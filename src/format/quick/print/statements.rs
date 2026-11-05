@@ -13,7 +13,7 @@ use crate::print::statics::{
     LBRACE, LET, LPAREN, RBRACE, RETURN, RPAREN, RPAREN_, SEMI, SPACE, STATIC_, SWITCH_LPAREN,
     THROW, TRY_, USING, VAR, WHILE_LPAREN, WITH_LPAREN,
 };
-use crate::{Quick, R, Words};
+use crate::{Quick, R, Words, rare};
 
 impl Quick {
     // ------------------------------------------------------------------------------------------------------- sequences
@@ -136,9 +136,10 @@ impl Quick {
                 | k::MatchStatementCase => {}
                 k::ModuleDeclaration => {
                     // DeclareNamespace is not on the list
-                    if self.mode.is_flow
-                        && (((self.n.at(parent) as u32) >> SUB_SHIFT) as i32 & 3) != MK_MODULE
-                    {
+                    if self.mode.is_flow {
+                        if (((self.n.at(parent) as u32) >> SUB_SHIFT) as i32 & 3) == MK_MODULE {
+                            return Err(self.rare(rare::FLOW));
+                        }
                         self.hardline();
                     }
                 }

@@ -823,8 +823,13 @@ pub(crate) fn parse<'a>(
         }
     };
     let get_tag_content_type: GetTagContentType<'_> = &get_tag_content_type;
-    let runs = (options.runs.filter(|_| start == 0))
-        .map(|settings| tree.runs.take().unwrap_or_else(|| Runs::new(settings)));
+    let runs = (options.runs.filter(|_| start == 0)).map(|settings| {
+        let spare = tree.spare_runs.take().map(|mut runs| {
+            runs.reset(settings);
+            runs
+        });
+        (tree.runs.take().or(spare)).unwrap_or_else(|| Runs::new(settings))
+    });
     let mut lexer = Tokenizer::new(text, start, get_tag_content_type, options.lexer, runs);
     // A node is typically about thirty bytes.
     tree.nodes.reserve(text.len().saturating_sub(start) / 32);
@@ -855,8 +860,11 @@ pub(crate) fn parse<'a>(
     let (mut tree_errors, is_nested_too_deeply) = (builder.errors, builder.is_nested_too_deeply);
     // There is more only if the tree is nested too deeply.
     while lexer.step() {}
-    tree.has_typescript_script_in_run |=
-        (lexer.runs.as_ref()).is_some_and(|runs| runs.has_typescript_script);
+    if let Some(runs) = lexer.runs.take() {
+        tree.has_typescript_script_in_run |= runs.has_typescript_script;
+        tree.assumes_typescript = tree.assumes_typescript.or(runs.assumes_typescript);
+        tree.spare_runs = Some(runs);
+    }
     let mut errors = lexer.errors;
     errors.append(&mut tree_errors);
     let ended = (lexer.tokens.last()).map_or(text.len() as u32, |eof| eof.span.start);

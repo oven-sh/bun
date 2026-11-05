@@ -92,6 +92,8 @@ impl Quick {
         if n + size > self.arena.n_cap {
             self.grow_ast(n + size);
         }
+        #[cfg(feature = "tally")]
+        crate::tally::node(head, start, end);
         self.n.put_several(n, [head, start, end, 0]);
         self.arena.n_pos = n + size;
         return n;
@@ -103,6 +105,10 @@ impl Quick {
         let n = self.arena.n_pos;
         if n + COUNT as i32 > self.arena.n_cap {
             self.grow_ast(n + COUNT as i32);
+        }
+        #[cfg(feature = "tally")]
+        if let [head, start, end, ..] = *words.as_slice() {
+            crate::tally::node(head, start, end);
         }
         self.n.put_several(n, words);
         self.arena.n_pos = n + COUNT as i32;
@@ -247,7 +253,7 @@ impl Quick {
 
     #[inline]
     pub(crate) fn list_push(&mut self, item: i32) {
-        if self.arena.ls_pos >= (self.arena.ls.len() as i32) {
+        if self.arena.ls_pos + 4 > (self.arena.ls.len() as i32) {
             self.grow_list();
         }
         self.arena.ls.put(self.arena.ls_pos, item);
@@ -273,11 +279,13 @@ impl Quick {
             return 0;
         }
         let l = self.arena.n_pos;
-        if l + count + 1 > self.arena.n_cap {
-            self.grow_ast(l + count + 1);
+        if l + count + 4 > self.arena.n_cap {
+            self.grow_ast(l + count + 4);
         }
-        self.n.put(l, count);
-        let mut i: i32 = 0;
+        // three items at once, whether there are as many or not
+        let [a, b, c] = self.arena.ls.several(mark);
+        self.n.put_several(l, [count, a, b, c]);
+        let mut i: i32 = 3;
         while i < count {
             self.n.put(l + 1 + i, self.arena.ls.at(mark + i));
             i += 1;

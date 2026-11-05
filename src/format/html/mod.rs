@@ -379,6 +379,7 @@ pub(crate) fn write_document(
         None,
         Flavor::Prettier,
         None,
+        &mut None,
         &mut Scripts::default(),
         f,
         None,
@@ -408,6 +409,7 @@ pub(crate) fn write_document_to_quick<'w, 'f>(
         None,
         Flavor::Prettier,
         None,
+        &mut None,
         &mut Scripts::default(),
         f,
         Some(quick),
@@ -416,7 +418,8 @@ pub(crate) fn write_document_to_quick<'w, 'f>(
 }
 
 /// Like `write_document`. `cursor_offset` is the cursor's offset in `text`, and `script_flavor` is the flavor that
-/// scripts are formatted in. `found` is what `Runs::whole` has left.
+/// scripts are formatted in. `found` is what `Runs::whole` has left. `spare` is what has read another text, whose buffers
+/// are used and left there again.
 #[allow(clippy::too_many_arguments)]
 fn write_document_with_cursor<'w, 'f>(
     text: &[u8],
@@ -428,6 +431,7 @@ fn write_document_with_cursor<'w, 'f>(
     cursor_offset: Option<u32>,
     script_flavor: Flavor,
     found: Option<(runs::Runs, Vec<u8>)>,
+    spare: &mut Option<(runs::Runs, Vec<u8>)>,
     scripts: &mut Scripts,
     f: &'w mut Formatter<'f>,
     quick: Option<writer::ToQuick<'w, 'f>>,
@@ -438,6 +442,9 @@ fn write_document_with_cursor<'w, 'f>(
     tree.nodes.reserve(text.len() / 24 + 8);
     if let Some((runs, printed)) = found {
         (tree.runs, tree.printed) = (Some(runs), printed);
+    } else if let Some((runs, mut printed)) = spare.take() {
+        printed.clear();
+        (tree.spare_runs, tree.printed) = (Some(runs), printed);
     }
     // Only where lines start at a known column, and nobody asks where a node has gone.
     let reads_runs = !is_embedded && indent_level == Some(0) && cursor_offset.is_none();
@@ -447,12 +454,27 @@ fn write_document_with_cursor<'w, 'f>(
             || (!strings::contains(text, b"v-pre") && !script_flavor.is_oxfmt()));
     let runs = runs::Settings::new(parser, options, path, front_matter_len.unwrap_or(0))
         .filter(|_| reads_runs);
-    parse::parse_with_runs(&content, front_matter_len, parser, runs, &mut tree).map_err(
-        |error| match error {
-            parse::ParseError::Syntax(_) => FormatError::SyntaxError,
-            parse::ParseError::NestedTooDeeply => FormatError::NestedTooDeeply,
-        },
-    )?;
+    // The code in a template is formatted while it is read.
+    if let Some(settings) = runs.filter(|_| parser == Parser::Vue) {
+        let reader = match &mut tree.runs {
+            Some(runs) => runs,
+            None => (tree.spare_runs).get_or_insert_with(|| runs::Runs::new(settings)),
+        };
+        reader.guests = Some(Box::new(runs::OwnGuests {
+            options: options.clone(),
+            scripts: std::mem::take(scripts),
+        }));
+    }
+    let parsed = parse::parse_with_runs(&content, front_matter_len, parser, runs, &mut tree);
+    for reader in [&mut tree.runs, &mut tree.spare_runs].into_iter().flatten() {
+        if let Some(guests) = reader.guests.take() {
+            *scripts = guests.scripts;
+        }
+    }
+    parsed.map_err(|error| match error {
+        parse::ParseError::Syntax(_) => FormatError::SyntaxError,
+        parse::ParseError::NestedTooDeeply => FormatError::NestedTooDeeply,
+    })?;
     let cursor = cursor_offset.map_or(Cursor::Nowhere, |offset| cursor::locate(&tree, offset));
     let options = Options {
         parser,
@@ -487,27 +509,34 @@ fn write_document_with_cursor<'w, 'f>(
     };
     printer.print_root(!is_embedded);
     let is_nested_too_deeply = printer.is_nested_too_deeply;
-    let has_wrong_short_cut = printer.has_wrong_short_cut;
+    let has_wrong_short_cut = printer.has_wrong_short_cut
+        || (tree.assumes_typescript)
+            .is_some_and(|it| it != printer.is_vue_sfc_with_typescript_script());
     *scripts = std::mem::take(&mut printer.scripts);
     let unwritten = printer.out.unwritten();
     printer.out.finish();
+    let (region, top_level_count) = (cursor.region(&tree), tree.children(tree.root).count());
+    *spare = (tree.spare_runs.take().or_else(|| tree.runs.take()))
+        .map(|runs| (runs, std::mem::take(&mut tree.printed)));
     match is_nested_too_deeply {
         true => Err(FormatError::NestedTooDeeply),
         false => Ok(DocumentSummary {
-            region: cursor.region(&tree),
-            top_level_count: tree.children(tree.root).count(),
+            region,
+            top_level_count,
             has_wrong_short_cut,
             unwritten,
         }),
     }
 }
 
-/// Appends what is printed for `text`, a Vue file with `options` that is one run, for which `lines` is printed: lines,
-/// and between them code, which its formatter prints as a text. Returns false if it takes a document.
+/// Appends what is printed for `text`, a Vue file called `name` that is one run, for which `lines` is printed: lines, and
+/// between them code, which its formatter prints as a text. `options` are those that the caller has asked for,
+/// `options_of_text` makes those of the text. Returns false if it takes a document.
 fn write_lines_and_code(
     mut lines: &[u8],
-    text: &[u8],
+    (text, name): (&[u8], &[u8]),
     options: &FormatOptions,
+    options_of_text: &dyn Fn() -> FormatOptions,
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> bool {
@@ -528,7 +557,7 @@ fn write_lines_and_code(
             None => {
                 let script = crate::js::quick::Script {
                     text: source,
-                    name: options.filepath.as_deref().unwrap_or_default(),
+                    name,
                     is_typescript: code.language == Language::TypeScript,
                     is_no_module: false,
                     indentation: u32::from(code.level),
@@ -544,7 +573,7 @@ fn write_lines_and_code(
                         root: HtmlRoot::Program,
                         ..InHtml::default()
                     },
-                    ..embed::options_for_printed_text(options, 0)
+                    ..embed::options_for_printed_text(&options_of_text(), 0)
                 };
                 formatted.clear();
                 let style_sheets = &mut scratch.style_sheets;
@@ -791,7 +820,11 @@ fn format_once(
             }
             None => (runs::Runs::new(settings), Vec::new()),
         };
-        if let Some((span, is_in_text)) = runs.whole(&text, &mut printed)
+        let guests = (parser == Parser::Vue).then_some(runs::Guests {
+            options,
+            scripts: &mut scratch.scripts,
+        });
+        if let Some((span, is_in_text)) = runs.whole(&text, &mut printed, guests)
             && options.line_ending.resolve(original) == crate::options::LineEnding::Lf
             && let Some(whole) = (if is_in_text { &text[..] } else { &printed[..] })
                 .get(span.start as usize..span.end as usize)
@@ -802,15 +835,16 @@ fn format_once(
                 scratch.runs = Some((runs, printed));
                 return Ok(None);
             }
-            let options = options_of_text();
             if front_matter_len == 0 && parser == Parser::Vue {
                 let written = out.len();
-                if write_lines_and_code(whole, &text, &options, scratch, out) {
+                let named = (&text[..], options.filepath.as_deref().unwrap_or(path));
+                if write_lines_and_code(whole, named, options, &options_of_text, scratch, out) {
                     scratch.runs = Some((runs, printed));
                     return Ok(None);
                 }
                 out.truncate(written);
             }
+            let options = options_of_text();
             let mut context =
                 JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
             context.parse_javascript = parse_javascript;
@@ -876,6 +910,7 @@ fn format_once(
                 cursor_offset,
                 script_flavor,
                 found.take(),
+                &mut scratch.runs,
                 &mut scratch.scripts,
                 f,
                 None,

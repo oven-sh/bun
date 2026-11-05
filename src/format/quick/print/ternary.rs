@@ -3,7 +3,7 @@
 use crate::ast::{F_COMPUTED, k};
 use crate::doc::ALIGN_DEDENT;
 use crate::print::statics::{_EXTENDS_, COLON_SPACE, LPAREN, QUESTION_SPACE, RPAREN, SPACE};
-use crate::{Quick, R, Words};
+use crate::{Quick, R, Words, rare};
 
 /// What print_ternary() has found out about the conditional whose parts it is printing. A conditional among these parts belongs to the same
 /// chain, asks the same questions, and need not climb past this one or walk the whole chain again.
@@ -107,6 +107,14 @@ impl Quick {
         if self.options.use_tabs {
             self.indent_open();
         } else {
+            if self.options.tab_width == 1
+                && matches!(
+                    self.n.at(n) & 0xff,
+                    k::ConditionalExpression | k::ConditionalType
+                )
+            {
+                return Err(self.rare(rare::TAB_WIDTH));
+            }
             self.align_open(2);
         }
         self.print(n)?;

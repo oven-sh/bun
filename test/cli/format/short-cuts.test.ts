@@ -2297,6 +2297,18 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
     // A `<template>` that is not broken, is empty, is in another language, has attributes.
     "<template>a</template>\n",
     "<template>\n  a\n</template>\n",
+    "<template>\n  a\n  <div></div>\n</template>\n",
+    "<template>\n  a\n\n  <div></div>\n</template>\n",
+    "<template>\n  a <b>c</b>\n  <div></div>\n</template>\n",
+    "<template>\n  a\n  b\n  <div></div>\n</template>\n",
+    "<template>\n  a\n  {{ b }}\n</template>\n",
+    // An empty block has its end tag on the line of its start tag.
+    "<style scoped></style>\n",
+    '<script lang="ts" setup></script>\n<style>\na {\n}\n</style>\n',
+    '<script lang="ts"></script>\n\n<template>\n  <p :a="b  as c"></p>\n</template>\n',
+    "<script setup></script >\n",
+    "<script setup> </script>\n",
+    "<script setup></script>a\n",
     "<template>\n  {{ a }}\n</template>\n",
     "<template>\n  <!-- a -->\n</template>\n",
     "<template>\n  <b>a</b> c\n</template>\n",
@@ -2470,6 +2482,208 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
         color: blue;
       }
       </style>
+      "
+    `);
+  });
+});
+
+describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () => {
+  const wide = "a".repeat(30);
+  const values = [
+    "a  +  b",
+    "(a)",
+    "a ? (b) : c",
+    "[a,b]",
+    `[${wide}, ${wide}, ${wide}]`,
+    `[\n  ${wide},\n  b]`,
+    "{a:b}",
+    "{\n  a: b }",
+    `{ a: ${wide}, b: ${wide}, c: ${wide} }`,
+    `${wide}(${wide}, ${wide}, ${wide})`,
+    `${wide} || ${wide} || ${wide} || ${wide}`,
+    `${wide} ? ${wide} : ${wide} + ${wide}`,
+    "(a) => b(a)",
+    "a => { b(a) }",
+    "(a) => {\n  b(a);\n  c();\n}",
+    "a = b; c = d",
+    "a()",
+    "a as b",
+    "a!",
+    "(a: b) => c",
+    "<a>b",
+    "a | b",
+    "a | b(c)",
+    "`a${ b }`",
+    "`a\n${b}`",
+    "'a' + \"b\"",
+    "'a\\'b'",
+    "a && b",
+    "(a || b) && c",
+    "a &amp;&amp; b",
+    "a &foo; b",
+    "a &quot;b&quot;",
+    "a // b",
+    "a /* b */",
+    "{{ a }}",
+    "a }} b",
+    "a\tb",
+    "'é' + a  ",
+    "'中文' +  a",
+    "",
+    " ",
+    "a b",
+    "(",
+    "function () {}",
+    "async () => await a",
+    "/a\\d/.test(b)",
+    "$emit('a',  b)",
+  ];
+  const names = [":a", ".a", "v-bind:a", "v-bind", "v-if", "v-model", "v-html", "@a", "v-on:a", "@a.b", ":[a]", "v-for", "#a", "v-slot:a", "slot-scope", "a", "onclick"];
+  const scripts = [
+    "",
+    '\n<script setup lang="ts">\nlet a;\n</script>\n',
+    "\n<script setup lang='ts'>\nlet a;\n</script>\n",
+    '\n<script lang="typescript">\nlet a;\n</script>\n',
+    '\n<script lang="tsx">\nlet a;\n</script>\n',
+    '\n<script>\nlet a = \'<script lang="ts">\';\n</script>\n',
+    '\n<!-- <script lang="ts"> -->\n<script>\nlet a;\n</script>\n',
+    '\n<docs>\n<script lang="ts">\n</script>\n</docs>\n',
+    '\n<script lang="ts" src="a">\n</script>\n',
+  ];
+  const inputs = [
+    ...values.flatMap(value =>
+      names.map(name => `<template>\n  <div>\n    <p b="c" ${name}="${value}" d>e</p>\n  </div>\n</template>\n${scripts[1]}`),
+    ),
+    ...values.map(value => `<template>\n  <div>\n    {{ ${value} }}\n    <p>{{${value}}}</p>\n    <p>a {{ ${value} }} b</p>\n  </div>\n</template>\n${scripts[1]}`),
+    // Whether the code is TypeScript.
+    ...scripts.flatMap(script => [
+      `<template>\n  <p :a="b  as c" @d="(e: f) => g!">{{ h  as i }}</p>\n</template>\n${script}`,
+      `${script.trimStart()}\n<template>\n  <p :a="b  as c" @d="(e: f) => g!">{{ h  as i }}</p>\n</template>\n`,
+      // With something that goes the long way behind the code.
+      `<template>\n  <p :a="b  as c">{{ h  as i }}</p>\n  <p #j="{ k: { l } }"></p>\n</template>\n${script}`,
+    ]),
+    // Where the attribute is, and what follows it.
+    ...[
+      '<p :a="[b,c]"></p>',
+      '<p :a="[b,c]" />',
+      '<p\n  :a="[b,c]"\n/>',
+      `<p :a="[${wide},${wide},${wide}]" />`,
+      `<p :a="[${wide},${wide},${wide}]">d</p>`,
+      `<p :a="[${wide},${wide},${wide}]"\n  >d</p\n>`,
+      `<span :a="[${wide},${wide},${wide}]">d</span>`,
+      `<span :a="[${wide},${wide},${wide}]"><b>d</b></span>`,
+      `<component-with-a-long-name :a="[${wide},${wide}]" />`,
+      `<i :a="[${wide},${wide}, b]" />`,
+      `<pre :a="[${wide},${wide},${wide}]">d</pre>`,
+      '<pre :a="[b,c]">d</pre>',
+      '<textarea :a="[b,c]"></textarea>',
+      `<textarea :a="[${wide},${wide},${wide}]"></textarea>`,
+      '<svg :a="[b,c]"><g :d="[e,f]"></g></svg>',
+      'a <b :c="[d,e]">f</b> g',
+      `a <b :c="[${wide},${wide},${wide}]">f</b> g`,
+      '<input :a="[b,c]">',
+      '<br :a="[b,c]" /><br :a="[b,c]" />',
+    ].flatMap(element => [
+      `<template>\n  ${element}\n</template>\n`,
+      `<template>\n  <div>\n    <div>\n      ${element}\n    </div>\n  </div>\n</template>\n`,
+      `<template>\n  <span>${element}</span>\n</template>\n`,
+    ]),
+    // A `style` attribute, whatever is between its declarations.
+    ...[
+      "color: red;width: 1px",
+      "color: red ; width: 1px",
+      "\n  color: red;\n  width: 1px;\n",
+      "\n  color: red;\n\n  width: 1px;\n",
+      "\n\n  color: red;\n",
+      "color: red;;",
+      "color: red;\twidth: 1px",
+      `\n  color: var(--${wide});\n  width: 1px;\n  background: rgba(0, 0, 0, 0.5);\n`,
+      `color: var(--${wide}); width: 1px; background: rgba(0, 0, 0, 0.5); height: 100%`,
+      `color: var(--${wide}${wide}${wide})`,
+      `margin: ${"1px ".repeat(30)}1px`,
+      "color: red; /* a */ width: 1px",
+      "color: RED;\n width: 1px",
+      "color: red;\n font-family: a, b",
+      "--a: b;\n color: red",
+      "",
+      "\n",
+      ";",
+    ].flatMap(value => [
+      `<template>\n  <div>\n    <p a="b" style="${value}" c>d</p>\n  </div>\n</template>\n`,
+      `<template>\n  <i style="${value}" />\n  <component-with-a-long-name style="${value}" />\n</template>\n`,
+    ]),
+    // What is not as wide as it is long, next to `{{ }}`.
+    ...["Value：{{ a }}", "{{ a + 1 }}期", "中{{ a }}文{{ b }}字", "é{{ a }}", "́{{ a }}", "{{ a }}́", "{{ a }}️⃣", "😀{{ a }}😀 b"].flatMap(
+      words => [
+        `<template>\n  <div class="demonstration">${words}</div>\n</template>\n`,
+        `<template>\n  <p>${words} ${words} ${words} ${words}</p>\n  <span>c ${words}</span>\n</template>\n`,
+        `<template>\n  <div>\n    ${words}\n  </div>\n</template>\n`,
+      ],
+    ),
+    // A comment that starts with a tag is a comment like another, unless it ends a conditional comment.
+    ...["<!-- <a> -->", "<!--<a b>-->", "<!-- <a\n  b\n/> -->", "<!--<![endif]-->", "<!--<! [endif]-->", "<!-- <![endif] -->", "<!--<-->", "<!--<!-->"].map(
+      comment => `<template>\n  ${comment}\n  <div>\n      ${comment}\n    <p   a>b</p>\n  </div>\n</template>\n`,
+    ),
+    // Code behind something that goes the long way.
+    `<template>\n  <p #a="{ b: { c } }"></p>\n  <p :d="[e,f]" :g="[${wide},${wide},${wide}]">{{ h  ( i ) }}</p>\n</template>\n`,
+    `<template>\n  <div>\n    <p #a="{ b: { c } }"></p>\n    <p :d="e  as f">{{ g  as h }}</p>\n  </div>\n</template>\n\n<script lang="ts">\ni;\n</script>\n`,
+    // A tab is as wide as the options say, which matters on one line.
+    ...["M1,2\n\tz", "M1,2\tz", "\tM1\n", "a\t\nb"].flatMap(value =>
+      ["d", "class", ":d", "title"].map(name => `<template>\n  <path a="b" ${name}="${value}" />\n</template>\n`),
+    ),
+  ];
+  const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
+
+  test.concurrent.each([
+    [],
+    ["--print-width=40"],
+    ["--print-width=20", "--tab-width=4"],
+    ["--print-width=60", "--tab-width=8"],
+    ["--print-width=1"],
+    ["--print-width=100000", "--tab-width=0"],
+    ["--use-tabs", "--print-width=60"],
+    ["--single-quote", "--no-bracket-spacing", "--arrow-parens=avoid", "--no-semi"],
+    ["--quote-props=consistent", "--trailing-comma=none"],
+    ["--object-wrap=collapse", "--experimental-operator-position=start"],
+    ["--experimental-ternaries"],
+    ["--html-whitespace-sensitivity=strict"],
+    ["--html-whitespace-sensitivity=ignore", "--print-width=60"],
+    ["--bracket-same-line", "--print-width=60"],
+    ["--single-attribute-per-line"],
+    ["--embedded-language-formatting=off"],
+    ["--end-of-line=crlf"],
+    ["--vue-indent-script-and-style"],
+  ])("the same with and without short cuts: %j", async (...options: string[]) => {
+    const { short, long } = await bothWays(files, options);
+    expect(short).toEqual(long);
+  });
+
+  test("code in a file that is read from the bytes is formatted", async () => {
+    const { short, long } = await bothWays(
+      {
+        "a.vue": `<template>\n  <div :a="[b,c]" style="\n color: red;width: 1px;">\n    <p :class="[${wide},${wide}, d  as e]">{{ f  ( g ) }}</p>\n  </div>\n</template>\n\n<script lang="ts">\nh\n</script>\n`,
+      },
+      [],
+    );
+    expect(short).toEqual(long);
+    expect(short.written["a.vue"]).toMatchInlineSnapshot(`
+      "<template>
+        <div :a="[b, c]" style="color: red; width: 1px">
+          <p
+            :class="[
+              aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+              aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+              d as e,
+            ]"
+          >
+            {{ f(g) }}
+          </p>
+        </div>
+      </template>
+
+      <script lang="ts">
+      h;
+      </script>
       "
     `);
   });
@@ -4374,6 +4588,43 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "", 'describe("x", () /* a */ /* b */=> {\n  f();\n});\n'],
     ["a.jsx", "", "a = <T><b>Log<\n// c\n/b>: {m}</T>;\n"],
     ["a.ts", "", "a = {\n  [b]:\n// c\n(value: number) => isNumber(value),\n};\n"],
+    // The name `let` in parentheses.
+    ["a.js", "--no-semi", "(let)\n"],
+    // A `;` behind a comment, with nothing to end.
+    ["a.js", "", '/* @flow */;\nimport "a";\na();\n'],
+    // A declaration as the body of an `if`.
+    ["a.ts", "", "if (1)\n  const enum A {}\n"],
+    // `await` that is a name among the parameters, for TypeScript.
+    ["a.tsx", "", "class A { set a(@dec {a} = await {}) {} }\n"],
+    // `new ()` in an interface is no method with the name `new`.
+    ["a.ts", "", "interface foo{\n bar():any\n new()\n}\n"],
+    // `{ " " }` is white space like `{" "}`.
+    [
+      "a.jsx",
+      "",
+      'x = <A>\n  <code>one two three four</code> a b;{" "}\n  { " " }\n  <code>a</code>{" "} a{" "}\n\t</A>\n',
+    ],
+    // A comment between two words of the head of a declaration or a member.
+    ["a.ts", "", "class A {\n  static // c\n  readonly a = 1;\n}\n"],
+    ["a.js", "", "class A{static// why\n  accessor x1}\n"],
+    ["a.js", "", 'import a// b\n/**\n */from"d"\n'],
+    ["a.ts", "", "export default class// b\nimplements A{}\n"],
+    // A comment that is all there is between the parentheses of a method.
+    ["a.js", "", "class C{#f(/* b */){}static{}}\n"],
+    // A comment behind the value of a class property.
+    ["a.js", "", "class A {\n  #x = (0 /* a */);\n}\n"],
+    // What may be a type cast of JSDoc, in Flow and in a conditional expression.
+    ["a.js.flow", "", "/** @type {A} */(l)\n"],
+    ["a.js", "", "a?/** @type {any} */(b?1:2):3\n"],
+    // Flow: a comment before or behind the parameters of a method of an object type.
+    ["a.js.flow", "", "declare class M{static/* 1 */():void}\n"],
+    ["a.js.flow", "", "type AndroidPlatform={get Version():/* @__PURE__ */{||}}\n"],
+    // Flow: a type guard as the return type of an arrow function.
+    ["a.js.flow", "", "a=():x is{a:()=>void}=>true\n"],
+    // Flow: a `declare module` with nothing in it.
+    ["a.js.flow", "", 'declare module"a"{}\n'],
+    // A conditional as a branch of a conditional where a level of indentation is one column.
+    ["a.js", "--print-width=25 --tab-width=1", "const price = user ? (user.isMember ? 8 : 10) : 12;\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

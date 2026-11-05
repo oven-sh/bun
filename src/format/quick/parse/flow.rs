@@ -10,9 +10,9 @@ use crate::ast::{
     TO_RENDERS, TO_RENDERS_MAYBE, TO_RENDERS_STAR, TP_ASSERTS, TP_IMPLIES, V_CONST, V_LET, V_VAR,
     VA_IN, VA_MINUS, VA_OUT, VA_PLUS, VA_READONLY, VA_WRITEONLY, k, type_keyword,
 };
-use crate::lexer::{kw, tk};
+use crate::lexer::{C_START, C_STRIDE, kw, tk};
 use crate::words::w;
-use crate::{Quick, R, Words};
+use crate::{Quick, R, Words, rare};
 
 pub(crate) struct ParseFlow {
     /// `A => B` without parentheses is not a function type here: in the return type of an arrow function
@@ -507,11 +507,22 @@ impl Quick {
         } else {
             0
         };
+        let open = self.lexer.tok_start;
         self.expect(tk::ParenL)?;
         let params = self.flow_parse_function_type_params(self.arena.ls_pos)?;
+        let close = self.lexer.tok_start;
         self.expect(tk::ParenR)?;
         self.expect(tk::Colon)?;
         let return_type = self.flow_parse_type_or_guard()?;
+        // The type starts where the member starts, so that a comment before or behind the parameters has two nodes to go to.
+        let mut c = self.lexer.c_count - 1;
+        while c >= self.lexer.c_base && self.lexer.c.at(c * C_STRIDE + C_START) >= start {
+            let at = self.lexer.c.at(c * C_STRIDE + C_START);
+            if at < open || (at > close && at < self.lexer.prev_end) {
+                return Err(self.rare(rare::COMMENT));
+            }
+            c -= 1;
+        }
         return Ok(self.function_node(
             kind,
             start,

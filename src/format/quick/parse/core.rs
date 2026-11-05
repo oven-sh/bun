@@ -416,6 +416,9 @@ impl Quick {
         let head = k::Identifier
             | self.lexer.tok_flags
             | (if self.lexer.tok_kw == kw::Let || self.lexer.tok_kw == kw::Async {
+                if self.lexer.tok_kw == kw::Let {
+                    return Err(self.rare(rare::LET));
+                }
                 F_EXTRA
             } else {
                 0
@@ -814,9 +817,7 @@ impl Quick {
     /// Where the `}` stands, if nothing but blanks and ends of lines comes before it behind p; else 0.
     pub(crate) fn closing_brace_behind(&self, p: i32) -> i32 {
         let mut q = p;
-        while self.t.at(q) == 10 || self.t.at(q) == 32 {
-            q += 1;
-        }
+        q = self.blank_lines_end(q);
         return if self.t.at(q) == 125 { q } else { 0 };
     }
 
@@ -1671,7 +1672,11 @@ impl Quick {
                 tk::Semi => {
                     // The body of a loop or of an `if` stands behind a `)` or a word.
                     let before = self.t.at(self.lexer.prev_end - 1);
-                    if self.lexer.tok_nl == 0 && (before == 125 || before == 59) {
+                    if self.lexer.tok_nl == 0
+                        && before != 41
+                        && !(before >= 97 && before <= 122)
+                        && start != self.text.src_start
+                    {
                         return Err(self.rare(rare::SEMICOLON));
                     }
                     self.check_semicolon_at_line_start()?;
@@ -2010,12 +2015,7 @@ impl Quick {
     /// The statement behind `if (a)`, `else`, `with (a)`, a label or the head of a loop. Of the declarations, Babel takes those with `var` and `function` in this place; TypeScript's parser takes them all.
     fn parse_body(&mut self) -> R<i32> {
         match self.lexer.tok {
-            tk::Const | tk::Class | tk::At => {
-                if self.parse.typed != TYPED_TS {
-                    return Err(self.text_refuse());
-                }
-            }
-            tk::Export => {
+            tk::Const | tk::Class | tk::At | tk::Export => {
                 return Err(self.text_refuse());
             }
             tk::Name => {
@@ -4087,6 +4087,15 @@ impl Quick {
                             && !self.is_operator_for_type_script()))
                 {
                     // a name there, for some
+                    return Err(self.text_refuse());
+                }
+                if self.lexer.tok_kw == kw::Await
+                    && self.parse.typed == TYPED_TS
+                    && self.parse.in_async == 0
+                    && self.parse.place.in_parameters
+                    && !self.is_operand_of_await_in_type_script()?
+                {
+                    // a name among the parameters, also at the top of a module
                     return Err(self.text_refuse());
                 }
                 if self.lexer.tok_kw == kw::Await

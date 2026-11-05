@@ -610,7 +610,7 @@ impl<'a> Tokenizer<'a, '_> {
     /// `printed`.
     pub(crate) fn find_runs(&mut self, parent: Parent<'_>, printed: &mut Vec<u8>) {
         if let Some(runs) = &mut self.runs {
-            runs.scan(self.text, self.pos, parent, printed);
+            runs.scan(self.text, self.pos, parent, printed, None);
         }
     }
 

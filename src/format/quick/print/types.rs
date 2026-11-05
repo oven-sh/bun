@@ -1065,6 +1065,9 @@ impl Quick {
                 return Ok(true);
             }
             k::TypePredicate => {
+                if !self.mode.is_type_script && self.is_return_type_of_arrow(self.n.at(n + 3)) {
+                    return Err(self.rare(rare::FLOW));
+                }
                 if (self.n.at(n) & F_ASSERTS) != 0
                     || ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == TP_ASSERTS
                 {

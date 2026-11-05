@@ -12,6 +12,8 @@ bun_core.workspace = true
 [features]
 # Keeps what each stage leaves behind. For tools, never for a build that ships.
 stages = []
+# Notes what the reader refuses and what is read the long way. For tools, never for a build that ships.
+tally = []
 
 [lints]
 workspace = true

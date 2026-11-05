@@ -50,3 +50,75 @@ test.each([
   );
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true number\n", stderr: "", exitCode: 0 });
 });
+
+// The exact shape Turbopack (Next.js 16.4, module fragments / tree shaking) emits, minified: every
+// export of a module factory gets a live-binding getter and setter, `e.s([name, () => v, e => v = e])`,
+// and for a `const` the setter assigns to a constant. It is never called, so the chunk must load.
+// Both a literal and an object initializer occur in real chunks (`const t="/middleware"`, `const s={...}`).
+const factorySource = `
+const factories = [
+  e => { const t = "/middleware"; e.s(["a", () => t, e => t = e]) },
+  e => { const s = { wait: 1 }; e.s(["a", () => s, e => s = e]) },
+  e => { const n = { ...e.x }; const i = (n.c ? n.proxy : n.middleware) || n.default; e.s(["b", () => i, e => i = e, "g", () => n, e => n = e]) },
+];
+function run() {
+  const seen = [];
+  for (const f of factories) {
+    f({ x: { middleware: "mw" }, s: (...exports) => seen.push(exports.filter(x => typeof x === "string")) });
+  }
+  return JSON.stringify(seen);
+}
+`;
+
+test("Turbopack-style CommonJS chunk with unused const setters loads", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "chunk.js": `${factorySource}\nmodule.exports = run;\n`,
+      "index.js": `console.log(require("./chunk.js")());\n`,
+    },
+    "index.js",
+  );
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '[["a"],["a"],["b","g"]]\n', stderr: "", exitCode: 0 });
+});
+
+test("Turbopack-style ES module chunk with unused const setters loads", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "chunk.mjs": `${factorySource}\nexport { run };\nexport const marker = 1;\n`,
+      "index.mjs": `import { run, marker } from "./chunk.mjs";\nconsole.log(run(), marker);\n`,
+    },
+    "index.mjs",
+  );
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '[["a"],["a"],["b","g"]] 1\n', stderr: "", exitCode: 0 });
+});
+
+test("calling a Turbopack-style const setter throws TypeError at runtime", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "index.mjs": `let set; const t = "/middleware"; set = e => t = e;
+try { set("x") } catch (err) { console.log(err instanceof TypeError, t) }\n`,
+    },
+    "index.mjs",
+  );
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true /middleware\n", stderr: "", exitCode: 0 });
+});
+
+// Every other form of write target must also stay a runtime error rather than a parse error.
+test.each([
+  ["compound", "e += 1"],
+  ["increment", "e++"],
+  ["logical", "e ||= 1"],
+  ["array destructuring", "[e] = [1]"],
+  ["object destructuring", "({ a: e } = { a: 1 })"],
+  ["for-of target", "for (e of [1]) {}"],
+  ["for-in target", "for (e in { a: 1 }) {}"],
+  ["delete", "delete e"],
+])("unexecuted %s write to a const loads", async (_name, stmt) => {
+  for (const decl of ["const e = 1;", "const e = Math.random();"]) {
+    const { stdout, stderr, exitCode } = await run(
+      { "index.js": `${decl}\nfunction f() { ${stmt} }\nconsole.log("loaded");\n` },
+      "index.js",
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "loaded\n", stderr: "", exitCode: 0 });
+  }
+});

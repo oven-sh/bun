@@ -19,7 +19,7 @@ use crate::holes::FILTER_END_OF_LINE;
 use crate::lexer::{C_END, C_FLAGS, C_START, C_STRIDE, CF_BLOCK, CF_CLAIMED, PREC, kw, tk};
 use crate::mode::SINGLE_JSX_IN_MARKDOWN;
 use crate::options::{EOL_LF, QUOTE_PROPS_CONSISTENT};
-use crate::{Quick, R, Stop, Words, why, zeros};
+use crate::{Quick, R, Stop, Words, rare, why, zeros};
 
 pub(crate) struct Parse {
     // ---- context
@@ -214,9 +214,23 @@ impl Quick {
     }
 
     /// Consumes a semicolon, written or inserted.
+    /// The token is a `;` or the `,` of a member of a type. Where the empty lines around it and the comments behind it go, and what these
+    /// count for, depends on where the node before it is taken to end. Code without semicolons has `;[a].b()` and `;(a)()`, which are plain.
+    #[inline(always)]
+    pub(crate) fn check_semicolon_at_line_start(&self) -> R<()> {
+        if self.lexer.tok_nl != 0 {
+            let next = self.t.at(self.lexer.tok_end);
+            if next <= 32 || next == 47 || next == 59 {
+                return Err(self.rare(rare::SEMICOLON));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn semicolon(&mut self) -> R<()> {
         self.parse.content_end = self.lexer.prev_end;
         if self.lexer.tok == tk::Semi {
+            self.check_semicolon_at_line_start()?;
             self.next()?;
         } else if self.lexer.tok != tk::BraceR
             && self.lexer.tok != tk::EOF
@@ -1323,6 +1337,12 @@ impl Quick {
                     return self.parse_block();
                 }
                 tk::Semi => {
+                    // The body of a loop or of an `if` stands behind a `)` or a word.
+                    let before = self.t.at(self.lexer.prev_end - 1);
+                    if self.lexer.tok_nl == 0 && (before == 125 || before == 59) {
+                        return Err(self.rare(rare::SEMICOLON));
+                    }
+                    self.check_semicolon_at_line_start()?;
                     self.next()?;
                     return Ok(self.node0(k::EmptyStatement, start, self.lexer.prev_end));
                 }
@@ -2422,8 +2442,8 @@ impl Quick {
                 end = self.lexer.tok_end;
                 break;
             }
-            if self.eat(tk::Semi)? {
-                continue;
+            if self.lexer.tok == tk::Semi {
+                return Err(self.rare(rare::SEMICOLON));
             }
             if self.lexer.tok == tk::EOF {
                 return Err(self.unexpected());

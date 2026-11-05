@@ -2903,6 +2903,30 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "", "class A {\n  export c;\n}\n"],
     ["a.ts", "", "class A {\n  const a;\n}\n"],
     ["a.ts", "", "class A {\n  default function() {}\n}\n"],
+    // A `;` that doesn't directly follow what it ends, or ends nothing: the empty lines around it, ..
+    [
+      "a.ts",
+      "",
+      "class A {\n  b = 1;\n\n;  /** a comment that is printed after the property */\n  d(e?: string) {}\n}\n",
+    ],
+    ["a.ts", "", "class C {\n  x() {}\n  ;\n\n  static;\n}\n"],
+    ["a.js", "", "for (a of b);\n;\n\na();\n"],
+    ["a.js", "", "a: ;\n;\n\na;\n"],
+    // .. and the comments behind it, which count for the width of the line before.
+    [
+      "a.ts",
+      "",
+      "class A {\n  someProperty: SomeType<WithArguments> = new SomeType<WithArguments>();\n; /** a comment that is printed after the property */\n}\n",
+    ],
+    [
+      "a.ts",
+      "",
+      "class A {\n  @a() b: string;\n; /** a comment that is printed after the property, and makes its line too wide */\n}\n",
+    ],
+    ["a.ts", "", "type T = {\n  a: string // c\n; /* d */\n}\n"],
+    ["a.js", "", "a // b\n;/* c *//* c */\n"],
+    // The guard of code without semicolons is none of these.
+    ["a.js", "--no-semi", "const a = 1\n;[1, 2].forEach(f)\n\n;(function () {})()\nfunction g() {}\n;`t`.length\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

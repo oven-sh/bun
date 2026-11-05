@@ -2467,11 +2467,23 @@ impl Quick {
     }
 
     /// Does `n` end with something in parentheses that stands where an arrow function could?
-    fn ends_with_parentheses(&self, mut n: i32) -> bool {
+    fn ends_with_parentheses(&self, n: i32) -> bool {
+        self.ends_where_an_arrow_function_could_start(n, true)
+    }
+
+    fn ends_with_call_of_async(&self, n: i32) -> bool {
+        self.ends_where_an_arrow_function_could_start(n, false)
+    }
+
+    fn ends_where_an_arrow_function_could_start(
+        &self,
+        mut n: i32,
+        parentheses_count: bool,
+    ) -> bool {
         loop {
             let head = self.n.at(n);
             if (head & F_PAREN) != 0 {
-                return true;
+                return parentheses_count;
             }
             n = match head & 0xff {
                 k::ArrowFunctionExpression | k::AssignmentExpression => self.n.at(n + 5),
@@ -4013,16 +4025,36 @@ impl Quick {
         self.parse.no_in = NO_IN_CONSEQUENT;
         let consequent = self.parse_maybe_assign()?;
         self.parse.no_in = saved_no_in;
+        // `a ? async() : b`: the head of an arrow function with a return type for TypeScript's parser, and for the long way everywhere
+        if self.t.at(self.lexer.prev_end - 1) == 41 && self.ends_with_call_of_async(consequent) {
+            return Err(self.rare(rare::OTHER));
+        }
         self.expect(tk::Colon)?;
         let alternate = self.parse_maybe_assign()?;
         // `a ? () => (b) : c => d`: TypeScript's parser, and the long way in JavaScript too, takes `(b): c => d` for an arrow function
         // with a return type where it is the body of what can only be an arrow function.
         if self.parse.typed == 0
             && (self.n.at(alternate) & (0xff | F_PAREN)) == k::ArrowFunctionExpression
+            // (`(c) => d` is a type, which is one that is returned if another `=>` follows)
+            && (self.t.at(self.n.at(alternate + 1)) != 40
+                || (self.n.at(self.n.at(alternate + 5)) & (0xff | F_PAREN))
+                    == k::ArrowFunctionExpression)
             && (self.n.at(consequent) & (0xff | F_PAREN)) == k::ArrowFunctionExpression
             && self.ends_with_parentheses(consequent)
         {
             return Err(self.rare(rare::OTHER));
+        }
+        // `a ? () => (b) : class {}`: the same in TypeScript, where no type starts and the `{` is taken for a body
+        if self.parse.typed == TYPED_TS
+            && self.text_is(
+                self.n.at(alternate + 1),
+                self.n.at(alternate + 1) + 5,
+                b"class",
+            )
+            && (self.n.at(consequent) & (0xff | F_PAREN)) == k::ArrowFunctionExpression
+            && self.ends_with_parentheses(consequent)
+        {
+            return Err(self.text_refuse());
         }
         return Ok(self.node3(
             k::ConditionalExpression,
@@ -4235,6 +4267,13 @@ impl Quick {
                 ));
             }
             tk::Name => {
+                // Flow: `await <a />`, `await<A>(b)`: an operand, or the type arguments of a call
+                if self.lexer.tok_kw == kw::Await
+                    && self.parse.typed == TYPED_FLOW
+                    && self.t.at(self.blanks(self.lexer.tok_end)) == 60
+                {
+                    return Err(self.text_refuse());
+                }
                 if self.lexer.tok_kw == kw::Await
                     && (self.dialect.declaration_file
                         || (self.parse_typescript.in_namespace != 0

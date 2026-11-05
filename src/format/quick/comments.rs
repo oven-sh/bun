@@ -650,8 +650,10 @@ impl Quick {
             k::LogicalExpression => {
                 !matches!(c.h_following_kind, k::ObjectExpression | k::ArrayExpression)
             }
-            // before the `...` of a rest parameter
-            k::FunctionType => behind != 46,
+            // next to the `...` of a rest parameter
+            k::FunctionType => behind != 46 && before != 46,
+            // before the `?`
+            k::FunctionTypeParam => behind != 63,
             // in a getter or a setter
             k::ObjectTypeProperty => {
                 ((self.n.at(c.h_enclosing) as u32) >> SUB_SHIFT) as i32 & M_MASK == M_METHOD

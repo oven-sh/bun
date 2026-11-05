@@ -713,6 +713,21 @@ impl Quick {
                 self.next()?;
                 let is_conditional = self.is_start_of_type();
                 if is_conditional {
+                    // A `(` starts a type if what follows it could be in one, a `-` does before a number: not in `a as B ? (class {}) : c`,
+                    // `a as B ? -c : d`. (Where type arguments are tried, `a < b ? -c : d`, there are none either way.)
+                    if self.parse.speculating == 0 {
+                        if self.lexer.tok == tk::ParenL {
+                            self.next()?;
+                            if self.lexer.tok != tk::ParenR && !self.is_start_of_type() {
+                                return Err(self.text_refuse());
+                            }
+                        }
+                        if self.lexer.tok == tk::Sub
+                            && !matches!(self.t.at(self.blanks(self.lexer.tok_end)), 46 | 48..=57)
+                        {
+                            return Err(self.text_refuse());
+                        }
+                    }
                     self.restore(saved);
                     return Ok(type_);
                 }

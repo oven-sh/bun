@@ -1439,6 +1439,10 @@ impl Quick {
             let bound_start = self.lexer.tok_start;
             self.next()?;
             let type_ = self.flow_parse_type()?;
+            // (the long way breaks the parameters of a function type in this place, Prettier what it returns)
+            if (self.n.at(type_) & 0xff) == k::FunctionType {
+                return Err(self.rare(rare::FLOW));
+            }
             bound = self.node1(k::TypeAnnotation, bound_start, self.lexer.prev_end, type_);
         } else if self.lexer.tok == tk::Extends {
             // (Babel does not note the difference, and the long way does)

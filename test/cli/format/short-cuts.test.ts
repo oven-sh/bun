@@ -4492,6 +4492,19 @@ describe("TypeScript that the long way rejects", () => {
     });
   }
   expectRejected("a.ts", [
+    // parentheses as the body of an arrow function before the `:` of a conditional expression and a class
+    "a?()=>(b):class{}",
+    "2?():X=>({}):class{}",
+    // a call of `async` without arguments, or with a spread first, before the `:` of a conditional expression
+    "a?async():b",
+    "a?async(...x):b",
+    "a?c=async():b",
+    // `?` behind the type of `as`, before what starts no type
+    "b as e?(class{}):d",
+    "(b)()as e?(class{}):()=>l",
+    "b satisfies e?(class{}):()=>l",
+    "b as e?-c:d",
+    "b as e?(-c):d",
     // await, a block comment and what is no word, in a namespace
     'module a{await/**/{""(){}}}',
     // a test of a case that ends with parentheses where an arrow function could stand
@@ -5852,6 +5865,20 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.jsx", "--print-width=22", "a((a=b([f]))=>{c})\n"],
     // Flow: a cast among the items of a sequence.
     ["a.js", "--print-width=17", "//@flow\ne=(e,(h).a:(((a))))\n"],
+    // Two arrow functions as the branches of a conditional expression, the second with parentheses.
+    ["a.mjs", "", "const x = h ? () => (a) : (d) => t;\n"],
+    ["a.mjs", "", "h?()=>({}):(d)=>t\n"],
+    // Flow: `await` before a `<`, which the long way rejects in what may be parameters.
+    ["a.js", "", "//@flow\n({a=(await<a>o</a>.a)}=b)\n"],
+    ["a.js", "", "//@flow\n({a=[(await<a>o</a>.a)]}=((()=>{l()}))(()=>{(function(){})}))\n"],
+    // Flow: a function type as what a type parameter extends, comments before the `?` of a parameter of a function type and behind the `...`.
+    ["a.js", "--print-width=27", "//@flow\n[a=>{type a<a:(l)=>((...e)=>d)>=0}]\n"],
+    ["a.js.flow", "--print-width=12", "type a<b:(l)=>d>=0\n"],
+    ["a.js", "--print-width=30", "//@flow\n(c=>{type a=(d/**/?:{})=>[]})\n"],
+    ["a.js", "--print-width=7", "//@flow\ntype a=(a,...//\n2)=>e\n"],
+    // A comparison, a `?` and a `-`: no type arguments, and nothing to refuse.
+    ["a.ts", "", "numbers.push((distance < 0 ? -distance * 2 - 1 : distance * 2) + 1);\n"],
+    ["a.ts", "", "x=d<a?(-d):d\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {
@@ -5920,6 +5947,9 @@ describe("JavaScript and Flow that the long way rejects", () => {
     });
   }
   expectRejected("a.js", "a.js", [
+    // a call of `async` without arguments, or with a spread first, before the `:` of a conditional expression
+    "a?async():b",
+    "a?async(...x):b",
     // a test of a case that ends with parentheses where an arrow function could stand
     "switch($){case()=>(a):{if(b){c}}}",
     "switch($){case a=(b):{if(b){c}}}",
@@ -6098,6 +6128,8 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "function f() {\n  break\u00a0;\n}\n",
   ]);
   expectRejected("a.js.flow", "a.js.flow", [
+    // a call of `async` without arguments, or with a spread first, before the `:` of a conditional expression
+    "a?async():b",
     // `is` on the line behind the name that a function type returns, and nothing behind it
     "const d:()=>d\nis",
     "type a=()=>d\nis",
@@ -6258,6 +6290,8 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "component A(@a b) {}\n",
   ]);
   expectRejected("a.mjs", "a.mjs", [
+    // the same before a chain of arrow functions
+    "a?()=>(b):(c)=>d=>e",
     // parentheses as the body of an arrow function before the `:` of a conditional expression and another arrow function
     "h?()=>({}):d=>(t)",
     "h?()=>(a):d=>t",

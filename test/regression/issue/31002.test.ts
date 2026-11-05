@@ -21,14 +21,15 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test.concurrent.each([
-  // Bare `var []` / `var {}` as the only statement in a dead `if` body.
-  // These were the exact forms in the bug report; without the fix, each
-  // one crashed the printer.
-  "if(0)var[]",
-  "if(0)var{}",
+  // `var []` / `var {}` as the only statement in a dead `if` body. The bug
+  // report had them with no initializer (`if(0)var[]`), which is a
+  // SyntaxError that the parser now reports. The initializer keeps the
+  // input valid and reaches the same code.
+  "if(0)var[]=[]",
+  "if(0)var{}={}",
   // Same empty destructuring inside a function body — the DCE path runs
   // per-scope and must not crash regardless of enclosing scope.
-  "function f(){if(0)var[]}",
+  "function f(){if(0)var[]=[]}",
 ])("`%s` does not crash the printer (dead-branch destructuring var with no bindings)", async source => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", source],

@@ -1327,6 +1327,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
                 value = Some(p.parse_expr(Level::Comma)?);
+            } else if kind != js_ast::symbol::Kind::Constant
+                && matches!(local.data, B::B::BArray(_) | B::B::BObject(_))
+                && !opts.is_typescript_declare
+                && !p.will_need_binding_pattern()
+            {
+                p.missing_initializer(local.loc);
             }
 
             decls.push(G::Decl {

@@ -2110,6 +2110,35 @@ export default class {
       exp("declare let x: number; var y", "var y");
       exp("declare var x: number; var y", "var y");
     });
+
+    it("only an ambient declaration binds a pattern with no initializer", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      const message = "Missing initializer in destructuring declaration";
+
+      err("var { a }: T;", message);
+      err("let [a]: T;", message);
+      err("export let { a }: T;", message);
+      err("for (var { a }: T; c; ) {}", message);
+      err("namespace N { var { a }: T }", message);
+      err("namespace N { export var { a }: T }", message);
+
+      exp("declare var { a }: T; var y", "var y");
+      exp("declare let [a]: T; var y", "var y");
+      exp("declare const { a }: T; var y", "var y");
+      exp("declare var { a }: T, [b]: U; var y", "var y");
+      exp("export declare var { a }: T", "");
+      exp("export declare const { a, b }: T", "");
+      exp("declare namespace N { var { a }: T; let [b]: U; const { c }: V }", "");
+      exp("declare namespace N { export var { a }: T; namespace M { let [b]: U } }", "");
+      exp('declare module "m" { var { a }: T; export let [b]: U; export const { c }: V }', "");
+      exp("declare global { var { a }: T; const { c }: V }\nexport {}", "export {};\n");
+      exp("namespace N { export declare var { a }: T }", "var N;\n((N) => {})(N ||= {});\n");
+
+      exp("let { a }: T = b", "let { a } = b");
+      exp("for (var { a }: T in b) ;", "for ({ a } in b)\n  ;\nvar a;\n");
+      exp("for (let [a]: T of b) ;", "for (let [a] of b)\n  ;\n");
+    });
   });
 
   describe("generated closures", () => {
@@ -3920,6 +3949,66 @@ console.log(resolve.length)
       expectPrintedNoTrim("for (var [a] in y) ;", "for ([a] in y)\n  ;\nvar a;\n");
       expectPrintedNoTrim("for (let [a] of y) ;", "for (let [a] of y)\n  ;\n");
       expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
+    });
+
+    it("a declaration that binds a pattern needs an initializer", () => {
+      const message = "Missing initializer in destructuring declaration";
+      const errorsOf = code => {
+        try {
+          parsed(code, false, false);
+        } catch (er) {
+          return (er instanceof AggregateError ? er.errors : [er]).map(e => ({
+            message: e.message,
+            offset: e.position?.offset,
+          }));
+        }
+        return [];
+      };
+
+      // Each row: the source, then the text in front of each pattern that has no initializer.
+      const rows = [
+        ["var { a };", "var "],
+        ["var [a];", "var "],
+        ["let { a };", "let "],
+        ["let [a];", "let "],
+        ["var {};", "var "],
+        ["var x, { a };", "var x, "],
+        ["var { a }, x = 1;", "var "],
+        ["var { a }, [b];", "var ", "var { a }, "],
+        ["export var { a };", "export var "],
+        // A statement that a later pass moves or removes is an error too.
+        ["{ var { a }; }", "{ var "],
+        ["if (false) var [a];", "if (false) var "],
+        ["function f() { return; var { a }; }", "function f() { return; var "],
+        ["switch (c) { case 1: let { a }; }", "switch (c) { case 1: let "],
+        // Only a for-in or for-of head gives a pattern its value.
+        ["for (var { a }; c; ) {}", "for (var "],
+        ["for (var [a]; c; ) {}", "for (var "],
+        ["for (var {}; c; ) {}", "for (var "],
+        ["for (var x, { a }; c; ) {}", "for (var x, "],
+        ["for (var { a }, x = 1; c; ) {}", "for (var "],
+        ["for (let [a]; c; ) {}", "for (let "],
+        ["for (let { a }; c; ) {}", "for (let "],
+        ["for (var f = class { static { var { a } } }; c; ) {}", "for (var f = class { static { var "],
+      ];
+      for (const [code, ...prefixes] of rows) {
+        expect({ code, errors: errorsOf(code) }).toEqual({
+          code,
+          errors: prefixes.map(prefix => ({ message, offset: prefix.length })),
+        });
+      }
+
+      expectPrintedNoTrim("for (var { a } in y) ;", "for ({ a } in y)\n  ;\nvar a;\n");
+      expectPrintedNoTrim("for (var [a] of y) ;", "for ([a] of y)\n  ;\nvar a;\n");
+      expectPrintedNoTrim("for (let { a } in y) ;", "for (let { a } in y)\n  ;\n");
+      expectPrintedNoTrim(
+        "async function f() { for await (let [a] of y) ; }",
+        "async function f() {\n  for await (let [a] of y)\n    ;\n}\n",
+      );
+      expectPrintedNoTrim("for (var { a } = {}; c; ) {}", "for ({ a } = {};c; ) {}\nvar a;\n");
+      expectPrintedNoTrim("for (let [a] = [], b; c; ) {}", "for (let [a] = [], b;c; ) {}\n");
+      expectPrintedNoTrim("{ var { a } = {}; }", "{\n  ({ a } = {});\n}\nvar a;\n");
+      expectPrintedNoTrim("var x, y; let z;", "var x, y;\nlet z;\n");
     });
 
     it("regexp", () => {

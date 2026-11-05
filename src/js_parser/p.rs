@@ -4702,6 +4702,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// `var { a };`: only a for-in or for-of head gives a pattern its value
+    /// without an initializer.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn missing_initializer(&mut self, loc: bun_ast::Loc) {
+        self.log().add_error(
+            Some(self.source),
+            loc,
+            b"Missing initializer in destructuring declaration",
+        );
+    }
+
     #[allow(non_snake_case)]
     pub(crate) fn require_initializers(
         &mut self,

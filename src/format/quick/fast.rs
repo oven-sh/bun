@@ -1914,6 +1914,7 @@ impl Quick {
     }
 
     /// Names whose calls are printed in ways of their own: tests, `require`, `define`.
+    #[inline(never)]
     pub(crate) fn is_special_callee(&self, p: i32, e: i32) -> bool {
         match e - p {
             2 => {
@@ -2211,6 +2212,7 @@ impl Quick {
     }
 
     /// Can T[p, q), names with dots between them, be the tag of a template that is printed as it stands? Not if it says that this is CSS, GraphQL, HTML, Markdown or a table.
+    #[inline(never)]
     pub(crate) fn is_plain_tag(&self, p: i32, q: i32) -> bool {
         let mut e = p;
         while e < q && self.t.at(e) != 46 {
@@ -2255,6 +2257,11 @@ impl Quick {
         }
         return !((q - s == 4 && self.text_is(s, q, b"each"))
             || (q - s == 6 && self.text_is(s, q, b"extend")));
+    }
+
+    #[inline(never)]
+    fn is_graphql(&self, p: i32) -> bool {
+        self.text_is(p, p + 7, b"graphql")
     }
 
     pub(crate) fn chain(&mut self, p: i32) -> R<i32> {
@@ -2566,7 +2573,7 @@ impl Quick {
                 target = true;
             } else if d == 40 {
                 // graphql(schema, `..`)
-                if sh == SH_NAME && q - p == 7 && self.text_is(p, q, b"graphql") {
+                if sh == SH_NAME && q - p == 7 && self.is_graphql(p) {
                     self.fast.no_templates += 1;
                 }
                 let curried = self.t.at(q - 1) == 41;

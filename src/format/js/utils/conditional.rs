@@ -323,7 +323,10 @@ struct FormatConditionalLike<'a> {
 impl<'a> Format<'a> for FormatConditionalLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let layout = self.layout(f);
+        // `/** @type {A} */ (a ? b : c).d`: the parent is the `ParenthesizedExpression`, which indents what is in it.
+        let is_cast = matches!(self.conditional, ConditionalLike::ConditionalExpression(e) if is_cast_target_that_hides_its_kind(e, f));
         let should_extra_indent = layout.is_root()
+            && !is_cast
             && matches!(self.conditional, ConditionalLike::ConditionalExpression(e) if should_extra_indent(e));
         let is_jsx_chain = self.jsx_chain || layout.is_jsx_chain();
 
@@ -374,6 +377,7 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
             // ```
             if !should_extra_indent
                 && !is_jsx_chain
+                && !is_cast
                 && self.is_parent_static_member_expression(layout, f)
             {
                 write!(f, soft_line_break());

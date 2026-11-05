@@ -89,6 +89,11 @@ casts/conditional-in-a-branch-of-a-conditional.js
 291 312 L ParenthesizedExpression 313 474 -
 362 387 L MemberExpression 388 399 -
 412 453 L MemberExpression 454 466 -
+casts/conditional-in-a-cast-before-a-member-or-a-call.js
+29 45 L CallExpression 46 163 -
+171 187 L MemberExpression 188 308 -
+319 335 L MemberExpression 336 452 -
+456 472 L ExpressionStatement 473 597 -
 casts/element-that-breaks-in-a-cast.js
 4 20 L ParenthesizedExpression 21 136 -
 138 154 L ExpressionStatement 155 274 -

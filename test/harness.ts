@@ -522,7 +522,6 @@ export class Heap {
   }
 }
 
-
 // ASAN's quarantine pins freed blocks and keeps RSS at peak.
 export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
   return {
@@ -784,7 +783,11 @@ export function tempDirWithBunTypes(
 ): string & DisposableString & AsyncDisposable {
   const dir = tempDir(basename, filesOrAbsolutePathToCopyFolderFrom);
   fs.mkdirSync(join(String(dir), "node_modules", "@types"), { recursive: true });
-  fs.symlinkSync(join(import.meta.dir, "..", "packages", "bun-types"), join(String(dir), "node_modules", "@types", "bun"), "junction");
+  fs.symlinkSync(
+    join(import.meta.dir, "..", "packages", "bun-types"),
+    join(String(dir), "node_modules", "@types", "bun"),
+    "junction",
+  );
   return dir;
 }
 

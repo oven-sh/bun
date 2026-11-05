@@ -7,6 +7,20 @@ use crate::lang::lang;
 use crate::parse::core::TYPED_TS;
 use crate::{Bytes, Quick, R, Words, rare, zeros};
 
+/// What [`Quick::save`] gives.
+#[derive(Clone, Copy)]
+pub(crate) struct Saved {
+    pos: i32,
+    tok: i32,
+    start: i32,
+    end: i32,
+    nl: i32,
+    flags: i32,
+    kw: i32,
+    prev: i32,
+    comments: i32,
+}
+
 pub(crate) struct Lexer {
     // ---- state
     pub(crate) pos: i32,
@@ -23,15 +37,6 @@ pub(crate) struct Lexer {
     pub(crate) c_count: i32,
     pub(crate) c_base: i32,
     // ---- going back: a lookahead saves these and restores them
-    pub(crate) saved_pos: i32,
-    pub(crate) s_tok: i32,
-    pub(crate) s_start: i32,
-    pub(crate) s_end: i32,
-    pub(crate) s_nl: i32,
-    pub(crate) s_flags: i32,
-    pub(crate) s_kw: i32,
-    pub(crate) s_prev: i32,
-    pub(crate) s_comments: i32,
     /// The same for a parser that tries a reading of the text and may have to give it up. These nest.
     pub(crate) marks: Vec<i32>,
     pub(crate) marks_top: i32,
@@ -58,15 +63,6 @@ impl Lexer {
             c: zeros(4096),
             c_count: 0,
             c_base: 0,
-            saved_pos: 0,
-            s_tok: 0,
-            s_start: 0,
-            s_end: 0,
-            s_nl: 0,
-            s_flags: 0,
-            s_kw: 0,
-            s_prev: 0,
-            s_comments: 0,
             marks: zeros(144),
             marks_top: 0,
             flow_comments: false,
@@ -320,28 +316,31 @@ impl Quick {
         Ok(())
     }
 
-    pub(crate) fn save(&mut self) {
-        self.lexer.saved_pos = self.lexer.pos;
-        self.lexer.s_tok = self.lexer.tok;
-        self.lexer.s_start = self.lexer.tok_start;
-        self.lexer.s_end = self.lexer.tok_end;
-        self.lexer.s_nl = self.lexer.tok_nl;
-        self.lexer.s_flags = self.lexer.tok_flags;
-        self.lexer.s_kw = self.lexer.tok_kw;
-        self.lexer.s_prev = self.lexer.prev_end;
-        self.lexer.s_comments = self.lexer.c_count;
+    /// Where the lexer stands, for a look ahead over a few tokens: [`Quick::restore`] goes back there.
+    pub(crate) fn save(&self) -> Saved {
+        Saved {
+            pos: self.lexer.pos,
+            tok: self.lexer.tok,
+            start: self.lexer.tok_start,
+            end: self.lexer.tok_end,
+            nl: self.lexer.tok_nl,
+            flags: self.lexer.tok_flags,
+            kw: self.lexer.tok_kw,
+            prev: self.lexer.prev_end,
+            comments: self.lexer.c_count,
+        }
     }
 
-    pub(crate) fn restore(&mut self) {
-        self.lexer.pos = self.lexer.saved_pos;
-        self.lexer.tok = self.lexer.s_tok;
-        self.lexer.tok_start = self.lexer.s_start;
-        self.lexer.tok_end = self.lexer.s_end;
-        self.lexer.tok_nl = self.lexer.s_nl;
-        self.lexer.tok_flags = self.lexer.s_flags;
-        self.lexer.tok_kw = self.lexer.s_kw;
-        self.lexer.prev_end = self.lexer.s_prev;
-        self.lexer.c_count = self.lexer.s_comments;
+    pub(crate) fn restore(&mut self, saved: Saved) {
+        self.lexer.pos = saved.pos;
+        self.lexer.tok = saved.tok;
+        self.lexer.tok_start = saved.start;
+        self.lexer.tok_end = saved.end;
+        self.lexer.tok_nl = saved.nl;
+        self.lexer.tok_flags = saved.flags;
+        self.lexer.tok_kw = saved.kw;
+        self.lexer.prev_end = saved.prev;
+        self.lexer.c_count = saved.comments;
     }
 
     /// Remembers where the lexer stands. Every mark() is followed by rewind() or unmark() with its result.

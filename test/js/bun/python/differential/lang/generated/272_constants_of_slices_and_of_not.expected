@@ -1,0 +1,134 @@
+status: 0
+script: 77a840eca331abe4
+source: 7ba821ada7543373
+---
+source [source='x = y[-2:]'] => x = y[-2:]
+consts(compile(source, '<test>', 'exec')) [source='x = y[-2:]'] => [(2, -2)]
+source [source='x = y[:-2]'] => x = y[:-2]
+consts(compile(source, '<test>', 'exec')) [source='x = y[:-2]'] => [(None, -2)]
+source [source='x = y[-3:-2]'] => x = y[-3:-2]
+consts(compile(source, '<test>', 'exec')) [source='x = y[-3:-2]'] => [(3, -3, -2)]
+source [source='x = y[::-2]'] => x = y[::-2]
+consts(compile(source, '<test>', 'exec')) [source='x = y[::-2]'] => [(None, -2)]
+source [source='x = y[1:-2]'] => x = y[1:-2]
+consts(compile(source, '<test>', 'exec')) [source='x = y[1:-2]'] => [(1, -2)]
+source [source='x = y[-1:]'] => x = y[-1:]
+consts(compile(source, '<test>', 'exec')) [source='x = y[-1:]'] => [(1,)]
+source [source='x = y[:-1]'] => x = y[:-1]
+consts(compile(source, '<test>', 'exec')) [source='x = y[:-1]'] => [(None,)]
+source [source='x = y[::-1]'] => x = y[::-1]
+consts(compile(source, '<test>', 'exec')) [source='x = y[::-1]'] => [(None,)]
+source [source='x = y[1:2]'] => x = y[1:2]
+consts(compile(source, '<test>', 'exec')) [source='x = y[1:2]'] => [(slice(1, 2, None),)]
+source [source='x = y[1:2:3]'] => x = y[1:2:3]
+consts(compile(source, '<test>', 'exec')) [source='x = y[1:2:3]'] => [(slice(1, 2, 3),)]
+source [source='x = y[-2:5:7]'] => x = y[-2:5:7]
+consts(compile(source, '<test>', 'exec')) [source='x = y[-2:5:7]'] => [(2, -2)]
+source [source='x = "abcdef"[-2:]'] => x = "abcdef"[-2:]
+consts(compile(source, '<test>', 'exec')) [source='x = "abcdef"[-2:]'] => [('abcdef', -2)]
+source [source='x = "abcdef"[:-2]'] => x = "abcdef"[:-2]
+consts(compile(source, '<test>', 'exec')) [source='x = "abcdef"[:-2]'] => [('abcdef', -2)]
+source [source='x = "abcdef"[::-1]'] => x = "abcdef"[::-1]
+consts(compile(source, '<test>', 'exec')) [source='x = "abcdef"[::-1]'] => [('abcdef',)]
+source [source='x = "abcdef"[::-2]'] => x = "abcdef"[::-2]
+consts(compile(source, '<test>', 'exec')) [source='x = "abcdef"[::-2]'] => [('abcdef', -2)]
+source [source='x = "abcdef"[1:-2]'] => x = "abcdef"[1:-2]
+consts(compile(source, '<test>', 'exec')) [source='x = "abcdef"[1:-2]'] => [('abcdef', -2)]
+source [source='x = "abcdef"[-2]'] => x = "abcdef"[-2]
+consts(compile(source, '<test>', 'exec')) [source='x = "abcdef"[-2]'] => [('abcdef', 'e')]
+source [source='x = "abcdef"[+2:]'] => x = "abcdef"[+2:]
+consts(compile(source, '<test>', 'exec')) [source='x = "abcdef"[+2:]'] => [('abcdef',)]
+source [source='x = "abcdef"[~2:]'] => x = "abcdef"[~2:]
+consts(compile(source, '<test>', 'exec')) [source='x = "abcdef"[~2:]'] => [('abcdef', -3)]
+source [source='x = "abcdef"[1+1:]'] => x = "abcdef"[1+1:]
+consts(compile(source, '<test>', 'exec')) [source='x = "abcdef"[1+1:]'] => [('abcdef',)]
+source [source='x = (1, 2, 3)[-2:]'] => x = (1, 2, 3)[-2:]
+consts(compile(source, '<test>', 'exec')) [source='x = (1, 2, 3)[-2:]'] => [(1, (1, 2, 3), -2)]
+source [source='x = y[-2:, 1]'] => x = y[-2:, 1]
+consts(compile(source, '<test>', 'exec')) [source='x = y[-2:, 1]'] => [(2, -2)]
+source [source='x = y[1:2, -3]'] => x = y[1:2, -3]
+consts(compile(source, '<test>', 'exec')) [source='x = y[1:2, -3]'] => [(slice(1, 2, None), (slice(1, 2, None), -3))]
+source [source='y[-2:] = x'] => y[-2:] = x
+consts(compile(source, '<test>', 'exec')) [source='y[-2:] = x'] => [(2, -2)]
+source [source='del y[-2:]'] => del y[-2:]
+consts(compile(source, '<test>', 'exec')) [source='del y[-2:]'] => [(2, -2)]
+source [source='y[-2:] += x'] => y[-2:] += x
+consts(compile(source, '<test>', 'exec')) [source='y[-2:] += x'] => [(2, -2)]
+source [source='x = y[-2.5:]'] => x = y[-2.5:]
+consts(compile(source, '<test>', 'exec')) [source='x = y[-2.5:]'] => [(2.5, -2.5)]
+source [source='x = y[-2j:]'] => x = y[-2j:]
+consts(compile(source, '<test>', 'exec')) [source='x = y[-2j:]'] => [(2j, (-0-2j))]
+source [source='x = y[not 1:]'] => x = y[not 1:]
+consts(compile(source, '<test>', 'exec')) [source='x = y[not 1:]'] => [(1,)]
+source [source='x = y[(1, 2):]'] => x = y[(1, 2):]
+consts(compile(source, '<test>', 'exec')) [source='x = y[(1, 2):]'] => [(1, (1, 2))]
+source [source='x = y[None:-2]'] => x = y[None:-2]
+consts(compile(source, '<test>', 'exec')) [source='x = y[None:-2]'] => [(None, -2)]
+source [source='x = y[True:-2]'] => x = y[True:-2]
+consts(compile(source, '<test>', 'exec')) [source='x = y[True:-2]'] => [(True, -2)]
+source [source='not ()'] => not ()
+consts(compile(source, '<test>', 'exec')) [source='not ()'] => [(None, ())]
+source [source='x = not ()'] => x = not ()
+consts(compile(source, '<test>', 'exec')) [source='x = not ()'] => [(None, ())]
+source [source='x = not (1, 2)'] => x = not (1, 2)
+consts(compile(source, '<test>', 'exec')) [source='x = not (1, 2)'] => [(1, (1, 2))]
+source [source='x = not 1'] => x = not 1
+consts(compile(source, '<test>', 'exec')) [source='x = not 1'] => [(1,)]
+source [source='x = not ""'] => x = not ""
+consts(compile(source, '<test>', 'exec')) [source='x = not ""'] => [('',)]
+source [source='x = not "a"'] => x = not "a"
+consts(compile(source, '<test>', 'exec')) [source='x = not "a"'] => [('a',)]
+source [source='x = not None'] => x = not None
+consts(compile(source, '<test>', 'exec')) [source='x = not None'] => [(None,)]
+source [source='x = not 1.5'] => x = not 1.5
+consts(compile(source, '<test>', 'exec')) [source='x = not 1.5'] => [(1.5,)]
+source [source='x = not b""'] => x = not b""
+consts(compile(source, '<test>', 'exec')) [source='x = not b""'] => [(b'',)]
+source [source='x = not not ()'] => x = not not ()
+consts(compile(source, '<test>', 'exec')) [source='x = not not ()'] => [(None, ())]
+source [source='x = not (1,)'] => x = not (1,)
+consts(compile(source, '<test>', 'exec')) [source='x = not (1,)'] => [(1, (1,))]
+source [source='x = () or 1'] => x = () or 1
+consts(compile(source, '<test>', 'exec')) [source='x = () or 1'] => [(1, ())]
+source [source='x = () and 1'] => x = () and 1
+consts(compile(source, '<test>', 'exec')) [source='x = () and 1'] => [(1, ())]
+source [source='if not (): pass'] => if not (): pass
+consts(compile(source, '<test>', 'exec')) [source='if not (): pass'] => [(None, ())]
+source [source='if (): pass'] => if (): pass
+consts(compile(source, '<test>', 'exec')) [source='if (): pass'] => [(None, ())]
+source [source='if not (1, 2): x = 1'] => if not (1, 2): x = 1
+consts(compile(source, '<test>', 'exec')) [source='if not (1, 2): x = 1'] => [(1, (1, 2))]
+source [source='while not (): break'] => while not (): break
+consts(compile(source, '<test>', 'exec')) [source='while not (): break'] => [(None, ())]
+source [source='x = 1 if not () else 2'] => x = 1 if not () else 2
+consts(compile(source, '<test>', 'exec')) [source='x = 1 if not () else 2'] => [(1, ())]
+source [source='x = 1 if () else 2'] => x = 1 if () else 2
+consts(compile(source, '<test>', 'exec')) [source='x = 1 if () else 2'] => [(1, ())]
+source [source='x = [a for a in y if not ()]'] => x = [a for a in y if not ()]
+consts(compile(source, '<test>', 'exec')) [source='x = [a for a in y if not ()]'] => [(None, ())]
+source [source='assert not ()'] => assert not ()
+consts(compile(source, '<test>', 'exec')) [source='assert not ()'] => [(None, ())]
+source [source='assert (), "m"'] => assert (), "m"
+consts(compile(source, '<test>', 'exec')) [source='assert (), "m"'] => [('m', ())]
+source [source='x = not ...'] => x = not ...
+consts(compile(source, '<test>', 'exec')) [source='x = not ...'] => [(Ellipsis,)]
+source [source='x = not (1, 2)[0]'] => x = not (1, 2)[0]
+consts(compile(source, '<test>', 'exec')) [source='x = not (1, 2)[0]'] => [(1,)]
+source [source='x = not -1'] => x = not -1
+consts(compile(source, '<test>', 'exec')) [source='x = not -1'] => [(1,)]
+source [source='x = not 300'] => x = not 300
+consts(compile(source, '<test>', 'exec')) [source='x = not 300'] => [(300,)]
+source [source='x = -300'] => x = -300
+consts(compile(source, '<test>', 'exec')) [source='x = -300'] => [(300, -300)]
+source [source='x = not -300'] => x = not -300
+consts(compile(source, '<test>', 'exec')) [source='x = not -300'] => [(300, -300)]
+source [source='x = ~()'] => x = ~()
+consts(compile(source, '<test>', 'exec')) [source='x = ~()'] => [(None, ())]
+source [source='x = (not (), 1)'] => x = (not (), 1)
+consts(compile(source, '<test>', 'exec')) [source='x = (not (), 1)'] => [(1, ())]
+source [source='x = (not 5, 1)'] => x = (not 5, 1)
+consts(compile(source, '<test>', 'exec')) [source='x = (not 5, 1)'] => [(5, (False, 1))]
+source [source='def f(): return not ()'] => def f(): return not ()
+consts(compile(source, '<test>', 'exec')) [source='def f(): return not ()'] => [('code',), [(None, ())]]
+source [source='def f(): not ()'] => def f(): not ()
+consts(compile(source, '<test>', 'exec')) [source='def f(): not ()'] => [('code',), [(None, ())]]

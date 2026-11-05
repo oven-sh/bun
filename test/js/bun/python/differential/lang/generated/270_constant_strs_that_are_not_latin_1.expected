@@ -1,0 +1,73 @@
+status: 0
+script: bf31de7962faba0d
+source: a59ea27fe125ca92
+---
+ascii(source) [source='"Ā" * 5000'] => '"\u0100" * 5000'
+ascii(shown) [source='"Ā" * 5000'] => ['\u0100', 5000]
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" * 5000'] => (5000, '\u0100\u0100')
+ascii(source) [source='5000 * "Ā"'] => '5000 * "\u0100"'
+ascii(shown) [source='5000 * "Ā"'] => [5000, '\u0100']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='5000 * "Ā"'] => (5000, '\u0100\u0100')
+ascii(source) [source='"Ā" * 4096'] => '"\u0100" * 4096'
+ascii(shown) [source='"Ā" * 4096'] => ['\u0100', (4096, '\u0100\u0100')]
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" * 4096'] => (4096, '\u0100\u0100')
+ascii(source) [source='"Ā" * 4097'] => '"\u0100" * 4097'
+ascii(shown) [source='"Ā" * 4097'] => ['\u0100', 4097]
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" * 4097'] => (4097, '\u0100\u0100')
+ascii(source) [source='"Ā" * 3'] => '"\u0100" * 3'
+ascii(shown) [source='"Ā" * 3'] => ['\u0100', '\u0100\u0100\u0100']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" * 3'] => '\u0100\u0100\u0100'
+ascii(source) [source='3 * "Ā"'] => '3 * "\u0100"'
+ascii(shown) [source='3 * "Ā"'] => [3, '\u0100\u0100\u0100']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='3 * "Ā"'] => '\u0100\u0100\u0100'
+ascii(source) [source='"Ā" * 0'] => '"\u0100" * 0'
+ascii(shown) [source='"Ā" * 0'] => ['\u0100']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" * 0'] => ''
+ascii(source) [source='"Ā" * -1'] => '"\u0100" * -1'
+ascii(shown) [source='"Ā" * -1'] => ['\u0100']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" * -1'] => ''
+ascii(source) [source='"Ā%s" % 1'] => '"\u0100%s" % 1'
+ascii(shown) [source='"Ā%s" % 1'] => ['\u0100%s']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā%s" % 1'] => '\u01001'
+ascii(source) [source='"Ā%s" % (1,)'] => '"\u0100%s" % (1,)'
+ascii(shown) [source='"Ā%s" % (1,)'] => ['\u0100']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā%s" % (1,)'] => '\u01001'
+ascii(source) [source='"Ā" % ()'] => '"\u0100" % ()'
+ascii(shown) [source='"Ā" % ()'] => ['\u0100']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" % ()'] => '\u0100'
+ascii(source) [source='"Ā" + "b"'] => '"\u0100" + "b"'
+ascii(shown) [source='"Ā" + "b"'] => ['\u0100', '\u0100b']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" + "b"'] => '\u0100b'
+ascii(source) [source='"a" + "Ā"'] => '"a" + "\u0100"'
+ascii(shown) [source='"a" + "Ā"'] => ['a', 'a\u0100']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"a" + "Ā"'] => 'a\u0100'
+ascii(source) [source='"Āb"[0]'] => '"\u0100b"[0]'
+ascii(shown) [source='"Āb"[0]'] => ['\u0100b', '\u0100']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Āb"[0]'] => '\u0100'
+ascii(source) [source='"Āb"[1]'] => '"\u0100b"[1]'
+ascii(shown) [source='"Āb"[1]'] => ['\u0100b', 'b']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Āb"[1]'] => 'b'
+ascii(source) [source='"Āb"[-1:]'] => '"\u0100b"[-1:]'
+ascii(shown) [source='"Āb"[-1:]'] => ['\u0100b']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Āb"[-1:]'] => 'b'
+ascii(source) [source='"😀" * 2048'] => '"\U0001f600" * 2048'
+ascii(shown) [source='"😀" * 2048'] => ['\U0001f600', (2048, '\U0001f600\U0001f600')]
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"😀" * 2048'] => (2048, '\U0001f600\U0001f600')
+ascii(source) [source='"😀" * 5000'] => '"\U0001f600" * 5000'
+ascii(shown) [source='"😀" * 5000'] => ['\U0001f600', 5000]
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"😀" * 5000'] => (5000, '\U0001f600\U0001f600')
+ascii(source) [source='"😀%d" % 1'] => '"\U0001f600%d" % 1'
+ascii(shown) [source='"😀%d" % 1'] => ['\U0001f600%d']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"😀%d" % 1'] => '\U0001f6001'
+ascii(source) [source='"😀a"[0]'] => '"\U0001f600a"[0]'
+ascii(shown) [source='"😀a"[0]'] => ['\U0001f600a', '\U0001f600']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"😀a"[0]'] => '\U0001f600'
+ascii(source) [source='("Ā",) * 3'] => '("\u0100",) * 3'
+ascii(shown) [source='("Ā",) * 3'] => ['\u0100', ('\u0100', '\u0100', '\u0100')]
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='("Ā",) * 3'] => ('\u0100', '\u0100', '\u0100')
+ascii(source) [source='"Ā" < "b"'] => '"\u0100" < "b"'
+ascii(shown) [source='"Ā" < "b"'] => ['\u0100', 'b']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" < "b"'] => False
+ascii(source) [source='"Ā" in "Āb"'] => '"\u0100" in "\u0100b"'
+ascii(shown) [source='"Ā" in "Āb"'] => ['\u0100', '\u0100b']
+ascii(x if not isinstance(x, str) or len(x) < 20 else (len(x), x[:2])) [source='"Ā" in "Āb"'] => True

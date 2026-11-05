@@ -7,14 +7,15 @@
 
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
-    CL_EXTENDS, CL_IMPLEMENTS, CL_MIXINS, CL_TYPE_PARAMETERS, EXT_AT, F_DANGLING, F_EXT, F_IGNORED,
-    F_LEADING, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, MOD_ABSTRACT, SHAPE, k,
+    CL_EXTENDS, CL_IMPLEMENTS, CL_MIXINS, CL_TYPE_PARAMETERS, EXT_AT, F_CHAIN, F_DANGLING, F_EXT,
+    F_IGNORED, F_LEADING, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, MOD_ABSTRACT, MOD_DECLARE,
+    SHAPE, k,
 };
 use crate::lexer::{
     C_ENCLOSING, C_END, C_FLAGS, C_FOLLOWING, C_NEXT, C_NODE, C_PRECEDING, C_START, C_STRIDE,
     CF_BLOCK, CF_CLAIMED, CF_INDENTABLE, CF_PLAIN,
 };
-use crate::{Quick, R, Words, why, zeros};
+use crate::{Quick, R, Words, rare, why, zeros};
 
 pub(crate) struct Comments {
     // ---- node -> its comments: an open addressing table of [node, first, last]
@@ -47,6 +48,11 @@ pub(crate) struct Comments {
     pub(crate) h_preceding_kind: i32,
     pub(crate) h_following_kind: i32,
     pub(crate) h_is_block: bool,
+    // ---- see characters_around_comment()
+    /// the last comment between the two tokens
+    pub(crate) gap_last: i32,
+    pub(crate) gap_before: i32,
+    pub(crate) gap_behind: i32,
     pub(crate) h_placement: i32,
     pub(crate) h_is_last: bool,
 }
@@ -73,8 +79,272 @@ impl Comments {
             h_preceding_kind: 0,
             h_following_kind: 0,
             h_is_block: false,
+            gap_last: -1,
+            gap_before: 0,
+            gap_behind: 0,
             h_placement: 0,
             h_is_last: false,
+        }
+    }
+}
+
+const OWN_LINE: i32 = 1;
+const OWN_BLOCK: i32 = 2;
+const END_LINE: i32 = 4;
+const END_BLOCK: i32 = 8;
+const MID_BLOCK: i32 = 16;
+
+/// Which comments are taken inside a node of this kind: line comments and block comments that stand on lines of their own, at the end of
+/// a line, or (block comments) with code behind them on their line. An entry stands for real code, and for comments of every form put into
+/// every gap of real code, on which the long way prints the same; where it prints something else even once, or nothing is known, there is none.
+fn comments_taken_in(kind: i32) -> i32 {
+    match kind {
+        k::ArrayExpression
+        | k::ArrayPattern
+        | k::AsExpression
+        | k::AssignmentExpression
+        | k::AssignmentPattern
+        | k::AwaitExpression
+        | k::BinaryExpression
+        | k::CallExpression
+        | k::CatchClause
+        | k::ClassBody
+        | k::ClassDeclaration
+        | k::ClassMethod
+        | k::ClassProperty
+        | k::DeclareModuleExports
+        | k::EnumBody
+        | k::EnumDeclaration
+        | k::EnumMember
+        | k::ExportAllDeclaration
+        | k::ExportNamedDeclaration
+        | k::ExportSpecifier
+        | k::ForInStatement
+        | k::ForOfStatement
+        | k::ForStatement
+        | k::FunctionDeclaration
+        | k::FunctionExpression
+        | k::FunctionType
+        | k::Heritage
+        | k::ImportDeclaration
+        | k::ImportNamespaceSpecifier
+        | k::ImportSpecifier
+        | k::ImportType
+        | k::IndexSignature
+        | k::InterfaceDeclaration
+        | k::IntersectionType
+        | k::JSXAttribute
+        | k::JSXExpressionContainer
+        | k::JSXSpreadAttribute
+        | k::LogicalExpression
+        | k::MemberExpression
+        | k::MethodSignature
+        | k::ModuleDeclaration
+        | k::NewExpression
+        | k::NullableType
+        | k::ObjectExpression
+        | k::ObjectMethod
+        | k::ObjectPattern
+        | k::ObjectTypeSpreadProperty
+        | k::PropertySignature
+        | k::QualifiedName
+        | k::RestElement
+        | k::SequenceExpression
+        | k::SpreadElement
+        | k::SwitchCase
+        | k::SwitchStatement
+        | k::TSDeclareFunction
+        | k::TryStatement
+        | k::TupleType
+        | k::TypeAlias
+        | k::TypeAnnotation
+        | k::TypeCastExpression
+        | k::TypeLiteral
+        | k::TypeOperator
+        | k::TypeParameterDeclaration
+        | k::TypeParameterInstantiation
+        | k::TypeQuery
+        | k::TypeReference
+        | k::UnaryExpression
+        | k::UpdateExpression
+        | k::VariableDeclaration
+        | k::VariableDeclarator
+        | k::WhileStatement => OWN_LINE | OWN_BLOCK | END_LINE | MID_BLOCK,
+        k::IndexedAccessType
+        | k::JSXClosingElement
+        | k::JSXClosingFragment
+        | k::JSXEmptyExpression
+        | k::JSXMemberExpression
+        | k::NonNullExpression
+        | k::ObjectTypeIndexer
+        | k::ObjectTypeProperty
+        | k::ThrowStatement
+        | k::TypeParameter => MID_BLOCK,
+        k::BlockStatement
+        | k::ConditionalExpression
+        | k::IfStatement
+        | k::InterfaceBody
+        | k::JSXOpeningElement
+        | k::Program
+        | k::TemplateLiteral
+        | k::UnionType => OWN_LINE | OWN_BLOCK | END_LINE | END_BLOCK | MID_BLOCK,
+        k::ArrayType
+        | k::ConditionalType
+        | k::ImportExpression
+        | k::MetaProperty
+        | k::SatisfiesExpression => OWN_LINE | END_LINE | MID_BLOCK,
+        k::ConstructSignature
+        | k::JSXOpeningFragment
+        | k::TaggedTemplateExpression
+        | k::TypePredicate => OWN_LINE | MID_BLOCK,
+        k::ArrowFunctionExpression | k::ModuleBlock => OWN_LINE | OWN_BLOCK | END_LINE,
+        k::MappedType | k::ReturnStatement => OWN_LINE | OWN_BLOCK | MID_BLOCK,
+        k::FunctionTypeParam => OWN_BLOCK | MID_BLOCK,
+        k::DoWhileStatement => OWN_LINE,
+        _ => 0,
+    }
+}
+
+fn is_blank(c: i32) -> bool {
+    c == 32 || c == 9 || c == 10
+}
+
+/// A letter, a digit, a quote or part of a character beyond ASCII: the end or the start of a name, a number, a string or a template.
+fn is_part_of_word(c: i32) -> bool {
+    c >= 128
+        || (c >= 48 && c <= 57)
+        || ((c | 32) >= 97 && (c | 32) <= 122)
+        || matches!(c, 95 | 36 | 34 | 39 | 96)
+}
+
+impl Quick {
+    fn is_part_of_optional_chain(&self, n: i32) -> bool {
+        matches!(self.n.at(n) & 0xff, k::MemberExpression | k::CallExpression)
+            && (self.n.at(n) & F_CHAIN) != 0
+    }
+
+    /// The last character of the token before the comment `i` and the first one of the token behind it, other comments aside; 0 at the
+    /// ends of the text. They are the same for all comments between two tokens, however many those are.
+    fn characters_around_comment(&mut self, i: i32) -> (i32, i32) {
+        if i <= self.comments.gap_last {
+            return (self.comments.gap_before, self.comments.gap_behind);
+        }
+        let mut before = self.lexer.c.at(i * C_STRIDE + C_START) - 1;
+        let mut j = i - 1;
+        loop {
+            while is_blank(self.t.at(before)) {
+                before -= 1;
+            }
+            if j < self.lexer.c_base || self.lexer.c.at(j * C_STRIDE + C_END) != before + 1 {
+                break;
+            }
+            before = self.lexer.c.at(j * C_STRIDE + C_START) - 1;
+            j -= 1;
+        }
+        let mut behind = self.lexer.c.at(i * C_STRIDE + C_END);
+        let mut j = i + 1;
+        loop {
+            while is_blank(self.t.at(behind)) {
+                behind += 1;
+            }
+            if j >= self.lexer.c_count || self.lexer.c.at(j * C_STRIDE + C_START) != behind {
+                break;
+            }
+            behind = self.lexer.c.at(j * C_STRIDE + C_END);
+            j += 1;
+        }
+        self.comments.gap_last = j - 1;
+        self.comments.gap_before = if before < self.text.src_start {
+            0
+        } else {
+            self.t.at(before)
+        };
+        self.comments.gap_behind = if behind >= self.text.src_end {
+            0
+        } else {
+            self.t.at(behind)
+        };
+        (self.comments.gap_before, self.comments.gap_behind)
+    }
+
+    /// Is the comment at hand, `i`, in a place where both ways are known to print it alike? The two give comments to nodes in ways of their
+    /// own, and both deviate from Prettier somewhere, so that what is not known to be the same is left to the long way.
+    fn is_comment_taken(&mut self, i: i32) -> bool {
+        let (before, behind) = self.characters_around_comment(i);
+        let c = &self.comments;
+        let form = match (c.h_placement, c.h_is_block) {
+            (CF_OWN_LINE, false) => OWN_LINE,
+            (CF_OWN_LINE, true) => OWN_BLOCK,
+            (CF_END_OF_LINE, false) => END_LINE,
+            (CF_END_OF_LINE, true) => END_BLOCK,
+            _ => MID_BLOCK,
+        };
+        let inside = c.h_enclosing_kind;
+        if (comments_taken_in(inside) & form) == 0 {
+            return false;
+        }
+        // it starts where another one ends
+        if i > self.lexer.c_base && self.lexer.c.at((i - 1) * C_STRIDE + C_END) == c.h_start {
+            return false;
+        }
+        // In or before an optional chain, or behind one on its line: some trees have a node more around a chain.
+        if self.is_part_of_optional_chain(c.h_enclosing)
+            || self.is_part_of_optional_chain(c.h_following)
+            || (c.h_placement != CF_OWN_LINE && self.is_part_of_optional_chain(c.h_preceding))
+        {
+            return false;
+        }
+        // It has a line break in it and code before or behind it on its lines: what still fits there is counted in two ways.
+        if inside != k::JSXEmptyExpression
+            && (form == MID_BLOCK || (form == END_BLOCK && before != 0))
+            && self.has_newline_in_range(c.h_start, c.h_end)
+        {
+            return false;
+        }
+        match inside {
+            // nothing but comments in the file
+            k::Program => c.h_preceding != 0 || c.h_following != 0,
+            k::BlockStatement
+            | k::ModuleBlock
+            | k::SwitchCase
+            | k::SwitchStatement
+            | k::ClassBody => true,
+            // before the separator of the item that it follows
+            _ if behind == 59 => false,
+            k::ConditionalExpression | k::ConditionalType => true,
+            // before the `:` of a type
+            _ if behind == 58 => false,
+            // behind the last item of a pattern that has a type
+            k::ObjectPattern | k::ArrayPattern => c.h_following_kind != k::TypeAnnotation,
+            // in braces with nothing else in them, which may be hugged
+            k::TypeLiteral => c.h_preceding != 0 || c.h_following != 0,
+            // between the key and the parameters, or on the line of their `(`
+            k::ObjectMethod | k::ClassMethod => {
+                !is_part_of_word(before) && !(before == 40 && c.h_placement == CF_END_OF_LINE)
+            }
+            // before the `=`
+            k::VariableDeclarator => !is_part_of_word(before),
+            // (a DeclareTypeAlias is no TypeAlias)
+            k::TypeAlias => {
+                !is_part_of_word(before)
+                    && (((self.n.at(c.h_enclosing) as u32) >> SUB_SHIFT) as i32 & MOD_DECLARE) == 0
+            }
+            k::MemberExpression => c.h_preceding_kind == k::CallExpression,
+            // before the `...` of a rest parameter
+            k::FunctionType => behind != 46,
+            // between the name and the parameters
+            k::FunctionDeclaration | k::FunctionExpression => {
+                !(is_part_of_word(before) && behind == 40)
+            }
+            // in the key of an indexer, in an index, in the last type of a tuple
+            k::UnionType => {
+                let mut end = self.n.at(c.h_enclosing + 2);
+                while is_blank(self.t.at(end)) {
+                    end += 1;
+                }
+                self.t.at(end) != 93
+            }
+            _ => true,
         }
     }
 }
@@ -1725,6 +1995,7 @@ impl Quick {
         self.comments.ch_pos = 0;
         self.comments.path_pos = 0;
         self.comments.tie_count = 0;
+        self.comments.gap_last = -1;
         self.push_level(program);
         let mut i = self.lexer.c_base;
         while i < count {
@@ -1764,6 +2035,9 @@ impl Quick {
                 self.lexer
                     .c
                     .put(v0, self.lexer.c.at(v0) | self.comments.h_placement);
+                if !self.is_comment_taken(i) {
+                    return Err(self.rare(rare::COMMENT));
+                }
                 if self.comments.h_placement == CF_OWN_LINE {
                     if self.handle_own_line() {
                     } else if self.comments.h_following != 0 {

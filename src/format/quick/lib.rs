@@ -132,6 +132,8 @@ pub(crate) mod rare {
     pub(crate) const HUGGED_CHAIN: i32 = 10;
     /// `<T>` before something that breaks whatever its width.
     pub(crate) const ASSERTION: i32 = 11;
+    /// A comment in a place where the long way is not known to print it alike: see is_comment_taken().
+    pub(crate) const COMMENT: i32 = 12;
 }
 
 thread_local! {

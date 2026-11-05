@@ -5301,7 +5301,9 @@ impl Quick {
 
     #[cold]
     fn ends_in_space_beyond_ascii(&self, q: i32) -> bool {
-        self.t.at(q - 1) == 127 || self.unicode_space(q - 2) == 2 || (self.unicode_space(q - 3) & 15) == 3
+        self.t.at(q - 1) == 127
+            || self.unicode_space(q - 2) == 2
+            || (self.unicode_space(q - 3) & 15) == 3
     }
 
     /// Behind p, the end of a line, in a list of statements (or of members) that is indented by `column`: the comments up to the next item, if each of them stands alone on its lines, as it

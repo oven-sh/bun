@@ -3567,6 +3567,50 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "--print-width=22",
       'const filteredSections: {\n  ["apis" | "components"]: Array<SectionData<RNTesterModuleInfo>>,\n} = {};\n',
     ],
+    // A comment that starts where another one ends.
+    ["a.js", "", "/**\n * a\n *//**\n * b\n */\n"],
+    // A comment next to an optional chain.
+    ["a.ts", "", "if (sockets[name]?.length === // c\n0) delete sockets[name];\n"],
+    ["a.ts", "", "const code\n// c\n= (error as { code?: string } | null)?.code;\n"],
+    ["a.tsx", "", 'a = typeof option === "object" && !! // c\n(option as Segmented)?.icon;\n'],
+    // A comment in a `declare type`.
+    ["a.js.flow", "", "declare type A = // c\n// d\nB | C;\n"],
+    // A comment before the separator of the member that it follows.
+    ["a.js.flow", "", "declare class A {\n  a: () => void\n// c\n;\n\n  b: number;\n}\n"],
+    // A comment behind the last property of a pattern that has a type.
+    ["a.js.flow", "", "const A = ({\n  a,\n/* c */}: {\n  a: string,\n}) => `x`;\n"],
+    // A comment in the empty braces of an object type.
+    ["a.js.flow", "", "function f(props: {\n// c\n}): R {}\n"],
+    // A comment between the key of a method and its parameters, or on the line of their `(`.
+    ["a.ts", "", "class A {\n  override visit\n// c\n(sourceFile: B) {}\n}\n"],
+    ["a.ts", "", "a = {\n  fn( // c\nargs) {},\n};\n"],
+    // A comment before the `:` of a type.
+    [
+      "a.js.flow",
+      "",
+      "export default function useWindowDimensions() // c\n:\n  | DisplayMetrics\n  | DisplayMetricsAndroid {}\n",
+    ],
+    // A comment between the name of a function and its parameters.
+    [
+      "a.js.flow",
+      "",
+      "export default function useWindowDimensions // c\n():\n  | DisplayMetrics\n  | DisplayMetricsAndroid {}\n",
+    ],
+    // A comment in a member expression whose object is no call.
+    ["a.js", "", 'a = {\n  parser: require\n// c\n.resolve("hermes-eslint"),\n};\n'],
+    // A block comment with a line break in it and code on its lines.
+    [
+      "a.mjs",
+      "--use-tabs --tab-width=4",
+      "const getCertdataURL = version => {\n  const certdataURL /* c\n c */= `https://hg.mozilla.org/projects/nss/raw-file/${tag}/lib/ckfw/builtins/certdata.txt`;\n};\n",
+    ],
+    // A comment before the `...` of a rest parameter of a function type.
+    ["a.js.flow", "", "declare var console: {\n  error: (\n// c\n...data: $ReadOnlyArray<mixed>) => void,\n};\n"],
+    // Comments in places where real code has none.
+    ["a.ts", "", "function f(): Element[/* c\n c */] | null {}\n"],
+    ["a.ts", "", 'describe("x", () /* a */ /* b */=> {\n  f();\n});\n'],
+    ["a.jsx", "", "a = <T><b>Log<\n// c\n/b>: {m}</T>;\n"],
+    ["a.ts", "", "a = {\n  [b]:\n// c\n(value: number) => isNumber(value),\n};\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

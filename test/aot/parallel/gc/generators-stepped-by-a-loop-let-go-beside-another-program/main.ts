@@ -1,5 +1,6 @@
 // locals-of-generators-set-to-null-behind-yields-let-go.ts with the two forms that a loop steps, in one executable with another program: there `registry.register(x, name)` goes through a native call frame.
 // Prints what the compiler saves: objects that are collected earlier
+// Todo on win32 x64: Not every time: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 // Entry points: ./another-program.mjs
 type Thing = { id: number; payload: number[] };
 let made = 0;

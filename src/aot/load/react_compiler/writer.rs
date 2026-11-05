@@ -340,9 +340,9 @@ impl<'a, 's> TreeWriter<'a, 's> {
             ListHolder::File => self.items.outlined.push(declaration),
             holder => {
                 let mut statements: Vec<StmtId> = self.file.ids(self.list_of(holder)).collect();
-                let earlier = statements[index + 1..].iter();
+                let earlier = statements[index..].iter();
                 let earlier = earlier.take_while(|it| self.outlined_into_lists.contains(it));
-                statements.insert(index + 1 + earlier.count(), declaration);
+                statements.insert(index + earlier.count(), declaration);
                 self.outlined_into_lists.insert(declaration);
                 let list = self.file.list(&statements);
                 match holder {
@@ -478,10 +478,18 @@ impl<'a, 's> TreeWriter<'a, 's> {
             (0..file.modules.len() as u32).map(|id| ListHolder::Namespace(ModuleId(id)));
         let mut innermost = (ListHolder::File, 0, 0);
         for holder in blocks.chain(cases).chain(functions).chain(namespaces) {
+            if let ListHolder::Case(case) = holder
+                && file[case].test.is_some()
+            {
+                let test = file[file[case].test];
+                if test.pos <= position && position < test.end && test.pos >= innermost.2 {
+                    innermost = (holder, 0, test.pos);
+                }
+            }
             for (index, statement) in file.ids(self.list_of(holder)).enumerate() {
                 let range = file[statement].loc;
                 if range.pos <= position && position < range.end && range.pos >= innermost.2 {
-                    innermost = (holder, index, range.pos);
+                    innermost = (holder, index + 1, range.pos);
                 }
             }
         }

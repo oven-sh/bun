@@ -21,8 +21,8 @@ export interface ProgramOptions {
   posix?: boolean;
   /** It prints what an executable alone has, so it is held against an executable built without --trim. */
   printsAsAnExecutable?: boolean;
-  /** A program that comes near a part: the part stays today. */
-  keptToday?: boolean;
+  /** A program that comes near parts: those that stay today. A case for each runs every time and is red the day the part goes. `true`: all stay, and nothing asks. */
+  keptToday?: boolean | string[];
   /** A known bug, in a sentence. The test is red as soon as the program runs. */
   failsToday?: string;
 }
@@ -89,6 +89,9 @@ export function checkNames() {
           wrong.push(
             `${where}: ${spelling} is ${findFeature(spelling) === undefined ? "no feature" : "spelled " + findFeature(spelling)}`,
           );
+      for (const spelling of Array.isArray(options.keptToday) ? options.keptToday : [])
+        if (!featuresOf(name, options).includes(spelling))
+          wrong.push(`${where}: ${spelling} stays today and is none of its features`);
     };
     for (const name of programNames) check(name + ".ts", name, optionsAt(join(programs, name + ".json")));
     for (const name of neighborNames) check("near/" + name, name, optionsAt(join(neighbors, name, "features.json")));
@@ -133,24 +136,32 @@ export function byUse(part: number, parts: number) {
         readdirSync(join(neighbors, name)).map(file => [file, readFileSync(join(neighbors, name, file), "utf8")]),
       );
       const options: ProgramOptions = files["features.json"] ? JSON.parse(files["features.json"]) : {};
-      const features = featuresOf(name, options);
-      test.skipIf(features.length === 0 || (isWindows && options.posix === true))(
-        `near ${name}: the program prints what it prints in plain Bun, and its executable lacks ${features.join(", ")}`,
-        () =>
-          inTurn(async () => {
-            using dir = tempDir("trim-by-use-near", { ...files, "tsconfig.json": tsconfig, "cwd/empty": "" });
-            const { trimmed, plain, removed } = await trimmedAndPlain(String(dir), "near.ts", {
-              printsAsAnExecutable: options.printsAsAnExecutable,
-            });
-            expect(plain.exitCode).toBe(0);
-            expect(plain.stdout).not.toBe("");
-            expect({ stdout: trimmed.stdout, exitCode: trimmed.exitCode }).toEqual({
-              stdout: plain.stdout,
-              exitCode: 0,
-            });
-            if (!options.keptToday) expect(features.filter(feature => !removed.includes(feature))).toEqual([]);
-          }),
+      const keptToday = Array.isArray(options.keptToday) ? options.keptToday : [];
+      const features = featuresOf(name, options).filter(feature => !keptToday.includes(feature));
+      const isSkipped = features.length + keptToday.length === 0 || (isWindows && options.posix === true);
+      let ran: ReturnType<typeof trimmedAndPlain> | undefined;
+      const builtAndRun = () =>
+        (ran ??= inTurn(async () => {
+          using dir = tempDir("trim-by-use-near", { ...files, "tsconfig.json": tsconfig, "cwd/empty": "" });
+          return await trimmedAndPlain(String(dir), "near.ts", { printsAsAnExecutable: options.printsAsAnExecutable });
+        }));
+      test.skipIf(isSkipped)(
+        `near ${name}: the program prints what it prints in plain Bun${features.length ? `, and its executable lacks ${features.join(", ")}` : ""}`,
+        async () => {
+          const { trimmed, plain, removed } = await builtAndRun();
+          expect(plain.exitCode).toBe(0);
+          expect(plain.stdout).not.toBe("");
+          expect({ stdout: trimmed.stdout, exitCode: trimmed.exitCode }).toEqual({
+            stdout: plain.stdout,
+            exitCode: 0,
+          });
+          if (options.keptToday !== true) expect(features.filter(feature => !removed.includes(feature))).toEqual([]);
+        },
       );
+      for (const feature of isSkipped ? [] : keptToday)
+        test.failing(`near ${name}: its executable lacks ${feature}`, async () =>
+          expect((await builtAndRun()).removed).toContain(feature),
+        );
     }
   });
 }

@@ -14,9 +14,11 @@
 //   //@ build --flag        more flags for both builds            //@ ext ts      the extension of the program
 //   //@ file <path> "text"  a file beside the program. Below cwd/ it lies in the working directory of both runs
 //   //@ removes Bun.color   the trimmed executable is without the feature of that name
+//   //@ kept-today Bun.color <why>   it should be and is not yet: a case of its own runs every time and is red the day the feature goes
 //   //@ trimmed-says <text> the trimmed executable prints it and the whole one does not
 //   //@ build-error <text>  both builds fail with it
 //   //@ todo <why>          it does not pass today
+//   //@ fails-today <why>   it does not pass today, runs every time and is red the day it passes
 //   //@ not-seen            the build does not see that the call reaches an evaluator: both executables end with the same EvalError
 //   //@ evaluated-code-uses-removed-api   where --trim removed the feature, the call in the evaluated code throws
 import { describe, expect, test } from "bun:test";
@@ -41,11 +43,13 @@ interface Program {
   files: Record<string, string>;
   exitCode: number;
   todo?: string;
+  failsToday?: string;
   buildError?: string;
   evaluatedCodeUsesRemovedApi: boolean;
   isNotSeen: boolean;
   isAlone: boolean;
   removes: string[];
+  keptToday: { api: string; why: string }[];
   trimmedSays?: string;
 }
 
@@ -72,6 +76,7 @@ function programsOf(file: string): Program[] {
       isNotSeen: false,
       isAlone: false,
       removes: [],
+      keptToday: [],
     };
     for (const [, directive, value] of source.matchAll(/^\/\/@ *(\S+) ?(.*)$/gm)) {
       if (directive === "args") program.args.push(...value.split(" "));
@@ -84,11 +89,14 @@ function programsOf(file: string): Program[] {
       else if (directive === "ext") program.extension = value;
       else if (directive === "exit") program.exitCode = Number(value);
       else if (directive === "todo") program.todo = value;
+      else if (directive === "fails-today") program.failsToday = value;
       else if (directive === "build-error") program.buildError = value;
       else if (directive === "evaluated-code-uses-removed-api") program.evaluatedCodeUsesRemovedApi = true;
       else if (directive === "not-seen") program.isNotSeen = true;
       else if (directive === "alone") program.isAlone = true;
       else if (directive === "removes") program.removes.push(value);
+      else if (directive === "kept-today")
+        program.keptToday.push({ api: value.split(" ", 1)[0], why: value.slice(value.indexOf(" ") + 1) });
       else if (directive === "trimmed-says") program.trimmedSays = value;
       else throw new Error(`${file}: ${program.name}: unknown directive ${directive}`);
     }
@@ -119,9 +127,11 @@ const sharesNoExecutable = (program: Program) =>
   program.isAlone ||
   program.isNotSeen ||
   program.removes.length > 0 ||
+  program.keptToday.length > 0 ||
   program.trimmedSays !== undefined ||
   program.buildError !== undefined ||
   program.todo !== undefined ||
+  program.failsToday !== undefined ||
   program.buildFlags.some(flag => flag.startsWith("./"));
 
 const chosen = "PROGRAM_TO_START";
@@ -136,7 +146,11 @@ class Executables {
   #dir?: ReturnType<typeof tempDir>;
 
   constructor(readonly programs: Program[]) {
-    this.#left = programs.length;
+    this.#left = programs.reduce((cases, program) => cases + 1 + program.keptToday.length, 0);
+  }
+
+  #letGo() {
+    if (--this.#left === 0) this.#dir?.[Symbol.dispose]();
   }
 
   #entryOf(program: Program) {
@@ -212,12 +226,22 @@ class Executables {
       ]);
       return { builds, removed, whole, trimmed };
     } finally {
-      if (--this.#left === 0) this.#dir?.[Symbol.dispose]();
+      this.#letGo();
+    }
+  }
+
+  /** The features that the trimmed executable is without. */
+  async removed() {
+    try {
+      return (await this.#build()).removed;
+    } finally {
+      this.#letGo();
     }
   }
 }
 
-const color = model.features.find(feature => feature.name === featureOf("Bun.color"))!.index;
+const indexOf = (api: string) => model.features.find(feature => feature.name === featureOf(api))!.index;
+const color = indexOf("Bun.color");
 
 async function judge(program: Program, executables: Executables) {
   const { builds, removed, whole, trimmed } = await executables.both(program);
@@ -245,10 +269,7 @@ async function judge(program: Program, executables: Executables) {
   }
   expect(whole).toMatchObject({ exitCode: program.exitCode });
   if (program.exitCode === 0) expect(whole!.stdout).not.toBe("");
-  const stillThere = program.removes.filter(
-    api => !removed.includes(model.features.find(feature => feature.name === featureOf(api))!.index),
-  );
-  expect(stillThere).toEqual([]);
+  expect(program.removes.filter(api => !removed.includes(indexOf(api)))).toEqual([]);
   if (program.trimmedSays !== undefined) {
     expect(whole!.stdout + whole!.stderr).not.toContain(program.trimmedSays);
     return expect(trimmed!.stdout + trimmed!.stderr).toContain(program.trimmedSays);
@@ -280,12 +301,20 @@ export function testTrimmedMatchesWhole(part: number, parts: number) {
           else shared.getOrInsertComputed(program.buildFlags.join(" "), () => []).push(program);
         for (const programs of shared.values()) pairs.push(new Executables(programs));
         for (const executables of pairs)
-          for (const program of executables.programs)
-            (program.todo ? test.todo : test)(
-              `${program.group}: ${program.name}${program.todo ? ` (${program.todo})` : ""}`,
+          for (const program of executables.programs) {
+            const why = program.todo ?? program.failsToday;
+            (program.todo ? test.todo : program.failsToday ? test.failing : test)(
+              `${program.group}: ${program.name}${why ? ` (${why})` : ""}`,
               () => judge(program, executables),
               600_000,
             );
+            for (const { api, why } of program.keptToday)
+              test.failing(
+                `${program.group}: ${program.name}: the trimmed executable is without ${api} (${why})`,
+                async () => expect(await executables.removed()).toContain(indexOf(api)),
+                600_000,
+              );
+          }
       }
     },
   );

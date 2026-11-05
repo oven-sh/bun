@@ -13,6 +13,7 @@
 #include <JavaScriptCore/AOTRegExpSummary.h>
 #include <JavaScriptCore/AOTRemovableFeature.h>
 #include <JavaScriptCore/AOTRuntimeDescription.h>
+#include <JavaScriptCore/AOTStoredStrings.h>
 #include <JavaScriptCore/AOTThreads.h>
 #include <JavaScriptCore/YarrErrorCode.h>
 #include <JavaScriptCore/YarrFlags.h>
@@ -142,6 +143,13 @@ extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t ad
     JSC::AOT::relocateImage({ image, size }, address);
 }
 
+extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport))
+{
+    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size });
+    take(stored, read.strings.span().data(), read.strings.size(), read.report.span().data(), read.report.size());
+    return static_cast<uint32_t>(read.verdict);
+}
+
 extern "C" size_t Bun__AOT__peakResidentMegabytesOfProcess()
 {
     return JSC::AOT::peakResidentMegabytesOfProcess();
@@ -234,6 +242,7 @@ extern "C" size_t Bun__AOT__describeRegExpConstructionError(const uint8_t* patte
 // What src/aot/engine/shared.rs asks. Nothing else of this file has a caller in a Bun without the compiler.
 extern "C" size_t Bun__AOT__imageAlignment() { return 1; }
 extern "C" void Bun__AOT__relocateImage(uint8_t*, size_t, uint64_t) {}
+extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t*, size_t, void*, void (*)(void*, const uint8_t*, size_t, const uint8_t*, size_t)) { return 2; }
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
 extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t*, size_t, const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
 extern "C" uint32_t Bun__AOT__classifyRegExpLiteral(const uint8_t*, size_t, const uint8_t*, size_t) { return 0; }

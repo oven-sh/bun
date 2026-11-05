@@ -1,5 +1,6 @@
 // A variable that the program sets to null lets go of what it held while the function still runs, also in the version of the function that runs where its guard turns away.
 // The bodies of local() and parameter() name no built-in: what makes the reference, collects and asks stands in functions of its own.
+// Todo on win32 x64: Not every time: plain Bun itself prints there that most of the four are kept, and not the same ones each time: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 type Thing = { id: number; payload: number[] };
 class Tag { n = 1; m = 2; }
 const unseen = (x: any): any => [x][JSON.parse("0")];

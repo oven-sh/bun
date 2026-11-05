@@ -208,6 +208,115 @@ export function apart(holder: { readonly part: string | number[] }, flag: boolea
     assert_eq!(taking, through);
 }
 
+fn write_program_with_calls_beside_commas(filler: usize) -> String {
+    let mut text = String::from(
+        "// @ts-nocheck
+var isFirst = x => 0, isSecond = x => 0, fetchRows = () => [], place = 0, drain = () => {}, one = 0, two = 0, spare = 0;
+var meter = { total: 0, add(v) { this.total += v } };
+function fill(meter) {
+  const mark = meter ? 1 : \"s\";
+",
+    );
+    for index in 0..filler {
+        writeln!(text, "  meter.add({index}); meter.add({index});").unwrap();
+    }
+    text.push_str(
+        "  return mark;
+}
+function gather(list) {
+  let kept = [];
+  let begin = () => {}, end = () => {};
+  let current = null;
+  for (let [key, item] of list.entries()) {
+    let none = 0;
+    if (isFirst(item));
+    if (isSecond(item));
+    if (item.kind && item.inner.kind);
+    else if (item.kind && item.inner.kind) {
+      let rows = current ? [] : fetchRows();
+      {
+        let row = rows[place];
+        kept.push({ body: [row] });
+        if (0) { continue }
+        drain(), kept.push(1);
+      }
+    } else if (item.kind && item.inner.kind);
+    else if (item.kind) {
+      let left = 0, right = 0;
+      if (one && Array.isArray(item));
+      if (two && Array.isArray(item)) {
+        let a = 0, b = 0, c = 0, d = 0, e = 0;
+        if (0) kept.push(2);
+      }
+      {
+        if (0) spare = null;
+        begin(), end();
+        continue;
+      }
+    }
+  }
+  return kept;
+}
+export const seen = [fill(meter), meter.total, gather([{ kind: \"a\", inner: { kind: \"\" } }]).length];
+",
+    );
+    text
+}
+
+fn ask_for_every_expression_from_the_last(text: &str, far_walk: u32) -> Vec<String> {
+    with_program(&[("main.ts", text)], &["./main.ts"], 1, |program| {
+        let all = program.files();
+        let roles = vec![FileRole::Checked; all.modules.len()];
+        let inputs = QueryInputs {
+            roles: &roles,
+            checked_elsewhere: &[],
+            builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
+            named_values: &NoNamedValues,
+            max_inference_nodes: 0,
+            limits: Default::default(),
+        };
+        let main = program.file("main.ts");
+        let answer = Mutex::new(Vec::new());
+        check(program, &|checker, file| {
+            if file != main {
+                return;
+            }
+            checker.set_far_walk(far_walk);
+            *answer.lock().unwrap() = checker.with_queries(file, &inputs, |queries| {
+                let expressions = queries.hir().exprs.iter().enumerate();
+                let mut asked: Vec<(u32, u32, ExprId)> = expressions
+                    .map(|(index, it)| (it.pos, it.end, ExprId(index as u32)))
+                    .collect();
+                asked.sort();
+                let types = asked.iter().rev().map(|&(position, end, expression)| {
+                    let text = match queries.expression_type(expression) {
+                        Ok(ty) => String::from_utf8(queries.type_text(ty)).unwrap(),
+                        Err(reason) => format!("{reason:?}"),
+                    };
+                    format!("{position}..{end}: {text}")
+                });
+                types.collect()
+            });
+        });
+        answer.into_inner().unwrap()
+    })
+}
+
+#[test]
+fn a_call_beside_a_comma_that_is_asked_about_in_the_middle_of_a_far_skip_leaves_the_table_whole() {
+    for filler in [0, 31] {
+        let text = write_program_with_calls_beside_commas(filler);
+        let through = ask_for_every_expression_from_the_last(&text, u32::MAX);
+        for far_walk in [32, 64] {
+            let skipping = ask_for_every_expression_from_the_last(&text, far_walk);
+            assert_eq!(
+                skipping, through,
+                "{filler} lines of filler, a far walk of {far_walk}"
+            );
+        }
+    }
+}
+
 #[test]
 fn names_behind_many_loops_do_not_each_leave_a_type_at_every_loop() {
     const COUNT: usize = 300;

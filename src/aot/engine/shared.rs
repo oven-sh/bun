@@ -24,8 +24,43 @@ pub enum RegExpLiteralCreation {
     DependsOnStack,
 }
 
+pub struct StoredStrings {
+    pub verdict: u32,
+    pub strings: Vec<u8>,
+    pub report: Vec<u8>,
+}
+
 pub fn has_compiler() -> bool {
     Bun__AOT__hasCompiler()
+}
+
+pub fn read_stored_strings(file: &[u8]) -> StoredStrings {
+    unsafe extern "C" fn take(
+        stored: *mut core::ffi::c_void,
+        strings: *const u8,
+        strings_size: usize,
+        report: *const u8,
+        report_size: usize,
+    ) {
+        let copy = |bytes: *const u8, size: usize| match size {
+            0 => Vec::new(),
+            // SAFETY: the engine hands `size` bytes that live until this function returns.
+            _ => unsafe { core::slice::from_raw_parts(bytes, size) }.to_vec(),
+        };
+        // SAFETY: the pointer that `read_stored_strings` passed, which nothing else uses meanwhile.
+        let stored = unsafe { &mut *stored.cast::<StoredStrings>() };
+        (stored.strings, stored.report) = (copy(strings, strings_size), copy(report, report_size));
+    }
+    let mut stored = StoredStrings {
+        verdict: 2,
+        strings: Vec::new(),
+        report: Vec::new(),
+    };
+    // SAFETY: the engine reads `file.len()` bytes and calls `take` once, with `stored`, before it returns.
+    stored.verdict = unsafe {
+        Bun__AOT__readStoredStrings(file.as_ptr(), file.len(), (&raw mut stored).cast(), take)
+    };
+    stored
 }
 
 pub fn image_alignment() -> usize {
@@ -120,6 +155,12 @@ unsafe extern "C" {
     safe fn Bun__AOT__imageAlignment() -> usize;
     fn Bun__AOT__relocateImage(image: *mut u8, size: usize, address: u64);
     safe fn Bun__AOT__hasCompiler() -> bool;
+    fn Bun__AOT__readStoredStrings(
+        file: *const u8,
+        size: usize,
+        stored: *mut core::ffi::c_void,
+        take: unsafe extern "C" fn(*mut core::ffi::c_void, *const u8, usize, *const u8, usize),
+    ) -> u32;
     fn Bun__AOT__describeDifferenceOfRuntime(
         description: *const u8,
         size: usize,

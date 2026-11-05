@@ -401,6 +401,14 @@ allows src/aot/lower/call/written_operands.rs a parent that is written as a prot
     return self.file.queries.atom_bytes(name) == b"prototype";
 allows src/aot/modules/imports.rs a specifier that is no relative path
     return !matches!(input.files.atoms.bytes(name), [b'.' | b'/', ..]);
+allows src/aot/lower/statement.rs the word at the head of an arm in a module of Bun's own
+    return self.file.source.dialect() == SourceDialect::Runtime && self.file.queries.atom_bytes(text) == b"unlikely";
+allows src/aot/test_runs/files_of_run.rs the keys of a package.json
+    match atoms.bytes(name) {
+        b"main" | b"module" | b"bin" => ways.extend(text_of(field.value)),
+        b"exports" => nested.push(field.value),
+        _ => {}
+    }
 allows src/aot/test_runs/files_of_run.rs the scope of a package
     return name.starts_with(b"@");
 allows src/aot/test_runs/texts.rs the specifier of another test runner

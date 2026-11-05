@@ -24,9 +24,10 @@ use bun_removable_features::{Feature, FeatureSet};
 
 pub use self::records::{Position, builtin_of, feature_of, position_of};
 pub use self::shared::{
-    EngineModuleId, ExecutableIdentity, RegExpLiteralCreation, RejectedOptionWord, TargetImageForm,
-    classify_regexp_literal, describe_difference_of_runtime, describe_regexp_construction_error,
-    describe_regexp_syntax_error, has_compiler, image_alignment, relocate_image,
+    EngineModuleId, ExecutableIdentity, RegExpLiteralCreation, RejectedOptionWord, StoredStrings,
+    TargetImageForm, classify_regexp_literal, describe_difference_of_runtime,
+    describe_regexp_construction_error, describe_regexp_syntax_error, has_compiler,
+    image_alignment, read_stored_strings, relocate_image,
 };
 #[cfg(test)]
 use self::tests::{

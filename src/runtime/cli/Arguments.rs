@@ -752,6 +752,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),
         parse_param!("--aot-out <STR>"),
+        parse_param!("--aot-stored-strings <STR>"),
         parse_param!("--aot-symbols"),
         parse_param!("--no-builtin-modules"),
         parse_param!("--trim-without <STR>..."),

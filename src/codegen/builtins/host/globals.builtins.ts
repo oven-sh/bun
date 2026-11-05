@@ -1333,7 +1333,7 @@ const textAtPointer = {
 // function of its own. The operand is undefined, null, a text (the folder) or a dictionary; native code copies what it reads of it, keeps nothing and calls nothing of the library.
 // What the object yields goes through `yield*` over a list of texts, so through the iterator of lists as the program has left it: the row says nothing of it.
 const optionsOfScan = ["onlyFiles", "throwErrorOnBrokenSymlink", "followSymlinks", "absolute", "cwd", "dot"];
-const scansFolder = (name: string, made: b.TableType) => {
+const scansFolder = (name: string, made: b.TableType): b.FunctionField[] => {
   const scans = {
     this: b.instance("Glob"),
     returns: made,

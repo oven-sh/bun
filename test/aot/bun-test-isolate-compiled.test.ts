@@ -313,6 +313,26 @@ test("only writes the pattern", () => { expect(pattern.flags).toBe(""); });`,
   expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
 });
 
+test("import() calls a job apart do not keep the test file that made them", async () => {
+  // The second call is made again a job behind the delivery of the texts, by a job that the run time knows by a promise of that realm.
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
+    "part-a.ts": `export const a = 1;`,
+    "part-b.ts": `export const b = 2;`,
+    "d.test.ts": `
+import { expect, test } from "bun:test";
+${mark}
+test("calls", async () => {
+  const first = import("./part-a");
+  await null;
+  const second = import("./part-b");
+  expect((await first).a + (await second).b).toBe(3);
+});`,
+    "e.test.ts": fileThatDoesNothing,
+    "f.test.ts": lastFile(""),
+  });
+  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
+});
+
 test.skipIf(isWindows)("a read that never ends does not keep the test file that began it", async () => {
   const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
     "d.test.ts": `

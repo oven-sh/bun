@@ -16,12 +16,12 @@
 # print(besideOne(new Sledge(), 3));
 # -- end of source
 # The carrier is an object of one class. A test in front of `load` that asks the guards of all that it may be of is no word on a class of which it is not: no Sledge need have been made.
-# So the birth behind it begins the guards of Sledge and asks for itself what stands under `prototype`.
+# So the birth behind it begins the guards of Sledge and asks guards of Sledge for itself: while one of them holds, what stands under `prototype` is the prototype of the class.
 # RUN(BIRTH): walk f4 mechanisms=all
 # BIRTH-LABEL: code f4:Body
-# BIRTH: BeginMemberGuards layout=
-# BIRTH: side=Static key="prototype"
-# BIRTH: = NewObject layout=
+# BIRTH: BeginMemberGuards layout=L2
+# BIRTH: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L2
+# BIRTH: = NewObject -, 
 # RUN(ANSWERS): run-in-shell globalThis.publish = () => { }; globalThis.pick = () => false;
 # ANSWERS: 6
 # ANSWERS-NEXT: 10002

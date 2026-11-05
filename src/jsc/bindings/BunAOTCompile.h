@@ -57,6 +57,7 @@ extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, siz
 
 // BunCompilers.cpp
 extern "C" bool Bun__AOT__hasCompiler();
+extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport));
 
 // BunAOTHostBindings.cpp, generated
 extern "C" void Bun__AOT__registerHostBindings();

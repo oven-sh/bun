@@ -25,7 +25,7 @@ pub(crate) struct ProgramFacts {
     pub can_load_addons_at_run_time: bool,
     pub can_be_cluster_worker: bool,
     pub can_replace_builtins: bool,
-    pub hands_process_to_code_laid_above: bool,
+    pub process_reaches_code_on_its_prototypes: bool,
 }
 
 fn is_read_left_out_where_unused(path: &[&[u8]]) -> bool {
@@ -130,7 +130,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
         define_fact(b"CAN_REPLACE_BUILT_INS", facts.can_replace_builtins),
         define_fact(
             b"PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES",
-            facts.hands_process_to_code_laid_above,
+            facts.process_reaches_code_on_its_prototypes,
         ),
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
     ]);
@@ -286,7 +286,7 @@ mod tests {
         can_load_addons_at_run_time: false,
         can_be_cluster_worker: false,
         can_replace_builtins: false,
-        hands_process_to_code_laid_above: false,
+        process_reaches_code_on_its_prototypes: false,
     };
 
     fn fold_inputs_with_facts<'s>(
@@ -493,8 +493,8 @@ mod tests {
     fn build_decides_whether_runtime_sources_let_process_go_where_they_lay_something_above_it() {
         assert_fact_decides_import(
             "if (PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES) import('./process');",
-            |hands_process_to_code_laid_above| ProgramFacts {
-                hands_process_to_code_laid_above,
+            |process_reaches_code_on_its_prototypes| ProgramFacts {
+                process_reaches_code_on_its_prototypes,
                 ..NO_FACTS
             },
         );

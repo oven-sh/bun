@@ -59,6 +59,7 @@
 //                                      `operations`: all calls into the run time. The run has no collection. What the program starts counts too
 //   // COUNTER: <name> (= | >= | <=) <n>     the same, with the name without its kind (CompiledStructuresMade, operationAOTGetById)
 //                                      Each of the three may end with ` Todo: <why>`: it is not met today. It is asked all the same, and fails once it is met: the words go out.
+//                                      ` Todo on win32: <why>`: the same where process.platform is that, and the bound is held as ever anywhere else.
 //                                      The rest of the program is held as ever. A name that nothing counts fails with or without them.
 //                                      A line that begins like one of the three and is not of that form fails the program: nothing that looks like a bound is passed over.
 //                                      In a folder with a main file they may stand in any file: none of the others is a program
@@ -722,10 +723,11 @@ function fail(program: Program, stage: string, message: string, actual?: Output,
 
 /** Only a COUNT names what is counted with its kind in front. */
 function readBound(line: string): (Bound & { kind: string }) | undefined {
-  const [, kind, name, relation, bound, todo] =
-    /^\/\/ (STATISTIC|COUNT|COUNTER): ([\w:]+) (=|>=|<=) (\d+)(?: Todo: (.+))?$/.exec(line) ?? [];
+  const [, kind, name, relation, bound, platform, todo] =
+    /^\/\/ (STATISTIC|COUNT|COUNTER): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+))?: (.+))?$/.exec(line) ?? [];
   if (kind === undefined || (kind !== "COUNT" && name.includes(":"))) return undefined;
-  return { kind, name, relation, bound: Number(bound), todo };
+  const isTodoHere = platform === undefined || platform === process.platform;
+  return { kind, name, relation, bound: Number(bound), todo: isTodoHere ? todo : undefined };
 }
 
 function read(file: string): Program {

@@ -227,7 +227,7 @@ pub struct ResolvedBuiltins {
     hands_mock_on: bool,
     resets_modules: bool,
     stores_loader_functions: bool,
-    hands_process_to_code_laid_above: bool,
+    process_reaches_code_on_its_prototypes: bool,
     tables_of_loaders_written: Box<[ExprId]>,
     unlocked: OnceLock<Arc<[u32]>>,
     mentioned: Box<[BuiltinId]>,
@@ -415,8 +415,8 @@ impl ResolvedBuiltins {
         &self.tables_of_loaders_written
     }
 
-    pub fn hands_process_to_code_laid_above(&self) -> bool {
-        self.hands_process_to_code_laid_above
+    pub fn process_reaches_code_on_its_prototypes(&self) -> bool {
+        self.process_reaches_code_on_its_prototypes
     }
 
     pub fn stores_loader_functions(&self) -> bool {

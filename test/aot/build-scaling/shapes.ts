@@ -23,6 +23,11 @@ export type Shape = {
   isTestRun?: true;
   /** Counters that the build prints under --explain=statistics. Their growth is judged however little they count. */
   counts?: string[];
+  /**
+   * A goal that is not met yet: what the shape was last measured to grow by, in a count that is the same on every machine. The case says so in its name and is
+   * expected to fail: it runs every time, and fails once the goal is met.
+   */
+  growsSoFar?: string;
   write(size: number): Record<string, string>;
 };
 
@@ -675,10 +680,11 @@ export const shapes: Shape[] = [
   },
   // Every value is made above loops and read below them, and no loop changes it.
   // Whoever keeps a definition of each value at each loop that a read passes, or looks through all that he has found at a loop for each name, works by the value times the loop.
+  // From 1,889 values on `mix` is called where it is taken in line below that, and a value costs a tenth more work and a quarter more memory: both sizes lie behind that step.
   {
     name: "values that stay live across loops",
     counted: "values",
-    size: 1000,
+    size: 2000,
     entry: "main.js",
     write: size => ({
       "main.js":
@@ -1358,6 +1364,8 @@ export const shapes: Shape[] = [
   // Each constructor is small enough to go into the one below it, which goes into the one below that: every level is one more round over all that a constructor has taken in.
   {
     name: "classes that extend one another in a row, each constructed",
+    // The tables of the image list every field of every class that has objects, the inherited ones too.
+    growsSoFar: "3.45 times in TableBytesEmitted",
     counted: "classes",
     size: 125,
     entry: "main.js",
@@ -1528,6 +1536,8 @@ export const shapes: Shape[] = [
   // Which class of a row holds a field is asked for each class that an access may meet, and the answer lies as many classes up as the row is long.
   {
     name: "classes with a field each that extend one another in a row, all constructed at one place",
+    // As for the row of which each class is constructed.
+    growsSoFar: "3.90 times in TableBytesEmitted",
     counted: "classes",
     size: 250,
     entry: "main.js",

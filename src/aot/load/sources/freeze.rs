@@ -95,6 +95,7 @@ pub(crate) fn freeze_sources(
         entry_points: collect_entry_points(input, &all.entries),
         entries: all.entries,
         project_root: input.options.load.project_root[..].into(),
+        root_of_executable: (!runs_in_place).then(|| paths.module_prefix[..].into()),
         runtime_module_files: all.runtime_module_files,
         modules_named_at_run_time: input.modules_named_at_run_time.to_vec(),
         web_assembly_files: all.web_assembly_files,

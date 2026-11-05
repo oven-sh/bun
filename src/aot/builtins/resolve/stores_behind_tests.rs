@@ -82,6 +82,51 @@ impl Resolver<'_, '_> {
         })
     }
 
+    fn leaves_variable_filled(&self, test: ExprId, member: BuiltinId, variable: SymbolId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let leaves = |part: ExprId| self.leaves_variable_filled(part, member, variable);
+        match hir[hir.skip_type_assertions(test)].kind {
+            ExprKind::Ident(_)
+            | ExprKind::This
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_) => true,
+            ExprKind::Dot { obj, .. } => leaves(obj),
+            ExprKind::Unary {
+                op: UnOp::Not | UnOp::Typeof | UnOp::Void,
+                operand,
+            } => leaves(operand),
+            ExprKind::Binary {
+                op:
+                    BinOp::And
+                    | BinOp::Or
+                    | BinOp::Nullish
+                    | BinOp::EqEq
+                    | BinOp::NotEq
+                    | BinOp::EqEqEq
+                    | BinOp::NotEqEq
+                    | BinOp::In,
+                left,
+                right,
+            } => leaves(left) && leaves(right),
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } => match (hir[target].kind, bound.binding(target)) {
+                (ExprKind::Ident(_), Binding::Symbol(stored)) if stored == variable => {
+                    self.reads_member(value, member, None)
+                }
+                (ExprKind::Ident(_), Binding::Symbol(_)) => leaves(value),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     fn is_member_beside_what_says_missing(
         &self,
         value: ExprId,
@@ -122,7 +167,8 @@ impl Resolver<'_, '_> {
         let answer_behind = |left: ExprId, right: ExprId| {
             let filled = self
                 .find_variable_filled_with_member(left, member)
-                .or(filled);
+                .or(filled)
+                .filter(|&variable| self.leaves_variable_filled(left, member, variable));
             self.find_answer_where_member_is_there(right, member, filled)
         };
         match hir[test].kind {

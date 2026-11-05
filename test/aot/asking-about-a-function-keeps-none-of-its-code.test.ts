@@ -25,6 +25,27 @@ const namedIsUsedToday = [
   /^Bun\.build$/,
   /^Bun\.plugin(\.|$)/,
   /^WebAssembly\.(compile|instantiate)Streaming$/,
+  // The object that holds them counts as used once it is read.
+  /^Bun\.CSRF\./,
+  /^Bun\.FFI\./,
+  /^Bun\.JSON5\./,
+  /^Bun\.JSONC\./,
+  /^Bun\.JSONL\./,
+  /^Bun\.TOML\./,
+  /^Bun\.XML\./,
+  /^Bun\.YAML\./,
+  /^Bun\.dns\./,
+  /^Bun\.markdown\./,
+  /^Bun\.password\./,
+  /^Bun\.secrets\./,
+  /^Bun\.semver\./,
+  /^Bun\.unsafe\./,
+  /^Temporal\.Now\./,
+  /^WebAssembly\.(Module\.|compile$|instantiate$|promising$|validate$)/,
+  /^process\.report\./,
+  // Each keeps nearly everything that --trim can remove.
+  /^process\._rawDebug$/,
+  /^process\.loadEnvFile$/,
 ];
 
 async function usersIn(text: string) {
@@ -95,6 +116,16 @@ test("what a program asks about a function without calling it is no use of anyth
   expect(asked).toEqual(expect.arrayContaining(["Bun.Cookie.parse", "Bun.WebView.closeAll", "URL.createObjectURL"]));
   expect((await usersIn(questionsAbout(asked))).map(({ line }) => line)).toEqual([]);
 }, 600_000);
+
+// A goal that is not met yet. Once it is, this test fails: change `test.failing` to `test` and empty the list of what is used once it is named.
+test.failing(
+  "what a program asks about any function that --trim can remove is no use of anything: 158 lines of the report on Linux x64, the goal is none",
+  async () => {
+    const asked = functions.filter(listsAllMembers).map(({ path }) => path);
+    expect((await usersIn(questionsAbout(asked))).map(({ line }) => line)).toEqual([]);
+  },
+  600_000,
+);
 
 test.concurrent.each(namedIsUsedToday.map(pattern => [String(pattern), pattern] as const))(
   "the list of what is used once it is named holds nothing that is not: %s",

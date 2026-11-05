@@ -102,10 +102,13 @@ impl Resolver<'_, '_> {
         self.output.mentioned.push(id);
     }
 
-    fn hand_to_code_laid_above(&mut self, id: BuiltinId) {
+    fn hand_to_code_laid_above(&mut self, id: BuiltinId, is_handed: bool) {
         match self.input.dialect {
-            SourceDialect::Program => self.output.hands_process_to_code_laid_above = true,
-            SourceDialect::Runtime => self.expose(id),
+            SourceDialect::Program => {
+                self.output.process_reaches_code_on_its_prototypes |= is_handed;
+            }
+            SourceDialect::Runtime if is_handed => self.expose(id),
+            SourceDialect::Runtime => {}
         }
     }
 
@@ -248,9 +251,8 @@ impl Resolver<'_, '_> {
         if is_function_that_loader_calls(id) {
             self.note_use_of_function_that_loader_calls(expr);
         }
-        if self.is_handed_to_code_laid_above(expr, id) {
-            self.hand_to_code_laid_above(id);
-        }
+        let is_handed = self.is_handed_to_code_laid_above(expr, id);
+        self.hand_to_code_laid_above(id, is_handed);
         match self.classify_use(expr) {
             MentionUse::Called(call) if self.is_import_site(call) => {}
             MentionUse::Called(call) if self.asks_for_symbol_that_host_ignores(call, id) => {}
@@ -662,9 +664,8 @@ impl Resolver<'_, '_> {
                     self.expose(holder.path.id);
                     continue;
                 }
-                if self.may_be_answered_by_accessor_above(holder.path.id, name) {
-                    self.hand_to_code_laid_above(holder.path.id);
-                }
+                let is_handed = self.may_be_answered_by_accessor_above(holder.path.id, name);
+                self.hand_to_code_laid_above(holder.path.id, is_handed);
                 if self.is_inherited_object_prototype_member(Some(holder.path.id), name) {
                     self.expose(holder.path.id);
                 }

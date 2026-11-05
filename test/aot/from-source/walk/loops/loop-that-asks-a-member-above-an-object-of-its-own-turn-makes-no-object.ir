@@ -25,6 +25,8 @@
 # REQUIRES(ROW): entries-of-bun
 # ROW: = BeginMemberGuards layout=L2
 # ROW: isInLoop=true isLoopHead=true
+# ROW-NOT: = NewObject
 # ROW: = BitAnd
-# ROW-NEXT: = AreMembersUnchanged conditions=[{layout=L2 key="second"}]
+# ROW-NOT: = NewObject
+# ROW: = AreMembersUnchanged conditions=[{layout=L2 key="second"}]
 # ROW: = AreMembersUnchanged conditions=[{layout=L2 key="first"}]

@@ -307,12 +307,15 @@ fn what_is_laid_above_process_answers_what_process_lacks() {
         "({ [process]: 1 });",
     ] {
         with_case(PROGRAM, source, |case| {
-            assert!(case.resolved.hands_process_to_code_laid_above(), "{source}");
+            assert!(
+                case.resolved.process_reaches_code_on_its_prototypes(),
+                "{source}"
+            );
             assert!(case.resolved.exposed().is_empty(), "{source}");
         });
         with_case(RUNTIME, source, |case| {
             assert!(
-                !case.resolved.hands_process_to_code_laid_above(),
+                !case.resolved.process_reaches_code_on_its_prototypes(),
                 "{source}"
             );
             assert!(case.exposes(BuiltinId::Process), "{source}");
@@ -321,7 +324,8 @@ fn what_is_laid_above_process_answers_what_process_lacks() {
     let kept = "var a; (a = process).own ?? (a.own = {});";
     with_case(PROGRAM, kept, |case| {
         assert!(
-            case.resolved.hands_process_to_code_laid_above() || case.exposes(BuiltinId::Process)
+            case.resolved.process_reaches_code_on_its_prototypes()
+                || case.exposes(BuiltinId::Process)
         );
     });
     for source in [
@@ -342,7 +346,7 @@ fn what_is_laid_above_process_answers_what_process_lacks() {
     ] {
         with_case(PROGRAM, source, |case| {
             assert!(
-                !case.resolved.hands_process_to_code_laid_above(),
+                !case.resolved.process_reaches_code_on_its_prototypes(),
                 "{source}"
             );
         });
@@ -357,6 +361,7 @@ fn left_of_instanceof_is_handed_to_the_method_of_the_right() {
         "const p = process; p instanceof x;",
         "(y || process) instanceof x;",
         "switch (true) { case process instanceof x: }",
+        "import { EventEmitter } from \"node:events\"; process instanceof EventEmitter;",
     ] {
         with_case(PROGRAM, source, |case| {
             assert!(case.exposes(BuiltinId::Process), "{source}")
@@ -364,7 +369,7 @@ fn left_of_instanceof_is_handed_to_the_method_of_the_right() {
     }
     for source in [
         "process instanceof Map;",
-        "import { EventEmitter } from \"node:events\"; process instanceof EventEmitter;",
+        "process instanceof Object;",
     ] {
         with_case(PROGRAM, source, |case| {
             assert!(!case.exposes(BuiltinId::Process), "{source}")

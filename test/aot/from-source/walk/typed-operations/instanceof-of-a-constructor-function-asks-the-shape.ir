@@ -29,8 +29,10 @@
 # RUN(ROW): walk f7 mechanisms=all
 # REQUIRES(ROW): entries-of-bun
 # ROW: = InstanceOf
-# Tagged has a Symbol.hasInstance of its own.
+# Tagged has a Symbol.hasInstance of its own: the shape is asked only behind the guard of that name, which the program's own deed ends.
 # RUN(OWN): walk f8 mechanisms=all
 # REQUIRES(OWN): entries-of-bun
 # OWN-NOT: ShapeTest
+# OWN: = AreMembersUnchanged {{*}}key=@@hasInstance
+# OWN: = ShapeTest
 # OWN: = InstanceOf

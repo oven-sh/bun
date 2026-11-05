@@ -84,7 +84,7 @@ pub(crate) fn collect_runtime_roots(
     let mut named: Vec<RuntimeModule> = Vec::new();
     let mut lets_in_what_nobody_names =
         further.has_file_that_asks_for_it || used_at_start.lets_in_what_nobody_names;
-    let mut asks_of_texts = used_at_start.asks.clone();
+    let mut asks_of_texts = used_at_start.asks;
     for &file in application.compiled_files() {
         lets_in_what_nobody_names |=
             loader_by_name(application.module(file).file_name()) == Loader::Napi;

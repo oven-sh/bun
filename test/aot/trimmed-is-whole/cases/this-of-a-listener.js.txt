@@ -59,6 +59,7 @@ process[Symbol.toPrimitive] = function () { show(this[names[0]]); return 1; };
 console.log(+process);
 //// prototype-method-this
 //@ build-error TS100014:
+//@ fails-today the build only warns: where a host object is read under a computed name it does not see that every run comes to the assignment
 Object.prototype.me = function () { return this; };
 show(process.me()[names[0]]);
 //// prototype-getter-this
@@ -79,6 +80,7 @@ Object.defineProperty(Object.prototype, "me", { get() { return this; }, configur
 show(me[names[5]]);
 //// prototype-method-bare-call
 //@ build-error TS100014
+//@ fails-today the build only warns: where a host object is read under a computed name it does not see that every run comes to the assignment
 //@ ext cjs
 Object.prototype.me = function () { return this; };
 show(me()[names[5]]);

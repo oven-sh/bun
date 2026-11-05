@@ -177,6 +177,7 @@ pub struct Sources {
     project: ProjectId,
     entries: Vec<SourceEntry>,
     project_root: Box<[u8]>,
+    root_of_executable: Option<Box<[u8]>>,
     entry_points: Vec<EntryPoint>,
     runtime_module_files: Vec<(RuntimeModule, FileId)>,
     modules_named_at_run_time: Vec<RuntimeModule>,
@@ -219,6 +220,10 @@ impl Sources {
 
     pub fn public_path(&self, file: FileId) -> &[u8] {
         &self.entries[file.idx()].public_path
+    }
+
+    pub fn root_of_executable(&self) -> Option<&[u8]> {
+        self.root_of_executable.as_deref()
     }
 
     pub fn diagnostic_path(&self, file: FileId) -> &[u8] {

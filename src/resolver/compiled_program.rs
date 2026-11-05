@@ -1025,8 +1025,13 @@ impl CompiledProgram {
                 // `bun build --compile` finds a path below a package from the root directory, whoever asks.
                 let ends_search = package.is_some_and(|package| {
                     let mark = [&node_modules[..], package, ENDS_SEARCH].concat();
-                    (self.allows_code_from_disk || package.len() == specifier.len())
-                        && self.find_package_name(&mark, is_require).is_some()
+                    match self.allows_code_from_disk {
+                        true => self.find_package_name(&mark, is_require).is_some(),
+                        false => {
+                            matches!(&specifier[package.len()..], b"" | b"/")
+                                && self.is_hidden_name(&mark, is_require)
+                        }
+                    }
                 });
                 if ends_search {
                     return Unknown;
@@ -1648,9 +1653,10 @@ mod tests {
                 b"/$bunfs/root/node_modules/orm/index.js",
             ];
 
-            const HIDDEN_FROM_REQUIRE: [&[u8]; 2] = [
+            const HIDDEN_FROM_REQUIRE: [&[u8]; 3] = [
                 b"/$bunfs/root/node_modules/driver/lib/absent.js",
                 b"/$bunfs/root/node_modules/orm/index.js",
+                b"/$bunfs/root/held/node_modules/driver//",
             ];
 
             fn find_file(path: &[u8]) -> Option<&'static [u8]> {
@@ -1666,12 +1672,7 @@ mod tests {
                 });
                 let order = (0..FILES.len() as u32).collect();
                 let names: [(&[u8], Option<u32>, Option<u32>, bool); 10] = [
-                    (
-                        b"/$bunfs/root/held/node_modules/driver//",
-                        None,
-                        None,
-                        false,
-                    ),
+                    (HIDDEN_FROM_REQUIRE[2], None, None, false),
                     (b"/$bunfs/root/node_modules/@scope/closed", None, None, true),
                     (
                         b"/$bunfs/root/node_modules/@scope/closed/feature",
@@ -1769,6 +1770,9 @@ mod tests {
             fn folder_that_only_the_disk_of_the_build_held_ends_the_search() {
                 let held: &[u8] = b"/$bunfs/root/held/deep/";
                 assert_eq!(require(held, b"driver"), Unknown);
+                assert_eq!(require(held, b"driver/"), Unknown);
+                let imported = find_in(&program(false), held, b"driver", false);
+                assert_eq!(imported, Found(FILES[1]));
                 assert_eq!(require(held, b"driver/lib/extra.js"), Found(FILES[2]));
                 assert_eq!(require(held, b"both"), Found(FILES[4]));
                 assert_eq!(require(ROOT, b"driver"), Found(FILES[1]));

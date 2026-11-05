@@ -1088,6 +1088,7 @@ function handleToDestroyUnwatched(req: $Node.IncomingMessage, state: $Node.Reada
       req.destroy !== destroy ||
       req._destroy !== incomingMessageDestroy ||
       req._readableState !== state ||
+      !readsItsSocketUnseen(req) ||
       !isUnheard(req, "end") ||
       !readsReadableEndedThroughAccessor(req) ||
       !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
@@ -1172,6 +1173,7 @@ function takeCloseTick(req: $Node.IncomingMessage): boolean {
     tick.next !== ring.write ||
     tick.callback !== closeUnwatched ||
     tick.first !== req ||
+    req.listenerCount !== listenerCount ||
     !isUnheard(req, "close")
   ) {
     return false;
@@ -1486,6 +1488,7 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
       req.destroy !== destroy ||
       req._readableState !== state ||
       !readsReadableEndedThroughAccessor(req) ||
+      !readsItsSocketUnseen(req) ||
       !ticksAreUnseen()
     ) {
       ("unlikely");
@@ -1545,6 +1548,7 @@ function staysUnseen(req: $Node.IncomingMessage): boolean {
       req._dumped &&
       !req._consuming &&
       !req[eofInProgress] &&
+      readsItsSocketUnseen(req) &&
       keepsItsMethods(req)
     );
   } catch {
@@ -1617,6 +1621,11 @@ function readsTheMethodsOfItsClass(req: $Node.IncomingMessage): boolean {
     readsReadableEndedThroughAccessor(req) &&
     hasNoListenerAndNoWritableSide(req)
   );
+}
+
+function readsItsSocketUnseen(req: $Node.IncomingMessage): boolean {
+  const socket = req.socket;
+  return !socket || http.requestRoad.readsDestroyedUnseen!(socket);
 }
 
 function endUnseen(req: $Node.IncomingMessage): void {

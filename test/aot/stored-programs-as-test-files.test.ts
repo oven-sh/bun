@@ -42,6 +42,7 @@ const programs = [
   // A shared file rebinds `module`, deletes `module.exports` or stores into `module.parent`, and the test file looks.
   "commonjs/a-required-file-stores-the-main-module-into-its-module",
   "commonjs/keys-of-a-child-that-deleted-its-module-exports",
+  "commonjs/a-require-gets-what-the-file-left-under-the-exports-of-its-module",
   "commonjs/a-store-into-module-parent-of-a-required-file",
   "commonjs/a-store-into-module-parent-in-front-of-the-first-read",
   "commonjs/a-module-object-and-then-a-text-stored-into-module-parent",

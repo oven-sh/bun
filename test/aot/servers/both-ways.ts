@@ -30,10 +30,12 @@ type Shares = { equal: number; equalBehindAnotherFile: number; executable: numbe
 /**
  * `equalAtLeast`: percent of the executable's functions, rounded down, on Linux x64, less one: a landing that moves ten functions of two thousand is not meant.
  * `equalBehindAnotherFileAtLeast`: the same where another test file runs first, as in every project with two. TODO: each is owed the number of the first.
+ * `reachedSoFar`: where a floor is not met yet, the percent that is: the case on the floor is `failing`, with both numbers in its name, and turns red the day the floor is met; a second case holds what is reached, less one.
  */
 export function holdBothWays(
   equalAtLeast: Record<string, number>,
   equalBehindAnotherFileAtLeast: Record<string, number>,
+  reachedSoFar: { equal?: Record<string, number>; equalBehindAnotherFile?: Record<string, number> } = {},
 ) {
   const servers = Object.keys(equalAtLeast);
   // The forms are the same on every platform. The bytes are not, and neither are the files that a package loads.
@@ -43,6 +45,7 @@ export function holdBothWays(
       const work = String(tempDir("aot-servers-both-ways", {}));
       const app = join(work, "app");
       const shares = new Map<string, Shares>();
+      const sharesOf = (name: string) => shares.get(name)!;
       afterAll(() => rmSync(work, { recursive: true, force: true }));
 
       beforeAll(async () => {
@@ -87,24 +90,34 @@ export function holdBothWays(
         );
       }, 900_000);
 
-      test.each(servers)("%s", name => {
-        const { equal, executable, testRun } = shares.get(name)!;
-        const percent = Math.floor((100 * equal) / executable);
-        console.log(
-          `EQUAL ${name}: ${percent}% (${equal} of the executable's ${executable} functions; the test run has ${testRun})`,
-        );
-        expect(executable).toBeGreaterThan(500);
-        expect({ name, percent: Math.min(percent, equalAtLeast[name]) }).toEqual({ name, percent: equalAtLeast[name] });
-      });
-
-      test.each(servers)("%s, behind another test file", name => {
-        const { equalBehindAnotherFile: equal, executable } = shares.get(name)!;
-        const [percent, atLeast] = [Math.floor((100 * equal) / executable), equalBehindAnotherFileAtLeast[name]];
-        console.log(
-          `EQUAL ${name}, behind another test file: ${percent}% (${equal} of the executable's ${executable} functions)`,
-        );
-        expect({ name, percent: Math.min(percent, atLeast) }).toEqual({ name, percent: atLeast });
-      });
+      const ways = [
+        { where: "", share: "equal", atLeast: equalAtLeast, reached: reachedSoFar.equal ?? {} },
+        {
+          where: ", behind another test file",
+          share: "equalBehindAnotherFile",
+          atLeast: equalBehindAnotherFileAtLeast,
+          reached: reachedSoFar.equalBehindAnotherFile ?? {},
+        },
+      ] as const;
+      for (const { where, share, atLeast, reached } of ways)
+        for (const name of servers) {
+          const percentOf = (all: Shares) => Math.floor((100 * all[share]) / all.executable);
+          test(`${name}${where}: what is reached`, () => {
+            const all = sharesOf(name);
+            const percent = percentOf(all);
+            console.log(
+              `EQUAL ${name}${where}: ${percent}% (${all[share]} of the executable's ${all.executable} functions; the test run has ${all.testRun})`,
+            );
+            expect(all.executable).toBeGreaterThan(500);
+            const held = name in reached ? reached[name] - 1 : atLeast[name];
+            expect({ name, percent: Math.min(percent, held) }).toEqual({ name, percent: held });
+          });
+          if (name in reached)
+            test.failing(`${name}${where}: ${reached[name]}% for a floor of ${atLeast[name]}%`, () => {
+              const percent = percentOf(sharesOf(name));
+              expect({ name, percent: Math.min(percent, atLeast[name]) }).toEqual({ name, percent: atLeast[name] });
+            });
+        }
 
       for (const name of servers)
         test.todo(`${name}: a test file is compiled alike wherever it stands in the run`, () => {

@@ -1480,6 +1480,10 @@
     "default": 1900,
     "asan": 7600
   },
+  "aot/stored-strings-of-an-executable.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/strict-functions.test.ts": {
     "default": 1600,
     "asan": 6400

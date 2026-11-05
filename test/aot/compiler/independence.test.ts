@@ -8,6 +8,7 @@
 //   alone | another caller    somebody else calls the shared helpers too, and no function of the features that call them changes
 //   alone | padded            the main file holds ten thousand more functions, and no function of another file changes a byte
 //   alone | another limit     the control: one constant of the feature is changed, and the comparison must report it
+//   alone | another type      the control: somebody hands a shared helper what the features never do, and the comparison must report it
 //
 // A build writes its program with --aot-out, and `testaot bytes` prints what each unit of it compiles to: a hash of the code with the fields of its
 // relocations cleared, and each relocation by the name of its symbol. The numbers behind the names are the image's, and differ by right.
@@ -18,6 +19,9 @@
 // A record is one layout for each set of names, for the whole program, and a read off a value that nobody has typed goes by the name. So what other files
 // store under a name that the unit reads is a fact about what the unit mentions, and differs by right: the part of a type that is marked
 // ?ContentsOfEscapedObject, and which field of which record a fact about such a read names.
+// A written type stands for every layout of the program that fits it, and the plan holds a slot to what the whole program stores there. Both are facts
+// about what the unit mentions, and both grow with the program, by right: a set of layouts is read as its first member, which the small program has too.
+// The type of a value is what the walk knows of it and not what it builds. The operation, its operands, the form of its result and its fields are compared.
 // The padding is there for what comes behind the walk: an emitter that reads a total of the program reads the same one in both halves of same-bytes-alone.
 // A unit is known by its role and by the file, the position and the name of its function. What every caller has inlined is never compiled, so a
 // unit that only one of two programs has is counted and not held against them.
@@ -54,15 +58,19 @@ const featuresAlone = 3;
 const paddingFunctions = 10_000;
 const timeLimit = 900_000;
 
-// The same types as the features hand over, so the facts about what they mention stay as they are.
-const anotherCaller = `
+// The same types as the features hand over, so the facts about what they mention stay as they are. A template is a text whatever stands in it.
+const callerThatHandsOver = (body: string) => `
 import { flagOf } from "./flags";
 import { text } from "./router";
 import { hash, isInteger } from "./text";
-router.get("/elsewhere/:place", request => text(418, request.parameters.place + request.path));
+router.get("/elsewhere/:place", request => text(418, ${body}));
 const depth = flagOf(new Map([["depth", "4"]]), "depth", "9");
 console.log(hash("a text that no feature has") + depth.length + Number(isInteger(depth)) + router.handle("/elsewhere/here").body.length);
 `;
+const anotherCaller = callerThatHandsOver("`${request.parameters.place}${request.path}`");
+// The sum of two values that nobody has proven to be texts may be a number, a text or a bigint. The slot of the body is held to all three then, and
+// whoever stores into it asks for all three.
+const callerWithAnotherType = callerThatHandsOver("request.parameters.place + request.path");
 
 // Each stands at the top of the module, captures nothing and deals in numbers alone: no layout, no environment, no mention of a layout, no string in a type.
 // Each calls itself, so no caller inlines it and it is compiled.
@@ -91,6 +99,7 @@ const sources = {
   alone: (dress: Dress) => generate(featuresAlone, dress),
   inside: (dress: Dress) => generate(100 * featuresAlone, dress),
   "another caller": (dress: Dress) => withChange(dress, "main", text => text + anotherCaller),
+  "another type": (dress: Dress) => withChange(dress, "main", text => text + callerWithAnotherType),
   padded: (dress: Dress) => withChange(dress, "main", text => text + padding(dress)),
   // The number keeps its two digits, so every function keeps its position.
   "another limit": (dress: Dress) =>
@@ -161,15 +170,22 @@ const numbersOfTheProgram = new RegExp(
 );
 // undefined|number|string|Array?ContentsOfEscapedObject: the words in front of the mark. What else the type names is compared.
 const contentsOfEscapedObjects = /(?:\w+\|)*\w+\?(?:\w+\+)*ContentsOfEscapedObject(?:\+\w+)*/g;
-function withoutContentsOfEscapedObjects(line: string) {
-  const rest = line.replace(contentsOfEscapedObjects, "?ContentsOfEscapedObject");
+// v30: undefined|number|Array @JSValue: the type between the name of a value and the form it has.
+const typesOfValues = /\b(v\d+): (?:(?! @[A-Z]).)* (@[A-Z]\w*)/g;
+// L8|L29|L72 in a type, [L8, L29, L72] in a field.
+const setsOfLayouts = /\b(L\d+)(?:\|L\d+)+|\[(L\d+)(?:, L\d+)+\]/g;
+function withoutWhatDiffersByRight(line: string) {
+  const rest = line
+    .replace(typesOfValues, "$1 $2")
+    .replace(contentsOfEscapedObjects, "?ContentsOfEscapedObject")
+    .replace(setsOfLayouts, (_, inType, inField) => inType ?? `[${inField}]`);
   return /^\s*fact \S+ kind=NarrowedTypes\b.*\bsubjectKind=Field\b/.test(rest) ? rest.replace(/ index=\d+/, "") : rest;
 }
 // What is left out is left out first: a layout that only one of two texts mentions there takes no place.
 function byFirstMention(lines: string[]) {
   const places = new Map<string, string>();
   return lines.map(line =>
-    withoutContentsOfEscapedObjects(line).replace(numbersOfTheProgram, token => {
+    withoutWhatDiffersByRight(line).replace(numbersOfTheProgram, token => {
       if (/^["bv]/.test(token)) return token;
       if (!places.has(token)) places.set(token, token.replace(/\d+$/, `#${places.size}`));
       return places.get(token)!;
@@ -290,6 +306,13 @@ for (const dress of Object.keys(extensions) as Dress[]) {
       "the comparison reports a changed constant",
       async () =>
         expect((await compare(await both(dress, "alone", "another limit"), [feature])).differences).not.toEqual([]),
+      timeLimit,
+    );
+
+    declared(
+      "the comparison reports another type that a shared helper is handed",
+      async () =>
+        expect((await compare(await both(dress, "alone", "another type"), features)).differences).not.toEqual([]),
       timeLimit,
     );
   });

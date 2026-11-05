@@ -2,7 +2,7 @@ use bun_sema::atom::known;
 use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Parent, ScopeKind};
 use bun_sema::fold::{Decisions, FoldedValue};
 use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, StmtId, StmtKind, UnOp};
-use bun_sema::import_sites::WHERE_FILE_LIES;
+use bun_sema::import_sites::{ImportSpecifier, WHERE_FILE_LIES};
 use bun_sema::program::FileId;
 use bun_sema::util::FxHashMap;
 use smallvec::SmallVec;
@@ -13,7 +13,7 @@ use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved, ResolvedBuiltins};
 use crate::ir::generated::CommonJsParameter;
 use crate::ir::{FunctionKey, PropertyKeyId, Type, TypeId, ValueId, VariableId, VariableKey};
-use crate::load::contents::entry_points::is_relative_path;
+use crate::load::contents::entry_points::{is_relative_path, join_below_root};
 use crate::load::contents::worker_entries::{
     join_to_url_of_module, read_file_url, resolve_paths, with_forward_slashes, write_url_of_module,
     write_url_of_path,
@@ -58,6 +58,12 @@ pub(in crate::lower) fn undeclared_wrapper_parameters(
     let redeclared = bound.runtime.redeclared_commonjs_variables();
     let parameters = WRAPPER_PARAMETERS.into_iter();
     parameters.filter(move |&variable| !redeclared.iter().any(|entry| entry.1 == variable))
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub(in crate::lower) struct MovedFolder {
+    pub as_joined: Vec<u8>,
+    pub in_executable: Vec<u8>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
@@ -433,6 +439,48 @@ impl FileLowering<'_, '_, '_, '_> {
         found
     }
 
+    pub(in crate::lower) fn find_folders_moved_by_joining(
+        &self,
+        written: &ImportSpecifier,
+        is_url: bool,
+    ) -> Vec<MovedFolder> {
+        let mut moved = Vec::new();
+        let directory = self.find_path_text(self.file, BuiltinId::ImportMetaDir);
+        let (Some(root), Some(directory)) = (self.inputs.sources.root_of_executable(), directory)
+        else {
+            return moved;
+        };
+        let is_windows = self.inputs.options.platform.contains(Platforms::WINDOWS);
+        let spell = |path: Vec<u8>| match is_url {
+            true => write_url_of_path(&path),
+            false => Some(with_separators_of_host(&path, is_windows)),
+        };
+        for alternative in self.compiled.analysis.alternatives_of(written) {
+            let (ImportSpecifier::Constant(start) | ImportSpecifier::Pattern { prefix: start, .. }) =
+                *alternative
+            else {
+                continue;
+            };
+            let start = self.queries.atom_bytes(start);
+            let Some(folder) = find_where_joining_moves_folder(root, &directory, start) else {
+                continue;
+            };
+            let (Some(as_joined), Some(in_executable)) =
+                (spell(folder.as_joined), spell(folder.in_executable))
+            else {
+                continue;
+            };
+            let folder = MovedFolder {
+                as_joined,
+                in_executable,
+            };
+            if !moved.contains(&folder) {
+                moved.push(folder);
+            }
+        }
+        moved
+    }
+
     pub(in crate::lower) fn has_source_path_of(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(file) if self.inputs.sources.has_source_path(file))
     }
@@ -502,6 +550,26 @@ pub(in crate::lower) fn find_wrapper_path(
         properties.push(entry);
         entry = table::entry(entry).holder?;
     }
+}
+
+fn find_where_joining_moves_folder(
+    root: &[u8],
+    directory: &[u8],
+    written: &[u8],
+) -> Option<MovedFolder> {
+    let root = with_forward_slashes(root.to_vec());
+    let directory = [&with_forward_slashes(directory.to_vec())[..], b"/"].concat();
+    let below_root = directory.strip_prefix(&root[..])?;
+    let folder = &written[..=bun_core::strings::last_index_of_char(written, b'/')?];
+    if !below_root.starts_with(b"_.._/") || !is_relative_path(folder) {
+        return None;
+    }
+    let in_executable = join_below_root(&root, &[below_root, folder].concat());
+    let as_joined = resolve_paths(&[directory.clone(), folder.to_vec()])?;
+    (as_joined != in_executable).then_some(MovedFolder {
+        as_joined,
+        in_executable,
+    })
 }
 
 fn directory_of_source(path: &[u8]) -> &[u8] {
@@ -929,6 +997,58 @@ mod tests {
 
         assert_eq!(url(b"/a/b.js"), text(b"file:///a/b.js"));
         assert_eq!(url(br"C:\a\b.js"), text(b"file:///C:/a/b.js"));
+    }
+
+    #[test]
+    fn folder_behind_a_parent_of_the_root_that_joining_takes_away() {
+        let moved = |directory: &[u8], written: &[u8]| {
+            let root: &[u8] = match directory.starts_with(b"/") {
+                true => b"/$bunfs/root/",
+                false => b"B:/~BUN/root/",
+            };
+            let folder = find_where_joining_moves_folder(root, directory, written)?;
+            Some((folder.as_joined, folder.in_executable))
+        };
+        let pair = |as_joined: &[u8], in_executable: &[u8]| {
+            Some((as_joined.to_vec(), in_executable.to_vec()))
+        };
+        let loaders = b"/$bunfs/root/_.._/loaders";
+        assert_eq!(
+            moved(loaders, b"./../../texts/"),
+            pair(b"/$bunfs/root/texts", b"/$bunfs/root/_.._/_.._/texts")
+        );
+        assert_eq!(
+            moved(loaders, b"../../texts/part-of-a-name"),
+            pair(b"/$bunfs/root/texts", b"/$bunfs/root/_.._/_.._/texts")
+        );
+        assert_eq!(
+            moved(loaders, b"../../../texts/"),
+            pair(b"/$bunfs/texts", b"/$bunfs/root/_.._/_.._/_.._/texts")
+        );
+        assert_eq!(
+            moved(b"/$bunfs/root/_.._/_.._", b"../texts/"),
+            pair(
+                b"/$bunfs/root/_.._/texts",
+                b"/$bunfs/root/_.._/_.._/_.._/texts"
+            )
+        );
+        assert_eq!(
+            moved(br"B:\~BUN\root\_.._\loaders", b"../../texts/"),
+            pair(b"B:/~BUN/root/texts", b"B:/~BUN/root/_.._/_.._/texts")
+        );
+        for (directory, written) in [
+            (&loaders[..], &b"./"[..]),
+            (loaders, b"./deeper/"),
+            (loaders, b"../texts/"),
+            (loaders, b"no-folder"),
+            (loaders, b"/whole/path/"),
+            (b"/$bunfs/root", b"../texts/"),
+            (b"/$bunfs/root/lib", b"../../texts/"),
+            (b"/$bunfs/root/lib/_.._", b"../../texts/"),
+            (b"/elsewhere/_.._/loaders", b"../../texts/"),
+        ] {
+            assert_eq!(moved(directory, written), None);
+        }
     }
 
     #[test]

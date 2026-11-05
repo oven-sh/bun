@@ -6,7 +6,7 @@ import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 // The build links the imports of a program as if no plugin could answer for them, unless a file that it compiles names Bun.plugin. A program that came by the function some other way got the real
-// module, in silence, where `bun main.mjs`, the plain executable and `bun test` get the plugin's. Bun.plugin() refuses such a call aloud.
+// module, in silence, where `bun main.mjs`, the plain executable and `bun test` get the plugin's. Such a plugin is refused aloud where it registers something: in onResolve(), onLoad() and module().
 const refusal = "Cannot use Bun.plugin: no file that was compiled names it";
 const env = { ...bunEnv, NO_COLOR: "1" };
 const options = String.raw`{ name: "swaps", setup(build) {
@@ -45,6 +45,13 @@ describe("an executable", () => {
     expect(plain.stdout).toBe("the plugin's ./a.mjs\n");
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: "", exitCode: 1 });
     expect(compiled.stderr).toContain(refusal);
+  });
+
+  test("a plugin that registers nothing goes through", async () => {
+    const registers = `import { use } from "./use.mjs";\nuse(Bun, { name: "idle", setup(build) { console.log(typeof build.onLoad); } });`;
+    const { plain, compiled } = await answersOf({ ...modules, "main.mjs": registers + "\n" + loads });
+    expect(plain.stdout).toBe("function\nthe real a\n");
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
 
   test("named in sight, the plugin answers", async () => {

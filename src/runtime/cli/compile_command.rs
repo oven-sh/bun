@@ -6,6 +6,7 @@ mod failure;
 mod library;
 mod printing;
 mod reports;
+mod stored_strings;
 mod trimming;
 
 use core::ptr::NonNull;
@@ -38,6 +39,7 @@ pub(crate) use self::printing::{
     exit_with_failure, print_error_and_notes, print_failure, print_log, print_report_log,
     write_trimmed_size,
 };
+pub(crate) use self::stored_strings::print_stored_strings_and_exit;
 pub(crate) use self::trimming::{plan_trimming, trim_settings_of};
 
 pub(crate) struct CompileCommand;

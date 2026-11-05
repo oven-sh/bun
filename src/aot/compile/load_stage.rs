@@ -601,8 +601,8 @@ impl<'a> Build<'a> {
                                 || contents.embeds_addon_as_file)),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
                     can_replace_builtins: contents.can_replace_builtins(),
-                    hands_process_to_code_laid_above: can_load_code_at_run_time
-                        || contents.hands_process_to_code_laid_above,
+                    process_reaches_code_on_its_prototypes: can_load_code_at_run_time
+                        || contents.process_reaches_code_on_its_prototypes,
                 },
             ),
             code: CodeOptions {

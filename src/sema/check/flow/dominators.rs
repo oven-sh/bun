@@ -211,6 +211,48 @@ impl Checker<'_, '_> {
         self.flow_memo.dominators = index;
     }
 
+    fn find_last_call_not_known_to_be_idle(
+        &mut self,
+        file: FileId,
+        start: u32,
+        least: u32,
+        from: u32,
+    ) -> u32 {
+        let memo = &mut self.flow_memo;
+        let mut at = from;
+        let found = loop {
+            let known = memo.dominators.last_busy_call[at as usize];
+            if known == u32::MAX {
+                break u32::MAX;
+            }
+            if known != at {
+                at = known;
+                continue;
+            }
+            let (its_start, flow) = memo.dominators.calls[at as usize];
+            if its_start != start || flow <= least || !memo.is_idle_call(file, FlowId(flow)) {
+                break at;
+            }
+            match at.checked_sub(1) {
+                Some(before) => at = before,
+                None => break u32::MAX,
+            }
+        };
+        let mut at = from;
+        while at != found {
+            let known = std::mem::replace(&mut memo.dominators.last_busy_call[at as usize], found);
+            debug_assert!(
+                found == u32::MAX || known != u32::MAX && found <= known,
+                "an entry only moves down: entry {at} held {known} and is given {found}"
+            );
+            if known == u32::MAX || known == at && at == 0 {
+                break;
+            }
+            at = if known == at { at - 1 } else { known };
+        }
+        found
+    }
+
     fn find_last_busy_call_between(
         &mut self,
         file: FileId,
@@ -224,54 +266,28 @@ impl Checker<'_, '_> {
         let Some(from) = after.checked_sub(1) else {
             return 0;
         };
-        let mut at = from as u32;
-        let found = loop {
-            let index = &self.flow_memo.dominators;
-            let known = index.last_busy_call[at as usize];
-            if known == u32::MAX {
-                break u32::MAX;
+        loop {
+            let found = self.find_last_call_not_known_to_be_idle(file, start, least, from as u32);
+            let node = match self.flow_memo.dominators.calls.get(found as usize) {
+                Some(&(its_start, node)) if its_start == start => node,
+                _ => return 0,
+            };
+            let Flow::Call { call, .. } = bound.flow[node as usize] else {
+                return node;
+            };
+            if node <= least {
+                return node;
             }
-            if known != at {
-                at = known;
-                continue;
+            let (signature, is_cached) = self.effects_signature_and_is_cached(file, call);
+            if is_cached {
+                self.note_settled_call(file, FlowId(node), signature.is_none());
             }
-            let (its_start, flow) = index.calls[at as usize];
-            let flow = FlowId(flow);
-            if its_start != start || flow.0 <= least {
-                break at;
+            if self.flow_memo.dominators.file != Some(file) {
+                return u32::MAX;
             }
-            if !self.flow_memo.is_idle_call(file, flow) {
-                let Flow::Call { call, .. } = bound.flow[flow.idx()] else {
-                    break at;
-                };
-                let (signature, is_cached) = self.effects_signature_and_is_cached(file, call);
-                if is_cached {
-                    self.note_settled_call(file, flow, signature.is_none());
-                }
-                if self.flow_memo.dominators.file != Some(file) {
-                    return u32::MAX;
-                }
-                if signature.is_some() || !is_cached {
-                    break at;
-                }
+            if !self.flow_memo.is_idle_call(file, FlowId(node)) {
+                return node;
             }
-            match at.checked_sub(1) {
-                Some(before) => at = before,
-                None => break u32::MAX,
-            }
-        };
-        let index = &mut self.flow_memo.dominators;
-        let mut at = from as u32;
-        while at != found {
-            let known = std::mem::replace(&mut index.last_busy_call[at as usize], found);
-            if known == u32::MAX || known == at && at == 0 {
-                break;
-            }
-            at = if known == at { at - 1 } else { known };
-        }
-        match index.calls.get(found as usize) {
-            Some(&(its_start, node)) if its_start == start => node,
-            _ => 0,
         }
     }
 

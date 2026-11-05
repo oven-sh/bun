@@ -33,6 +33,9 @@ describe("Reflect.setPrototypeOf() of a built-in", () => {
       "Reflect.setPrototypeOf(Array.prototype, [])",
       "Reflect.setPrototypeOf(Date, Object.create(Date))",
       "Reflect.setPrototypeOf(Math, Object.create(Object.create(Math)))",
+      "(Reflect.preventExtensions(Math), Reflect.setPrototypeOf(Math, {}))",
+      "Reflect.setPrototypeOf(Math, null)",
+      "Reflect.setPrototypeOf(Math, Object.getPrototypeOf(Math))",
     ];
     using dir = tempDir("aot-reflect-set-prototype-of", {
       "one.test.js": `import { test } from "bun:test";\nconst said = [];\n${asked.map(ask => `try { said.push(${ask}); } catch (error) { said.push(error.name); }\n`).join("")}test("says", () => console.log(said.join()));\n`,
@@ -41,7 +44,7 @@ describe("Reflect.setPrototypeOf() of a built-in", () => {
       const { stdout, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
       expect({ flags, said: stdout.split("\n")[1], exitCode }).toEqual({
         flags,
-        said: "false,true,false,false,false",
+        said: "false,true,false,false,false,false,false,true",
         exitCode: 0,
       });
     }

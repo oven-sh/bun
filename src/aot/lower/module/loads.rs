@@ -59,12 +59,14 @@ enum ComputedLoad {
 
 #[derive(Copy, Clone)]
 struct KnownOfName {
+    written: ImportSpecifier,
     all_names_are_known: bool,
     names_no_library_module: bool,
 }
 
 #[derive(Copy, Clone)]
 struct AnswersOfResolver<'a> {
+    node: ExprId,
     form: ResolvedForm,
     spelled_modules: &'a [SpelledModule],
     known_of_name: KnownOfName,
@@ -347,6 +349,7 @@ pub(crate) fn lower_import_call(
                 return lowering.emit_computed_load(load, referrer, name, specifier, candidates);
             }
             lowering.emit_behind_test_of_name(load, name, specifier, &mut |this, is_path_alone| {
+                let specifier = this.emit_name_as_executable_spells_it(node, written, specifier);
                 (this.builder).import_dynamic(specifier, options, referrer, false, is_path_alone)
             })
         }
@@ -1305,10 +1308,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .iter()
             .filter(is_answered_by_program)
             .collect();
+        let (node, written) = (site.specifier_node, site.specifier);
         if answered.is_empty() {
-            return self
-                .builder
-                .resolve_dynamic(specifier, referrer, true, false);
+            let name = self.emit_name_as_executable_spells_it(node, written, specifier);
+            return self.builder.resolve_dynamic(name, referrer, true, false);
         }
         let result = self.builder.create_variable(None);
         let strings: Vec<StringId> = answered
@@ -1327,9 +1330,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.jump(done);
         }
         self.continue_in(otherwise);
-        let found = self
-            .builder
-            .resolve_dynamic(specifier, referrer, true, false);
+        let name = self.emit_name_as_executable_spells_it(node, written, specifier);
+        let found = self.builder.resolve_dynamic(name, referrer, true, false);
         self.builder.write_variable(result, found);
         self.jump(done);
 
@@ -1795,6 +1797,79 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.read_variable(spelled)
     }
 
+    fn emit_name_as_executable_spells_it(
+        &mut self,
+        node: ExprId,
+        written: ImportSpecifier,
+        name: ValueId,
+    ) -> ValueId {
+        let form = self.file.find_resolved_form(node);
+        if form.is_none() && !self.file.is_path_from_own_directory(node) {
+            return name;
+        }
+        let is_url = matches!(form, Some(ResolvedForm::Url | ResolvedForm::UrlObject));
+        let moved = self.file.find_folders_moved_by_joining(&written, is_url);
+        if moved.is_empty() {
+            return name;
+        }
+        let text = match form {
+            Some(ResolvedForm::UrlObject) => {
+                let href = self.file.intern_bytes(b"href");
+                let href = PropertyName::Constant(self.file.text_key(href));
+                self.emit_get(name, href)
+            }
+            Some(ResolvedForm::Path | ResolvedForm::Url) | None => name,
+        };
+        let platform = self.file.inputs.options.platform;
+        let separator: &[u8] = match !is_url && platform.contains(Platforms::WINDOWS) {
+            true => b"\\",
+            false => b"/",
+        };
+        let spelled = self.builder.create_variable(None);
+        self.builder.write_variable(spelled, text);
+        let (is_text_block, done) = (self.create_block(), self.create_block());
+        let is_text = self.builder.type_test(text, TypeTable::STRING);
+        self.builder
+            .branch(is_text, Edge::to(is_text_block), Edge::to(done));
+
+        self.continue_in(is_text_block);
+        let end = self.emit_text(separator);
+        let with_end = self.builder.strcat(&[text, end]);
+        let in_place = moved.iter().map(|folder| (folder, false));
+        for (folder, is_moved) in in_place.chain(moved.iter().map(|folder| (folder, true))) {
+            let start = match is_moved {
+                true => &folder.as_joined,
+                false => &folder.in_executable,
+            };
+            let starts_with = self.emit_builtin_itself(BuiltinId::StringPrototypeStartsWith);
+            let with_end_too = self.emit_text(&[&start[..], separator].concat());
+            let is_below = call::emit_call(self, starts_with, Some(with_end), &[with_end_too]);
+            let is_below = self.builder.to_boolean(is_below);
+            let (below, otherwise) = (self.create_block(), self.create_block());
+            self.builder
+                .branch(is_below, Edge::to(below), Edge::to(otherwise));
+
+            self.continue_in(below);
+            if is_moved {
+                let as_joined = self.emit_text(start);
+                let length = PropertyName::Constant(self.file.atom_key(known::length));
+                let length = self.emit_get(as_joined, length);
+                let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
+                let rest = call::emit_call(self, slice, Some(text), &[length]);
+                let in_executable = self.emit_text(&folder.in_executable);
+                let put_back = self.builder.strcat(&[in_executable, rest]);
+                self.builder.write_variable(spelled, put_back);
+            }
+            self.jump(done);
+
+            self.continue_in(otherwise);
+        }
+        self.jump(done);
+
+        self.continue_in(done);
+        self.builder.read_variable(spelled)
+    }
+
     fn branch_on_path_made_by_call(
         &mut self,
         specifier: ImportSpecifier,
@@ -1946,6 +2021,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_behind_test_of_name(load, name, specifier, &mut |this, is_path_alone| {
             let analysis = &this.file.compiled.analysis;
             let known_of_name = KnownOfName {
+                written,
                 all_names_are_known: candidates.hold_every_name(analysis, &written),
                 names_no_library_module: is_path_alone,
             };
@@ -2090,6 +2166,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         if let Some(form) = self.file.find_resolved_form(node) {
             let candidates = AnswersOfResolver {
+                node,
                 form,
                 spelled_modules,
                 known_of_name,
@@ -2099,7 +2176,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let modules_of_every_value = self.file.find_modules_of_every_value(node, spelled_modules);
         let spelled_modules = modules_of_every_value.as_deref().unwrap_or(spelled_modules);
         if spelled_modules.is_empty() {
-            return self.emit_load_by_name(load, referrer, specifier, known_of_name);
+            let name =
+                self.emit_name_as_executable_spells_it(node, known_of_name.written, specifier);
+            return self.emit_load_by_name(load, referrer, name, known_of_name);
         }
         let result = self.builder.create_variable(None);
         let mut strings: Vec<StringId> = Vec::with_capacity(spelled_modules.len());
@@ -2136,7 +2215,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if modules_of_every_value.is_some() {
             self.builder.unreachable();
         } else {
-            let loaded = self.emit_load_by_name(load, referrer, specifier, known_of_name);
+            let name =
+                self.emit_name_as_executable_spells_it(node, known_of_name.written, specifier);
+            let loaded = self.emit_load_by_name(load, referrer, name, known_of_name);
             self.builder.write_variable(result, loaded);
             self.jump(done);
         }
@@ -2253,7 +2334,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
             self.continue_in(other);
         }
-        let loaded = self.emit_load_by_name(load, referrer, answer, candidates.known_of_name);
+        let written = candidates.known_of_name.written;
+        let name = self.emit_name_as_executable_spells_it(candidates.node, written, answer);
+        let loaded = self.emit_load_by_name(load, referrer, name, candidates.known_of_name);
         self.builder.write_variable(result, loaded);
         self.jump(done);
 

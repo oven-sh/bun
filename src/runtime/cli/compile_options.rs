@@ -12,7 +12,9 @@ use bun_options_types::schema::api;
 use bun_options_types::trim::{Feature, TrimFeature, TrimRequest};
 use bun_trim::{TrimError, TrimRequestError};
 
-use super::compile_command::{CompileFailure, RequestOrigin, print_error_and_notes};
+use super::compile_command::{
+    CompileFailure, RequestOrigin, print_error_and_notes, print_stored_strings_and_exit,
+};
 use super::run_compiled;
 use super::startup_options::read_exec_argv;
 use crate::cli::arguments::{AUTO_PARAMS, BUILD_ONLY_PARAMS, ParamType};
@@ -890,6 +892,9 @@ fn read_build_flags<'c>(
 #[cold]
 #[inline(never)]
 pub(crate) fn parse_build_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>) {
+    if let Some(executable) = args.option(b"--aot-stored-strings") {
+        print_stored_strings_and_exit(executable);
+    }
     let origin = if cmd == Tag::CompileCommand {
         RequestOrigin::CompileCommand
     } else {

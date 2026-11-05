@@ -1681,12 +1681,12 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     }
 
-    // SAFETY: per fn contract — `parent` is this thread's VM, and only its own
-    // thread mutates its `transpiler` and the log that it writes to. No two
-    // references to the log overlap: this one ends with the statement,
-    // `resolve_entry_point` makes its own where it fails, and the one in the
-    // `Err` arm is made when that call has returned.
     let said_before = {
+        // SAFETY: per fn contract — `parent` is this thread's VM, and only its own
+        // thread mutates its `transpiler` and the log that it writes to. No two
+        // references to the log overlap: this one ends with the block,
+        // `resolve_entry_point` makes its own where it fails, and the one in the
+        // `Err` arm is made when that call has returned.
         let log = unsafe { &*(*parent).transpiler.log };
         (log.msgs.len(), log.errors)
     };

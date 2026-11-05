@@ -1478,6 +1478,7 @@
     "aot/import-calls-a-job-apart-cost-the-same-a-call-where-there-are-more.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
+    "aot/stored-strings-of-an-executable.test.ts",
     "aot/typescript-that-tsc-rejects.test.ts"
   ]
 }

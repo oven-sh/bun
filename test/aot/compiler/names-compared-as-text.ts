@@ -349,7 +349,7 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   },
   {
     paths: /^src\/aot\/test_runs\/files_of_run\.rs$/,
-    lines: /^b"(?:main|dependencies)" \||\.starts_with\(b"[@.]"\)/,
+    lines: /^b"(?:main|dependencies)" \||^b"exports" =>|\.starts_with\(b"[@.]"\)/,
     reason:
       "the keys of a package.json, the scope in the name of a package and the names of folders on the disk: data that a test run reads to find its files, no name of the program",
   },
@@ -373,6 +373,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     paths: /^src\/sema\/check\/aot\/inferred_from_use\.rs$/,
     lines: /^b"__proto__" \| b"Infinity" \| b"NaN" \|/,
     reason: "the class of a name, read off its text: which keys of a literal a layout lists",
+  },
+  {
+    paths: /^src\/aot\/lower\/statement\.rs$/,
+    lines: /atom_bytes\(text\) == b"unlikely"/,
+    reason:
+      "the word that a module of Bun's own writes as the first statement of an arm that seldom runs: a mark of the library's dialect, read in no file of the program",
   },
   {
     paths: /^src\/aot\/lower\/condition\.rs$/,

@@ -5,6 +5,7 @@ import { release } from "node:os";
 import { join } from "node:path";
 import { findImage, imageHeader } from "./cli/compiled-image";
 import { refusesExecuteOnlyStart } from "./execute-only-start";
+import { isHardened } from "./hardened";
 import { afterAll } from "./harness/default-timeout";
 import "./harness/real-executables";
 // One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
@@ -654,7 +655,8 @@ test.skipIf(!isLinux)(
   120_000,
 );
 
-test.skipIf(!isLinux)(
+// A hardened build runs no compiled code out of another file: a-hardened-build-runs-no-compiled-code-out-of-another-file.test.ts.
+test.skipIf(!isLinux || isHardened)(
   "a program that is compiled and run in one go lies at another address in every run",
   async () => {
     using dir = tempDir("aot-address-of-a-program", {

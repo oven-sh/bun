@@ -40,6 +40,12 @@ functions_of_no_engine! {
     fn Bun__AOT__freeResult(*mut c_void);
     fn Bun__AOT__imageAlignment() -> usize;
     fn Bun__AOT__relocateImage(*mut u8, usize, u64);
+    fn Bun__AOT__readStoredStrings(
+        *const u8,
+        usize,
+        *mut c_void,
+        unsafe extern "C" fn(*mut c_void, *const u8, usize, *const u8, usize)
+    ) -> u32;
     fn Bun__AOT__describeDifferenceOfRuntime(*const u8, usize, *mut u8, usize) -> usize;
     fn Bun__AOT__describeRegExpSyntaxError(*const u8, usize, *const u8, usize, *mut u8, usize) -> usize;
     fn Bun__AOT__classifyRegExpLiteral(*const u8, usize, *const u8, usize) -> u32;

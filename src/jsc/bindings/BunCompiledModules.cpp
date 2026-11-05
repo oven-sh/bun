@@ -859,11 +859,14 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     // `bun run` runs the text once more, into `target`. The image has the file once, so what has run cannot run beside itself.
     bool readsExportsOffVariable = layExportsVariableIfModuleObjectOfFile(globalObject, target, *module);
     RETURN_IF_EXCEPTION(scope, false);
+    // A refusal is no throw of the file: nothing has run into the object, which stays as it was, and the next call is refused as well.
+    bool isRefused = AOT::refusesToRunFileForDefaultLoader(globalObject, *module);
     // Ahead of the body, as in `bun run`: a file that throws is not run again into the same object.
-    target->hasEvaluated = true;
+    target->hasEvaluated = !isRefused;
     JSValue exports = AOT::runFileForDefaultLoader(globalObject, *module);
     bool hasThrown = scope.exception();
-    if (readsExportsOffVariable)
+    // An ES module that threw has laid nothing: the object keeps what it had.
+    if (readsExportsOffVariable || isRefused || (hasThrown && AOT::isESModule(*module)))
         return !hasThrown;
     // `bun run` runs the text into the object's own `exports`: what the file had laid there when it threw is there.
     target->setExportsObject(hasThrown ? AOT::moduleExports(globalObject, *module) : exports);
@@ -1168,8 +1171,14 @@ static bool layExportsVariableIfModuleObjectOfFile(Zig::GlobalObject* globalObje
 {
     if (AOT::moduleObjectOverExportsVariableIfMade(globalObject, module) != target)
         return false;
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     target->compiledModule = module.index();
-    return layExportsVariableOnModuleObject(globalObject, target);
+    bool isLaid = layExportsVariableOnModuleObject(globalObject, target);
+    RETURN_IF_EXCEPTION(scope, false);
+    // Over a property that the program has made fixed nothing is laid: what the file exports is in the variable alone.
+    if (isLaid)
+        AOT::didLayExportsVariableOnModuleObject(globalObject, module);
+    return isLaid;
 }
 
 static void layOnModuleObject(Zig::GlobalObject* globalObject, JSCommonJSModule* module, JSString* path, AOT::ModuleID compiled, OptionSet<AOT::ModuleObjectTrait> traits, AOT::ModuleObjects& out)

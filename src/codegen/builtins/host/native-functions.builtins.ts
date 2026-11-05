@@ -338,10 +338,10 @@ export default b.declarations(
   // from a native emitter comes by the operand. `process` is the object of the realm, whatever the global of that name holds. Code runs only where a program has laid a proxy above `process`.
   b.static(cpp("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom"), {
     // It refuses nothing: what is no object goes nowhere.
-    args: { prototype: b.any.optional, handedToWhatLiesOnIt: b.any.optional },
+    args: { prototype: b.any.optional, processIfReachable: b.any.optional },
     returns: b.undefined,
     capability: "js",
-    uses: { prototype: [b.retained], handedToWhatLiesOnIt: [b.retained] },
+    uses: { prototype: [b.retained], processIfReachable: [b.retained] },
     marks: ["LaysOperandAbovePrototype"],
     implementation: b.hostCall,
   }),

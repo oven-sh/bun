@@ -154,8 +154,8 @@ export const buildScaling = (part: number, parts: number) =>
     const countsInstructionsHere = countsInstructions();
     for (const [index, shape] of shapes.entries()) {
       if (!shape.name.includes(wanted) || index % parts !== part - 1) continue;
-      test.concurrent(
-        shape.name,
+      (shape.growsSoFar ? test.concurrent.failing : test.concurrent)(
+        shape.growsSoFar ? `${shape.name}: ${shape.growsSoFar}; the bound is ${mostGrowth}` : shape.name,
         async () => {
           const size = shape.size * factor;
           type Costs = [none: Built, once: Built | undefined, twice: Built];

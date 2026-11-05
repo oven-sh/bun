@@ -121,7 +121,8 @@ impl Manifests {
                 b"exports" => {
                     let mut nested = vec![field.value];
                     while let Some(value) = nested.pop() {
-                        ways.extend(text_of(value).filter(|way| !way.contains(&b'*')));
+                        let way = text_of(value);
+                        ways.extend(way.filter(|way| !strings::contains_char(way, b'*')));
                         nested.extend(fields_of(value).iter().map(|it| hir[it].value));
                         if let ExprKind::Array(items) = hir[value].kind {
                             nested.extend(hir.ids(items));

@@ -65,10 +65,20 @@ static bool isValidNamespaceString(String& namespaceString)
     return !namespaceString.isEmpty() && namespaceString.containsOnly<isValidNamespaceCharacter>();
 }
 
+static bool throwsWhereBuildSawNoPlugin(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+{
+    JSC::JSValue error = Bun::errorIfBuildSawNoPlugin(globalObject);
+    if (error) [[unlikely]]
+        throwException(globalObject, scope, error);
+    return !!error;
+}
+
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (throwsWhereBuildSawNoPlugin(globalObject, scope))
+        return {};
 
     if (callframe->argumentCount() < 2) {
         throwException(globalObject, scope, createError(globalObject, "onLoad() requires at least 2 arguments"_s));
@@ -129,6 +139,8 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (throwsWhereBuildSawNoPlugin(globalObject, scope))
+        return {};
 
     if (callframe->argumentCount() < 2) {
         throwException(globalObject, scope, createError(globalObject, "module() needs 2 arguments: a module ID and a function to call"_s));
@@ -201,6 +213,8 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (throwsWhereBuildSawNoPlugin(globalObject, scope))
+        return {};
 
     if (callframe->argumentCount() < 2) {
         throwException(globalObject, scope, createError(globalObject, "onResolve() requires at least 2 arguments"_s));
@@ -5712,12 +5726,5 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObjec
         JSC::throwException(globalObject, scope, error);
         return {};
     }
-#if ENABLE(AOT)
-    if (JSC::JSValue error = Bun::errorIfBuildSawNoPlugin(globalObject)) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-        JSC::throwException(globalObject, scope, error);
-        return {};
-    }
-#endif
     return Bun::setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }

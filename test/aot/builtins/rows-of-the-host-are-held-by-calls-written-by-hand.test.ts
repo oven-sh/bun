@@ -217,6 +217,13 @@ const namesOfLibc =
     ? ["libSystem.B.dylib"]
     : ["libc.so.6", `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1`, "libc.so.7", "libc.so"];
 const neverCalled = { ptr: 8, args: [], returns: "void" };
+// A library holds native memory until it is closed. What is asked of it here is asked of a closed one as well.
+const linkAndClose = () => {
+  const linked = ffi.linkSymbols({ neverCalled });
+  const { symbols } = linked;
+  linked.close();
+  return { linked, symbols };
+};
 const absolute = { abs: { args: ["i32"], returns: "i32" } };
 const spreadToCallback = (overload: DumpedOverload) =>
   overload.callbacks.flatMap(callback => typeAt(callback.spreadArguments));
@@ -440,10 +447,10 @@ const casesOfFFI: Case[] = [
     mode: "Call",
     place: "the result",
     typesIn: result,
-    see: () =>
-      [ffi.linkSymbols({ neverCalled }), ffi.linkSymbols({}), ffi.linkSymbols({ neverCalled: { args: 5 } })].map(
-        value => ({ value }),
-      ),
+    see: () => {
+      const refused = [ffi.linkSymbols({}), ffi.linkSymbols({ neverCalled: { args: 5 } })];
+      return [linkAndClose().linked, ...refused].map(value => ({ value }));
+    },
   },
   {
     row: "Bun.FFI.viewSource",
@@ -479,7 +486,7 @@ const casesOfFFI: Case[] = [
       const opened = openLibc(ffi.dlopen);
       const { symbols } = opened;
       opened.close();
-      return [symbols, opened.symbols, ffi.linkSymbols({ neverCalled }).symbols].map(value => ({ value }));
+      return [symbols, opened.symbols, linkAndClose().symbols].map(value => ({ value }));
     },
     notBroughtOut: { Undefined: "native code hands out no library before it has laid the object there" },
   },
@@ -1270,7 +1277,7 @@ function defineTests() {
       const [made] = overloadsOf({ row: "native:Bindgen:ffi.bind.ts:makeCallback", mode: "Call" } as Case).map(
         row => row.result.type,
       );
-      for (const value of [{}, () => {}, new Error("made for this test"), ffi.linkSymbols({ neverCalled }), null, 5])
+      for (const value of [{}, () => {}, new Error("made for this test"), linkAndClose().linked, null, 5])
         expect(mismatchOf(made, { value })).toBeString();
     },
   );
@@ -1282,7 +1289,7 @@ function defineTests() {
       expect(Reflect.ownKeys(prototype)).toEqual(["close"]);
       expect(Reflect.getPrototypeOf(prototype)).toBe(Object.prototype);
       const close = Reflect.get(prototype, "close");
-      for (const receiver of [undefined, {}, prototype, ffi.linkSymbols({ neverCalled })])
+      for (const receiver of [undefined, {}, prototype, linkAndClose().linked])
         expect(() => Reflect.apply(close, receiver, [])).toThrow(TypeError);
       const made = ffi.callback({}, () => {});
       expect(Reflect.ownKeys(made).sort()).toEqual(["ptr", "threadsafe"]);

@@ -52,6 +52,22 @@ bun compile --obfuscate ./repo.ts
 
 `--obfuscate` does what `--sourcemap=external` does, and the `name` of every function and class is `""`. That includes built-in functions that are written in JavaScript, such as `Array.prototype.map`. An error message names a variable by a single letter. Code that reads a name behaves differently: `this.name = new.target.name` sets an empty name, and a table keyed by `constructor.name` puts every class under one key. Property names, strings and the descriptions of symbols stay in the executable, because your program finds and prints them when it runs.
 
+### List the strings in an executable
+
+```bash terminal icon="terminal"
+bun build --aot-stored-strings ./dist/app > strings.bin
+```
+
+Before you ship, you may want to check that a name didn't end up in the executable. `strings` and `grep` are a poor fit for that. Compiled code stores its strings back to back and shares bytes between them, so two neighbors can spell a word that isn't in your program. This command prints every string that the compiled code stores, whole, as UTF-8, each followed by a zero byte. It reads an executable built for any platform, builds nothing, and takes no other flag.
+
+Standard error gets one line for each compiled image in the file. It says where those bytes are:
+
+```txt
+image 0 | Text | offset 94617600 | length 18883161 | 1 bytes that no string covers
+```
+
+The exit code is 0 when the bytes that no string covers are all zero, 1 when one of them isn't, and 2 when the file holds no compiled code or comes from a Bun with another image format.
+
 ### Use with Sentry
 
 ```bash terminal icon="terminal"

@@ -6540,7 +6540,7 @@ class ClientHttp2Session extends Http2Session {
       try {
         this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
       } catch (e) {
-        this.#releaseRequestSlot(req, false);
+        this.#releaseRequestSlot(req);
         throw e;
       }
       if (onClientStreamStartChannel.hasSubscribers) {
@@ -6575,11 +6575,11 @@ class ClientHttp2Session extends Http2Session {
   }
 
   // Called at the native close report (the peer frees the slot then), and from 'close' as a backstop.
-  #releaseRequestSlot(req: ClientHttp2Stream, flush: boolean = true) {
+  #releaseRequestSlot(req: ClientHttp2Stream) {
     if ((req[bunHTTP2StreamStatus] & StreamState.HoldsRequestSlot) === 0) return;
     req[bunHTTP2StreamStatus] &= ~StreamState.HoldsRequestSlot;
     this.#activeRequestCount--;
-    if (flush) this.#flushPendingRequests();
+    this.#flushPendingRequests();
   }
 
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots
@@ -6641,7 +6641,7 @@ class ClientHttp2Session extends Http2Session {
         // never reached the wire either, so the teardown must not write RST_STREAM for an id the
         // peer considers idle.
         this.#connections--;
-        this.#releaseRequestSlot(req, false);
+        this.#releaseRequestSlot(req);
         req[kNeverAnnounced] = true;
         if (!req.destroyed) req.destroy(err as Error);
         continue;

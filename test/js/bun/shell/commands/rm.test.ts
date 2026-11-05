@@ -645,9 +645,21 @@ describe.concurrent("rm takes its operands in the order given", () => {
           },
           { line: "rm -rf link/sub link", setup: ["a/sub/k", "link -> a"], exitCode: 0, left: ["a/"] },
         ]),
-    // rm refuses "." only where it exists: a missing operand is a missing operand.
+    // rm refuses "." only where it is a directory: a missing operand is a missing operand.
     { line: "rm -rf missing/. b", setup: ["b/y"], exitCode: 0, left: [] },
     { line: "rm -r missing/. b", setup: ["b/y"], exitCode: 1, left: [], stderr: missing("missing/.") },
+    ...(isWindows
+      ? []
+      : [
+          { line: "rm -r f/. b", setup: ["f", "b/y"], exitCode: 1, left: ["f"], stderr: "rm: f/.: Not a directory\n" },
+          {
+            line: "rm -rf link/. b",
+            setup: ["a/x", "b/y", "link -> a"],
+            exitCode: 1,
+            left: ["a/", "a/x", "link@"],
+            stderr: refused("link/."),
+          },
+        ]),
     // Directory operands whose walks would overlap if they started at once.
     { line: "rm -r a b c", setup: bushes("a", "b", "c"), exitCode: 0, left: [] },
     { line: "rm -r a b a/s1", setup: bushes("a", "b"), exitCode: 1, left: [], stderr: missing("a/s1") },
@@ -667,13 +679,6 @@ describe.concurrent("rm takes its operands in the order given", () => {
     { line: "rm -r a b ./a c", setup: bushes("a", "b", "c"), exitCode: 1, left: [], stderr: missing("./a") },
     { line: "rm -r a b a/s0/f1 c", setup: bushes("a", "b", "c"), exitCode: 1, left: [], stderr: missing("a/s0/f1") },
     { line: "rm -r a b b/../a", setup: bushes("a", "b"), exitCode: 1, left: [], stderr: missing("b/../a") },
-    {
-      line: "rm -r a b s/../c c/s1 d e",
-      setup: [...bushes("a", "b", "c", "d", "e"), "s/"],
-      exitCode: 1,
-      left: ["s/"],
-      stderr: missing("c/s1"),
-    },
     { line: "rm -rf a/ b/ a/ c/", setup: bushes("a", "b", "c"), exitCode: 0, left: [] },
     { line: "rm -rf a f b g c", setup: [...bushes("a", "b", "c"), "f", "g"], exitCode: 0, left: [] },
     { line: "rm -r a f a/f0 b", setup: [...bushes("a", "b"), "f"], exitCode: 1, left: [], stderr: missing("a/f0") },
@@ -735,6 +740,14 @@ describe.concurrent("rm takes its operands in the order given", () => {
             stderr: missing("c/s1"),
           },
           { line: "rm -r $PWD/a a b", setup: bushes("a", "b"), exitCode: 1, left: [], stderr: missing("a") },
+          // Windows does not resolve ".." behind a directory that exists (#13523).
+          {
+            line: "rm -r a b s/../c c/s1 d e",
+            setup: [...bushes("a", "b", "c", "d", "e"), "s/"],
+            exitCode: 1,
+            left: ["s/"],
+            stderr: missing("c/s1"),
+          },
         ]),
   ];
 

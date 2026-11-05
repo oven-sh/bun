@@ -578,7 +578,7 @@ export default b.declarations(
       emitWarning: emitsWarningOnNextTick,
       ref: callsMemberOfOperand("@@@nodejs.ref", "ref"),
       unref: callsMemberOfOperand("@@@nodejs.unref", "unref"),
-      cwd: { ...systemCall, returns: b.string },
+      cwd: b.property(b.callable, { call: { ...systemCall, returns: b.string, implementation: b.generic } }),
       chdir: [{ ...systemCall, args: { directory: b.string }, returns: b.string }, refusal(["directory"])],
       umask: [{ ...systemCall, args: { mask: numberOrString.optional }, returns: b.f64 }, refusal(["mask"])],
       getgroups: { ...systemCall, returns: newArrayOf(b.f64) },

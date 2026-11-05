@@ -250,6 +250,8 @@ impl Quick {
         self.doc.label = 0;
     }
 
+    #[cold]
+    #[inline(never)]
     pub(crate) fn grow_doc(&mut self) {
         if self.doc.d_pos > self.doc.d_cap {
             self.doc.overflowed = true;
@@ -261,6 +263,7 @@ impl Quick {
     }
 
     /// Every writer below trusts that there is room. Whoever writes in a loop calls this once per turn.
+    #[inline(always)]
     pub(crate) fn reserve(&mut self) {
         if self.doc.d_pos + 1024 > self.doc.d_cap {
             self.grow_doc();

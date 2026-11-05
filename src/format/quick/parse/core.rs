@@ -515,7 +515,8 @@ impl Quick {
             && self.doc.text_filter == 0
             && self.options.end_of_line == EOL_LF
             && !self.options.use_tabs
-            && self.mode.single_statement_mode == 0;
+            && self.mode.single_statement_mode == 0
+            && !self.options.is_mdx_es_syntax;
         self.set_may_break_lines(self.parse.joins_lines);
         let mut known: i32 = 0;
         if self.fast.verified_end != 0 {
@@ -1878,10 +1879,10 @@ impl Quick {
                 tk::Import => {
                     {
                         // import( and import. start expressions
-                        self.save();
+                        let saved = self.save();
                         self.next()?;
                         let after = self.lexer.tok;
-                        self.restore();
+                        self.restore(saved);
                         if after == tk::ParenL || after == tk::Dot {
                             break 's0;
                         }
@@ -1904,14 +1905,14 @@ impl Quick {
                     }
                     match self.lexer.tok_kw {
                         kw::Let => {
-                            self.save();
+                            let saved = self.save();
                             self.next()?;
                             let is_declaration = self.lexer.tok == tk::Name
                                 || self.lexer.tok == tk::BracketL
                                 || self.lexer.tok == tk::BraceL;
                             // `let`, the end of the line, `function f() {}`
                             let is_odd = self.lexer.tok >= tk::In;
-                            self.restore();
+                            self.restore(saved);
                             if is_declaration {
                                 return self.parse_var_statement(start, V_LET);
                             }
@@ -1921,16 +1922,16 @@ impl Quick {
                         }
                         kw::Static => {
                             // TypeScript's parser, which reads every file first, takes it for a modifier of what follows, on whatever line
-                            self.save();
+                            let saved = self.save();
                             self.next()?;
                             let is_odd = self.is_word();
-                            self.restore();
+                            self.restore(saved);
                             if is_odd {
                                 return Err(self.text_refuse());
                             }
                         }
                         kw::Async => {
-                            self.save();
+                            let saved = self.save();
                             self.next()?;
                             let is_function =
                                 self.lexer.tok == tk::Function && self.lexer.tok_nl == 0;
@@ -1942,21 +1943,21 @@ impl Quick {
                                 }
                                 return Ok(declaration);
                             }
-                            self.restore();
+                            self.restore(saved);
                         }
                         kw::Using => {
-                            self.save();
+                            let saved = self.save();
                             self.next()?;
                             let is_declaration = (self.lexer.tok == tk::Void
                                 || (self.lexer.tok == tk::Name && self.lexer.tok_kw != kw::Of))
                                 && self.lexer.tok_nl == 0;
-                            self.restore();
+                            self.restore(saved);
                             if is_declaration {
                                 return self.parse_var_statement(start, V_USING);
                             }
                         }
                         kw::Await => {
-                            self.save();
+                            let saved = self.save();
                             self.next()?;
                             let mut is_declaration =
                                 self.is_kw(kw::Using) && self.lexer.tok_nl == 0;
@@ -1966,7 +1967,7 @@ impl Quick {
                                     || self.lexer.tok == tk::Void)
                                     && self.lexer.tok_nl == 0;
                             }
-                            self.restore();
+                            self.restore(saved);
                             if is_declaration {
                                 self.next()?;
                                 return self.parse_var_statement(start, V_AWAIT_USING);
@@ -2031,10 +2032,10 @@ impl Quick {
             // whether this is a declaration depends on the parser, and on where the line ends
             kw::Let => Ok(self.parse.typed != TYPED_TS),
             kw::Async => {
-                self.save();
+                let saved = self.save();
                 self.next()?;
                 let is_function = self.lexer.tok == tk::Function && self.lexer.tok_nl == 0;
-                self.restore();
+                self.restore(saved);
                 Ok(is_function && self.parse.typed != TYPED_TS)
             }
             _ => Ok(self.parse.typed == TYPED_FLOW
@@ -2275,7 +2276,7 @@ impl Quick {
                     || self.lexer.tok_kw == kw::Await)
             {
                 let kw = self.lexer.tok_kw;
-                self.save();
+                let saved = self.save();
                 self.next()?;
                 if kw == kw::Let {
                     if self.lexer.tok == tk::Name
@@ -2299,7 +2300,7 @@ impl Quick {
                         var_kind = V_AWAIT_USING;
                     }
                 }
-                self.restore();
+                self.restore(saved);
                 if var_kind == V_AWAIT_USING {
                     self.next()?;
                 }
@@ -3858,13 +3859,13 @@ impl Quick {
         }
         if self.parse.typed != 0 {
             // `(a?: T) => ..`, `(a?, b) => ..`: the mark of an optional parameter
-            self.save();
+            let saved = self.save();
             self.next()?;
             let is_optional_mark = self.lexer.tok == tk::Colon
                 || self.lexer.tok == tk::Comma
                 || self.lexer.tok == tk::ParenR
                 || self.lexer.tok == tk::Eq;
-            self.restore();
+            self.restore(saved);
             if is_optional_mark {
                 return Ok(test);
             }
@@ -3990,14 +3991,14 @@ impl Quick {
 
     /// TypeScript takes `await x` for what it looks like wherever a word or a literal follows on the same line.
     pub(crate) fn is_operand_of_await_in_type_script(&mut self) -> R<bool> {
-        self.save();
+        let saved = self.save();
         self.next()?;
         let result = self.lexer.tok_nl == 0
             && (self.is_word()
                 || self.lexer.tok == tk::Num
                 || self.lexer.tok == tk::BigInt
                 || self.lexer.tok == tk::String);
-        self.restore();
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -4090,7 +4091,7 @@ impl Quick {
                         || (self.parse.typed == TYPED_TS
                             && self.is_operand_of_await_in_type_script()?))
                 {
-                    self.save();
+                    let saved = self.save();
                     self.next()?;
                     // `await` alone, or before something that cannot start an operand, is a name
                     let is_operand = self.starts_expression()
@@ -4119,7 +4120,7 @@ impl Quick {
                             argument,
                         ));
                     }
-                    self.restore();
+                    self.restore(saved);
                 }
             }
             _ => {}
@@ -4193,12 +4194,12 @@ impl Quick {
                 }
             } else if self.lexer.tok == tk::Question {
                 // f(?, x)
-                self.save();
+                let saved = self.save();
                 self.next()?;
                 if self.lexer.tok == tk::Comma || self.lexer.tok == tk::ParenR {
                     return Err(self.text_refuse());
                 }
-                self.restore();
+                self.restore(saved);
                 let v1 = self.parse_maybe_assign()?;
                 self.list_push(v1);
             } else {
@@ -4496,12 +4497,8 @@ impl Quick {
                         }
                         self.list_truncate(list_mark);
                     }
-                    if are_typed
-                        || (maybe_async
-                            && self.lexer.tok == tk::BraceL
-                            && self.parse.typed == TYPED_TS)
-                    {
-                        // they were parameters, or are taken for them, and there is no function
+                    if are_typed {
+                        // they were parameters, and there is no function
                         return Err(self.text_refuse());
                     }
                     if maybe_async && self.parse.typed == TYPED_FLOW {
@@ -4673,7 +4670,7 @@ impl Quick {
                         }
                     }
                     if self.lexer.tok_kw == kw::Async {
-                        self.save();
+                        let saved = self.save();
                         self.next()?;
                         if self.lexer.tok_nl == 0 {
                             if self.lexer.tok == tk::Function {
@@ -4705,14 +4702,14 @@ impl Quick {
                                 return Err(self.text_refuse());
                             }
                         }
-                        self.restore();
+                        self.restore(saved);
                     } else if self.lexer.tok_kw == kw::Module {
-                        self.save();
+                        let saved = self.save();
                         self.next()?;
                         if self.lexer.tok == tk::BraceL && self.lexer.tok_nl == 0 {
                             return Err(self.text_refuse());
                         }
-                        self.restore();
+                        self.restore(saved);
                     } else if self.lexer.tok_kw != 0 && self.is_reserved_here(self.lexer.tok_kw) {
                         return Err(self.text_refuse());
                     }
@@ -4962,10 +4959,10 @@ impl Quick {
             } else if self.parse.typed != 0 {
                 if self.lexer.tok == tk::This && self.parse.typed == TYPED_TS {
                     // (this: T) => ..
-                    self.save();
+                    let saved = self.save();
                     self.next()?;
                     let is_parameter = self.lexer.tok == tk::Colon;
-                    self.restore();
+                    self.restore(saved);
                     if is_parameter {
                         let parameter = self.identifier()?;
                         self.parse_binding_suffix(parameter)?;
@@ -6035,7 +6032,7 @@ impl Quick {
                 && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"type")
             {
                 // `import type X from`, `import type { X } from`, `import type * as X from`; but `import type from "x"`, `import type, { X } from`
-                self.save();
+                let saved = self.save();
                 self.next()?;
                 let is_kind = self.lexer.tok != tk::Comma
                     && self.lexer.tok != tk::Eq
@@ -6043,14 +6040,14 @@ impl Quick {
                 if is_kind {
                     import_kind = IK_TYPE;
                 } else {
-                    self.restore();
+                    self.restore(saved);
                 }
             }
             if self.lexer.tok == tk::Name {
-                self.save();
+                let saved = self.save();
                 self.next()?;
                 let is_equals = self.lexer.tok == tk::Eq;
-                self.restore();
+                self.restore(saved);
                 if is_equals {
                     return self.ts_parse_import_equals(start, import_kind);
                 }
@@ -6063,7 +6060,7 @@ impl Quick {
         {
             // `import defer * as ns`, `import source x from`; but `import defer from "x"` imports a default
             let kw = self.lexer.tok_kw;
-            self.save();
+            let saved = self.save();
             self.next()?;
             let is_phase = if kw == kw::Defer {
                 self.lexer.tok == tk::Mul
@@ -6086,7 +6083,7 @@ impl Quick {
                     return Err(self.text_refuse());
                 }
             } else {
-                self.restore();
+                self.restore(saved);
             }
         }
         let mut flags: i32 = 0;
@@ -6397,13 +6394,13 @@ impl Quick {
                     }
                 }
                 if declaration == 0 && self.is_kw(kw::Async) {
-                    self.save();
+                    let saved = self.save();
                     self.next()?;
                     if self.lexer.tok == tk::Function && self.lexer.tok_nl == 0 {
                         declaration =
                             self.parse_function(decl_start, k::FunctionDeclaration, F_ASYNC)?;
                     } else {
-                        self.restore();
+                        self.restore(saved);
                     }
                 }
                 if declaration == 0 {
@@ -6475,14 +6472,14 @@ impl Quick {
                         || self.lexer.tok_kw == kw::Using
                         || self.lexer.tok_kw == kw::Await
                     {
-                        self.save();
+                        let saved = self.save();
                         self.next()?;
                         let looks_like_declaration = self.lexer.tok == tk::Name
                             || self.lexer.tok == tk::Function
                             || self.lexer.tok == tk::BracketL
                             || self.lexer.tok == tk::BraceL;
                         let is_from = self.is_kw(kw::From);
-                        self.restore();
+                        self.restore(saved);
                         if looks_like_declaration && !is_from {
                             declaration = self.parse_statement()?;
                             // `export async`, the end of the line, `function f() {}`
@@ -7012,7 +7009,7 @@ impl Quick {
                             }
                         }
                     }
-                    self.save();
+                    let saved = self.save();
                     let comments_before = self.lexer.c_count;
                     self.next_jsx_tag()?;
                     if self.parse.typed == TYPED_TS
@@ -7055,7 +7052,7 @@ impl Quick {
                         }
                         break;
                     }
-                    self.restore();
+                    self.restore(saved);
                     let v5 = self.parse_jsx_element(if after_empty {
                         JSX_CHILD_AFTER_EMPTY
                     } else {

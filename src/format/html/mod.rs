@@ -127,6 +127,8 @@ pub(crate) struct Scripts {
     pub(crate) quick: crate::js::quick::Scratch,
     /// The last one, formatted.
     pub(crate) formatted: Vec<u8>,
+    /// The name of an attribute with code in it.
+    pub(crate) name: Vec<u8>,
 }
 
 /// The `options` that Prettier's functions receive.
@@ -526,6 +528,7 @@ fn write_lines_and_code(
             None => {
                 let script = crate::js::quick::Script {
                     text: source,
+                    name: options.filepath.as_deref().unwrap_or_default(),
                     is_typescript: code.language == Language::TypeScript,
                     is_no_module: false,
                     indentation: u32::from(code.level),

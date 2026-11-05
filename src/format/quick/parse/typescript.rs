@@ -152,10 +152,10 @@ impl Quick {
 
     /// The current token is a word that can be a modifier: is it one here? Leaves the lexer where it is.
     pub(crate) fn next_can_follow_modifier(&mut self, allow_line_break: bool) -> R<bool> {
-        self.save();
+        let saved = self.save();
         self.next()?;
         let result = (allow_line_break || self.lexer.tok_nl == 0) && self.can_follow_modifier();
-        self.restore();
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -199,7 +199,7 @@ impl Quick {
         let mut result: i32 = 0;
         if self.lexer.tok == tk::Name {
             // x is T
-            self.save();
+            let saved = self.save();
             let start = self.lexer.tok_start;
             let is_enum = self.is_kw(kw::Enum);
             let name = self.identifier()?;
@@ -214,7 +214,7 @@ impl Quick {
                 let v1 = self.node1(k::TypeAnnotation, type_start, self.lexer.prev_end, type_);
                 result = self.node2(k::TypePredicate, start, v0, name, v1);
             } else {
-                self.restore();
+                self.restore(saved);
             }
         }
         if result == 0 {
@@ -401,10 +401,10 @@ impl Quick {
             return self.is_unambiguously_start_of_function_type();
         }
         if self.word() == w::Abstract {
-            self.save();
+            let saved = self.save();
             self.next()?;
             let result = self.lexer.tok == tk::New;
-            self.restore();
+            self.restore(saved);
             return Ok(result);
         }
         return Ok(false);
@@ -518,6 +518,10 @@ impl Quick {
         };
         // Prettier drops a union or intersection of one type
         if self.lexer.tok != operator {
+            if has_leading_operator {
+                // (for the long way there is a union where it asks what is around a type: `(| typeof a)[b]`, `A<| B>` that does not fit)
+                return Err(self.text_refuse());
+            }
             return Ok(first);
         }
         let list_mark = self.arena.ls_pos;
@@ -686,11 +690,11 @@ impl Quick {
                 }
             } else if self.lexer.tok == tk::Question {
                 // `T?` in a tuple; before the start of a type it belongs to a conditional type
-                self.save();
+                let saved = self.save();
                 self.next()?;
                 let is_conditional = self.is_start_of_type();
                 if is_conditional {
-                    self.restore();
+                    self.restore(saved);
                     return Ok(type_);
                 }
                 type_ = self.node1(k::OptionalType, start, self.lexer.prev_end, type_);
@@ -711,12 +715,12 @@ impl Quick {
 
     pub(crate) fn keyword_type(&mut self, which: i32) -> R<i32> {
         // followed by a dot it is the name of a namespace
-        self.save();
+        let saved = self.save();
         let start = self.lexer.tok_start;
         let end = self.lexer.tok_end;
         self.next()?;
         if self.lexer.tok == tk::Dot {
-            self.restore();
+            self.restore(saved);
             return self.parse_type_reference();
         }
         return Ok(self.node0(k::KeywordType | (which << SUB_SHIFT), start, end));
@@ -926,14 +930,14 @@ impl Quick {
         if !self.is_word() {
             return Ok(false);
         }
-        self.save();
+        let saved = self.save();
         self.next()?;
         let mut result = self.lexer.tok == tk::Colon;
         if self.lexer.tok == tk::Question {
             self.next()?;
             result = self.lexer.tok == tk::Colon;
         }
-        self.restore();
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -1084,12 +1088,12 @@ impl Quick {
                         return self.keyword_type(type_keyword::Object);
                     }
                     w::Asserts => {
-                        self.save();
+                        let saved = self.save();
                         self.next()?;
                         let is_predicate = (self.lexer.tok == tk::Name
                             || self.lexer.tok == tk::This)
                             && self.lexer.tok_nl == 0;
-                        self.restore();
+                        self.restore(saved);
                         if is_predicate {
                             return self.parse_asserts_type_predicate();
                         }
@@ -1313,12 +1317,12 @@ impl Quick {
             return self.parse_signature(k::CallSignature, start, 0);
         }
         if self.lexer.tok == tk::New {
-            self.save();
+            let saved = self.save();
             self.next()?;
             if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
                 return self.parse_signature(k::ConstructSignature, start, 0);
             }
-            self.restore();
+            self.restore(saved);
         }
         let mut head: i32 = 0;
         let mut method = M_METHOD;
@@ -1350,12 +1354,12 @@ impl Quick {
             && (self.lexer.tok_kw == kw::Get || self.lexer.tok_kw == kw::Set)
         {
             let kw = self.lexer.tok_kw;
-            self.save();
+            let saved = self.save();
             self.next()?;
             if self.lexer.tok == tk::BracketL || self.is_literal_property_name() {
                 method = if kw == kw::Get { M_GET } else { M_SET };
             } else {
-                self.restore();
+                self.restore(saved);
             }
         }
         if self.lexer.tok == tk::BracketL && method == M_METHOD && self.is_index_signature()? {
@@ -1626,12 +1630,12 @@ impl Quick {
                     // the second one is a name
                     break;
                 }
-                self.save();
+                let saved = self.save();
                 self.next()?;
                 if self.lexer.tok == tk::BraceL {
                     return self.parse_static_block_in_class(start);
                 }
-                self.restore();
+                self.restore(saved);
             }
             if !self.next_can_follow_modifier(w == w::Static)? {
                 break;
@@ -1672,12 +1676,12 @@ impl Quick {
             && (self.lexer.tok_kw == kw::Get || self.lexer.tok_kw == kw::Set)
         {
             let kw = self.lexer.tok_kw;
-            self.save();
+            let saved = self.save();
             self.next()?;
             if self.lexer.tok == tk::BracketL || self.is_literal_property_name() {
                 method = if kw == kw::Get { M_GET } else { M_SET };
             } else {
-                self.restore();
+                self.restore(saved);
             }
         }
         if self.lexer.tok == tk::BracketL
@@ -1892,12 +1896,12 @@ impl Quick {
         self.expect(tk::Eq)?;
         let mut type_: i32 = 0;
         if self.word() == w::Intrinsic {
-            self.save();
+            let saved = self.save();
             let type_start = self.lexer.tok_start;
             let type_end = self.lexer.tok_end;
             self.next()?;
             if self.lexer.tok == tk::Dot {
-                self.restore();
+                self.restore(saved);
             } else {
                 type_ = self.node0(
                     k::KeywordType | (type_keyword::Intrinsic << SUB_SHIFT),
@@ -2017,23 +2021,23 @@ impl Quick {
     }
 
     pub(crate) fn peek(&mut self) -> R<i32> {
-        self.save();
+        let saved = self.save();
         self.next()?;
         let result = self.lexer.tok;
-        self.restore();
+        self.restore(saved);
         return Ok(result);
     }
 
     /// The token after the current one, if it stands on the same line; else Tk.EOF.
     pub(crate) fn peek_on_same_line(&mut self) -> R<i32> {
-        self.save();
+        let saved = self.save();
         self.next()?;
         let result = if self.lexer.tok_nl == 0 {
             self.lexer.tok
         } else {
             tk::EOF
         };
-        self.restore();
+        self.restore(saved);
         return Ok(result);
     }
 
@@ -2135,12 +2139,12 @@ impl Quick {
     pub(crate) fn parse_declaration(&mut self, start: i32, modifiers: i32) -> R<i32> {
         self.stack()?;
         if self.lexer.tok == tk::Const {
-            self.save();
+            let saved = self.save();
             self.next()?;
             if self.is_kw(kw::Enum) {
                 return self.parse_enum(start, F_CONST | (modifiers << SUB_SHIFT));
             }
-            self.restore();
+            self.restore(saved);
             if modifiers == 0 {
                 return Ok(0);
             }
@@ -2374,7 +2378,7 @@ impl Quick {
             return Ok(0);
         }
         if self.is_kw(kw::As) {
-            self.save();
+            let saved = self.save();
             self.next()?;
             if self.word() == w::Namespace {
                 self.next()?;
@@ -2387,11 +2391,11 @@ impl Quick {
                     id,
                 ));
             }
-            self.restore();
+            self.restore(saved);
             return Ok(0);
         }
         if self.word() == w::Type {
-            self.save();
+            let saved = self.save();
             self.next()?;
             if self.lexer.tok == tk::BraceL || self.lexer.tok == tk::Mul {
                 return Ok(-1);
@@ -2399,7 +2403,7 @@ impl Quick {
             if self.is_kw(kw::As) {
                 return Err(self.text_refuse());
             }
-            self.restore();
+            self.restore(saved);
         }
         // a class starts at its decorators, also if they stand before `export`
         return self.ts_parse_statement(if self.parse.pending_decorators != 0 {
@@ -2720,14 +2724,14 @@ impl Quick {
             }
             if is_shift && self.parse.typed != FLOW {
                 // `a << b >> (c)`: TypeScript takes `<b>` for the type parameters of a function type, and goes on without the rest of it
-                self.save();
+                let saved = self.save();
                 self.next()?;
                 let is_name = self.lexer.tok == tk::Name;
                 self.next()?;
                 if is_name && self.starts_with_gt() {
                     return Err(self.text_refuse());
                 }
-                self.restore();
+                self.restore(saved);
                 // `a << b.c > (d)`: the same, with more that is missed
                 let mut p = self.lexer.tok_end;
                 let is_one_token = self.lexer.tok == tk::Shl;

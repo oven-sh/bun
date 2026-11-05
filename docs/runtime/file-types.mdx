@@ -365,12 +365,13 @@ To import the metadata with the HTML at runtime, load `.md` files with a [plugin
 
 ```ts markdown-plugin.ts icon="/icons/typescript.svg"
 import { plugin } from "bun";
+import { readFileSync } from "node:fs";
 
 plugin({
   name: "markdown-front-matter",
   setup(build) {
-    build.onLoad({ filter: /\.md$/ }, async ({ path }) => {
-      const { data, content } = Bun.markdown.frontmatter(await Bun.file(path).text());
+    build.onLoad({ filter: /\.md$/ }, ({ path }) => {
+      const { data, content } = Bun.markdown.frontmatter(readFileSync(path, "utf8"));
       return {
         loader: "object",
         exports: {

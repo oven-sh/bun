@@ -245,10 +245,12 @@ trim-feature markdown : Markdown
 
 trim-feature yaml : Yaml
   about "`Bun.YAML`. Importing a `.yaml` file doesn't need it."
+  also "`Bun.markdown.frontmatter()` of a `---` block"
   saves 0.0 0.0
 
 trim-feature toml : Toml
   about "`Bun.TOML`. Importing a `.toml` file doesn't need it."
+  also "`Bun.markdown.frontmatter()` of a `+++` block"
   saves 0.0 0.0
 
 trim-feature json5 : Json5

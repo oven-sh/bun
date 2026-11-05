@@ -223,6 +223,16 @@ fn parse_metadata<'a>(
     // SAFETY: as for `Bun.YAML.parse` and `Bun.TOML.parse`, which this is.
     let global = unsafe { heap.global() };
     let check_root = |root: &bun_ast::Expr| must_be_mapping(global, root);
+    let feature = match marker {
+        b'-' => bun_removable_features::Feature::Yaml,
+        _ => bun_removable_features::Feature::Toml,
+    };
+    // The fence is data: without the feature this throws, as `Bun.YAML.parse` does there, and does not abort.
+    if bun_removable_features::is_removed(feature) {
+        return Err(crate::removed_feature::throw_for_removed_feature(
+            global, feature,
+        ));
+    }
     let data = match marker {
         b'-' => bun_removable_features::removable_body!(Yaml, Abort, {
             yaml_object::parse_to_values(global, utf8, roots, pending, check_root)

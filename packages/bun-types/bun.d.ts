@@ -2128,8 +2128,8 @@ declare module "bun" {
      *
      * Throws the `SyntaxError` of `Bun.YAML.parse` or `Bun.TOML.parse` when
      * the metadata does not parse. Also throws a `SyntaxError` when YAML
-     * metadata is not a mapping: `---\ntitle Hello\n---` (a missing colon)
-     * is a YAML scalar.
+     * metadata is a sequence or a scalar other than `null`:
+     * `---\ntitle Hello\n---` (a missing colon) is a YAML scalar.
      *
      * The renderers skip the same block. Pass `{ frontmatter: false }` when
      * you render `content`, so that a document body that starts with `---`

@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
 import { join } from "path";
 
-// Tracks exit code from the last runMd() call so individual tests can
+// Tracks the exit code of the runMd() calls of a test (the first that is not 0, if any) so individual tests can
 // assert it after snapshotting stdout (giving a readable diff on failure).
 let lastExitCode: number | null = null;
 
@@ -18,7 +18,7 @@ async function runMd(source: string, env: Record<string, string> = {}) {
   });
   // stderr intentionally not asserted: ASAN builds emit a warning there.
   const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  lastExitCode = exitCode;
+  lastExitCode = lastExitCode || exitCode;
   return stdout;
 }
 

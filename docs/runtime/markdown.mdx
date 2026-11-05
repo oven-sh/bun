@@ -126,11 +126,11 @@ To render a document, Bun looks at the shape of the block and does not parse the
 
 A line ends with LF, CRLF, or CR.
 
-`...` is the YAML document end marker. Pandoc and Jekyll also end a `---` block at that line. It does not end a `+++` block.
+`...` is the YAML document end marker. Pandoc and Jekyll also end a `---` block at that line. `...` does not end a `+++` block.
 
 A document that starts with `----`, with `---yaml`, or with an indented `---` has no front matter, and Bun renders all of it.
 
-`bun fmt` and `bun lint` follow other tools, and their rules differ in details. `bun fmt` follows Prettier: a language can follow the opening fence (`---yaml`), and the line after that fence can be blank. `bun lint` reads front matter only when `languageOptions.frontmatter` names the format. There, the line after the opening fence can be blank, and `...` does not end the block.
+[`bun fmt`](/format) and [`bun lint`](/lint) have their own rules for front matter, which differ in details. `bun fmt` follows Prettier: a language can follow the opening fence (`---yaml`), the line after that fence can be blank, and `...` ends a `---` block only when no later line starts with `---`. `bun lint` reads front matter only when [`languageOptions.frontmatter`](/lint/plugins) names the format. For `bun lint`, the line after the opening fence can be blank, and `...` does not end the block.
 
 Two examples of the CommonMark spec start with what this rule reads as front matter. Bun renders `---\n---` to nothing, where CommonMark has two thematic breaks. Bun renders `---\nFoo\n---\nBar\n---\nBaz` without its first three lines, where CommonMark has a thematic break and the heading `Foo`. Pass `frontmatter: false` to render the block as CommonMark does:
 
@@ -138,6 +138,8 @@ Two examples of the CommonMark spec start with what this rule reads as front mat
 Bun.markdown.html("---\ntitle: Hello\n---\n", { frontmatter: false });
 // "<hr />\n<h2>title: Hello</h2>\n"
 ```
+
+`render()` and `react()` take the option in their third argument. `ansi()` takes it in its second argument.
 
 The renderers read their input as a whole document. Pass `frontmatter: false` when the input is a fragment: a chat message, a comment, or text that you render again while it streams in. Without the option, a fragment that starts with a `---` line loses its first lines as soon as a later line ends the block. Bun looks for that line before it reads the Markdown, so a `---` line inside fenced code also ends the block.
 
@@ -185,7 +187,7 @@ Bun.markdown.frontmatter("# A document");
 // { data: null, content: "# A document" }
 ```
 
-`frontmatter()` throws a `SyntaxError` when the metadata does not parse. It is the error that `Bun.YAML.parse()` or `Bun.TOML.parse()` throws for the same text. YAML metadata that is not a mapping also throws. For example, `title Hello` without the colon is a YAML string.
+`frontmatter()` throws a `SyntaxError` when the metadata does not parse. It is the error that `Bun.YAML.parse()` or `Bun.TOML.parse()` throws for the same text. TOML does not allow a line that ends with CR alone, so a `+++` block with such lines throws. YAML metadata that is a sequence or a scalar other than `null` also throws. For example, `title Hello` without the colon is a YAML string.
 
 ```ts
 Bun.markdown.frontmatter("---\ntitle: [\n---\n");

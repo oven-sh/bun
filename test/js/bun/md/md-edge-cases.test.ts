@@ -1,9 +1,9 @@
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToString } from "react-dom/server";
-import { describe as jscDescribe } from "bun:jsc";
 
 const Markdown = Bun.markdown;
 
@@ -2221,16 +2221,11 @@ describe("front matter", () => {
     ["ansi()", (input, frontmatter) => Markdown.ansi(input, { colors: false, frontmatter })],
   ];
 
-  // The same characters in 16-bit storage: a part of a string that has a character above U+00FF.
-  const wide = (text: string) => {
-    const whole = "\u2713" + text;
-    // Reading a character makes one string of the two parts.
-    if (whole.charCodeAt(0) !== 0x2713) throw new Error("unreachable");
-    return whole.slice(1);
-  };
+  // The same characters in 16-bit storage.
+  const wide = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");
 
   // What a document can start with that is front matter, and its data: `undefined` if it is not a mapping.
-  const blocks: [name: string, block: string, data: object | undefined][] = [
+  const blocks: [name: string, block: string, data: Record<string, unknown> | undefined][] = [
     ["YAML between `---` lines", "---\ntitle: x\n---\n", { title: "x" }],
     ["TOML between `+++` lines", "+++\ntitle = 'x'\n+++\n", { title: "x" }],
     ["lines that end with CRLF", "---\r\ntitle: x\r\n---\r\n", { title: "x" }],
@@ -2265,16 +2260,14 @@ describe("front matter", () => {
     ["a JSON object without fences", '{"title": "x"}\n'],
   ];
 
-  // Every example of the spec files in this directory, as md-spec.test.ts renders them.
-  const examples = new Bun.Glob("*.txt")
-    .scanSync(import.meta.dir)
-    .toArray()
-    .sort();
+  // The Markdown of every example of the spec files in this directory.
+  const examples = Array.from(new Bun.Glob("*.txt").scanSync(import.meta.dir)).sort();
+  const exampleStart = Buffer.alloc(32, "`").toString() + " example";
   const exampleTexts = examples.flatMap(name => {
     const lines = readFileSync(join(import.meta.dir, name), "utf8").split(/\r?\n/);
     const texts: string[] = [];
     for (let start = 0; start < lines.length; start++) {
-      if (!lines[start].startsWith("`".repeat(32) + " example")) continue;
+      if (!lines[start].startsWith(exampleStart)) continue;
       const end = lines.indexOf(".", start);
       if (end === -1) break;
       const markdown = lines.slice(start + 1, end).join("\n");
@@ -2297,6 +2290,7 @@ describe("front matter", () => {
     test.each(blocks)("skips %s", (_, block) => {
       expect(rendered(block + body)).toBe(withoutBlock);
       expect(rendered(block + body, true)).toBe(withoutBlock);
+      expect(rendered(wide(block + body))).toBe(withoutBlock);
       expect(rendered(Buffer.from(block + body))).toBe(withoutBlock);
       expect(rendered(block + body, false)).not.toBe(withoutBlock);
     });
@@ -2307,8 +2301,11 @@ describe("front matter", () => {
     });
 
     test.each(starts)("renders %s", (_, start) => {
-      expect(rendered(start + body)).toBe(rendered(start + body, false));
-      expect(rendered(start + body)).not.toBe(withoutBlock);
+      const withStart = rendered(start + body, false);
+      expect(withStart).not.toBe(withoutBlock);
+      expect(rendered(start + body)).toBe(withStart);
+      expect(rendered(wide(start + body))).toBe(withStart);
+      expect(rendered(Buffer.from(start + body))).toBe(withStart);
     });
 
     test("skips a byte order mark behind the block, as it does at the start of a document", () => {
@@ -2333,6 +2330,7 @@ describe("front matter", () => {
 
     test.each([false, null, 0])("with frontmatter: %p the block is Markdown", off => {
       const document = "---\ntitle: x\n---\n" + body;
+      expect(rendered(document, off as boolean)).not.toBe(withoutBlock);
       expect(rendered(document, off as boolean)).toBe(rendered(document, false));
     });
 
@@ -2415,8 +2413,8 @@ describe("front matter", () => {
       date: "2024-01-28",
       license: "[CC-BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)",
     });
-    expect(content.startsWith("\n# Introduction\n")).toBe(true);
-    expect(spec.endsWith(content)).toBe(true);
+    expect(content.slice(0, 16)).toBe("\n# Introduction\n");
+    expect(spec.lastIndexOf(content)).toBe(spec.length - content.length);
     const html = Markdown.html(spec);
     expect(html).toBe(Markdown.html(content, { frontmatter: false }));
     const headings = (html: string) => [html.split("<h1>").length - 1, html.split("<h2>").length - 1];
@@ -2433,12 +2431,14 @@ describe("front matter", () => {
       }
     };
 
-    test("a part of a string with a character above U+00FF is in 16-bit storage", () => {
-      expect(jscDescribe(wide("---\ntitle: x\n---\n"))).toContain("8Bit:(0)");
-      expect(jscDescribe("---\ntitle: x\n---\n")).toContain("8Bit:(1)");
+    test("the 16-bit inputs of these tests are in 16-bit storage, also after a call", () => {
+      const input = wide("---\n---");
+      expect(frontmatter(input)).toEqual({ data: {}, content: "" });
+      expect(jscDescribe(input)).toContain("8Bit:(0)");
+      expect(jscDescribe("---\n---")).toContain("8Bit:(1)");
     });
 
-    test.each(blocks.filter(([, , data]) => data !== undefined))("reads %s", (_, block, data) => {
+    test.each(blocks.filter(([, , data]) => data !== undefined))("reads %s", (_, block, data = {}) => {
       expect(frontmatter(block + body)).toEqual({ data, content: body });
       expect(frontmatter(wide(block + body))).toEqual({ data, content: body });
       expect(frontmatter(Buffer.from(block + body))).toEqual({ data, content: body });
@@ -2453,6 +2453,9 @@ describe("front matter", () => {
     test("data is null without a block, and {} for a block with nothing in it", () => {
       expect(frontmatter("")).toEqual({ data: null, content: "" });
       expect(frontmatter("# Heading\n")).toEqual({ data: null, content: "# Heading\n" });
+      // `content` is then the input, with its byte order mark.
+      expect(frontmatter("\uFEFF# Heading\n")).toEqual({ data: null, content: "\uFEFF# Heading\n" });
+      expect(frontmatter(Buffer.from("\uFEFF# Heading\n"))).toEqual({ data: null, content: "\uFEFF# Heading\n" });
       expect(frontmatter("---\n---")).toEqual({ data: {}, content: "" });
       expect(frontmatter("---\n~\n---\nbody")).toEqual({ data: {}, content: "body" });
       expect(Object.keys(frontmatter(""))).toEqual(["data", "content"]);
@@ -2514,10 +2517,18 @@ describe("front matter", () => {
     test("a string that is a rope or a part of another string", () => {
       const text = Buffer.alloc(64, "a").toString();
       const read = { data: { title: text }, content: text };
-      const rope = "---\ntitle: " + text + "\n---\n" + text;
-      expect(frontmatter(rope)).toEqual(read);
-      expect(frontmatter(("padding " + rope + " padding").slice(8, -8))).toEqual(read);
-      expect(frontmatter(wide(rope))).toEqual(read);
+      const document = "---\ntitle: " + text + "\n---\n" + text;
+      expect(jscDescribe(document)).toContain("(rope)");
+      expect(frontmatter(document)).toEqual(read);
+      // A part of a string of 8-bit and of 16-bit characters.
+      for (const padding of ["padding ", "\u2713adding "]) {
+        const whole = padding + document + padding;
+        // Reading a character makes one string of the three.
+        expect(whole.charCodeAt(8)).toBe(0x2d);
+        const part = whole.slice(8, -8);
+        expect(jscDescribe(part)).toContain("(rope)");
+        expect(frontmatter(part)).toEqual(read);
+      }
     });
 
     test("metadata that is a scalar or a sequence throws", () => {
@@ -2581,7 +2592,10 @@ describe("front matter", () => {
 
     test("the values that wait for such a key outlive a collection that the key runs", () => {
       const keys = Array.from({ length: 8 }, (_, key) => key);
-      const metadata = keys.map(key => `? [k${key}, ${key}]\n: {v: [${key}, text ${key}]}\n`).join("");
+      // A string behind a key that is a sequence waits too.
+      const metadata = keys
+        .map(key => `? [k${key}, ${key}]\n: {v: [${key}, text ${key}]}\nlater${key}: text ${key}\n`)
+        .join("");
       const { toString } = Array.prototype;
       const results: { data: Record<string, unknown>; content: string }[] = [];
       let collections = 0;
@@ -2593,18 +2607,22 @@ describe("front matter", () => {
         return toString.call(this);
       };
       try {
-        for (let i = 0; i < 6; i++) results.push(frontmatter(`---\nn: ${i}\n${metadata}---\nbody ${i}\n`) as never);
+        // The body is long enough for `content` to share the characters of the input, which is garbage after the call.
+        for (let i = 0; i < 6; i++) {
+          results.push(frontmatter(`---\nn: ${i}\n${metadata}---\nthe body of document ${i}\n`) as never);
+        }
       } finally {
         Array.prototype.toString = toString;
       }
       Bun.gc(true);
       expect(collections).toBe(6 * keys.length);
       for (const [i, { data, content }] of results.entries()) {
-        expect(content).toBe(`body ${i}\n`);
-        expect(Object.entries(data)).toEqual([
-          ["n", i],
-          ...keys.map(key => [`k${key},${key}`, { v: [key, `text ${key}`] }]),
+        expect(content).toBe(`the body of document ${i}\n`);
+        const waiting = keys.flatMap((key): [string, unknown][] => [
+          [`k${key},${key}`, { v: [key, `text ${key}`] }],
+          [`later${key}`, `text ${key}`],
         ]);
+        expect(Object.entries(data)).toEqual([["n", i], ...waiting]);
       }
     });
 

@@ -179,7 +179,7 @@ impl<'a> JsHeap<'a> {
             .ok_or_else(|| self.string_too_long())
     }
 
-    /// The code units `start..end` of a WTF-backed `string`, which the result shares with it: nothing is copied.
+    /// The code units `start..end` of a WTF-backed `string`. The result shares them with it, unless it is short.
     #[inline]
     pub fn create_substring(
         &self,

@@ -2106,6 +2106,15 @@ impl Quick {
             self.next()?;
             let id = self.parse_ident()?;
             let body = self.parse_block()?;
+            // (a class in there is declared, and printed in ways of its own)
+            let list = self.n.at(body + 5);
+            let mut i: i32 = 1;
+            while i <= self.n.at(list) {
+                if (self.n.at(self.n.at(list + i)) & 0xff) == k::ClassDeclaration {
+                    return Err(self.text_refuse());
+                }
+                i += 1;
+            }
             result = self.node2(
                 k::ModuleDeclaration | ((MOD_DECLARE | MK_NAMESPACE) << SUB_SHIFT),
                 start,

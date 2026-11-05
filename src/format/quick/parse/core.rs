@@ -442,6 +442,11 @@ impl Quick {
                     || self.parse.needs_module
                     || self.parse.place.scope == SCOPE_STATIC_BLOCK
                     || self.is_operator_for_type_script()
+                    // `await ** a`
+                    || (self.parse.typed == TYPED_TS && {
+                        let p = self.next_char_index(self.lexer.tok_end);
+                        self.t.at(p) == 42 && self.t.at(p + 1) == 42
+                    })
             }
             kw::Yield => self.parse.in_generator != 0 || self.is_operator_for_type_script(),
             _ => false,
@@ -4058,7 +4063,12 @@ impl Quick {
                 ));
             }
             tk::Name => {
-                if self.lexer.tok_kw == kw::Await && self.dialect.declaration_file {
+                if self.lexer.tok_kw == kw::Await
+                    && (self.dialect.declaration_file
+                        || (self.parse_typescript.in_namespace != 0
+                            && self.parse.in_function == 0
+                            && !self.is_operator_for_type_script()))
+                {
                     // a name there, for some
                     return Err(self.text_refuse());
                 }

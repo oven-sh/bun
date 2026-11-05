@@ -33,6 +33,8 @@ pub(crate) struct ParseTypescript {
     pub(crate) trial_is_doubtful: bool,
     /// How many times `T?` was read where it is no element of a tuple: there it is a type of JSDoc.
     pub(crate) stray_optional_types: i32,
+    /// not 0: in a namespace or an enum, where `await` outside of a function is the operator only in front of a word, a number or a string
+    pub(crate) in_namespace: i32,
     /// What a class extends or implements, or an interface extends, is read.
     pub(crate) in_heritage: bool,
 }
@@ -47,6 +49,7 @@ impl ParseTypescript {
             export_needs_from: false,
             trial_is_doubtful: false,
             stray_optional_types: 0,
+            in_namespace: 0,
             in_heritage: false,
         }
     }
@@ -69,6 +72,7 @@ impl Quick {
         self.parse_typescript.in_head_of_for = false;
         self.parse_typescript.export_needs_from = false;
         self.parse_typescript.stray_optional_types = 0;
+        self.parse_typescript.in_namespace = 0;
         self.parse_typescript.in_heritage = false;
         self.flow_reset_context();
     }
@@ -1856,7 +1860,10 @@ impl Quick {
             }
             let key = self.parse_property_name()?;
             let initializer = if self.eat(tk::Eq)? {
-                self.parse_maybe_assign()?
+                self.parse_typescript.in_namespace += 1;
+                let value = self.parse_maybe_assign()?;
+                self.parse_typescript.in_namespace -= 1;
+                value
             } else {
                 0
             };
@@ -1889,6 +1896,7 @@ impl Quick {
         let start = self.lexer.tok_start;
         self.expect(tk::BraceL)?;
         let list_mark = self.arena.ls_pos;
+        self.parse_typescript.in_namespace += 1;
         while self.lexer.tok != tk::BraceR {
             if self.lexer.tok == tk::EOF {
                 return Err(self.unexpected());
@@ -1896,6 +1904,7 @@ impl Quick {
             let v0 = self.parse_statement()?;
             self.list_push(v0);
         }
+        self.parse_typescript.in_namespace -= 1;
         self.next()?;
         let v1 = self.lexer.prev_end;
         let v2 = self.list_finish(list_mark);

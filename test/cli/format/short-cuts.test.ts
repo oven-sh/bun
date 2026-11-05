@@ -3843,6 +3843,7 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "declare export { if };\n",
     "module as A;\n",
     'import type defer * as a from "b";\n',
+    "component A(@a b) {}\n",
   ]);
   expectRejected("a.mjs", "a.mjs", [
     // default
@@ -3896,6 +3897,11 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "await in a;\n",
     "a << b.c > (d);\n",
     "var\ufeff\n",
+    "enum A {\n  a = await\n  b,\n}\n",
+    "namespace N {\n  await {};\n}\n",
+    "await\n** a;\n",
+    "f<unique>(a);\n",
+    "f<a | <T>(b)>(c);\n",
   ]);
   expectRejected("a.tsx", "a.tsx", [
     // jsx
@@ -3932,6 +3938,7 @@ describe("JavaScript and Flow that the long way rejects", () => {
       "a<b>;\n",
       "const a = b<c>.d;\n",
       "class A extends B<c>.d {}\n",
+      "new A<b>c;\n",
       // flow-casts
       "(a: b, c);\n",
       "((a: b)) => c;\n",

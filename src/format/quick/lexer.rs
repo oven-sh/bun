@@ -596,11 +596,21 @@ impl Quick {
                             }
                             // Where it ends is all there is to remember: looking ahead and going back need no care.
                             let mut end = p + skip;
+                            // the end stands behind `//` on its line
+                            let mut is_hidden = false;
                             while !(self.t.at(end) == 42 && self.t.at(end + 1) == 47) {
                                 if end >= self.text.src_end {
                                     return Err(self.fail(p));
                                 }
+                                if self.t.at(end) == 47 && self.t.at(end + 1) == 47 {
+                                    is_hidden = true;
+                                } else if self.t.at(end) == 10 {
+                                    is_hidden = false;
+                                }
                                 end += 1;
+                            }
+                            if is_hidden {
+                                return Err(self.text_refuse());
                             }
                             self.lexer.flow_comment_end = end;
                             p += skip;

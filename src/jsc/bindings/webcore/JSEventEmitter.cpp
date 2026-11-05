@@ -266,6 +266,12 @@ static JSValue maxListenersOf(JSGlobalObject* lexicalGlobalObject, JSEventEmitte
     return defaultLimit ? defaultLimit : jsNumber(10);
 }
 
+// `a > b` as the language has it. Out of line: jsLess is inlined in full wherever it is named.
+static NEVER_INLINE bool isGreater(JSGlobalObject* lexicalGlobalObject, JSValue a, JSValue b)
+{
+    return jsLess<false>(lexicalGlobalObject, b, a);
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L585-L595
 static void warnIfOverMaxListeners(JSGlobalObject* lexicalGlobalObject, JSEventEmitter& wrapper, JSValue emitter, const Identifier& eventType, JSValue type)
 {
@@ -277,7 +283,7 @@ static void warnIfOverMaxListeners(JSGlobalObject* lexicalGlobalObject, JSEventE
     RETURN_IF_EXCEPTION(scope, void());
 
     // `m > 0 && existing.length > m` with the language's `>`: the limit is whatever the program stored.
-    bool isOver = jsLess<false>(lexicalGlobalObject, jsNumber(0), limit);
+    bool isOver = isGreater(lexicalGlobalObject, limit, jsNumber(0));
     RETURN_IF_EXCEPTION(scope, void());
     if (!isOver)
         return;
@@ -285,7 +291,7 @@ static void warnIfOverMaxListeners(JSGlobalObject* lexicalGlobalObject, JSEventE
     auto* list = listeners.find(eventType);
     if (!list)
         return;
-    isOver = jsLess<false>(lexicalGlobalObject, limit, jsNumber(list->size()));
+    isOver = isGreater(lexicalGlobalObject, jsNumber(list->size()), limit);
     RETURN_IF_EXCEPTION(scope, void());
     if (!isOver)
         return;

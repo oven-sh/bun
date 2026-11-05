@@ -4310,6 +4310,8 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js.flow", "", "a=():x is{a:()=>void}=>true\n"],
     // Flow: a `declare module` with nothing in it.
     ["a.js.flow", "", 'declare module"a"{}\n'],
+    // A conditional as a branch of a conditional where a level of indentation is one column.
+    ["a.js", "--print-width=25 --tab-width=1", "const price = user ? (user.isMember ? 8 : 10) : 12;\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

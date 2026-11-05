@@ -138,6 +138,8 @@ pub(crate) mod rare {
     /// Flow: a type guard as the return type of an arrow function, which gets no parentheses though there may be a function type in it;
     /// a `declare module` with nothing in it, whose braces stand on two lines.
     pub(crate) const FLOW: i32 = 13;
+    /// `tabWidth: 1` and a conditional as a branch of a conditional: the long way moves it by one column where Prettier moves it by two.
+    pub(crate) const TAB_WIDTH: i32 = 14;
 }
 
 thread_local! {

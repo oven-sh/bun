@@ -33,6 +33,7 @@ pub(crate) struct Printer<'t, 'a, 'o, 'w, 'f> {
     pub(crate) cursor: Cursor,
     /// Reused for formatting style sheets.
     pub(crate) css_scratch: crate::css::Scratch,
+    pub(crate) scripts: super::Scripts,
 }
 
 /// The return value of `printBetweenLine`.

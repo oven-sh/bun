@@ -495,16 +495,21 @@ impl Scratches {
     /// Starts to count, from zero, which scripts go the quick way.
     fn count_quick_way(&mut self) {
         self.quick.counts = Some(Default::default());
+        self.html.quick_way_mut().counts = Some(Default::default());
         self.blocks.get_or_insert_default().quick.counts = Some(Default::default());
     }
 
     /// What has been counted since.
     fn quick_way_counts(&self) -> impl Iterator<Item = &bun_format::quick::Counts> {
         let blocks = self.blocks.as_deref();
-        [Some(&self.quick), blocks.map(|it| &it.quick)]
-            .into_iter()
-            .flatten()
-            .filter_map(|it| it.counts.as_deref())
+        [
+            Some(&self.quick),
+            Some(self.html.quick_way()),
+            blocks.map(|it| &it.quick),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(|it| it.counts.as_deref())
     }
 
     /// An empty buffer for what a text of `len` bytes is formatted to.
@@ -541,17 +546,6 @@ fn format_block_in(
     names: (&dyn Intern, &Session),
     scratch: &mut Scratches,
 ) -> bool {
-    let sort_imports = options.sort_imports.clone();
-    let resolved = Resolved {
-        options: FormatOptions {
-            sort_imports: sort_imports.filter(|it| it.applies_to_embedded_code()),
-            ..options.clone()
-        },
-        omits_final_newline: false,
-        has_unsupported_option: false,
-        formats_recoverable_errors: false,
-        depends_on_directory: false,
-    };
     // The name only says which language it is.
     let is_script = [
         &b".js"[..],
@@ -566,9 +560,44 @@ fn format_block_in(
     .iter()
     .any(|extension| path.ends_with(extension))
         && options.filepath.is_none()
-        && options.parser.is_none();
-    let formatted = match is_script && !matches!(code, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
-        true => format_script(path, path, code, &resolved, names, scratch, false),
+        && options.parser.is_none()
+        && !matches!(code, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]);
+    // A text has many small blocks, and the quick way needs nothing of what is made for the long way.
+    let is_as_written = !options.require_pragma
+        && !options.check_ignore_pragma
+        && !options.insert_pragma
+        && options.sort_imports.is_none();
+    if is_script && is_as_written {
+        let mut formatted = scratch.buffer_for(code.len());
+        let is_formatted =
+            format_script_quickly(path, path, code, options, scratch, &mut formatted);
+        if is_formatted {
+            out.extend_from_slice(&formatted);
+        }
+        scratch.spare = formatted;
+        if is_formatted {
+            return true;
+        }
+    }
+    let sort_imports = options.sort_imports.clone();
+    let resolved = Resolved {
+        options: FormatOptions {
+            sort_imports: sort_imports.filter(|it| it.applies_to_embedded_code()),
+            ..options.clone()
+        },
+        omits_final_newline: false,
+        has_unsupported_option: false,
+        formats_recoverable_errors: false,
+        depends_on_directory: false,
+    };
+    let formatted = match is_script {
+        true => {
+            let way = match is_as_written {
+                true => Way::Long,
+                false => Way::QuickFirst,
+            };
+            format_script(path, path, code, &resolved, names, scratch, way)
+        }
         false => format(path, code, &resolved, names, scratch, false),
     };
     let Ok((formatted, _)) = formatted else {
@@ -886,8 +915,60 @@ fn format(
         resolved,
         (atoms, memory),
         scratch,
-        verifies,
+        match verifies {
+            true => Way::LongAndVerified,
+            false => Way::QuickFirst,
+        },
     )
+}
+
+/// How a script is formatted.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Way {
+    /// The long way only if the quick way refuses.
+    QuickFirst,
+    /// The quick way has refused already.
+    Long,
+    /// The output is parsed and compared with the text.
+    LongAndVerified,
+}
+
+/// True if the text is Flow, and if it may have types in comments, which are code then.
+fn flow_in(path: &[u8], name: &[u8], text: &[u8], options: &FormatOptions) -> (bool, bool) {
+    // `babel` hands a Flow file to `babel-flow`, which reads the contents of `/*:: */` and `/*: */` as code.
+    let is_flow = match options.parser.as_deref() {
+        Some(b"flow" | b"babel-flow") => true,
+        // oxfmt doesn't parse Flow.
+        Some(b"babel") | None => {
+            !options.flavor.is_oxfmt()
+                && (bun_lint::linter::is_flow_file(text, name)
+                    || (options.parser.is_none() && ends_in(name, b".js.flow")))
+        }
+        Some(_) => false,
+    };
+    let has_comment_types = is_flow
+        && bun_format::flow::is_parsed_by_babel_flow(options, path)
+        && bun_format::flow::may_have_comment_types(text);
+    (is_flow, has_comment_types)
+}
+
+/// Puts `text`, which is what `pragma::before_parsing` has left, in `out`, formatted. Returns false, with `out` empty,
+/// if it has to go the long way.
+fn format_script_quickly(
+    path: &[u8],
+    name: &[u8],
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratches,
+    out: &mut Vec<u8>,
+) -> bool {
+    let (is_flow, has_comment_types) = flow_in(path, name, text, options);
+    let code = bun_format::quick::Code {
+        path,
+        text,
+        is_flow,
+    };
+    !has_comment_types && bun_format::quick::format(code, options, &mut scratch.quick, out).is_ok()
 }
 
 /// [`format`] for JavaScript and TypeScript. `name` is the name of the file if `filepath` says so, else `path`.
@@ -898,44 +979,27 @@ fn format_script(
     resolved: &Resolved,
     (atoms, memory): (&dyn Intern, &Session),
     scratch: &mut Scratches,
-    verifies: bool,
+    way: Way,
 ) -> Result<Formatted, Failure> {
     let options = &resolved.options;
+    let verifies = way == Way::LongAndVerified;
     let text = match bun_format::pragma::before_parsing(text, options) {
         BeforeParsing::LeaveUnchanged => return Ok((text.to_vec(), options.cursor_offset)),
         BeforeParsing::Format(text) => text,
     };
-    // `babel` hands a Flow file to `babel-flow`, which reads the contents of `/*:: */` and `/*: */` as code.
-    let is_flow = match options.parser.as_deref() {
-        Some(b"flow" | b"babel-flow") => true,
-        // oxfmt doesn't parse Flow.
-        Some(b"babel") | None => {
-            !options.flavor.is_oxfmt()
-                && (bun_lint::linter::is_flow_file(&text, name)
-                    || (options.parser.is_none() && ends_in(name, b".js.flow")))
-        }
-        Some(_) => false,
-    };
-    let has_comment_types = is_flow
-        && bun_format::flow::is_parsed_by_babel_flow(options, path)
-        && bun_format::flow::may_have_comment_types(&text);
-    if !verifies && !has_comment_types {
-        let code = bun_format::quick::Code {
-            path,
-            text: &text,
-            is_flow,
-        };
+    if way == Way::QuickFirst {
         let mut out = scratch.buffer_for(text.len());
-        match bun_format::quick::format(code, options, &mut scratch.quick, &mut out) {
-            Ok(()) => {
+        match format_script_quickly(path, name, &text, options, scratch, &mut out) {
+            true => {
                 if resolved.omits_final_newline {
                     without_final_newline(&mut out);
                 }
                 return Ok((out, None));
             }
-            Err(bun_format::quick::Refused) => scratch.spare = out,
+            false => scratch.spare = out,
         }
     }
+    let (is_flow, has_comment_types) = flow_in(path, name, &text, options);
     let text = match has_comment_types {
         true => {
             let how = How {

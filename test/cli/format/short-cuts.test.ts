@@ -4347,6 +4347,17 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "",
       'const [\n  ,\n  name,\n  writtenDirection,\n  writtenByteCount,\n  writtenKind,\n  writtenEndianness,\n  writtenSomethingElse,\n] = match;\nx = [\n  ,\n  ,\n\n  __create(base?.[__knownSymbol("metadata")] ?? null, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa),\n];\n',
     ],
+    // What is taken: comments among the arguments of an optional call, before an optional chain, behind a parameter, a `:` or a `.`.
+    [
+      "a.js",
+      "",
+      'legacyRef.current?.measureLayout(\n  // c\n  containerRef.current,\n  (x, y) => {},\n);\na =\n  flattenStyle(prevProps.style)?.opacity !==\n  // c\n  flattenStyle(this.props.style)?.opacity;\nclass A {\n  m(\n    onSuccess,\n    onFail /* currently unused */,\n  ) {}\n}\nb = {\n  data:\n    // c\n    // d\n    options ? options.data : null,\n};\nc = factory./* c */ $call(iterable);\nd =\n  e === "android"\n    ? /* c\n       * d */\n      (f) => g\n    : h;\n',
+    ],
+    [
+      "a.js.flow",
+      "",
+      "export interface Spec {\n  +getParentNode: (shadowNode: mixed /* ShadowNode */) => mixed /* ?InstanceHandle */;\n  +getChildNodes: () => void;\n}\n",
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

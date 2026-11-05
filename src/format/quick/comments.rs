@@ -146,6 +146,7 @@ fn comments_taken_in(kind: i32) -> i32 {
         | k::ObjectExpression
         | k::ObjectMethod
         | k::ObjectPattern
+        | k::ObjectProperty
         | k::ObjectTypeSpreadProperty
         | k::PropertySignature
         | k::QualifiedName
@@ -166,7 +167,6 @@ fn comments_taken_in(kind: i32) -> i32 {
         | k::TypeParameterInstantiation
         | k::TypeQuery
         | k::TypeReference
-        | k::UnaryExpression
         | k::UpdateExpression
         | k::VariableDeclaration
         | k::VariableDeclarator
@@ -200,6 +200,7 @@ fn comments_taken_in(kind: i32) -> i32 {
         | k::TypePredicate => OWN_LINE | MID_BLOCK,
         k::ArrowFunctionExpression | k::ModuleBlock => OWN_LINE | OWN_BLOCK | END_LINE,
         k::MappedType | k::ReturnStatement => OWN_LINE | OWN_BLOCK | MID_BLOCK,
+        k::UnaryExpression => END_LINE | MID_BLOCK,
         k::FunctionTypeParam => OWN_BLOCK | MID_BLOCK,
         k::DoWhileStatement => OWN_LINE,
         _ => 0,
@@ -312,16 +313,19 @@ impl Quick {
         if i > self.lexer.c_base && self.lexer.c.at((i - 1) * C_STRIDE + C_END) == c.h_start {
             return false;
         }
-        // In or before an optional chain, or behind one on its line: some trees have a node more around a chain.
-        if self.is_part_of_optional_chain(c.h_enclosing)
-            || self.is_part_of_optional_chain(c.h_following)
+        // Some trees have a node more around an optional chain. So none in a chain but among the arguments of a call, none before one
+        // but on lines of its own, none behind one on its line.
+        if (self.is_part_of_optional_chain(c.h_enclosing)
+            && !(inside == k::CallExpression && (before == 40 || before == 44)))
+            || (self.is_part_of_optional_chain(c.h_following)
+                && !(c.h_placement == CF_OWN_LINE && behind != 40))
             || (c.h_placement != CF_OWN_LINE && self.is_part_of_optional_chain(c.h_preceding))
         {
             return false;
         }
-        // It has a line break in it and code before or behind it on its lines: what still fits there is counted in two ways.
+        // It has a line break in it and code behind it on its last line: what still fits there is counted in two ways.
         if inside != k::JSXEmptyExpression
-            && (form == MID_BLOCK || (form == END_BLOCK && before != 0))
+            && form == MID_BLOCK
             && self.has_newline_in_range(c.h_start, c.h_end)
         {
             return false;
@@ -343,7 +347,7 @@ impl Quick {
             | k::SwitchStatement
             | k::ClassBody => true,
             // before the separator of the item that it follows
-            _ if behind == 59 => false,
+            _ if behind == 59 => inside == k::InterfaceBody && form == MID_BLOCK,
             k::ConditionalExpression | k::ConditionalType => true,
             // before the `:` of a type
             _ if behind == 58 => false,
@@ -353,7 +357,7 @@ impl Quick {
             k::TypeLiteral => c.h_preceding != 0 || c.h_following != 0,
             // between the key and the parameters, on the line of their `(`, or all there is between `(` and `)`
             k::ObjectMethod | k::ClassMethod => {
-                !is_part_of_word(before)
+                !(is_part_of_word(before) && behind != 44 && behind != 41)
                     && !(before == 40 && (c.h_placement == CF_END_OF_LINE || behind == 41))
             }
             // behind a modifier, the key or the value
@@ -377,7 +381,11 @@ impl Quick {
                 !is_part_of_word(before)
                     && (((self.n.at(c.h_enclosing) as u32) >> SUB_SHIFT) as i32 & MOD_DECLARE) == 0
             }
-            k::MemberExpression => c.h_preceding_kind == k::CallExpression,
+            k::MemberExpression => {
+                c.h_preceding_kind == k::CallExpression || (form == MID_BLOCK && before == 46)
+            }
+            // before the parentheses of a function, or parentheses that go
+            k::ObjectProperty => behind != 40,
             // before the `...` of a rest parameter
             k::FunctionType => behind != 46,
             // between the name and the parameters

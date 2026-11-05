@@ -3002,6 +3002,7 @@ describe("TypeScript that the long way rejects", () => {
     "class A { declare constructor() }",
     "class A { static async constructor() {} }",
     "class A { @a constructor() {} }",
+    "class A { 'constructor'<T>(public a) {} }",
     "class A {\n  constructor;\n}\n",
     "class A {\n  constructor: T;\n  a: T;\n}\n",
     "class A {\n  async constructor() {\n    a;\n  }\n}\n",
@@ -3033,6 +3034,11 @@ describe("TypeScript that the long way rejects", () => {
     "interface A { set a }",
     "interface A { get a?(): T }",
     "interface A { a b }",
+    "interface A {\n  accessor\n  get a(b): T\n}",
+    "interface A { get a(): T {}; }",
+    "interface A {\n  in\n  get a()\n}\n",
+    "interface A {\n  out\n  get a()\n}\n",
+    "type A = {\n  const\n  set a(b)\n}\n",
     "interface A {\n  public a: T;\n}\n",
     "interface A {\n  readonly a(): T;\n}\n",
     "interface A {\n  x: T;\n  static a: T;\n}\n",
@@ -3147,6 +3153,8 @@ describe("TypeScript that the long way rejects", () => {
     "class A implements implements {}",
     "class A extends implements {}",
     "class A extends <T>B {}",
+    "class A extends {} ! {}",
+    "class A extends {} <T> {}",
     "interface A extends 1 {}",
     "interface A extends B() {}",
     "interface A extends (B) {}",
@@ -3258,6 +3266,7 @@ describe("TypeScript that the long way rejects", () => {
     "a.\nb instanceof c",
     "a?.\nb in c",
     "@a.\nb class A {}",
+    "@a.\n#b class A {}",
     "let x: a.\nb extends c ? 1 : 2",
     // what is assigned to
     "a as b = 1",
@@ -3284,6 +3293,16 @@ describe("TypeScript that the long way rejects", () => {
     "async (a?)",
     "async (a: b)",
     "async (a?: b)",
+    "a < keyof > (c)",
+    "a < keyof, b > (c)",
+    "a < [infer] > (c)",
+    "a < [,] > (c)",
+    "a < typeof [] > (c)",
+    "a < new {} > (c)",
+    "a < < {} > (c)",
+    "a < import(b) > (c)",
+    "<T>a++ ()",
+    "<T>a.b++ !",
     // `as` between operators
     "x = 1 + 1 as number * 2",
     "x = 1 + 1 as any as number * 2",
@@ -3292,6 +3311,19 @@ describe("TypeScript that the long way rejects", () => {
     // a type assertion where only a left-hand side expression can stand
     "++<T>a",
     "--<T>a.b",
+    // parentheses before a block
+    "(a)\n{}",
+    "x = (a)\n{}",
+    "x = (a, b)\n{}",
+    "x = ({a})\n{}",
+    "async (a)\n{}",
+    "if (x) (a)\n{}",
+    // a line break that TypeScript does not see, or sees
+    "function f(): asserts a\nis",
+    "class A {\n  a(): asserts b\n  is\n}\n",
+    "export * from 'b'\nwith { a: 'b' }",
+    "export {a} from 'b'\nwith { a: 'b' }",
+    "a < b & new c > (d)",
     // the head of a `for`
     "for (var a = 1 in b);",
     "for (let a = 1 of b);",
@@ -3361,6 +3393,8 @@ describe("TypeScript that the long way rejects", () => {
     "<></>.a",
     "x = <a />.b",
     "f(<a />.b)",
+    "<a /><T>",
+    "<a /> < b",
     // `</` is one token
     "<a>< /a>",
     "<>< />",
@@ -3372,8 +3406,27 @@ describe("TypeScript that the long way rejects", () => {
     "x = a <// c\nb",
     // what looks like type parameters
     "<const x={} />",
+    "x = <const a='b' />",
+    "const x = <const a='b' />;\n",
     "<T,>a</T>",
     "<T extends U>a</T>",
     "<a<> />",
   ]);
+  describe("what looks like it and is printed", () =>
+    expectSame(
+      "a.ts",
+      [
+        "interface A {\n  x: T;\n  new();\n  new(): T;\n  y: T;\n}\n",
+        "x;\na < keyof \nb > (c);\ny;\n",
+        "x;\nconst a = b < c\nd > (e);\n",
+        "x = a < (b + c) && a > (d);\n",
+        "x = a < !b;\n",
+        "if (a < (b = c)) {\n}\n",
+        "x = a < b!.c ? d : e;\n",
+        "class A extends (B) {}\n",
+        "import a from 'b'\nwith { a: 'b' }\n",
+        "interface A {\n  in: T;\n  out: T;\n  const: T;\n}\n",
+      ],
+      [[]],
+    ));
 });

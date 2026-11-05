@@ -1,5 +1,11 @@
 //! TypeScript: types, declarations, class members with modifiers, and the expressions that hold types. The grammar follows
 //! the parser of TypeScript itself, the tree is the one typescript-estree builds from it (as far as Prettier looks at it).
+//!
+//! What the long way rejects in a TypeScript file is refused: what TypeScript's parser reports, and what typescript-estree throws while it converts the tree (modifiers,
+//! bodies, initializers, heritage, parameter properties ..). So is what TypeScript's parser mends in a way that is printed differently. A check stands where the construct
+//! is read, on what is known there. It answers `text_refuse()`, which ends the work on the file. Inside of a type it answers `unexpected()`: a type can be read on trial
+//! (`a < b`, `a ? (b) : c`), and then the other reading is the valid one. Where TypeScript itself would mend the type and go on with the trial, see `trial_is_doubtful`.
+//! fast.rs reads members, heads and statements without coming by here: whatever is checked here is something that it does not take.
 
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
@@ -35,6 +41,9 @@ pub(crate) struct ParseTypescript {
     pub(crate) stray_optional_types: i32,
     /// What a class extends or implements, or an interface extends, is read.
     pub(crate) in_heritage: bool,
+    /// How many lists are open in the type that is read: the members of a tuple or an object type, parameters, type parameters. What a failure leaves behind is not taken
+    /// back: only differences count.
+    pub(crate) open_type_lists: i32,
 }
 impl ParseTypescript {
     pub(crate) fn new() -> Self {
@@ -48,6 +57,7 @@ impl ParseTypescript {
             trial_is_doubtful: false,
             stray_optional_types: 0,
             in_heritage: false,
+            open_type_lists: 0,
         }
     }
 }
@@ -70,6 +80,7 @@ impl Quick {
         self.parse_typescript.export_needs_from = false;
         self.parse_typescript.stray_optional_types = 0;
         self.parse_typescript.in_heritage = false;
+        self.parse_typescript.open_type_lists = 0;
         self.flow_reset_context();
     }
 
@@ -298,6 +309,7 @@ impl Quick {
             // `<>`
             return Err(self.unexpected());
         }
+        self.parse_typescript.open_type_lists += 1;
         while !self.starts_with_gt() {
             let v0 = self.parse_type_parameter(has_variance)?;
             self.list_push(v0);
@@ -305,6 +317,7 @@ impl Quick {
                 self.expect(tk::Comma)?;
             }
         }
+        self.parse_typescript.open_type_lists -= 1;
         self.parse_typescript.no_conditional_types = saved;
         let end = self.lexer.tok_start + 1;
         self.expect_gt()?;
@@ -403,7 +416,13 @@ impl Quick {
         } else {
             0
         };
+        if self.lexer.tok != tk::ParenL && self.is_start_of_type() {
+            // `new A`: TypeScript goes on without the parameters and the `=>`
+            self.parse_typescript.trial_is_doubtful = true;
+        }
+        self.parse_typescript.open_type_lists += 1;
         let params = self.parse_params()?;
+        self.parse_typescript.open_type_lists -= 1;
         let arrow_start = self.lexer.tok_start;
         if self.lexer.tok != tk::Arrow
             && (self.lexer.tok == tk::Comma || self.starts_with_gt() || self.is_start_of_type())
@@ -464,6 +483,7 @@ impl Quick {
     pub(crate) fn parse_constituent(&mut self, operator: i32) -> R<i32> {
         // a function type needs parentheses here
         if self.is_start_of_function_or_constructor_type()? {
+            self.parse_typescript.trial_is_doubtful = true;
             return Err(self.unexpected());
         }
         return Ok(if operator == tk::BitOr {
@@ -691,7 +711,10 @@ impl Quick {
     /// The current token stands behind a dot, on a new line. If it is a word and another word follows on its line, TypeScript takes the two for the start of a statement.
     #[cold]
     pub(crate) fn ts_check_name_on_new_line(&mut self) -> R<()> {
-        if self.parse.typed != FLOW && self.parse.typed != 0 && self.is_word() {
+        if self.parse.typed != FLOW
+            && self.parse.typed != 0
+            && (self.is_word() || self.lexer.tok == tk::PrivateName)
+        {
             let after = self.peek_on_same_line()?;
             if after == tk::Name || after >= tk::In {
                 return Err(self.text_refuse());
@@ -746,6 +769,10 @@ impl Quick {
         self.expect(tk::Import)?;
         self.expect(tk::ParenL)?;
         let list_mark = self.arena.ls_pos;
+        if self.lexer.tok != tk::String {
+            // any type, for TypeScript's parser
+            self.parse_typescript.trial_is_doubtful = true;
+        }
         let v0 = self.string_literal()?;
         self.list_push(v0);
         if self.lexer.tok == tk::Comma {
@@ -821,6 +848,7 @@ impl Quick {
     pub(crate) fn parse_mapped_type(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
         self.expect(tk::BraceL)?;
+        self.parse_typescript.open_type_lists += 1;
         let mut readonly = MT_NONE;
         let mut optional = MT_NONE;
         if self.lexer.tok == tk::Add || self.lexer.tok == tk::Sub {
@@ -865,6 +893,7 @@ impl Quick {
         }
         self.eat(tk::Semi)?;
         self.expect(tk::BraceR)?;
+        self.parse_typescript.open_type_lists -= 1;
         return Ok(self.node4(
             k::MappedType | ((readonly | (optional << 2)) << SUB_SHIFT),
             start,
@@ -932,6 +961,7 @@ impl Quick {
         let start = self.lexer.tok_start;
         self.expect(tk::BracketL)?;
         let list_mark = self.arena.ls_pos;
+        self.parse_typescript.open_type_lists += 1;
         while self.lexer.tok != tk::BracketR {
             let v0 = self.parse_tuple_element()?;
             self.list_push(v0);
@@ -939,6 +969,7 @@ impl Quick {
                 self.expect(tk::Comma)?;
             }
         }
+        self.parse_typescript.open_type_lists -= 1;
         self.next()?;
         let v1 = self.lexer.prev_end;
         let v2 = self.list_finish(list_mark);
@@ -963,7 +994,11 @@ impl Quick {
             self.identifier()?
         };
         let mut annotation: i32 = 0;
-        if self.lexer.tok_nl == 0 && self.word() == w::Is {
+        if self.word() == w::Is {
+            if self.lexer.tok_nl != 0 {
+                // it belongs to the predicate for TypeScript
+                return Err(self.text_refuse());
+            }
             self.next()?;
             let type_start = self.lexer.tok_start;
             let type_ = self.ts_parse_type()?;
@@ -1227,9 +1262,9 @@ impl Quick {
         } else {
             0
         };
-        // the body of an accessor is an error that TypeScript reports later; the tree does not have it
+        // the body of an accessor is an error that TypeScript reports later
         if self.lexer.tok == tk::BraceL && (((head as u32) >> SUB_SHIFT) as i32 & 3) != M_METHOD {
-            self.parse_function_body(0)?;
+            return Err(self.text_refuse());
         }
         self.type_member_semicolon()?;
         return Ok(self.function_node(
@@ -1262,9 +1297,10 @@ impl Quick {
         let mut method = M_METHOD;
         if self.lexer.tok == tk::Name {
             let w = self.word();
-            if is_modifier_word(w) && self.next_can_follow_modifier(w == w::Static)? {
+            // (on whatever line the next word stands: where TypeScript looks for the start of a member, it skips these words)
+            if is_modifier_word(w) && self.next_can_follow_modifier(true)? {
                 // `readonly`, once, is the only modifier here
-                if w != w::Readonly {
+                if w != w::Readonly || !self.next_can_follow_modifier(false)? {
                     return Err(self.text_refuse());
                 }
                 head = MOD_READONLY << SUB_SHIFT;
@@ -1275,7 +1311,14 @@ impl Quick {
                 }
             }
         }
-        self.ts_check_word_before_member()?;
+        if self.lexer.tok >= tk::In
+            && (self.lexer.tok == tk::Export
+                || self.lexer.tok == tk::Default
+                || self.lexer.tok == tk::In
+                || self.lexer.tok == tk::Const)
+        {
+            self.ts_check_export_before_member()?;
+        }
         if self.lexer.tok == tk::Name
             && (self.lexer.tok_kw == kw::Get || self.lexer.tok_kw == kw::Set)
         {
@@ -1336,6 +1379,7 @@ impl Quick {
         self.parse_typescript.no_conditional_types = 0;
         let list_mark = self.arena.ls_pos;
         self.enter_list();
+        self.parse_typescript.open_type_lists += 1;
         while self.lexer.tok != tk::BraceR {
             if self.lexer.tok == tk::EOF {
                 return Err(self.unexpected());
@@ -1350,6 +1394,7 @@ impl Quick {
             self.list_push(v0);
         }
         self.leave_list();
+        self.parse_typescript.open_type_lists -= 1;
         self.parse_typescript.no_conditional_types = saved;
         self.next()?;
         let v1 = self.lexer.prev_end;
@@ -1625,6 +1670,14 @@ impl Quick {
         }
         let is_constructor_key = (head & F_COMPUTED) == 0 && self.is_constructor_key(key);
         if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
+            if is_constructor_key
+                && self.lexer.tok == tk::Lt
+                && (self.n.at(key) & 0xff) == k::StringLiteral
+                && is_ts
+            {
+                // a method for TypeScript
+                return Err(self.text_refuse());
+            }
             if method == M_METHOD && (head & F_STATIC) == 0 && is_constructor_key {
                 method = M_CONSTRUCTOR;
             }
@@ -2523,9 +2576,13 @@ impl Quick {
         let depth = self.parse.speculating;
         let saved = self.parse_typescript.no_conditional_types;
         let is_shift = self.lexer.tok == tk::Shl;
+        let open_lists = self.parse_typescript.open_type_lists;
         self.parse_typescript.trial_is_doubtful = false;
         self.set_speculating(depth + 1);
         let mut result: i32 = 0;
+        // where the type that is read starts, and with which token; 0 between two types
+        let mut type_start: i32 = 0;
+        let mut type_token: i32 = 0;
         let v0 = (|| -> R<Option<i32>> {
             let start = self.lexer.tok_start;
             self.expect_lt()?;
@@ -2535,7 +2592,10 @@ impl Quick {
                 return Err(self.text_refuse());
             }
             while !self.starts_with_gt() {
+                type_start = self.lexer.tok_start;
+                type_token = self.lexer.tok;
                 let v1 = self.ts_parse_type()?;
+                type_start = 0;
                 self.list_push(v1);
                 if !self.starts_with_gt() {
                     self.expect(tk::Comma)?;
@@ -2571,11 +2631,38 @@ impl Quick {
         self.set_speculating(depth);
         self.parse_typescript.no_conditional_types = saved;
         if result == 0 {
+            // Did a type start and break off (`-a` and `(-a` start none), in a list, where TypeScript skips what it does not know, or at a token with which a type can go on?
+            // Then TypeScript mends the type, goes on, and may find the end of the arguments: `a < keyof > (b)`, `a < [b + c] > (d)`, `a < (b, c) > (d)`, `a < !b > (c)`.
+            let is_doubtful = self.parse_typescript.trial_is_doubtful
+                || (type_start != 0
+                    && self.lexer.tok_start != type_start
+                    && type_token != tk::Sub
+                    && !(type_token == tk::ParenL && self.lexer.prev_end == type_start + 1)
+                    && (self.parse_typescript.open_type_lists != open_lists
+                        || self.starts_with_gt()
+                        || matches!(
+                            self.lexer.tok,
+                            tk::Comma
+                                | tk::ParenR
+                                | tk::BracketR
+                                | tk::BraceR
+                                | tk::BracketL
+                                | tk::BitOr
+                                | tk::BitAnd
+                                | tk::Arrow
+                                | tk::Colon
+                                | tk::Question
+                                | tk::Extends
+                                | tk::Semi
+                                | tk::Eq
+                                | tk::Dot
+                                | tk::Ellipsis
+                        )));
+            self.parse_typescript.open_type_lists = open_lists;
             self.rewind(m);
             self.list_truncate(list_top);
             self.restore_context(context);
-            if self.parse_typescript.trial_is_doubtful && self.parse.typed != FLOW {
-                // `a < (b, c) > (d)`: TypeScript has taken `(b, c)` for parameters, and goes on without the `=>`; `a < !b > (c)`
+            if is_doubtful && self.parse.typed != FLOW && self.ts_type_arguments_may_end()? {
                 return Err(self.text_refuse());
             }
             if is_shift && self.parse.typed != FLOW {
@@ -2592,6 +2679,73 @@ impl Quick {
         } else {
             self.unmark(m);
         }
+        return Ok(result);
+    }
+
+    /// The current token is a `<`. Does a `>` follow, before the end of the statement or of what is open around it, behind which type arguments could have ended?
+    /// Leaves the lexer where it is.
+    #[cold]
+    fn ts_type_arguments_may_end(&mut self) -> R<bool> {
+        let m = self.mark();
+        let mut depth: i32 = 0;
+        let mut count: i32 = 0;
+        let mut result = false;
+        let mut is_read = false;
+        loop {
+            if !is_read && self.next().is_err() {
+                // (a regular expression, or text of JSX, read as something else)
+                if self.why.get() != why::SYNTAX {
+                    return Err(Stop);
+                }
+                self.why.set(why::NONE);
+                break;
+            }
+            is_read = false;
+            count += 1;
+            match self.lexer.tok {
+                tk::ParenL | tk::BracketL | tk::BraceL => {
+                    depth += 1;
+                }
+                tk::ParenR | tk::BracketR | tk::BraceR => {
+                    depth -= 1;
+                    if depth < 0 {
+                        break;
+                    }
+                }
+                tk::EOF => {
+                    break;
+                }
+                tk::Semi => {
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                tk::Gt => {
+                    if self.next().is_err() {
+                        if self.why.get() != why::SYNTAX {
+                            return Err(Stop);
+                        }
+                        self.why.set(why::NONE);
+                        break;
+                    }
+                    if self.can_follow_type_arguments_in_expression() {
+                        result = true;
+                        break;
+                    }
+                    is_read = true;
+                }
+                // what is in a template is not read here
+                tk::BackQuote => {
+                    result = true;
+                    break;
+                }
+                _ => {}
+            }
+            if count > 200 {
+                break;
+            }
+        }
+        self.rewind(m);
         return Ok(result);
     }
 
@@ -2696,6 +2850,18 @@ impl Quick {
         let expression = self.parse_maybe_unary()?;
         if self.is_bare_arrow(expression) {
             return Err(self.text_refuse());
+        }
+        // `<T>a++ ()`: nothing goes on behind it but what the operand has taken
+        match self.lexer.tok {
+            tk::Dot | tk::QuestionDot | tk::ParenL | tk::BracketL | tk::BackQuote | tk::Lt => {
+                return Err(self.text_refuse());
+            }
+            tk::Not => {
+                if self.lexer.tok_nl == 0 {
+                    return Err(self.text_refuse());
+                }
+            }
+            _ => {}
         }
         return Ok(self.node2(
             k::TypeAssertion,

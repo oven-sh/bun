@@ -2594,6 +2594,8 @@ impl Quick {
                 self.parse.no_record_expression = 1;
             } else if self.parse.typed == TYPED_TS
                 && (self.lexer.tok == tk::Lt
+                    // (whether `{}` is an object or the body depends on what follows it)
+                    || self.lexer.tok == tk::BraceL
                     || (self.lexer.tok == tk::Name
                         && self.lexer.tok_end - self.lexer.tok_start == 10
                         && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"implements")))
@@ -3511,8 +3513,12 @@ impl Quick {
                         }
                         self.list_truncate(list_mark);
                     }
-                    if are_typed {
-                        // they were parameters, and there is no function
+                    if are_typed
+                        || (maybe_async
+                            && self.lexer.tok == tk::BraceL
+                            && self.parse.typed == TYPED_TS)
+                    {
+                        // they were parameters, or are taken for them, and there is no function
                         return Err(self.text_refuse());
                     }
                     base = self.call_node(
@@ -3785,7 +3791,8 @@ impl Quick {
                             | tk::QuestionDot
                             | tk::ParenL
                             | tk::BracketL
-                            | tk::BackQuote => {
+                            | tk::BackQuote
+                            | tk::Lt => {
                                 return Err(self.text_refuse());
                             }
                             tk::Not => {
@@ -3954,6 +3961,13 @@ impl Quick {
         let count = self.arena.ls_pos - mark;
         if count == 0 || saw_rest || trailing_comma || typed_item != 0 {
             return Err(self.unexpected());
+        }
+        if self.lexer.tok == tk::BraceL
+            && self.parse.typed == TYPED_TS
+            && !self.parse_typescript.in_heritage
+        {
+            // `(a)` and a block on the next line: for TypeScript an arrow function without its arrow, if these can be parameters
+            return Err(self.text_refuse());
         }
         let expression: i32;
         if count == 1 {
@@ -4663,6 +4677,14 @@ impl Quick {
         return self.leaf(k::StringLiteral);
     }
 
+    /// The same behind an export, where TypeScript wants `with` on the same line.
+    pub(crate) fn parse_attributes_of_export(&mut self) -> R<i32> {
+        if self.lexer.tok == tk::With && self.lexer.tok_nl != 0 && self.parse.typed == TYPED_TS {
+            return Err(self.text_refuse());
+        }
+        return self.parse_attributes();
+    }
+
     /// `with { type: "json" }`, or nothing.
     pub(crate) fn parse_attributes(&mut self) -> R<i32> {
         self.parse.attributes_flag = 0;
@@ -4994,7 +5016,7 @@ impl Quick {
             }
             self.next()?;
             let source = self.string_literal()?;
-            let attributes = self.parse_attributes()?;
+            let attributes = self.parse_attributes_of_export()?;
             let end = self.lexer.prev_end;
             self.semicolon()?;
             return Ok(self.node2_l(
@@ -5230,7 +5252,7 @@ impl Quick {
         if self.is_kw(kw::From) {
             self.next()?;
             source = self.string_literal()?;
-            attributes = self.parse_attributes()?;
+            attributes = self.parse_attributes_of_export()?;
         } else if needs_from {
             return Err(self.unexpected());
         } else if self.parse_typescript.export_needs_from {

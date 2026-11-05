@@ -462,7 +462,7 @@ static JSValue handleVirtualModuleResult(
             commonJSModule->setExportsObject(exports);
             commonJSModule->hasEvaluated = true;
             // Left in the require map, it would hide the mock from require() once the factory has settled.
-            JSC__JSMap__remove(requireMapOf(globalObject, commonJSModule->moduleGraph()), globalObject, JSValue::encode(commonJSModule->filename()));
+            JSC__JSMap__remove(requireMapOf(globalObject, commonJSModule->moduleGraph()), globalObject, JSValue::encode(fetch.specifierJS));
             RETURN_IF_EXCEPTION(scope, {});
             return commonJSModule;
         }

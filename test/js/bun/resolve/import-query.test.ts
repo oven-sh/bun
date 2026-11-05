@@ -757,3 +757,40 @@ test.concurrent("CommonJS query referrers resolve relative children before the s
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
 });
+
+test.concurrent.skipIf(isWindows).each(["literal path", "query suffix"])(
+  "requiring an original does not hide a settled mock with a %s",
+  async kind => {
+    const filename = kind === "literal path" ? "target?copy.cjs" : "target.cjs";
+    using dir = tempDir("file-url-mock-original", {
+      [filename]: `module.exports = { value: "real" };`,
+    });
+    const url = Bun.pathToFileURL(path.join(String(dir), filename)).href + (kind === "query suffix" ? "?v=1" : "");
+    await Bun.write(path.join(String(dir), "early.cjs"), `module.exports = require(${JSON.stringify(url)});`);
+    await Bun.write(
+      path.join(String(dir), "entry.test.ts"),
+      `
+      import { expect, test, vi } from "bun:test";
+      import early from "./early.cjs";
+      import * as mocked from ${JSON.stringify(url)};
+      vi.mock(${JSON.stringify(url)}, async importOriginal => ({ ...(await importOriginal()), value: "mocked" }));
+      test("the settled mock replaces the original", () => {
+        expect(early.value).toBe("real");
+        expect(mocked.value).toBe("mocked");
+        expect(require(${JSON.stringify(url)}).value).toBe("mocked");
+      });
+    `,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "entry.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+  },
+);

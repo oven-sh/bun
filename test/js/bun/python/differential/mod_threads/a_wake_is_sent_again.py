@@ -1,8 +1,8 @@
 # A thread is to come out of a system call to run a finalizer, and the first try comes to nothing. Nobody collects after that.
 # (What comes to nothing for real is a signal that arrives just before the system call begins. Here the program sees to it.)
-import ctypes, fcntl, os, select, signal, tempfile, threading, time
+import ctypes, errno, fcntl, os, select, signal, tempfile, threading, time
 
-libc = ctypes.CDLL(None)
+libc = ctypes.CDLL(None, use_errno=True)
 
 
 class pollfd(ctypes.Structure):
@@ -66,6 +66,9 @@ while not tries and not done:
     give_up_after(deadline, "the object was not found dead")
 signal.siginterrupt(signal.SIGURG, True)
 # In foreign code this thread does nothing: it does not collect, and wakes nobody.
-print("finalized:", libc.poll(ctypes.byref(pollfd(r, select.POLLIN, 0)), 1, 120000))
+# (A collector may stop the threads with a signal, if the other thread collects, and poll() is never begun again after one.)
+while (ready := libc.poll(ctypes.byref(pollfd(r, select.POLLIN, 0)), 1, 120000)) == -1 and ctypes.get_errno() == errno.EINTR:
+    pass
+print("finalized:", ready)
 thread.join()
 print(done)

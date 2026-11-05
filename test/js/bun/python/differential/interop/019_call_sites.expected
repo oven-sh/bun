@@ -1,0 +1,121 @@
+status: 0
+oracle: none
+---
+different: 0
+0 at0 undefined 
+0 at1 undefined number:7
+0 at2 undefined number:7 number:8
+0 at_float undefined number:2 number:2.5
+0 at_keyword undefined number:7 {b:8}
+0 at_keywords undefined {a:1,b:two}
+0 at_star undefined number:7 number:8
+0 at_star_star undefined number:7 {b:8}
+1 at0 true 0 undefined undefined
+1 at1 true 1 7 undefined
+1 at2 true 2 7 8
+1 at_float true 2 2 2.5
+1 at_keyword true 2 7 [object Object]
+1 at_keywords true 1 [object Object] undefined
+1 at_star true 2 7 8
+1 at_star_star true 2 7 [object Object]
+2 at0 undefined/default
+2 at1 7/default
+2 at2 7/8
+2 at_float 2/2.5
+2 at_keyword 7/[object Object]
+2 at_keywords [object Object]/default
+2 at_star 7/8
+2 at_star_star 7/[object Object]
+3 at0 Point(undefined,undefined)
+3 at1 Point(7,undefined)
+3 at2 Point(7,8)
+3 at_float Point(2,2.5)
+3 at_keyword Point(7,[object Object])
+3 at_keywords Point([object Object],undefined)
+3 at_star Point(7,8)
+3 at_star_star Point(7,[object Object])
+4 at0 bound,first,,
+4 at1 bound,first,7,
+4 at2 bound,first,7,8
+4 at_float bound,first,2,2.5
+4 at_keyword bound,first,7,[object Object]
+4 at_keywords bound,first,[object Object],
+4 at_star bound,first,7,8
+4 at_star_star bound,first,7,[object Object]
+5 at0 target undefined undefined
+5 at1 target 7 undefined
+5 at2 target 7 8
+5 at_float target 2 2.5
+5 at_keyword target 7 [object Object]
+5 at_keywords target [object Object] undefined
+5 at_star target 7 8
+5 at_star_star target 7 [object Object]
+6 at0 trapped 
+6 at1 trapped 7
+6 at2 trapped 7,8
+6 at_float trapped 2,2.5
+6 at_keyword trapped 7,[object Object]
+6 at_keywords trapped [object Object]
+6 at_star trapped 7,8
+6 at_star_star trapped 7,[object Object]
+7 at0 JSError: RangeError: from JS undefined
+7 at1 JSError: RangeError: from JS 7
+7 at2 JSError: RangeError: from JS 7
+7 at_float JSError: RangeError: from JS 2
+7 at_keyword JSError: RangeError: from JS 7
+7 at_keywords JSError: RangeError: from JS [object Object]
+7 at_star JSError: RangeError: from JS 7
+7 at_star_star JSError: RangeError: from JS 7
+8 at0 -inf
+8 at1 7
+8 at2 8
+8 at_float 2.5
+8 at_keyword nan
+8 at_keywords nan
+8 at_star 8
+8 at_star_star nan
+9 at0 
+9 at1 7
+9 at2 7
+9 at_float 2
+9 at_keyword 7
+9 at_keywords [object Object]
+9 at_star 7
+9 at_star_star 7
+10 at0 []
+10 at1 [7]
+10 at2 [7, 8]
+10 at_float [2, 2.5]
+10 at_keyword [7, <JavaScript Object at ADDRESS>]
+10 at_keywords [<JavaScript Object at ADDRESS>]
+10 at_star [7, 8]
+10 at_star_star [7, <JavaScript Object at ADDRESS>]
+11 at0 None
+11 at1 7
+11 at2 7
+11 at_float 2
+11 at_keyword 7
+11 at_keywords {"a":1,"b":"two"}
+11 at_star 7
+11 at_star_star 7
+12 at0 nan
+12 at1 7
+12 at2 7
+12 at_float nan
+12 at_keyword 7
+12 at_keywords nan
+12 at_star 7
+12 at_star_star 7
+['function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1, 'function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1]
+['function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1, 'function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1]
+['function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1, 'function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1]
+['function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1, 'function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1]
+string,number,true string,number,true string,number,true string,number,true
+['function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1, 'function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1]
+['function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1, 'function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1]
+['function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1, 'function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1]
+['function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1, 'function 1 []', 'method 1 []', 'called 1 []', 'one JSPlainObject', 1]
+["function 0 ['a']", "method 0 ['a']", "called 0 ['a']", "function 0 ['a']", "method 0 ['a']", "called 0 ['a']"] ["function 0 ['a']", "method 0 ['a']", "called 0 ['a']", "function 0 ['a']", "method 0 ['a']", "called 0 ['a']"]
+["function 0 ['a']", "method 0 ['a']", "called 0 ['a']", "function 0 ['a']", "method 0 ['a']", "called 0 ['a']"] ["function 0 ['a']", "method 0 ['a']", "called 0 ['a']", "function 0 ['a']", "method 0 ['a']", "called 0 ['a']"]
+["function 0 ['a']", "method 0 ['a']", "called 0 ['a']", "function 0 ['a']", "method 0 ['a']", "called 0 ['a']"] ["function 0 ['a']", "method 0 ['a']", "called 0 ['a']", "function 0 ['a']", "method 0 ['a']", "called 0 ['a']"]
+["function 0 ['a']", "method 0 ['a']", "called 0 ['a']", "function 0 ['a']", "method 0 ['a']", "called 0 ['a']"] ["function 0 ['a']", "method 0 ['a']", "called 0 ['a']", "function 0 ['a']", "method 0 ['a']", "called 0 ['a']"]

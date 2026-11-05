@@ -1,0 +1,1616 @@
+status: 0
+script: 82db66005b503724
+---
+--- each place for itself, each callee three times running, then all in turn, twice
+
+
+
+3
+3
+3
+3 4
+3 4
+3 4
+3 4 5
+3 4 5
+3 4 5
+abc
+abc
+abc
+abc a
+abc a
+abc a
+[3, 1, 2]
+[3, 1, 2]
+[3, 1, 2]
+3 4
+3 4
+3 4
+3
+3
+3
+2.0 1.5
+2.0 1.5
+2.0 1.5
+3 4
+3 4
+3 4
+
+3
+3 4
+3 4 5
+abc
+abc a
+[3, 1, 2]
+3 4
+3
+2.0 1.5
+3 4
+
+3
+3 4
+3 4 5
+abc
+abc a
+[3, 1, 2]
+3 4
+3
+2.0 1.5
+3 4
+at0
+    plain TypeError: plain() missing 2 required positional arguments: 'a' and 'b'
+    defaults TypeError: defaults() missing 1 required positional argument: 'a'
+    star ('star', ())
+    keywords ('keywords', [])
+    both TypeError: both() missing 1 required positional argument: 'a'
+    only TypeError: only() missing 2 required positional arguments: 'a' and 'b'
+    none ('none',)
+    generator TypeError: generator() missing 1 required positional argument: 'a'
+    coroutine TypeError: coroutine() missing 1 required positional argument: 'a'
+    raises TypeError: raises() missing 1 required positional argument: 'a'
+    recursive TypeError: recursive() missing 1 required positional argument: 'a'
+    closure.<locals>.inner TypeError: closure.<locals>.inner() missing 1 required positional argument: 'a'
+    closure.<locals>.inner TypeError: closure.<locals>.inner() missing 1 required positional argument: 'a'
+    closure.<locals>.inner TypeError: closure.<locals>.inner() missing 1 required positional argument: 'a'
+    <lambda> TypeError: <lambda>() missing 2 required positional arguments: 'a' and 'b'
+    <lambda> ('lambda star', ())
+    Plain TypeError: Plain.__init__() missing 1 required positional argument: 'a'
+    WithNew TypeError: WithNew.__new__() missing 1 required positional argument: 'a'
+    Callable TypeError: Callable.__call__() missing 1 required positional argument: 'a'
+    CallableList TypeError: CallableList.__call__() missing 1 required positional argument: 'a'
+    OfMeta TypeError: Meta.__call__() missing 1 required positional argument: 'a'
+    Slotted TypeError: Slotted.__init__() missing 1 required positional argument: 'a'
+    Plain.method TypeError: Plain.method() missing 1 required positional argument: 'a'
+    Plain.method TypeError: Plain.method() missing 2 required positional arguments: 'self' and 'a'
+    Plain.of_class TypeError: Plain.of_class() missing 1 required positional argument: 'a'
+    Plain.of_class TypeError: Plain.of_class() missing 1 required positional argument: 'a'
+    Plain.static TypeError: Plain.static() missing 1 required positional argument: 'a'
+    Plain.static TypeError: Plain.static() missing 1 required positional argument: 'a'
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() missing 1 required positional argument: 'b'
+    partial TypeError: defaults() missing 1 required positional argument: 'a'
+    partial TypeError: closure.<locals>.inner() missing 1 required positional argument: 'a'
+    len TypeError: len() takes exactly one argument (0 given)
+    abs TypeError: abs() takes exactly one argument (0 given)
+    max TypeError: max expected at least 1 argument, got 0
+    min TypeError: min expected at least 1 argument, got 0
+    divmod TypeError: divmod expected 2 arguments, got 0
+    pow TypeError: pow() missing required argument 'base' (pos 1)
+    isinstance TypeError: isinstance expected 2 arguments, got 0
+    getattr TypeError: getattr expected at least 2 arguments, got 0
+    hasattr TypeError: hasattr expected 2 arguments, got 0
+    repr TypeError: repr() takes exactly one argument (0 given)
+    builtin_function_or_method.__call__ None
+    sorted TypeError: sorted expected 1 argument, got 0
+    sum TypeError: sum() takes at least 1 positional argument (0 given)
+    round TypeError: round() missing required argument 'number' (pos 1)
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes exactly one argument (0 given)
+    int 0
+    float 0.0
+    str ''
+    list []
+    tuple ()
+    dict {}
+    set ('set', [])
+    frozenset ('frozenset', [])
+    bytes b''
+    complex 0j
+    range TypeError: range expected at least 1 argument, got 0
+    slice TypeError: slice expected at least 1 argument, got 0
+    type TypeError: type() takes 1 or 3 arguments
+    object <object object at ADDRESS>
+    ValueError ValueError()
+    KeyError KeyError()
+    zip ('zip', [])
+    map TypeError: map() must have at least two arguments.
+    enumerate TypeError: enumerate() missing required argument 'iterable'
+    str.upper 'ABC'
+    str.startswith TypeError: startswith expected at least 1 argument, got 0
+    str.split ['a,b']
+    str.upper TypeError: unbound method str.upper() needs an argument
+    str.startswith TypeError: unbound method str.startswith() needs an argument
+    list.index TypeError: index expected at least 1 argument, got 0
+    list.append TypeError: unbound method list.append() needs an argument
+    dict.get TypeError: get expected at least 1 argument, got 0
+    dict.fromkeys TypeError: fromkeys expected at least 1 argument, got 0
+    tuple.count TypeError: tuple.count() takes exactly one argument (0 given)
+    int.bit_length TypeError: unbound method int.bit_length() needs an argument
+    int.__add__ TypeError: expected 1 argument, got 0
+    int.__add__ TypeError: descriptor '__add__' of 'int' object needs an argument
+    reduce TypeError: reduce() takes at least 2 positional arguments (0 given)
+    plain TypeError: plain() missing 2 required positional arguments: 'a' and 'b'
+    plain TypeError: plain() missing 2 required positional arguments: 'a' and 'b'
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at1
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    defaults ('defaults', 3, 2, 3)
+    star ('star', (3,))
+    keywords TypeError: keywords() takes 0 positional arguments but 1 was given
+    both ('both', 3, (), 0, [])
+    only TypeError: only() missing 1 required positional argument: 'b'
+    none TypeError: none() takes 0 positional arguments but 1 was given
+    generator ('generator', [3, 0])
+    coroutine 'coroutine'
+    raises ValueError: (3, 0)
+    recursive 3
+    closure.<locals>.inner ('inner', 1, 3, 0)
+    closure.<locals>.inner ('inner', 2, 3, 0)
+    closure.<locals>.inner ('inner', 3, 3, 0)
+    <lambda> TypeError: <lambda>() missing 1 required positional argument: 'b'
+    <lambda> ('lambda star', (3,))
+    Plain Plain(3, 0)
+    WithNew ('new', 3, 0)
+    Callable ('called', 3, 0)
+    CallableList ('list called', 2, 3, 0)
+    OfMeta ('meta', 'OfMeta', 3, 0)
+    Slotted Slotted(3, 0)
+    Plain.method ('method', 3, 0)
+    Plain.method TypeError: Plain.method() missing 1 required positional argument: 'a'
+    Plain.of_class ('of_class', 'Plain', 3, 0)
+    Plain.of_class ('of_class', 'Plain', 3, 0)
+    Plain.static ('static', 3, 0)
+    Plain.static ('static', 3, 0)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial ('plain', 7, 3)
+    partial ('defaults', 3, 2, 9)
+    partial ('inner', 4, 3, 0)
+    len TypeError: object of type 'int' has no len()
+    abs 3
+    max TypeError: 'int' object is not iterable
+    min TypeError: 'int' object is not iterable
+    divmod TypeError: divmod expected 2 arguments, got 1
+    pow TypeError: pow() missing required argument 'exp' (pos 2)
+    isinstance TypeError: isinstance expected 2 arguments, got 1
+    getattr TypeError: getattr expected at least 2 arguments, got 1
+    hasattr TypeError: hasattr expected 2 arguments, got 1
+    repr '3'
+    builtin_function_or_method.__call__ None
+    sorted TypeError: 'int' object is not iterable
+    sum TypeError: 'int' object is not iterable
+    round 3
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable False
+    int 3
+    float 3.0
+    str '3'
+    list TypeError: 'int' object is not iterable
+    tuple TypeError: 'int' object is not iterable
+    dict TypeError: 'int' object is not iterable
+    set TypeError: 'int' object is not iterable
+    frozenset TypeError: 'int' object is not iterable
+    bytes b'\x00\x00\x00'
+    complex (3+0j)
+    range ('range', [0, 1, 2])
+    slice slice(None, 3, None)
+    type <class 'int'>
+    object TypeError: object() takes no arguments
+    ValueError ValueError(3)
+    KeyError KeyError(3)
+    zip TypeError: 'int' object is not iterable
+    map TypeError: map() must have at least two arguments.
+    enumerate TypeError: 'int' object is not iterable
+    str.upper TypeError: str.upper() takes no arguments (1 given)
+    str.startswith TypeError: startswith first arg must be str or a tuple of str, not int
+    str.split TypeError: must be str or None, not int
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'int' object
+    list.index 0
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+    dict.get None
+    dict.fromkeys TypeError: 'int' object is not iterable
+    tuple.count 0
+    int.bit_length 2
+    int.__add__ 8
+    int.__add__ TypeError: expected 1 argument, got 0
+    reduce TypeError: reduce() takes at least 2 positional arguments (1 given)
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at2
+    plain ('plain', 3, 4)
+    defaults ('defaults', 3, 4, 3)
+    star ('star', (3, 4))
+    keywords TypeError: keywords() takes 0 positional arguments but 2 were given
+    both ('both', 3, (4,), 0, [])
+    only ('only', 3, 4, 1)
+    none TypeError: none() takes 0 positional arguments but 2 were given
+    generator ('generator', [3, 4])
+    coroutine 'coroutine'
+    raises ValueError: (3, 4)
+    recursive 3
+    closure.<locals>.inner ('inner', 1, 3, 4)
+    closure.<locals>.inner ('inner', 2, 3, 4)
+    closure.<locals>.inner ('inner', 3, 3, 4)
+    <lambda> ('lambda', 3, 4)
+    <lambda> ('lambda star', (3, 4))
+    Plain Plain(3, 4)
+    WithNew ('new', 3, 4)
+    Callable ('called', 3, 4)
+    CallableList ('list called', 2, 3, 4)
+    OfMeta ('meta', 'OfMeta', 3, 4)
+    Slotted Slotted(3, 4)
+    Plain.method ('method', 3, 4)
+    Plain.method ('method', 4, 0)
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() takes 2 positional arguments but 3 were given
+    partial ('defaults', 3, 4, 9)
+    partial ('inner', 4, 3, 4)
+    len TypeError: len() takes exactly one argument (2 given)
+    abs TypeError: abs() takes exactly one argument (2 given)
+    max 4
+    min 3
+    divmod (0, 3)
+    pow 81
+    isinstance TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+    getattr TypeError: attribute name must be string, not 'int'
+    hasattr TypeError: attribute name must be string, not 'int'
+    repr TypeError: repr() takes exactly one argument (2 given)
+    builtin_function_or_method.__call__ None
+    sorted TypeError: sorted expected 1 argument, got 2
+    sum TypeError: 'int' object is not iterable
+    round 3
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes exactly one argument (2 given)
+    int TypeError: int() can't convert non-string with explicit base
+    float TypeError: float expected at most 1 argument, got 2
+    str TypeError: str() argument 'encoding' must be str, not int
+    list TypeError: list expected at most 1 argument, got 2
+    tuple TypeError: tuple expected at most 1 argument, got 2
+    dict TypeError: dict expected at most 1 argument, got 2
+    set TypeError: set expected at most 1 argument, got 2
+    frozenset TypeError: frozenset expected at most 1 argument, got 2
+    bytes TypeError: bytes() argument 'encoding' must be str, not int
+    complex (3+4j)
+    range ('range', [3])
+    slice slice(3, 4, None)
+    type TypeError: type() takes 1 or 3 arguments
+    object TypeError: object() takes no arguments
+    ValueError ValueError(3, 4)
+    KeyError KeyError(3, 4)
+    zip TypeError: 'int' object is not iterable
+    map TypeError: 'int' object is not iterable
+    enumerate TypeError: 'int' object is not iterable
+    str.upper TypeError: str.upper() takes no arguments (2 given)
+    str.startswith TypeError: startswith first arg must be str or a tuple of str, not int
+    str.split TypeError: must be str or None, not int
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'int' object
+    list.index ValueError: list.index(x): x not in list
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+    dict.get 4
+    dict.fromkeys TypeError: 'int' object is not iterable
+    tuple.count TypeError: tuple.count() takes exactly one argument (2 given)
+    int.bit_length TypeError: int.bit_length() takes no arguments (1 given)
+    int.__add__ TypeError: expected 1 argument, got 2
+    int.__add__ 7
+    reduce TypeError: reduce() arg 2 must support iteration
+    plain ('plain', 3, 4)
+    plain ('plain', 3, 4)
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at3
+    plain TypeError: plain() takes 2 positional arguments but 3 were given
+    defaults ('defaults', 3, 4, 5)
+    star ('star', (3, 4, 5))
+    keywords TypeError: keywords() takes 0 positional arguments but 3 were given
+    both ('both', 3, (4, 5), 0, [])
+    only TypeError: only() takes 2 positional arguments but 3 were given
+    none TypeError: none() takes 0 positional arguments but 3 were given
+    generator TypeError: generator() takes from 1 to 2 positional arguments but 3 were given
+    coroutine TypeError: coroutine() takes from 1 to 2 positional arguments but 3 were given
+    raises TypeError: raises() takes from 1 to 2 positional arguments but 3 were given
+    recursive TypeError: recursive() takes from 1 to 2 positional arguments but 3 were given
+    closure.<locals>.inner TypeError: closure.<locals>.inner() takes from 1 to 2 positional arguments but 3 were given
+    closure.<locals>.inner TypeError: closure.<locals>.inner() takes from 1 to 2 positional arguments but 3 were given
+    closure.<locals>.inner TypeError: closure.<locals>.inner() takes from 1 to 2 positional arguments but 3 were given
+    <lambda> TypeError: <lambda>() takes 2 positional arguments but 3 were given
+    <lambda> ('lambda star', (3, 4, 5))
+    Plain TypeError: Plain.__init__() takes from 2 to 3 positional arguments but 4 were given
+    WithNew TypeError: WithNew.__new__() takes from 2 to 3 positional arguments but 4 were given
+    Callable TypeError: Callable.__call__() takes from 2 to 3 positional arguments but 4 were given
+    CallableList TypeError: CallableList.__call__() takes from 2 to 3 positional arguments but 4 were given
+    OfMeta TypeError: Meta.__call__() takes from 2 to 3 positional arguments but 4 were given
+    Slotted TypeError: Slotted.__init__() takes from 2 to 3 positional arguments but 4 were given
+    Plain.method TypeError: Plain.method() takes from 2 to 3 positional arguments but 4 were given
+    Plain.method ('method', 4, 5)
+    Plain.of_class TypeError: Plain.of_class() takes from 2 to 3 positional arguments but 4 were given
+    Plain.of_class TypeError: Plain.of_class() takes from 2 to 3 positional arguments but 4 were given
+    Plain.static TypeError: Plain.static() takes from 1 to 2 positional arguments but 3 were given
+    Plain.static TypeError: Plain.static() takes from 1 to 2 positional arguments but 3 were given
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() takes 2 positional arguments but 4 were given
+    partial TypeError: defaults() got multiple values for argument 'c'
+    partial TypeError: closure.<locals>.inner() takes from 1 to 2 positional arguments but 3 were given
+    len TypeError: len() takes exactly one argument (3 given)
+    abs TypeError: abs() takes exactly one argument (3 given)
+    max 5
+    min 3
+    divmod TypeError: divmod expected 2 arguments, got 3
+    pow 1
+    isinstance TypeError: isinstance expected 2 arguments, got 3
+    getattr TypeError: attribute name must be string, not 'int'
+    hasattr TypeError: hasattr expected 2 arguments, got 3
+    repr TypeError: repr() takes exactly one argument (3 given)
+    builtin_function_or_method.__call__ None
+    sorted TypeError: sorted expected 1 argument, got 3
+    sum TypeError: sum() takes at most 2 arguments (3 given)
+    round TypeError: round() takes at most 2 arguments (3 given)
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes exactly one argument (3 given)
+    int TypeError: int expected at most 2 arguments, got 3
+    float TypeError: float expected at most 1 argument, got 3
+    str TypeError: str() argument 'encoding' must be str, not int
+    list TypeError: list expected at most 1 argument, got 3
+    tuple TypeError: tuple expected at most 1 argument, got 3
+    dict TypeError: dict expected at most 1 argument, got 3
+    set TypeError: set expected at most 1 argument, got 3
+    frozenset TypeError: frozenset expected at most 1 argument, got 3
+    bytes TypeError: bytes() argument 'encoding' must be str, not int
+    complex TypeError: complex() takes at most 2 arguments (3 given)
+    range ('range', [3])
+    slice slice(3, 4, 5)
+    type TypeError: type.__new__() argument 1 must be str, not int
+    object TypeError: object() takes no arguments
+    ValueError ValueError(3, 4, 5)
+    KeyError KeyError(3, 4, 5)
+    zip TypeError: 'int' object is not iterable
+    map TypeError: 'int' object is not iterable
+    enumerate TypeError: enumerate() takes at most 2 arguments (3 given)
+    str.upper TypeError: str.upper() takes no arguments (3 given)
+    str.startswith TypeError: startswith first arg must be str or a tuple of str, not int
+    str.split TypeError: split() takes at most 2 arguments (3 given)
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'int' object
+    list.index ValueError: list.index(x): x not in list
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+    dict.get TypeError: get expected at most 2 arguments, got 3
+    dict.fromkeys TypeError: fromkeys expected at most 2 arguments, got 3
+    tuple.count TypeError: tuple.count() takes exactly one argument (3 given)
+    int.bit_length TypeError: int.bit_length() takes no arguments (2 given)
+    int.__add__ TypeError: expected 1 argument, got 3
+    int.__add__ TypeError: expected 1 argument, got 2
+    reduce TypeError: reduce() arg 2 must support iteration
+    plain TypeError: plain() takes 2 positional arguments but 3 were given
+    plain TypeError: plain() takes 2 positional arguments but 3 were given
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_text
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    defaults ('defaults', 'abc', 2, 3)
+    star ('star', ('abc',))
+    keywords TypeError: keywords() takes 0 positional arguments but 1 was given
+    both ('both', 'abc', (), 0, [])
+    only TypeError: only() missing 1 required positional argument: 'b'
+    none TypeError: none() takes 0 positional arguments but 1 was given
+    generator ('generator', ['abc', 0])
+    coroutine 'coroutine'
+    raises ValueError: ('abc', 0)
+    recursive TypeError: '<=' not supported between instances of 'str' and 'int'
+    closure.<locals>.inner ('inner', 1, 'abc', 0)
+    closure.<locals>.inner ('inner', 2, 'abc', 0)
+    closure.<locals>.inner ('inner', 3, 'abc', 0)
+    <lambda> TypeError: <lambda>() missing 1 required positional argument: 'b'
+    <lambda> ('lambda star', ('abc',))
+    Plain Plain('abc', 0)
+    WithNew ('new', 'abc', 0)
+    Callable ('called', 'abc', 0)
+    CallableList ('list called', 2, 'abc', 0)
+    OfMeta ('meta', 'OfMeta', 'abc', 0)
+    Slotted Slotted('abc', 0)
+    Plain.method ('method', 'abc', 0)
+    Plain.method TypeError: Plain.method() missing 1 required positional argument: 'a'
+    Plain.of_class ('of_class', 'Plain', 'abc', 0)
+    Plain.of_class ('of_class', 'Plain', 'abc', 0)
+    Plain.static ('static', 'abc', 0)
+    Plain.static ('static', 'abc', 0)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial ('plain', 7, 'abc')
+    partial ('defaults', 'abc', 2, 9)
+    partial ('inner', 4, 'abc', 0)
+    len 3
+    abs TypeError: bad operand type for abs(): 'str'
+    max 'c'
+    min 'a'
+    divmod TypeError: divmod expected 2 arguments, got 1
+    pow TypeError: pow() missing required argument 'exp' (pos 2)
+    isinstance TypeError: isinstance expected 2 arguments, got 1
+    getattr TypeError: getattr expected at least 2 arguments, got 1
+    hasattr TypeError: hasattr expected 2 arguments, got 1
+    repr "'abc'"
+    builtin_function_or_method.__call__ None
+    sorted ['a', 'b', 'c']
+    sum TypeError: unsupported operand type(s) for +: 'int' and 'str'
+    round TypeError: type str doesn't define __round__ method
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable False
+    int ValueError: invalid literal for int() with base 10: 'abc'
+    float ValueError: could not convert string to float: 'abc'
+    str 'abc'
+    list ['a', 'b', 'c']
+    tuple ('a', 'b', 'c')
+    dict ValueError: dictionary update sequence element #0 has length 1; 2 is required
+    set ('set', ['a', 'b', 'c'])
+    frozenset ('frozenset', ['a', 'b', 'c'])
+    bytes TypeError: string argument without an encoding
+    complex ValueError: complex() arg is a malformed string
+    range TypeError: 'str' object cannot be interpreted as an integer
+    slice slice(None, 'abc', None)
+    type <class 'str'>
+    object TypeError: object() takes no arguments
+    ValueError ValueError('abc')
+    KeyError KeyError('abc')
+    zip ('zip', [('a',), ('b',), ('c',)])
+    map TypeError: map() must have at least two arguments.
+    enumerate ('enumerate', [(0, 'a'), (1, 'b'), (2, 'c')])
+    str.upper TypeError: str.upper() takes no arguments (1 given)
+    str.startswith True
+    str.split ['a,b']
+    str.upper 'ABC'
+    str.startswith TypeError: startswith expected at least 1 argument, got 0
+    list.index ValueError: list.index(x): x not in list
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'str' object
+    dict.get None
+    dict.fromkeys {'a': None, 'b': None, 'c': None}
+    tuple.count 0
+    int.bit_length TypeError: descriptor 'bit_length' for 'int' objects doesn't apply to a 'str' object
+    int.__add__ NotImplemented
+    int.__add__ TypeError: descriptor '__add__' requires a 'int' object but received a 'str'
+    reduce TypeError: reduce() takes at least 2 positional arguments (1 given)
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_text2
+    plain ('plain', 'abc', 'a')
+    defaults ('defaults', 'abc', 'a', 3)
+    star ('star', ('abc', 'a'))
+    keywords TypeError: keywords() takes 0 positional arguments but 2 were given
+    both ('both', 'abc', ('a',), 0, [])
+    only ('only', 'abc', 'a', 1)
+    none TypeError: none() takes 0 positional arguments but 2 were given
+    generator ('generator', ['abc', 'a'])
+    coroutine 'coroutine'
+    raises ValueError: ('abc', 'a')
+    recursive TypeError: '<=' not supported between instances of 'str' and 'int'
+    closure.<locals>.inner ('inner', 1, 'abc', 'a')
+    closure.<locals>.inner ('inner', 2, 'abc', 'a')
+    closure.<locals>.inner ('inner', 3, 'abc', 'a')
+    <lambda> ('lambda', 'abc', 'a')
+    <lambda> ('lambda star', ('abc', 'a'))
+    Plain Plain('abc', 'a')
+    WithNew ('new', 'abc', 'a')
+    Callable ('called', 'abc', 'a')
+    CallableList ('list called', 2, 'abc', 'a')
+    OfMeta ('meta', 'OfMeta', 'abc', 'a')
+    Slotted Slotted('abc', 'a')
+    Plain.method ('method', 'abc', 'a')
+    Plain.method ('method', 'a', 0)
+    Plain.of_class ('of_class', 'Plain', 'abc', 'a')
+    Plain.of_class ('of_class', 'Plain', 'abc', 'a')
+    Plain.static ('static', 'abc', 'a')
+    Plain.static ('static', 'abc', 'a')
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() takes 2 positional arguments but 3 were given
+    partial ('defaults', 'abc', 'a', 9)
+    partial ('inner', 4, 'abc', 'a')
+    len TypeError: len() takes exactly one argument (2 given)
+    abs TypeError: abs() takes exactly one argument (2 given)
+    max 'abc'
+    min 'a'
+    divmod TypeError: unsupported operand type(s) for divmod(): 'str' and 'str'
+    pow TypeError: unsupported operand type(s) for ** or pow(): 'str' and 'str'
+    isinstance TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+    getattr AttributeError: 'str' object has no attribute 'a'
+    hasattr False
+    repr TypeError: repr() takes exactly one argument (2 given)
+    builtin_function_or_method.__call__ None
+    sorted TypeError: sorted expected 1 argument, got 2
+    sum TypeError: sum() can't sum strings [use ''.join(seq) instead]
+    round TypeError: type str doesn't define __round__ method
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes exactly one argument (2 given)
+    int TypeError: 'str' object cannot be interpreted as an integer
+    float TypeError: float expected at most 1 argument, got 2
+    str TypeError: decoding str is not supported
+    list TypeError: list expected at most 1 argument, got 2
+    tuple TypeError: tuple expected at most 1 argument, got 2
+    dict TypeError: dict expected at most 1 argument, got 2
+    set TypeError: set expected at most 1 argument, got 2
+    frozenset TypeError: frozenset expected at most 1 argument, got 2
+    bytes LookupError: unknown encoding: a
+    complex TypeError: complex() argument 'real' must be a real number, not str
+    range TypeError: 'str' object cannot be interpreted as an integer
+    slice slice('abc', 'a', None)
+    type TypeError: type() takes 1 or 3 arguments
+    object TypeError: object() takes no arguments
+    ValueError ValueError('abc', 'a')
+    KeyError KeyError('abc', 'a')
+    zip ('zip', [('a', 'a')])
+    map TypeError: 'str' object is not callable
+    enumerate TypeError: 'str' object cannot be interpreted as an integer
+    str.upper TypeError: str.upper() takes no arguments (2 given)
+    str.startswith TypeError: slice indices must be integers or have an __index__ method
+    str.split TypeError: 'str' object cannot be interpreted as an integer
+    str.upper TypeError: str.upper() takes no arguments (1 given)
+    str.startswith True
+    list.index TypeError: slice indices must be integers or have an __index__ method
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'str' object
+    dict.get 'a'
+    dict.fromkeys {'a': 'a', 'b': 'a', 'c': 'a'}
+    tuple.count TypeError: tuple.count() takes exactly one argument (2 given)
+    int.bit_length TypeError: descriptor 'bit_length' for 'int' objects doesn't apply to a 'str' object
+    int.__add__ TypeError: expected 1 argument, got 2
+    int.__add__ TypeError: descriptor '__add__' requires a 'int' object but received a 'str'
+    reduce 'a'
+    plain ('plain', 'abc', 'a')
+    plain ('plain', 'abc', 'a')
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_list
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    defaults ('defaults', [3, 1, 2], 2, 3)
+    star ('star', ([3, 1, 2],))
+    keywords TypeError: keywords() takes 0 positional arguments but 1 was given
+    both ('both', [3, 1, 2], (), 0, [])
+    only TypeError: only() missing 1 required positional argument: 'b'
+    none TypeError: none() takes 0 positional arguments but 1 was given
+    generator ('generator', [[3, 1, 2], 0])
+    coroutine 'coroutine'
+    raises ValueError: ([3, 1, 2], 0)
+    recursive TypeError: '<=' not supported between instances of 'list' and 'int'
+    closure.<locals>.inner ('inner', 1, [3, 1, 2], 0)
+    closure.<locals>.inner ('inner', 2, [3, 1, 2], 0)
+    closure.<locals>.inner ('inner', 3, [3, 1, 2], 0)
+    <lambda> TypeError: <lambda>() missing 1 required positional argument: 'b'
+    <lambda> ('lambda star', ([3, 1, 2],))
+    Plain Plain([3, 1, 2], 0)
+    WithNew ('new', [3, 1, 2], 0)
+    Callable ('called', [3, 1, 2], 0)
+    CallableList ('list called', 2, [3, 1, 2], 0)
+    OfMeta ('meta', 'OfMeta', [3, 1, 2], 0)
+    Slotted Slotted([3, 1, 2], 0)
+    Plain.method ('method', [3, 1, 2], 0)
+    Plain.method TypeError: Plain.method() missing 1 required positional argument: 'a'
+    Plain.of_class ('of_class', 'Plain', [3, 1, 2], 0)
+    Plain.of_class ('of_class', 'Plain', [3, 1, 2], 0)
+    Plain.static ('static', [3, 1, 2], 0)
+    Plain.static ('static', [3, 1, 2], 0)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial ('plain', 7, [3, 1, 2])
+    partial ('defaults', [3, 1, 2], 2, 9)
+    partial ('inner', 4, [3, 1, 2], 0)
+    len 3
+    abs TypeError: bad operand type for abs(): 'list'
+    max 3
+    min 1
+    divmod TypeError: divmod expected 2 arguments, got 1
+    pow TypeError: pow() missing required argument 'exp' (pos 2)
+    isinstance TypeError: isinstance expected 2 arguments, got 1
+    getattr TypeError: getattr expected at least 2 arguments, got 1
+    hasattr TypeError: hasattr expected 2 arguments, got 1
+    repr '[3, 1, 2]'
+    builtin_function_or_method.__call__ None
+    sorted [1, 2, 3]
+    sum 6
+    round TypeError: type list doesn't define __round__ method
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable False
+    int TypeError: int() argument must be a string, a bytes-like object or a real number, not 'list'
+    float TypeError: float() argument must be a string or a real number, not 'list'
+    str '[3, 1, 2]'
+    list [3, 1, 2]
+    tuple (3, 1, 2)
+    dict TypeError: object is not iterable
+    set ('set', [1, 2, 3])
+    frozenset ('frozenset', [1, 2, 3])
+    bytes b'\x03\x01\x02'
+    complex TypeError: complex() argument must be a string or a number, not list
+    range TypeError: 'list' object cannot be interpreted as an integer
+    slice slice(None, [3, 1, 2], None)
+    type <class 'list'>
+    object TypeError: object() takes no arguments
+    ValueError ValueError([3, 1, 2])
+    KeyError KeyError([3, 1, 2])
+    zip ('zip', [(3,), (1,), (2,)])
+    map TypeError: map() must have at least two arguments.
+    enumerate ('enumerate', [(0, 3), (1, 1), (2, 2)])
+    str.upper TypeError: str.upper() takes no arguments (1 given)
+    str.startswith TypeError: startswith first arg must be str or a tuple of str, not list
+    str.split TypeError: must be str or None, not list
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'list' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'list' object
+    list.index ValueError: list.index(x): x not in list
+    list.append TypeError: list.append() takes exactly one argument (0 given)
+    dict.get TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+    dict.fromkeys {3: None, 1: None, 2: None}
+    tuple.count 0
+    int.bit_length TypeError: descriptor 'bit_length' for 'int' objects doesn't apply to a 'list' object
+    int.__add__ NotImplemented
+    int.__add__ TypeError: descriptor '__add__' requires a 'int' object but received a 'list'
+    reduce TypeError: reduce() takes at least 2 positional arguments (1 given)
+    plain TypeError: unhashable type: 'list'
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_keyword
+    plain ('plain', 3, 4)
+    defaults ('defaults', 3, 4, 3)
+    star TypeError: star() got an unexpected keyword argument 'b'
+    keywords TypeError: keywords() takes 0 positional arguments but 1 was given
+    both ('both', 3, (), 0, [('b', 4)])
+    only ('only', 3, 4, 1)
+    none TypeError: none() got an unexpected keyword argument 'b'
+    generator ('generator', [3, 4])
+    coroutine 'coroutine'
+    raises ValueError: (3, 4)
+    recursive 3
+    closure.<locals>.inner ('inner', 1, 3, 4)
+    closure.<locals>.inner ('inner', 2, 3, 4)
+    closure.<locals>.inner ('inner', 3, 3, 4)
+    <lambda> ('lambda', 3, 4)
+    <lambda> TypeError: <lambda>() got an unexpected keyword argument 'b'
+    Plain Plain(3, 4)
+    WithNew ('new', 3, 4)
+    Callable ('called', 3, 4)
+    CallableList ('list called', 2, 3, 4)
+    OfMeta ('meta', 'OfMeta', 3, 4)
+    Slotted Slotted(3, 4)
+    Plain.method ('method', 3, 4)
+    Plain.method TypeError: Plain.method() missing 1 required positional argument: 'a'
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() got multiple values for argument 'b'
+    partial ('defaults', 3, 4, 9)
+    partial ('inner', 4, 3, 4)
+    len TypeError: len() takes no keyword arguments
+    abs TypeError: abs() takes no keyword arguments
+    max TypeError: max() got an unexpected keyword argument 'b'
+    min TypeError: min() got an unexpected keyword argument 'b'
+    divmod TypeError: divmod() takes no keyword arguments
+    pow TypeError: pow() missing required argument 'exp' (pos 2)
+    isinstance TypeError: isinstance() takes no keyword arguments
+    getattr TypeError: getattr() takes no keyword arguments
+    hasattr TypeError: hasattr() takes no keyword arguments
+    repr TypeError: repr() takes no keyword arguments
+    builtin_function_or_method.__call__ TypeError: print() got an unexpected keyword argument 'b'
+    sorted TypeError: 'int' object is not iterable
+    sum TypeError: sum() got an unexpected keyword argument 'b'
+    round TypeError: round() got an unexpected keyword argument 'b'
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes no keyword arguments
+    int TypeError: int() got an unexpected keyword argument 'b'
+    float TypeError: float() takes no keyword arguments
+    str TypeError: str() got an unexpected keyword argument 'b'
+    list TypeError: list() takes no keyword arguments
+    tuple TypeError: tuple() takes no keyword arguments
+    dict TypeError: 'int' object is not iterable
+    set TypeError: set() takes no keyword arguments
+    frozenset TypeError: frozenset() takes no keyword arguments
+    bytes TypeError: bytes() got an unexpected keyword argument 'b'
+    complex TypeError: complex() got an unexpected keyword argument 'b'
+    range TypeError: range() takes no keyword arguments
+    slice TypeError: slice() takes no keyword arguments
+    type TypeError: type() takes no keyword arguments
+    object TypeError: object() takes no arguments
+    ValueError TypeError: ValueError() takes no keyword arguments
+    KeyError TypeError: KeyError() takes no keyword arguments
+    zip TypeError: zip() got an unexpected keyword argument 'b'
+    map TypeError: map() got an unexpected keyword argument 'b'
+    enumerate TypeError: 'b' is an invalid keyword argument for enumerate()
+    str.upper TypeError: str.upper() takes no keyword arguments
+    str.startswith TypeError: str.startswith() takes no keyword arguments
+    str.split TypeError: split() got an unexpected keyword argument 'b'
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'int' object
+    list.index TypeError: list.index() takes no keyword arguments
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+    dict.get TypeError: dict.get() takes no keyword arguments
+    dict.fromkeys TypeError: dict.fromkeys() takes no keyword arguments
+    tuple.count TypeError: tuple.count() takes no keyword arguments
+    int.bit_length TypeError: int.bit_length() takes no keyword arguments
+    int.__add__ TypeError: wrapper __add__() takes no keyword arguments
+    int.__add__ TypeError: wrapper __add__() takes no keyword arguments
+    reduce TypeError: reduce() takes at least 2 positional arguments (1 given)
+    plain ('plain', 3, 4)
+    plain ('plain', 3, 4)
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_keywords
+    plain ('plain', 3, 4)
+    defaults ('defaults', 3, 4, 3)
+    star TypeError: star() got an unexpected keyword argument 'a'
+    keywords ('keywords', [('a', 3), ('b', 4)])
+    both ('both', 3, (), 0, [('b', 4)])
+    only TypeError: only() got some positional-only arguments passed as keyword arguments: 'a'
+    none TypeError: none() got an unexpected keyword argument 'a'
+    generator ('generator', [3, 4])
+    coroutine 'coroutine'
+    raises ValueError: (3, 4)
+    recursive 3
+    closure.<locals>.inner ('inner', 1, 3, 4)
+    closure.<locals>.inner ('inner', 2, 3, 4)
+    closure.<locals>.inner ('inner', 3, 3, 4)
+    <lambda> ('lambda', 3, 4)
+    <lambda> TypeError: <lambda>() got an unexpected keyword argument 'a'
+    Plain Plain(3, 4)
+    WithNew ('new', 3, 4)
+    Callable ('called', 3, 4)
+    CallableList ('list called', 2, 3, 4)
+    OfMeta ('meta', 'OfMeta', 3, 4)
+    Slotted Slotted(3, 4)
+    Plain.method ('method', 3, 4)
+    Plain.method TypeError: Plain.method() missing 1 required positional argument: 'self'
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() got multiple values for argument 'a'
+    partial ('defaults', 3, 4, 9)
+    partial ('inner', 4, 3, 4)
+    len TypeError: len() takes no keyword arguments
+    abs TypeError: abs() takes no keyword arguments
+    max TypeError: max expected at least 1 argument, got 0
+    min TypeError: min expected at least 1 argument, got 0
+    divmod TypeError: divmod() takes no keyword arguments
+    pow TypeError: pow() missing required argument 'base' (pos 1)
+    isinstance TypeError: isinstance() takes no keyword arguments
+    getattr TypeError: getattr() takes no keyword arguments
+    hasattr TypeError: hasattr() takes no keyword arguments
+    repr TypeError: repr() takes no keyword arguments
+    builtin_function_or_method.__call__ TypeError: print() got an unexpected keyword argument 'a'
+    sorted TypeError: sorted expected 1 argument, got 0
+    sum TypeError: sum() takes at least 1 positional argument (0 given)
+    round TypeError: round() missing required argument 'number' (pos 1)
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes no keyword arguments
+    int TypeError: int() got an unexpected keyword argument 'a'
+    float TypeError: float() takes no keyword arguments
+    str TypeError: str() got an unexpected keyword argument 'a'
+    list TypeError: list() takes no keyword arguments
+    tuple TypeError: tuple() takes no keyword arguments
+    dict {'a': 3, 'b': 4}
+    set TypeError: set() takes no keyword arguments
+    frozenset TypeError: frozenset() takes no keyword arguments
+    bytes TypeError: bytes() got an unexpected keyword argument 'a'
+    complex TypeError: complex() got an unexpected keyword argument 'a'
+    range TypeError: range() takes no keyword arguments
+    slice TypeError: slice() takes no keyword arguments
+    type TypeError: type() takes 1 or 3 arguments
+    object TypeError: object() takes no arguments
+    ValueError TypeError: ValueError() takes no keyword arguments
+    KeyError TypeError: KeyError() takes no keyword arguments
+    zip TypeError: zip() takes at most 1 keyword argument (2 given)
+    map TypeError: map() takes at most 1 keyword argument (2 given)
+    enumerate TypeError: 'a' is an invalid keyword argument for enumerate()
+    str.upper TypeError: str.upper() takes no keyword arguments
+    str.startswith TypeError: str.startswith() takes no keyword arguments
+    str.split TypeError: split() got an unexpected keyword argument 'a'
+    str.upper TypeError: unbound method str.upper() needs an argument
+    str.startswith TypeError: unbound method str.startswith() needs an argument
+    list.index TypeError: list.index() takes no keyword arguments
+    list.append TypeError: unbound method list.append() needs an argument
+    dict.get TypeError: dict.get() takes no keyword arguments
+    dict.fromkeys TypeError: dict.fromkeys() takes no keyword arguments
+    tuple.count TypeError: tuple.count() takes no keyword arguments
+    int.bit_length TypeError: unbound method int.bit_length() needs an argument
+    int.__add__ TypeError: wrapper __add__() takes no keyword arguments
+    int.__add__ TypeError: descriptor '__add__' of 'int' object needs an argument
+    reduce TypeError: reduce() takes at least 2 positional arguments (0 given)
+    plain ('plain', 3, 4)
+    plain ('plain', 3, 4)
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_other_keyword
+    plain TypeError: plain() got an unexpected keyword argument 'zz'
+    defaults TypeError: defaults() got an unexpected keyword argument 'zz'
+    star TypeError: star() got an unexpected keyword argument 'zz'
+    keywords TypeError: keywords() takes 0 positional arguments but 1 was given
+    both ('both', 3, (), 0, [('zz', 4)])
+    only TypeError: only() got an unexpected keyword argument 'zz'
+    none TypeError: none() got an unexpected keyword argument 'zz'
+    generator TypeError: generator() got an unexpected keyword argument 'zz'
+    coroutine TypeError: coroutine() got an unexpected keyword argument 'zz'
+    raises TypeError: raises() got an unexpected keyword argument 'zz'
+    recursive TypeError: recursive() got an unexpected keyword argument 'zz'
+    closure.<locals>.inner TypeError: closure.<locals>.inner() got an unexpected keyword argument 'zz'
+    closure.<locals>.inner TypeError: closure.<locals>.inner() got an unexpected keyword argument 'zz'
+    closure.<locals>.inner TypeError: closure.<locals>.inner() got an unexpected keyword argument 'zz'
+    <lambda> TypeError: <lambda>() got an unexpected keyword argument 'zz'
+    <lambda> TypeError: <lambda>() got an unexpected keyword argument 'zz'
+    Plain TypeError: Plain.__init__() got an unexpected keyword argument 'zz'
+    WithNew TypeError: WithNew.__new__() got an unexpected keyword argument 'zz'
+    Callable TypeError: Callable.__call__() got an unexpected keyword argument 'zz'
+    CallableList TypeError: CallableList.__call__() got an unexpected keyword argument 'zz'
+    OfMeta TypeError: Meta.__call__() got an unexpected keyword argument 'zz'
+    Slotted TypeError: Slotted.__init__() got an unexpected keyword argument 'zz'
+    Plain.method TypeError: Plain.method() got an unexpected keyword argument 'zz'
+    Plain.method TypeError: Plain.method() got an unexpected keyword argument 'zz'
+    Plain.of_class TypeError: Plain.of_class() got an unexpected keyword argument 'zz'
+    Plain.of_class TypeError: Plain.of_class() got an unexpected keyword argument 'zz'
+    Plain.static TypeError: Plain.static() got an unexpected keyword argument 'zz'
+    Plain.static TypeError: Plain.static() got an unexpected keyword argument 'zz'
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() got an unexpected keyword argument 'zz'
+    partial TypeError: defaults() got an unexpected keyword argument 'zz'
+    partial TypeError: closure.<locals>.inner() got an unexpected keyword argument 'zz'
+    len TypeError: len() takes no keyword arguments
+    abs TypeError: abs() takes no keyword arguments
+    max TypeError: max() got an unexpected keyword argument 'zz'
+    min TypeError: min() got an unexpected keyword argument 'zz'
+    divmod TypeError: divmod() takes no keyword arguments
+    pow TypeError: pow() missing required argument 'exp' (pos 2)
+    isinstance TypeError: isinstance() takes no keyword arguments
+    getattr TypeError: getattr() takes no keyword arguments
+    hasattr TypeError: hasattr() takes no keyword arguments
+    repr TypeError: repr() takes no keyword arguments
+    builtin_function_or_method.__call__ TypeError: print() got an unexpected keyword argument 'zz'
+    sorted TypeError: 'int' object is not iterable
+    sum TypeError: sum() got an unexpected keyword argument 'zz'
+    round TypeError: round() got an unexpected keyword argument 'zz'
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes no keyword arguments
+    int TypeError: int() got an unexpected keyword argument 'zz'
+    float TypeError: float() takes no keyword arguments
+    str TypeError: str() got an unexpected keyword argument 'zz'
+    list TypeError: list() takes no keyword arguments
+    tuple TypeError: tuple() takes no keyword arguments
+    dict TypeError: 'int' object is not iterable
+    set TypeError: set() takes no keyword arguments
+    frozenset TypeError: frozenset() takes no keyword arguments
+    bytes TypeError: bytes() got an unexpected keyword argument 'zz'
+    complex TypeError: complex() got an unexpected keyword argument 'zz'
+    range TypeError: range() takes no keyword arguments
+    slice TypeError: slice() takes no keyword arguments
+    type TypeError: type() takes no keyword arguments
+    object TypeError: object() takes no arguments
+    ValueError TypeError: ValueError() takes no keyword arguments
+    KeyError TypeError: KeyError() takes no keyword arguments
+    zip TypeError: zip() got an unexpected keyword argument 'zz'
+    map TypeError: map() got an unexpected keyword argument 'zz'
+    enumerate TypeError: 'zz' is an invalid keyword argument for enumerate()
+    str.upper TypeError: str.upper() takes no keyword arguments
+    str.startswith TypeError: str.startswith() takes no keyword arguments
+    str.split TypeError: split() got an unexpected keyword argument 'zz'
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'int' object
+    list.index TypeError: list.index() takes no keyword arguments
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+    dict.get TypeError: dict.get() takes no keyword arguments
+    dict.fromkeys TypeError: dict.fromkeys() takes no keyword arguments
+    tuple.count TypeError: tuple.count() takes no keyword arguments
+    int.bit_length TypeError: int.bit_length() takes no keyword arguments
+    int.__add__ TypeError: wrapper __add__() takes no keyword arguments
+    int.__add__ TypeError: wrapper __add__() takes no keyword arguments
+    reduce TypeError: reduce() takes at least 2 positional arguments (1 given)
+    plain TypeError: plain() got an unexpected keyword argument 'zz'
+    plain TypeError: plain() got an unexpected keyword argument 'zz'
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_star
+    plain ('plain', 3, 4)
+    defaults ('defaults', 3, 4, 3)
+    star ('star', (3, 4))
+    keywords TypeError: keywords() takes 0 positional arguments but 2 were given
+    both ('both', 3, (4,), 0, [])
+    only ('only', 3, 4, 1)
+    none TypeError: none() takes 0 positional arguments but 2 were given
+    generator ('generator', [3, 4])
+    coroutine 'coroutine'
+    raises ValueError: (3, 4)
+    recursive 3
+    closure.<locals>.inner ('inner', 1, 3, 4)
+    closure.<locals>.inner ('inner', 2, 3, 4)
+    closure.<locals>.inner ('inner', 3, 3, 4)
+    <lambda> ('lambda', 3, 4)
+    <lambda> ('lambda star', (3, 4))
+    Plain Plain(3, 4)
+    WithNew ('new', 3, 4)
+    Callable ('called', 3, 4)
+    CallableList ('list called', 2, 3, 4)
+    OfMeta ('meta', 'OfMeta', 3, 4)
+    Slotted Slotted(3, 4)
+    Plain.method ('method', 3, 4)
+    Plain.method ('method', 4, 0)
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() takes 2 positional arguments but 3 were given
+    partial ('defaults', 3, 4, 9)
+    partial ('inner', 4, 3, 4)
+    len TypeError: len() takes exactly one argument (2 given)
+    abs TypeError: abs() takes exactly one argument (2 given)
+    max 4
+    min 3
+    divmod (0, 3)
+    pow 81
+    isinstance TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+    getattr TypeError: attribute name must be string, not 'int'
+    hasattr TypeError: attribute name must be string, not 'int'
+    repr TypeError: repr() takes exactly one argument (2 given)
+    builtin_function_or_method.__call__ None
+    sorted TypeError: sorted expected 1 argument, got 2
+    sum TypeError: 'int' object is not iterable
+    round 3
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes exactly one argument (2 given)
+    int TypeError: int() can't convert non-string with explicit base
+    float TypeError: float expected at most 1 argument, got 2
+    str TypeError: str() argument 'encoding' must be str, not int
+    list TypeError: list expected at most 1 argument, got 2
+    tuple TypeError: tuple expected at most 1 argument, got 2
+    dict TypeError: dict expected at most 1 argument, got 2
+    set TypeError: set expected at most 1 argument, got 2
+    frozenset TypeError: frozenset expected at most 1 argument, got 2
+    bytes TypeError: bytes() argument 'encoding' must be str, not int
+    complex (3+4j)
+    range ('range', [3])
+    slice slice(3, 4, None)
+    type TypeError: type() takes 1 or 3 arguments
+    object TypeError: object() takes no arguments
+    ValueError ValueError(3, 4)
+    KeyError KeyError(3, 4)
+    zip TypeError: 'int' object is not iterable
+    map TypeError: 'int' object is not iterable
+    enumerate TypeError: 'int' object is not iterable
+    str.upper TypeError: str.upper() takes no arguments (2 given)
+    str.startswith TypeError: startswith first arg must be str or a tuple of str, not int
+    str.split TypeError: must be str or None, not int
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'int' object
+    list.index ValueError: list.index(x): x not in list
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+    dict.get 4
+    dict.fromkeys TypeError: 'int' object is not iterable
+    tuple.count TypeError: tuple.count() takes exactly one argument (2 given)
+    int.bit_length TypeError: int.bit_length() takes no arguments (1 given)
+    int.__add__ TypeError: expected 1 argument, got 2
+    int.__add__ 7
+    reduce TypeError: reduce() arg 2 must support iteration
+    plain ('plain', 3, 4)
+    plain ('plain', 3, 4)
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_star_list
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    defaults ('defaults', 3, 2, 3)
+    star ('star', (3,))
+    keywords TypeError: keywords() takes 0 positional arguments but 1 was given
+    both ('both', 3, (), 0, [])
+    only TypeError: only() missing 1 required positional argument: 'b'
+    none TypeError: none() takes 0 positional arguments but 1 was given
+    generator ('generator', [3, 0])
+    coroutine 'coroutine'
+    raises ValueError: (3, 0)
+    recursive 3
+    closure.<locals>.inner ('inner', 1, 3, 0)
+    closure.<locals>.inner ('inner', 2, 3, 0)
+    closure.<locals>.inner ('inner', 3, 3, 0)
+    <lambda> TypeError: <lambda>() missing 1 required positional argument: 'b'
+    <lambda> ('lambda star', (3,))
+    Plain Plain(3, 0)
+    WithNew ('new', 3, 0)
+    Callable ('called', 3, 0)
+    CallableList ('list called', 2, 3, 0)
+    OfMeta ('meta', 'OfMeta', 3, 0)
+    Slotted Slotted(3, 0)
+    Plain.method ('method', 3, 0)
+    Plain.method TypeError: Plain.method() missing 1 required positional argument: 'a'
+    Plain.of_class ('of_class', 'Plain', 3, 0)
+    Plain.of_class ('of_class', 'Plain', 3, 0)
+    Plain.static ('static', 3, 0)
+    Plain.static ('static', 3, 0)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial ('plain', 7, 3)
+    partial ('defaults', 3, 2, 9)
+    partial ('inner', 4, 3, 0)
+    len TypeError: object of type 'int' has no len()
+    abs 3
+    max TypeError: 'int' object is not iterable
+    min TypeError: 'int' object is not iterable
+    divmod TypeError: divmod expected 2 arguments, got 1
+    pow TypeError: pow() missing required argument 'exp' (pos 2)
+    isinstance TypeError: isinstance expected 2 arguments, got 1
+    getattr TypeError: getattr expected at least 2 arguments, got 1
+    hasattr TypeError: hasattr expected 2 arguments, got 1
+    repr '3'
+    builtin_function_or_method.__call__ None
+    sorted TypeError: 'int' object is not iterable
+    sum TypeError: 'int' object is not iterable
+    round 3
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable False
+    int 3
+    float 3.0
+    str '3'
+    list TypeError: 'int' object is not iterable
+    tuple TypeError: 'int' object is not iterable
+    dict TypeError: 'int' object is not iterable
+    set TypeError: 'int' object is not iterable
+    frozenset TypeError: 'int' object is not iterable
+    bytes b'\x00\x00\x00'
+    complex (3+0j)
+    range ('range', [0, 1, 2])
+    slice slice(None, 3, None)
+    type <class 'int'>
+    object TypeError: object() takes no arguments
+    ValueError ValueError(3)
+    KeyError KeyError(3)
+    zip TypeError: 'int' object is not iterable
+    map TypeError: map() must have at least two arguments.
+    enumerate TypeError: 'int' object is not iterable
+    str.upper TypeError: str.upper() takes no arguments (1 given)
+    str.startswith TypeError: startswith first arg must be str or a tuple of str, not int
+    str.split TypeError: must be str or None, not int
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'int' object
+    list.index 0
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+    dict.get None
+    dict.fromkeys TypeError: 'int' object is not iterable
+    tuple.count 0
+    int.bit_length 2
+    int.__add__ 8
+    int.__add__ TypeError: expected 1 argument, got 0
+    reduce TypeError: reduce() takes at least 2 positional arguments (1 given)
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    plain TypeError: plain() missing 1 required positional argument: 'b'
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_star_star
+    plain ('plain', 3, 4)
+    defaults ('defaults', 3, 4, 3)
+    star TypeError: star() got an unexpected keyword argument 'a'
+    keywords ('keywords', [('a', 3), ('b', 4)])
+    both ('both', 3, (), 0, [('b', 4)])
+    only TypeError: only() got some positional-only arguments passed as keyword arguments: 'a'
+    none TypeError: none() got an unexpected keyword argument 'a'
+    generator ('generator', [3, 4])
+    coroutine 'coroutine'
+    raises ValueError: (3, 4)
+    recursive 3
+    closure.<locals>.inner ('inner', 1, 3, 4)
+    closure.<locals>.inner ('inner', 2, 3, 4)
+    closure.<locals>.inner ('inner', 3, 3, 4)
+    <lambda> ('lambda', 3, 4)
+    <lambda> TypeError: <lambda>() got an unexpected keyword argument 'a'
+    Plain Plain(3, 4)
+    WithNew ('new', 3, 4)
+    Callable ('called', 3, 4)
+    CallableList ('list called', 2, 3, 4)
+    OfMeta ('meta', 'OfMeta', 3, 4)
+    Slotted Slotted(3, 4)
+    Plain.method ('method', 3, 4)
+    Plain.method TypeError: Plain.method() missing 1 required positional argument: 'self'
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.of_class ('of_class', 'Plain', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.static ('static', 3, 4)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() got multiple values for argument 'a'
+    partial ('defaults', 3, 4, 9)
+    partial ('inner', 4, 3, 4)
+    len TypeError: len() takes no keyword arguments
+    abs TypeError: abs() takes no keyword arguments
+    max TypeError: max expected at least 1 argument, got 0
+    min TypeError: min expected at least 1 argument, got 0
+    divmod TypeError: divmod() takes no keyword arguments
+    pow TypeError: pow() missing required argument 'base' (pos 1)
+    isinstance TypeError: isinstance() takes no keyword arguments
+    getattr TypeError: getattr() takes no keyword arguments
+    hasattr TypeError: hasattr() takes no keyword arguments
+    repr TypeError: repr() takes no keyword arguments
+    builtin_function_or_method.__call__ TypeError: print() got an unexpected keyword argument 'a'
+    sorted TypeError: sorted expected 1 argument, got 0
+    sum TypeError: sum() takes at least 1 positional argument (0 given)
+    round TypeError: round() missing required argument 'number' (pos 1)
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes no keyword arguments
+    int TypeError: int() got an unexpected keyword argument 'a'
+    float TypeError: float() takes no keyword arguments
+    str TypeError: str() got an unexpected keyword argument 'a'
+    list TypeError: list() takes no keyword arguments
+    tuple TypeError: tuple() takes no keyword arguments
+    dict {'a': 3, 'b': 4}
+    set TypeError: set() takes no keyword arguments
+    frozenset TypeError: frozenset() takes no keyword arguments
+    bytes TypeError: bytes() got an unexpected keyword argument 'a'
+    complex TypeError: complex() got an unexpected keyword argument 'a'
+    range TypeError: range() takes no keyword arguments
+    slice TypeError: slice() takes no keyword arguments
+    type TypeError: type() takes 1 or 3 arguments
+    object TypeError: object() takes no arguments
+    ValueError TypeError: ValueError() takes no keyword arguments
+    KeyError TypeError: KeyError() takes no keyword arguments
+    zip TypeError: zip() takes at most 1 keyword argument (2 given)
+    map TypeError: map() takes at most 1 keyword argument (2 given)
+    enumerate TypeError: 'a' is an invalid keyword argument for enumerate()
+    str.upper TypeError: str.upper() takes no keyword arguments
+    str.startswith TypeError: str.startswith() takes no keyword arguments
+    str.split TypeError: split() got an unexpected keyword argument 'a'
+    str.upper TypeError: unbound method str.upper() needs an argument
+    str.startswith TypeError: unbound method str.startswith() needs an argument
+    list.index TypeError: list.index() takes no keyword arguments
+    list.append TypeError: unbound method list.append() needs an argument
+    dict.get TypeError: dict.get() takes no keyword arguments
+    dict.fromkeys TypeError: dict.fromkeys() takes no keyword arguments
+    tuple.count TypeError: tuple.count() takes no keyword arguments
+    int.bit_length TypeError: unbound method int.bit_length() needs an argument
+    int.__add__ TypeError: wrapper __add__() takes no keyword arguments
+    int.__add__ TypeError: descriptor '__add__' of 'int' object needs an argument
+    reduce TypeError: reduce() takes at least 2 positional arguments (0 given)
+    plain ('plain', 3, 4)
+    plain ('plain', 3, 4)
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_all
+    plain TypeError: plain() got an unexpected keyword argument 'k'
+    defaults TypeError: defaults() got an unexpected keyword argument 'k'
+    star TypeError: star() got an unexpected keyword argument 'k'
+    keywords TypeError: keywords() takes 0 positional arguments but 2 were given
+    both ('both', 3, (4,), 5, [])
+    only TypeError: only() got an unexpected keyword argument 'k'
+    none TypeError: none() got an unexpected keyword argument 'k'
+    generator TypeError: generator() got an unexpected keyword argument 'k'
+    coroutine TypeError: coroutine() got an unexpected keyword argument 'k'
+    raises TypeError: raises() got an unexpected keyword argument 'k'
+    recursive TypeError: recursive() got an unexpected keyword argument 'k'
+    closure.<locals>.inner TypeError: closure.<locals>.inner() got an unexpected keyword argument 'k'
+    closure.<locals>.inner TypeError: closure.<locals>.inner() got an unexpected keyword argument 'k'
+    closure.<locals>.inner TypeError: closure.<locals>.inner() got an unexpected keyword argument 'k'
+    <lambda> TypeError: <lambda>() got an unexpected keyword argument 'k'
+    <lambda> TypeError: <lambda>() got an unexpected keyword argument 'k'
+    Plain TypeError: Plain.__init__() got an unexpected keyword argument 'k'
+    WithNew TypeError: WithNew.__new__() got an unexpected keyword argument 'k'
+    Callable TypeError: Callable.__call__() got an unexpected keyword argument 'k'
+    CallableList TypeError: CallableList.__call__() got an unexpected keyword argument 'k'
+    OfMeta TypeError: Meta.__call__() got an unexpected keyword argument 'k'
+    Slotted TypeError: Slotted.__init__() got an unexpected keyword argument 'k'
+    Plain.method TypeError: Plain.method() got an unexpected keyword argument 'k'
+    Plain.method TypeError: Plain.method() got an unexpected keyword argument 'k'
+    Plain.of_class TypeError: Plain.of_class() got an unexpected keyword argument 'k'
+    Plain.of_class TypeError: Plain.of_class() got an unexpected keyword argument 'k'
+    Plain.static TypeError: Plain.static() got an unexpected keyword argument 'k'
+    Plain.static TypeError: Plain.static() got an unexpected keyword argument 'k'
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() got an unexpected keyword argument 'k'
+    partial TypeError: defaults() got an unexpected keyword argument 'k'
+    partial TypeError: closure.<locals>.inner() got an unexpected keyword argument 'k'
+    len TypeError: len() takes no keyword arguments
+    abs TypeError: abs() takes no keyword arguments
+    max TypeError: max() got an unexpected keyword argument 'k'
+    min TypeError: min() got an unexpected keyword argument 'k'
+    divmod TypeError: divmod() takes no keyword arguments
+    pow TypeError: pow() got an unexpected keyword argument 'k'
+    isinstance TypeError: isinstance() takes no keyword arguments
+    getattr TypeError: getattr() takes no keyword arguments
+    hasattr TypeError: hasattr() takes no keyword arguments
+    repr TypeError: repr() takes no keyword arguments
+    builtin_function_or_method.__call__ TypeError: print() got an unexpected keyword argument 'k'
+    sorted TypeError: sorted expected 1 argument, got 2
+    sum TypeError: sum() takes at most 2 arguments (3 given)
+    round TypeError: round() takes at most 2 arguments (3 given)
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes no keyword arguments
+    int TypeError: int() takes at most 2 arguments (3 given)
+    float TypeError: float() takes no keyword arguments
+    str TypeError: str() got an unexpected keyword argument 'k'
+    list TypeError: list() takes no keyword arguments
+    tuple TypeError: tuple() takes no keyword arguments
+    dict TypeError: dict expected at most 1 argument, got 2
+    set TypeError: set() takes no keyword arguments
+    frozenset TypeError: frozenset() takes no keyword arguments
+    bytes TypeError: bytes() got an unexpected keyword argument 'k'
+    complex TypeError: complex() takes at most 2 arguments (3 given)
+    range TypeError: range() takes no keyword arguments
+    slice TypeError: slice() takes no keyword arguments
+    type TypeError: type() takes 1 or 3 arguments
+    object TypeError: object() takes no arguments
+    ValueError TypeError: ValueError() takes no keyword arguments
+    KeyError TypeError: KeyError() takes no keyword arguments
+    zip TypeError: zip() got an unexpected keyword argument 'k'
+    map TypeError: map() got an unexpected keyword argument 'k'
+    enumerate TypeError: enumerate() takes at most 2 arguments (3 given)
+    str.upper TypeError: str.upper() takes no keyword arguments
+    str.startswith TypeError: str.startswith() takes no keyword arguments
+    str.split TypeError: split() takes at most 2 arguments (3 given)
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'int' object
+    list.index TypeError: list.index() takes no keyword arguments
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+    dict.get TypeError: dict.get() takes no keyword arguments
+    dict.fromkeys TypeError: dict.fromkeys() takes no keyword arguments
+    tuple.count TypeError: tuple.count() takes no keyword arguments
+    int.bit_length TypeError: int.bit_length() takes no keyword arguments
+    int.__add__ TypeError: wrapper __add__() takes no keyword arguments
+    int.__add__ TypeError: wrapper __add__() takes no keyword arguments
+    reduce TypeError: reduce() got an unexpected keyword argument 'k'
+    plain TypeError: plain() got an unexpected keyword argument 'k'
+    plain TypeError: plain() got an unexpected keyword argument 'k'
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+at_float
+    plain ('plain', 2.0, 1.5)
+    defaults ('defaults', 2.0, 1.5, 3)
+    star ('star', (2.0, 1.5))
+    keywords TypeError: keywords() takes 0 positional arguments but 2 were given
+    both ('both', 2.0, (1.5,), 0, [])
+    only ('only', 2.0, 1.5, 1)
+    none TypeError: none() takes 0 positional arguments but 2 were given
+    generator ('generator', [2.0, 1.5])
+    coroutine 'coroutine'
+    raises ValueError: (2.0, 1.5)
+    recursive 2.0
+    closure.<locals>.inner ('inner', 1, 2.0, 1.5)
+    closure.<locals>.inner ('inner', 2, 2.0, 1.5)
+    closure.<locals>.inner ('inner', 3, 2.0, 1.5)
+    <lambda> ('lambda', 2.0, 1.5)
+    <lambda> ('lambda star', (2.0, 1.5))
+    Plain Plain(2.0, 1.5)
+    WithNew ('new', 2.0, 1.5)
+    Callable ('called', 2.0, 1.5)
+    CallableList ('list called', 2, 2.0, 1.5)
+    OfMeta ('meta', 'OfMeta', 2.0, 1.5)
+    Slotted Slotted(2.0, 1.5)
+    Plain.method ('method', 2.0, 1.5)
+    Plain.method ('method', 1.5, 0)
+    Plain.of_class ('of_class', 'Plain', 2.0, 1.5)
+    Plain.of_class ('of_class', 'Plain', 2.0, 1.5)
+    Plain.static ('static', 2.0, 1.5)
+    Plain.static ('static', 2.0, 1.5)
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() takes 2 positional arguments but 3 were given
+    partial ('defaults', 2.0, 1.5, 9)
+    partial ('inner', 4, 2.0, 1.5)
+    len TypeError: len() takes exactly one argument (2 given)
+    abs TypeError: abs() takes exactly one argument (2 given)
+    max 2.0
+    min 1.5
+    divmod (1.0, 0.5)
+    pow 2.8284271247461903
+    isinstance TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+    getattr TypeError: attribute name must be string, not 'float'
+    hasattr TypeError: attribute name must be string, not 'float'
+    repr TypeError: repr() takes exactly one argument (2 given)
+    builtin_function_or_method.__call__ None
+    sorted TypeError: sorted expected 1 argument, got 2
+    sum TypeError: 'float' object is not iterable
+    round TypeError: 'float' object cannot be interpreted as an integer
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes exactly one argument (2 given)
+    int TypeError: 'float' object cannot be interpreted as an integer
+    float TypeError: float expected at most 1 argument, got 2
+    str TypeError: str() argument 'encoding' must be str, not float
+    list TypeError: list expected at most 1 argument, got 2
+    tuple TypeError: tuple expected at most 1 argument, got 2
+    dict TypeError: dict expected at most 1 argument, got 2
+    set TypeError: set expected at most 1 argument, got 2
+    frozenset TypeError: frozenset expected at most 1 argument, got 2
+    bytes TypeError: bytes() argument 'encoding' must be str, not float
+    complex (2+1.5j)
+    range TypeError: 'float' object cannot be interpreted as an integer
+    slice slice(2.0, 1.5, None)
+    type TypeError: type() takes 1 or 3 arguments
+    object TypeError: object() takes no arguments
+    ValueError ValueError(2.0, 1.5)
+    KeyError KeyError(2.0, 1.5)
+    zip TypeError: 'float' object is not iterable
+    map TypeError: 'float' object is not iterable
+    enumerate TypeError: 'float' object cannot be interpreted as an integer
+    str.upper TypeError: str.upper() takes no arguments (2 given)
+    str.startswith TypeError: slice indices must be integers or have an __index__ method
+    str.split TypeError: 'float' object cannot be interpreted as an integer
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'float' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'float' object
+    list.index TypeError: slice indices must be integers or have an __index__ method
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'float' object
+    dict.get 1.5
+    dict.fromkeys TypeError: 'float' object is not iterable
+    tuple.count TypeError: tuple.count() takes exactly one argument (2 given)
+    int.bit_length TypeError: descriptor 'bit_length' for 'int' objects doesn't apply to a 'float' object
+    int.__add__ TypeError: expected 1 argument, got 2
+    int.__add__ TypeError: descriptor '__add__' requires a 'int' object but received a 'float'
+    reduce TypeError: reduce() arg 2 must support iteration
+    plain ('plain', 2.0, 1.5)
+    plain ('plain', 2.0, 1.5)
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+ignoring
+    plain 'ignored'
+    defaults 'ignored'
+    star 'ignored'
+    keywords TypeError: keywords() takes 0 positional arguments but 2 were given
+    both 'ignored'
+    only 'ignored'
+    none TypeError: none() takes 0 positional arguments but 2 were given
+    generator 'ignored'
+    coroutine 'ignored'
+    raises ValueError: (3, 4)
+    recursive 'ignored'
+    closure.<locals>.inner 'ignored'
+    closure.<locals>.inner 'ignored'
+    closure.<locals>.inner 'ignored'
+    <lambda> 'ignored'
+    <lambda> 'ignored'
+    Plain 'ignored'
+    WithNew 'ignored'
+    Callable 'ignored'
+    CallableList 'ignored'
+    OfMeta 'ignored'
+    Slotted 'ignored'
+    Plain.method 'ignored'
+    Plain.method 'ignored'
+    Plain.of_class 'ignored'
+    Plain.of_class 'ignored'
+    Plain.static 'ignored'
+    Plain.static 'ignored'
+    Plain.of_class TypeError: 'classmethod' object is not callable
+    partial TypeError: plain() takes 2 positional arguments but 3 were given
+    partial 'ignored'
+    partial 'ignored'
+    len TypeError: len() takes exactly one argument (2 given)
+    abs TypeError: abs() takes exactly one argument (2 given)
+    max 'ignored'
+    min 'ignored'
+    divmod 'ignored'
+    pow 'ignored'
+    isinstance TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union
+    getattr TypeError: attribute name must be string, not 'int'
+    hasattr TypeError: attribute name must be string, not 'int'
+    repr TypeError: repr() takes exactly one argument (2 given)
+    builtin_function_or_method.__call__ 'ignored'
+    sorted TypeError: sorted expected 1 argument, got 2
+    sum TypeError: 'int' object is not iterable
+    round 'ignored'
+    builtin_function_or_method TypeError: cannot create 'builtin_function_or_method' instances
+    callable TypeError: callable() takes exactly one argument (2 given)
+    int TypeError: int() can't convert non-string with explicit base
+    float TypeError: float expected at most 1 argument, got 2
+    str TypeError: str() argument 'encoding' must be str, not int
+    list TypeError: list expected at most 1 argument, got 2
+    tuple TypeError: tuple expected at most 1 argument, got 2
+    dict TypeError: dict expected at most 1 argument, got 2
+    set TypeError: set expected at most 1 argument, got 2
+    frozenset TypeError: frozenset expected at most 1 argument, got 2
+    bytes TypeError: bytes() argument 'encoding' must be str, not int
+    complex 'ignored'
+    range 'ignored'
+    slice 'ignored'
+    type TypeError: type() takes 1 or 3 arguments
+    object TypeError: object() takes no arguments
+    ValueError 'ignored'
+    KeyError 'ignored'
+    zip TypeError: 'int' object is not iterable
+    map TypeError: 'int' object is not iterable
+    enumerate TypeError: 'int' object is not iterable
+    str.upper TypeError: str.upper() takes no arguments (2 given)
+    str.startswith TypeError: startswith first arg must be str or a tuple of str, not int
+    str.split TypeError: must be str or None, not int
+    str.upper TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+    str.startswith TypeError: descriptor 'startswith' for 'str' objects doesn't apply to a 'int' object
+    list.index ValueError: list.index(x): x not in list
+    list.append TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+    dict.get 'ignored'
+    dict.fromkeys TypeError: 'int' object is not iterable
+    tuple.count TypeError: tuple.count() takes exactly one argument (2 given)
+    int.bit_length TypeError: int.bit_length() takes no arguments (1 given)
+    int.__add__ TypeError: expected 1 argument, got 2
+    int.__add__ 'ignored'
+    reduce TypeError: reduce() arg 2 must support iteration
+    plain 'ignored'
+    plain 'ignored'
+    NoneType TypeError: 'NoneType' object is not callable
+    int TypeError: 'int' object is not callable
+    str TypeError: 'str' object is not callable
+    float TypeError: 'float' object is not callable
+    tuple TypeError: 'tuple' object is not callable
+    list TypeError: 'list' object is not callable
+    dict TypeError: 'dict' object is not callable
+    NotImplementedType TypeError: 'NotImplementedType' object is not callable
+    ellipsis TypeError: 'ellipsis' object is not callable
+    module TypeError: 'module' object is not callable
+    object TypeError: 'object' object is not callable
+--- functions that are made, called once and dropped
+37512500
+--- a function that has never run, at a place that has seen many
+('new', 3, 0) ('new', 3, 4) TypeError: new0() takes from 1 to 2 positional arguments but 3 were given
+('new', 3, 1) ('new', 3, 4) TypeError: new1() takes from 1 to 2 positional arguments but 3 were given
+('new', 3, 2) ('new', 3, 4) TypeError: new2() takes from 1 to 2 positional arguments but 3 were given
+('new', 3, 3) ('new', 3, 4) TypeError: new3() takes from 1 to 2 positional arguments but 3 were given
+('new', 3, 4) ('new', 3, 4) TypeError: new4() takes from 1 to 2 positional arguments but 3 were given
+--- what is raised, and where
+raises [('deep', True), ('at2', True), ('raises', True)]
+none [('deep', True), ('at2', True)]
+len [('deep', True), ('at2', True)]
+NoneType [('deep', True), ('at2', True)]
+Plain.method ('method', 3, 4)
+Callable ('called', 3, 4)
+int.bit_length [('deep', True), ('at2', True)]
+--- how deep
+RecursionError maximum recursion depth exceeded
+RecursionError maximum recursion depth exceeded
+--- methods of many classes at one place
+['(0, 1)', '(1, 1)', '(2, 1)', '(3, 1)', '(4, 1)', '(5, 1)', '(6, 1)', '(7, 1)', '(8, 1)'] ["AttributeError: 'K18' object h", "AttributeError: 'K19' object h", '0', '0', '0', "AttributeError: 'N3' object ha", '0']
+['(8, 1)', '(9, 1)', '(10, 1)', '(11, 1)', '(12, 1)', '(13, 1)', '(14, 1)', '(15, 1)', '(16, 1)'] ["AttributeError: 'K18' object h", "AttributeError: 'K19' object h", '0', '0', '0', "AttributeError: 'N3' object ha", '0']
+['(16, 1)', '(17, 1)', '(18, 1)', '(19, 1)', "AttributeError: 'N0' object has no attri", "AttributeError: 'N1' object has no attri", "AttributeError: 'N2' object has no attri", "AttributeError: 'N3' object has no attri", "AttributeError: 'N4' object has no attri"] ["AttributeError: 'K18' object h", "AttributeError: 'K19' object h", '0', '0', '0', "AttributeError: 'N3' object ha", '0']
+--- who is told of the calls
+[('call', 'closure'), ('call', '__init__'), ('call', 'at2'), ('call', 'plain'), ('call', 'sub'), ('call', '_compile'), ('c_call', 'sub'), ('call', 'at2'), ('call', 'inner'), ('call', 'sub'), ('call', '_compile'), ('c_call', 'sub'), ('call', 'at2'), ('c_call', 'len'), ('call', 'at2'), ('call', '__init__'), ('call', 'sub'), ('call', '_compile'), ('c_call', 'sub'), ('call', 'at2'), ('call', 'method'), ('call', 'sub'), ('call', '_compile'), ('c_call', 'sub'), ('call', 'at2'), ('call', '__call__'), ('call', 'sub'), ('call', '_compile'), ('c_call', 'sub'), ('call', 'at2'), ('c_call', 'max'), ('call', 'sub'), ('call', '_compile'), ('c_call', 'sub')]
+--- how deep, by way of methods and objects
+method 148 maximum recursion depth exceeded
+__call__ 148 maximum recursion depth exceeded
+--- what was dropped before a call is gone within it, whatever is called
+function 18
+ByStatic 18
+ByClassMethod 18
+ByFunction 18
+method 18
+ByDict 18
+ByList 18
+ByDescriptor 18

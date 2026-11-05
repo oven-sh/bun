@@ -1130,7 +1130,11 @@ impl Quick {
             self.skip_space()?;
             p = self.lexer.pos;
             c = self.t.at(p);
-            if c == 44 && self.lexer.tok_nl != 0 {
+            // (behind a `[` or a `,` it stands for a hole in an array)
+            if c == 44
+                && self.lexer.tok_nl != 0
+                && !matches!(self.t.at(self.lexer.prev_end - 1), 91 | 44)
+            {
                 self.lexer.tok_start = p;
                 return Err(self.rare(rare::COMMA));
             }

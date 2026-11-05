@@ -4341,6 +4341,12 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js.flow", "--no-semi", "x;\n// prettier-ignore\ndeclare export function f(): void;\n"],
     // White space of any kind before the words.
     ["a.js", "", "a;\n//\u00a0prettier-ignore\nb  (  );\n/*\u3000prettier-ignore */\nc  (  );\n"],
+    // What is taken: holes in an array that is broken.
+    [
+      "a.ts",
+      "",
+      'const [\n  ,\n  name,\n  writtenDirection,\n  writtenByteCount,\n  writtenKind,\n  writtenEndianness,\n  writtenSomethingElse,\n] = match;\nx = [\n  ,\n  ,\n\n  __create(base?.[__knownSymbol("metadata")] ?? null, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa),\n];\n',
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

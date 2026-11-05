@@ -1189,7 +1189,7 @@ class Dir {
   }
 
   read(cb?: Callback<[entry: DirentType | null]>): any {
-    if (!$isUndefinedOrNull(cb)) {
+    if (cb !== undefined) {
       validateFunction(cb, "callback");
       cb = guardCallback(cb);
       // node's callback overload returns undefined (like close(cb) above)
@@ -1231,7 +1231,7 @@ class Dir {
   }
 
   close(cb?: Callback) {
-    if (!$isUndefinedOrNull(cb)) {
+    if (cb !== undefined) {
       validateFunction(cb, "callback");
       cb = guardCallback(cb);
       settleCallbackWithNull(this.close()!, cb);

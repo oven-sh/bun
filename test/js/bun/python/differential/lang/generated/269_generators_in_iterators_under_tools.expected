@@ -1,0 +1,978 @@
+status: 0
+script: 16473b400b4cb74c
+source: dded3aa9a9d5daa5
+---
+-- loop
+   closed a
+   after the loop
+-- loop, profiled
+   ('call', 'loop')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after the loop
+   ('c_return', 'list.append')
+   ('return', 'loop')
+   ('c_call', 'setprofile')
+-- loop, traced
+   ('call', 'loop', 0)
+   ('line', 'loop', 1)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('line', 'loop', 2)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'loop', 3)
+   after the loop
+   ('return', 'loop', 3)
+-- loop_over_two
+   closed b
+   closed a
+   after the loop
+-- loop_over_two, profiled
+   ('call', 'loop_over_two')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed b
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after the loop
+   ('c_return', 'list.append')
+   ('return', 'loop_over_two')
+   ('c_call', 'setprofile')
+-- loop_over_two, traced
+   ('call', 'loop_over_two', 0)
+   ('line', 'loop_over_two', 1)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('line', 'loop_over_two', 2)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed b
+   ('return', 'g', 5)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'loop_over_two', 3)
+   after the loop
+   ('return', 'loop_over_two', 3)
+-- function
+   closed a
+   after next
+-- function, profiled
+   ('call', 'function')
+   ('c_call', 'next')
+   ('call', 'g')
+   ('return', 'g')
+   ('c_return', 'next')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after next
+   ('c_return', 'list.append')
+   ('return', 'function')
+   ('c_call', 'setprofile')
+-- function, traced
+   ('call', 'function', 0)
+   ('line', 'function', 1)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'function', 2)
+   after next
+   ('return', 'function', 2)
+-- type_
+   closed a
+   after list
+-- type_, profiled
+   ('call', 'type_')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after list
+   ('c_return', 'list.append')
+   ('return', 'type_')
+   ('c_call', 'setprofile')
+-- type_, traced
+   ('call', 'type_', 0)
+   ('line', 'type_', 1)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'type_', 2)
+   after list
+   ('return', 'type_', 2)
+-- two_levels
+   closed b
+   closed a
+   after any
+-- two_levels, profiled
+   ('call', 'two_levels')
+   ('c_call', 'any')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('c_return', 'any')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed b
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after any
+   ('c_return', 'list.append')
+   ('return', 'two_levels')
+   ('c_call', 'setprofile')
+-- two_levels, traced
+   ('call', 'two_levels', 0)
+   ('line', 'two_levels', 1)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed b
+   ('return', 'g', 5)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'two_levels', 2)
+   after any
+   ('return', 'two_levels', 2)
+-- method
+   closed a
+   after join
+   closed a
+   after extend
+   closed a
+   closed b
+   after deque
+   closed a
+   closed b
+   after bytes
+-- method, profiled
+   ('call', 'method')
+   ('c_call', 'str.join')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_return', 'str.join')
+   ('c_call', 'list.append')
+   after join
+   ('c_return', 'list.append')
+   ('c_call', 'list.extend')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_return', 'list.extend')
+   ('c_call', 'list.append')
+   after extend
+   ('c_return', 'list.append')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'deque.extend')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed b
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_return', 'deque.extend')
+   ('c_call', 'list.append')
+   after deque
+   ('c_return', 'list.append')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'bytes.join')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed b
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_return', 'bytes.join')
+   ('c_call', 'list.append')
+   after bytes
+   ('c_return', 'list.append')
+   ('return', 'method')
+   ('c_call', 'setprofile')
+-- method, traced
+   ('call', 'method', 0)
+   ('line', 'method', 1)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'method', 2)
+   after join
+   ('line', 'method', 3)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'method', 4)
+   after extend
+   ('line', 'method', 5)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed b
+   ('return', 'g', 5)
+   ('line', 'method', 6)
+   after deque
+   ('line', 'method', 7)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed b
+   ('return', 'g', 5)
+   ('line', 'method', 8)
+   after bytes
+   ('return', 'method', 8)
+-- raises
+   closed a
+   in the handler
+   closed a
+   in the handler
+   closed a
+   in the handler
+-- raises, profiled
+   ('call', 'raises')
+   ('c_call', 'str.join')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_exception', 'str.join')
+   ('c_call', 'list.append')
+   in the handler
+   ('c_return', 'list.append')
+   ('call', '<genexpr>')
+   ('call', 'g')
+   ('return', 'g')
+   ('return', '<genexpr>')
+   ('call', '<genexpr>')
+   ('return', '<genexpr>')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   in the handler
+   ('c_return', 'list.append')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   in the handler
+   ('c_return', 'list.append')
+   ('return', 'raises')
+   ('c_call', 'setprofile')
+-- raises, traced
+   ('call', 'raises', 0)
+   ('line', 'raises', 1)
+   ('line', 'raises', 2)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('exception', 'raises', 2)
+   ('line', 'raises', 3)
+   ('line', 'raises', 4)
+   in the handler
+   ('line', 'raises', 5)
+   ('line', 'raises', 6)
+   ('call', '<genexpr>', 0)
+   ('line', '<genexpr>', 0)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('return', '<genexpr>', 0)
+   ('call', '<genexpr>', 0)
+   ('exception', '<genexpr>', 0)
+   ('return', '<genexpr>', 0)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('exception', 'raises', 6)
+   ('line', 'raises', 7)
+   ('line', 'raises', 8)
+   in the handler
+   ('line', 'raises', 9)
+   ('line', 'raises', 10)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('exception', 'raises', 10)
+   ('line', 'raises', 11)
+   ('line', 'raises', 12)
+   in the handler
+   ('return', 'raises', 12)
+-- unpacks
+   closed a
+   after the assignment
+   closed a
+   closed b
+   after the assignment
+-- unpacks, profiled
+   ('call', 'unpacks')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after the assignment
+   ('c_return', 'list.append')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed b
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after the assignment
+   ('c_return', 'list.append')
+   ('return', 'unpacks')
+   ('c_call', 'setprofile')
+-- unpacks, traced
+   ('call', 'unpacks', 0)
+   ('line', 'unpacks', 1)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'unpacks', 2)
+   after the assignment
+   ('line', 'unpacks', 3)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'g', 3)
+   ('line', 'g', 2)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed b
+   ('return', 'g', 5)
+   ('line', 'unpacks', 4)
+   after the assignment
+   ('return', 'unpacks', 4)
+-- elements_that_call
+   closed a
+   after next
+   closed a
+   after any
+   closed a
+   after the loop
+-- elements_that_call, profiled
+   ('call', 'elements_that_call')
+   ('c_call', 'next')
+   ('call', '<genexpr>')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'identity')
+   ('return', 'identity')
+   ('return', '<genexpr>')
+   ('c_return', 'next')
+   ('call', '<genexpr>')
+   ('return', '<genexpr>')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after next
+   ('c_return', 'list.append')
+   ('call', '<genexpr>')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'identity')
+   ('return', 'identity')
+   ('return', '<genexpr>')
+   ('call', '<genexpr>')
+   ('return', '<genexpr>')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after any
+   ('c_return', 'list.append')
+   ('call', '<genexpr>')
+   ('call', 'g')
+   ('return', 'g')
+   ('call', 'identity')
+   ('return', 'identity')
+   ('return', '<genexpr>')
+   ('call', '<genexpr>')
+   ('return', '<genexpr>')
+   ('call', 'g')
+   ('c_call', 'list.append')
+   closed a
+   ('c_return', 'list.append')
+   ('return', 'g')
+   ('c_call', 'list.append')
+   after the loop
+   ('c_return', 'list.append')
+   ('return', 'elements_that_call')
+   ('c_call', 'setprofile')
+-- elements_that_call, traced
+   ('call', 'elements_that_call', 0)
+   ('line', 'elements_that_call', 1)
+   ('call', '<genexpr>', 0)
+   ('line', '<genexpr>', 0)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'identity', 0)
+   ('line', 'identity', 1)
+   ('return', 'identity', 1)
+   ('return', '<genexpr>', 0)
+   ('call', '<genexpr>', 0)
+   ('exception', '<genexpr>', 0)
+   ('return', '<genexpr>', 0)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'elements_that_call', 2)
+   after next
+   ('line', 'elements_that_call', 3)
+   ('call', '<genexpr>', 0)
+   ('line', '<genexpr>', 0)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'identity', 0)
+   ('line', 'identity', 1)
+   ('return', 'identity', 1)
+   ('return', '<genexpr>', 0)
+   ('call', '<genexpr>', 0)
+   ('exception', '<genexpr>', 0)
+   ('return', '<genexpr>', 0)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'elements_that_call', 4)
+   after any
+   ('line', 'elements_that_call', 5)
+   ('call', '<genexpr>', 0)
+   ('line', '<genexpr>', 0)
+   ('call', 'g', 0)
+   ('line', 'g', 1)
+   ('line', 'g', 2)
+   ('line', 'g', 3)
+   ('return', 'g', 3)
+   ('call', 'identity', 0)
+   ('line', 'identity', 1)
+   ('return', 'identity', 1)
+   ('return', '<genexpr>', 0)
+   ('line', 'elements_that_call', 6)
+   ('call', '<genexpr>', 0)
+   ('exception', '<genexpr>', 0)
+   ('return', '<genexpr>', 0)
+   ('call', 'g', 3)
+   ('exception', 'g', 3)
+   ('line', 'g', 5)
+   closed a
+   ('return', 'g', 5)
+   ('line', 'elements_that_call', 7)
+   after the loop
+   ('return', 'elements_that_call', 7)
+-- loop, monitored
+   (1, 'loop')
+   (1, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after the loop
+   (4, 'loop')
+-- loop_over_two, monitored
+   (1, 'loop_over_two')
+   (1, 'g')
+   (8, 'g')
+   (1, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed b
+   (8192, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after the loop
+   (4, 'loop_over_two')
+-- function, monitored
+   (1, 'function')
+   (1, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after next
+   (4, 'function')
+-- type_, monitored
+   (1, 'type_')
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after list
+   (4, 'type_')
+-- two_levels, monitored
+   (1, 'two_levels')
+   (1, 'g')
+   (8, 'g')
+   (1, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed b
+   (8192, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after any
+   (4, 'two_levels')
+-- method, monitored
+   (1, 'method')
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after join
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after extend
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed b
+   (8192, 'g')
+   after deque
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed b
+   (8192, 'g')
+   after bytes
+   (4, 'method')
+-- raises, monitored
+   (1, 'raises')
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (2, 'g')
+   closed a
+   (4, 'g')
+   in the handler
+   (1, '<genexpr>')
+   (1, 'g')
+   (8, 'g')
+   (8, '<genexpr>')
+   (16384, '<genexpr>')
+   (8192, '<genexpr>')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   in the handler
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   in the handler
+   (4, 'raises')
+-- unpacks, monitored
+   (1, 'unpacks')
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after the assignment
+   (1, 'g')
+   (8, 'g')
+   (1, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (2, 'g')
+   (8, 'g')
+   (2, 'g')
+   closed a
+   (4, 'g')
+   (16384, 'g')
+   closed b
+   (8192, 'g')
+   after the assignment
+   (4, 'unpacks')
+-- elements_that_call, monitored
+   (1, 'elements_that_call')
+   (1, '<genexpr>')
+   (1, 'g')
+   (8, 'g')
+   (1, 'identity')
+   (4, 'identity')
+   (8, '<genexpr>')
+   (16384, '<genexpr>')
+   (8192, '<genexpr>')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after next
+   (1, '<genexpr>')
+   (1, 'g')
+   (8, 'g')
+   (1, 'identity')
+   (4, 'identity')
+   (8, '<genexpr>')
+   (16384, '<genexpr>')
+   (8192, '<genexpr>')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after any
+   (1, '<genexpr>')
+   (1, 'g')
+   (8, 'g')
+   (1, 'identity')
+   (4, 'identity')
+   (8, '<genexpr>')
+   (16384, '<genexpr>')
+   (8192, '<genexpr>')
+   (16384, 'g')
+   closed a
+   (8192, 'g')
+   after the loop
+   (4, 'elements_that_call')

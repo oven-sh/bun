@@ -1,0 +1,86 @@
+status: 0
+script: 1e4cb30d8220647b
+source: e14e46643f16a33b
+---
+-- f.__name__ [f=function] => handed_out_by_accumulate
+after the loop []
+0 1
+closed ['a']
+-- f.__name__ [f=function] => handed_out_by_zip_longest
+after the loop []
+0 1
+closed ['a']
+-- f.__name__ [f=function] => default_of_next
+after next []
+after the loop []
+1
+closed ['a']
+-- f.__name__ [f=function] => start_of_sum
+0
+after the loop []
+2
+closed ['a']
+-- f.__name__ [f=function] => initial_of_reduce
+0 1
+2
+closed ['a']
+-- f.__name__ [f=function] => two_arguments_of_min
+after min []
+0 1
+closed ['a']
+-- f.__name__ [f=function] => sentinel_of_iter
+after the loop []
+0 1
+after next []
+closed ['a']
+-- f.__name__ [f=function] => key_of_sorted
+'generator' object is not callable
+after sorted []
+-- f.__name__ [f=function] => two_of_each
+after the loop ['b', 'a']
+-- f.__name__ [f=function] => three_levels_twice
+after the loop ['c', 'b', 'a']
+-- f.__name__ [f=function] => a_call_between
+after the loop ['inner', 'inner 2', 'b', 'a']
+-- f.__name__ [f=function] => other_calls_between
+after the loop ['a']
+-- f.__name__ [f=function] => an_argument_raises
+after the loop ['b']
+after the loop ['b']
+after the loop ['b']
+-- f.__name__ [f=function] => dropped_at_the_yield
+closed []
+-- f.__name__ [f=function] => the_iterator_is_kept
+after the loop ['b']
+(1, 1)
+-- f.__name__ [f=function] => the_generator_is_kept
+after the loop ['b']
+1
+closed ['a']
+-- f.__name__ [f=function] => a_class_of_the_program
+after the loop []
+1 1
+closed ['a', 'b']
+-- f.__name__ [f=function] => shadowed
+after the loop []
+1
+closed ['a']
+-- f.__name__ [f=function] => islice_lets_go
+in the loop 0 []
+in the loop 0 ['a']
+after the loop ['b']
+-- f.__name__ [f=function] => chain_lets_go
+in the loop (0, 'x') []
+in the loop y []
+after the loop ['a']
+-- f.__name__ [f=function] => f_locals_of_a_generator_expression
+closed []
+(1, 1)
+-- f.__name__ [f=function] => taken_apart
+after the assignment ['a', 'b']
+after the assignment ['a', 'b']
+in the handler ['b', 'a']
+-- f.__name__ [f=function] => by_attribute
+after the loop ['a']
+after next ['a']
+in the handler ['a']

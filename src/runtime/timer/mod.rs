@@ -652,8 +652,8 @@ impl All {
             _ => tag.allow_fake_timers() && self.fake_timers.set_timeout_clock() == Clock::Fake,
         };
         if fake {
-            // SAFETY: `timer` is live and in no heap (caller contract). Its owner removes it before it
-            // frees it or writes `next`.
+            // SAFETY: `timer` is live and in no heap (caller contract). Its owner removes it before
+            // it frees it or writes `next`.
             unsafe {
                 self.fake_timers.timers.insert(timer);
                 (*timer).state = EventLoopTimerState::ACTIVE;
@@ -833,9 +833,9 @@ impl All {
         debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
         {
             let mut wtf = self.wtf_timers.lock();
-            // SAFETY: `timer` is live. `WTFTimer::deinit` disarms it before it frees it (where the VM's
-            // context is gone, nothing reads this heap any more). Its state, `next` and heap links
-            // only change under this guard, `next` only here, after the `remove`.
+            // SAFETY: `timer` is live. `WTFTimer::deinit` disarms it before it frees it (where the
+            // VM's context is gone, nothing reads this heap any more). Its state, `next` and heap
+            // links only change under this guard, `next` only here, after the `remove`.
             unsafe {
                 if (*timer).state == EventLoopTimerState::ACTIVE {
                     wtf.remove(timer);

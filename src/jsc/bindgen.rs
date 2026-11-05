@@ -50,7 +50,7 @@ impl<'a> JsHeap<'a> {
         self.global_object()
     }
 
-    /// This thread's VM. What its `global()` returns is bound by the contract of [`JsHeap::global`].
+    /// This thread's VM. The contract of [`JsHeap::global`] binds what its `global()` returns.
     pub fn bun_vm(&self) -> &'static VirtualMachine {
         self.global_object().bun_vm()
     }

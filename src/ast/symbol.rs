@@ -100,7 +100,7 @@ pub struct Symbol {
     /// compile-time error like we do for real import items. This status lets us
     /// avoid this. We also need to be able to replace such import items with
     /// undefined, which this status is also used for.
-    /// `Cell`: the linker sets it through `&Symbol`, only in a serial step (its graph is shared across threads).
+    /// `Cell`: the linker, whose graph is shared across threads, sets it in a serial step.
     pub import_item_status: Cell<ImportItemStatus>,
 
     /// Packed boolean state — see [`SymbolFlags`].

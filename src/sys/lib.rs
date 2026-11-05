@@ -1598,7 +1598,7 @@ mod safe_libc {
         pub(crate) safe fn setrlimit(resource: c_int, rlim: &libc::rlimit) -> c_int;
         // Reads the two `timespec`s; a `tv_nsec` out of range is `EINVAL`.
         pub(crate) safe fn futimens(fd: c_int, times: &[libc::timespec; 2]) -> c_int;
-        // Of the caller's memory the kernel touches only the two offsets, which it reads and updates.
+        // Of the caller's memory the kernel only reads and updates the two offsets.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub safe fn splice(
             fd_in: c_int,

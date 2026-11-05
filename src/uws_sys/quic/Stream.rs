@@ -38,7 +38,7 @@ unsafe extern "C" {
 }
 
 impl Stream {
-    /// The parent connection, which every stream on it shares. The handle is zero-sized, so `&mut`s to it cannot conflict.
+    /// The parent connection, which its streams share. Zero-sized handle: `&mut`s cannot conflict.
     pub fn socket(&mut self) -> Option<&mut Socket> {
         us_quic_stream_socket(self)
     }

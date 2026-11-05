@@ -19,7 +19,7 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    // Module-private, one call site: `bytes_ptr`/`bytes_len` are the ptr/len of a `&[u8]` that outlives the call.
+    // Private, one call site: `bytes_ptr`/`bytes_len` come from a `&[u8]` that outlives the call.
     safe fn JSC__Wasm__StreamingCompiler__addBytes(
         streaming_compiler: &StreamingCompiler,
         bytes_ptr: *const u8,

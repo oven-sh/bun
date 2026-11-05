@@ -233,7 +233,7 @@ pub(crate) fn decode(
         SetParam::MaxPixels,
         c_int::try_from(src_w * src_h).unwrap_or(c_int::MAX),
     );
-    // SAFETY: TurboJPEG adds `x + w` and `y + h` as C ints; with x = y = 0 neither sum can overflow.
+    // SAFETY: TurboJPEG adds `x + w` and `y + h` as C ints; with x = y = 0 neither can overflow.
     let cropped = unsafe {
         tj3SetCroppingRegion(
             handle.0,

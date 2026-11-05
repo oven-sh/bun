@@ -2637,11 +2637,11 @@ pub mod ffi {
     /// Windows CRT spells it `_errno()`.
     #[inline(always)]
     pub fn with_errno<R>(f: impl FnOnce(&core::cell::Cell<core::ffi::c_int>) -> R) -> R {
-        // SAFETY: each of the four symbols takes no argument and returns the address that its libc's `errno`
-        // macro dereferences: never null, aligned for `int`. libc does not free that `int` until its thread
-        // exits, and the reference ends sooner: `&Cell` is `!Send`, so it stays on that thread, and `f` only
-        // borrows it, so it ends with this call. What libc writes to `errno` meanwhile is interior mutation,
-        // which `Cell` allows.
+        // SAFETY: each of the four symbols takes no argument and returns the address that its
+        // libc's `errno` macro dereferences: never null, aligned for `int`. libc does not free that
+        // `int` until its thread exits, and the reference ends sooner: `&Cell` is `!Send`, so it
+        // stays on that thread, and `f` only borrows it, so it ends with this call. What libc
+        // writes to `errno` meanwhile is interior mutation, which `Cell` allows.
         unsafe extern "C" {
             #[cfg_attr(
                 any(
@@ -2669,7 +2669,7 @@ pub mod ffi {
             )]
             safe fn errno_location() -> &'static core::cell::Cell<core::ffi::c_int>;
         }
-        // Lent, not returned: a copy kept in a thread-local could be read by a destructor after libc freed the slot.
+        // Lent, not returned: a TLS destructor could use a kept copy after libc freed the slot.
         f(errno_location())
     }
 

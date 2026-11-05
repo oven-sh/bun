@@ -377,7 +377,8 @@ impl App {
         where
             H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `p` is the registered `*mut UD` (non-null by route registration).
+            // SAFETY: uWS callback contract — `p` is the registered `*mut UD` (non-null by route
+            // registration).
             let Some(ud) = (unsafe { p.cast::<UD>().as_ref() }) else {
                 return;
             };

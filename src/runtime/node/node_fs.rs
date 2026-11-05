@@ -2225,7 +2225,7 @@ mod _async_tasks {
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
-            // `fs.cp` always has a JS ticket; the const in front keeps references to the shell out of its code.
+            // `fs.cp` always has a JS ticket; the const in front keeps the shell out of its code.
             if !IS_SHELL || poster.is_js() {
                 poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
                     this,
@@ -2245,7 +2245,7 @@ mod _async_tasks {
 
         /// The shell's `cp`, on its loop (JS or mini): hands the result to the `ShellCpTask`.
         pub(crate) fn finish_shell(mut self: Box<Self>) {
-            // Move the result out: `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap `Ok(())` placeholder.
+            // Move the result out: `Maybe<ret::Cp>` (`Maybe<()>`) has a cheap `Ok(())` placeholder.
             let result = core::mem::replace(self.result.get_mut(), Ok(()));
             let src = core::mem::take(&mut self.args.src);
             let dest = core::mem::take(&mut self.args.dest);

@@ -51,7 +51,8 @@ impl Drop for HeadersRef {
 // `&`/`&mut` refs to them at the FFI boundary are sound (C++ reads/writes
 // only the named struct).
 // Shims that traffic only in such refs + scalars are declared `safe fn`; those
-// that take raw arrays (`copyTo`) are not. A returned `HeadersRef` is the only ref on an object that C++ has just allocated; `None` is null.
+// that take raw arrays (`copyTo`) are not. A returned `HeadersRef` is the only ref
+// on an object that C++ has just allocated; `None` is null.
 unsafe extern "C" {
     safe fn WebCore__FetchHeaders__cast_(value0: JSValue, arg1: &VM) -> *mut FetchHeaders;
     safe fn WebCore__FetchHeaders__cloneThis(

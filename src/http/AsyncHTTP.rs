@@ -331,7 +331,7 @@ impl Preconnect {
     }
 }
 
-/// Keeps `owned_href`, the buffer `url` points into (empty if that is `'static`), until `url` is last read.
+/// Keeps `owned_href`, which `url` points into unless it is `'static`, until `url` is last read.
 pub fn preconnect(url: URL<'static>, owned_href: Vec<u8>) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         return;

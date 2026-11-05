@@ -1202,7 +1202,7 @@ pub(crate) type StringBoolMap = StringHashMap<bool>;
 pub(crate) type RefMap = HashMap<Ref, ()>;
 pub(crate) type RefRefMap = HashMap<Ref, Ref>;
 
-// `scope` is not `&'arena`: the visit pass writes through it, and the lists of `ScopeOrder` need `Copy`.
+// `scope` is not `&'arena`: the visit pass writes through it, and `ScopeOrder` lists need `Copy`.
 #[derive(Clone, Copy)]
 pub struct ScopeOrder<'arena> {
     pub(crate) loc: bun_ast::Loc,

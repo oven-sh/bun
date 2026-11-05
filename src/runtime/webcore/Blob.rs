@@ -2519,7 +2519,7 @@ impl BlobExt for Blob {
             };
         }
 
-        // `shared_view_raw` has mutable provenance: after `Transfer`, JSC writes through the pointer.
+        // `shared_view_raw` has mutable provenance: after `Transfer`, JSC writes through it.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
             return jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(cx.global(), b"");

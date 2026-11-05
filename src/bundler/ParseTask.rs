@@ -799,7 +799,7 @@ pub mod parse_worker {
     // getAST
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `resolver` stays raw: `MacroContext::call` forms a `&mut` to that `Resolver` while a JS arm parses.
+    // `resolver` stays raw: `MacroContext::call` forms a `&mut` to it while a JS arm parses.
     #[allow(clippy::too_many_arguments)]
     fn get_ast(
         log: &mut Log,
@@ -2357,7 +2357,7 @@ pub mod parse_worker {
         }
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
         // reassigned above); reborrow only the disjoint `options` field.
-        // `'static` erasure: symbol names in the returned AST can point into `define`, which lives until `Worker::deinit`.
+        // `'static` erasure: the AST's names can point into `define`, alive until `Worker::deinit`.
         let topts: &'static options::BundleOptions<'static> = unsafe { &(*transpiler).options };
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s

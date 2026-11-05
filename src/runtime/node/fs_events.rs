@@ -283,7 +283,8 @@ struct FSEventsLoopState {
     cf_paths: CFArrayRef,
 }
 
-// SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used under `mutex`.
+// SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used
+// under `mutex`.
 unsafe impl Sync for FSEventsLoop {}
 
 pub(crate) struct Task {

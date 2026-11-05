@@ -448,7 +448,7 @@ fn on_close(ctx: *mut HTTPClient) {
     crate::http_thread().schedule_proxy_deref(keepalive);
 }
 
-/// `ctx` must be live, and the caller must not hold a `&mut HTTPClient` across this call (see ALIASING NOTE above).
+/// `ctx` must be live, with no `&mut HTTPClient` held across this call (see ALIASING NOTE above).
 fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: &ProxyTunnel) {
     // Same context rule as the ProxyHeaders arm of `on_data`: the tunnel is
     // pooled into whichever context `progress_update` is handed.
@@ -570,7 +570,7 @@ impl ProxyTunnel {
         }
     }
 
-    /// Outer socket became writable. Takes a ref of its own: the flush can release the client's handle.
+    /// Outer socket became writable. Takes its own ref: the flush can release the client's handle.
     pub(crate) fn on_writable<const IS_SSL: bool>(this: RefPtr<Self>, socket: HTTPSocket<IS_SSL>) {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
         this.with_write_buffer(|write_buffer| {

@@ -123,7 +123,8 @@ impl StatWatcherScheduler {
         let interval = watcher.interval;
         let this = watcher.scheduler.as_non_null();
 
-        // BACKREF — only this thread writes `closed`: past the push the wrapper holds `watcher`, which holds `this`.
+        // BACKREF — only this thread writes `closed`: past the push the wrapper holds `watcher`,
+        // which holds `this`.
         let this_ref = ParentRef::from(this);
         debug_assert_eq!(this_ref.main_thread, thread::current().id());
         let watcher = watcher.into_non_null();

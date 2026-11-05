@@ -508,7 +508,9 @@ struct PeerColumns<'a> {
 /// Marks the peers of a linked node (a cycle ancestor, or the node an early dedupe found) on each
 /// chain that links it: the ones it has when the link is made, and the ones that arrive later.
 struct PeerMarker<'a> {
+    lockfile: &'a Lockfile,
     dependencies: &'a [install::Dependency],
+    pkg_name_hashes: &'a [PackageNameHash],
     contained: &'a DynamicBitSet,
     peer_ctx: &'a store::node::TransitivePeerOrderedArraySetCtx<'a>,
     queue: Vec<PeerMark>,
@@ -570,9 +572,24 @@ impl<'a> PeerMarker<'a> {
                 self.path.push(curr_id);
                 curr_id = cols.parent_ids[curr_id.get() as usize];
             };
-            if resolved.is_some_and(|pkg_id| pkg_id != peer.pkg_id) {
-                continue;
-            }
+            // The rebuilt walk would stop at the provider, or pass an overridden peer of another
+            // name and auto-install, as the declarer did.
+            let peer = match resolved {
+                None => peer,
+                Some(pkg_id) if pkg_id == peer.pkg_id => store::node::TransitivePeer {
+                    auto_installed: false,
+                    ..peer
+                },
+                Some(pkg_id)
+                    if peer.auto_installed
+                        && self.pkg_name_hashes[pkg_id as usize]
+                            != self.pkg_name_hashes[peer.pkg_id as usize]
+                        && self.lockfile.is_overridden_dependency(peer.dep_id) =>
+                {
+                    peer
+                }
+                Some(_) => continue,
+            };
             for &node_id in &self.path {
                 // A package is never its own peer.
                 if cols.pkg_ids[node_id.get() as usize] != peer.pkg_id
@@ -828,7 +845,9 @@ fn build_store(
     // For each node, the parents of the dependencies that link it (a cycle or an early dedupe).
     let mut link_parents: Vec<Vec<store::node::Id>> = Vec::new();
     let mut peer_marker = PeerMarker {
+        lockfile,
         dependencies,
+        pkg_name_hashes: pkgs.items_name_hash(),
         contained: &contained,
         peer_ctx: &peer_ctx,
         queue: Vec::new(),

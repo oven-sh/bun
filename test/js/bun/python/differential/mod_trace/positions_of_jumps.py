@@ -370,6 +370,10 @@ class Stop(Exception):
 
 
 def handler(signum, frame):
+    # (Too early, on a slow machine: the function has not been called yet.)
+    if frame.f_code.co_name == '<module>':
+        signal.setitimer(signal.ITIMER_REAL, 0.01)
+        return
     raise Stop
 
 

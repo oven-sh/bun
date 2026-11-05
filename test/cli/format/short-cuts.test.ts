@@ -4370,6 +4370,18 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "",
       "const getIcon = (type: 'confirm' | 'error') =>\n  match (type) {\n    'confirm' =>\n      <ListenLaterAddedSVG\n        color=\"var(--color-core-confirm)\"\n        size=\"large\"\n        {...iconProps}\n      />,\n  3 => (\n    <div>\n    </div>\n  ),\n};\n",
     ],
+    // What the reader copies stands for a group: the next group is not measured anew because of a line break before it.
+    [
+      "a.jsx",
+      "",
+      'a = (\n<>\n<b>\n  ccccccc\n  <d>e</d>\n</b>\n<Divider orientation="left">sub-element xxxxxxxxxxxxxxxxxx center</Divider> <Row>\n</Row>\n</>\n);\n',
+    ],
+    // The parameters of a function in a wrapper, in a test call with a long name.
+    [
+      "a.js",
+      "",
+      'it("does something really long and complicated so I have to write a very long name for the test", fakeAsync((b) => {\n  code();\n}));\n',
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

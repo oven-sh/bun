@@ -1353,6 +1353,9 @@ impl Quick {
                             if pos + len + ((w >> 5) & 1) > width || o + len > cap {
                                 break 's2;
                             }
+                            // It stands for a group, and the first group behind a forced line break in something flat is the one that
+                            // is measured anew.
+                            remeasure = 0;
                             let s = self.d.at(pc + 1);
                             // (a statement on its line)
                             if len > 96 || !copy_block::<96>(&mut self.printer.out, o, &self.t, s) {

@@ -3544,6 +3544,16 @@ impl Quick {
         if q < 0 || self.fast.opened == 0 || (self.fast.opened_flags & BLOCK_JSX) != 0 {
             return Ok(-1);
         }
+        // (Prettier does not see that a function in a wrapper is in a test call: its parameters break where the line is too long.)
+        if wrapper != 0 {
+            let mut i = parameters_at;
+            while i < q && self.t.at(i) != 40 {
+                i += 1;
+            }
+            if self.t.at(self.blanks(i + 1)) != 41 {
+                return Ok(-1);
+            }
+        }
         // Nothing in the head can be broken if the parameters are names and no more. A pattern, a type, a default value can.
         let mut i = parameters_at;
         while i < q {

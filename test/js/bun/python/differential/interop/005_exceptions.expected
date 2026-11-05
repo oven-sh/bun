@@ -27,4 +27,7 @@ true Traceback (most recent call last):
 KeyError: 'mine'
 true
 {"code":7}
+NameError: name 'nope' is not defined. Did you mean: 'self.nope'?
+AttributeError: 'Hinted' object has no attribute '_hiden'. Did you mean '._hidden' instead of '._hiden'?
+NameError: name 'valu' is not defined. Did you mean: 'value'?
 rejected ValueError

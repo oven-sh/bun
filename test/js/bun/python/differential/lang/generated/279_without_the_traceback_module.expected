@@ -1,0 +1,77 @@
+status: 0
+script: 5dc79375c12f26c7
+source: be5945980755a816
+---
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 61, in Body
+    attribut
+NameError: name 'attribut' is not defined
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 19, in name
+    return nope
+NameError: name 'nope' is not defined
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 23, in name_like_local
+    return nope
+NameError: name 'nope' is not defined
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 26, in attribute
+    return self._hiden
+AttributeError: 'K' object has no attribute '_hiden'
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 29, in nested
+    return self.nop
+AttributeError: 'K' object has no attribute 'nop'
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 33, in other
+    return o._hiden
+AttributeError: 'K' object has no attribute '_hiden'
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 40, in plain
+    return valu
+NameError: name 'valu' is not defined
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 46, in module
+    return collections
+NameError: name 'collections' is not defined
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 68, in <lambda>
+    for function in (K().name, K().name_like_local, K().attribute, K().nested, K().other, plain, module, lambda: next(generator()), lambda: [valu for value in (1,)], lambda: sys.modulez, lambda: (1).reel):
+  File "<dir>/279_without_the_traceback_module.py", line 53, in generator
+    yield valu
+NameError: name 'valu' is not defined
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 68, in <lambda>
+    for function in (K().name, K().name_like_local, K().attribute, K().nested, K().other, plain, module, lambda: next(generator()), lambda: [valu for value in (1,)], lambda: sys.modulez, lambda: (1).reel):
+NameError: name 'valu' is not defined
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 68, in <lambda>
+    for function in (K().name, K().name_like_local, K().attribute, K().nested, K().other, plain, module, lambda: next(generator()), lambda: [valu for value in (1,)], lambda: sys.modulez, lambda: (1).reel):
+AttributeError: module 'sys' has no attribute 'modulez'
+Traceback (most recent call last):
+  File "<dir>/279_without_the_traceback_module.py", line 70, in <module>
+    function()
+  File "<dir>/279_without_the_traceback_module.py", line 68, in <lambda>
+    for function in (K().name, K().name_like_local, K().attribute, K().nested, K().other, plain, module, lambda: next(generator()), lambda: [valu for value in (1,)], lambda: sys.modulez, lambda: (1).reel):
+AttributeError: 'int' object has no attribute 'reel'
+done

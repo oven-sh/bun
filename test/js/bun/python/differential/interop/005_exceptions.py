@@ -53,3 +53,12 @@ def through(f):
         f(raiser)
     except ValueError as e2:
         return e2 is e1
+class Hinted:
+    def __init__(self):
+        self.nope = 1
+        self._hidden = 2
+    def name(self): return nope
+    def attribute(self): return self._hiden
+def misspelt():
+    value = 1
+    return valu

@@ -34,3 +34,6 @@ print(m.catch(() => { throw mine; }) === mine);
 // Promise rejection, JSON.
 Promise.reject(grab(() => m.fail())).catch(x => print("rejected", x.name));
 print(JSON.stringify(grab(() => m.fail("app"))));
+// The stack has the hints that traceback.py gives.
+const hinted = m.Hinted();
+for (const f of [() => hinted.name(), () => hinted.attribute(), () => m.misspelt()]) print(grab(f).stack.trim().split("\n").at(-1));

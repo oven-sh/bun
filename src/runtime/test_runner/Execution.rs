@@ -110,6 +110,8 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) failure_skip_to: usize,
     /// Like `ExecutionSequence::pending_matchers`, for matchers whose calling sequence isn't known.
     pub(crate) pending_matchers: u32,
+    /// `Execution::judge` found the wait for `pending_matchers` past its deadline.
+    pub(crate) matchers_timed_out: bool,
 }
 
 impl ConcurrentGroup {
@@ -122,6 +124,7 @@ impl ConcurrentGroup {
             failure_skip_to: next_index,
             next_sequence_index: 0,
             pending_matchers: 0,
+            matchers_timed_out: false,
         }
     }
 
@@ -418,6 +421,16 @@ impl Result {
     }
 }
 
+/// What [`Execution::judge`] found.
+pub(crate) struct Judged {
+    /// The earliest deadline that has not passed. `EPOCH` if nothing waits for one.
+    pub(crate) next_deadline: Timespec,
+    /// A result is in the queue for the runner to act on.
+    pub(crate) queued: bool,
+    /// The entry that timed out is the only one running, so the processes to kill are its own.
+    pub(crate) lone_entry_timed_out: bool,
+}
+
 impl Execution {
     pub(crate) fn init() -> Execution {
         Execution {
@@ -438,7 +451,7 @@ impl Execution {
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }
 
-    /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    /// The kill-only half of a timeout: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes
@@ -452,22 +465,81 @@ impl Execution {
                 if let Some(entry) = sequence.active_entry {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     let entry = unsafe { entry.as_ref() };
-                    let now = Timespec::now_force_real_time();
-                    if entry.timespec.order(&now) == core::cmp::Ordering::Less {
-                        // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
-                        if kill_count.processes > 0 {
-                            bun_core::pretty_errorln!(
-                                "<d>killed {} dangling process{}<r>",
-                                kill_count.processes,
-                                if kill_count.processes != 1 { "es" } else { "" },
-                            );
-                            bun_core::Output::flush();
-                        }
+                    if entry.is_overdue(&Timespec::now_force_real_time()) {
+                        Execution::kill_dangling_processes(global_this);
                     }
                 }
             }
         }
+    }
+
+    pub(crate) fn kill_dangling_processes(global_this: &JSGlobalObject) {
+        // SAFETY: bun_vm() returns the live per-thread VM.
+        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
+        if kill_count.processes > 0 {
+            bun_core::pretty_errorln!(
+                "<d>killed {} dangling process{}<r>",
+                kill_count.processes,
+                if kill_count.processes != 1 { "es" } else { "" },
+            );
+            bun_core::Output::flush();
+        }
+    }
+
+    /// The one place that times out a callback that has yielded. The caller reads `now` at the moment that asks: the fire of
+    /// the file's timer, or an error report. A step acts on what this queues and reads no clock itself, because it can run
+    /// after other callbacks, and one of those may have ended an entry in time and then held the thread past its deadline.
+    pub(crate) fn judge(buntest: &mut BunTest, now: &Timespec) -> Judged {
+        let mut judged = Judged {
+            next_deadline: Timespec::EPOCH,
+            queued: false,
+            lone_entry_timed_out: false,
+        };
+        let this = &mut buntest.execution;
+        let group_index = this.group_index;
+        let Some(group) = this.groups.get_mut(group_index) else {
+            // No group is active while the file waits in `ExpectDeferred::step_file_end`.
+            let (deadline, is_over) = buntest.unclaimed.judge_file_end(now);
+            judged.next_deadline = deadline;
+            if is_over {
+                buntest.add_result(RefDataValue::Start);
+                judged.queued = true;
+            }
+            return judged;
+        };
+        let sequences = &this.sequences[group.sequence_start..group.sequence_end];
+        for (sequence_index, sequence) in sequences.iter().enumerate() {
+            let (true, Some(entry_ptr)) = (sequence.executing, sequence.active_entry) else {
+                continue;
+            };
+            // SAFETY: arena-owned entry, alive for lifetime of BunTest
+            let entry = unsafe { entry_ptr.as_ref() };
+            if entry.is_overdue(now) {
+                let _ = buntest.result_queue.write_item(RefDataValue::TimedOut {
+                    group_index,
+                    entry_data: EntryData {
+                        sequence_index,
+                        entry: entry_ptr.as_ptr() as *const (),
+                        attempt: sequence.attempt,
+                    },
+                });
+                judged.queued = true;
+                judged.lone_entry_timed_out = sequences.len() == 1;
+            } else {
+                judged.next_deadline = judged.next_deadline.min_ignore_epoch(entry.timespec);
+            }
+        }
+        if group.pending_matchers > 0 && group.remaining_incomplete_entries == 0 {
+            let deadline = matchers_deadline(sequences);
+            if deadline.greater(now) {
+                judged.next_deadline = judged.next_deadline.min_ignore_epoch(deadline);
+            } else if !deadline.eql(&Timespec::EPOCH) {
+                group.matchers_timed_out = true;
+                let _ = buntest.result_queue.write_item(RefDataValue::Start);
+                judged.queued = true;
+            }
+        }
+        judged
     }
 
     pub(crate) fn step(
@@ -479,11 +551,16 @@ impl Execution {
         let buntest = buntest_strong.get();
         let buntest_ptr = NonNull::from(&mut *buntest);
         let this = &mut buntest.execution;
-        let mut now = Timespec::now_force_real_time();
+        let (data, timed_out) = match *data {
+            RefDataValue::TimedOut { group_index, entry_data } => {
+                (RefDataValue::Execution { group_index, entry_data: Some(entry_data) }, true)
+            }
+            data => (data, false),
+        };
 
         match data {
             RefDataValue::Start => {
-                return step_group(buntest_strong, global_this, &mut now);
+                return step_group(buntest_strong, global_this);
             }
             _ => {
                 // determine the active sequence,group
@@ -491,28 +568,38 @@ impl Execution {
                 // step the sequence
                 // if the group is complete, step the group
 
-                let Some((sequence, group)) = this.get_current_and_valid_execution_sequence(data)
+                let Some((sequence, group)) = this.get_current_and_valid_execution_sequence(&data)
                 else {
                     group_log::log(format_args!(
                         "runOneCompleted: the data is outdated, invalid, or did not know the sequence",
                     ));
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 };
-                let sequence_index = match data {
-                    RefDataValue::Execution { entry_data: Some(ed), .. } => ed.sequence_index,
+                let (group_index, entry_data) = match data {
+                    RefDataValue::Execution { group_index, entry_data: Some(ed) } => (group_index, ed),
                     // get_current_and_valid_execution_sequence returned Some ⇒ data is Execution with entry_data
                     _ => unreachable!(),
                 };
+                let sequence_index = entry_data.sequence_index;
 
                 debug_assert!(sequence.active_entry.is_some());
-                if sequence.waits_for_matchers() {
+                if timed_out {
+                    // SAFETY: `data` is valid, so this is the active entry. Arena-owned, alive for lifetime of BunTest.
+                    let active_entry = unsafe { &*entry_data.entry.cast::<ExecutionEntry>() };
+                    active_entry.fail_timed_out(sequence);
+                    if let Some(context) = sequence.context.as_ref().map(Strong::get) {
+                        TestContext::abort_signal(context, global_this);
+                    }
+                    buntest_strong.bun_test_root.get().mark_timed_out(group_index, entry_data);
+                    report_around_timeout(buntest_strong, global_this, active_entry, &data)?;
+                } else if sequence.waits_for_matchers() {
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
                 let group_ptr = NonNull::from(group);
                 Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
 
                 let sequence_result =
-                    step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
+                    step_sequence(buntest_strong, global_this, group_ptr, sequence_index)?;
                 match sequence_result {
                     AdvanceSequenceStatus::Done => {}
                     AdvanceSequenceStatus::Execute { timeout } => {
@@ -536,7 +623,7 @@ impl Execution {
                         continue;
                     }
                     let sequence_status =
-                        step_sequence(buntest_strong, global_this, group_ptr, next_idx, &mut now)?;
+                        step_sequence(buntest_strong, global_this, group_ptr, next_idx)?;
                     match sequence_status {
                         AdvanceSequenceStatus::Done => {
                             // SAFETY: see above
@@ -551,7 +638,7 @@ impl Execution {
                 // all sequences have started
                 // SAFETY: see above
                 if unsafe { group_ptr.as_ref() }.remaining_incomplete_entries == 0 {
-                    return step_group(buntest_strong, global_this, &mut now);
+                    return step_group(buntest_strong, global_this);
                 }
                 return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
             }
@@ -997,7 +1084,6 @@ impl Execution {
 fn step_group(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
-    now: &mut Timespec,
 ) -> JsResult<StepResult> {
     let _g = group_begin!();
     let buntest = buntest_strong.get();
@@ -1005,7 +1091,7 @@ fn step_group(
 
     loop {
         let Some(group) = this.active_group() else {
-            return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now));
+            return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this));
         };
         if !group.executing {
             Execution::on_group_started(global_this);
@@ -1016,7 +1102,7 @@ fn step_group(
 
         // loop over items in the group and advance their execution
 
-        let status = step_group_one(buntest_strong, global_this, group_ptr, now)?;
+        let status = step_group_one(buntest_strong, global_this, group_ptr)?;
         match status {
             AdvanceStatus::Execute { timeout } => {
                 return Ok(StepResult::Waiting { timeout });
@@ -1027,14 +1113,8 @@ fn step_group(
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
         let group = unsafe { &mut *group_ptr.as_ptr() };
         if group.pending_matchers > 0 {
-            // Any test in the group may have called them, so wait until the latest test deadline.
-            let timeout = this.sequences[group.sequence_start..group.sequence_end]
-                .iter()
-                .filter_map(|sequence| sequence.test_entry)
-                // SAFETY: arena-owned entry
-                .map(|entry| unsafe { entry.as_ref() }.timespec)
-                .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest });
-            if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
+            if !core::mem::take(&mut group.matchers_timed_out) {
+                let timeout = matchers_deadline(&this.sequences[group.sequence_start..group.sequence_end]);
                 return Ok(StepResult::Waiting { timeout });
             }
             group.pending_matchers = 0;
@@ -1067,6 +1147,16 @@ fn step_group(
     }
 }
 
+/// Any test in the group may have called the group's pending matchers, so they wait until the latest test deadline.
+fn matchers_deadline(sequences: &[ExecutionSequence]) -> Timespec {
+    sequences
+        .iter()
+        .filter_map(|sequence| sequence.test_entry)
+        // SAFETY: arena-owned entry
+        .map(|entry| unsafe { entry.as_ref() }.timespec)
+        .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest })
+}
+
 enum AdvanceStatus {
     Done,
     Execute { timeout: Timespec },
@@ -1077,7 +1167,6 @@ fn step_group_one(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
     group: NonNull<ConcurrentGroup>,
-    now: &mut Timespec,
 ) -> JsResult<AdvanceStatus> {
     let buntest = buntest_strong.get();
     let mut final_status = AdvanceStatus::Done;
@@ -1096,8 +1185,7 @@ fn step_group_one(
         g.sequence_end - g.sequence_start
     };
     for sequence_index in 0..len {
-        let sequence_status =
-            step_sequence(buntest_strong, global_this, group, sequence_index, now)?;
+        let sequence_status = step_sequence(buntest_strong, global_this, group, sequence_index)?;
         match sequence_status {
             AdvanceSequenceStatus::Done => {}
             AdvanceSequenceStatus::Execute { timeout } => {
@@ -1147,12 +1235,9 @@ fn step_sequence(
     global_this: &JSGlobalObject,
     group: NonNull<ConcurrentGroup>,
     sequence_index: usize,
-    now: &mut Timespec,
 ) -> JsResult<AdvanceSequenceStatus> {
     loop {
-        if let Some(r) =
-            step_sequence_one(buntest_strong, global_this, group, sequence_index, now)?
-        {
+        if let Some(r) = step_sequence_one(buntest_strong, global_this, group, sequence_index)? {
             return Ok(r);
         }
     }
@@ -1165,7 +1250,6 @@ fn step_sequence_one(
     global_this: &JSGlobalObject,
     group: NonNull<ConcurrentGroup>,
     sequence_index: usize,
-    now: &mut Timespec,
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
     let _g = group_begin!();
     if core::mem::take(&mut buntest_strong.get().unclaimed.some_ended) {
@@ -1185,33 +1269,11 @@ fn step_sequence_one(
                 timeout: Timespec::EPOCH,
             }));
         };
-        // SAFETY: arena-owned entry
-        let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
-        if active_entry.evaluate_timeout(sequence, now) {
-            if let Some(context) = sequence.context.as_ref().map(Strong::get) {
-                TestContext::abort_signal(context, global_this);
-            }
-            let entry_data = EntryData {
-                sequence_index,
-                entry: active_entry_ptr.as_ptr() as *const (),
-                attempt: sequence.attempt,
-            };
-            buntest_strong
-                .bun_test_root
-                .get()
-                .mark_timed_out(this.group_index, entry_data);
-            report_around_timeout(
-                buntest_strong,
-                global_this,
-                active_entry,
-                &RefDataValue::Execution { group_index: this.group_index, entry_data: Some(entry_data) },
-            )?;
-            Execution::advance_sequence(buntest_ptr, sequence, group);
-            return Ok(None); // run again
-        }
+        // Only `Execution::judge` times out an entry that is already running.
         group_log::log(format_args!("runOne: can't advance; already executing"));
         return Ok(Some(AdvanceSequenceStatus::Execute {
-            timeout: active_entry.timespec,
+            // SAFETY: arena-owned entry
+            timeout: unsafe { active_entry_ptr.as_ref() }.timespec,
         }));
     }
 
@@ -1347,11 +1409,12 @@ fn step_sequence_one(
         )
         .is_some()
         {
-            *now = Timespec::now_force_real_time();
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            if next_item.evaluate_timeout(sequence, now) {
+            // The callback is done, so nothing can end the entry between this read of the clock and its use.
+            if next_item.is_overdue(&Timespec::now_force_real_time()) {
+                next_item.fail_timed_out(sequence);
                 if let Some(context) = context {
                     TestContext::abort_signal(context, global_this);
                 }

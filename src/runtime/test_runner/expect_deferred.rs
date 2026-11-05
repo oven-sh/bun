@@ -82,6 +82,8 @@ pub(crate) struct Unclaimed {
     of_file: u32,
     /// When the file stops waiting after its tests have run. `EPOCH` means never.
     deadline: Option<Timespec>,
+    /// `judge_file_end` found `deadline` passed.
+    timed_out: bool,
 }
 
 impl Unclaimed {
@@ -113,6 +115,22 @@ impl Unclaimed {
         }
         while let Some(None) = self.calls.last() {
             self.calls.pop();
+        }
+    }
+
+    /// For `Execution::judge`, about the wait in `ExpectDeferred::step_file_end`: the deadline if it is still ahead
+    /// (else `EPOCH`), and whether this call found the wait over.
+    pub(crate) fn judge_file_end(&mut self, now: &Timespec) -> (Timespec, bool) {
+        match self.deadline {
+            Some(deadline) if self.of_file > 0 && !deadline.eql(&Timespec::EPOCH) => {
+                if deadline.greater(now) {
+                    (deadline, false)
+                } else {
+                    self.timed_out = true;
+                    (Timespec::EPOCH, true)
+                }
+            }
+            _ => (Timespec::EPOCH, false),
         }
     }
 }
@@ -836,11 +854,7 @@ impl ExpectDeferred {
     }
 
     /// After a file's tests have run, keeps the file open until the calls it holds finish or time out.
-    pub(crate) fn step_file_end(
-        buntest: &BunTestPtr,
-        global: &JSGlobalObject,
-        now: &Timespec,
-    ) -> StepResult {
+    pub(crate) fn step_file_end(buntest: &BunTestPtr, global: &JSGlobalObject) -> StepResult {
         let this = buntest.get();
         if this.unclaimed.of_file == 0 {
             return StepResult::Complete;
@@ -855,9 +869,11 @@ impl ExpectDeferred {
         });
         let deadline = *this.unclaimed.deadline.get_or_insert_with(|| match timeout_ms {
             0 => Timespec::EPOCH,
-            timeout_ms => now.add_ms(i64::from(timeout_ms)),
+            timeout_ms => {
+                Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_ms))
+            }
         });
-        if deadline.eql(&Timespec::EPOCH) || deadline.order(now).is_gt() {
+        if !core::mem::take(&mut this.unclaimed.timed_out) {
             return StepResult::Waiting { timeout: deadline };
         }
         this.unclaimed.of_file = 0;

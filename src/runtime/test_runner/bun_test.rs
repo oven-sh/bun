@@ -1057,15 +1057,32 @@ impl BunTest {
         Ok(())
     }
 
-    fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
+    /// Returns whether it queued something for the runner to act on.
+    fn handle_timeout(&mut self, global_this: &JSGlobalObject, pass: &Timespec) -> bool {
         let _g = group_begin!();
-        self.execution.kill_dangling_processes_on_timeout(global_this);
-        self.add_result(RefDataValue::Start);
+        let judged = Execution::Execution::judge(self, &Timespec::now_force_real_time());
+        if judged.lone_entry_timed_out {
+            Execution::Execution::kill_dangling_processes(global_this);
+        }
+        if !judged.next_deadline.eql(&Timespec::EPOCH) {
+            // A timer pass can take a deadline as due up to 1 ms early (`All::next`). It would fire one that is armed for
+            // a time inside the pass again and again until the clock gets there.
+            let next = if judged.next_deadline.greater(pass) {
+                judged.next_deadline
+            } else if pass.nsec < 999_999_999 {
+                Timespec { sec: pass.sec, nsec: pass.nsec + 1 }
+            } else {
+                Timespec { sec: pass.sec + 1, nsec: 0 }
+            };
+            self.update_min_timeout(global_this, &next);
+        }
+        judged.queued
     }
 
+    /// `pass` is the time up to which the caller took deadlines as due.
     pub(crate) fn bun_test_timeout_callback(
         this_strong: &BunTestPtr,
-        _ts: &Timespec,
+        pass: &Timespec,
         vm: &VirtualMachine,
     ) {
         let _g = group_begin!();
@@ -1073,18 +1090,20 @@ impl BunTest {
         let global = vm.global();
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
-        unsafe {
+        let queued = unsafe {
             (*this).timer.next = ElTimespec::EPOCH;
             (*this).timer.state = EventLoopTimerState::PENDING;
 
             match (*this).phase {
-                Phase::Collection => {}
-                Phase::Execution => (*this).handle_timeout(global),
-                Phase::Done => {}
+                Phase::Collection => false,
+                Phase::Execution => (*this).handle_timeout(global, pass),
+                Phase::Done => false,
             }
-        }
+        };
         // Not run inline, because `Bun.spawnSync()` can fire this timer with the timed-out test still on the stack.
-        Self::run_next_tick(&Rc::downgrade(this_strong), global, RefDataValue::Done);
+        if queued {
+            Self::run_next_tick(&Rc::downgrade(this_strong), global, RefDataValue::Done);
+        }
     }
 
     pub(crate) fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
@@ -1776,8 +1795,16 @@ pub(crate) enum RefDataValue {
         group_index: usize,
         entry_data: Option<EntryData>,
     },
+    /// Only in the result queue: `Execution::judge` found this entry past its deadline.
+    TimedOut {
+        group_index: usize,
+        entry_data: EntryData,
+    },
     Done,
 }
+
+// One per slot of the result queue.
+const _: () = assert!(core::mem::size_of::<RefDataValue>() == 40);
 
 impl RefDataValue {
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
@@ -1828,6 +1855,11 @@ impl fmt::Display for RefDataValue {
                     write!(f, "execution: group_index={}", group_index)
                 }
             }
+            RefDataValue::TimedOut { group_index, entry_data } => write!(
+                f,
+                "timed out: group_index={},sequence_index={},entry_index={:x},attempt={}",
+                group_index, entry_data.sequence_index, entry_data.entry as usize, entry_data.attempt
+            ),
             RefDataValue::Done => write!(f, "done"),
         }
     }
@@ -2418,36 +2450,31 @@ impl ExecutionEntry {
         entry
     }
 
-    pub(crate) fn evaluate_timeout(
-        &self,
-        sequence: &mut Execution::ExecutionSequence,
-        now: &Timespec,
-    ) -> bool {
-        if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
-            // timed out
-            // SAFETY: pointer-identity comparison only — no deref, no provenance laundering.
-            let is_test_entry = sequence
-                .test_entry
-                .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
-            let has_done_parameter = self.calling == Calling::Jest { done: true };
-            sequence.result = if self.around.is_some() {
-                // `Execution::report_around_timeout` fails the sequence with an error.
-                sequence.result
-            } else if is_test_entry {
-                if has_done_parameter {
-                    Execution::Result::FailBecauseTimeoutWithDoneCallback
-                } else {
-                    Execution::Result::FailBecauseTimeout
-                }
-            } else if has_done_parameter {
-                Execution::Result::FailBecauseHookTimeoutWithDoneCallback
+    pub(crate) fn is_overdue(&self, now: &Timespec) -> bool {
+        !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less
+    }
+
+    pub(crate) fn fail_timed_out(&self, sequence: &mut Execution::ExecutionSequence) {
+        // SAFETY: pointer-identity comparison only — no deref, no provenance laundering.
+        let is_test_entry = sequence
+            .test_entry
+            .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
+        let has_done_parameter = self.calling == Calling::Jest { done: true };
+        sequence.result = if self.around.is_some() {
+            // `Execution::report_around_timeout` fails the sequence with an error.
+            sequence.result
+        } else if is_test_entry {
+            if has_done_parameter {
+                Execution::Result::FailBecauseTimeoutWithDoneCallback
             } else {
-                Execution::Result::FailBecauseHookTimeout
-            };
-            sequence.maybe_skip = true;
-            return true;
-        }
-        false
+                Execution::Result::FailBecauseTimeout
+            }
+        } else if has_done_parameter {
+            Execution::Result::FailBecauseHookTimeoutWithDoneCallback
+        } else {
+            Execution::Result::FailBecauseHookTimeout
+        };
+        sequence.maybe_skip = true;
     }
 }
 // destroy → Drop: callback (Strong) and base.name (Box) drop automatically.

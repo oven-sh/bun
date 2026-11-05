@@ -713,6 +713,11 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.is_reporting_uncaught = false;
+            if matches!(current_state_data, RefDataValue::Start) {
+                // An error in a hook has always made the runner look at the deadlines. The step that `Start` asks for reads no clock.
+                let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+                bun_test::Execution::Execution::judge(buntest, &now);
+            }
             buntest.add_result(current_state_data);
             // The JS that reported the error may still be on the stack, so don't start the next test under it.
             bun_test::BunTest::run_next_tick(

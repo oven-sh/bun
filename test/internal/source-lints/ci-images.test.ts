@@ -134,6 +134,43 @@ test("the packages an Alpine bake records", () => {
   ]);
 });
 
+test("every Linux bake removes the SSH server, after everything that installs packages", () => {
+  using dir = tempDir("ci-images", {});
+  const linux = images.filter(image => image.os === "linux");
+  const removal = {
+    alpine: [
+      "apk add --no-cache --no-interactive --no-progress openssh-client-default",
+      "rc-update del sshd default",
+      "apk del --no-interactive --no-progress openssh openssh-server-pam",
+      "if [ -e /usr/sbin/sshd.pam ]; then",
+      "  echo 'bootstrap: the SSH server is still installed' >&2",
+      "  exit 1",
+      "fi",
+    ],
+    debian: ["apt-get purge --yes openssh-server openssh-sftp-server"],
+    ubuntu: ["apt-get purge --yes openssh-server openssh-sftp-server ec2-instance-connect"],
+  };
+  for (const image of linux) {
+    const section = recordSection(image, String(dir), "ssh-client").filter(line => !line.startsWith("# cloud-init"));
+    expect(section).toEqual([
+      "# ---- ssh-client",
+      ...removal[image.distro],
+      "if [ -e /usr/sbin/sshd ]; then",
+      "  echo 'bootstrap: the SSH server is still installed' >&2",
+      "  exit 1",
+      "fi",
+      `rm -rf "/etc/ssh/"ssh_host_*`,
+      "mkdir -p /etc/cloud/cloud.cfg.d",
+      "cat > /etc/cloud/cloud.cfg.d/99-ssh.cfg <<'EOF'",
+      "ssh_genkeytypes: []",
+      "ssh_pwauth: null",
+      "EOF",
+    ]);
+    const bootstrap = readFileSync(join(generateImage(image, String(dir)).directory, "bootstrap.sh"), "utf8");
+    expect(bootstrap.slice(bootstrap.indexOf("# ---- prefetch"))).not.toMatch(/^\s*(apk add|apt-get install)/m);
+  }
+});
+
 test("the record a Windows bake writes", () => {
   using dir = tempDir("ci-images", {});
   const image = images.find(image => image.os === "windows" && image.arch === "aarch64")!;

@@ -1567,6 +1567,36 @@ function noTmpfs(): Tool {
   return { name: "no-tmpfs", identity: configuration, steps: [service("tmp.mount", "masked")] };
 }
 
+/** The SSH client without the server that the base image comes with. */
+function sshClient(image: LinuxImage): Tool {
+  const { distro } = image;
+  return {
+    name: "ssh-client",
+    identity: packageDatabase,
+    steps: [
+      ...(distro === "alpine"
+        ? [
+            apkAdd(["openssh-client-default"]),
+            service("sshd", "disabled"),
+            apkDel(["openssh", "openssh-server-pam"]),
+            failIfExists("/usr/sbin/sshd.pam", "the SSH server is still installed"),
+          ]
+        : [
+            aptPurge([
+              "openssh-server",
+              "openssh-sftp-server",
+              ...(distro === "ubuntu" ? ["ec2-instance-connect"] : []),
+            ]),
+          ]),
+      failIfExists("/usr/sbin/sshd", "the SSH server is still installed"),
+      remove(text`/etc/ssh/${glob("ssh_host_*")}`),
+      comment("cloud-init would make host keys at every boot, and write the server's configuration and restart it."),
+      directory("/etc/cloud/cloud.cfg.d"),
+      writeFile("/etc/cloud/cloud.cfg.d/99-ssh.cfg", ["ssh_genkeytypes: []", "ssh_pwauth: null"]),
+    ],
+  };
+}
+
 /**
  * What a build and a test job would otherwise download each time: dependency
  * sources for scripts/build/download.ts, the Docker images the tests use, and
@@ -2068,6 +2098,7 @@ export function tools(image: Image): readonly Tool[] {
     age(image),
     coreDumps(image),
     ...(apt ? [noTmpfs()] : []),
+    sshClient(image),
     prefetch(image),
     agentService(),
     recordImage(image),
@@ -2431,6 +2462,14 @@ const failUnlessNotEmpty =
       ? [`if (-not ${renderValue(value, c)}) { throw ${renderValue(text`bootstrap: ${message}`, c, true)} }`]
       : [`[ -n ${renderValue(value, c)} ] || { echo ${renderValue(text`bootstrap: ${message}`, c)} >&2; exit 1; }`];
 
+const failIfExists = (path: Value, message: Value): Step =>
+  ifExists(path, [
+    c =>
+      isPowerShell(c)
+        ? [`throw ${renderValue(text`bootstrap: ${message}`, c, true)}`]
+        : [`echo ${renderValue(text`bootstrap: ${message}`, c)} >&2`, "exit 1"],
+  ]);
+
 const ifExists =
   (path: Value, steps: Step[]): Step =>
   c =>
@@ -2777,6 +2816,16 @@ const apkAdd =
     `apk add --no-cache --no-interactive --no-progress ${names.join(" ")}`,
   ];
 
+/** Removes the packages with their configuration, and the packages that need them. */
+const aptPurge =
+  (names: readonly string[]): Step =>
+  () => [`apt-get purge --yes ${names.join(" ")}`];
+
+/** Removes the packages, and what was only there for them. */
+const apkDel =
+  (names: readonly string[]): Step =>
+  () => [`apk del --no-interactive --no-progress ${names.join(" ")}`];
+
 const brewInstall =
   (names: readonly string[], options: { formula?: boolean } = {}): Step =>
   () => [`brew install --quiet ${options.formula ? "--formula " : ""}${names.join(" ")}`];
@@ -2843,7 +2892,7 @@ const addUserToGroup =
   (user: string, group: string): Step =>
   c => [isAlpine(c) ? `addgroup ${user} ${group}` : `usermod -aG ${group} ${user}`];
 
-/** `enabled`: starts with the machine. `started`: running now. `masked`, `disabled`: systemd only. */
+/** `enabled`, `disabled`: whether it starts with the machine. `started`: running now. `masked`: systemd only. */
 const service =
   (name: string, state: "enabled" | "started" | "masked" | "disabled"): Step =>
   c => {
@@ -2852,6 +2901,7 @@ const service =
         `systemctl ${{ enabled: "enable", started: "start", masked: "mask", disabled: "disable" }[state]} ${name}`,
       ];
     if (state === "enabled") return [`rc-update add ${name} default`];
+    if (state === "disabled") return [`rc-update del ${name} default`];
     if (state === "started") return [`rc-service ${name} start`];
     throw new Error(`OpenRC has no "${state}"`);
   };

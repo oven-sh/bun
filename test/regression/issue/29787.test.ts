@@ -142,9 +142,7 @@ test("stdin stream stays open while concurrent fetch(file://) bodies finish (#29
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   const events = JSON.parse(stdout) as (
-    | { kind: "data"; bytes: number }
-    | { kind: "done" }
-    | { kind: "err"; message: string }
+    { kind: "data"; bytes: number } | { kind: "done" } | { kind: "err"; message: string }
   )[];
 
   // No internal errors from the stdin reader.

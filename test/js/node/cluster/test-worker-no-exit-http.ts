@@ -57,7 +57,7 @@ if (cluster.isPrimary) {
     assert(success);
   });
 } else {
-  process.on("message", function (msg) {
+  process.on("message", function (msg: any) {
     console.log(2, msg);
     // We shouldn't exit, not while a network connection exists
     const req = http.get(`http://localhost:${msg.port}/`, res => {

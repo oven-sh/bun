@@ -1,0 +1,21 @@
+# A URL of which only the path is read is not made, whether or not a check stands in front of it.
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass AddGenericVersion
+# STATISTIC: URLsLeftUnbuilt = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="readsThePathBehindACheck" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = Builtin builtin=URL
+    v3 = Construct v2, -, v0 calleeName="URL"
+    v4 = Call v1
+    v5 = Check v4 expectedType=number
+    v6 = PropGet v3 key="pathname"
+    v7 = Add v6, v5
+    Return v7
+}
+# CHECK-LABEL: function f0 name="readsThePathBehindACheck"
+# CHECK: overload=CompilerHelpersScanPlainURL/0

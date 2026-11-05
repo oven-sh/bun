@@ -1,0 +1,37 @@
+if (a)
+  b(); // else
+// note
+else if (c) d();
+
+if (a)
+  b(); // elsewhere
+// note
+else d();
+
+if (a)
+  b(); /* else */
+// note
+else d();
+
+if (a)
+  b(); // x else y
+/* note */
+else {
+  d();
+}
+
+if (a)
+  b(); // note
+// else
+else d();
+
+if (a)
+  b(); // else
+else // else
+  d();
+
+if (a) {
+  b();
+} // else
+// note
+else d();

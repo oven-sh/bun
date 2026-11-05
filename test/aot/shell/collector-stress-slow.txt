@@ -1,0 +1,10 @@
+# Programs that run out of time under collector-stress.py, so that nothing is learnt from them, and under which collections. `all` leaves them out; named by hand they run.
+arrays/sort-write-back-after-mutation    full
+external-data/json-parse-type-argument-every-byte-cut    full, young
+external-data/json-parse-type-argument-more-orders    full, young
+external-data/json-parse-type-argument-strings-keys    full, young
+type-rules/every-rule-100k-times    full, young
+typed-objects/old-containers-hold-young-objects    full
+typed-objects/young-objects-between-old-ones    full
+untyped-code/contents-survive-added-props-elements    full
+untyped-stress/stack-overflow-in-prologue-native-caller    full, young

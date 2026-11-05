@@ -44,7 +44,7 @@ pub use stream::Stream;
 
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
-/// via TestingAPIs.quicLiveCounts so they must be atomic.
+/// via `bun_http_jsc`'s `h3_live_counts` so they must be atomic.
 // Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
 // submodules share one identifier; SCREAMING_SNAKE aliases preserved for the
 // existing internal references.
@@ -54,6 +54,3 @@ pub static live_sessions: AtomicU32 = AtomicU32::new(0);
 pub static live_streams: AtomicU32 = AtomicU32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
-
-// H3TestingAPIs lives in bun_http_jsc and is accessed via the
-// extension-trait pattern there.

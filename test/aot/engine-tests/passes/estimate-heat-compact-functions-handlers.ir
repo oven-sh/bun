@@ -1,0 +1,408 @@
+# What the host calls for every request or message runs as often as what a loop calls. In a very large program such a handler is cold, as every function that no loop of the program calls,
+# but neither it nor what it calls is compact. A callback that is called once later is
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:1
+# RUN: pipeline EstimateHeat
+# CHECK: f1 Cold 10 1
+# CHECK-NEXT: f2 Cold 10 1
+# CHECK-NEXT: f3 Cold 10 1
+# CHECK-NEXT: f4 Cold 10 1
+# CHECK-NEXT: f5 Compact 10 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="fetch" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=BunServe
+    v3 = Call v2, -, v1
+    v4 = NewClosure function=f4
+    v5 = Builtin builtin=EventEmitterPrototypeOn
+    v6 = Builtin builtin=Process
+    v7 = String string="message"
+    v8 = Call v5, v6, v7, v4
+    v9 = NewClosure function=f5
+    v10 = Builtin builtin=QueueMicrotask
+    v11 = Call v10, -, v9
+    Return
+}
+
+function f1 name="fetch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    v2 = ToBoolean v0
+    v3 = ToBoolean v0
+    v4 = ToBoolean v0
+    v5 = ToBoolean v0
+    v6 = ToBoolean v0
+    v7 = ToBoolean v0
+    v8 = ToBoolean v0
+    v9 = ToBoolean v0
+    v10 = ToBoolean v0
+    v11 = ToBoolean v0
+    v12 = ToBoolean v0
+    v13 = ToBoolean v0
+    v14 = ToBoolean v0
+    v15 = ToBoolean v0
+    v16 = ToBoolean v0
+    v17 = ToBoolean v0
+    v18 = ToBoolean v0
+    v19 = ToBoolean v0
+    v20 = ToBoolean v0
+    v21 = ToBoolean v0
+    v22 = ToBoolean v0
+    v23 = ToBoolean v0
+    v24 = ToBoolean v0
+    v25 = ToBoolean v0
+    v26 = ToBoolean v0
+    v27 = ToBoolean v0
+    v28 = ToBoolean v0
+    v29 = ToBoolean v0
+    v30 = ToBoolean v0
+    v31 = ToBoolean v0
+    v32 = ToBoolean v0
+    v33 = ToBoolean v0
+    v34 = ToBoolean v0
+    v35 = ToBoolean v0
+    v36 = ToBoolean v0
+    v37 = ToBoolean v0
+    v38 = ToBoolean v0
+    v39 = ToBoolean v0
+    v40 = ToBoolean v0
+    v41 = ToBoolean v0
+    v42 = ToBoolean v0
+    v43 = ToBoolean v0
+    v44 = ToBoolean v0
+    v45 = ToBoolean v0
+    v46 = ToBoolean v0
+    v47 = ToBoolean v0
+    v48 = ToBoolean v0
+    v49 = ToBoolean v0
+    v50 = ToBoolean v0
+    v51 = ToBoolean v0
+    v52 = ToBoolean v0
+    v53 = ToBoolean v0
+    v54 = ToBoolean v0
+    v55 = ToBoolean v0
+    v56 = ToBoolean v0
+    v57 = ToBoolean v0
+    v58 = ToBoolean v0
+    v59 = ToBoolean v0
+    v60 = ToBoolean v0
+    v61 = ToBoolean v0
+    v62 = ToBoolean v0
+    v63 = ToBoolean v0
+    v64 = ToBoolean v0
+    v65 = ToBoolean v0
+    v66 = ToBoolean v0
+    v67 = ToBoolean v0
+    v68 = ToBoolean v0
+    v69 = ToBoolean v0
+    v70 = ToBoolean v0
+    v71 = CallDirect function=f2
+    Return v71
+}
+
+function f2 name="route" results=[{type=undefined}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=1
+    v2 = Integer integer=1
+    v3 = Integer integer=1
+    v4 = Integer integer=1
+    v5 = Integer integer=1
+    v6 = Integer integer=1
+    v7 = Integer integer=1
+    v8 = Integer integer=1
+    v9 = Integer integer=1
+    v10 = Integer integer=1
+    v11 = Integer integer=1
+    v12 = Integer integer=1
+    v13 = Integer integer=1
+    v14 = Integer integer=1
+    v15 = Integer integer=1
+    v16 = Integer integer=1
+    v17 = Integer integer=1
+    v18 = Integer integer=1
+    v19 = Integer integer=1
+    v20 = Integer integer=1
+    v21 = Integer integer=1
+    v22 = Integer integer=1
+    v23 = Integer integer=1
+    v24 = Integer integer=1
+    v25 = Integer integer=1
+    v26 = Integer integer=1
+    v27 = Integer integer=1
+    v28 = Integer integer=1
+    v29 = Integer integer=1
+    v30 = Integer integer=1
+    v31 = Integer integer=1
+    v32 = Integer integer=1
+    v33 = Integer integer=1
+    v34 = Integer integer=1
+    v35 = Integer integer=1
+    v36 = Integer integer=1
+    v37 = Integer integer=1
+    v38 = Integer integer=1
+    v39 = Integer integer=1
+    v40 = Integer integer=1
+    v41 = Integer integer=1
+    v42 = Integer integer=1
+    v43 = Integer integer=1
+    v44 = Integer integer=1
+    v45 = Integer integer=1
+    v46 = Integer integer=1
+    v47 = Integer integer=1
+    v48 = Integer integer=1
+    v49 = Integer integer=1
+    v50 = Integer integer=1
+    v51 = Integer integer=1
+    v52 = Integer integer=1
+    v53 = Integer integer=1
+    v54 = Integer integer=1
+    v55 = Integer integer=1
+    v56 = Integer integer=1
+    v57 = Integer integer=1
+    v58 = Integer integer=1
+    v59 = Integer integer=1
+    v60 = Integer integer=1
+    v61 = Integer integer=1
+    v62 = Integer integer=1
+    v63 = Integer integer=1
+    v64 = Integer integer=1
+    v65 = Integer integer=1
+    v66 = Integer integer=1
+    v67 = Integer integer=1
+    v68 = Integer integer=1
+    v69 = Integer integer=1
+    v70 = CallDirect function=f3
+    Return v70
+}
+
+function f3 name="respond" results=[{type=undefined}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=1
+    v2 = Integer integer=1
+    v3 = Integer integer=1
+    v4 = Integer integer=1
+    v5 = Integer integer=1
+    v6 = Integer integer=1
+    v7 = Integer integer=1
+    v8 = Integer integer=1
+    v9 = Integer integer=1
+    v10 = Integer integer=1
+    v11 = Integer integer=1
+    v12 = Integer integer=1
+    v13 = Integer integer=1
+    v14 = Integer integer=1
+    v15 = Integer integer=1
+    v16 = Integer integer=1
+    v17 = Integer integer=1
+    v18 = Integer integer=1
+    v19 = Integer integer=1
+    v20 = Integer integer=1
+    v21 = Integer integer=1
+    v22 = Integer integer=1
+    v23 = Integer integer=1
+    v24 = Integer integer=1
+    v25 = Integer integer=1
+    v26 = Integer integer=1
+    v27 = Integer integer=1
+    v28 = Integer integer=1
+    v29 = Integer integer=1
+    v30 = Integer integer=1
+    v31 = Integer integer=1
+    v32 = Integer integer=1
+    v33 = Integer integer=1
+    v34 = Integer integer=1
+    v35 = Integer integer=1
+    v36 = Integer integer=1
+    v37 = Integer integer=1
+    v38 = Integer integer=1
+    v39 = Integer integer=1
+    v40 = Integer integer=1
+    v41 = Integer integer=1
+    v42 = Integer integer=1
+    v43 = Integer integer=1
+    v44 = Integer integer=1
+    v45 = Integer integer=1
+    v46 = Integer integer=1
+    v47 = Integer integer=1
+    v48 = Integer integer=1
+    v49 = Integer integer=1
+    v50 = Integer integer=1
+    v51 = Integer integer=1
+    v52 = Integer integer=1
+    v53 = Integer integer=1
+    v54 = Integer integer=1
+    v55 = Integer integer=1
+    v56 = Integer integer=1
+    v57 = Integer integer=1
+    v58 = Integer integer=1
+    v59 = Integer integer=1
+    v60 = Integer integer=1
+    v61 = Integer integer=1
+    v62 = Integer integer=1
+    v63 = Integer integer=1
+    v64 = Integer integer=1
+    v65 = Integer integer=1
+    v66 = Integer integer=1
+    v67 = Integer integer=1
+    v68 = Integer integer=1
+    v69 = Integer integer=1
+    Return
+}
+
+function f4 name="onMessage" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    v2 = ToBoolean v0
+    v3 = ToBoolean v0
+    v4 = ToBoolean v0
+    v5 = ToBoolean v0
+    v6 = ToBoolean v0
+    v7 = ToBoolean v0
+    v8 = ToBoolean v0
+    v9 = ToBoolean v0
+    v10 = ToBoolean v0
+    v11 = ToBoolean v0
+    v12 = ToBoolean v0
+    v13 = ToBoolean v0
+    v14 = ToBoolean v0
+    v15 = ToBoolean v0
+    v16 = ToBoolean v0
+    v17 = ToBoolean v0
+    v18 = ToBoolean v0
+    v19 = ToBoolean v0
+    v20 = ToBoolean v0
+    v21 = ToBoolean v0
+    v22 = ToBoolean v0
+    v23 = ToBoolean v0
+    v24 = ToBoolean v0
+    v25 = ToBoolean v0
+    v26 = ToBoolean v0
+    v27 = ToBoolean v0
+    v28 = ToBoolean v0
+    v29 = ToBoolean v0
+    v30 = ToBoolean v0
+    v31 = ToBoolean v0
+    v32 = ToBoolean v0
+    v33 = ToBoolean v0
+    v34 = ToBoolean v0
+    v35 = ToBoolean v0
+    v36 = ToBoolean v0
+    v37 = ToBoolean v0
+    v38 = ToBoolean v0
+    v39 = ToBoolean v0
+    v40 = ToBoolean v0
+    v41 = ToBoolean v0
+    v42 = ToBoolean v0
+    v43 = ToBoolean v0
+    v44 = ToBoolean v0
+    v45 = ToBoolean v0
+    v46 = ToBoolean v0
+    v47 = ToBoolean v0
+    v48 = ToBoolean v0
+    v49 = ToBoolean v0
+    v50 = ToBoolean v0
+    v51 = ToBoolean v0
+    v52 = ToBoolean v0
+    v53 = ToBoolean v0
+    v54 = ToBoolean v0
+    v55 = ToBoolean v0
+    v56 = ToBoolean v0
+    v57 = ToBoolean v0
+    v58 = ToBoolean v0
+    v59 = ToBoolean v0
+    v60 = ToBoolean v0
+    v61 = ToBoolean v0
+    v62 = ToBoolean v0
+    v63 = ToBoolean v0
+    v64 = ToBoolean v0
+    v65 = ToBoolean v0
+    v66 = ToBoolean v0
+    v67 = ToBoolean v0
+    v68 = ToBoolean v0
+    v69 = ToBoolean v0
+    v70 = ToBoolean v0
+    Return
+}
+
+function f5 name="job" results=[{type=undefined}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=1
+    v2 = Integer integer=1
+    v3 = Integer integer=1
+    v4 = Integer integer=1
+    v5 = Integer integer=1
+    v6 = Integer integer=1
+    v7 = Integer integer=1
+    v8 = Integer integer=1
+    v9 = Integer integer=1
+    v10 = Integer integer=1
+    v11 = Integer integer=1
+    v12 = Integer integer=1
+    v13 = Integer integer=1
+    v14 = Integer integer=1
+    v15 = Integer integer=1
+    v16 = Integer integer=1
+    v17 = Integer integer=1
+    v18 = Integer integer=1
+    v19 = Integer integer=1
+    v20 = Integer integer=1
+    v21 = Integer integer=1
+    v22 = Integer integer=1
+    v23 = Integer integer=1
+    v24 = Integer integer=1
+    v25 = Integer integer=1
+    v26 = Integer integer=1
+    v27 = Integer integer=1
+    v28 = Integer integer=1
+    v29 = Integer integer=1
+    v30 = Integer integer=1
+    v31 = Integer integer=1
+    v32 = Integer integer=1
+    v33 = Integer integer=1
+    v34 = Integer integer=1
+    v35 = Integer integer=1
+    v36 = Integer integer=1
+    v37 = Integer integer=1
+    v38 = Integer integer=1
+    v39 = Integer integer=1
+    v40 = Integer integer=1
+    v41 = Integer integer=1
+    v42 = Integer integer=1
+    v43 = Integer integer=1
+    v44 = Integer integer=1
+    v45 = Integer integer=1
+    v46 = Integer integer=1
+    v47 = Integer integer=1
+    v48 = Integer integer=1
+    v49 = Integer integer=1
+    v50 = Integer integer=1
+    v51 = Integer integer=1
+    v52 = Integer integer=1
+    v53 = Integer integer=1
+    v54 = Integer integer=1
+    v55 = Integer integer=1
+    v56 = Integer integer=1
+    v57 = Integer integer=1
+    v58 = Integer integer=1
+    v59 = Integer integer=1
+    v60 = Integer integer=1
+    v61 = Integer integer=1
+    v62 = Integer integer=1
+    v63 = Integer integer=1
+    v64 = Integer integer=1
+    v65 = Integer integer=1
+    v66 = Integer integer=1
+    v67 = Integer integer=1
+    v68 = Integer integer=1
+    v69 = Integer integer=1
+    Return
+}

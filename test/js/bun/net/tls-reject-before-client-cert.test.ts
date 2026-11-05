@@ -1,7 +1,7 @@
 // A client with rejectUnauthorized on must abort the TLS handshake when the
 // server's chain fails verification, before its own Certificate message goes
 // out. Otherwise a server the client then refuses still learns the client's
-// mTLS identity. node:tls already did this; these cover the other clients.
+// mTLS identity. node:tls already did this for the chain; these cover the other clients.
 //
 // Each mock server requests a client certificate, accepts any, and records
 // the peer CN on `secure`. The client pins ca2 while the server presents the
@@ -18,17 +18,18 @@
 import { RedisClient, SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { tls as harnessTls, isWindows, tempDir } from "harness";
-import { randomUUID } from "node:crypto";
+import { randomUUID, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
+import https from "node:https";
 import net from "node:net";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
+  listeningServer,
   MYSQL_CLIENT_LONG_PASSWORD,
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
-  listeningServer,
   mysqlHandshakeV10,
   pgSSLResponse,
 } from "../../sql/wire-frames";
@@ -120,7 +121,7 @@ async function mtlsServer(opts: {
     });
     secure.on("secure", () => {
       const peer = secure.getPeerCertificate();
-      seen.peerCN = peer?.subject?.CN ?? "(none)";
+      seen.peerCN = (peer?.subject?.CN as string) ?? "(none)";
       opts.onSecure?.(secure);
     });
   });
@@ -129,7 +130,7 @@ async function mtlsServer(opts: {
     const upstream = net.connect(backend.port, "127.0.0.1");
     client.on("error", () => {});
     upstream.on("error", () => {});
-    client.on("data", chunk => {
+    client.on("data", (chunk: Buffer) => {
       fromClient = Buffer.concat([fromClient, chunk]);
       upstream.write(chunk);
     });
@@ -159,7 +160,9 @@ const httpOk = (socket: tls.TLSSocket) =>
   socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"));
 
 // The handshake is all this test needs: drop the connection once it is done.
-const dropAfterHandshake = (socket: tls.TLSSocket) => socket.destroy();
+// Not inside 'secure': a TLS 1.2 server has not sent its Finished there yet,
+// and a destroy() in that callback turns the client down.
+const dropAfterHandshake = (socket: tls.TLSSocket) => setImmediate(() => socket.destroy());
 
 // Postgres: answer the 8-byte SSLRequest with "S", then TLS starts.
 const postgresPrelude = (socket: net.Socket) =>
@@ -906,6 +909,61 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
   },
 );
 
+// A checkServerIdentity function decides in JS, in the handshake callback. Under
+// TLS 1.3 the client's final flight, with its certificate, is still held at that
+// point, and the destroy() of the refusal drops it. Under TLS 1.2 the
+// certificate leaves before the server's Finished, in node too. The built-in
+// check also runs inside the handshake, so it covers TLS 1.2.
+// node-tls-connect.test.ts runs every route in node as well.
+describe.each(["TLSv1.3", "TLSv1.2"] as const)(
+  "%s: a node:tls client sends no client certificate to a server whose certificate names another host",
+  maxVersion => {
+    test("tls.connect", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, maxVersion });
+      const err = await tlsOutcome(tls.connect({ host: "localhost", port: srv.port, ...otherHostMtls }));
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+
+    test.skipIf(maxVersion === "TLSv1.2")(
+      "tls.connect with a checkServerIdentity function that returns an Error",
+      async () => {
+        await using srv = await mtlsServer({ identity: otherHost, maxVersion });
+        const checkServerIdentity = () => Object.assign(new Error("not the pinned key"), { code: "ERR_PINNED_KEY" });
+        const err = await tlsOutcome(
+          tls.connect({
+            host: "localhost",
+            port: srv.port,
+            servername: "agent1",
+            ...otherHostMtls,
+            checkServerIdentity,
+          }),
+        );
+        expect(err?.code).toBe("ERR_PINNED_KEY");
+        await srv.seen.closed;
+        expect(srv.seen.peerCN).toBeNull();
+        expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+      },
+    );
+
+    test("https.request", async () => {
+      await using srv = await mtlsServer({ identity: otherHost, onSecure: httpOk, maxVersion });
+      const err = await new Promise<any>(resolve =>
+        https
+          .request({ host: "localhost", port: srv.port, agent: false, ...otherHostMtls }, () => resolve(null))
+          .on("error", resolve)
+          .end(),
+      );
+      expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      await srv.seen.closed;
+      expect(srv.seen.peerCN).toBeNull();
+      expect(srv.seen.clientTlsBytes).toBe(srv.seen.clientHelloBytes);
+    });
+  },
+);
+
 // The inline reject is installed only when the client's policy rejects a bad
 // chain. A client that accepts one must still complete the handshake, and
 // the server then sees the client certificate as before.
@@ -988,5 +1046,81 @@ describe("a client that accepts a bad chain still completes the handshake", () =
       srv.seen.closed,
     );
     expect(srv.seen.peerCN).toBe("agent3");
+  });
+});
+
+// A host in IP shorthand is a name for these clients, as it is for
+// tls.checkServerIdentity(). The native check asked ares_inet_pton, which reads
+// "0x7f000001" and "127.0.0.1/32" as 127.0.0.1, an address in the harness
+// certificate.
+describe("a rejecting client takes a host in IP shorthand for a name", () => {
+  const pinned = { ca: trustedCA };
+  const certificate = new X509Certificate(serverCert).toLegacyObject();
+  const mismatch = (host: string) => {
+    const error: any = tls.checkServerIdentity(host, certificate);
+    return { code: error?.code, message: error?.message };
+  };
+
+  // "1.2.3.4" is an address, and it is not in the certificate.
+  test.each(["0x7f000001", "127.000.000.001", "127.0.0.1/32", "127.1", "::1/64", "1.2.3.4"])(
+    "Bun.connect under %j",
+    async serverName => {
+      await using srv = await mtlsServer({});
+      let fromGetter: any;
+      const err = await bunConnectOutcome(
+        srv.port,
+        { ...pinned, serverName },
+        { onHandshake: socket => (fromGetter = socket.getAuthorizationError()) },
+      );
+      expect(mismatch(serverName).code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      expect({ code: err?.code, message: err?.message }).toEqual(mismatch(serverName));
+      expect({ code: fromGetter?.code, message: fromGetter?.message }).toEqual(mismatch(serverName));
+      await srv.seen.closed;
+    },
+  );
+
+  test("control: Bun.connect under an address the certificate carries", async () => {
+    await using srv = await mtlsServer({ onSecure: dropAfterHandshake });
+    expect(await bunConnectOutcome(srv.port, { ...pinned, serverName: "127.0.0.1" })).toBeNull();
+    await srv.seen.closed;
+  });
+
+  test("socket.upgradeTLS", async () => {
+    await using srv = await mtlsServer({});
+    const err = await bunConnectOutcome(srv.port, { ...pinned, serverName: "0x7f000001" }, { upgrade: true });
+    expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    await srv.seen.closed;
+  });
+
+  // The server ends the connection after a handshake. A client that rejects
+  // the certificate never gets that far, so the server sees no peer.
+  // RedisClient matches the host that it dials, and the Windows resolver does
+  // not read this one.
+  test.skipIf(isWindows)("Bun.RedisClient", async () => {
+    await using srv = await mtlsServer({ onSecure: dropAfterHandshake });
+    const client = new RedisClient(`rediss://0x7f000001:${srv.port}`, { tls: pinned, maxRetries: 0 } as any);
+    const [, commandErr] = await Promise.all([settle(client.connect()), settle(client.send("PING", []))]);
+    client.close();
+    await srv.seen.closed;
+    expect({ code: commandErr?.code, peerCN: srv.seen.peerCN }).toEqual({
+      code: "ERR_TLS_CERT_ALTNAME_INVALID",
+      peerCN: null,
+    });
+  });
+
+  test.each(sqlAdapters)("Bun.SQL %s sslmode=verify-full", async (adapter, prelude) => {
+    await using srv = await mtlsServer({ plain: prelude, onSecure: dropAfterHandshake });
+    const sql = new SQL({
+      url: sqlUrl(adapter, "127.0.0.1", srv.port, "verify-full"),
+      max: 1,
+      tls: { ...pinned, serverName: "0x7f000001" },
+    });
+    const query = settle(sql`SELECT 1`);
+    await srv.seen.closed;
+    await sql.close();
+    expect({ code: (await query)?.code, peerCN: srv.seen.peerCN }).toEqual({
+      code: "ERR_TLS_CERT_ALTNAME_INVALID",
+      peerCN: null,
+    });
   });
 });

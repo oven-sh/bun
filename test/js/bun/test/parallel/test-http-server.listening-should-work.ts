@@ -7,4 +7,6 @@ const server = http.createServer();
 await once(server.listen(0), "listening");
 expect(server.listening).toBe(true);
 server.closeAllConnections();
+expect(server.listening).toBe(true);
+server.close();
 expect(server.listening).toBe(false);

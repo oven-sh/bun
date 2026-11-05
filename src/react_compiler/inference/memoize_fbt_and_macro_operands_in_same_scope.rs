@@ -13,7 +13,7 @@
 //! 1. Forward data-flow: identify all macro tags (including property loads like `fbt.param`)
 //! 2. Reverse data-flow: merge arguments of macro invocations into the same scope
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::collections::IdMap;
 use crate::hir::environment::Environment;
@@ -53,7 +53,7 @@ fn transitive_macro() -> MacroDefinition {
 }
 
 fn fbt_macro() -> MacroDefinition {
-    let mut props: HashMap<&'static [u8], MacroDefinition> = HashMap::new();
+    let mut props: HashMap<&'static [u8], MacroDefinition> = HashMap::default();
     props.insert(b"*", shallow_macro());
     // fbt.enum gets FBT_MACRO (recursive/transitive)
     // We'll fill this in after construction since it's self-referential.
@@ -67,7 +67,7 @@ fn fbt_macro() -> MacroDefinition {
     let enum_macro = MacroDefinition {
         level: InlineLevel::Transitive,
         properties: Some({
-            let mut p: HashMap<&'static [u8], MacroDefinition> = HashMap::new();
+            let mut p: HashMap<&'static [u8], MacroDefinition> = HashMap::default();
             p.insert(b"*", shallow_macro());
             // enum's enum is also recursive, but in practice the depth is bounded
             p.insert(b"enum", transitive_macro());
@@ -80,7 +80,7 @@ fn fbt_macro() -> MacroDefinition {
 
 /// Built-in FBT tags and their macro definitions.
 fn fbt_tags() -> HashMap<Vec<u8>, MacroDefinition> {
-    let mut tags: HashMap<Vec<u8>, MacroDefinition> = HashMap::new();
+    let mut tags: HashMap<Vec<u8>, MacroDefinition> = HashMap::default();
     tags.insert(b"fbt".to_vec(), fbt_macro());
     tags.insert(b"fbt:param".to_vec(), shallow_macro());
     tags.insert(b"fbt:enum".to_vec(), fbt_macro());
@@ -368,13 +368,7 @@ fn visit_operands(
 ) {
     macro_values.insert(lvalue_id);
 
-    let operand_ids: Vec<IdentifierId> =
-        visitors::each_instruction_value_operand_with_functions(value, &env.functions)
-            .into_iter()
-            .map(|p| p.identifier)
-            .collect();
-
-    for operand_id in operand_ids {
+    for operand_id in visitors::each_instruction_value_operand_ids(value, env) {
         if matches!(macro_def.level, InlineLevel::Transitive) {
             env.identifiers[operand_id.0 as usize].scope = Some(scope_id);
             expand_fbt_scope_range(env, scope_id, operand_id);

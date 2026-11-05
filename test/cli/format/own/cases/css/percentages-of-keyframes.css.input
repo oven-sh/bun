@@ -1,0 +1,15 @@
+@keyframes a {
+  .50% {
+    color: red;
+  }
+  .100%,
+  10% {
+    color: blue;
+  }
+  FROM {
+    color: green;
+  }
+}
+.50 {
+  color: red;
+}

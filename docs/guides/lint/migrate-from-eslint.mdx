@@ -1,0 +1,159 @@
+---
+title: Migrate from ESLint to bun lint
+sidebarTitle: Migrate from ESLint
+mode: center
+---
+
+`bun lint` reads your `eslint.config.js` and prints the same report as ESLint 10. In most projects you only change the command.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "lint": "eslint --max-warnings 0", // [!code --]
+    "lint": "bun lint --max-warnings 0" // [!code ++]
+  }
+}
+```
+
+Flags and arguments stay the same: `eslint --fix src` becomes `bun lint --fix src`. Change CI, lint-staged, and Git hooks too.
+
+Edit the script first. If `package.json` has a `lint` script, `bun lint` runs that script, so you'd still get ESLint.
+
+---
+
+Run it. You get the same rules, messages, and exit code as with `eslint`.
+
+```sh terminal icon="terminal"
+bun run lint
+```
+
+```txt
+$ bun lint --max-warnings 0
+
+/app/src/index.ts
+  1:1   warning  Open an issue instead of leaving a TODO              local/no-todo
+  3:7   error    'fallback' is never reassigned. Use 'const' instead  prefer-const
+  4:27  error    Invalid typeof comparison value                      valid-typeof
+
+✖ 3 problems (2 errors, 1 warning)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+
+Linted 3 files [108.90ms]
+error: script "lint" exited with code 1
+```
+
+---
+
+Run `--doctor` to see what Bun does with your config. It doesn't lint or write anything.
+
+```sh terminal icon="terminal"
+bun lint --doctor
+```
+
+```txt
+Using eslint.config.js (ESLint flat config)
+
+    3 files to lint
+
+   25 rules run natively
+    1 rule runs in JavaScript
+        lint/plugin.js    1
+
+Still needed:   eslint (typescript-eslint needs it)
+                typescript-eslint (eslint.config.js loads it)
+```
+
+- **Natively**: the rule is built into Bun. That covers ESLint's core rules, typescript-eslint, `react`, `react-hooks`, `import`, 15 rules of `n`, and `prettier/prettier`.
+- **In JavaScript**: Bun loads the plugin and runs it like ESLint does. It works, but it's slower. See [ESLint plugins](/lint/plugins).
+
+The last lines tell you which packages you still need. Bun runs your `eslint.config.js`, so everything that file imports has to stay. Here that's `typescript-eslint`, which needs `eslint`. Packages you no longer need are listed under `You can remove`.
+
+---
+
+You can drop lint-staged. `--staged` lints only the staged files, and with `--fix` it stages the fixed files again.
+
+```sh .husky/pre-commit icon="terminal"
+npx lint-staged # [!code --]
+bun lint --staged --fix # [!code ++]
+```
+
+---
+
+Type-aware rules need no changes. If your config asks for types, they run.
+
+```js eslint.config.js icon="/icons/javascript.svg"
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(...tseslint.configs.recommendedTypeChecked, {
+  languageOptions: { parserOptions: { projectService: true } },
+});
+```
+
+The types come from Bun's built-in type checker ([`bun check`](/runtime/check)), not from the `typescript` package. It behaves like TypeScript 7.
+
+---
+
+Still on ESLint 8? `.eslintrc.*`, `eslintConfig` in `package.json`, and `.eslintignore` work when there is no `eslint.config.js`. So do ESLint 8's flags.
+
+```sh terminal icon="terminal"
+eslint --ext .js,.ts,.tsx src # [!code --]
+bun lint --ext .js,.ts,.tsx src # [!code ++]
+```
+
+---
+
+If your config asks for something Bun can't do, Bun lints everything else, tells you what it skipped, and exits with code `2`.
+
+```txt
+error: 1 rule did not run because rules that run in JavaScript cannot use type information: local/typed
+  Everything else was linted. Use --allow-unsupported to make this a warning.
+```
+
+There are two such cases: a JavaScript rule that needs types, and files in [other languages](/lint/plugins#other-languages) when the `eslint` package isn't installed. Pass `--allow-unsupported` to turn the error into a warning.
+
+---
+
+If the project also has an oxlint config, Bun uses that one and tells you.
+
+```txt
+note: Using .oxlintrc.json. eslint.config.js is ignored. Use --config to pick it.
+```
+
+Pick the ESLint config with `--config`.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "lint": "oxlint && eslint", // [!code --]
+    "lint": "bun lint && bun lint --config eslint.config.js" // [!code ++]
+  }
+}
+```
+
+---
+
+## Differences from ESLint
+
+If `bun lint` and ESLint 10 disagree about a rule, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
+
+- **Built-in rules have a fixed version**, whatever you have installed: ESLint 10.12, typescript-eslint 8.71, eslint-plugin-react 7.37, react-hooks 7.1, import 2.32, n 18.4. [`--no-native-plugin-rules`](/lint/plugins#run-the-installed-package-instead) runs your installed plugins instead.
+- **Deprecated formatting rules don't run**: `semi`, `quotes`, `indent`, and so on. Use [`bun fmt`](/format) or `@stylistic/eslint-plugin`.
+- **No custom formatters.** `-f` only takes built-in formats such as `stylish`, `json`, `unix`, `junit`, and `sarif`.
+- **No `--inspect-config` or `--mcp`.**
+- **`--cache` does nothing.** Every run lints every file.
+- **No config file is not an error.** Bun uses [its defaults](/lint#default-rules).
+- **Syntax errors can be worded differently.** Bun's parser replaces `espree`, `@typescript-eslint/parser`, and `@babel/eslint-parser`.
+- **A type-aware rule without type information is skipped**, with a warning. typescript-eslint throws.
+- **A file that no `tsconfig.json` includes is still linted**, with the nearest `tsconfig.json`. ESLint stops.
+- **`--fix` never writes a file that no longer parses.** Bun drops those fixes and warns.
+- **`console.log` in your config file is hidden** unless the config fails to load.
+- **One extra line on stderr** with the number of files and the time.
+- **In GitHub Actions, `::error` and `::warning` lines follow the `stylish` report** on stdout, so problems show up in the pull request diff. If a problem matcher such as the one from `actions/setup-node` already does that, you get each annotation twice. `-f json` and the other machine-readable formats don't have these lines.
+
+---
+
+See also:
+
+- [`bun lint`](/lint)
+- [ESLint plugins](/lint/plugins)
+- [Migrate from Prettier to bun fmt](/guides/format/migrate-from-prettier)

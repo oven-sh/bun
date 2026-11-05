@@ -292,7 +292,7 @@ console.log("About manifest:", aboutHtml);
       // The manifests are embedded as escaped JSON strings in __jsonParse calls
       const manifestMatches = [...serverCode.matchAll(/__jsonParse\("(.+?)"\)/gs)];
       expect(manifestMatches.length).toBe(2);
-      let manifests = [];
+      let manifests: any[] = [];
       for (const match of manifestMatches) {
         // The captured group contains the escaped JSON string
         const escapedJson = match[1];

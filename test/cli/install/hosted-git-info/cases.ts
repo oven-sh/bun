@@ -1503,6 +1503,11 @@ export const validGitUrls: { [K in Provider]: { [K in string]: object } } = {
       auth: null,
       ...committishDefaults,
     },
+    // scp-style colon followed by a digit is still a path separator, not a port
+    // (hosted-git-info only applies this rewrite to input `new URL()` rejects)
+    "git+ssh://git@github.com:1foo/bar": { ...defaults.github, user: "1foo", default: "sshurl", auth: null },
+    "ssh://git@github.com:1foo/bar": { ...defaults.github, user: "1foo", default: "sshurl", auth: null },
+    "git@github.com:1foo/bar": { ...defaults.github, user: "1foo", default: "sshurl", auth: null },
 
     "git+ssh://github.com:foo/bar.git": { ...defaults.github, default: "sshurl" },
     [`git+ssh://github.com:foo/bar.git#${committishDefaults.committish}`]: {

@@ -178,6 +178,9 @@ pub(crate) struct WatcherData {
     pub(crate) dir_fd: Fd,
     /// True if the receiver must close `fd` when the watcher doesn't take it.
     pub(crate) owns_fd: bool,
+    /// The source was read from its file, which is to be watched: with `fd` where the
+    /// watcher watches through descriptors, by path (and `fd` closed) where it does not.
+    pub(crate) watch: bool,
 }
 
 impl WatcherData {
@@ -186,6 +189,7 @@ impl WatcherData {
         fd: Fd::INVALID,
         dir_fd: Fd::INVALID,
         owns_fd: false,
+        watch: false,
     };
 }
 
@@ -2314,10 +2318,13 @@ pub mod parse_worker {
         // there); closing it leaves a stale fd for the next in-process build.
         let opened_own_fd =
             matches!(task.contents_or_fd, ContentsOrFd::Fd { file, .. } if !file.is_valid());
+        // Kept open only for a watcher that watches through descriptors (kqueue). Others
+        // watch by path, and on Windows a file held open cannot be replaced by a rename:
+        // an editor saving that way (write a temp file, rename it over) failed with EPERM.
         let will_close_file_descriptor = opened_own_fd
             && entry.fd.is_valid()
             && entry.fd.stdio_tag().is_none()
-            && worker_ctx.bun_watcher.is_none();
+            && (worker_ctx.bun_watcher.is_none() || !bun_watcher::REQUIRES_FILE_DESCRIPTORS);
         if will_close_file_descriptor {
             let _ = entry.close_fd();
             task.contents_or_fd = ContentsOrFd::Fd {
@@ -2842,6 +2849,7 @@ pub mod parse_worker {
                     fd: file,
                     dir_fd: dir,
                     owns_fd: this.opened_own_fd,
+                    watch: file.is_valid() || !bun_watcher::REQUIRES_FILE_DESCRIPTORS,
                 },
                 ContentsOrFd::Contents(_) => WatcherData::NONE,
             },

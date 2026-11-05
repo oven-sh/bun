@@ -181,10 +181,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
         p.lexer.expect_or_insert_semicolon()?;
 
-        if !opts.is_typescript_declare {
-            p.require_initializers(js_ast::s::Kind::KConst, decls.slice())?;
-        }
-
         Ok(p.s(
             S::Local {
                 kind: js_ast::s::Kind::KConst,
@@ -591,7 +587,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => {
                     let mut stmt_opts = ParseStatementOptions {
                         lexical_decl: LexicalDecl::AllowAll,
-                        is_for_loop_init: true,
                         ..Default::default()
                     };
 
@@ -690,18 +685,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 ));
-            }
-
-            // Only require "const" statement initializers when we know we're a normal for loop
-            if let Some(init_stmt) = &init_ {
-                match &init_stmt.data {
-                    js_ast::StmtData::SLocal(local) => {
-                        if local.kind == js_ast::s::Kind::KConst {
-                            p.require_initializers(js_ast::s::Kind::KConst, decls_ptr.slice())?;
-                        }
-                    }
-                    _ => {}
-                }
             }
 
             p.lexer.expect(T::TSemicolon)?;

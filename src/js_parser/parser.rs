@@ -1524,7 +1524,6 @@ pub struct ParseStatementOptions<'a> {
     /// For "export default" pseudo-statements,
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
-    pub(crate) is_for_loop_init: bool,
 }
 
 impl<'a> ParseStatementOptions<'a> {

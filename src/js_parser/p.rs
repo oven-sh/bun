@@ -4702,62 +4702,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `var { a };`: only a for-in or for-of head gives a pattern its value
-    /// without an initializer.
+    /// Not for an ambient TypeScript declaration: its binding has no symbol to name.
     #[cold]
     #[inline(never)]
-    pub(crate) fn missing_initializer(&mut self, loc: bun_ast::Loc) {
-        self.log().add_error(
-            Some(self.source),
-            loc,
-            b"Missing initializer in destructuring declaration",
-        );
-    }
-
-    #[allow(non_snake_case)]
-    pub(crate) fn require_initializers(
+    pub(crate) fn missing_initializer(
         &mut self,
-        KIND: js_ast::s::Kind,
-        decls: &[G::Decl],
-    ) -> Result<(), crate::Error> {
-        let what = match KIND {
-            js_ast::s::Kind::KAwaitUsing | js_ast::s::Kind::KUsing => "declaration",
-            js_ast::s::Kind::KConst => "constant",
-            _ => unreachable!(),
-        };
+        kind: js_ast::symbol::Kind,
+        binding: &js_ast::Binding,
+        is_using: bool,
+    ) {
+        if kind != js_ast::symbol::Kind::Constant {
+            self.log().add_error(
+                Some(self.source),
+                binding.loc,
+                b"Missing initializer in destructuring declaration",
+            );
+            return;
+        }
 
-        for decl in decls {
-            if decl.value.is_none() {
-                match &decl.binding.data {
-                    js_ast::b::B::BIdentifier(ident) => {
-                        let r = js_lexer::range_of_identifier(self.source, decl.binding.loc);
-                        let ident_ref = ident.r#ref;
-                        // SAFETY: original_name is an arena-owned slice valid for 'a.
-                        let name = self.symbols[ident_ref.inner_index() as usize]
-                            .original_name
-                            .slice();
-                        self.log().add_range_error_fmt(
-                            Some(self.source),
-                            r,
-                            format_args!(
-                                "The {} \"{}\" must be initialized",
-                                what,
-                                bstr::BStr::new(name)
-                            ),
-                        );
-                        // return;/
-                    }
-                    _ => {
-                        self.log().add_error_fmt(
-                            Some(self.source),
-                            decl.binding.loc,
-                            format_args!("This {} must be initialized", what),
-                        );
-                    }
-                }
+        let what = if is_using { "declaration" } else { "constant" };
+        match &binding.data {
+            js_ast::b::B::BIdentifier(ident) => {
+                let r = js_lexer::range_of_identifier(self.source, binding.loc);
+                let name = self.symbols[ident.r#ref.inner_index() as usize]
+                    .original_name
+                    .slice();
+                self.log().add_range_error_fmt(
+                    Some(self.source),
+                    r,
+                    format_args!(
+                        "The {} \"{}\" must be initialized",
+                        what,
+                        bstr::BStr::new(name)
+                    ),
+                );
+            }
+            _ => {
+                self.log().add_error_fmt(
+                    Some(self.source),
+                    binding.loc,
+                    format_args!("This {} must be initialized", what),
+                );
             }
         }
-        Ok(())
     }
 
     // Generate a TypeScript namespace object for this namespace's scope. If this

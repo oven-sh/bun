@@ -4011,6 +4011,62 @@ console.log(resolve.length)
       expectPrintedNoTrim("var x, y; let z;", "var x, y;\nlet z;\n");
     });
 
+    it("a const or using declaration needs an initializer", () => {
+      const errorsOf = code => {
+        try {
+          parsed(code, false, false);
+        } catch (er) {
+          return (er instanceof AggregateError ? er.errors : [er]).map(e => [e.message, e.position?.offset]);
+        }
+        return [];
+      };
+
+      // Each row: the source, then each error with the text in front of it.
+      const rows = [
+        ["const x;", ['The constant "x" must be initialized', "const "]],
+        ["const {};", ["This constant must be initialized", "const "]],
+        ["const x = 1, y;", ['The constant "y" must be initialized', "const x = 1, "]],
+        ["const x y", ['The constant "x" must be initialized', "const "], ['Expected ";" but found "y"', "const x "]],
+        ["using x;", ['The declaration "x" must be initialized', "using "]],
+        [
+          "async function f() { await using x; }",
+          ['The declaration "x" must be initialized', "async function f() { await using "],
+        ],
+        // Only a for-in or for-of head gives the binding its value.
+        ["for (const x; c; ) {}", ['The constant "x" must be initialized', "for (const "]],
+        ["for (const [a]; c; ) {}", ["This constant must be initialized", "for (const "]],
+        ["for (using x; c; ) {}", ['The declaration "x" must be initialized', "for (using "]],
+        ["for (using x = a, y; c; ) {}", ['The declaration "y" must be initialized', "for (using x = a, "]],
+        [
+          "async function f() { for (await using x; c; ) {} }",
+          ['The declaration "x" must be initialized', "async function f() { for (await using "],
+        ],
+        [
+          "for (const x, y of z) ;",
+          ['The constant "x" must be initialized', "for (const "],
+          ["for-of loops must have a single declaration", "for (const "],
+        ],
+      ];
+      for (const [code, ...errors] of rows) {
+        expect({ code, errors: errorsOf(code) }).toEqual({
+          code,
+          errors: errors.map(([message, prefix]) => [message, prefix.length]),
+        });
+      }
+
+      expectPrintedNoTrim("for (const x of y) ;", "for (const x of y)\n  ;\n");
+      expectPrintedNoTrim("for (const [a] in y) ;", "for (const [a] in y)\n  ;\n");
+      expectPrintedNoTrim("for (using x = a; c; ) ;", "for (using x = a;c; )\n  ;\n");
+      // The output of a `using` for-of head is lowered, so these rows check only that it parses.
+      for (const code of [
+        "for (using x of y) ;",
+        "async function f() { for (await using x of y) ; }",
+        "async function f() { for await (using x of y) ; }",
+      ]) {
+        expect({ code, errors: errorsOf(code) }).toEqual({ code, errors: [] });
+      }
+    });
+
     it("regexp", () => {
       expectPrinted("/x/g", "/x/g");
       expectPrinted("/x/i", "/x/i");

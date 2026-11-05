@@ -871,16 +871,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if opts.is_typescript_declare {
                     // TypeScript does not allow "using" declarations in ambient
                     // contexts ("declare using x", "declare namespace { using x }").
-                    // Their bindings are also never declared as symbols, so
-                    // require_initializers (which looks up the binding's symbol)
-                    // must not run here.
                     p.log().add_error(
                         Some(p.source),
                         token_range.loc,
                         b"Cannot use \"declare\" with a \"using\" declaration",
                     );
-                } else if !opts.is_for_loop_init {
-                    p.require_initializers(js_ast::LocalKind::KUsing, decls.slice())?;
                 }
                 return Ok(ExprOrLetStmt {
                     stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
@@ -934,8 +929,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 token_range.loc,
                                 b"Cannot use \"declare\" with an \"await using\" declaration",
                             );
-                        } else if !opts.is_for_loop_init {
-                            p.require_initializers(js_ast::LocalKind::KAwaitUsing, decls.slice())?;
                         }
                         return Ok(ExprOrLetStmt {
                             stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
@@ -1327,12 +1320,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
                 value = Some(p.parse_expr(Level::Comma)?);
-            } else if kind != js_ast::symbol::Kind::Constant
-                && matches!(local.data, B::B::BArray(_) | B::B::BObject(_))
+            } else if (kind == js_ast::symbol::Kind::Constant
+                || matches!(local.data, B::B::BArray(_) | B::B::BObject(_)))
                 && !opts.is_typescript_declare
                 && !p.will_need_binding_pattern()
             {
-                p.missing_initializer(local.loc);
+                p.missing_initializer(kind, &local, opts.is_using_statement);
             }
 
             decls.push(G::Decl {

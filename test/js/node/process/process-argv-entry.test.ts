@@ -16,6 +16,9 @@ const printEntry = `console.log(JSON.stringify({
   bunMain: Bun.main,
 }));`;
 
+using fsProbe = tempDir("argv-case-probe", { "a.txt": "" });
+const isCaseInsensitiveFs = existsSync(join(String(fsProbe), "A.txt"));
+
 async function run(cwd: string, arg: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), arg],
@@ -288,11 +291,10 @@ describe.concurrent("process.argv[1] is path.resolve of the entry argument", () 
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(!isMacOS)("an entry typed in another case is not a symlink", async () => {
+  test.skipIf(!isMacOS || !isCaseInsensitiveFs)("an entry typed in another case is not a symlink", async () => {
     using dir = tempDir("argv-case-name", { "foo.mjs": printEntry });
     const root = String(dir);
     const fooPath = join(root, "foo.mjs");
-    if (!existsSync(join(root, "FOO.mjs"))) return; // case-sensitive volume
 
     const { stdout, stderr, exitCode } = await run(root, "FOO.mjs");
 
@@ -305,4 +307,26 @@ describe.concurrent("process.argv[1] is path.resolve of the entry argument", () 
     });
     expect(exitCode).toBe(0);
   });
+
+  test.skipIf(!isMacOS || isCaseInsensitiveFs)(
+    "a symlink that differs from its target by case alone keeps the link path",
+    async () => {
+      using dir = tempDir("argv-case-link", { "foo.mjs": printEntry });
+      const root = String(dir);
+      const fooPath = join(root, "foo.mjs");
+      const linkPath = join(root, "FOO.mjs");
+      symlinkSync("foo.mjs", linkPath);
+
+      const { stdout, stderr, exitCode } = await run(root, "FOO.mjs");
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        argv1: linkPath,
+        url: pathToFileURL(fooPath).href,
+        metaMain: true,
+        bunMain: fooPath,
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });

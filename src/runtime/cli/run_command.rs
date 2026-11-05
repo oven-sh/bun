@@ -2959,15 +2959,23 @@ impl RunCommand {
             joined = &joined[..joined.len() - 1];
         }
         // On a case-insensitive file system the typed path can differ by case alone.
-        let is_entry_path = if cfg!(any(windows, target_os = "macos")) {
-            bun_core::strings::eql_case_insensitive_ascii(joined, entry_path, true)
-        } else {
-            joined == entry_path
-        };
+        let is_entry_path = joined == entry_path
+            || (cfg!(any(windows, target_os = "macos"))
+                && bun_core::strings::eql_case_insensitive_ascii(joined, entry_path, true)
+                && !Self::is_symlink(joined));
         if joined.is_empty() || is_entry_path {
             return None;
         }
         Some(joined.to_vec().into_boxed_slice())
+    }
+
+    fn is_symlink(path: &[u8]) -> bool {
+        if path.len() >= MAX_PATH_BYTES {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        bun_sys::lstat(paths::resolve_path::z(path, &mut buf))
+            .is_ok_and(|st| bun_sys::S::ISLNK(st.st_mode as _))
     }
 
     /// Whether `path` is the same inode as `entry`.

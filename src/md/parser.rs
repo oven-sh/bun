@@ -21,7 +21,7 @@ pub(crate) const MARK_EXTENSION: u8 = 1 << 4;
 pub(crate) const MARK_OTHER: u8 = 1 << 5;
 use bun_core::{StackCheck, strings};
 
-use super::front_matter;
+use super::front_matter::{self, Rule};
 use super::html_renderer::HtmlRenderer;
 use super::types::{
     Align, BlockType, Container, ContainerEnds, Extensions, Flags, OFF, Renderer,
@@ -317,16 +317,17 @@ impl<'a> Parser<'a> {
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
         let track = rend.ptr.wants_source();
+        let has_carriage_return = strings::contains_char(text, b'\r');
         // Who wants to know where things are is told places in `text`, all of it.
         let markdown = match track {
             true => text,
-            false => markdown_of(text, flags.frontmatter),
+            false => markdown_of(text, flags.frontmatter, has_carriage_return),
         };
         let mut p = Parser {
             text,
             size,
             doc_start: (text.len() - markdown.len()) as OFF,
-            has_carriage_return: strings::contains_char(markdown, b'\r'),
+            has_carriage_return,
             flags,
             renderer: rend,
             image_nesting_level: 0,
@@ -495,14 +496,26 @@ impl<'a> Parser<'a> {
 
 /// `text` behind a UTF-8 byte order mark, the front matter if it counts, and a byte order mark right behind that.
 #[inline]
-fn markdown_of(text: &[u8], frontmatter: bool) -> &[u8] {
+fn markdown_of(text: &[u8], frontmatter: bool, carriage_returns: bool) -> &[u8] {
     let rest = strings::without_utf8_bom(text);
-    match frontmatter {
-        true => match front_matter::detect(rest, front_matter::Rule::MARKDOWN) {
-            Some(block) => strings::without_utf8_bom(&rest[block.end..]),
-            None => rest,
-        },
-        false => rest,
+    match rest.first() {
+        Some(&first) if frontmatter && strings::contains_char(Rule::MARKDOWN.markers, first) => {
+            behind_front_matter(rest, carriage_returns)
+        }
+        _ => rest,
+    }
+}
+
+/// `text` behind its front matter. Out of line: few documents start with what a fence is made of.
+#[inline(never)]
+fn behind_front_matter(text: &[u8], carriage_returns: bool) -> &[u8] {
+    let rule = Rule {
+        carriage_returns,
+        ..Rule::MARKDOWN
+    };
+    match front_matter::detect(text, rule) {
+        Some(block) => strings::without_utf8_bom(&text[block.end..]),
+        None => text,
     }
 }
 

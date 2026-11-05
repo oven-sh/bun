@@ -1086,7 +1086,7 @@ pub(crate) struct PendingProperty {
 }
 
 /// Defines the properties that waited. This runs JavaScript: the caller no longer reads the input.
-#[inline]
+#[inline(always)]
 pub(crate) fn define_pending(
     global: &JSGlobalObject,
     pending: Vec<PendingProperty>,

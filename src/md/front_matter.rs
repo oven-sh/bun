@@ -9,6 +9,8 @@ pub struct Rule<'a> {
     pub markers: &'a [u8],
     /// micromark-extension-frontmatter takes a blank line behind the opening fence. `Bun.markdown` reads a thematic break.
     pub blank_first_line: bool,
+    /// Whether the text can have a CR, which ends a line as LF does. The lines of a text without one are found faster.
+    pub carriage_returns: bool,
 }
 
 impl Rule<'_> {
@@ -16,6 +18,7 @@ impl Rule<'_> {
     pub const MARKDOWN: Rule<'static> = Rule {
         markers: b"-+",
         blank_first_line: false,
+        carriage_returns: true,
     };
 }
 
@@ -31,7 +34,7 @@ pub struct Block {
     pub end: usize,
 }
 
-/// The block `text` starts with: a line of three markers (blanks can follow) up to the next such line. CR ends a line too.
+/// The block `text` starts with: a line of three markers (blanks can follow) up to the next such line.
 #[inline]
 pub fn detect<T: PathByte>(text: &[T], rule: Rule<'_>) -> Option<Block> {
     let first = *text.first()?;
@@ -39,53 +42,43 @@ pub fn detect<T: PathByte>(text: &[T], rule: Rule<'_>) -> Option<Block> {
         .markers
         .iter()
         .find(|&&marker| T::from_u8(marker) == first)?;
-    fenced_by(text, marker, rule.blank_first_line)
-}
-
-/// [`detect`] for a text whose first unit is `marker`. Out of line: few documents start with one.
-#[inline(never)]
-fn fenced_by<T: PathByte>(text: &[T], marker: u8, blank_first_line: bool) -> Option<Block> {
-    let fence = [T::from_u8(marker); 3];
+    let fence = [first; 3];
     let blanks = [T::from_u8(b' '), T::from_u8(b'\t')];
     let crlf = [T::from_u8(b'\r'), T::from_u8(b'\n')];
-    // Where the line that starts at `from` ends, and where the next one starts.
-    let line_at = |from: usize| {
-        let rest = &text[from..];
-        let Some(len) = strings::index_of_any_t(rest, &crlf) else {
-            return (text.len(), text.len());
-        };
-        let line_break = 1 + usize::from(rest[len..].starts_with(&crlf));
-        (from + len, from + len + line_break)
-    };
-    let is_fence = |line: &[T]| {
-        line.starts_with(&fence) && strings::trim_left_t(&line[3..], &blanks).is_empty()
-    };
-
-    let (opening_end, content) = line_at(0);
-    if !is_fence(&text[..opening_end]) || opening_end == text.len() {
-        return None;
-    }
-    if !blank_first_line
-        && strings::trim_left_t(&text[content..], &blanks)
-            .first()
-            .is_none_or(|unit| crlf.contains(unit))
-    {
-        return None;
-    }
-    let mut start = content;
+    // Where the metadata starts, once the opening fence has been read.
+    let mut content = None;
+    let mut start = 0;
     loop {
-        let (end, next) = line_at(start);
-        if is_fence(&text[start..end]) {
-            return Some(Block {
-                marker,
-                content: (content, start),
-                fence_end: end,
-                end: next,
-            });
+        let rest = &text[start..];
+        let line_end = match rule.carriage_returns {
+            true => strings::index_of_any_t(rest, &crlf),
+            false => strings::index_of_scalar(rest, crlf[1]),
+        };
+        let line = &rest[..line_end.unwrap_or(rest.len())];
+        let next = start + line.len() + usize::from(line_end.is_some());
+        let next = next + usize::from(rest[line.len()..].starts_with(&crlf));
+        let is_fence =
+            line.starts_with(&fence) && strings::trim_left_t(&line[3..], &blanks).is_empty();
+        match content {
+            None if is_fence => content = Some(next),
+            None => return None,
+            Some(content) if is_fence => {
+                return Some(Block {
+                    marker,
+                    content: (content, start),
+                    fence_end: start + line.len(),
+                    end: next,
+                });
+            }
+            Some(content) => {
+                let is_first = start == content && !rule.blank_first_line;
+                if is_first && strings::trim_left_t(line, &blanks).is_empty() {
+                    return None;
+                }
+            }
         }
-        if end == text.len() {
-            return None;
-        }
+        // The text ends in a line that is no closing fence.
+        line_end?;
         start = next;
     }
 }

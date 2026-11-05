@@ -383,10 +383,13 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// is either on one line, with all that is in it, or the attribute is on a line of its own at the current
     /// indentation: so what fits there on one line is printed like that, and what doesn't is printed as it is there.
     /// Returns false, with nothing written, if it has to go the long way.
+    ///
+    /// `left`: the names on the left side of `v-for` and its operator. `value` is the right side then.
     pub(crate) fn write_attribute_quickly(
         &mut self,
         element: Id,
         attr: &Attribute<'_>,
+        left: Option<(&[&[u8]], &[u8])>,
         value: &[u8],
         is_typescript: bool,
         has_filters: bool,
@@ -412,17 +415,36 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
         name.extend_from_slice(local);
         name.extend_from_slice(b"=\"");
+        if let Some((names, operator)) = left {
+            let in_parentheses = names.len() > 1;
+            name.extend_from_slice(if in_parentheses { b"(" } else { b"" });
+            for (index, it) in names.iter().enumerate() {
+                name.extend_from_slice(if index > 0 { b", " } else { b"" });
+                name.extend_from_slice(it);
+            }
+            name.extend_from_slice(if in_parentheses { b") " } else { b" " });
+            name.extend_from_slice(operator);
+            name.push(b' ');
+        }
         let expression = crate::js::quick::Expression {
             text: value,
             is_typescript,
             has_filters,
             attribute: Some(&name),
+            hugs: left.is_some(),
             indentation,
         };
         let quick = &mut self.scripts.quick;
         let format = self.options.format;
         let mut is_written =
             crate::js::quick::format_expression(expression, format, quick, &mut formatted).is_ok();
+        // The parentheses around the names are broken if there is no room for what follows them up to the first place where
+        // the right side can be broken.
+        if left.is_some_and(|(names, _)| names.len() > 1) {
+            let first_line = strings::index_of_char_usize(&formatted, b'\n');
+            let width = first_line.unwrap_or(formatted.len());
+            is_written = is_written && self.has_room_on_line_of_its_own(element, width);
+        }
         if is_written && strings::contains_char(&formatted, b'\n') {
             // What has no room on a line of its own has none behind `<`, the name of the element and a blank either, if
             // that is at least as wide as a level of indentation. So the start tag is broken.
@@ -456,6 +478,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             is_typescript,
             has_filters: true,
             attribute: None,
+            hugs: false,
             indentation,
         };
         let quick = &mut self.scripts.quick;

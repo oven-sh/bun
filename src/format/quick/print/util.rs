@@ -574,6 +574,7 @@ impl Quick {
         return end;
     }
 
+    #[inline]
     pub(crate) fn is_next_line_empty(&self, n: i32) -> bool {
         let head = self.n.at(n);
         if (head & 0xff) >= k::Ready && (head & F_NEXT_LINE_KNOWN) != 0 {

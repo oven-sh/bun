@@ -45,6 +45,8 @@ pub(crate) struct Settings {
     indents_blocks: bool,
     /// How long the front matter of the text is, which the lexer sees as white space.
     front_matter_len: usize,
+    /// Prettier's `parentParser`: the text is code in Markdown. The value of `style` is no code then.
+    has_parent_parser: bool,
 }
 
 impl Settings {
@@ -59,7 +61,8 @@ impl Settings {
             && matches!(parser, Parser::Html | Parser::Vue)
             && !options.bracket_same_line.value()
             && !matches!(options.attribute_position, AttributePosition::Multiline)
-            && !options.is_in_markdown
+            // Where Markdown indents the code, it has to be told which line breaks are in a text.
+            && (!options.is_in_markdown || (options.is_at_margin && parser == Parser::Html))
             && options.html_template_depth == 0;
         is_read.then(|| Settings {
             parser,
@@ -76,6 +79,7 @@ impl Settings {
                 .is_some_and(|path| path.ends_with(b".html") || path.ends_with(b".htm")),
             indents_blocks: options.vue_indent_script_and_style,
             front_matter_len,
+            has_parent_parser: options.is_in_markdown,
         })
     }
 }
@@ -2930,8 +2934,13 @@ impl<'a> Scanner<'_, 'a> {
         };
         let value =
             &value_and_rest[..bun_core::strings::index_of_char_usize(value_and_rest, b'"')?];
+        // What may be a reference is for the lexer: one that it does not know is an error.
+        let starts_reference = |&[first, second]: &[u8; 2]| {
+            first == b'&' && (second.is_ascii_alphanumeric() || second == b'#')
+        };
         // Behind `{{` the lexer looks for `}}` first.
         if bun_core::strings::contains(value, b"{{")
+            || value.array_windows().any(starts_reference)
             || (self.siblings.level + 1) * self.settings.indent_width > self.settings.line_width
         {
             return None;
@@ -2943,6 +2952,7 @@ impl<'a> Scanner<'_, 'a> {
             is_typescript,
             has_filters,
             attribute: rest.get(..len + 2),
+            hugs: false,
             indentation: self.siblings.level as u32 + 1,
         };
         let printed = &mut scripts.formatted;
@@ -2979,9 +2989,11 @@ impl<'a> Scanner<'_, 'a> {
             indent_width,
             uses_tabs,
             formats_embedded,
+            has_parent_parser,
             ..
         } = self.settings;
-        let rest = self.text.get(from + 7..).filter(|_| formats_embedded)?;
+        let is_code = formats_embedded && !has_parent_parser;
+        let rest = self.text.get(from + 7..).filter(|_| is_code)?;
         let value = &rest[..bun_core::strings::index_of_char_usize(rest, b'"')?];
         // An empty line between two declarations is kept.
         let skip_space = |mut at: usize| {
@@ -3061,6 +3073,7 @@ impl<'a> Scanner<'_, 'a> {
             is_typescript,
             has_filters: true,
             attribute: None,
+            hugs: false,
             indentation: self.siblings.level as u32 + 1,
         };
         let printed = &mut scripts.formatted;
@@ -3102,7 +3115,9 @@ impl<'a> Scanner<'_, 'a> {
             b"style" => {
                 return match value {
                     _ if canonical::is_style(value) => Printed::AsWrittenOnOneLine,
-                    [rest @ .., b';'] if canonical::is_style(rest) => {
+                    [rest @ .., b';']
+                        if !self.settings.has_parent_parser && canonical::is_style(rest) =>
+                    {
                         Printed::WithoutSemicolonOnOneLine
                     }
                     _ => Printed::Otherwise,

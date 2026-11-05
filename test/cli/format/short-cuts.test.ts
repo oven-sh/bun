@@ -3580,6 +3580,17 @@ describe("JavaScript and TypeScript in a host", () => {
       "'&quot;'",
       "'it\\'s'",
       "'a' + &quot;b&quot;",
+      "(a || b) && !c",
+      "[a && 'b', c]",
+      "a&&b",
+      "a & b",
+      "a &&= b",
+      "'&amp;'",
+      "'&nbsp;' + a",
+      "a == &apos;b&apos;",
+      "'&apos;'",
+      "a &lt; b",
+      `(aaaaaaaaaaaaaaaaaaaaaaaaaa === 'bbbbbbbbbbbbbbbbbb' || cccccccccccccccccccc) && (dddddddddddddddd || e < f)`,
       // Comments.
       "a // b",
       "a /* b */",
@@ -3599,23 +3610,86 @@ describe("JavaScript and TypeScript in a host", () => {
     ];
     const names = [":a", "v-if", "@a", "v-bind:a", ".a", ":class", "v-model", "v-for", "#a", ":aaaaaaaaaaaaaaaaaaaaaaaa"];
     const script = '\n<script setup lang="ts">\nlet a;\n</script>\n';
+    // Names on the left side, and what is more than a name.
+    const lefts = [
+      "a",
+      "(a)",
+      "(a, b)",
+      "(a,b)",
+      "( a , b )",
+      "a, b",
+      "(a, b, c)",
+      "(a, b, c, d)",
+      "(a, a)",
+      "(a, , b)",
+      "{ a }",
+      "({ a, b }, c)",
+      "[a, b]",
+      "(a = 1, b)",
+      "await",
+      "(let, b)",
+      "null",
+      "(a, true)",
+      "undefined",
+      "type",
+      "\u00e9",
+      `(${"a".repeat(20)}, ${"b".repeat(20)})`,
+      `(${"a".repeat(30)}, ${"b".repeat(30)})`,
+    ];
+    const rights = [
+      "b",
+      "10",
+      "a.b",
+      "f(c)",
+      "f( c )",
+      "a.concat([{} as any])",
+      "[1,2]",
+      "{ a: 1 }",
+      "a.slice(\n      b\n    )",
+      "a in b",
+      "a && b",
+      "a | b",
+      "",
+      "a b",
+      `${"c".repeat(30)}.${"d".repeat(30)}`,
+      `${"c".repeat(20)}.filter((it) => it.${"d".repeat(20)} && it.${"e".repeat(20)})`,
+      ...[22, 23, 24, 25, 26, 27, 28, 29, 30].map(length => `f(${"c".repeat(length)}, ${"d".repeat(30)})`),
+    ];
+    // One file for a shape, with an element for every expression: an expression that can't be read stays as it is written.
+    // What could end its attribute or its braces has a file of its own.
+    const file = (elements: string[], end: string) => `<template>\n${elements.join("\n")}\n</template>\n${end}`;
+    const shapes: [RegExp, string, (code: string) => string][] = [
+      ...names.map(name => [/"/, script, (code: string) => `  <div ${name}="${code}"></div>`] as [RegExp, string, any]),
+      [/"/, "", code => `  <div :a="${code}"></div>`],
+      [/"/, script, code => `  <a :b="${code}" />`],
+      [/"/, script, code => `  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>`],
+      [/"/, script, code => `  <span :b="${code}">c</span>d`],
+      [/"/, script, code => `  <pre :b="${code}">\nc</pre>`],
+      [/[{}<]/, script, code => `  <p>{{ ${code} }}</p>`],
+      [/[{}<]/, "", code => `  <p>{{ ${code} }}</p>`],
+      [/[{}<]/, script, code => `  <p>\n    {{ ${code} }}\n  </p>`],
+      [/[{}<]/, script, code => `  <p>a {{ ${code} }} b</p>`],
+      [/[{}<]/, script, code => `  <p>{{${code}}}<b>c</b></p>`],
+    ];
     expectSame(
       "a.vue",
       [
-        ...names.flatMap(name =>
-          expressions.map(code => `<template>\n  <div ${name}="${code}"></div>\n</template>\n${script}`),
-        ),
-        ...expressions.flatMap(code => [
-          `<template>\n  <div :a="${code}"></div>\n</template>\n`,
-          `<template>\n  <a :b="${code}" />\n</template>\n${script}`,
-          `<template>\n  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>\n</template>\n${script}`,
-          `<template>\n  <span :b="${code}">c</span>d\n</template>\n${script}`,
-          `<template>\n  <pre :b="${code}">\nc</pre>\n</template>\n${script}`,
-          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n${script}`,
-          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n`,
-          `<template>\n  <p>\n    {{ ${code} }}\n  </p>\n</template>\n${script}`,
-          `<template>\n  <p>a {{ ${code} }} b</p>\n</template>\n${script}`,
-          `<template>\n  <p>{{${code}}}<b>c</b></p>\n</template>\n${script}`,
+        ...lefts.flatMap(left => [
+          file(
+            rights.map(right => `  <div v-for="${left} in ${right}"></div>`),
+            script,
+          ),
+          file(
+            rights.map(right => `  <li v-for="${left}  of  ${right}" :key="a">b</li>`),
+            "",
+          ),
+        ]),
+        ...shapes.flatMap(([alone, end, element]) => [
+          file(
+            expressions.filter(code => !alone.test(code)).map(element),
+            end,
+          ),
+          ...expressions.filter(code => alone.test(code)).map(code => file([element(code)], end)),
         ]),
       ],
       [
@@ -3696,6 +3770,32 @@ describe("JavaScript and TypeScript in a host", () => {
       "```js\r\nconst a = 1;\r\n```\r\n",
       // Many that aren't, then some that are.
       "```js\nconst  a=1\n```\n\n".repeat(30) + "```js\nconst a = 1;\n```\n\n".repeat(30),
+      // HTML: below the root it is read like a file, but for what is no code in a text with a parent.
+      ...[
+        '<div class="a b">\n  <p>c</p>\n</div>',
+        '<div   class="a  b "><p>c</p></div>',
+        '<p style="color: red">a</p>\n<p style="color: red;">b</p>\n<p style="color:red">c</p>\n<p style=" color : red ; ">d</p>',
+        '<div>\n  <p style="color: red;width: 1px;">a</p>\n  <p style="\n    color: red;\n  ">a</p>\n  <p style="color: red; width: 1px">a</p>\n</div>',
+        '<img srcset="a.png 1x, b.png 2x" sizes="(min-width: 1px) 2px, 3px" />\n<iframe allow="a; b"></iframe>\n<a onclick="b( )">c</a>',
+        "<pre>\n  a\n    b\n</pre>\n<textarea>\n c\n</textarea>",
+        "<!-- a\n   b -->\n<p>c</p>",
+        '<p\n  title="a\n  b"\n>\n  c\n</p>',
+        "<script>\n  const  a = `\n  b`\n</script>\n<style>\n  a{color:red}\n</style>",
+        "<script>\n  const a = 1;\n</script>\n<style>\n  a {\n    color: red;\n  }\n</style>",
+        "<!DOCTYPE html>\n<html>\n  <head>\n    <title>a</title>\n  </head>\n  <body>\n    <p>b</p>\n  </body>\n</html>",
+        "<!doctype html>\n<p>a</p>",
+        "---\na: 1\n---\n\n<p>b</p>",
+        `<p>${"word ".repeat(30)}</p>`,
+        "<ul>\n  <li>a</li>\n  <li><b>c</b> d</li>\n</ul>\n\n\n<p>e</p>",
+        "<p>a",
+        "<p>{{ a }}</p>\n<p :b=\"c+d\"></p>",
+      ].flatMap(code => [
+        `\`\`\`html\n${code}\n\`\`\`\n`,
+        `a\n\n\`\`\`html\n${code}\n\`\`\`\n\nb\n`,
+        `- a\n\n  \`\`\`html\n${indented(code, "  ")}\n  \`\`\`\n`,
+        `> \`\`\`html\n${code.replace(/^/gm, "> ")}\n> \`\`\`\n`,
+        `\`\`\`vue\n${code}\n\`\`\`\n`,
+      ]),
     ];
     describe("Markdown", () => expectSame("a.md", texts, options));
     describe("MDX", () =>
@@ -4978,4 +5078,96 @@ describe("JavaScript and Flow that the long way rejects", () => {
     // ts-shared
     "await /a/;\n",
   ]);
+});
+
+describe("an `if` with a statement that is no block on its line", () => {
+  const clauses = [
+    "return",
+    "return;",
+    "return a && b;",
+    "return 'a';",
+    "return a, b;",
+    "return { a: 1 };",
+    "return () => {};",
+    "return (\n    a\n  );",
+    "return\n  a;",
+    "throw new Error('x');",
+    "throw",
+    "break",
+    "break;",
+    "break a;",
+    "continue;",
+    "a();",
+    "a()",
+    "a.b.c(d,e);",
+    "a = b",
+    "a=b;",
+    "a++;",
+    "++a;",
+    "a = b = c;",
+    "a = {\n    b: 1,\n  };",
+    "a = () => {};",
+    "this.a = b;",
+    "super.a();",
+    "new A();",
+    "await a();",
+    "yield a;",
+    "delete a.b;",
+    "let a;",
+    "let = 1;",
+    "const a = 1;",
+    "function g() {}",
+    "async();",
+    "type = 1;",
+    "type A = 1;",
+    "declare = 1;",
+    "module.exports = a;",
+    "a: b;",
+    ";",
+    "if (b) c();",
+    "if (b) c(); else d();",
+    "a(() => {\n    b();\n  });",
+    "a(\n    b,\n  );",
+    "a\n    .b();",
+    "a(); // c",
+    "a(); /* c */",
+    "/* c */ a();",
+    "return // c",
+    "a.b(x => x).c(y => y).d();",
+    "it('x', () => {});",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa();",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa();",
+    "return aaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbb(cccccccc, ddd);",
+  ];
+  const followers = [
+    "",
+    " else b();",
+    "\n  else b();",
+    "\n  // c\n  else b();",
+    "\n  (b)",
+    "\n  .b",
+    "\n\n  b();",
+    "\n  elsewhere();",
+  ];
+  const around: [string, string][] = [
+    ["async function* f() {\n  ", "\n}\n"],
+    ["a: for (;;) {\n  ", "\n}\n"],
+    ["class A extends B {\n  m() {\n  ", "\n  }\n}\n"],
+    ["function f() {\n  // prettier-ignore\n  ", "\n}\n"],
+  ];
+  const texts = around.flatMap(([before, after]) =>
+    clauses.flatMap(clause => followers.map(follower => `${before}if (!a) ${clause}${follower}${after}`)),
+  );
+  const heads = [
+    "if(a) b();\n",
+    "if (a)b();\n",
+    "if  ( a )  b();\n",
+    "if (a)\n  b();\n",
+    "if (a) /* c */ b();\n",
+    "if (a) // c\n  b();\n",
+  ];
+  const options = [[], ["--print-width=30"], ["--no-semi", "--single-quote"], ["--use-tabs", "--end-of-line=crlf"]];
+  describe("TypeScript", () => expectSame("a.ts", [...texts, ...heads], options));
+  describe("JavaScript", () => expectSame("a.js", [...texts, ...heads], options));
+  describe("Flow", () => expectSame("a.js.flow", [...texts, ...heads], [[]]));
 });

@@ -3922,6 +3922,159 @@ console.log(resolve.length)
       expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
     });
 
+    describe("a declaration that needs an initializer", () => {
+      const missingInitializer = "Missing initializer in destructuring declaration";
+      const errorsOf = (source, loader = "js", method = "transformSync") => {
+        try {
+          transpiler[method](source, loader);
+        } catch (e) {
+          return (e instanceof AggregateError ? e.errors : [e]).map(error => error.message);
+        }
+        return [];
+      };
+      const errorsOfEach = (sources, loader) =>
+        Object.fromEntries(sources.map(source => [source, errorsOf(source, loader)]));
+      const eachHas = (sources, errors) => Object.fromEntries(sources.map(source => [source, errors]));
+
+      it("a `var` or `let` pattern with no initializer is a syntax error", () => {
+        const sources = [
+          "var { a };",
+          "var [a];",
+          "let { a };",
+          "let [a];",
+          "let\n{ a }",
+          "var a, { b };",
+          "var { a } = {}, [b];",
+          "export var { a };",
+          "export let [a];",
+          // The visit pass removes each of these statements, or the bundler removes the function around it.
+          "{ var { a }; }",
+          "{ var [a]; }",
+          "{ var {}; }",
+          "{ var x, { a }; }",
+          "{ let { a }; }",
+          "if (c) { var { a }; }",
+          "if (c) var { a };",
+          "if (false) { var { a }; }",
+          "try { var { a }; } catch {}",
+          "try {} catch { var [a]; }",
+          "switch (c) { case 1: var { a }; }",
+          "label: var { a };",
+          "label: { var { a }; }",
+          "while (c) var [a];",
+          "while (0) { var { a }; }",
+          "do var [a]; while (c)",
+          "function f() { var { a }; }",
+          "function f() { let { a }; }",
+          "var g = () => { var { a }; };",
+          "class K { static { var { a }; } }",
+        ];
+        expect(errorsOfEach(sources)).toEqual(eachHas(sources, [missingInitializer]));
+        expect(errorsOf("var { a }, [b];")).toEqual([missingInitializer, missingInitializer]);
+      });
+
+      it("the head of a `for (;;)` is not an exception", () => {
+        const sources = [
+          "for (var { a }; c; ) {}",
+          "for (var [a]; c; ) {}",
+          "for (let { a }; c; ) {}",
+          "for (let [a]; c; ) {}",
+          "for (var a, { b }; c; ) {}",
+          "for (var { a }, x = 1; c; ) {}",
+          "for (var x = 1, { a }; c; ) {}",
+          "for (var { a } = {}, [b]; c; ) {}",
+          "{ for (var { a }; c; ) {} }",
+          "function f() { for (var { a }; c; ) {} }",
+        ];
+        expect(errorsOfEach(sources)).toEqual(eachHas(sources, [missingInitializer]));
+
+        // A second declarator is not a for-in or for-of head, so the pattern in front of it needs its initializer too.
+        expect(errorsOf("for (let { a }, b of z) ;")).toEqual([
+          missingInitializer,
+          "for-of loops must have a single declaration",
+        ]);
+        expect(errorsOf("for (var { a }, b in z) ;")).toEqual([
+          missingInitializer,
+          "for-in loops must have a single declaration",
+        ]);
+
+        const usingSources = ["for (using x; c; ) {}", "async function f() { for (await using x; c; ) {} }"];
+        expect(errorsOfEach(usingSources)).toEqual(eachHas(usingSources, ['The declaration "x" must be initialized']));
+      });
+
+      it("the error is at the pattern", () => {
+        let error;
+        try {
+          transpiler.transformSync("var c = 0;\nfor (var { a }; c; ) {}", "js");
+        } catch (e) {
+          error = e;
+        }
+        expect({
+          message: error?.message,
+          line: error?.position?.line,
+          column: error?.position?.column,
+          lineText: error?.position?.lineText,
+        }).toEqual({ message: missingInitializer, line: 2, column: 10, lineText: "for (var { a }; c; ) {}" });
+      });
+
+      it("a binding that does not parse gets no second error", () => {
+        const sources = ["var 1;", "var a, 1;", "for (var 1; c; ) {}"];
+        expect(errorsOfEach(sources)).toEqual(eachHas(sources, ['Expected identifier but found "1"']));
+      });
+
+      it("the routes that only parse report it too", () => {
+        expect(errorsOf("var { a };", "js", "scanImports")).toEqual([missingInitializer]);
+        expect(errorsOf("{ var { a }; }", "js", "scan")).toEqual([missingInitializer]);
+      });
+
+      it("TypeScript is not an exception outside `declare`", () => {
+        const sources = [
+          "var { a }: { a: number };",
+          "let [a]: number[];",
+          "namespace N { export var { a }; }",
+          "namespace N { var { a }; }",
+          "for (var { a }: any; c; ) {}",
+        ];
+        expect(errorsOfEach(sources, "ts")).toEqual(eachHas(sources, [missingInitializer]));
+      });
+
+      it("a declaration that has its initializer, a for-in head and a for-of head are accepted", () => {
+        expectPrintedNoTrim("var { a } = {};", "var { a } = {};\n");
+        expectPrintedNoTrim("let { a }\n= {};", "let { a } = {};\n");
+        expectPrintedNoTrim("var [a] = [], b, { c } = {};", "var [a] = [], b, { c } = {};\n");
+        expectPrintedNoTrim("for (var { a } = {}; c; ) {}", "for ({ a } = {};c; ) {}\nvar a;\n");
+        expectPrintedNoTrim("for (let [a] = []; c; ) {}", "for (let [a] = [];c; ) {}\n");
+        expectPrintedNoTrim("for (var { a } of []) {}", "for ({ a } of []) {}\nvar a;\n");
+        expectPrintedNoTrim("for (var [a]\nof\nxs) {}", "for ([a] of xs) {}\nvar a;\n");
+        expectPrintedNoTrim("for (var [a] in {}) {}", "for ([a] in {}) {}\nvar a;\n");
+        expectPrintedNoTrim("for (let { a } of []) {}", "for (let { a } of []) {}\n");
+        expectPrintedNoTrim("for (let [a] in {}) {}", "for (let [a] in {}) {}\n");
+        expectPrintedNoTrim("for await (var { a } of []) {}", "for await ({ a } of []) {}\nvar a;\n");
+        expectPrintedNoTrim("for (using x = f(); c; ) {}", "for (using x = f();c; ) {}\n");
+
+        const accepted = ["for (var i; c; ) {}", "for (let i; c; ) {}", "for (using x of xs) {}"];
+        expect(errorsOfEach(accepted)).toEqual(eachHas(accepted, []));
+      });
+
+      it("a TypeScript `declare` has no initializer", () => {
+        const sources = [
+          "declare var { a }: { a: number };",
+          "declare let [a]: number[];",
+          "declare const { a }: { a: number };",
+          "declare namespace N { var { a }: any; let [b]: any; const { d }: any; namespace M { let { e }: any; } }",
+          "declare module 'm' { var { a }: any; export let [b]: any; }",
+          "declare global { var { a }: any; }",
+          "export declare var { a }: any;",
+        ];
+        expect(Object.fromEntries(sources.map(source => [source, ts.transpiledOutput(source)]))).toEqual(
+          eachHas(sources, ""),
+        );
+        ts.expectPrinted_("var { a }: { a: number } = x;", "var { a } = x;\n");
+        ts.expectPrinted_("for (var { a }: any of []) {}", "for ({ a } of []) {}\nvar a;\n");
+        ts.expectPrinted_("namespace N { export declare var { a }: any; }", "var N;\n((N) => {})(N ||= {});\n");
+      });
+    });
+
     it("regexp", () => {
       expectPrinted("/x/g", "/x/g");
       expectPrinted("/x/i", "/x/i");

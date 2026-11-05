@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 
 const exitCode0 = [
   " ",
@@ -180,6 +180,11 @@ const exitCode0 = [
   "for(const x of function*(){yield 1}()){}",
   "for(const {[key]: x} of []){}",
   "for(let [{a = 1} = {}] of []){}",
+  "for(var {a} of []){}",
+  "for(var [a] in {}){}",
+  "for(let {a} in {}){}",
+  "for await(var [a] of []){}",
+  "for(var {a} = {}; false;){}",
   "do{continue}while(false);",
   "label:do{break label}while(false);",
   "outer:for(;;)inner:break outer;",
@@ -411,5 +416,43 @@ describe("exit code 0", () => {
     expect(data.stderr).toBe("");
     expect(data.stdout.trimEnd().split("\n").at(-1)).toBe(`DONE ${exitCode0.length}`);
     expect(data.exitCode).toBe(0);
+  });
+});
+
+// The parser reports a `var` or `let` pattern with no initializer. The first five of these ran
+// before it did: a later pass removed the declaration.
+const missingInitializer: [file: string, source: string][] = [
+  ["entry.js", "{ var { a }; }"],
+  ["entry.js", "if (1) { var { a }; }"],
+  ["entry.js", "try { var [a]; } catch {}"],
+  ["entry.js", "label: var { a };"],
+  ["entry.js", "for (var x = 1, { a }; false; ) {}"],
+  ["entry.js", "for (let [a]; false; ) {}"],
+  ["entry.js", "for (var { a }; false; ) {}"],
+  ["entry.cjs", "for (var { a }; false; ) {}"],
+  ["entry.mjs", "for (var { a }; false; ) {}"],
+];
+
+describe("exit code 1", () => {
+  test.concurrent.each(missingInitializer)("%s: %s", async (file, source) => {
+    using dir = tempDir("syntax-missing-initializer", { [file]: `${source}\nconsole.log("ran");\n` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      error: stderr.split(/\r?\n/).find(line => line.startsWith("error: ")),
+      exitCode,
+    }).toEqual({
+      stdout: "",
+      error: "error: Missing initializer in destructuring declaration",
+      exitCode: 1,
+    });
   });
 });

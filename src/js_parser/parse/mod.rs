@@ -1327,6 +1327,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
                 value = Some(p.parse_expr(Level::Comma)?);
+            } else if !matches!(local.data, B::B::BIdentifier(_)) {
+                p.require_pattern_initializer(kind, opts, &local);
             }
 
             decls.push(G::Decl {

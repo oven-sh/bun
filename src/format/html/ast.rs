@@ -278,6 +278,8 @@ pub(crate) struct Tree<'a> {
     pub(crate) printed: Vec<u8>,
     /// What has been found out about the text before it is parsed, for the lexer.
     pub(crate) runs: Option<super::runs::Runs>,
+    /// One that has read another text, or this one in another way: its buffers are of use.
+    pub(crate) spare_runs: Option<super::runs::Runs>,
     /// See `Runs::has_typescript_script`.
     pub(crate) has_typescript_script_in_run: bool,
     /// See `Runs::assumes_typescript`.

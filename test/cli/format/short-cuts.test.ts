@@ -4817,6 +4817,11 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // A comment before the `in` or the `of` of a loop.
     ["a.ts", "", "for(c//\nin``)z\n"],
     ["a.ts", "", "for(c//\nof``){z()}\n"],
+    // `<const>x`, which the long way never breaks.
+    ["a.ts", "--print-width=12", "a=<const>x\n"],
+    // A union that a conditional type among type arguments checks, where it breaks.
+    ["a.ts", "--print-width=16", "const a:b<X|Y extends c?d:e>=z\n"],
+    ["a.ts", "--print-width=7", "type a=X|Y extends Y?Z:X\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

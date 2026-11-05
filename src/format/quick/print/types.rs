@@ -580,7 +580,12 @@ impl Quick {
         self.print_union_with_comments(n)?;
         self.indent_close();
         self.group_close(g);
-        if is_hugged_elsewhere {
+        // `a<B | C extends d ? e : f>`, `type A = B | C extends d ? e : f`: the line break of the union follows that of the type arguments
+        // or of the `=`. The long way writes one for the two.
+        let parent = self.n.at(n + 3);
+        if is_hugged_elsewhere
+            || ((self.n.at(parent) & 0xff) == k::ConditionalType && self.n.at(parent + 4) == n)
+        {
             self.gives_up_if_broken(g);
         }
         Ok(())
@@ -899,6 +904,10 @@ impl Quick {
     pub(crate) fn print_type_assertion(&mut self, n: i32) -> R<()> {
         let type_ = self.n.at(n + 4);
         let expression = self.n.at(n + 5);
+        // (the long way never breaks it)
+        if self.text_is(self.n.at(type_ + 1), self.n.at(type_ + 2), b"const") {
+            return Err(self.rare(rare::ASSERTION));
+        }
         if self.is_object_or_array_expression(expression) {
             let g = self.group_open();
             self.print_cast_group(type_)?;

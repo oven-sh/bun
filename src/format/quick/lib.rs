@@ -113,7 +113,7 @@ pub(crate) mod rare {
     pub(crate) const OTHER: i32 = 0;
     /// What the long way prints in another way if it breaks: an object type in the return type, for which it goes back and lays out the
     /// parameters as it will the next time; a union as the key of an indexer of Flow, which it does not indent; `boolean | null` and the
-    /// like in Flow, which it does not break.
+    /// like in Flow, which it does not break; a union that a conditional type checks, before which it leaves no line empty.
     pub(crate) const BROKEN: i32 = 1;
     /// White space other than blanks, tabs and line breaks between tokens or in a comment, a control character anywhere,
     /// U+2028 or U+2029 anywhere, a "\r" without a "\n", bytes that are not UTF-8.
@@ -135,7 +135,7 @@ pub(crate) mod rare {
     pub(crate) const LESS_GREATER: i32 = 9;
     /// A chain of calls in the default value of a parameter of a function that is hugged: it is indented otherwise.
     pub(crate) const HUGGED_CHAIN: i32 = 10;
-    /// `<T>` before something that breaks whatever its width.
+    /// `<T>` before something that breaks whatever its width; `<const>`, which the long way never breaks.
     pub(crate) const ASSERTION: i32 = 11;
     /// A comment in a place where the long way is not known to print it alike: see is_comment_taken().
     pub(crate) const COMMENT: i32 = 12;

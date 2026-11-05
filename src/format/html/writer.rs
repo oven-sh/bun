@@ -807,7 +807,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         let Some(quick) = &mut self.quick else {
             return self.foreign(|f| crate::css::embed::write_document(document, f));
         };
-        if let Err(unwritten) = FromDoc::new(quick.sink).write(document) {
+        if let Err(unwritten) = FromDoc::new(quick.sink).write_document(document) {
             quick.unwritten = Some(unwritten);
         }
         quick.last = Last::Unknown;

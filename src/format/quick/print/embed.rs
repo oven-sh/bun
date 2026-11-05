@@ -524,6 +524,8 @@ impl Quick {
         let expressions = self.n.at(n + 5);
         let count = self.n.at(expressions);
         let base = self.print_embed.ex_top;
+        // The other language may write a line suffix in front of an expression.
+        self.set_suffix_possible(true);
         if base + count > (self.print_embed.ex.len() as i32) {
             let mut grown = zeros::<i32>((base + count) * 2);
             grown.set_all(&self.print_embed.ex, 0);

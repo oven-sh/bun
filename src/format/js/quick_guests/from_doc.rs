@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 /// Why a document isn't written.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Unwritten {
-    /// It has something that the other document has no word for.
+    /// It isn't certain that it's printed as the long way prints it.
     Unknown,
     NestedTooDeeply,
 }
@@ -55,30 +55,44 @@ pub(crate) struct FromDoc<'s, 'q> {
     sink: &'s mut Sink<'q>,
     /// The ids of the document's groups, and what they're called in the other one.
     groups: SmallVec<[(u32, GroupId); 4]>,
-    /// How many groups and fills are around what is written. There the long way measures a line break in a string
-    /// differently. For Markdown it's 1 from the start: the long way makes a `literalline` of every one.
+    is_markdown: bool,
+    /// How many groups and fills are around what is written.
     measured: u32,
     /// The template has substitutions.
     has_holes: bool,
+    /// Nothing has been printed since the last line break, if that one is printed. The printer of `ir/` skips the next
+    /// one then.
+    is_after_line: bool,
     stack_check: bun_core::StackCheck,
 }
 
 impl<'s, 'q> FromDoc<'s, 'q> {
+    /// For the document of a style sheet.
     pub(crate) fn new(sink: &'s mut Sink<'q>) -> Self {
         FromDoc {
             has_holes: sink.hole_count() > 0,
             sink,
             groups: SmallVec::new(),
+            is_markdown: false,
             measured: 0,
+            is_after_line: true,
             stack_check: bun_core::StackCheck::init(),
         }
     }
 
-    /// The same for a document of Markdown.
     pub(crate) fn for_markdown(sink: &'s mut Sink<'q>) -> Self {
         FromDoc {
-            measured: 1,
+            is_markdown: true,
             ..FromDoc::new(sink)
+        }
+    }
+
+    /// Writes `doc`, which has a line break in front of it and behind it.
+    pub(crate) fn write_document(mut self, doc: &Doc<'_>) -> Result<(), Unwritten> {
+        self.write(doc)?;
+        match self.is_after_line {
+            true => Err(Unwritten::Unknown),
+            false => Ok(()),
         }
     }
 
@@ -95,44 +109,107 @@ impl<'s, 'q> FromDoc<'s, 'q> {
     }
 
     fn indented(&mut self, contents: &Doc<'_>) -> Result<(), Unwritten> {
-        let result = self.write(contents);
+        self.write(contents)?;
         self.sink.indent_close();
-        result
+        Ok(())
     }
 
-    pub(crate) fn write(&mut self, doc: &Doc<'_>) -> Result<(), Unwritten> {
+    /// `is_followed_by_break_parent`: the next part of the array is a `breakParent`.
+    fn line(&mut self, line: Line, is_followed_by_break_parent: bool) -> Result<(), Unwritten> {
+        let is_forced = matches!(line, Line::Hard | Line::Literal);
+        // `markdown/embed.rs` counts forced line breaks in a row.
+        if self.is_after_line && !(self.is_markdown && line == Line::Hard) {
+            return Err(Unwritten::Unknown);
+        }
+        // In `ir/`, a forced line break always breaks the groups around it.
+        if is_forced && !is_followed_by_break_parent {
+            return Err(Unwritten::Unknown);
+        }
+        // After a forced line break in what is printed on one line, a substitution is measured again, which breaks one
+        // that Prettier has printed to a string.
+        if is_forced && self.measured > 0 && self.has_holes {
+            return Err(Unwritten::Unknown);
+        }
+        match line {
+            Line::Space => self.sink.line(),
+            Line::Soft => self.sink.softline(),
+            Line::Hard => self.sink.hardline_without_break(),
+            Line::Literal => self.sink.literalline_without_break(),
+        }
+        self.is_after_line = true;
+        Ok(())
+    }
+
+    fn array(&mut self, parts: &[Doc<'_>]) -> Result<(), Unwritten> {
+        let mut index = 0;
+        while let Some(rest) = parts.get(index..).filter(|rest| !rest.is_empty()) {
+            // The line breaks in a row of which `css/embed.rs` makes an empty line.
+            let pair = match rest {
+                _ if self.is_markdown => 0,
+                [
+                    Doc::Line(Line::Hard),
+                    Doc::BreakParent,
+                    Doc::Line(Line::Hard),
+                    Doc::BreakParent,
+                    ..,
+                ] => 4,
+                [
+                    Doc::Line(Line::Hard),
+                    Doc::BreakParent,
+                    Doc::Line(Line::Space | Line::Soft),
+                    ..,
+                ]
+                | [
+                    Doc::Line(Line::Space | Line::Soft),
+                    Doc::Line(Line::Hard),
+                    Doc::BreakParent,
+                    ..,
+                ] => 3,
+                [Doc::Indent(contents), Doc::Line(Line::Soft), ..]
+                    if matches!(**contents, Doc::Line(Line::Soft)) =>
+                {
+                    2
+                }
+                _ => 0,
+            };
+            if pair > 0 && self.is_after_line {
+                return Err(Unwritten::Unknown);
+            }
+            for at in 0..pair.max(1) {
+                if pair > 0 {
+                    self.is_after_line = false;
+                }
+                match rest.get(at) {
+                    Some(Doc::Line(line)) => {
+                        self.line(*line, matches!(rest.get(at + 1), Some(Doc::BreakParent)))?
+                    }
+                    Some(part) => self.write(part)?,
+                    None => {}
+                }
+            }
+            index += pair.max(1);
+        }
+        Ok(())
+    }
+
+    fn write(&mut self, doc: &Doc<'_>) -> Result<(), Unwritten> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(Unwritten::NestedTooDeeply);
         }
         match doc {
-            Doc::Text(text) if self.measured > 0 && strings::contains_char(text, b'\n') => {
+            Doc::Text(text) if text.is_empty() => {}
+            // The long way measures a line break in a string differently. In Markdown it makes a `literalline` of it.
+            Doc::Text(text)
+                if (self.measured > 0 || self.is_markdown)
+                    && strings::contains_char(text, b'\n') =>
+            {
                 return Err(Unwritten::Unknown);
             }
-            Doc::Text(text) => self.sink.text(text),
-            Doc::Array(parts) => {
-                let mut parts = parts.iter().peekable();
-                while let Some(part) = parts.next() {
-                    // In `ir/`, a forced line break always breaks the groups around it.
-                    if matches!(part, Doc::Line(Line::Hard | Line::Literal))
-                        && !matches!(parts.peek(), Some(Doc::BreakParent))
-                    {
-                        return Err(Unwritten::Unknown);
-                    }
-                    // After a forced line break in what is printed on one line, a substitution is measured again, which
-                    // breaks one that Prettier has printed to a string.
-                    if matches!(part, Doc::Line(Line::Hard | Line::Literal))
-                        && self.measured > 0
-                        && self.has_holes
-                    {
-                        return Err(Unwritten::Unknown);
-                    }
-                    match part {
-                        Doc::Line(Line::Hard) => self.sink.hardline_without_break(),
-                        Doc::Line(Line::Literal) => self.sink.literalline_without_break(),
-                        _ => self.write(part)?,
-                    }
-                }
+            Doc::Text(text) => {
+                self.sink.text(text);
+                self.is_after_line = false;
             }
+            Doc::Array(parts) => self.array(parts)?,
             Doc::Indent(contents) => {
                 self.sink.indent_open();
                 self.indented(contents)?;
@@ -171,10 +248,9 @@ impl<'s, 'q> FromDoc<'s, 'q> {
                 let id = self.group_id(*id);
                 let group = self.sink.group_open();
                 self.measured += 1;
-                let result = self.write(contents);
+                self.write(contents)?;
                 self.measured -= 1;
                 self.sink.group_close(group, *should_break, id);
-                result?;
             }
             Doc::Group {
                 contents,
@@ -184,29 +260,23 @@ impl<'s, 'q> FromDoc<'s, 'q> {
             } => {
                 let variants = self.sink.variants_open();
                 let variant = self.sink.variant_open();
-                let result = self.write(contents);
+                self.write(contents)?;
                 self.sink.variant_close(variant);
                 self.sink.variants_close(variants, *should_break);
-                result?;
             }
             Doc::Group { .. } => return Err(Unwritten::Unknown),
             Doc::Fill(parts) => {
                 self.sink.fill_open();
                 self.measured += 1;
-                let mut result = Ok(());
                 for (index, part) in parts.iter().enumerate() {
                     match index % 2 {
                         0 => self.sink.fill_item(),
                         _ => self.sink.fill_separator(),
                     }
-                    result = self.write(part);
-                    if result.is_err() {
-                        break;
-                    }
+                    self.write(part)?;
                 }
                 self.measured -= 1;
                 self.sink.fill_close();
-                result?;
             }
             Doc::IfBreak {
                 break_contents,
@@ -214,24 +284,25 @@ impl<'s, 'q> FromDoc<'s, 'q> {
                 group_id,
             } => {
                 let id = self.group_id(*group_id);
+                let is_after_line = self.is_after_line;
                 let open = self.sink.if_break_open(id);
-                let broken = self.write(break_contents);
+                self.write(break_contents)?;
                 self.sink.if_break_else(open);
-                let flat = self.write(flat_contents);
+                let is_after_line = std::mem::replace(&mut self.is_after_line, is_after_line);
+                self.write(flat_contents)?;
                 self.sink.if_break_close(open);
-                broken.and(flat)?;
+                self.is_after_line |= is_after_line;
             }
             Doc::LineSuffix(contents) => {
+                let is_after_line = std::mem::replace(&mut self.is_after_line, false);
                 let open = self.sink.line_suffix_open();
-                let result = self.write(contents);
+                self.write(contents)?;
                 self.sink.line_suffix_close(open);
-                result?;
+                self.is_after_line = is_after_line;
             }
             Doc::LineSuffixBoundary => self.sink.line_suffix_boundary(),
             Doc::BreakParent => self.sink.break_parent(),
-            Doc::Line(Line::Space) => self.sink.line(),
-            Doc::Line(Line::Soft) => self.sink.softline(),
-            Doc::Line(Line::Hard | Line::Literal) => return Err(Unwritten::Unknown),
+            Doc::Line(line) => self.line(*line, false)?,
         }
         Ok(())
     }

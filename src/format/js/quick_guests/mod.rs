@@ -72,7 +72,7 @@ impl QuickGuests {
         }
         let document =
             crate::css::embed::document_of_template(text, count, &self.options, &mut self.css);
-        match document.map(|document| FromDoc::new(sink).write(&document)) {
+        match document.map(|document| FromDoc::new(sink).write_document(&document)) {
             None => Answer::NotRead,
             Some(Ok(())) => Answer::Written,
             Some(Err(unwritten)) => unwritten.into(),
@@ -113,7 +113,7 @@ impl QuickGuests {
             &mut self.markdown,
             // Around a text that may be on one line with its backticks, the long way breaks lines that Prettier doesn't.
             |document, _| match from_doc::forces_break(document) {
-                true => FromDoc::for_markdown(sink).write(document),
+                true => FromDoc::for_markdown(sink).write_document(document),
                 false => Err(Unwritten::Unknown),
             },
         );

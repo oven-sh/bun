@@ -173,7 +173,7 @@ pub struct Sink<'q> {
     source_at: i32,
     /// Where the document ended when a text was written that ends in `$`.
     dollar_at: i32,
-    /// Two texts in a row are one text for Prettier, and the filter would have had to see them as one.
+    /// What has been written may not be printed as the long way prints it.
     is_uncertain: bool,
 }
 
@@ -206,6 +206,7 @@ impl Sink<'_> {
         if self.q.doc.text_filter == 0 {
             return;
         }
+        // Two texts in a row are one text for Prettier.
         if self.dollar_at == written_from && text.first() == Some(&b'{') {
             self.is_uncertain = true;
         }
@@ -229,6 +230,14 @@ impl Sink<'_> {
         (start, start + length)
     }
 
+    /// T[start, end), whatever it holds.
+    fn slice(&mut self, start: i32, end: i32) {
+        let width = self.q.text_width(start, end);
+        // The long way skips a text without width when it measures, together with the blank in front of it.
+        self.is_uncertain |= width == 0 && start < end;
+        self.q.slice_w(start, end, width);
+    }
+
     /// A string. A line break in it is a character without width, as it is for Prettier.
     pub fn text(&mut self, text: &[u8]) {
         let from = self.q.doc.d_pos;
@@ -250,7 +259,7 @@ impl Sink<'_> {
             _ => {
                 let (start, end) = self.place(text);
                 self.q.reserve();
-                self.q.slice_any(start, end);
+                self.slice(start, end);
             }
         }
         self.note_ends(text, from);
@@ -273,7 +282,7 @@ impl Sink<'_> {
         loop {
             let at = crate::Bytes::index_of(self.q.t.sub(0, end), 10, from);
             self.q.reserve();
-            self.q.slice_any(from, if at < 0 { end } else { at });
+            self.slice(from, if at < 0 { end } else { at });
             if at < 0 {
                 return self.note_ends(text, written_from);
             }

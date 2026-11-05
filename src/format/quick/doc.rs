@@ -747,7 +747,6 @@ impl Quick {
         self.break_parent();
     }
 
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn hardline_without_break(&mut self) {
         self.d.put(self.doc.d_pos, op::Line | (LINE_HARD << 5));
         self.doc.d_pos += 1;
@@ -755,7 +754,6 @@ impl Quick {
         self.doc.impure_count += 1;
     }
 
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn literalline_without_break(&mut self) {
         self.d.put(self.doc.d_pos, op::Line | (LINE_LITERAL << 5));
         self.doc.d_pos += 1;
@@ -928,7 +926,6 @@ impl Quick {
         self.align_text_open(at, n);
     }
 
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn mark_as_root_open(&mut self) {
         self.align_open(ALIGN_MARK_ROOT);
     }
@@ -937,7 +934,6 @@ impl Quick {
         self.align_open(ALIGN_TO_ROOT);
     }
 
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn dedent_open(&mut self) {
         self.align_open(ALIGN_DEDENT);
     }
@@ -1146,7 +1142,6 @@ impl Quick {
     }
 
     /// True if nothing would be printed.
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn doc_is_empty(&self, h: i32) -> bool {
         return ((self.d.at(h) as u32) >> 5) as i32 == 3;
     }

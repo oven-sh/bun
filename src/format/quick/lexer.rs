@@ -3,6 +3,7 @@
 
 use crate::ast::{F_BLANK, F_BLANK_LINE, F_ESCAPE, F_QUOTE, F_SLOW_TEXT, F_TAIL};
 use crate::id_table::{ID_PART, ID_START};
+use crate::parse::core::TYPED_TS;
 use crate::{Bytes, Quick, R, Words, zeros};
 
 pub(crate) struct Lexer {
@@ -1142,6 +1143,14 @@ impl Quick {
                 } else if self.t.at(p + 1) == 61 {
                     self.lexer_finish(tk::LtEq, p + 2);
                 } else {
+                    if self.t.at(p + 1) == 47
+                        && self.t.at(p + 2) != 42
+                        && self.parse.jsx_enabled
+                        && self.parse.typed == TYPED_TS
+                    {
+                        // `<// comment`: one token, `</`, for TypeScript in a file with JSX
+                        return Err(self.text_refuse());
+                    }
                     self.lexer_finish(tk::Lt, p + 1);
                 }
                 return Ok(());

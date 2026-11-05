@@ -8,7 +8,7 @@
 //! embed(), and the guest's printer appends to the same stream, between what the host wrote before and what it writes after.
 //! If the code does not parse, the stream is cut back to where it was and the host prints the node as plain text.
 
-use crate::{Quick, R, why};
+use crate::Quick;
 
 pub(crate) struct Lang {
     /// options.parser: the language that is running.
@@ -61,31 +61,15 @@ impl Quick {
         self.lang.next_guest_column = column;
     }
 
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn set_top_level_count(&mut self, count: i32) {
         self.lang.top_level_count = count;
     }
 }
 
 impl Quick {
-    /// Appends the document of T[start, end), read as `language`, without a line break at its end.
-    /// Returns false, and leaves the document as it was, if that text has a syntax error or the language is not there.
-    ///
-    /// No other language writes into this document so far: the file is left to the long way.
-    pub(crate) fn embed(&mut self, _language: i32, _start: i32, _end: i32) -> R<bool> {
-        if self.has_no_guests() {
-            return Ok(false);
-        }
-        Err(self.stop(why::GUEST))
-    }
-
-    pub(crate) fn is_registered(&self, _language: i32) -> bool {
-        !self.has_no_guests()
-    }
-
     /// For tools: code in other languages is printed as if nobody knew these languages.
     #[inline(always)]
-    fn has_no_guests(&self) -> bool {
+    pub(crate) fn has_no_guests(&self) -> bool {
         #[cfg(feature = "stages")]
         return self.no_guests;
         #[cfg(not(feature = "stages"))]

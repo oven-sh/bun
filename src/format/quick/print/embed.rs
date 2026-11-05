@@ -10,7 +10,7 @@ use crate::holes::{FILTER_BACKTICK, FILTER_END_OF_LINE, FILTER_UNCOOK};
 use crate::lang::{GUEST_BETWEEN_LINES, lang};
 use crate::options::WHITESPACE_IGNORE;
 use crate::print::statics::{BACKQUOTE, SPACE};
-use crate::{Quick, R, Words, zeros};
+use crate::{Quick, R, Words, why, zeros};
 
 pub(crate) struct PrintEmbed {
     /// the docs of the expressions of the literal that is being printed
@@ -18,7 +18,6 @@ pub(crate) struct PrintEmbed {
     pub(crate) ex_top: i32,
     // ---------------------------------------------------------------------------------------------------------- GraphQL
     pub(crate) part_count: i32,
-    pub(crate) html_template_literal_counter: i32,
 }
 impl PrintEmbed {
     pub(crate) fn new() -> Self {
@@ -26,7 +25,6 @@ impl PrintEmbed {
             ex: zeros(64),
             ex_top: 0,
             part_count: 0,
-            html_template_literal_counter: 0,
         }
     }
 }
@@ -469,16 +467,56 @@ pub(crate) fn is_space(c: i32) -> bool {
     return c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12;
 }
 
+/// How many bytes the white space character of JavaScript takes that `text` starts with. 0 if it starts with none.
+fn space_length(text: &[u8]) -> i32 {
+    match text {
+        [32 | 9..=13, ..] => 1,
+        [0xc2, 0xa0, ..] => 2,
+        [0xe1, 0x9a, 0x80, ..]
+        | [0xe2, 0x80, 0x80..=0x8a | 0xa8 | 0xa9 | 0xaf, ..]
+        | [0xe2, 0x81, 0x9f, ..]
+        | [0xe3, 0x80, 0x80, ..]
+        | [0xef, 0xbb, 0xbf, ..] => 3,
+        _ => 0,
+    }
+}
+
 impl Quick {
+    /// `!text.trim()`
     pub(crate) fn print_embed_is_blank(&self, start: i32, end: i32) -> bool {
         let mut p = start;
         while p < end {
-            if !is_space(self.t.at(p)) {
+            let length = space_length(self.t.sub(p, end));
+            if length == 0 {
                 return false;
             }
-            p += 1;
+            p += length;
         }
         return true;
+    }
+
+    /// `/\s$/.test(text)`
+    fn ends_with_space(&self, start: i32, end: i32) -> bool {
+        (1..=3).any(|length| {
+            end - length >= start && space_length(self.t.sub(end - length, end)) == length
+        })
+    }
+
+    /// True if T[start, end) has white space that is neither a blank, a tab nor a line feed. The printers here and those of the long way do not agree on all of it.
+    fn has_odd_space(&self, start: i32, end: i32) -> bool {
+        let text = self.t.sub(start, end);
+        (0..text.len()).any(|at| match text.get(at..) {
+            Some([32 | 9 | 10, ..]) | None => false,
+            Some(rest) => space_length(rest) != 0,
+        })
+    }
+
+    /// True if an escape in T[start, end) has made half of a surrogate pair.
+    fn has_lone_surrogate(&self, start: i32, end: i32) -> bool {
+        self.t
+            .sub(start, end)
+            .windows(2)
+            .any(|pair| matches!(pair, [0xed, 0xa0..=0xff]))
     }
 
     pub(crate) fn print_expressions(&mut self, n: i32) -> R<i32> {
@@ -486,6 +524,8 @@ impl Quick {
         let expressions = self.n.at(n + 5);
         let count = self.n.at(expressions);
         let base = self.print_embed.ex_top;
+        // The other language may write a line suffix in front of an expression.
+        self.set_suffix_possible(true);
         if base + count > (self.print_embed.ex.len() as i32) {
             let mut grown = zeros::<i32>((base + count) * 2);
             grown.set_all(&self.print_embed.ex, 0);
@@ -671,6 +711,14 @@ impl Quick {
                 start = from;
                 end = self.text.gen_pos;
                 self.gen_source_end();
+                // no character of GraphQL
+                if self.has_lone_surrogate(start, end) {
+                    ok = false;
+                    break;
+                }
+            }
+            if self.has_odd_space(start, end) {
+                return Err(self.stop(why::GUEST));
             }
             // the lines
             let mut lines: i32 = 1;
@@ -758,10 +806,15 @@ impl Quick {
             }
             i += 1;
         }
+        let parts = self.print_embed.part_count;
         self.print_embed.part_count = saved_parts;
         self.print_embed.ex_top = base;
         if !ok {
             return Ok(false);
+        }
+        // Two line breaks in a row, of which the long way prints one.
+        if parts == 0 {
+            return Err(self.stop(why::GUEST));
         }
         self.dedent_hardline();
         self.text(BACKQUOTE);
@@ -774,15 +827,13 @@ pub(crate) const HTML_PREFIX_TEXT: &[u8] = b"PRETTIER_HTML_PLACEHOLDER_";
 pub(crate) const HTML_PREFIX: i32 = 1777; // staticText(HTML_PREFIX_TEXT)
 impl Quick {
     pub(crate) fn reset_embed(&mut self) {
-        self.print_embed.html_template_literal_counter = 0;
         self.print_embed.ex_top = 0;
     }
 
     pub(crate) fn print_embed_html(&mut self, n: i32, language: i32) -> R<bool> {
         let quasis = self.n.at(n + 4);
         let count = self.n.at(quasis);
-        let counter = self.print_embed.html_template_literal_counter;
-        self.print_embed.html_template_literal_counter += 1;
+        let counter = 0;
         let base = self.print_expressions(n)?;
         // the suffix of the placeholders: _<counter>_IN_JS
         self.reserve_gen(32);
@@ -813,8 +864,8 @@ impl Quick {
             end = self.text.gen_pos;
             self.gen_source_end();
         }
-        let leading_whitespace = start < end && is_space(self.t.at(start));
-        let trailing_whitespace = start < end && is_space(self.t.at(end - 1));
+        let leading_whitespace = space_length(self.t.sub(start, end)) != 0;
+        let trailing_whitespace = self.ends_with_space(start, end);
         let hard_break = self.options.html_whitespace_sensitivity == WHITESPACE_IGNORE;
         let has_linebreak = hard_break || (leading_whitespace && trailing_whitespace);
         let outer = self.group_open();
@@ -850,6 +901,7 @@ impl Quick {
         if has_linebreak && self.options.short_cuts {
             self.set_guest_column(GUEST_BETWEEN_LINES);
         }
+        self.guest.template_at = self.n.at(n + 1);
         let ok = self.embed(language, start, end)?;
         self.end_holes();
         self.print_embed.ex_top = base;
@@ -888,6 +940,9 @@ impl Quick {
         let quasi = self.n.at(self.n.at(n + 4) + 1);
         let raw_start = self.n.at(quasi + 1);
         let raw_end = self.n.at(quasi + 2);
+        if self.has_odd_space(raw_start, raw_end) {
+            return Err(self.stop(why::GUEST));
+        }
         // /((?:\\\\)*)\\`/g -> half of the backslashes, and the backtick
         let mut start = self.gen_source_start(raw_end - raw_start);
         {

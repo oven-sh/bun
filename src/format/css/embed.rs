@@ -313,6 +313,23 @@ enum Action<'w, 'a> {
     Write(&'w mut Formatter<'a>),
 }
 
+/// The document of `text`, which is what a template has between its backticks, with a placeholder for each of its
+/// `count` substitutions. `None` if it doesn't parse as SCSS, or if some substitution isn't in the document exactly once.
+pub(crate) fn document_of_template(
+    text: &[u8],
+    count: usize,
+    options: &FormatOptions,
+    scratch: &mut super::Scratch,
+) -> Option<Doc<'static>> {
+    let sink = Sink::to_document();
+    let sink =
+        super::parse_and_print(text, super::Parser::Scss, options, sink, scratch, false).ok()?;
+    let document = sink.into_document().and_then(doc::text_to_doc).ok()?;
+    (!document.is_empty_text()
+        && (count == 0 || count_placeholders(&document, count) == Some(count)))
+    .then_some(document)
+}
+
 /// Prettier's `printEmbedCss`. Writes nothing and returns `false` if the text doesn't parse as SCSS, or if some
 /// substitution isn't in the document exactly once.
 fn print_embed_css<'a>(
@@ -331,25 +348,10 @@ fn print_embed_css<'a>(
         text.extend_from_slice(template.raw(index));
     }
     let text = bun_core::strings::crlf_as_lf(&text);
-    let mut scratch = Default::default();
-    let Ok(sink) = super::parse_and_print(
-        &text,
-        super::Parser::Scss,
-        options,
-        Sink::to_document(),
-        &mut scratch,
-        false,
-    ) else {
+    let Some(document) = document_of_template(&text, count, options, &mut Default::default())
+    else {
         return false;
     };
-    let Ok(document) = sink.into_document().and_then(doc::text_to_doc) else {
-        return false;
-    };
-    if document.is_empty_text()
-        || (count > 0 && count_placeholders(&document, count) != Some(count))
-    {
-        return false;
-    }
     if let Action::Write(f) = action {
         f.write_token("`");
         f.write_element(FormatElement::Tag(Tag::StartIndent));

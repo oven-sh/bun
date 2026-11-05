@@ -48,8 +48,13 @@ pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut 
 
 /// True if a line-suffix comment in the captured `content` is still pending where `content` ends.
 pub(crate) fn ends_with_line_suffix(content: Interned, f: &Formatter<'_>) -> bool {
-    let (mut depth, mut is_waiting) = (0u32, false);
-    for element in f.storage.interned(content) {
+    is_line_suffix_waiting(f.storage.interned(content), false)
+}
+
+/// The same for `elements`. `is_waiting`: one is pending where they start.
+pub(crate) fn is_line_suffix_waiting(elements: &[FormatElement], mut is_waiting: bool) -> bool {
+    let mut depth = 0u32;
+    for element in elements {
         match element {
             FormatElement::Tag(Tag::StartLineSuffix) => (depth, is_waiting) = (depth + 1, true),
             FormatElement::Tag(Tag::EndLineSuffix) => depth = depth.saturating_sub(1),

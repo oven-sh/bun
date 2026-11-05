@@ -285,7 +285,30 @@ impl StandaloneModuleGraph {
         if self.is_directory_key(Self::normalize_dir_path(name, &mut buffer)) {
             return Some(Entry::Directory);
         }
-        let FoldedPath::Shorter(key) = self.fold(name, &mut buffer) else {
+        self.find_entry_folded(name, &mut buffer)
+    }
+
+    /// `find_entry` for a caller that mostly gets a directory: it asks for one first.
+    pub fn find_directory_or_file(&self, name: &[u8]) -> Option<Entry<'_>> {
+        if !is_bun_standalone_file_path(name) {
+            return match self.find_dir(name) {
+                true => Some(Entry::Directory),
+                false => self.find_at_source_path(name).map(Entry::File),
+            };
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        if self.is_directory_key(Self::normalize_dir_path(name, &mut buffer)) {
+            return Some(Entry::Directory);
+        }
+        if let Some(file) = self.lookup_file(name) {
+            return Some(Entry::File(file));
+        }
+        self.find_entry_folded(name, &mut buffer)
+    }
+
+    #[cold]
+    fn find_entry_folded(&self, name: &[u8], buffer: &mut PathBuffer) -> Option<Entry<'_>> {
+        let FoldedPath::Shorter(key) = self.fold(name, buffer) else {
             return None;
         };
         match self.files.get(key) {

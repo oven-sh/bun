@@ -483,7 +483,7 @@ fn access_in_graph(
     path: &[u8],
     mode: c_int,
 ) -> Option<Maybe<ret::Access>> {
-    let is_dir = matches!(graph.find_entry(path)?, Entry::Directory);
+    let is_dir = matches!(graph.find_directory_or_file(path)?, Entry::Directory);
     if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
         return Some(Err(
             sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(path)
@@ -6049,7 +6049,7 @@ impl NodeFS {
     pub(crate) fn mkdir(&mut self, args: &args::Mkdir, _: Flavor) -> Maybe<ret::Mkdir> {
         if let Some(graph) = graph_in_front_of_disk(args.path.slice()) {
             let path = args.path.slice();
-            let entry = graph.find_entry(path);
+            let entry = graph.find_directory_or_file(path);
             if args.recursive && matches!(entry, Some(Entry::Directory)) {
                 return Ok(StringOrUndefined::None);
             }

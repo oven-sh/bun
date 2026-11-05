@@ -1105,6 +1105,7 @@ impl StandaloneModuleGraph {
     }
 
     /// Whether `key` is that of a directory under the root: one that holds a file, or a module compiled ahead of time.
+    #[inline]
     pub(crate) fn is_directory_key(&self, key: &[u8]) -> bool {
         let program = self.compiled_program.as_ref();
         self.dirs.contains_key(key)

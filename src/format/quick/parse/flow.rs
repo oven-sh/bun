@@ -839,6 +839,10 @@ impl Quick {
                     }
                     value = self.flow_parse_methodish_type(member_start, k::FunctionType)?;
                 } else {
+                    // `get a: A`
+                    if method != M_METHOD {
+                        return Err(self.unexpected());
+                    }
                     if self.eat(tk::Question)? {
                         head |= F_OPTIONAL;
                     }
@@ -2395,6 +2399,9 @@ impl Quick {
             self.next()?;
             return Ok(self.node0(k::MatchWildcardPattern, start, self.lexer.prev_end));
         }
+        if self.is_kw(kw::Let) {
+            return Err(self.text_refuse());
+        }
         let id = self.parse_ident()?;
         let mut pattern = self.node1(k::MatchIdentifierPattern, start, self.lexer.prev_end, id);
         loop {
@@ -2467,6 +2474,9 @@ impl Quick {
             let target = if self.is_match_binding_start()? {
                 self.flow_parse_match_binding()?
             } else {
+                if self.is_kw(kw::Let) {
+                    return Err(self.text_refuse());
+                }
                 self.parse_ident()?
             };
             pattern = self.node2(
@@ -2635,6 +2645,12 @@ impl Quick {
             }
             w::Match => {
                 return self.flow_try_parse_match(true);
+            }
+            w::Module | w::Namespace => {
+                // `module as A`: a declaration for TypeScript's parser, which reads every file first
+                if self.peek_on_same_line()? == tk::Name {
+                    return Err(self.text_refuse());
+                }
             }
             w::Async => {
                 // async component

@@ -5536,6 +5536,9 @@ impl Quick {
                     return Err(self.text_refuse());
                 }
                 self.to_assignable(expression)?;
+                if !self.is_binding(expression)? {
+                    return Err(self.text_refuse());
+                }
                 self.n.put(expression, self.n.at(expression) | F_EXT);
                 self.set_child(
                     expression,

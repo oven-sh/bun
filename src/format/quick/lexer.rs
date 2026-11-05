@@ -553,6 +553,10 @@ impl Quick {
                     if self.lexer.flow_comments {
                         let skip = self.flow_comment_start(p);
                         if skip != 0 {
+                            // (a declaration does not start outside of it and go on inside)
+                            if self.lexer.tok == tk::Export {
+                                return Err(self.text_refuse());
+                            }
                             // Where it ends is all there is to remember: looking ahead and going back need no care.
                             let mut end = p + skip;
                             while !(self.t.at(end) == 42 && self.t.at(end + 1) == 47) {

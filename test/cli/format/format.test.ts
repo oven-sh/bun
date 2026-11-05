@@ -8044,6 +8044,14 @@ try {
       ["js", "a", "\n// c\n.b", ";"],
       ["js", "(", "/* c */ ", `a${".b".repeat(count)})();`],
       ["js", "(", "/* c */ ", `a${".b".repeat(count)}).c;`],
+      ["ts", "a", "! /* c */ ", ";"],
+      ["ts", "a?.b", "! /* c */ ", ";"],
+      ["js", "f()", " /* c */ .a()", ";"],
+      ["js", "f()", " /* c */ (g() /* c */ ())", ";"],
+      ["js", "f()", "\n// c\n.a(g()\n// c\n.b())", ";"],
+      ["js", "new f()", " /* c */ ()", ";"],
+      ["js", "x = ", "/** c */ ", `(${"/* c */ ".repeat(count)}a);`],
+      ["ts", "type A = [x, ", "a /* c */ | ", `b${" ".repeat(count)}, y];`],
     ];
     const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
     const ordinary =

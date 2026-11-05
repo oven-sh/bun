@@ -54,6 +54,10 @@ pub(crate) struct Comments {
     pub(crate) gap_last: i32,
     pub(crate) gap_before: i32,
     pub(crate) gap_behind: i32,
+    /// behind a `(`, the first character of the token that follows it
+    pub(crate) gap_in_parentheses: i32,
+    /// see is_asked_first(): a bit for each word of a node
+    pub(crate) asked: Vec<u64>,
     pub(crate) h_placement: i32,
     pub(crate) h_is_last: bool,
 }
@@ -83,6 +87,8 @@ impl Comments {
             gap_last: -1,
             gap_before: 0,
             gap_behind: 0,
+            gap_in_parentheses: 0,
+            asked: Vec::new(),
             h_placement: 0,
             h_is_last: false,
         }
@@ -218,16 +224,33 @@ fn is_part_of_word(c: i32) -> bool {
 }
 
 impl Quick {
-    pub(crate) fn is_part_of_optional_chain(&self, mut n: i32) -> bool {
-        while (self.n.at(n) & 0xff) == k::NonNullExpression {
-            n = self.n.at(n + 4);
+    /// (The `!`s behind a chain are marked like the chain. Behind a chain in parentheses there are none: see parse_paren_and_distinguish().)
+    pub(crate) fn is_part_of_optional_chain(&self, n: i32) -> bool {
+        matches!(
+            self.n.at(n) & 0xff,
+            k::MemberExpression | k::CallExpression | k::NonNullExpression
+        ) && (self.n.at(n) & F_CHAIN) != 0
+    }
+
+    /// Notes that the question `which` (0 to 2) has been asked about the node `n`, with the answer that lets the file go on. False if that
+    /// was noted before. A text can have a comment at every level of a chain, so that what goes from a node to its parents for a comment must
+    /// go over no node twice.
+    fn is_asked_first(&mut self, n: i32, which: i32) -> bool {
+        let bit = (n + which).max(0) as usize;
+        let asked = &mut self.comments.asked;
+        if asked.len() <= bit >> 6 {
+            asked.resize((bit >> 6) + 1, 0);
         }
-        matches!(self.n.at(n) & 0xff, k::MemberExpression | k::CallExpression)
-            && (self.n.at(n) & F_CHAIN) != 0
+        let Some(word) = asked.get_mut(bit >> 6) else {
+            return true;
+        };
+        let is_first = (*word >> (bit & 63)) & 1 == 0;
+        *word |= 1 << (bit & 63);
+        is_first
     }
 
     /// Is `n` what a `yield` yields, or what that starts with?
-    fn starts_what_is_yielded(&self, mut n: i32) -> bool {
+    fn starts_what_is_yielded(&mut self, mut n: i32) -> bool {
         loop {
             let parent = self.n.at(n + 3);
             if self.n.at(parent + 4) != n {
@@ -246,11 +269,14 @@ impl Quick {
                 | k::TaggedTemplateExpression => n = parent,
                 _ => return false,
             }
+            if !self.is_asked_first(n, 0) {
+                return false;
+            }
         }
     }
 
     /// Is `n` the left side of an assignment or the key of a property, or what that starts with?
-    fn starts_target(&self, mut n: i32) -> bool {
+    fn starts_target(&mut self, mut n: i32) -> bool {
         loop {
             let parent = self.n.at(n + 3);
             if self.n.at(parent + 4) != n {
@@ -260,6 +286,9 @@ impl Quick {
                 k::AssignmentExpression | k::ObjectProperty | k::ClassProperty => return true,
                 k::MemberExpression | k::CallExpression | k::NonNullExpression => n = parent,
                 _ => return false,
+            }
+            if !self.is_asked_first(n, 1) {
+                return false;
             }
         }
     }
@@ -305,6 +334,9 @@ impl Quick {
         } else {
             self.t.at(behind)
         };
+        if self.comments.gap_behind == 40 {
+            self.comments.gap_in_parentheses = self.next_significant_char(behind + 1);
+        }
         (self.comments.gap_before, self.comments.gap_behind)
     }
 
@@ -368,6 +400,7 @@ impl Quick {
         {
             return false;
         }
+        let c = &self.comments;
         // between the decorators and what they decorate, on the line of that
         if c.h_is_block
             && c.h_preceding_kind == k::Decorator
@@ -469,7 +502,7 @@ impl Quick {
                     // (at the start of a statement Prettier writes a `;` before it)
                     || !self.options.semi))
                 // (an object at the start of a statement has parentheses of its own on the long way)
-                || self.next_significant_char(self.next_char_index(c.h_end) + 1) == 123)
+                || c.gap_in_parentheses == 123)
         {
             return false;
         }
@@ -626,11 +659,14 @@ impl Quick {
             }
             // in the key of an indexer, in an index, in the last type of a tuple
             k::UnionType => {
-                let mut end = self.n.at(c.h_enclosing + 2);
-                while is_blank(self.t.at(end)) {
-                    end += 1;
+                let union = c.h_enclosing;
+                !self.is_asked_first(union, 2) || {
+                    let mut end = self.n.at(union + 2);
+                    while is_blank(self.t.at(end)) {
+                        end += 1;
+                    }
+                    self.t.at(end) != 93
                 }
-                self.t.at(end) != 93
             }
             _ => true,
         }
@@ -2284,6 +2320,7 @@ impl Quick {
         self.comments.path_pos = 0;
         self.comments.tie_count = 0;
         self.comments.gap_last = -1;
+        self.comments.asked.clear();
         self.push_level(program);
         let mut i = self.lexer.c_base;
         while i < count {

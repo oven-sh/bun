@@ -1044,8 +1044,8 @@ impl Quick {
             }
             k::NonNullExpression | k::CallExpression | k::MemberExpression => {
                 if if k == k::NonNullExpression {
-                    self.is_optional_chain_under_non_null(n)
-                        && ((head & F_PAREN) != 0 || pk != k::NonNullExpression)
+                    ((head & F_PAREN) != 0 || pk != k::NonNullExpression)
+                        && self.is_optional_chain_under_non_null(n)
                 } else {
                     (head & F_CHAIN) != 0 && ((head & F_PAREN) != 0 || pk != k::NonNullExpression)
                 } {

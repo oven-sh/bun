@@ -10,6 +10,75 @@ const bunEnv: typeof bunEnv_ = {
 };
 
 describe.concurrent("bun run", () => {
+  describe.each([false, true])("command separators with explicit run = %s", withRun => {
+    it.each([{ flags: ["--filter", "pkg"] }, { flags: ["--workspaces"] }])(
+      "consumes a workspace separator with $flags",
+      async ({ flags }) => {
+        using dir = tempDir("workspace-separator", {
+          "package.json": JSON.stringify({ private: true, workspaces: ["packages/*"] }),
+          "packages/pkg/package.json": JSON.stringify({
+            name: "pkg",
+            scripts: { go: `${JSON.stringify(bunExe())} entry.mjs` },
+          }),
+          "packages/pkg/entry.mjs": "console.log(JSON.stringify(process.argv.slice(2)))",
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...(withRun ? ["run"] : []), ...flags, "go", "--", "x", "y"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toContain('pkg go: ["x","y"]');
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    it.each(["--parallel", "--sequential"])("consumes a multi-script separator with %s", async flag => {
+      using dir = tempDir("multi-run-separator", {
+        "package.json": JSON.stringify({ scripts: { alpha: "echo ALPHA", beta: "echo BETA" } }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...(withRun ? ["run"] : []), flag, "alpha", "--", "beta"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toMatch(/alpha\s+\| ALPHA/);
+      expect(stdout).toMatch(/beta\s+\| BETA/);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it.each([{ args: ["-t", "v3"] }, { args: ["--", "-t", "v3"] }])(
+    "consumes one create separator before $args",
+    async ({ args }) => {
+      const bin = `node_modules/.bin/create-foo${isWindows ? ".cmd" : ""}`;
+      using dir = tempDir("create-separator", {
+        "package.json": "{}",
+        "print-args.js": "console.log(JSON.stringify(process.argv.slice(2)))",
+        // Windows bin lookup does not discover extensionless POSIX shims.
+        [bin]: isWindows
+          ? `@"${bunExe()}" "%~dp0..\\..\\print-args.js" %*\r\n`
+          : "#!/usr/bin/env node\nconsole.log(JSON.stringify(process.argv.slice(2)))",
+      });
+      if (!isWindows) chmodSync(join(String(dir), bin), 0o755);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "create", "--bun", "foo", "--", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual(args);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   it.each([false, true])("consumes package script separators with explicit run = %s", async withRun => {
     using dir = tempDir("package-separator", {
       "entry.mjs": "console.log(JSON.stringify(process.argv.slice(2)))",

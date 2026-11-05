@@ -1308,6 +1308,15 @@ pub(crate) mod command {
         if runs_several {
             super::run_compiled::reject(ctx, super::run_compiled::NonFileTarget::SeveralProcesses);
         }
+        if tag == Tag::AutoCommand
+            && runs_several
+            && ctx
+                .passthrough
+                .first()
+                .is_some_and(|arg| arg.as_ref() == b"--")
+        {
+            ctx.passthrough.remove(0);
+        }
         if runs_several
             && ctx.runtime_options.check
             && !super::check_command::check_project_before(None)
@@ -1863,7 +1872,14 @@ To create a project with the official Next.js scaffolding tool, run
             static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
             bunx_args.push(CREATE_PREFIX.get_or_init(|| prefixed).as_zstr());
-            for src in &args[template_name_start..] {
+            let mut forwarded_args = &args[template_name_start..];
+            if forwarded_args
+                .first()
+                .is_some_and(|arg| arg.as_bytes() == b"--")
+            {
+                forwarded_args = &forwarded_args[1..];
+            }
+            for src in forwarded_args {
                 bunx_args.push(*src);
             }
             return BunxCommand::exec(ctx, &bunx_args);

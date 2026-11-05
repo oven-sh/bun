@@ -313,6 +313,9 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_chunk_source_maps: Vec<CurrentChunkSourceMapData>,
     /// Client side: CSS asset content-hashes referenced by the current chunk.
     pub(crate) current_css_files: Vec<u64>,
+    /// Client side: files bundled again in this bundle only because a CSS module they import changed. One whose
+    /// code comes out the same (the edit changed no name) is not sent: sent, it would run again, or reload the page.
+    pub(crate) css_module_importers: ArrayHashMap<u32, ()>,
 }
 
 /// Byte-count breakdown of an incremental graph's memory usage (graph
@@ -438,6 +441,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         match SIDE {
             Side::Client => {
                 self.current_css_files.clear();
+                self.css_module_importers.clear_retaining_capacity();
             }
             Side::Server => {
                 // `Box<[u8]>` drops on clear; ditto `Shared` in source_maps.
@@ -620,6 +624,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         match SIDE {
             Side::Client => {
+                if found_existing && self.css_module_importers.swap_remove(&file_index.get()) {
+                    if let (ReceiveChunkContent::Js { code, .. }, Content::Js(old)) =
+                        (&content, &self.bundled_files.values()[file_index.get() as usize].content)
+                    {
+                        if old[..] == code[..] {
+                            return Ok(());
+                        }
+                    }
+                }
                 let mut html_route_bundle_index: Option<route_bundle::Index> = None;
                 let mut is_special_framework_file = false;
 
@@ -1741,6 +1754,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     entry_points.append_css(k.slice())?;
                                 }
                                 Content::Js(_) | Content::Unknown if css_module => {
+                                    self.css_module_importers.put(dep.get(), ())?;
                                     self.append_client_entry_point(entry_points, dep.get() as usize)?;
                                 }
                                 _ => {}
@@ -1778,15 +1792,44 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                 },
                 Side::Server => {
-                    let f = &self.bundled_files.values()[index];
-                    if f.is_rsc {
-                        entry_points.append_js(owned_path, bake::Graph::Server)?;
+                    // A CSS module's importers hold its class names: bundled again with it, as on the client.
+                    if owned_path.ends_with(b".module.css") {
+                        let mut it = self.edge_lists[index].first_dep;
+                        while let Some(edge_index) = it {
+                            let entry = self.edges[edge_index.get() as usize];
+                            self.stale_files.set(entry.dependency.get() as usize);
+                            self.append_server_entry_points(entry_points, entry.dependency.get() as usize)?;
+                            it = entry.next_dependency;
+                        }
                     }
-                    if f.rebundles_for_ssr_graph() {
-                        entry_points.append_js(owned_path, bake::Graph::Ssr)?;
-                    }
+                    self.append_server_entry_points(entry_points, index)?;
                 }
             }
+        }
+        // A file changed itself is sent, whatever its code.
+        if matches!(SIDE, Side::Client) {
+            for path in paths {
+                if let Some(index) = self.bundled_files.get_index(path) {
+                    self.css_module_importers.swap_remove(&(index as u32));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A server file's entry points: the server graph's, the SSR graph's, or both.
+    fn append_server_entry_points(
+        &self,
+        entry_points: &mut EntryPointList,
+        index: usize,
+    ) -> Result<(), crate::Error> {
+        let path = &self.bundled_files.keys()[index];
+        let f = &self.bundled_files.values()[index];
+        if f.is_rsc {
+            entry_points.append_js(path, bake::Graph::Server)?;
+        }
+        if f.rebundles_for_ssr_graph() {
+            entry_points.append_js(path, bake::Graph::Ssr)?;
         }
         Ok(())
     }

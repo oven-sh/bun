@@ -352,7 +352,7 @@ impl Quick {
                     }
                     q += 1;
                 }
-                if self.t.at(q - 1) <= 32 {
+                if self.ends_in_space(q) {
                     return Ok(-1);
                 }
             } else {

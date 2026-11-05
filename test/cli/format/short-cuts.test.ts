@@ -3453,3 +3453,83 @@ describe("what the quick way for scripts is asked about, and what is done around
       [[]],
     ));
 });
+
+describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them, or that are odd", () => {
+  // One row for each class of input: the name of the file, the flags, the text.
+  const rows: [name: string, flags: string, text: string][] = [
+    // The only parameter before a return type in which an object type doesn't fit (prettier#19968).
+    [
+      "a.ts",
+      "",
+      "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\nclass A {\n  method(this: A): Promise<[C, { aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccc: number }]> {}\n  abstract m({ a, b }: A): a is B & { aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccccc: number };\n}\ninterface I {\n  m(a: string): B<{ [K in keyof Taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]: Tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb[K] }>;\n  new (a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number, d: 1 }>;\n}\ntype F = (a: string) => B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number, d: 1 }>;\nfunction g(a = { b: 1 }): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\nfunction h(a: string): B<{ a: (b: string) => C<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccc: 1 }> }> {}\n",
+    ],
+    [
+      "a.ts",
+      "--object-wrap=collapse",
+      "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\n",
+    ],
+    [
+      "a.js.flow",
+      "",
+      "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\ndeclare function f(a: string): B<{| aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccc: number |}>;\n",
+    ],
+    // White space that isn't a blank, a tab or a line break: at the end of a comment that stands alone on its line, ..
+    ["a.ts", "", "first();\n// c\u00a0\ni;\n"],
+    ["a.ts", "", "first();\n/**\n * e\u3000\n */\ni;\n"],
+    ["a.ts", "", "first(); // c\u00a0\ni;\n"],
+    // .. between tokens, ..
+    ["a.ts", "", "a(/* c */\ufeff/* c */ b);\n"],
+    ["a.ts", "", "function f() /* c */\u3000{}\n"],
+    ["a.js", "", "x1\f;\n\ny();\n"],
+    ["a.js", "", "foo = {\n  a\u00a0,\n\n  b,\n};\n"],
+    // .. on a line that is empty but for it.
+    ["a.js", "", "a = {\n  b: [],\n\u000b\n  d,\n};\n"],
+    // U+2028 and U+2029 are line breaks in some places.
+    ["a.ts", "", "var\u2028x;\n"],
+    ["a.tsx", "", "x = <a>\u2029</a>;\n"],
+    ["a.ts", "", "first();\nglobal\u2028{}\n"],
+    // What TypeScript's parser takes for a modifier, and drops, is a statement or a member of its own for another parser.
+    ["a.ts", "", "declare export = x;\n"],
+    ["a.ts", "", "declare import a = b;\n"],
+    ["a.ts", "", "class A {\n  export c;\n}\n"],
+    ["a.ts", "", "class A {\n  const a;\n}\n"],
+    ["a.ts", "", "class A {\n  default function() {}\n}\n"],
+    // A `;` that doesn't directly follow what it ends, or ends nothing: the empty lines around it, ..
+    [
+      "a.ts",
+      "",
+      "class A {\n  b = 1;\n\n;  /** a comment that is printed after the property */\n  d(e?: string) {}\n}\n",
+    ],
+    ["a.ts", "", "class C {\n  x() {}\n  ;\n\n  static;\n}\n"],
+    ["a.js", "", "for (a of b);\n;\n\na();\n"],
+    ["a.js", "", "a: ;\n;\n\na;\n"],
+    // .. and the comments behind it, which count for the width of the line before.
+    [
+      "a.ts",
+      "",
+      "class A {\n  someProperty: SomeType<WithArguments> = new SomeType<WithArguments>();\n; /** a comment that is printed after the property */\n}\n",
+    ],
+    [
+      "a.ts",
+      "",
+      "class A {\n  @a() b: string;\n; /** a comment that is printed after the property, and makes its line too wide */\n}\n",
+    ],
+    ["a.ts", "", "type T = {\n  a: string // c\n; /* d */\n}\n"],
+    ["a.js", "", "a // b\n;/* c *//* c */\n"],
+    // The guard of code without semicolons is none of these.
+    ["a.js", "--no-semi", "const a = 1\n;[1, 2].forEach(f)\n\n;(function () {})()\nfunction g() {}\n;`t`.length\n"],
+    // A `,` that starts a line, and an empty line behind it.
+    ["a.js", "", "({\n  a\n  ,\n\n  b,\n});\n"],
+    ["a.js", "", "const {\n  A\n  ,\n\n  B,\n} = c;\n"],
+    ["a.js", "", "foo = {a\n\n  ,\n  b: 'b'};\n"],
+    ["a.js.flow", "", "type A = {|\n  a: number\n  ,\n\n  b: boolean,\n|};\n"],
+  ];
+  const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
+  test.concurrent.each([...groups])("%s", async (_, group) => {
+    const [[name, flags]] = group;
+    const texts = group.map(row => row[2]);
+    const { different, said, expected } = await differences(name, texts, flags.split(" ").filter(Boolean));
+    expect(different).toEqual([]);
+    expect(said).toEqual(expected);
+  });
+});

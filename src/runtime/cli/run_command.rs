@@ -3001,8 +3001,9 @@ impl RunCommand {
             return false;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
-        bun_sys::stat(paths::resolve_path::z(path, &mut buf))
-            .is_ok_and(|st| st.st_dev == entry.st_dev && st.st_ino == entry.st_ino)
+        bun_sys::stat(paths::resolve_path::z(path, &mut buf)).is_ok_and(|st| {
+            st.st_ino != 0 && st.st_dev == entry.st_dev && st.st_ino == entry.st_ino
+        })
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,

@@ -3046,9 +3046,10 @@ impl Quick {
             if self.parse.typed == TYPED_TS {
                 // any expression that can be called, but `@a [b]() {}` is a decorator before a computed key
                 let expr_start = self.lexer.tok_start;
-                if self.lexer.tok == tk::Lt {
+                if self.lexer.tok == tk::Lt || self.is_kw(kw::Yield) {
                     return Err(self.text_refuse());
                 }
+                let await_names = self.parse.await_names;
                 let atom = self.parse_expr_atom()?;
                 if self.is_bare_arrow(atom) {
                     return Err(self.text_refuse());
@@ -3056,6 +3057,10 @@ impl Quick {
                 self.parse.in_decorator = 1;
                 expression = self.parse_subscripts(atom, expr_start, false)?;
                 self.parse.in_decorator = 0;
+                if self.parse.await_names != await_names {
+                    // `await` is the operator in a decorator
+                    return Err(self.text_refuse());
+                }
             } else if self.lexer.tok == tk::ParenL {
                 expression = self.parse_paren_and_distinguish()?;
             } else {
@@ -3967,6 +3972,13 @@ impl Quick {
                 }
                 left = self.make_logical(op, left_start, self.lexer.prev_end, left, right)?;
             } else {
+                if op == tk::Gt
+                    && self.parse.typed == TYPED_TS
+                    && (self.n.at(left) & !F_PAREN) == k::BinaryExpression | (tk::Lt << SUB_SHIFT)
+                {
+                    // `(a < b) > c`: printed without the parentheses, and then with no line break behind the `>`
+                    return Err(self.text_refuse());
+                }
                 left = self.node2(
                     k::BinaryExpression | (op << SUB_SHIFT),
                     left_start,
@@ -4486,8 +4498,12 @@ impl Quick {
                         }
                         self.list_truncate(list_mark);
                     }
-                    if are_typed {
-                        // they were parameters, and there is no function
+                    if are_typed
+                        || (maybe_async
+                            && self.lexer.tok == tk::BraceL
+                            && self.parse.typed == TYPED_TS)
+                    {
+                        // they were parameters, or are taken for them, and there is no function
                         return Err(self.text_refuse());
                     }
                     if maybe_async && self.parse.typed == TYPED_FLOW {
@@ -4671,10 +4687,9 @@ impl Quick {
                                 if arrow != 0 {
                                     return Ok(arrow);
                                 }
-                                // `async<A>(b)`: no call for Flow's own parser
-                                if self.lang.lang == lang::Flow {
-                                    return Err(self.text_refuse());
-                                }
+                                // `async<A>(b)`: no call for Flow's own parser, and a rare one for the others. (The trial has saved places of its own:
+                                // restore() would not lead back to `async`.)
+                                return Err(self.text_refuse());
                             } else if self.lexer.tok == tk::Name {
                                 // async x => y
                                 let kw = self.lexer.tok_kw;
@@ -4799,7 +4814,8 @@ impl Quick {
                             | tk::QuestionDot
                             | tk::ParenL
                             | tk::BracketL
-                            | tk::BackQuote => {
+                            | tk::BackQuote
+                            | tk::Lt => {
                                 return Err(self.text_refuse());
                             }
                             tk::Not => {
@@ -5124,6 +5140,8 @@ impl Quick {
                 if self.parse.is_common_js && self.parse.typed == 0 {
                     return Err(self.fail(start));
                 }
+                // it makes a file of TypeScript a module
+                self.parse.needs_module |= self.parse.typed == TYPED_TS;
                 let meta = self.node0(k::Identifier, start, meta_end);
                 let property = self.identifier()?;
                 return Ok(self.node2(k::MetaProperty, start, self.lexer.prev_end, meta, property));
@@ -5887,10 +5905,20 @@ impl Quick {
             | k::NonNullExpression
             | k::AsExpression
             | k::SatisfiesExpression => {
+                if self.parse.typed == TYPED_TS
+                    && (self.n.at(n) & 0xff) != k::ParenthesizedExpression
+                    && !self.ts_is_valid_target(n)
+                {
+                    // `[{ ...a }!] = b`: no pattern for the long way
+                    return Err(self.text_refuse());
+                }
                 self.to_assignable(self.n.at(n + 4))?;
                 return Ok(());
             }
             k::TypeAssertion => {
+                if !self.ts_is_valid_target(n) {
+                    return Err(self.text_refuse());
+                }
                 self.to_assignable(self.n.at(n + 5))?;
                 return Ok(());
             }
@@ -5934,6 +5962,14 @@ impl Quick {
             return Err(self.unexpected());
         }
         return self.leaf(k::StringLiteral);
+    }
+
+    /// The same behind an export, where TypeScript wants `with` on the same line.
+    pub(crate) fn parse_attributes_of_export(&mut self) -> R<i32> {
+        if self.lexer.tok == tk::With && self.lexer.tok_nl != 0 && self.parse.typed == TYPED_TS {
+            return Err(self.text_refuse());
+        }
+        return self.parse_attributes();
     }
 
     /// `with { type: "json" }`, or nothing.
@@ -6283,7 +6319,7 @@ impl Quick {
             }
             self.next()?;
             let source = self.string_literal()?;
-            let attributes = self.parse_attributes()?;
+            let attributes = self.parse_attributes_of_export()?;
             let end = self.lexer.prev_end;
             self.semicolon()?;
             return Ok(self.node2_l(
@@ -6546,7 +6582,7 @@ impl Quick {
         if self.is_kw(kw::From) {
             self.next()?;
             source = self.string_literal()?;
-            attributes = self.parse_attributes()?;
+            attributes = self.parse_attributes_of_export()?;
         } else if needs_from {
             return Err(self.unexpected());
         } else if self.parse_typescript.export_needs_from {

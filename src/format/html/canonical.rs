@@ -529,6 +529,24 @@ pub(crate) fn expression_end(text: &[u8], start: usize, spelling: Spelling) -> O
     reader.expression(start)
 }
 
+/// The same for an expression that is printed as it is written but for its quotes, which are the other ones. A quote is
+/// nowhere in it but around a string. Returns the quote that is printed too.
+pub(crate) fn expression_end_in_other_quotes(
+    text: &[u8],
+    start: usize,
+    spelling: Spelling,
+) -> Option<(usize, u8)> {
+    let mut reader = Reader {
+        text,
+        spelling,
+        quote: b'"' + b'\'' - spelling.preferred_quote,
+        can_have_braces: false,
+        last_operator: 0,
+        depth: 0,
+    };
+    Some((reader.expression(start)?, spelling.preferred_quote))
+}
+
 /// `value` is the value of an attribute. With `is_handler`, `a.b = expression` will do as well.
 fn is_expression(value: &[u8], is_handler: bool, spelling: Spelling) -> bool {
     let mut reader = in_attribute(value, spelling);

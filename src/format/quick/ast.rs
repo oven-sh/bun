@@ -107,6 +107,8 @@ pub(crate) mod k {
     pub(crate) const JSXSpreadChild: i32 = 105;
     pub(crate) const JSXNamespacedName: i32 = 106;
     pub(crate) const JSXMemberExpression: i32 = 107;
+    /// the root of a text that is one expression: code in HTML
+    pub(crate) const JsExpressionRoot: i32 = 109;
     // ---- types. A kind that TypeScript and Flow both have stands for the node of either (TSUnionType, UnionTypeAnnotation):
     // Prettier prints the pair alike nearly everywhere, and where it does not, mode.rs knows which language is running.
     /// `: T`, and `=> T` of a function type

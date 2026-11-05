@@ -127,6 +127,8 @@ pub(crate) struct Scripts {
     pub(crate) quick: crate::js::quick::Scratch,
     /// The last one, formatted.
     pub(crate) formatted: Vec<u8>,
+    /// The name of an attribute with code in it.
+    pub(crate) name: Vec<u8>,
 }
 
 /// The `options` that Prettier's functions receive.

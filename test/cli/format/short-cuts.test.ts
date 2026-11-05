@@ -3161,6 +3161,345 @@ describe("JavaScript that is deep, long or full of comments", () => {
     ));
 });
 
+describe("JavaScript and TypeScript in a host", () => {
+  // A script or a code block is formatted to a text of its own, which the host puts between two of its lines.
+  const statements = [
+    // The common shapes.
+    "const  a=1",
+    "import  {a} from 'a'\nexport default {\n  name: 'b',\n  data() { return { c: 1 } },\n}",
+    "function f(a,b){\n  if(a){return b}\n  return a\n}\n\n\nclass A extends B{\n  c=1\n  d(){}\n}",
+    // A line break in a text: what follows it isn't indented, and has all of the line.
+    "const a = `\n  b\n`;",
+    "const a = `\n  b  \n\n  ${c}\n    d`;",
+    "function f() {\n  return `\n    a\n  `;\n}",
+    "foo(`a\n`, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccccccccccc, ddddddddddddd);",
+    "foo(`a\n`, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccccccccccc, dddddddd);",
+    "/* a\n   b */\nc;",
+    "function f() {\n  /* a\n     b */\n  c;\n}",
+    "/**\n * a\n */\nb;\n\n/**\n   * c\n   */\nd;",
+    'a = "b\\\nc";',
+    "x = <div>\n  {`a\n  b`}\n</div>;",
+    '<a b="c\nd" />;',
+    // What is asked of the width of the line, not of what is left of it.
+    'const aaaaaaaaaaaaaaaaaaaaaaaaa = document.getElementById("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");',
+    'const aaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccc("dddddddddddddddd");',
+    'const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbb("cccccccccccccccccccc");',
+    // To the column.
+    `const a = ${"b".repeat(66)};`,
+    `const a = ${"b".repeat(67)};`,
+    `const a = ${"b".repeat(68)};`,
+    `const a = ${"b".repeat(69)};`,
+    `const a = ${"b".repeat(70)};`,
+    `f(${"a".repeat(36)}, ${"b".repeat(36)});`,
+    `f(${"a".repeat(37)}, ${"b".repeat(37)});`,
+    // Nothing but an element.
+    "<a />;",
+    "<a />",
+    "<a>b</a>",
+    "(<a>b</a>)",
+    "// c\n<a />;",
+    "<a />;\nb;",
+    '"use strict";\n<a />;',
+    // What is one thing in a file and another in a host.
+    "// @flow\nconst a: number = 1;",
+    "/* @flow */\ntype A = {| a: 1 |};",
+    "// @format\na;",
+    "// prettier-ignore\na  =  1;",
+    "#!/usr/bin/env node\na;",
+    "<!-- a\nb;",
+    "a;\n--> b",
+    "while (n --> 0) {}",
+    "a <!--b;",
+    "await a;",
+    "await (a);",
+    "const await = 1;",
+    'import("a");',
+    "import.meta.url;",
+    "with (a) {}",
+    "var yield = 1;",
+    "return 1;",
+    "﻿a;",
+    // TypeScript, with and without JSX.
+    "const a = <T,>(b: T) => b;",
+    "const a = <T>(b: T) => b;",
+    "const a = <T>b;",
+    "const a = <div>b</div>;",
+    "let a: number = 1;\ntype A = { a: 1 };\nenum B { C }",
+    "defineProps<{ a: string }>();\nconst b = withDefaults(defineProps<C>(), { d: 1 });",
+    // Code in another language in it.
+    "a = css`\n  color: red;\n`;",
+    "a = html`<p>a</p>`;",
+    "a = /* HTML */ `<script>b</script>`;",
+    "a = gql`\n  query { a }\n`;",
+    "a = markdown`\n  # a\n`;",
+    // What can't be formatted.
+    "const = ;",
+    "a b",
+    "`",
+    "/*",
+    "}",
+    // Nothing, or as good as nothing.
+    "",
+    " ",
+    "\n\n",
+    ";",
+    "// a",
+    "/* a */",
+  ];
+  const options = [
+    [],
+    ["--vue-indent-script-and-style"],
+    ["--vue-indent-script-and-style", "--use-tabs"],
+    ["--vue-indent-script-and-style", "--tab-width=4", "--print-width=60"],
+    ["--tab-width=4"],
+    ["--tab-width=0"],
+    ["--tab-width=5000"],
+    ["--use-tabs"],
+    ["--print-width=1"],
+    ["--print-width=40"],
+    ["--print-width=100000"],
+    ["--end-of-line=crlf"],
+    ["--end-of-line=cr"],
+    ["--no-semi", "--single-quote"],
+    ["--embedded-language-formatting=off"],
+    ["--insert-pragma"],
+  ];
+  const indented = (code: string, by: string) => code.replace(/^(?=.)/gm, by);
+
+  describe("Vue", () => {
+    const tags = ["<script>", '<script setup lang="ts">', '<script lang="tsx">', '<script lang="jsx">'];
+    expectSame(
+      "a.vue",
+      [
+        ...tags.flatMap(tag => statements.map(code => `${tag}\n${code}\n</script>\n`)),
+        ...statements.map(code => `<script setup lang="ts">\n${indented(code, "  ")}\n</script>\n`),
+        // What is around the code.
+        '<script setup lang="ts">const  a=1</script>\n',
+        '<script setup lang="ts">   const  a=1\n   </script>\n',
+        '<script setup lang="ts">\n\n\nconst  a=1\n\n\n</script>\n',
+        '<script setup lang="ts"></script>\n',
+        '<script setup lang="ts">\n</script>\n',
+        '<script setup lang="ts" generic="T  extends A,U">\nconst  a=1\n</script>\n',
+        '<script lang="ts">\nexport default {}\n</script>\n\n<script setup lang="ts">\nconst  a=1\n</script>\n\n<template>\n  <div>{{ a }}</div>\n</template>\n\n<style>\na{color:red}\n</style>\n',
+        '<script src="a.js">\nconst  a=1\n</script>\n',
+        '<script lang="coffee">\na  =  1\n</script>\n',
+        '<script lang="ts">\nconst  a=1\n</script>text\n',
+        '<script lang="ts">\nconst  a=1\n</script><b>c</b>\n',
+        '<script lang="ts">\nconst  a=1\n',
+        '<template>\n  <div>\n    <script lang="ts">\n      const  a=1\n    </script>\n  </div>\n</template>\n',
+        '<custom lang="ts">\nconst  a=1\n</custom>\n',
+        '<script setup lang="ts">\r\nconst  a=1\r\nconst b = `\r\n`\r\n</script>\r\n',
+        '﻿<script setup lang="ts">\nconst  a=1\n</script>\n',
+      ],
+      options,
+    );
+  });
+
+  describe("expressions of Vue", () => {
+    // The start tag is on one line, or the attribute is on a line of its own: what is printed for it is known there.
+    const expressions = [
+      // Printed as they are written but for the quotes, blanks or parentheses.
+      "t('a.b')",
+      "a['b']",
+      "a ? 'b' : 'c'",
+      "a+b",
+      "(a)",
+      "(a, b)",
+      "(a || b) && c",
+      "!(a <= b)",
+      "a  ?  b  :  c",
+      "[a,b]",
+      "{a:1}",
+      "{ a: 1, 'b-c': d, [e]: f, ...g }",
+      "{ 'a': 1 }",
+      "{ 1: a, 'b': c }",
+      "{ '': 1, 1: 2 }",
+      "`a${b}c`",
+      "`a\n${b}`",
+      "a as string",
+      "(a as string[] | undefined)",
+      "a!",
+      "<T>a",
+      "(e) => f(a, e as KeyboardEvent)",
+      "(e: DragEvent) => f(e, i)",
+      "e => f(e)",
+      "async () => { await a }",
+      "function () { return 1 }",
+      "a = b",
+      "a = b, c = d",
+      "a++",
+      "f(); g()",
+      "if (a) b",
+      "a | b",
+      "a | b(c) | d",
+      "a || b | c",
+      "new A()",
+      "typeof a === 'b'",
+      "await a",
+      "<div />",
+      // What breaks, whether it fits or not.
+      "{\n  a: 1 }",
+      "{\n      a: 1,\n      b: { c: 2 },\n    }",
+      "[\n  a, b]",
+      "[{ a: 1 }, { b: 2 }]",
+      "[\n      { required: true, message: 'age is required' },\n      { type: 'number', message: 'age must be a number' },\n    ]",
+      "a.b().c().d().e()",
+      // What doesn't fit.
+      `[ns.b(), ns.is('disabled', disabled), ns.is('focus', focus), ns.is('bordered', border), ns.is('checked', a === b)]`,
+      `{ top: cursorTop + 'px', left: cursorLeft + 'px', backgroundColor: displayedColor, lineHeight: height }`,
+      `parentMenu.type.name === 'ElMenu' && rootMenu.props.collapse && $slots.title && somethingElse.that.is.long`,
+      `sourceVisible ? locale['hide-source-of-the-example-code'] : locale['view-source-of-the-example-code']`,
+      `handleAction(distinguishCancelAndClose ? 'close' : 'cancel', anotherArgument, andOneMoreArgument, last)`,
+      `${"a".repeat(30)}.${"b".repeat(30)}.${"c".repeat(30)}`,
+      `(event) => handleDragOver(event, index, anotherArgumentOfTheHandler, andOneMoreArgumentOfTheHandler)`,
+      // To the column.
+      ...[52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62].map(length => `f(${"a".repeat(length)}, b)`),
+      // What is written in another way in an attribute.
+      "'\"'",
+      "a &amp;&amp; b",
+      "a && b",
+      "'&quot;'",
+      "'it\\'s'",
+      "'a' + &quot;b&quot;",
+      // Comments.
+      "a // b",
+      "a /* b */",
+      "/* a */ b",
+      // What can't be read.
+      "",
+      " ",
+      "a b",
+      "a) + (b",
+      "a); (b",
+      "a,",
+      "{",
+      "}}",
+      "'",
+      "a \u00e9",
+      "'\u4e2d\u6587'",
+    ];
+    const names = [":a", "v-if", "@a", "v-bind:a", ".a", ":class", "v-model", "v-for", "#a", ":aaaaaaaaaaaaaaaaaaaaaaaa"];
+    const script = '\n<script setup lang="ts">\nlet a;\n</script>\n';
+    expectSame(
+      "a.vue",
+      [
+        ...names.flatMap(name =>
+          expressions.map(code => `<template>\n  <div ${name}="${code}"></div>\n</template>\n${script}`),
+        ),
+        ...expressions.flatMap(code => [
+          `<template>\n  <div :a="${code}"></div>\n</template>\n`,
+          `<template>\n  <a :b="${code}" />\n</template>\n${script}`,
+          `<template>\n  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>\n</template>\n${script}`,
+          `<template>\n  <span :b="${code}">c</span>d\n</template>\n${script}`,
+          `<template>\n  <pre :b="${code}">\nc</pre>\n</template>\n${script}`,
+          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n${script}`,
+          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n`,
+          `<template>\n  <p>\n    {{ ${code} }}\n  </p>\n</template>\n${script}`,
+          `<template>\n  <p>a {{ ${code} }} b</p>\n</template>\n${script}`,
+          `<template>\n  <p>{{${code}}}<b>c</b></p>\n</template>\n${script}`,
+        ]),
+      ],
+      [
+        ...options,
+        ["--tab-width=8"],
+        ["--tab-width=3", "--print-width=60"],
+        ["--quote-props=consistent"],
+        ["--quote-props=preserve"],
+        ["--no-bracket-spacing"],
+        ["--arrow-parens=avoid"],
+        ["--trailing-comma=none"],
+        ["--object-wrap=collapse"],
+        ["--bracket-same-line"],
+        ["--single-attribute-per-line"],
+        ["--experimental-operator-position=start"],
+        ["--experimental-ternaries"],
+      ],
+    );
+  });
+
+  describe("HTML", () => {
+    const at = (depth: number, tag: string, code: string) => {
+      const names = ["html", "body", "div", "section", "main"].slice(0, depth);
+      const open = names.map((name, level) => `${"  ".repeat(level)}<${name}>\n`).join("");
+      const close = names.map((name, level) => `${"  ".repeat(level)}</${name}>\n`).reverse().join("");
+      const by = "  ".repeat(depth);
+      return `${open}${by}${tag}\n${indented(code, `${by}  `)}\n${by}</script>\n${close}`;
+    };
+    expectSame(
+      "a.html",
+      [
+        ...statements.map(code => at(0, "<script>", code)),
+        ...statements.map(code => at(2, "<script>", code)),
+        ...statements.map(code => at(5, "<script>", code)),
+        ...statements.map(code => at(1, '<script type="module">', code)),
+        ...statements.map(code => at(1, '<script lang="ts">', code)),
+        ...statements.map(code => `<script>\n${code}\n</script>\n`),
+        '<script type="text/babel">\n  const  a=<b/>\n</script>\n',
+        '<script type="text/babel" data-type="module">\n  import  a from "a"\n</script>\n',
+        '<script type="application/javascript">\n  const  a=1\n</script>\n',
+        '<script type="text/x-template">\n  const  a=1\n</script>\n',
+        // The end tag, or the start tag, isn't on a line of its own.
+        "<div>a<script>\n  const  a=1\n</script>b</div>\n",
+        "<span><script>\n  const  a=1\n</script></span>\n",
+        "<b>c</b><script>\n  const  a=1\n</script><b>d</b>\n",
+        "<script>const  a=1</script><script>const  b=1</script>\n",
+        "<pre>\n<script>\n  const  a=1\n</script>\n</pre>\n",
+        "<script>\n  const  a=1\n",
+        "<!-- prettier-ignore -->\n<script>\n  const  a=1\n</script>\n",
+      ],
+      options,
+    );
+  });
+
+  describe("Markdown and MDX", () => {
+    const languages = ["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
+    const texts = [
+      ...statements.flatMap(code => [
+        `\`\`\`js\n${code}\n\`\`\`\n`,
+        `\`\`\`tsx\n${code}\n\`\`\`\n`,
+        `- a\n\n  \`\`\`jsx\n${indented(code, "  ")}\n  \`\`\`\n`,
+        `> \`\`\`ts\n${code.replace(/^/gm, "> ")}\n> \`\`\`\n`,
+      ]),
+      ...languages.map(language => `\`\`\`${language}\nconst  a=<b/>\nawait c\n\`\`\`\n`),
+      // Code that is formatted already is part of the text around it. What only looks like it isn't.
+      "a\n\n```js\nconst a = 1;\n\nfunction f() {\n  return {\n    b: 1,\n  };\n}\n```\n\nb\n",
+      '```ts\nimport { a } from "a";\n\n// b\nexport class A {\n  b = 1;\n\n  c(): void {\n    d();\n  }\n}\n\ninterface B {\n  c: number;\n}\n```\n',
+      "```js\nconst a = 1; \n```\n\n```js\nconst a = 1;\n\n```\n\n```js\n\nconst a = 1;\n```\n\n```js\nconst a = 1;\n\n\nconst b = 1;\n```\n\n```js\n const a = 1;\n```\n",
+      "```js\nconst a = 1; // b\n```\n\n```js\nconst a = 1; // b \n```\n\n```js\nconst a = 1;  // b\n```\n\n```js\n// a\n\n// b\n```\n\n```js\nif (a) {\n  // b\n\n  // c\n}\n```\n",
+      "```js\nconst a = {\n  b: 1\n};\n```\n\n```js\nconst a = {\n  b: 1,\n};\n```\n\n```js\nconst a = { b: 1 };\n```\n\n```js\nconst a = {\n  b: {\n    c: 1,\n  },\n};\n```\n",
+      "```js\nconst a = 'b';\n```\n\n```js\nconst a = \"b\";\n```\n\n```js\nconst a = 1\n```\n\n```js\nf((a) => a);\n```\n\n```js\nf(a => a);\n```\n",
+      `\`\`\`js\nconst a = ${"b".repeat(69)};\n\`\`\`\n\n\`\`\`js\nconst a = ${"b".repeat(70)};\n\`\`\`\n\n\`\`\`js\nconst a =\n  ${"b".repeat(70)};\n\`\`\`\n`,
+      "```js\nif (a) {\n  b();\n} else {\n  c();\n}\n\ntry {\n  d();\n} catch (e) {\n  f();\n} finally {\n  g();\n}\n```\n",
+      "```js\nif (a) {\n\tb();\n}\n```\n\n```js\nif (a) {\n    b();\n}\n```\n",
+      "```js\nconst a = 1;\n// @flow\n```\n\n```js\n// prettier-ignore\nconst a = 1;\n```\n\n```js\nconst a = 1; // prettier-ignore\nconst  b = 1;\n```\n",
+      "```js\nconst a = `b`;\n```\n\n```js\nconst a = css`b`;\n```\n\n```js\nconst a = 中;\n```\n\n```js\nconst a = \"中\";\n```\n",
+      "```js title=\"a\"\nconst a = 1;\n```\n\n````js\nconst a = 1;\n````\n\n~~~js\nconst a = 1;\n~~~\n\n``` js\nconst a = 1;\n```\n\n```js\nconst a = 1;\n``` \n",
+      "```js\r\nconst a = 1;\r\n```\r\n",
+      // Many that aren't, then some that are.
+      "```js\nconst  a=1\n```\n\n".repeat(30) + "```js\nconst a = 1;\n```\n\n".repeat(30),
+    ];
+    describe("Markdown", () => expectSame("a.md", texts, options));
+    describe("MDX", () =>
+      expectSame(
+        "a.mdx",
+        [
+          ...texts,
+          "import  a from 'a'\nimport {b} from \"b\"\n\nexport const c = 1\n\nexport default  d\n\n# e\n",
+          "import a from 'a'\nconst b = 1\n\nexport const c = 1\nd()\n\nexport * from 'e'\n\nexport {f}\n\nexport {g} from 'g'\n",
+          "export const a = `\n  b\n`\n\nexport const c = {\n  d: 1 }\n\nexport function e() { return <f/> }\n\n- g\n\n  export const h = `\n    i\n  `\n",
+          "import a from 'a' // b\n\n// c\nimport d from 'd'\n\nexport const e = ;\n\nimport\n\nexport\n\n'use strict'\nimport f from 'f'\n",
+          // JSX below the root, and in a list.
+          "<A b={1}  c='d' />\n\n<A b={{c:1}}>\n  e\n</A>\n\n<A>\n  <B c={d}/>\n  <E />\n</A>\n\n<A>{b}{c}</A>\n\n<A>\n  {b ? <C /> : null}\n</A>\n",
+          `<A b={${"c".repeat(80)}} />\n\n<A b="${"c".repeat(40)}" d="${"e".repeat(40)}" />\n\n<A b={() => { f() }} />\n\n<A {...b} />\n\n<A b={\`c\nd\`} />\n`,
+          "<A />\n<B />\n\n<A>b</A> c\n\n<A>b</A>;\n\n<A b={1: 2} />\n\n<A>{/* c */}</A>\n\n<A>{b /* c */}</A>\n\n<A b={c // d\n} />\n\n<></>\n\n<>a <b>c</b></>\n",
+          "- a\n\n  <A b={1}  c='d'>\n    <B />\n    e   f\n  </A>\n\n> <A b={`c\n> d`} />\n\n<A b={css`a{color:red}`} />\n\n<A b={{ 1: c, 'd': e }} />\n",
+          "<A>\n  text   {b}   more <C>d</C>\n  {' '}\n  e\n</A>\n\n<A>&nbsp;&amp;</A>\n\n<A b=\"&quot;\" c='\"' />\n\n<a.b.c d />\n\n<a:b c:d=\"e\" />\n\n<$ />\n\n<A></$>\n",
+        ],
+        options,
+      ));
+  });
+});
+
 describe("TypeScript that the long way rejects", () => {
   /** Nothing is printed, with or without the short cuts, and the messages are the same. */
   function expectRejected(name: string, texts: string[]) {

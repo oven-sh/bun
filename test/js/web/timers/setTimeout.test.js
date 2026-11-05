@@ -4,6 +4,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
+import timersPromises from "node:timers/promises";
 
 it("setTimeout", async () => {
   var lastID = -1;
@@ -939,5 +940,67 @@ describe("a delay of 0", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("true\n");
     expect(exitCode).toBe(0);
+  });
+
+  // The median of 100 waits, in ms. A busy machine stretches some of them, and the minimum stretches all of them.
+  const medianWait = async set => {
+    const waits = [];
+    for (let i = 0; i < 100; i++) {
+      const start = performance.now();
+      await new Promise(set);
+      waits.push(performance.now() - start);
+    }
+    return waits.sort((a, b) => a - b)[50];
+  };
+
+  it.each([
+    // happy-dom's setTimeout() passes a delay of 0 on like this.
+    ["a delay that is left out", resolve => setTimeout(resolve)],
+    ["a delay under 1 ms", resolve => setTimeout(resolve, 0.5)],
+    ["the setTimeout() of node:timers/promises", resolve => void timersPromises.setTimeout(0).then(resolve)],
+  ])("%s does not wait either", async (_, set) => {
+    expect(await medianWait(set)).toBeLessThan(1);
+  });
+
+  it("a delay of 1 ms still waits", async () => {
+    expect(await medianWait(resolve => setTimeout(resolve, 1))).toBeGreaterThanOrEqual(1);
+  });
+
+  // --isolate gives each file its own global object. --parallel runs the files in worker processes.
+  it.concurrent.each([
+    ["--isolate", false],
+    ["--parallel=2", true],
+  ])("does not wait for the minimum in bun test %s", async (flag, inWorker) => {
+    const file = `
+      import { test } from "bun:test";
+      test("waits", async () => {
+        const median = await (${medianWait})(resolve => setTimeout(resolve, 0));
+        console.log(JSON.stringify({ file: import.meta.file, inWorker: "BUN_TEST_WORKER_ID" in process.env, median }));
+      });
+    `;
+    const dir = tempDirWithFiles("set-timeout-0", { "a.test.js": file, "b.test.js": file });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", flag],
+      cwd: dir,
+      env: { ...bunEnv, BUN_TEST_WORKER_ID: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // With --parallel, what a test logs is on stderr.
+    const waits = (stdout + stderr)
+      .split(/\r?\n/)
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line))
+      .sort((a, b) => a.file.localeCompare(b.file))
+      .map(({ median, ...file }) => ({ ...file, median: median < 1 ? "under 1 ms" : median }));
+    expect({ waits, counts: stderr.match(/^ \d+ (pass|fail)$/gm), exitCode }).toEqual({
+      waits: [
+        { file: "a.test.js", inWorker, median: "under 1 ms" },
+        { file: "b.test.js", inWorker, median: "under 1 ms" },
+      ],
+      counts: [" 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
   });
 });

@@ -176,12 +176,6 @@ Promise.reject(new Error("Unhandled rejection"));
 
 If a file throws at the top level, or a top-level `await` rejects, the file fails to load and none of its tests run.
 
-Bun also checks for rejected promises when a test ends, before its `afterEach` hooks run or the next test starts. A promise that has rejected with no handler by then fails the test, whatever ended the test: a timer, I/O or `done()`. A hook or a later test that handles the promise comes too late. Attach the handler in the test.
-
-Some tests can't fail that way: a [`test.failing`](/test/writing-tests#test-modifiers) test, a test that skipped itself while it ran, and a test that timed out. Bun reports what such a test has left rejected when it ends as an unhandled error between tests. A hook can't fail its test that way either: what a hook has left rejected is an unhandled error between tests. Attach the handler in the hook.
-
-Bun can't tell which test rejected a promise. A promise that rejects with no handler after its test has ended fails the test that is running then. When [concurrent](/test#concurrent-test-execution) tests run together, a promise that one of them leaves rejected fails none of them, and neither does a promise that rejects later. Bun reports the rejection as an unhandled error between tests.
-
 ### Unsettled Top-Level Await
 
 There's no timeout while a test file is loading. If a top-level `await` or `import` is still pending and nothing left on the event loop could settle it, `bun test` fails the file, prints the modules that are stuck, and moves on to the next file.

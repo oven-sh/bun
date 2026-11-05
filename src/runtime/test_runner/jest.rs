@@ -632,7 +632,6 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
 }
 
 pub(crate) mod on_unhandled_rejection {
-    use super::super::execution::Result as ExecResult;
     use super::*;
 
     #[optimize(size)]
@@ -651,38 +650,23 @@ pub(crate) mod on_unhandled_rejection {
                 return;
             }
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
-            let mut current_state_data = match buntest.own_report {
-                bun_test::OwnReport::Earlier => RefDataValue::Start,
-                _ => buntest.get_current_state_data(),
-            };
+            let mut current_state_data = buntest.get_current_state_data();
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
                 .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
-            // `skip()` threw this where its test didn't await it. It only ends that test, if its callback still runs.
-            let is_skip_error = buntest.is_skip_error(rejection);
-            let mut unwinds_skipped_entry = false;
             if let Some(entry) = entry_ptr {
                 // SAFETY: `entry` belongs to the running file.
                 let mode = unsafe { (*entry).base.mode };
                 if let Some(sequence) = current_state_data.sequence(buntest) {
-                    let is_test = sequence.test_entry.map(|p| p.as_ptr()) == Some(entry);
-                    unwinds_skipped_entry = is_skip_error && is_test && sequence.result == ExecResult::Skip;
-                    if !unwinds_skipped_entry
-                        && (!is_test
-                            // An expected failure has to come from the test's own callback, not from a stray rejection.
-                            || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
-                            // Nor can a test that marked itself skipped or todo while it ran. A `test.todo` body expects the failure.
-                            || sequence.result == ExecResult::Skip
-                            || (sequence.result == ExecResult::Todo && mode != ScopeMode::Todo))
+                    if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry)
+                        // An expected failure has to come from the test's own callback, not from a stray rejection.
+                        || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
                     {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;
                     }
                 }
-            }
-            if is_skip_error && !unwinds_skipped_entry {
-                return;
             }
             buntest.is_reporting_uncaught = true;
             buntest.on_uncaught_exception(
@@ -692,17 +676,6 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.is_reporting_uncaught = false;
-            if buntest.own_report != bun_test::OwnReport::None {
-                // The runner that started this report has the next step in hand.
-                return;
-            }
-            let queue = &buntest.result_queue;
-            // A describe() callback that settled has its result in the queue. A second one would end the next describe().
-            if matches!(current_state_data, RefDataValue::Collection { .. })
-                && (0..queue.readable_length()).any(|index| matches!(queue.peek_item(index), RefDataValue::Collection { .. }))
-            {
-                return;
-            }
             buntest.add_result(current_state_data);
             // The JS that reported the error may still be on the stack, so don't start the next test under it.
             bun_test::BunTest::run_next_tick(

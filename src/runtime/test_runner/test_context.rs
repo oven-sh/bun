@@ -447,7 +447,7 @@ pub(crate) fn skip(
     }
     let this = TestContext::of_call(global, this_value)?;
     let this_value = this_value.to_js();
-    let Some((buntest, sequence)) = this.running(this_value) else {
+    let Some((_buntest, sequence)) = this.running(this_value) else {
         return Err(TestContext::throw_finished(global, "skip"));
     };
     // SAFETY: as in `running`; nothing else borrows the sequence while a callback of it is on the stack.
@@ -460,7 +460,7 @@ pub(crate) fn skip(
         result.put(global, b"note", note);
     }
     TestContext::sync_result(this_value, global, sequence)?;
-    Err(global.throw_value(buntest.get().new_skip_error(global)))
+    Err(global.throw(format_args!("test is skipped; abort execution")))
 }
 
 pub(crate) fn defer_hook<'a>(

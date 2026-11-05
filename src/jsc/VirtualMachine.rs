@@ -399,7 +399,7 @@ pub struct VirtualMachine {
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
     /// reason as [`Self::is_inside_deferred_task_queue`].
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
-    /// Set when a `bun test` hook or test finishes that has another one of the same test behind it. The next microtask drain with no JS on the stack runs that one.
+    /// Set when a `bun test` test or hook finishes. The next microtask drain with no JS on the stack runs the next one, or keeps this set if the runner declines.
     pub has_pending_test_step: core::cell::Cell<bool>,
 
     pub channel_ref: Async::KeepAlive,
@@ -3012,8 +3012,8 @@ pub struct RuntimeHooks {
     /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
     /// idle — folding it into `auto_tick` would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
-    /// Runs the next `bun test` test or hook. See [`VirtualMachine::has_pending_test_step`].
-    pub run_pending_test_step: fn(global: &JSGlobalObject),
+    /// Runs the next `bun test` test or hook, or returns false to keep the step pending. See [`VirtualMachine::has_pending_test_step`].
+    pub run_pending_test_step: fn(global: &JSGlobalObject) -> bool,
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
     /// High tier

@@ -890,10 +890,14 @@ unsafe extern "C" {
     safe fn Bun__releaseRejectedPromises(global: &JSGlobalObject, mark: usize);
 }
 
+/// Whether a rejected promise still waits for its report: one with no handler is queued, or the report of a batch is under way. Usually neither.
+pub(crate) fn has_unreported_rejections(global: &JSGlobalObject) -> bool {
+    Bun__hasRejectedPromises(global)
+}
+
 /// `toThrow()` takes a rejection that nothing handles during the call for what the function threw. What was rejected
 /// before the call isn't the function's, and can still get its handler, so it waits here until the call is over.
-/// The runner does the same around the callback of a test or hook.
-pub(crate) struct EarlierRejections<'a> {
+struct EarlierRejections<'a> {
     global: &'a JSGlobalObject,
     mark: usize,
 }
@@ -901,15 +905,6 @@ pub(crate) struct EarlierRejections<'a> {
 impl<'a> EarlierRejections<'a> {
     fn hold(global: &'a JSGlobalObject) -> Self {
         Self { global, mark: Bun__holdRejectedPromises(global) }
-    }
-
-    /// Whether a promise that was rejected with no handler still waits for its report. Usually none does.
-    pub(crate) fn any(global: &JSGlobalObject) -> bool {
-        Bun__hasRejectedPromises(global)
-    }
-
-    pub(crate) fn hold_any(global: &'a JSGlobalObject) -> Option<Self> {
-        Self::any(global).then(|| Self::hold(global))
     }
 }
 

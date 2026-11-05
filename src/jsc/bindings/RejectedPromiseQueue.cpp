@@ -91,13 +91,3 @@ extern "C" bool Bun__hasRejectedPromises(Zig::GlobalObject* globalObject)
 {
     return globalObject->hasRejectedPromises();
 }
-
-extern "C" size_t Bun__holdRejectedPromises(Zig::GlobalObject* globalObject)
-{
-    return globalObject->holdRejectedPromises();
-}
-
-extern "C" void Bun__releaseRejectedPromises(Zig::GlobalObject* globalObject, size_t mark)
-{
-    globalObject->releaseRejectedPromises(mark);
-}

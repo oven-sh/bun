@@ -1202,7 +1202,7 @@ describe("only block", () => {
       },
     );
 
-    it.each([[[]], [["--parallel=2"]]])(
+    it.each([[[]], [["--parallel=2", "--parallel-delay=600000"]]])(
       "puts a rejection left by the callback that settles a test on that test %j",
       async args => {
         using dir = tempDir("junit-left", {
@@ -1217,6 +1217,8 @@ describe("only block", () => {
             });
             test("next", () => {});
           `,
+          // --parallel starts a worker process only for more than one file.
+          "b.test.js": `test("passes", () => {});`,
         });
         await using proc = spawn([bunExe(), "test", ...junit, ...args], {
           cwd: String(dir),
@@ -1230,6 +1232,7 @@ describe("only block", () => {
           `<testcase name="leaves"`,
           `<failure type="Error" message="left" uncaught="true">`,
           `<testcase name="next"`,
+          `<testcase name="passes"`,
         ]);
         expect(exitCode).toBe(1);
       },

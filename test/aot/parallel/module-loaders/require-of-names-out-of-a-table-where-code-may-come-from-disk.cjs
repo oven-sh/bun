@@ -2,7 +2,7 @@
 // To the build an element of a list may be undefined, and so may what a table holds under it. require(undefined) throws, whatever lies on disk,
 // so the build knows every name that finds something here, and the executable holds those two modules of the library and little else.
 // Flags: --aot-allow-code-from-disk
-// STATISTIC: ImageFunctionsEmitted <= 400
+// STATISTIC: ImageFunctionsEmitted <= 400 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 // STATISTIC: FactEdges <= 30000 Todo: much of Bun's library comes in where code may come from disk
 const table = { first: "os", second: "node:path" };
 const kinds = [];

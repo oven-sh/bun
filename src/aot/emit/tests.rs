@@ -245,6 +245,7 @@ fn create_full_program() -> Program {
             export_name: names.name,
             builtin: Some(BuiltinId::GlobalThis),
             parameter: 0,
+            names_looked_for: vec![names.name],
         }],
     });
     program.runtime_functions.push(RuntimeFunctionEntry {

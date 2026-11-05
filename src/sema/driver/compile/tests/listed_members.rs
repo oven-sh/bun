@@ -175,7 +175,6 @@ fn visit_user(threads: usize, asked: usize) -> Vec<Visit> {
                     turns.reach(HAS_COMMITTED);
                 }
             },
-            None,
             &Passes {
                 count: PassCount::Exactly(1),
                 before_next: &|| {},

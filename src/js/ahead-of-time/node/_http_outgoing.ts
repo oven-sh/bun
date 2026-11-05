@@ -21,7 +21,6 @@ const kHighWaterMark: typeof http.kHighWaterMark = http.kHighWaterMark;
 const kSocket: typeof http.kSocket = http.kSocket;
 const kRejectNonStandardBodyWrites: typeof http.kRejectNonStandardBodyWrites = http.kRejectNonStandardBodyWrites;
 const kUniqueHeaders: typeof http.kUniqueHeaders = http.kUniqueHeaders;
-const kHandle: typeof http.kHandle = http.kHandle;
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -263,34 +262,13 @@ declare global {
     interface OutgoingMessageConstructor {
       new (options?: OutgoingMessageOptions): OutgoingMessage;
       (this: OutgoingMessage, options?: OutgoingMessageOptions): void;
-      /** The form of `ServerResponse` for a request of the native listener. */
-      (
-        this: OutgoingMessage,
-        marker: typeof kHandle,
-        highWaterMark: number | undefined,
-        rejectNonStandardBodyWrites: boolean | undefined,
-        keepAliveTimeout: number,
-      ): void;
       prototype: any;
     }
   }
 }
 
-function OutgoingMessage(
-  this: $Node.OutgoingMessage,
-  options?: $Node.OutgoingMessageOptions | typeof kHandle,
-  highWaterMark: number | undefined = undefined,
-  rejectNonStandardBodyWrites: boolean | undefined = undefined,
-  keepAliveTimeout: number | undefined = undefined,
-) {
-  if (options === kHandle) {
-    Stream.$call(this, undefined);
-    highWaterMark ??= getDefaultHighWaterMark();
-    if (rejectNonStandardBodyWrites === undefined) rejectNonStandardBodyWrites = false;
-  } else {
-    Stream.$call(this, options);
-    keepAliveTimeout = 0;
-  }
+function OutgoingMessage(this: $Node.OutgoingMessage, options?: $Node.OutgoingMessageOptions) {
+  Stream.$call(this, options);
 
   // Queue that holds all currently pending data, until the response will be
   // assigned to the socket (until it will its turn in the HTTP pipeline).
@@ -334,14 +312,13 @@ function OutgoingMessage(
   this._header = null;
   this[kOutHeaders] = null;
 
-  this._keepAliveTimeout = keepAliveTimeout;
+  this._keepAliveTimeout = 0;
 
   this._onPendingData = nop;
 
   this[kErrored] = null;
-  this[kHighWaterMark] = options === kHandle ? highWaterMark! : (options?.highWaterMark ?? getDefaultHighWaterMark());
-  this[kRejectNonStandardBodyWrites] =
-    options === kHandle ? rejectNonStandardBodyWrites! : (options?.rejectNonStandardBodyWrites ?? false);
+  this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
+  this[kRejectNonStandardBodyWrites] = options?.rejectNonStandardBodyWrites ?? false;
   // Declared here so the memoizing _isLenientHeaderValidation never
   // shape-transitions the message when it caches.
   this[kLenientValidation] = undefined;
@@ -369,27 +346,26 @@ function computeLenientHeaderValidation(message: $Node.OutgoingMessage): boolean
   const httpValidation = message.httpValidation;
   if (httpValidation !== undefined) return httpValidation !== "strict";
   // ServerResponse routes both options through the owning server; walk the req -> socket -> server chain once, not once per option.
-  const server = getServer(message);
-  const serverHttpValidation = getServerHttpValidation(server);
+  // Each step leaves early: where two ways meet again, a compiler ahead of time no longer knows what it holds.
+  const req = message.req;
+  if (req === undefined || req === null) return isLenientWithoutServer(message);
+  const socket = req.socket;
+  if (socket === undefined || socket === null) return isLenientWithoutServer(message);
+  const server = socket.server;
+  if (server === undefined || server === null) return isLenientWithoutServer(message);
+  const serverHttpValidation = server.httpValidation;
   if (serverHttpValidation !== undefined) return serverHttpValidation !== "strict";
   // Legacy insecureHTTPParser - ClientRequest has it directly
   const insecureHTTPParser = message.insecureHTTPParser;
   if (typeof insecureHTTPParser === "boolean") return insecureHTTPParser;
   // ServerResponse can access via the server
-  const serverOption = getServerInsecureHTTPParser(server);
+  const serverOption = server.insecureHTTPParser;
   return typeof serverOption === "boolean" ? serverOption : isLenient();
 }
 
-function getServer(message: $Node.OutgoingMessage) {
-  return message.req?.socket?.server;
-}
-
-function getServerHttpValidation(server: $Node.HttpSocketServer | null | undefined) {
-  return server?.httpValidation;
-}
-
-function getServerInsecureHTTPParser(server: $Node.HttpSocketServer | null | undefined) {
-  return server?.insecureHTTPParser;
+function isLenientWithoutServer(message: $Node.OutgoingMessage): boolean {
+  const insecureHTTPParser = message.insecureHTTPParser;
+  return typeof insecureHTTPParser === "boolean" ? insecureHTTPParser : isLenient();
 }
 
 ObjectDefineProperty(OutgoingMessage.prototype, "errored", {
@@ -1503,6 +1479,14 @@ function storeShapedHeader(exchange: Exchange, name: string, value: $Node.HttpHe
   storeUnexpectedHeader(exchange, shape, name, value);
 }
 
+// The first header of a message settles how its values are held, once and for all, behind the look at its name. A name that the shape expects has been looked at.
+function settleLeniency(exchange: Exchange, name: string): void {
+  const response = exchange.response;
+  if (response._isLenientHeaderValidation !== outgoingIsLenientHeaderValidation) return;
+  if (exchange.shape.nextName !== name) validatedLowercaseHeaderName(name);
+  response[kLenientValidation] = computeLenientHeaderValidation(response);
+}
+
 function findUnexpectedHeader(shape: HeaderShape, name: string): number {
   const index = indexInShape(shape, lowercaseHeaderName(name));
   const turn = shape.foundTurn;
@@ -1699,6 +1683,7 @@ function flatHeadersOf(exchange: Exchange): unknown[] | null {
 
 http.responseRoad.makeExchange = makeExchange;
 http.responseRoad.storeHeader = storeShapedHeader;
+http.responseRoad.settleLeniency = settleLeniency;
 http.responseRoad.spillHeaders = spillHeaders;
 http.responseRoad.spillHeadersReachedThrough = spillHeadersReachedThrough;
 http.responseRoad.hasHeaderUnderKey = hasHeaderUnderKey;
@@ -1712,6 +1697,7 @@ const outgoingSetHeader = function setHeader(this: $Node.OutgoingMessage, name: 
   }
   const exchange = this.$exchange;
   if (IS_COMPILED_AHEAD_OF_TIME && exchange !== undefined && exchange.response === this) {
+    if (exchange.shape.count === 0 && this[kLenientValidation] === undefined) settleLeniency(exchange, name);
     storeShapedHeader(exchange, name, value);
     return this;
   }

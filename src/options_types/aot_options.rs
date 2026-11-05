@@ -67,11 +67,15 @@ pub struct AotOptions {
     pub emits_symbols: bool,
     pub omits_builtin_modules: bool,
     pub obfuscates: bool,
+    /// With `obfuscates`: `--sourcemap=external` without `--obfuscate`. What the program itself reads stays in the executable: `name` of a function or a class, and the names that messages of errors quote.
+    pub keeps_names: bool,
     pub code_generation_from_strings: CodeGenerationFromStrings,
     pub omits_foreign_calls: bool,
     pub admits_inspector: bool,
     /// What the options that are written into the executable need (`--compile-exec-argv=--sql-preconnect`). The start reads `Bun.sql` for that one by itself, whatever the program says.
     pub features_of_embedded_options: Vec<Feature>,
+    /// `--unhandled-rejections` is written into the executable: the run time prints a warning for some rejections, with Bun's own JavaScript.
+    pub warns_of_rejections: bool,
     /// `--aot-allow-code-from-disk`: a path that is known only at run time may name a file with code that the build has not seen. Bun interprets it.
     pub loads_code_from_disk: bool,
     /// `--aot-testing=IsolatedCodeFromDisk`, with `loads_code_from_disk`: such a file finds no file of the program. What it names lies on disk.
@@ -132,6 +136,12 @@ pub enum TargetPlatform {
     Windows,
 }
 
+impl AotOptions {
+    pub fn hides_names(&self) -> bool {
+        self.obfuscates && !self.keeps_names
+    }
+}
+
 impl Default for AotOptions {
     fn default() -> AotOptions {
         AotOptions {
@@ -143,10 +153,12 @@ impl Default for AotOptions {
             emits_symbols: false,
             omits_builtin_modules: false,
             obfuscates: false,
+            keeps_names: false,
             code_generation_from_strings: CodeGenerationFromStrings::Allowed,
             omits_foreign_calls: false,
             admits_inspector: false,
             features_of_embedded_options: Vec::new(),
+            warns_of_rejections: false,
             loads_code_from_disk: false,
             isolates_code_from_disk: false,
             only_tests_load_code_from_disk: false,
@@ -202,10 +214,12 @@ mod tests {
             emits_symbols,
             omits_builtin_modules,
             obfuscates,
+            keeps_names,
             code_generation_from_strings,
             omits_foreign_calls,
             admits_inspector,
             features_of_embedded_options,
+            warns_of_rejections,
             loads_code_from_disk,
             isolates_code_from_disk,
             only_tests_load_code_from_disk,
@@ -247,6 +261,7 @@ mod tests {
         assert!(!emits_symbols);
         assert!(!omits_builtin_modules);
         assert!(!obfuscates);
+        assert!(!keeps_names);
         assert_eq!(
             code_generation_from_strings,
             CodeGenerationFromStrings::Allowed
@@ -254,6 +269,7 @@ mod tests {
         assert!(!omits_foreign_calls);
         assert!(!admits_inspector);
         assert!(features_of_embedded_options.is_empty());
+        assert!(!warns_of_rejections);
         assert!(!loads_code_from_disk);
         assert!(!isolates_code_from_disk);
         assert!(!only_tests_load_code_from_disk);

@@ -149,6 +149,9 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if options.obfuscates {
         record.output |= OutputOptions::OBFUSCATE;
     }
+    if options.keeps_names {
+        record.output |= OutputOptions::KEEPS_FUNCTION_NAMES;
+    }
     if options.runs_in_several_realms {
         record.output |= OutputOptions::RUNS_IN_SEVERAL_REALMS;
     }

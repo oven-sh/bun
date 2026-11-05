@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim, featureOf, withoutFeatures } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
@@ -268,6 +269,13 @@ group("Bun.serve for the exports of the entry point", () => {
       { "main.cjs": `Object.defineProperty(exports, "__esModule", { value: true });\nexports.twice = function (n) { return n * 2; };` },
     ],
     ["a CommonJS module whose fetch is undefined", { "main.cjs": `exports.fetch = undefined;\nexports.app = null;` }],
+    ["a CommonJS module that exports routes alone", { "main.cjs": `exports.port = 0;\nexports.routes = { "/": new Response("pong") };` }],
+    [
+      "a CommonJS module whose default has then",
+      {
+        "main.cjs": `Object.defineProperty(exports, "__esModule", { value: true });\nexports.default = { then(settle) { settle({ port: 0, fetch() { return new Response("pong"); } }); } };`,
+      },
+    ],
   ])("is not used with %s", async (_, files) => {
     expect(await judged(files)).toEqual({ serves: false, mayServe: false, first: closed.first, exitCode: 0 });
   });
@@ -364,6 +372,14 @@ group("what is done with the exports of the entry point does not depend on how t
 
   const leaves = `setTimeout(() => process.exit(0), 50);`;
 
+  // The names that the compiler's table says the host looks for on a default export, in the order in which native code reads them.
+  const namesOfServer: string[] = JSON.parse(
+    /^const namesOfServer = (\[.*\]);$/m.exec(
+      readFileSync(join(import.meta.dir, "../../src/codegen/builtins/host/host-reads.builtins.ts"), "utf8"),
+    )![1],
+  );
+  const readsOfNamesOfServer = namesOfServer.map(name => `read ${name}\n`).join("");
+
   test.each([
     ["no exports", { "main.ts": `console.log("hello");` }, "hello\n"],
     [
@@ -407,7 +423,7 @@ group("what is done with the exports of the entry point does not depend on how t
       {
         "main.ts": `export default new Proxy({}, { get(_, name) { console.log("read", String(name)); return undefined; } });`,
       },
-      "read fetch\nread app\n",
+      readsOfNamesOfServer,
     ],
     [
       "a binding that changes while it is looked at",
@@ -455,6 +471,65 @@ group("what is done with the exports of the entry point does not depend on how t
       ]),
     ).toEqual([expected, expected, expected]);
   });
+
+  async function answerOf(cmd: string[], cwd: string) {
+    await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    let said = "";
+    for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+      said += chunk;
+      const url = /^Started (?:development )?server: (\S+)$/m.exec(said)?.[1];
+      if (url) return await (await fetch(url)).text();
+    }
+    return { said, stderr: await proc.stderr.text(), exitCode: await proc.exited };
+  }
+
+  const answers = `function () { return new Response("served"); }`;
+  const server = `{ port: 0, fetch: ${answers} }`;
+  const wasESModule = `Object.defineProperty(exports, "__esModule", { value: true });`;
+
+  test.each([
+    ["stores fetch on its exports", { "main.cjs": `exports.port = 0;\nexports.fetch = ${answers};` }],
+    ["stores fetch through this", { "main.cjs": `this.port = 0;\nthis.fetch = ${answers};` }],
+    [
+      "exports an instance whose class has fetch",
+      { "main.cjs": `class Service { port = 0; fetch() { return new Response("served"); } }\nmodule.exports = new Service();` },
+    ],
+    ["exports a function that has fetch", { "main.cjs": `module.exports = Object.assign(function () {}, ${server});` }],
+    ["was an ES module with a default export", { "main.cjs": `${wasESModule}\nexports.default = ${server};` }],
+    [
+      "has a getter named default",
+      { "main.cjs": `${wasESModule}\nObject.defineProperty(exports, "default", { enumerable: true, get() { return ${server}; } });` },
+    ],
+    ["defines fetch", { "main.cjs": `exports.port = 0;\nObject.defineProperty(exports, "fetch", { value: ${answers} });` }],
+    ["is assigned a server's configuration", { "main.cjs": `Object.assign(exports, ${server});` }],
+    ["inherits fetch", { "main.cjs": `Object.setPrototypeOf(exports, ${server});` }],
+    ["exports a Proxy", { "main.cjs": `module.exports = new Proxy(${server}, {});` }],
+    ["stores fetch under a key made as it runs", { "main.cjs": `exports.port = 0;\nexports[["fe", "tch"].join("")] = ${answers};` }],
+    ["stores fetch in a microtask", { "main.cjs": `Promise.resolve().then(() => Object.assign(exports, ${server}));` }],
+    ["exports then", { "main.cjs": `exports.then = function (resolve) { resolve({ default: ${server} }); };` }],
+    ["exports what another file exports", { "main.cjs": `module.exports = require("./other.cjs");`, "other.cjs": `module.exports = ${server};` }],
+    ["is stored on by another file", { "main.cjs": `require("./other.cjs");`, "other.cjs": `Object.assign(require("./main.cjs"), ${server});` }],
+    ["stores fetch through the arguments of its wrapper", { "main.cjs": `Object.assign(arguments[0], ${server});` }],
+    ["stores fetch through require.main", { "main.cjs": `Object.assign(require.main.exports, ${server});` }],
+    ["stores fetch through process.mainModule", { "main.cjs": `Object.assign(process.mainModule.exports, ${server});` }],
+    [
+      "starts a worker whose file exports a server's configuration",
+      { "main.cjs": `new Worker("./worker.cjs");`, "worker.cjs": `module.exports = ${server};` },
+      ["main.cjs", "worker.cjs"],
+    ],
+  ] as [string, Record<string, string>, string[]?][])(
+    "a CommonJS entry point that %s answers a request",
+    async (_, files, entryPoints = ["main.cjs"]) => {
+      const use = await runtimeUse(files, [...build, ...entryPoints.slice(0, -1)], entryPoints.at(-1), {}, folder =>
+        Promise.all([answerOf([bunExe(), "main.cjs"], folder), answerOf([join(folder, "main")], folder)]),
+      );
+      expect({
+        exitCode: use.exitCode,
+        mayServe: use.whyOpen.length > 0 || retainsFeature(use.lines, "Serve"),
+        answer: use.answer,
+      }).toEqual({ exitCode: 0, mayServe: true, answer: ["served", "served"] });
+    },
+  );
 });
 
 group("what --trim removes", () => {

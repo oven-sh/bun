@@ -225,9 +225,7 @@ fn write_product(
         }),
     };
     let Some(outfile) = product.outfile else {
-        let place = crate::cli::run_compiled::place_of_program_being_built();
-        outcome.graph_bytes =
-            Some(to_graph_bytes(&graph, place.as_ref()).map_err(CompileFailure::Graph)?);
+        outcome.graph_bytes = Some(to_graph_bytes(&graph).map_err(CompileFailure::Graph)?);
         log_part_outside_stages("behind the engine: the payload");
         if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
             let bytes = outcome.graph_bytes.as_ref().map_or(0, |bytes| bytes.len());
@@ -245,8 +243,7 @@ fn write_product(
         && !options.obfuscates
         && !options.emits_symbols;
     if asks_for_this_bun_as_it_is && crate::cli::run_compiled::writes_program_alone() {
-        let place = crate::cli::run_compiled::place_of_program_being_built();
-        let bytes = to_graph_bytes(&graph, place.as_ref()).map_err(CompileFailure::Graph)?;
+        let bytes = to_graph_bytes(&graph).map_err(CompileFailure::Graph)?;
         log_part_outside_stages("behind the engine: the payload");
         let (directory, path) = executable_location(settings.root_dir, outfile);
         let build_id = bun_exe_format::build_id::compute(&bytes);
@@ -267,11 +264,13 @@ fn write_product(
         return Ok(());
     }
 
+    // SAFETY: the loader outlives the request, and the build, which reads it, has ended.
+    let env = unsafe { &mut *settings.env };
     let mut executable_request = ExecutableRequest {
         graph,
         root_dir: settings.root_dir,
         outfile,
-        env: &mut *settings.env,
+        env,
         windows: settings.windows,
         executable_path: settings.executable_path,
         trim: product.plan,
@@ -478,7 +477,7 @@ fn build_program(
         executable_identity: target.identity,
         image_form: target.image_form,
         module_prefix,
-        log: &mut *request.log,
+        log: request.log,
         arena: bundler.arena,
         event_loop: bundler.event_loop,
         worker_pool: bundler.worker_pool,
@@ -487,10 +486,10 @@ fn build_program(
         typescript_libs: bun_sema_driver::Libs::Bundled(crate::cli::typescript_libs::BUNDLED),
     });
     built.map_err(|failure| {
-        if !request.log.has_errors() {
-            request
-                .log
-                .add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
+        // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
+        let log = unsafe { &mut *request.log };
+        if !log.has_errors() {
+            log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
         }
         Box::new(failure)
     })

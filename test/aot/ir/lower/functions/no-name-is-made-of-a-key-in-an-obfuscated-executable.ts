@@ -7,6 +7,11 @@
 // HIDDEN: NewClosure
 // HIDDEN-NOT: SetFunctionName
 
+// --sourcemap=external without --obfuscate: what the program reads stays.
+// RUN(KEPT): lower
+// OPTIONS(KEPT): obfuscates keeps-names
+// KEPT-COUNT-6: SetFunctionName
+
 declare const text: string;
 const mark = Symbol(text);
 

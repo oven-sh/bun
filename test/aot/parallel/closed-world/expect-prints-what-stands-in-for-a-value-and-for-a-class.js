@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 const decoded = text => Buffer.from(text).toString();
 for (const text of ["process.finalization", "process.allowedNodeEnvironmentFlags", "Bun.SQL"]) {
-  const held = (0, eval)(decoded(text));
+  const [holder, name] = text.split(".");
+  const held = (0, eval)(decoded(`Object.getOwnPropertyDescriptor(${holder}, "${name}").value`));
   let message = "";
   try {
     expect({ held }).toEqual({ other: 1 });

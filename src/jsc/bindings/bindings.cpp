@@ -5981,12 +5981,13 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
         propertiesOfCompiledObject.shrink(0);
         valuesOfCompiledObject.clear();
         bool hasUnderscoreProto = false;
-        auto walked = JSC::AOT::PropertyWalk::forEachOwnPropertyAsCreated(vm, walkedObject, [&](const JSC::AOT::PropertyWalk::OwnProperty& own) -> IterationStatus {
+        auto walked = JSC::AOT::PropertyWalk::forEachOwnPropertyAsCreatedAfterPreparing(globalObject, walkedObject, [&](const JSC::AOT::PropertyWalk::OwnProperty& own) -> IterationStatus {
             hasUnderscoreProto |= own.name == vm.propertyNames->underscoreProto.impl();
             propertiesOfCompiledObject.append({ Identifier::fromUid(vm, own.name), own.attributes });
             valuesOfCompiledObject.appendWithCrashOnOverflow(own.value);
             return IterationStatus::Continue;
         });
+        CLEAR_IF_EXCEPTION(scope);
         listsCompiledObject = walked == JSC::AOT::PropertyWalk::Result::Completed && !hasUnderscoreProto;
         return listsCompiledObject;
     };

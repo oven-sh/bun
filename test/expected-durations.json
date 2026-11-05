@@ -44,6 +44,10 @@
     "default": 55100,
     "asan": 220400
   },
+  "aot/a-capturing-emitter-calls-no-built-in-that-a-test-may-replace.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-commonjs-file-that-a-module-imports-is-handed-to-nobody-who-asks-by-a-name-made-at-run-time.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -108,6 +112,10 @@
     "default": 27200,
     "asan": 108800
   },
+  "aot/a-file-that-may-be-evicted-keeps-what-its-one-run-laid.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-file-that-may-start-a-worker.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -159,6 +167,10 @@
   "aot/a-key-known-in-part-takes-out-the-files-that-fit.test.ts": {
     "default": 14300,
     "asan": 57200
+  },
+  "aot/a-library-that-serves-faults-on-its-memory-is-asked-where-compiled-code-faults.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-line-of-the-stage-log-goes-out-in-one-write.test.ts": {
     "default": 6200,
@@ -220,6 +232,14 @@
     "default": 7900,
     "asan": 31600
   },
+  "aot/a-name-that-a-test-lays-on-object-prototype-is-read-by-the-library-as-in-bun-test.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-name-that-finds-another-file-on-the-disk-of-the-build.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-name-that-only-a-mock-has-comes-through-export-star.test.ts": {
     "default": 11400,
     "asan": 45600
@@ -239,6 +259,10 @@
   "aot/a-package-that-asks-whether-jest-is-there-opens-no-export.test.ts": {
     "default": 21400,
     "asan": 85600
+  },
+  "aot/a-package-whose-folder-lay-nearer-on-the-disk-of-the-build.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-path-made-from-the-working-directory-names-the-file-on-disk.test.ts": {
     "default": 60000,
@@ -548,6 +572,10 @@
     "default": 15400,
     "asan": 61600
   },
+  "aot/cli/an-external-source-map-leaves-names-alone.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/cli/obfuscate-paths.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -563,6 +591,10 @@
   "aot/closed-test-run.test.ts": {
     "default": 10100,
     "asan": 40400
+  },
+  "aot/commonjs-files-below-a-require-run-as-the-loader-makes-them.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/compiled-file-written-anew.test.ts": {
     "default": 11500,
@@ -704,6 +736,10 @@
     "default": 30300,
     "asan": 121200
   },
+  "aot/evaluated-text-reads-every-own-name-of-a-host-object.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/evaluated-text-that-stores-into-a-dead-zone-gets-a-reference-error-in-a-test-run.test.ts": {
     "default": 3600,
     "asan": 14400
@@ -823,6 +859,10 @@
   "aot/import-behind-describe.test.ts": {
     "default": 3300,
     "asan": 13200
+  },
+  "aot/import-calls-a-job-apart-cost-the-same-a-call-where-there-are-more.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/import-cycles.test.ts": {
     "default": 3100,
@@ -1080,6 +1120,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/names-of-the-generated-tables-end-in-the-executable.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/names-planted-on-object-prototype.test.ts": {
     "default": 4100,
     "asan": 16400
@@ -1191,6 +1235,10 @@
   "aot/record-retired-mid-load.test.ts": {
     "default": 1100,
     "asan": 4400
+  },
+  "aot/reflect-set-prototype-of-throws-in-a-test-run-where-a-built-in-refuses.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/refusal-note.test.ts": {
     "default": 11700,
@@ -1572,6 +1620,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-library-calls-the-same-built-ins-compiled-as-plain.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-library-is-written-in-forms-that-the-schema-names.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1689,6 +1741,10 @@
     "asan": 8800
   },
   "aot/what-is-declared-of-a-test-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/what-is-laid-on-a-prototype-is-honored-where-a-server-is-not-listened-to.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -49221,10 +49277,6 @@
   "aot/a-file-that-loads-again-from-disk-calls-what-stands-on-the-global-object.test.ts": {
     "default": 10200,
     "asan": 63900
-  },
-  "aot/a-file-that-takes-as-long-as-all-the-others.test.ts": {
-    "default": 500,
-    "asan": 7000
   },
   "aot/a-function-of-an-earlier-test-file-reads-the-variables-of-its-own-realm.test.ts": {
     "default": 13100,

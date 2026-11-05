@@ -15,6 +15,6 @@ console.log(said(() => member.resume()));
 console.log("went on");
 /* Output:
 object
-Error: process.openStdin was not compiled into this executable
+Error: None of process.stdin or process.openStdin was compiled into this executable
 went on
 */

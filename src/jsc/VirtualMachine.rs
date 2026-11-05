@@ -5543,13 +5543,7 @@ impl VirtualMachine {
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
-                match bun_resolver::fs::PathName::init(source).dir_with_trailing_slash() {
-                    // `createRequire("/")` looks from "/noop.js" (NodeModuleModule.cpp), whose folder is "/". An executable took "./" for its own root.
-                    b"./" if self.finds_entry_points_by_path && source == b"/noop.js" => {
-                        &source[..1]
-                    }
-                    folder => folder,
-                }
+                bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
             } else {
                 source
             }

@@ -168,7 +168,7 @@ pub(crate) struct CompileFlags<'a> {
     pub is_in_place: bool,
     pub omits_function_source: bool,
     pub obfuscates: bool,
-    /// `--sourcemap=external`. With `--aot` it means what `--obfuscate` means.
+    /// `--sourcemap=external`. With `--aot` it means what `--obfuscate` means, but for the names that the program itself reads.
     pub has_external_source_map: bool,
     pub admits_inspector: bool,
     pub allows_code_from_disk: bool,
@@ -429,9 +429,11 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         explain,
         trim,
         obfuscates,
+        keeps_names: flags.has_external_source_map && !flags.obfuscates,
         code_generation_from_strings: embedded.code_generation_from_strings,
         admits_inspector,
         features_of_embedded_options: embedded.features(),
+        warns_of_rejections: embedded.warns_of_rejections,
         loads_code_from_disk: flags.allows_code_from_disk,
         runs_in_place: flags.is_in_place,
         looks_for_type_errors: flags.checks_types,
@@ -630,7 +632,7 @@ pub(crate) fn apply_developer_word<'a>(
             return Err(OptionError::DeveloperWord {
                 key,
                 word: key.as_bytes().to_vec(),
-                sentence: b"cannot be used with --obfuscate or --sourcemap=external, which keep function names out of the executable".to_vec(),
+                sentence: b"cannot be used with --obfuscate or --sourcemap=external, which keep the names of stack frames out of the executable".to_vec(),
             });
         }
         "symbols" => options.emits_symbols = true,
@@ -1014,6 +1016,8 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
             HeapSize::Standard
         },
         runs_in_place: true,
+        // The process that runs the program gets the words of this one.
+        warns_of_rejections: args.option(b"--unhandled-rejections").is_some(),
         checks_only: !compiles,
         runs_tests: cmd == Tag::TestCommand,
         counts_executions: cmd == Tag::TestCommand && compiles && ctx.test_options.coverage.enabled,

@@ -174,6 +174,24 @@ function isIterable(obj, isAsync?: boolean) {
 }
 
 function isDestroyed(stream: $Node.MaybeStream) {
+  if (IS_COMPILED_AHEAD_OF_TIME && $isObject(stream) && !$isProxyObject(stream)) {
+    const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
+    const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
+    if (
+      !rState &&
+      !wState &&
+      !(typeof stream.write === "function" && typeof stream.on === "function") &&
+      !(typeof stream.pipe === "function" && typeof stream.on === "function")
+    ) {
+      return null;
+    }
+    if (stream.destroyed || stream[kIsDestroyed]) return true;
+    const state = wState || rState;
+    const isOfLibrary = wState
+      ? isWritableState(state) || isReadableState(state)
+      : isReadableState(state) || isWritableState(state);
+    return !!(isOfLibrary ? (state![kState] & Flag.Destroyed) !== 0 : state?.destroyed);
+  }
   if (!isNodeStream(stream)) return null;
   const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
   const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;

@@ -25,10 +25,14 @@ fn build_host_read(read: &table::HostRead, strings: &mut StringTable) -> HostRea
         HostReadUse::PassedTo { builtin, argument } => (Some(builtin), u32::from(argument)),
         HostReadUse::Inspected | HostReadUse::Called => (None, 0),
     };
+    let names = read.names_looked_for.iter();
     HostRead {
         export_name: strings.intern(table::text_of_name(read.export_name)),
         builtin,
         parameter,
+        names_looked_for: names
+            .map(|&name| strings.intern(table::text_of_name(name)))
+            .collect(),
     }
 }
 
@@ -81,6 +85,7 @@ fn read_everything(
         export_name: strings.intern(name),
         builtin: None,
         parameter: 0,
+        names_looked_for: Vec::new(),
     };
     names.into_iter().map(read).collect()
 }

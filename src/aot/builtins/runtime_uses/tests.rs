@@ -37,6 +37,7 @@ fn own_functions(id: BuiltinId) -> impl Iterator<Item = RuntimeFunction> {
     let listed = entry
         .calls()
         .iter()
+        .chain(entry.calls_where_call_runs_other_code())
         .chain(entry.implemented_by())
         .chain(entry.guessed_functions())
         .chain(for_texts)
@@ -187,10 +188,7 @@ fn mention_needs_own_lists() {
     assert!(own_modules(stdout).next().is_some());
     let uses = uses_of(&[stdout], &[]);
     assert_eq!(*uses.modules, *sorted_unique(own_modules(stdout)));
-    assert_eq!(
-        *uses.functions,
-        *with_what_promises_can_do(own_functions(stdout))
-    );
+    assert_eq!(*uses.functions, *sorted_unique(own_functions(stdout)));
     let other = uses_of(&[BuiltinId::ProcessPid], &[]);
     assert!(own_modules(stdout).all(|module| !other.modules.contains(&module)));
 }
@@ -466,13 +464,29 @@ fn what_steps_the_list_of_call_sites_comes_with_the_member_that_takes_the_functi
 }
 
 #[test]
-fn compiler_helper_that_makes_no_promise_needs_nothing_that_the_host_calls_for_one() {
-    let called_for_promise = table::entry(BuiltinId::Promise).calls();
-    assert!(!called_for_promise.is_empty());
+fn a_promise_makes_the_host_call_nothing_and_the_option_that_warns_has_an_entry_of_its_own() {
+    assert!(table::entry(BuiltinId::Promise).calls().is_empty());
+    let warned_with = table::entry(BuiltinId::WarningsOfRejections).calls();
+    assert!(!warned_with.is_empty());
+    let of_a_promise = uses_of(&[BuiltinId::Promise], &[]);
+    let mut called = warned_with.iter();
+    assert!(called.all(|function| !of_a_promise.functions.contains(function)));
+    let of_the_option = uses_of(
+        &[BuiltinId::WarningsOfRejections],
+        &[BuiltinId::WarningsOfRejections],
+    );
+    let mut called = warned_with.iter();
+    assert!(called.all(|function| of_the_option.functions.contains(function)));
+}
+
+#[test]
+fn compiler_helper_that_makes_no_promise_brings_nothing_of_promises() {
+    let of_promise = table::entry(BuiltinId::Promise).implemented_by();
+    assert!(!of_promise.is_empty());
     let needs_it = |helper: BuiltinId| {
         let found = uses_of(&[helper], &[]);
-        let mut called = called_for_promise.iter();
-        called.any(|function| found.functions.contains(function))
+        let mut code = of_promise.iter();
+        code.any(|function| found.functions.contains(function))
     };
     for helper in [
         BuiltinId::CompilerHelpersOpenIterator,
@@ -627,7 +641,7 @@ fn what_promises_can_do_comes_with_the_first_thing_that_makes_one() {
     ] {
         assert!(holds_code_of(uses, BuiltinId::PromiseAll));
         assert!(holds_code_of(uses, BuiltinId::PromiseTry));
-        assert!(leads_to_host(uses));
+        assert!(!leads_to_host(uses));
     }
     let names = [BuiltinId::PromisePrototypeThen, BuiltinId::PromiseAll].map(name_of);
     let only_named = Mentions {

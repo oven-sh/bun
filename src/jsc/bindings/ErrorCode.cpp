@@ -783,6 +783,15 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
             builder.append(view);
             return;
         }
+        // util.inspect(value, { depth: -1 }): the object's own custom inspect function runs, and nothing that the object holds is printed.
+        auto customInspect = value.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!customInspect.isCallable()) {
+            auto description = describeObjectWithoutConstructorName(vm, globalObject, cell->getObject());
+            RETURN_IF_EXCEPTION(scope, void());
+            builder.append(description);
+            return;
+        }
     }
 
     //       value = lazyInternalUtilInspect().inspect(value, { colors: false });

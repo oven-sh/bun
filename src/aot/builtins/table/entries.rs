@@ -108,10 +108,36 @@ pub struct CallsForTexts {
     pub calls: &'static [RuntimeFunction],
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum WrittenOperand {
+    Function,
+    Integer {
+        least: i64,
+        most: i64,
+        may_be_left_out: bool,
+    },
+    Any,
+    AnyFurther,
+    PrimitivesFurther {
+        null: bool,
+        boolean: bool,
+        number: bool,
+        string: bool,
+    },
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct QuietCall {
+    pub operands: &'static [WrittenOperand],
+    pub answers_primitive: bool,
+}
+
 pub(super) struct Dependencies {
     pub(super) loads: &'static [ModuleLoad],
     pub(super) calls: &'static [RuntimeFunction],
     pub(super) calls_for_texts: &'static [CallsForTexts],
+    pub(super) calls_where_call_runs_other_code: &'static [RuntimeFunction],
+    pub(super) calls_that_run_no_other_code: &'static [QuietCall],
     pub(super) implemented_by: &'static [RuntimeFunction],
     pub(super) guessed: &'static [RuntimeFunction],
 }
@@ -186,4 +212,5 @@ pub struct HostRead {
     pub context: HostReadContext,
     pub export_name: BuiltinName,
     pub read_use: HostReadUse,
+    pub names_looked_for: &'static [BuiltinName],
 }

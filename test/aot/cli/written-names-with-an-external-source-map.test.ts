@@ -1,7 +1,7 @@
-// docs/compiler/debugging.mdx, "Minified executables and external source maps": with --sourcemap=external the names of functions, classes,
-// variables, parameters and imports are in the map and not in the executable. `name` is "", a frame has no name, and a message has a short
-// name where the program wrote one. Keys, strings and descriptions of symbols, here the names that begin with "kept", may stay: the program
-// finds and prints them when it runs.
+// docs/compiler/debugging.mdx, "Minified executables and external source maps": with --obfuscate, and with --minify --sourcemap=external, the
+// names of functions, classes, variables, parameters and imports are in the map and not in the executable. A frame has no name, and a message
+// has a short name where the program wrote one. `name` is "" with --obfuscate and short with --minify. Keys, strings and descriptions of
+// symbols, here the names that begin with "kept", may stay: the program finds and prints them when it runs.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -147,11 +147,14 @@ export class ImportedClassN1 {
 
 const sources = Object.values(program).join();
 const everyName = [...new Set(sources.match(/\b[A-Za-z]+N\d+\b/g))];
-// What a function under a symbol is called is made of the description, and is a name of a function all the same.
+// What a function under a symbol is called is made of the description, and is a name of a function all the same: it goes with --obfuscate.
 const written = [...everyName.filter(name => !name.startsWith("kept")), "[keptDescriptionN23]", "[keptRegisteredN26]"];
 
 const short = "[A-Za-z_$][\\w$]{0,5}";
 const deadZone = `Cannot access '${short}' before initialization\\.`;
+const emptyNames = '\\["","","","","","","","",""\\]';
+const shortNameAt = (at: number) => (at === 6 ? '"\\[keptDescriptionN23\\]"' : `"${short}"`);
+const shortNames = `\\[${Array.from({ length: 9 }, (_, at) => shortNameAt(at))}\\]`;
 const expected: [label: string, shown: string][] = [
   ["early imported arrow", deadZone],
   ["early variable", deadZone],
@@ -173,7 +176,7 @@ const expected: [label: string, shown: string][] = [
   ["frame of a getter under a registered symbol", "<anonymous>"],
   ["frame of a static method under a joined key", "<anonymous>"],
   ["frame of a method under a given key", "<anonymous>"],
-  ["names", '\\["","","","","","","","",""\\]'],
+  ["names", emptyNames],
   ["compared", "false"],
   ["error of a class of the program", "Error: keptTextN46"],
   ["member of a typed parameter", "keptTextN47"],
@@ -192,10 +195,12 @@ interface SourceMap {
 }
 
 describe.concurrent.each([
-  ["--sourcemap=external", ["--sourcemap=external"]],
-  ["--minify --sourcemap=external", ["--minify", "--sourcemap=external"]],
-  ["--keep-names --sourcemap=external", ["--keep-names", "--sourcemap=external"]],
-] as [string, string[]][])("written names, built with %s", (_, flags) => {
+  ["--obfuscate", ["--obfuscate"], emptyNames],
+  ["--minify --obfuscate", ["--minify", "--obfuscate"], emptyNames],
+  ["--keep-names --obfuscate", ["--keep-names", "--obfuscate"], emptyNames],
+  ["--obfuscate --sourcemap=external", ["--obfuscate", "--sourcemap=external"], emptyNames],
+  ["--minify --sourcemap=external", ["--minify", "--sourcemap=external"], shortNames],
+] as [string, string[], string][])("written names, built with %s", (_, flags, names) => {
   test(
     "are in the map, and neither in the executable nor in what it prints",
     () =>
@@ -206,12 +211,15 @@ describe.concurrent.each([
         const executable = join(folder, "dist", isWindows ? "app.exe" : "app");
 
         const file = readFileSync(executable);
-        expect(written.filter(name => file.includes(name) || file.includes(Buffer.from(name, "utf16le")))).toEqual([]);
+        const hidden = names === emptyNames ? written : written.filter(name => !name.startsWith("["));
+        expect(hidden.filter(name => file.includes(name) || file.includes(Buffer.from(name, "utf16le")))).toEqual([]);
 
         const run = await spawned([executable], folder, env);
         expect({ stderr: run.stderr, exitCode: run.exitCode }).toEqual({ stderr: "", exitCode: 0 });
         expect(run.stdout.trimEnd().split("\n")).toEqual(
-          expected.map(([label, shown]) => expect.stringMatching(new RegExp(`^${label}: ${shown}$`))),
+          expected.map(([label, shown]) =>
+            expect.stringMatching(new RegExp(`^${label}: ${label === "names" ? names : shown}$`)),
+          ),
         );
 
         const map: SourceMap = JSON.parse(readFileSync(executable + ".map", "utf8"));

@@ -818,6 +818,84 @@ fn an_es_module_that_is_required_links_a_graph_of_its_own() {
     });
 }
 
+fn hoisted_below_required_root(imports: &[(&str, &[&str])]) -> Vec<String> {
+    let mut files = vec![("main.cjs".to_owned(), "require('./m0.mjs');".to_owned())];
+    for (importer, imported) in imports {
+        let statements = imported.iter().map(|name| format!("import './{name}';"));
+        files.push(((*importer).to_owned(), statements.collect()));
+        for name in imported.iter().filter(|name| name.ends_with(".cjs")) {
+            if !files.iter().any(|(known, _)| known == name) {
+                files.push(((*name).to_owned(), "exports.one = 1;".to_owned()));
+            }
+        }
+    }
+    let files: Vec<(&str, &str)> = files.iter().map(|it| (&it.0[..], &it.1[..])).collect();
+    let mut hoisted = Vec::new();
+    with_plan(&files, |plan| {
+        for request in plan.requests("m0.mjs") {
+            if let Some(name) = request.strip_suffix(" hoisted") {
+                hoisted.push(name.trim_start_matches("request ").to_owned());
+            }
+        }
+    });
+    hoisted
+}
+
+#[test]
+fn below_a_require_commonjs_files_run_level_by_level_where_each_is_asked_for_once() {
+    let imports: [(&str, &[&str]); 4] = [
+        ("m0.mjs", &["m1.mjs", "m2.mjs"]),
+        ("m1.mjs", &["m3.mjs"]),
+        ("m2.mjs", &["c2.cjs"]),
+        ("m3.mjs", &["c1.cjs"]),
+    ];
+    assert_eq!(hoisted_below_required_root(&imports), ["c2.cjs", "c1.cjs"]);
+}
+
+#[test]
+fn below_a_require_what_a_module_imported_twice_imports_runs_in_front() {
+    let imports: [(&str, &[&str]); 3] = [
+        ("m0.mjs", &["m1.mjs", "m2.mjs"]),
+        ("m1.mjs", &["m2.mjs", "c1.cjs"]),
+        ("m2.mjs", &["c2.cjs"]),
+    ];
+    assert_eq!(hoisted_below_required_root(&imports), ["c2.cjs", "c1.cjs"]);
+}
+
+#[test]
+fn below_a_require_a_commonjs_file_imported_twice_runs_in_front() {
+    let imports: [(&str, &[&str]); 3] = [
+        ("m0.mjs", &["m1.mjs", "m2.mjs"]),
+        ("m1.mjs", &["c1.cjs", "c3.cjs"]),
+        ("m2.mjs", &["c2.cjs", "c3.cjs"]),
+    ];
+    let expected = ["c3.cjs", "c1.cjs", "c2.cjs"];
+    assert_eq!(hoisted_below_required_root(&imports), expected);
+}
+
+#[test]
+fn below_a_require_a_module_that_imports_the_root_lets_its_neighbors_go_first() {
+    let imports: [(&str, &[&str]); 4] = [
+        ("m0.mjs", &["m1.mjs", "m2.mjs", "m3.mjs"]),
+        ("m1.mjs", &["c1.cjs", "m0.mjs"]),
+        ("m2.mjs", &["c2.cjs"]),
+        ("m3.mjs", &["c3.cjs"]),
+    ];
+    let expected = ["c2.cjs", "c3.cjs", "c1.cjs"];
+    assert_eq!(hoisted_below_required_root(&imports), expected);
+}
+
+#[test]
+fn below_a_require_a_commonjs_file_asked_for_a_third_time_runs_on_the_spot() {
+    let imports: [(&str, &[&str]); 4] = [
+        ("m0.mjs", &["m1.mjs", "m4.mjs", "m3.mjs"]),
+        ("m1.mjs", &["m3.mjs"]),
+        ("m3.mjs", &["c1.cjs", "m0.mjs"]),
+        ("m4.mjs", &["c2.cjs", "m1.mjs"]),
+    ];
+    assert_eq!(hoisted_below_required_root(&imports), ["c1.cjs", "c2.cjs"]);
+}
+
 #[test]
 fn what_an_imported_file_requires_is_required_during_a_load() {
     let files = [

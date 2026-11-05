@@ -1177,7 +1177,7 @@ impl<'a> Resolver<'a> {
         let is_left_outside = graph.compiled_program().is_some_and(|program| {
             let public_root = graph.base_public_path_with_default_suffix();
             program.leaves_outside(source_dir, import_path)
-                || program.leaves_package_to_disk(public_root, source_dir, import_path)
+                || program.looks_for_package_from_disk(public_root, source_dir, import_path)
         });
         if is_left_outside {
             return PackageLookup::Unknown;

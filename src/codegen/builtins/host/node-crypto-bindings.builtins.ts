@@ -52,8 +52,8 @@ export default b.declarations(
     "KeyObject",
     "X509Certificate",
   ),
-  // node:crypto wraps this method on the prototype, and native code calls no method of it.
-  b.class(`${cppBinding}.ECDH`, { namesReadByNativeCodeOnPrototype: [], proto: { setPublicKey: undeclaredFunction } }),
+  // node:crypto wraps this method on the prototype.
+  b.class(`${cppBinding}.ECDH`, { proto: { setPublicKey: undeclaredFunction } }),
   // Called without `new`, some throw and the others construct.
   ["Sign", "Verify", "Hmac", "Hash", "DiffieHellman", "Cipher", "ECDH"].flatMap(name => [
     ...b.construction(`${cppBinding}.${name}`, constructing(b.instance(`NodeCryptoBinding.${name}`), b.hostCall)),

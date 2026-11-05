@@ -3,7 +3,7 @@
 // A build with --aot leaves out what the program does not reach: members of `Bun` and `process`, functions of Bun's own JavaScript, whole modules. Every rule that cuts more is a proof about programs, and a
 // false proof shows in one shape of program and in no other. Each family here is one such shape, told over many names; most were written on the night when their fault was found.
 //
-//   bun run.ts [--jobs=32] [--kinds=closed,made-name] [--limit=400] [--part=1/6] [family ..]      the Bun that runs this file is the Bun that is asked
+//   bun run.ts [--jobs=32] [--kinds=closed,made-name] [--limit=400] [--part=1/6] [--whole-executables] [family ..]      the Bun that runs this file is the Bun that is asked
 //
 // Each program is built alone, as anybody builds it (`bun build --compile --aot <file> --outfile x`), three times:
 //   closed      with nothing more
@@ -165,6 +165,8 @@ function headOf(text: string): Head {
     else if (word === "Open alone") head.kinds = ["open"];
   }
   head.output = /\/\* Output:\n([^]*?)\*\/\s*$/.exec(text)?.[1];
+  // The stored output is that of the closed build. Another build may refuse the same thing in other words of the same kind.
+  head.refused.push(...refusals.filter(sentence => head.output?.includes(sentence)));
   return head;
 }
 
@@ -213,6 +215,8 @@ export type Options = {
   /** [2, 6]: the second sixth of the programs. */
   part?: [number, number];
   moreFlags?: string[];
+  /** Every build writes a whole executable, as anybody's build does. */
+  wholeExecutables?: boolean;
   start?: Start;
   /** Called with each verdict as it falls. */
   heard?: (verdict: Verdict) => void;
@@ -380,6 +384,10 @@ export async function battery(options: Options = {}): Promise<Verdict[]> {
         try {
           const folder = kind === "made-name" ? join(scratch, "beside-a-made-name", family, program) : written;
           if (kind === "made-name") layBesideAMadeName(folder, written, entry, isFolder);
+          // An executable is a copy of Bun with the program behind it, and writing the copy is half of what a small build costs the machine. The build writes the program alone, as under
+          // run-parallel.ts: the compile is the same, and the file starts as the executable would. A program that asks about its own file gets the executable.
+          const asksAboutItsFile = /\bexecPath\b|\bargv0\b|\bargv\[0\]/.test(readFileSync(join(folder, entry), "utf8"));
+          const writesProgramAlone = process.platform === "linux" && !options.wholeExecutables && !asksAboutItsFile;
           const build = await start(
             [
               bun,
@@ -394,7 +402,9 @@ export async function battery(options: Options = {}): Promise<Verdict[]> {
               made,
             ],
             folder,
-            env,
+            writesProgramAlone
+              ? { ...env, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1", BUN_AOT_WRITES_PROGRAM_ALONE: "1" }
+              : env,
             240_000,
           );
           const printed = build.stdout + build.stderr;
@@ -463,6 +473,7 @@ if (import.meta.main) {
     limit: Number(flag("limit") ?? 0),
     part: flag("part")?.split("/").map(Number) as [number, number] | undefined,
     moreFlags: flag("threads") ? [`--aot-threads=${flag("threads")}`] : [],
+    wholeExecutables: process.argv.includes("--whole-executables"),
     // What is bad is said at once on the standard error, for whoever watches a long run; the lines that count come at the end.
     heard: verdict => isBad(verdict) && verdict.word !== "not run" && console.error(`now: ${lineOf(verdict)}`),
     families: process.argv.slice(2).filter(word => !word.startsWith("--")),

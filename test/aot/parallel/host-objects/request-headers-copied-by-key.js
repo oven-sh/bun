@@ -1,5 +1,5 @@
 // The headers of a request are copied under keys that are made at run time. A read under such a key may find what every object inherits, functions among them. fetch looks for its one callback on `tls` of the options: it calls nothing that lies among the headers.
-// STATISTIC: ImageFunctionsEmitted <= 100
+// STATISTIC: ImageFunctionsEmitted <= 100 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 const store = { ACCEPT: "text/plain" };
 const list = JSON.parse('["accept"]');
 const copy = {};

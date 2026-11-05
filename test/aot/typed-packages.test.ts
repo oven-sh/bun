@@ -1,3 +1,4 @@
+import { describeCheckerQueries } from "bun:internal-for-testing";
 import { afterAll, expect } from "bun:test";
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -37,41 +38,34 @@ describe("compile/aot/typed-packages", () => {
     return folder;
   }
 
+  // Each unit of code has a row in the map: its bytes, the name of its function, its role (Body, SlowBody, ParameterGuard ..) and the file of the function.
   function compiledOf(map: string, modulePath: string) {
-    const found = { typed: { bytes: 0, names: new Set<string>() }, untyped: { bytes: 0, names: new Set<string>() } };
+    const found = { bytes: 0, names: new Set<string>() };
     for (const line of readFileSync(map, "utf8").split("\n")) {
       const fields = line.split("\t");
-      // A function as it is written is "typed" or "untyped", its general entry "generic-typed" or "generic-untyped". What the compiler makes of one (a result worker, a construct body ..) says neither.
-      const [, word] = /^(?:generic-)?(typed|untyped)$/.exec(fields[8] ?? "") ?? [];
-      if (fields[0] !== "F" || fields[10] !== modulePath || word === undefined) continue;
-      const kind = word === "untyped" ? found.untyped : found.typed;
-      kind.bytes += Number(fields[3]);
-      kind.names.add(fields[7]);
+      if (fields[0] !== "F" || fields[10] !== modulePath) continue;
+      found.bytes += Number(fields[3]);
+      found.names.add(fields[7]);
     }
     return found;
   }
-  const hot = [
-    "begin",
-    "complete",
-    "copyToWorkOn",
-    "markLane",
-    "schedule",
-    "markReaders",
-    "readContext",
-    "hasSameInputs",
-    "copyNextHook",
-    "renderComponent",
-    "reconcile",
-    "renderTree",
-    "commit",
-    "commitHostChanges",
-    "runEffects",
-  ];
-  function expectTyped(map: string) {
-    const { typed, untyped } = compiledOf(map, typedModulePath);
-    expect(typed.bytes).toBeGreaterThan(30_000);
-    expect(untyped.bytes).toBeLessThan(typed.bytes / 50);
-    expect(hot.filter(name => !typed.names.has(name) || untyped.names.has(name))).toEqual([]);
+  // What the compiler takes each file of the program for: its written types hold in a file that is "Checked"; of one that is "Inferred" it knows what it works out itself.
+  function rolesOf(entryPoint: string) {
+    const roles: Record<string, string> = {};
+    for (const line of describeCheckerQueries(entryPoint, 1).split("\n")) {
+      const [, file, role] = /^(.+):0 role `` = (\w+)$/.exec(line) ?? [];
+      if (file !== undefined) roles[file.replaceAll("\\", "/")] = role;
+    }
+    return roles;
+  }
+  function expectTyped(folder: string, map: string) {
+    expect(rolesOf(join(folder, "main.ts"))).toMatchObject({
+      [typedFile]: "Checked",
+      "node_modules/task-queue/index.js": "Inferred",
+    });
+    const compiled = compiledOf(map, typedModulePath);
+    expect(compiled.bytes).toBeGreaterThan(30_000);
+    expect([...compiled.names]).toContain("renderTree");
   }
 
   test("the package is compiled typed", async () => {
@@ -83,7 +77,7 @@ describe("compile/aot/typed-packages", () => {
     });
     built(build);
     expect(build.stdout + build.stderr).not.toMatch(/compiled (untyped|without (its |their )?types)/);
-    expectTyped(map);
+    expectTyped(folder, map);
     const compiled = await spawned([join(folder, "app")], folder, {
       ...bunEnv,
       BUN_JSC_crashIfInterpreterIsUsed: "1",

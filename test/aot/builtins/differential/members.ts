@@ -84,6 +84,17 @@ export class Realm {
 
   constructor(table: Table) {
     this.table = table;
+    this.#hiddenRoots.set("%FFICallback%.prototype", () => this.#findPrototypeOfCallbacksOfFFI());
+  }
+
+  // No path and no id leads to it: it is found on what the native binding behind `JSCallback` of bun:ffi makes.
+  #findPrototypeOfCallbacksOfFFI(): object | undefined {
+    const binding = this.table.dump.entries.find(({ path }) => path === "native:Bindgen:ffi.bind.ts:makeCallback");
+    const make = this.valueOf(binding?.token ?? null);
+    if (typeof make !== "function") return undefined;
+    const made = make({ args: [], returns: "void" }, () => {});
+    made.close();
+    return prototypeOf(made);
   }
 
   register(path: string, value: unknown): void {

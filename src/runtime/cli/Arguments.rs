@@ -441,6 +441,8 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
 
 pub(crate) const AUTO_REQUIREMENTS: [RuntimeRequirement; AUTO_PARAMS.len()] =
     startup_options::requirements_of(AUTO_PARAMS, AUTO_REQUIREMENT_ROWS);
+pub(crate) const UNHANDLED_REJECTIONS_PARAM: usize =
+    startup_options::index_of_long(AUTO_PARAMS, b"unhandled-rejections");
 pub(crate) const CODE_GENERATION_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"disallow-code-generation-from-strings");
 /// These need `Feature::HotReload` besides what their rows say.
@@ -728,7 +730,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--trim-locales <STR>...          Keep only these locales, such as en,de-AT. Implies --trim"
         ),
         parse_param!(
-            "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map. Same as --sourcemap=external"
+            "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map. The name of every function and class is empty"
         ),
         parse_param!(
             "--compile-inspector              With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower"

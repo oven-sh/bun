@@ -1,7 +1,8 @@
-use bun_sema::bind::{Binding, BindingInitializer, Bound, FnOwner};
+use bun_sema::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent};
+use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, CaseId, Chain, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList,
-    MemberId, MemberKind, ModifierKind, PropKey, Span, StmtId, StmtKind, VarKind,
+    MemberId, MemberKind, ModifierKind, PropKey, Span, StmtId, StmtKind, UnOp, VarKind,
 };
 use bun_sema::program::CompiledModule;
 use rustc_hash::FxHashMap;
@@ -55,6 +56,103 @@ fn find_start_of_field(hir: &hir::File<'_>, member: &hir::Member, initializer: E
         true => hir[initializer].pos - 1,
         false => member.name_pos,
     }
+}
+
+fn find_constant_of_plain(
+    hir: &hir::File<'_>,
+    decisions: &Decisions<'_>,
+    expression: ExprId,
+) -> Option<Constant> {
+    match decisions.constant(hir, expression) {
+        FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant)
+            if decisions.is_constant_under_minify_syntax(hir, expression) =>
+        {
+            Some(constant)
+        }
+        _ => None,
+    }
+}
+
+fn is_printed_where_it_is_read(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    read: ExprId,
+) -> bool {
+    use core::mem::discriminant;
+    let constant_of = |expression: ExprId| {
+        find_constant_of_plain(hir, decisions, hir.skip_type_assertions(expression))
+    };
+    let is_text = |constant: Option<Constant>| matches!(constant, Some(Constant::String(_)));
+    let is_number = |constant: Option<Constant>| matches!(constant, Some(Constant::Number(_)));
+    let mut inner = read;
+    while let Parent::Expr(outer) = bound.parent_of_expr(inner) {
+        if hir.type_assertion_operand(outer) == Some(inner) {
+            inner = outer;
+            continue;
+        }
+        let (operator, left, right) = match hir[outer].kind {
+            ExprKind::Template { .. } => return false,
+            ExprKind::Unary {
+                op: UnOp::Typeof, ..
+            } => return false,
+            ExprKind::Unary {
+                op: UnOp::Plus | UnOp::Minus | UnOp::BitNot,
+                ..
+            } => return is_text(constant_of(inner)),
+            ExprKind::Binary { op, left, right } => (op, left, right),
+            _ => return true,
+        };
+        let (own, other) = match left == inner {
+            true => (constant_of(left), constant_of(right)),
+            false => (constant_of(right), constant_of(left)),
+        };
+        let are_numbers = is_number(own) && is_number(other);
+        let are_of_one_kind = match (own, other) {
+            (Some(own), Some(other)) => discriminant(&own) == discriminant(&other),
+            _ => false,
+        };
+        let is_joined = operator == BinOp::Add
+            && own.is_some()
+            && other.is_some()
+            && (is_text(own) || is_text(other));
+        let is_joined_to_text_in_front = match hir[hir.skip_type_assertions(left)].kind {
+            ExprKind::Binary {
+                op: BinOp::Add,
+                right: in_front,
+                ..
+            } => operator == BinOp::Add && other.is_none() && is_text(constant_of(in_front)),
+            _ => false,
+        };
+        match operator {
+            BinOp::Add if is_joined && left == inner => inner = outer,
+            BinOp::Add if is_joined => return false,
+            BinOp::Add if right == inner && is_joined_to_text_in_front => return false,
+            BinOp::Add
+            | BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::Pow
+            | BinOp::Shl
+            | BinOp::Shr
+            | BinOp::UShr
+            | BinOp::BitAnd
+            | BinOp::BitOr
+            | BinOp::BitXor => return !are_numbers,
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                return !(are_numbers || (is_text(own) && is_text(other)));
+            }
+            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => return !are_of_one_kind,
+            BinOp::In
+            | BinOp::Instanceof
+            | BinOp::And
+            | BinOp::Or
+            | BinOp::Nullish
+            | BinOp::Comma => return true,
+        }
+    }
+    true
 }
 
 fn find_end_of_function(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> Option<u32> {
@@ -521,7 +619,10 @@ impl Finder<'_, '_> {
             {
                 printed = value;
             }
-            if printed != read {
+            if printed != read
+                && !matches!(hir[printed].kind, ExprKind::Ident(_))
+                && is_printed_where_it_is_read(hir, bound, decisions, read)
+            {
                 let (printed, read) = (hir[printed], hir[read]);
                 self.add(b'o', printed.pos, printed.end, Some(read.pos));
             }

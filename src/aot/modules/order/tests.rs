@@ -318,6 +318,31 @@ fn the_main_entry_point_is_seen_half_done_where_a_package_is_left_out() {
 }
 
 #[test]
+fn an_es_module_that_a_made_name_may_require_during_its_load_is_left_to_the_loader() {
+    let all: &[&str] = &["main.cjs", "root.mjs", "asker.cjs", "asked.mjs"];
+    let rows: [(&str, &[&str]); 3] = [
+        ("require('./asked.mjs');", all),
+        ("require(process.env.NONE || './asked.mjs');", all),
+        ("require(process.env.NONE);", &[]),
+    ];
+    for (asker, left_to_loader) in rows {
+        let files = [
+            ("main.cjs", "require('./root.mjs');"),
+            ("root.mjs", "import './asker.cjs'; import './asked.mjs';"),
+            ("asker.cjs", asker),
+            ("asked.mjs", "import asker from './asker.cjs'; asker;"),
+        ];
+        let found = with_order(&files, |input, order, _| {
+            let marks = &order.parts.is_loaded_by_loader;
+            let is_left = |name: &&str| marks[file_named(input, name).idx()];
+            let names = files.iter().map(|file| file.0);
+            names.filter(is_left).collect::<Vec<_>>()
+        });
+        assert_eq!(found, left_to_loader, "{asker}");
+    }
+}
+
+#[test]
 fn a_site_in_a_branch_exposes_nothing() {
     let files = [
         ("main.cjs", "if (exports.y) require('./a.cjs');"),

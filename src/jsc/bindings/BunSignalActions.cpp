@@ -86,6 +86,15 @@ static SignalHandler callLibcSignal(int signalNumber, SignalHandler handler)
     return findNextDefinition<SignalHandler(int, SignalHandler)>(LibcFunction::Signal)(signalNumber, handler);
 }
 
+extern "C" char __executable_start[];
+extern "C" char _end[];
+
+// Bun's own calls mean the kernel's action.
+static ALWAYS_INLINE bool isInExecutable(void* address)
+{
+    return reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(__executable_start) < static_cast<uintptr_t>(_end - __executable_start);
+}
+
 #else // !DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 
 static void findDefinitionsForSignalHandler() {}
@@ -172,6 +181,18 @@ static bool isHandler(SignalHandlerWithInfo handler, SignalHandler other)
     return reinterpret_cast<SignalHandler>(handler) == other;
 }
 
+// A library may fill the memory that it hands out when a page is first touched. A trap of compiled code is nobody else's to serve.
+static bool mayServeFaultOfCompiledCode(int signalNumber, SignalHandlerWithInfo handler)
+{
+#if DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
+    return signalNumber != SIGILL && !isHandler(handler, SIG_DFL) && !isHandler(handler, SIG_IGN) && !isInExecutable(reinterpret_cast<void*>(handler));
+#else
+    UNUSED_PARAM(signalNumber);
+    UNUSED_PARAM(handler);
+    return false;
+#endif
+}
+
 static void handleAccessFaultSignal(int signalNumber, siginfo_t* info, void* context)
 {
     auto* userContext = static_cast<ucontext_t*>(context);
@@ -182,8 +203,8 @@ static void handleAccessFaultSignal(int signalNumber, siginfo_t* info, void* con
     AccessFaultSignal& signal = accessFaultSignal(signalNumber);
     SignalHandlerWithInfo handler = signal.handler.load(std::memory_order_relaxed);
     int flags = signal.flags.load(std::memory_order_relaxed);
-    // A listener of the program notes the signal and returns, onto the same instruction, for ever.
-    if (isFault && isInCompiledCode(*userContext)) {
+    // Bun's handler for a listener of the program notes the signal and returns, onto the same instruction, for ever.
+    if (isFault && isInCompiledCode(*userContext) && !mayServeFaultOfCompiledCode(signalNumber, handler)) {
         handler = signal.handlerOfEngine;
         flags = signal.flagsOfEngine & ~SA_RESETHAND;
     }
@@ -419,15 +440,6 @@ static void* const replacementsOfLibcFunctions[numberOfLibcFunctions] = {
     reinterpret_cast<void*>(setSignalMaskBits<LibcFunction::Sigblock>),
     reinterpret_cast<void*>(setSignalMaskBits<LibcFunction::Sigsetmask>),
 };
-
-extern "C" char __executable_start[];
-extern "C" char _end[];
-
-// Bun's own calls mean the kernel's action.
-static ALWAYS_INLINE bool isInExecutable(void* address)
-{
-    return reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(__executable_start) < static_cast<uintptr_t>(_end - __executable_start);
-}
 
 #endif // DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 

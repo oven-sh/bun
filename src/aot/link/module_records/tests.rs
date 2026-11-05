@@ -1047,6 +1047,9 @@ fn main_entry_lists_the_default_export_for_serve() {
     let default_read = default_read.expect("the host reads the default export");
     assert_eq!(default_read.builtin, Some(BuiltinId::BunServe));
     assert_eq!(default_read.parameter, 0);
+    let names = default_read.names_looked_for.iter();
+    let names: Vec<&[u8]> = names.map(|&name| program.strings.get(name)).collect();
+    assert_eq!(names, [&b"fetch"[..], b"app"]);
 }
 
 #[test]

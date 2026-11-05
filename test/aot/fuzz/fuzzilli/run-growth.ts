@@ -6,7 +6,7 @@
 //   bun run-growth.ts --bun <the Bun that builds> --work <folder> --finds <folder> [--size 6000] [--most 6] [--shape <name>] [--writes <table>] [--against <earlier table>] [--rise 1.25]
 //
 // It prints a line a shape: the two costs, in millions of instructions where `perf` is there and in milliseconds of processor time elsewhere, and the ratio of what they cost beyond an empty build.
-// What it keeps: <finds>/growth-<shape>/{program.ts at the small size, report.txt}.
+// What it keeps: <finds>/growth-<shape>/{the program at the small size, report.txt}.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -125,16 +125,21 @@ const shapes = [
 const write = (shape: string, n: number) => {
   if (shape in whole) return `${whole[shape][1](Math.round(n * whole[shape][0]))}\nconsole.log(sum);\nexport {};\n`;
   const [maker, user] = shape.split("-");
-  return `${makers[maker](n)}\n${users[user](n)}\nconsole.log(sum);\nexport {};\n`;
+  // These are JavaScript: the checker gives up on a list of thousands of types, and a cast on each of them hides from the compiler what the shape is there to show.
+  return `${makers[maker](n)}\n${users[user](n)}\nconsole.log(sum);\nexport {};\n`.replace(
+    /: (?:any\[\]|any|number)(?=[ ,)=;])/g,
+    "",
+  );
 };
+const extension = (shape: string) => (shape in whole ? "ts" : "js");
 
 const folder = join(work, `growth-${process.pid}`);
 const perf = Bun.which("perf");
 /** What a build costs: millions of instructions where `perf` is there, which are the same from run to run, and milliseconds of processor time elsewhere. */
-async function costOfBuild(text: string) {
+async function costOfBuild(text: string, extension = "ts") {
   rmSync(folder, { recursive: true, force: true });
   mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "program.ts"), text);
+  writeFileSync(join(folder, "program." + extension), text);
   const counted = join(folder, "counted.txt");
   const child = Bun.spawn({
     cmd: [
@@ -145,7 +150,7 @@ async function costOfBuild(text: string) {
         "--compile",
         "--aot",
         "--aot-threads=1",
-        "./program.ts",
+        "./program." + extension,
         "--outfile",
         join(folder, "executable"),
       ],
@@ -173,8 +178,8 @@ const size = Number(options.size);
 const table: string[] = [];
 const empty = await costOfBuild("console.log(0);\nexport {};\n");
 for (const shape of options.shape ? [options.shape] : shapes) {
-  const small = await costOfBuild(write(shape, size));
-  const large = await costOfBuild(write(shape, size * 4));
+  const small = await costOfBuild(write(shape, size), extension(shape));
+  const large = await costOfBuild(write(shape, size * 4), extension(shape));
   table.push([shape, small.toFixed(0), large.toFixed(0)].join("\t"));
   const before = earlier.get(shape);
   const ratio = (large - empty) / (small - empty);
@@ -187,7 +192,7 @@ for (const shape of options.shape ? [options.shape] : shapes) {
   console.log(line + (why ? ` | KEPT: ${why}` : ""));
   if (!why) continue;
   mkdirSync(join(finds, `growth-${shape}`), { recursive: true });
-  writeFileSync(join(finds, `growth-${shape}`, "program.ts"), write(shape, size));
+  writeFileSync(join(finds, `growth-${shape}`, "program." + extension(shape)), write(shape, size));
   writeFileSync(join(finds, `growth-${shape}`, "report.txt"), `growth: ${why}\n${bun}\n${line}\n`);
 }
 if (options.writes) writeFileSync(options.writes, table.join("\n") + "\n");

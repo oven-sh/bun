@@ -14,6 +14,7 @@
 // `--shuffles-costs 50` builds 50 programs of 100 once more under a word that may only change what the code costs: guesses fail unasked, expected types are ignored or shuffled, so are the frequencies of blocks and
 // the choices by cost, Link is given more. An answer that changes there is a miscompilation.
 // `--kin 100` draws 100 programs of 100 as kin (write-kin.ts) of the stored programs under `--stored` (../../parallel), seven of ten from those that changed within `--hours` (2) of the newest.
+// `--changes-draws 30` makes the same small changes to 30 drawn programs of 100.
 // `--together 10` builds ten programs into one executable first, behind an entry that imports them in a row. A build costs about the same for one small program as for ten. Where the company does as
 // `bun <file>` does, all ten count as the same. Where it parts, each member is built alone in the same way. Where none parts alone, members are taken out while the rest still parts, and what is left is kept as
 // `together-<kind>`. Company hides some faults and shows others, so this is a second net beside the first.
@@ -56,6 +57,7 @@ const { values: options } = parseArgs({
     stored: { type: "string", default: process.env.FUZZ_STORED_PROGRAMS ?? "" },
     hours: { type: "string", default: "2" },
     together: { type: "string", default: "1" },
+    "changes-draws": { type: "string", default: "0" },
   },
 });
 const { bun, work, finds } = options as Record<string, string>;
@@ -74,6 +76,7 @@ for (const name of [
   "stored",
   "hours",
   "together",
+  "changes-draws",
 ])
   options[name] = String(options[name]);
 if (!work || !finds) throw new Error("Expected --work and --finds");
@@ -141,6 +144,17 @@ function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: E
   if (/^SIG/.test(ours.end) || Number(ours.end) >= 128) return "signal";
   if (ours.end === plainAgain.end && withoutLayout(ours.stdout) === withoutLayout(plainAgain.stdout))
     return "function text";
+  // Where the first line on which they part is a line of the program itself, `bun <file>` prints the text of a function.
+  const [left, right] = [withoutDetails(ours.stdout).split("\n"), withoutDetails(plainAgain.stdout).split("\n")];
+  const parting = (right[left.findIndex((each, at) => each !== right[at])] ?? "").trim();
+  if (
+    (parting.length > 12 && text.includes(parting)) ||
+    /^(?:async )?function\b.*\{$|^class\b.*\{$|=> \{$/.test(parting)
+  )
+    return "function text";
+  // The text of a function of the library is not in the executable.
+  if (ours.stdout.includes("{ [native code] }") && !plainAgain.stdout.includes("{ [native code] }"))
+    return "function text";
   if (isDocumented(text, ours)) return "documented difference";
   return ours.end !== plainAgain.end ? "exit-code" : "stdout";
 }
@@ -191,7 +205,9 @@ if (Number(options.kin) > 0) {
   for (const name of new Bun.Glob("**/*.{ts,js,mjs,cjs,mts,cts}").scanSync({ cwd: stored })) {
     // The folder may be laid anew while it is read.
     const { mtimeMs = 0, size = Infinity } = statSync(join(stored, name), { throwIfNoEntry: false }) ?? {};
-    if (size < 16_000 && !name.endsWith(".d.ts") && !name.includes(".test.")) changed.set(name, mtimeMs);
+    const isForAnotherProcessor = /^(x64|arm64)-alone\//.test(name) && !name.startsWith(process.arch);
+    if (size < 16_000 && !name.endsWith(".d.ts") && !name.includes(".test.") && !isForAnotherProcessor)
+      changed.set(name, mtimeMs);
   }
   const newest = Math.max(...changed.values());
   pools.all = [...changed.keys()];
@@ -199,7 +215,7 @@ if (Number(options.kin) > 0) {
 }
 /** A stored program that stands alone and prints the same wherever it lies. */
 const standsAlone = (text: string) =>
-  !/from "\.|require\("\.|import\("\.|import "\.|bun:test|Plain Bun prints another output|import\.meta|\.argv|__filename|__dirname|^\/\/ (?:Env|Flags|Options|Arguments|@filename)/m.test(
+  !/from "\.|require\("\.|import\("\.|import "\.|bun:test|Plain Bun prints another output|[Cc]ompiled executable|[Ee]xecutable refuses|[Pp]lain Bun|@ts-expect-error|@ts-ignore|import\.meta|\.argv|\.execPath|Bun\.main|__filename|__dirname|^\/\/ (?:Env|Flags|Options|Arguments|@filename)/m.test(
     text,
   );
 function drawKin() {
@@ -245,6 +261,21 @@ function draw(): Drawn | undefined {
     const kin = drawKin();
     if (kin) return kin;
   }
+  const drawn = drawAScene();
+  // A scene stands where a fault once stood. Its kin stand beside it.
+  if (!drawn || drawn.text.includes("// @filename: ") || Math.random() * 100 >= Number(options["changes-draws"]))
+    return drawn;
+  const kin = writeKin(drawn.text, Math.random);
+  if (!kin.changes.length) return drawn;
+  const name = `a draw ${Bun.hash.crc32(drawn.text).toString(16)}`;
+  return {
+    ...drawn,
+    text: `${kin.text}\n// kin of ${name}: ${kin.changes.join(", ")}\n`,
+    isKin: true,
+    from: { name, text: drawn.text },
+  };
+}
+function drawAScene(): Drawn | undefined {
   if (given) {
     const name = given.shift();
     return name === undefined
@@ -274,7 +305,7 @@ function draw(): Drawn | undefined {
   const canBeAScript = !/^\s*(?:import|export)\b|\bawait\b/m.test(own) && (staysAScript || !files.length);
   if (canBeAScript && (staysAScript || Math.random() < 0.25))
     return { text: script, extension: options.draws === "ts" ? ".cts" : ".cjs" };
-  return staysAScript ? draw() : { text, extension: "." + options.draws };
+  return staysAScript ? drawAScene() : { text, extension: "." + options.draws };
 }
 
 /** One executable for several programs: an entry that imports them in a row, each in a folder of its own. */
@@ -312,6 +343,8 @@ const waiting: Drawn[] = [];
 // How deep calls can go is asked of the executable as users build it, with nothing beside the program.
 const asksForDepth = /^function visit_\d+\(depth/m;
 const endsTheProcess = /process\.(?:exit|abort|kill|reallyExit|on|once)\b|uncaughtException|unhandledRejection/;
+// When an `import()` settles against what a module beside it awaits is an order of loads.
+const loadsLate = /\bimport\(/;
 
 /** So many programs that `bun <file>` runs to their end, as one. What cannot stand in company waits to be judged alone. */
 async function drawTogether(size: number): Promise<Drawn | undefined> {
@@ -321,12 +354,12 @@ async function drawTogether(size: number): Promise<Drawn | undefined> {
     if (!program) break;
     lay(program);
     const plain = await spawn([bun, "program" + program.extension], 20);
-    if (plain.end === "0" && !endsTheProcess.test(program.text) && !asksForDepth.test(program.text))
-      members.push(program);
+    const canStandInCompany = ![endsTheProcess, asksForDepth, loadsLate].some(pattern => pattern.test(program.text));
+    if (plain.end === "0" && canStandInCompany) members.push(program);
     else if (!program.isKin) waiting.push(program);
     else {
       counts.taken++;
-      add(plain.end === "0" ? "a kin that ends the process" : "a kin that bun <file> does not run to its end");
+      add(plain.end === "0" ? "a kin that cannot stand in company" : "a kin that bun <file> does not run to its end");
     }
   }
   return members.length > 1 ? together(members) : (members[0] ?? waiting.shift());

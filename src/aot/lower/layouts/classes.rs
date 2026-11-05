@@ -25,6 +25,8 @@ use crate::lower::{CheckerTypeId, FileLowering, SourceKind, class, module};
 
 type Supertypes = SmallVec<[LayoutId; 4]>;
 
+const MOST_PARENTS_THAT_A_CLASS_HAS_ROOM_FOR: usize = 4;
+
 impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn class_binding(&self, class: ClassId) -> Binding {
         Binding::Symbol(self.bound.declared_symbol(Decl::Class(class)))
@@ -512,6 +514,32 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    fn find_several_parents(&mut self, derived: ClassRef) -> Vec<ClassRef> {
+        let Some(extends) = self.hir[derived.class].extends.some() else {
+            return Vec::new();
+        };
+        let Ok(ty) = self.queries.predicted_expression_type(extends) else {
+            return Vec::new();
+        };
+        let members = match self.queries.type_shape(ty).map(|shape| shape.kind) {
+            Ok(ShapeKind::Union(members)) => members,
+            Ok(ShapeKind::ClassConstructor(parent)) if parent != derived => return vec![parent],
+            _ => return Vec::new(),
+        };
+        let parents =
+            members
+                .iter()
+                .filter_map(|&member| match self.queries.type_shape(member).ok()?.kind {
+                    ShapeKind::ClassConstructor(parent) if parent != derived => Some(parent),
+                    _ => None,
+                });
+        let parents: Vec<ClassRef> = parents.collect();
+        match parents.len() > MOST_PARENTS_THAT_A_CLASS_HAS_ROOM_FOR {
+            true => Vec::new(),
+            false => parents,
+        }
+    }
+
     fn compute_static_fields(&mut self, layout: LayoutId, class: ClassRef) -> Vec<StaticField> {
         let hir = self.hir;
         let shape = self.queries.class_shape(class);
@@ -664,6 +692,14 @@ pub(in crate::lower) fn define_class_layout(
     };
     let base = base.filter(|&it| it != layout);
     let mut supertypes: Supertypes = base.into_iter().collect();
+    if base.is_none() && !is_parent_left_out {
+        for parent in file.find_several_parents(reference) {
+            let parent_layout = file.class_layout(parent);
+            if is_defined(file, parent) && !supertypes.contains(&parent_layout) {
+                supertypes.push(parent_layout);
+            }
+        }
+    }
     for written in file.hir.ids(node.implements) {
         if let Some(ty) = file.queries.written_type(written).written()
             && let Some(implemented) = file.find_layout_of_written_type(ty)

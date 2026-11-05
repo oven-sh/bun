@@ -241,7 +241,7 @@ impl JSBundleCompletionTask {
                     Some(compile.executable_path.list.as_slice())
                 },
                 root_dir: destination.root_dir.fd,
-                env: &mut self.env,
+                env: &raw mut *self.env,
                 windows: &destination.windows,
                 exec_argv: &compile.exec_argv.list,
                 flags: destination.flags,
@@ -251,7 +251,7 @@ impl JSBundleCompletionTask {
                 assets: &compile.assets,
                 embeds_source_maps: self.config.source_map != options::SourceMapOption::None,
             },
-            log: &mut self.log,
+            log: &raw mut self.log,
         };
 
         let compiled = bun_removable_features::call_removable_or!(

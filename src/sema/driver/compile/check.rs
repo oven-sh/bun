@@ -29,7 +29,6 @@ pub fn check_and_lower<'s, T: Send>(
         files_to_lower,
         lower,
         note_commit,
-        None,
         &Passes {
             count: PassCount::Exactly(1),
             before_next: &|| {},
@@ -55,7 +54,6 @@ pub fn check_whole_files<'s>(
             requested: &|_| Requested::All,
             after_file: None,
             after_commit: &|_| {},
-            beside_file: None,
             frees_tree: &|_| false,
             is_last_pass: &|| false,
             note_cycles_entered: None,
@@ -85,7 +83,6 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     files_to_lower: &[FileId],
     lower: &(dyn Fn(&mut Checker<'_, 's>, FileId) -> Option<T> + Sync),
     note_commit: &(dyn Fn(FileId, &T) + Sync),
-    prepare: Option<&(dyn Fn(FileId) + Sync)>,
     passes: &Passes<'_>,
 ) -> CheckedProgram<T> {
     let files = loaded.files();
@@ -109,13 +106,6 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         .collect();
     files.let_trees_go_behind(&to_check);
     let passes_left = AtomicUsize::new(usize::MAX);
-    let prepare_lowered_file = |file: FileId| {
-        if let Some(prepare) = prepare
-            && slots[file.idx()].is_some()
-        {
-            prepare(file);
-        }
-    };
     let work = FileWork {
         requested: &requested,
         after_file: Some(&|checker, file| {
@@ -132,7 +122,6 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
                 note_commit(file, product);
             }
         },
-        beside_file: prepare.map(|_| &prepare_lowered_file as &(dyn Fn(FileId) + Sync)),
         frees_tree: &|_| true,
         is_last_pass: &|| passes_left.load(Ordering::Relaxed) == 0,
         note_cycles_entered: Some(&|file, cycles| {

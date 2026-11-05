@@ -274,7 +274,6 @@ pub(crate) struct FileWork<'a, 's> {
     pub requested: &'a (dyn Fn(FileId) -> Requested + Sync),
     pub after_file: Option<&'a (dyn Fn(&mut Checker<'_, 's>, FileId) + Sync)>,
     pub after_commit: &'a (dyn Fn(FileId) + Sync),
-    pub beside_file: Option<&'a (dyn Fn(FileId) + Sync)>,
     pub frees_tree: &'a (dyn Fn(FileId) -> bool + Sync),
     pub is_last_pass: &'a (dyn Fn() -> bool + Sync),
     pub note_cycles_entered: Option<&'a (dyn Fn(FileId, CyclesEntered) + Sync)>,

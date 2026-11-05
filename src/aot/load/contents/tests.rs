@@ -2232,6 +2232,7 @@ fn builtin_writes_of_a_test_run_merge_into_one_list() {
             describe_names_added(files, program),
             ["ObjectPrototype.alpha", "ObjectPrototype.zeta"]
         );
+        assert!(program.can_replace_builtins());
         let unlocked = mutabilities_of(files, "reads.ts", BuiltinId::ArrayFrom);
         assert!(!unlocked.is_empty());
         assert!(
@@ -2250,9 +2251,35 @@ fn builtin_writes_of_a_test_run_merge_into_one_list() {
     load(&executable(&[("main.ts", writes)]), |loaded| {
         assert!(loaded.contents.replaced_builtins.is_empty());
         assert!(loaded.contents.names_added_to_builtins.is_empty());
+        assert!(!loaded.contents.can_replace_builtins());
         let written = mutabilities_of(files_of(loaded), "main.ts", BuiltinId::ArrayFrom);
         assert!(written.iter().all(|&it| it == Mutability::AlwaysLocked));
     });
+}
+
+#[test]
+fn a_name_that_a_test_adds_to_a_builtin_counts_as_a_replacement_for_the_library() {
+    let head = "import { test } from \"bun:test\";\ntest(\"t\", () => {});\n";
+    for (write, can_replace) in [
+        ("", false),
+        ("const own = { emitClose: false };\n", false),
+        ("Object.prototype.emitClose = false;\n", true),
+        (
+            "Object.defineProperty(Object.prototype, \"_writableState\", { get() {} });\n",
+            true,
+        ),
+        ("Function.prototype.extra = 1;\n", true),
+    ] {
+        let text = format!("{head}{write}");
+        load(&test_run(&[("a.test.ts", &text)]), |loaded| {
+            assert!(loaded.contents.replaced_builtins.is_empty(), "{write}");
+            assert_eq!(
+                loaded.contents.can_replace_builtins(),
+                can_replace,
+                "{write}"
+            );
+        });
+    }
 }
 
 #[test]

@@ -79,7 +79,9 @@ pub(crate) struct ExecutableSettings<'r> {
     pub(crate) target: &'r CompileTarget,
     pub(crate) executable_path: Option<&'r [u8]>,
     pub(crate) root_dir: Fd,
-    pub(crate) env: &'r mut bun_dotenv::Loader,
+    /// The transpiler holds the same pointer and reads through it while the build runs. As with
+    /// `CompileRequest::log`, whoever needs the loader makes a reference for that use alone.
+    pub(crate) env: *mut bun_dotenv::Loader,
     pub(crate) windows: &'r WindowsOptions,
     pub(crate) exec_argv: &'r [u8],
     pub(crate) flags: Flags,
@@ -95,7 +97,9 @@ pub(crate) struct CompileRequest<'r, 'a> {
     pub(crate) entry_points: &'r [&'r [u8]],
     pub(crate) bundler: Option<BundlerInputs<'a>>,
     pub(crate) executable: ExecutableSettings<'r>,
-    pub(crate) log: &'r mut bun_ast::Log,
+    /// The transpiler holds the same pointer, and its resolver and bundler write through it while
+    /// the build runs. Whoever writes here makes a reference for that write alone.
+    pub(crate) log: *mut bun_ast::Log,
 }
 
 pub(crate) struct CompileOutcome {

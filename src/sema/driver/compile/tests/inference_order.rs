@@ -1,4 +1,4 @@
-use super::support::{check, with_program};
+use super::support::{check, check_only, with_program};
 use bun_sema::check::aot::{
     BuiltinTypeSymbols, NamedValue, NamedValues, QueryInputs, QueryStatistics,
 };
@@ -471,6 +471,37 @@ fn types_in_a_circle_across_files_do_not_depend_on_the_threads() {
     for attempt in 0..20 {
         let on_four_threads = ask_for_results_of_a_circle_across_files(4);
         assert_eq!(on_one_thread, on_four_threads, "attempt {attempt}");
+    }
+}
+
+#[test]
+fn a_ring_through_the_type_of_an_assertion_is_answered_alike_whoever_enters_it_first() {
+    let files = [
+        (
+            "main.ts",
+            "import { use } from \"./early\";\nimport { make } from \"./gadget\";\nexport const used = use(make());\n",
+        ),
+        (
+            "early.ts",
+            "export function use(gadget: Shop.Gadget) {\n  return gadget.start();\n}\n",
+        ),
+        (
+            "gadget.ts",
+            "import keys from \"./keys\";\nconst kFirst: typeof keys.kFirst = keys.kFirst;\n\
+             declare global {\n  namespace Shop {\n    interface Base { start(): number }\n    \
+             interface Gadget extends Base { [kFirst]?: number }\n  }\n}\n\
+             export function make(): Shop.Gadget {\n  return { [kFirst]: 1, start() { return 2; } };\n}\n",
+        ),
+        (
+            "keys.ts",
+            "export default {} as unknown as {\n  \
+             readonly kFirst: unique symbol;\n  startOfGadget: Shop.Gadget[\"start\"] | undefined;\n};\n",
+        ),
+    ];
+    for threads in [1, 4] {
+        with_program(&files, &["./main.ts"], threads, |program| {
+            assert_eq!(check_only(program).codes(), [0; 0], "{threads} threads");
+        });
     }
 }
 

@@ -341,8 +341,7 @@ impl Build<'_> {
                     starts_of_workers: &starts_of_workers,
                     beside: &beside,
                 };
-                let lists_program_files =
-                    self.options.aot.loads_code_from_disk && !self.options.aot.runs_in_place;
+                let lists_program_files = !self.options.aot.runs_in_place;
                 steps.end_with(|| format!("{project_name}: what is asked ahead of the reach"));
                 let (program_files, (left_out, reached)) = run_steps_beside(
                     &beside,

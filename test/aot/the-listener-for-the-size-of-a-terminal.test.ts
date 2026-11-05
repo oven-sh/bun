@@ -1,6 +1,6 @@
 // process.stdout and process.stderr over a terminal lay a listener for "SIGWINCH" on `process`, as node's do. In a compiled program
-// native code lays it, by what it finds as process.on. A program can list the listener, remove it, be told of it and put a function
-// of its own in the place of process.on: each of these answers as `bun run` does.
+// that asks little of a stream native code lays it. A program can list the listener, remove it, be told of it and put a function
+// of its own in the place of process.on, which gets `process` as `this`: each of these answers as `bun run` does.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
@@ -10,11 +10,13 @@ import { describe, test } from "./supported";
 const env = { ...bunEnv, NO_COLOR: "1" };
 
 // The report of an error shows lines of the source and a stack, and an executable has other paths.
+// Of a call in the text of its own library plain Bun quotes nothing: "5 is not a function". A compiled program quotes it: "process.on is not a function. (In 'process.on()', 'process.on' is 5)".
 const withoutPlaces = (shown: string) =>
   shown
     .replaceAll("\r\n", "\n")
     .split("\n")
     .filter(line => line !== "" && !/^\s*\d+ \| |^\s*\^+$|^\s+at |^Bun v/.test(line))
+    .map(line => line.replace(/^TypeError: .*$/, "TypeError"))
     .join("\n");
 
 async function shownInTerminal(cmd: string[], cwd: string) {
@@ -53,6 +55,24 @@ console.log(notes.join("\\n"));
 `,
     shown: "on SIGWINCH function true 2\ncount 1",
   },
+  "a function under process.on reads a member off `this` that nothing else in the program names": {
+    source: `process.on = function (this: NodeJS.Process, event: string) {
+  console.log(event, typeof this.allowedNodeEnvironmentFlags.has);
+  return this;
+} as never;
+process.stdout.write("written\\n");
+`,
+    shown: "SIGWINCH function\nwritten",
+  },
+  "so does a function that is laid above `process`": {
+    source: `(process as never as { __proto__: NodeJS.Process }).__proto__.on = function (this: NodeJS.Process, event: string) {
+  console.log(event, typeof this.finalization.register);
+  return this;
+};
+process.stderr.write("written\\n");
+`,
+    shown: "SIGWINCH function\nwritten",
+  },
   "a getter that the program has put under process.on is read": {
     source: `const notes: string[] = [];
 const original = process.on;
@@ -68,12 +88,12 @@ console.log(notes.join("\\n"));
 `,
     shown: "read true\ncount 1",
   },
-  "what is no function under process.on is reported as it is by `bun run`": {
+  "what is no function under process.on is reported as a TypeError, and the stream is undefined from then on": {
     source: `process.on = 5 as never;
 const stream = process.stdout;
 console.log(typeof stream, process.listenerCount("SIGWINCH"));
 `,
-    shown: "TypeError: 5 is not a function\nundefined 0",
+    shown: "TypeError\nundefined 0",
     exitCode: 1,
   },
   "a listener for newListener is told, in front of the count": {

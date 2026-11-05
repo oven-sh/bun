@@ -13,14 +13,15 @@ const broughtByIncludesOfHeader = new Set(["Image"]);
 
 type Use = { name: string; at: string };
 
-function usesOutsideGuard(file: string, text: string): Use[] {
+type Region = "with" | "without" | "either";
+
+function readRegions(text: string): { line: string; number: number; region: Region }[] {
   const onlyWithCompiler = new Set<string>();
   const asks = (condition: string) =>
     /(?<!!\s*)\bENABLE\(AOT\)/.test(condition) ||
     [...onlyWithCompiler].some(macro => new RegExp(`(?<!!\\s*)\\b${macro}\\b`).test(condition));
-  const regions: ("with" | "without" | "either")[] = [];
-  const aliases = new Set<string>();
-  const uses: Use[] = [];
+  const regions: Region[] = [];
+  const lines: { line: string; number: number; region: Region }[] = [];
   text.split("\n").forEach((line, index) => {
     const directive = /^\s*#\s*(if|ifdef|ifndef|elif|else|endif|define)\b(.*)$/.exec(line);
     const isWithCompiler = regions.includes("with");
@@ -44,8 +45,18 @@ function usesOutsideGuard(file: string, text: string): Use[] {
         return;
       }
     }
-    if (isWithCompiler) return;
-    const at = `${file}:${index + 1}`;
+    const region = isWithCompiler ? "with" : regions.includes("without") ? "without" : "either";
+    lines.push({ line, number: index + 1, region });
+  });
+  return lines;
+}
+
+function usesOutsideGuard(file: string, text: string): Use[] {
+  const aliases = new Set<string>();
+  const uses: Use[] = [];
+  for (const { line, number, region } of readRegions(text)) {
+    if (region === "with") continue;
+    const at = `${file}:${number}`;
     const code = line.replace(/\/\/.*$/, "");
     const alias = /\bnamespace\s+(\w+)\s*=\s*(?:JSC::)?AOT(?:::\w+)*\s*;/.exec(code);
     if (alias) aliases.add(alias[1]);
@@ -55,7 +66,7 @@ function usesOutsideGuard(file: string, text: string): Use[] {
       const names = path.split("::").filter(Boolean);
       for (const name of broughtByIncludesOfHeader.has(names[0]) ? names.slice(0, 1) : names) uses.push({ name, at });
     }
-  });
+  }
   return uses;
 }
 
@@ -112,3 +123,38 @@ test("every name of JSC::AOT that is used outside #if ENABLE(AOT) has a stand-in
   expect(found).toBeGreaterThan(50);
   expect(lacking.sort()).toEqual([]);
 });
+
+// The linker's half: a function that Rust imports in every build needs a definition in every build. Some linkers drop the
+// callers first and never ask; others stop.
+test("every function that Rust imports in every build is defined outside #if ENABLE(AOT) too", async () => {
+  const definedIn = new Map<string, Set<Region>>();
+  for await (const rel of new Glob("**/*.{h,cpp,mm}").scan({ cwd: path.join(repoRoot, "src") })) {
+    const file = path.join("src", rel).replaceAll("\\", "/");
+    if (file.startsWith("src/aot/")) continue;
+    const text = readFileSync(path.join(repoRoot, file), "utf8");
+    if (!text.includes('extern "C"')) continue;
+    for (const { line, region } of readRegions(text)) {
+      const name = /^\s*extern "C"\s+(?!\{)[^;(]*?\b(\w+)\s*\(/.exec(line)?.[1];
+      if (!name || line.trimEnd().endsWith(";")) continue;
+      if (!definedIn.has(name)) definedIn.set(name, new Set());
+      definedIn.get(name)!.add(region);
+    }
+  }
+  const isInEveryBuild = (file: string) => !file.startsWith("src/aot/") || /^src\/aot\/(interface|absent)\//.test(file);
+  const lacking: string[] = [];
+  for await (const rel of new Glob("**/*.rs").scan({ cwd: path.join(repoRoot, "src") })) {
+    const file = path.join("src", rel).replaceAll("\\", "/");
+    if (!isInEveryBuild(file)) continue;
+    const text = readFileSync(path.join(repoRoot, file), "utf8");
+    if (!text.includes('extern "C" {')) continue;
+    for (const [, block] of text.matchAll(/extern "C" \{([\s\S]*?)\n\s*\}/g)) {
+      for (const [, name] of block.matchAll(/\bfn\s+(\w+)/g)) {
+        const regions = definedIn.get(name);
+        if (regions?.size === 1 && regions.has("with")) lacking.push(`${file}: ${name}`);
+      }
+    }
+  }
+  const onBothSides = [...definedIn.values()].filter(regions => regions.has("with") && regions.has("without")).length;
+  expect(onBothSides).toBeGreaterThan(30);
+  expect(lacking.sort()).toEqual([]);
+}, 60_000);

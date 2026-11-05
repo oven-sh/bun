@@ -1,7 +1,7 @@
 // As TypeScript's scanner is written: the variables are declared without a value, the text is read through a closure, and the flags are written behind the step.
-// The loop of skipComment() is built twice: in its typed copy pos and end are asked for an int32 where the turn first uses them, and where that fails the turn begins again in the other copy.
+// The loop of skipComment() is built twice: in front of its typed copy pos and end are asked for an int32, and where that fails the other copy runs. pos comes round as a parameter of the head: no turn begins again.
 // STATISTIC: LoopsBuiltTwice >= 1
-// STATISTIC: TurnsThatBeginAgain >= 1
+// STATISTIC: TurnsThatBeginAgain = 0
 function isLineBreak(ch: number): boolean { return ch === 10 || ch === 13 || ch === 8232 || ch === 8233; }
 function createScanner() {
   var text: string; var pos: number; var end: number; var lines = 0; var tokenFlags: number;

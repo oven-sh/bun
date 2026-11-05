@@ -600,7 +600,9 @@ impl<'a> Build<'a> {
                             && (options.aot.only_tests_load_code_from_disk
                                 || contents.embeds_addon_as_file)),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
-                    can_replace_builtins: !contents.replaced_builtins.is_empty(),
+                    can_replace_builtins: contents.can_replace_builtins(),
+                    hands_process_to_code_laid_above: can_load_code_at_run_time
+                        || contents.hands_process_to_code_laid_above,
                 },
             ),
             code: CodeOptions {

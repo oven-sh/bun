@@ -83,6 +83,7 @@ pub fn parse_option_words<'a>(
             "erase-types" => aot.erases_types = true,
             "builtin-modules" => aot.omits_builtin_modules = false,
             "obfuscates" => aot.obfuscates = true,
+            "keeps-names" => aot.keeps_names = true,
             "entry-points-run-again" => aot.entry_points_run_again = true,
             "runs-in-place" => aot.runs_in_place = true,
             "discards-first-visits" => aot.discards_first_visits = true,

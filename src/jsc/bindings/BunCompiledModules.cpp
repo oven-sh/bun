@@ -713,21 +713,28 @@ struct RequireHandedToLoaderOfProgram {
 static constinit thread_local RequireHandedToLoaderOfProgram s_requireHandedToLoaderOfProgram;
 
 static void requireCompiledModuleInto(Zig::GlobalObject*, JSCommonJSModule* target, AOT::ModuleID, JSString* key);
+static JSObject* attachRequireFunction(VM&, Zig::GlobalObject*, JSCommonJSModule*, JSString* path);
+static void layOnModuleObject(Zig::GlobalObject*, JSCommonJSModule*, JSString* path, AOT::ModuleID, OptionSet<AOT::ModuleObjectTrait>, AOT::ModuleObjects& out);
+static bool layExportsVariableIfModuleObjectOfFile(Zig::GlobalObject*, JSCommonJSModule*, AOT::ModuleID);
 
 bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path)
 {
     RequireHandedToLoaderOfProgram handed = s_requireHandedToLoaderOfProgram;
     if (!handed.target || handed.target != target || *handed.path != path)
         return false;
+    // `bun run` leaves the object as it is: JSCommonJSModule::evaluate() runs nothing into an object that has been evaluated.
+    if (target->hasEvaluated)
+        return true;
     if (target->m_overriddenCompile) {
         AOT::throwTextRefusedToCompileOfProgram(globalObject, AOT::ModuleID(handed.module));
         return false;
     }
     SetForScope nothingIsHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram {});
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    // Ahead of the body, as in `bun run`: a file that throws is not run again by a second call.
+    target->hasEvaluated = true;
     requireCompiledModuleInto(globalObject, target, AOT::ModuleID(handed.module), jsString(getVM(globalObject), path));
     RETURN_IF_EXCEPTION(scope, false);
-    target->hasEvaluated = true;
     return true;
 }
 
@@ -742,18 +749,35 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
     auto scope = DECLARE_THROW_SCOPE(vm);
     // In a test run willStoreLoaderOfExtension() has taken the files of the kind out of the program.
     if (JSValue loader = reloadsFilesFromDisk() ? JSValue() : loaderOfProgramForFile(globalObject, path)) {
+        JSString* key = jsString(vm, path);
+        // What the loader lays on the object the file finds on its `module`, as in `bun run`.
+        auto traits = AOT::traitsOfModuleObjectYetToBeMade(globalObject, *module);
+        // Until the file runs it is an object of require() like any other: `exports` is the empty object that lies there, and it is a child of whoever asked.
+        if (traits) {
+            AOT::ModuleObjects objects;
+            objects.module = target;
+            objects.require = attachRequireFunction(vm, globalObject, target, key);
+            RETURN_IF_EXCEPTION(scope, false);
+            AOT::takeModuleObject(globalObject, *module, objects);
+        }
         SetForScope isHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram { target, &path, module->index() });
         MarkedArgumentBuffer arguments;
         arguments.append(target);
-        arguments.append(jsString(vm, path));
+        arguments.append(key);
         JSC::profiledCall(globalObject, ProfilingReason::API, loader, getCallData(loader), target, arguments);
-        RETURN_IF_EXCEPTION(scope, false);
+        if (scope.exception()) [[unlikely]] {
+            // The object leaves the cache. Where the file has not run, or may run again, the next require() makes its `module`.
+            if (traits)
+                AOT::giveBackModuleObject(globalObject, *module);
+            return false;
+        }
         // The object stays in the cache, as in `bun run`: the loader is called once for a file.
         return true;
     }
     JSString* key = jsString(vm, path);
     requireCompiledModuleInto(globalObject, target, *module, key);
     RETURN_IF_EXCEPTION(scope, false);
+    target->hasEvaluated = true;
     // A module of the executable is in no cache. The next require() of the name asks the engine again, which answers what the module exports then.
     JSValue held = globalObject->requireMap()->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
@@ -781,6 +805,13 @@ static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJ
         else
             globalObject->requireMap()->remove(globalObject, key);
         RETURN_IF_EXCEPTION(scope, void());
+    }
+    bool readsExportsOffVariable = layExportsVariableIfModuleObjectOfFile(globalObject, target, module);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (readsExportsOffVariable) {
+        scope.release();
+        AOT::requireModule(globalObject, module, referrer);
+        return;
     }
     RELEASE_AND_RETURN(scope, requireInto(globalObject, target, module, referrer));
 }
@@ -826,11 +857,17 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
         return false;
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     // `bun run` runs the text once more, into `target`. The image has the file once, so what has run cannot run beside itself.
-    JSValue exports = AOT::runFileForDefaultLoader(globalObject, *module);
+    bool readsExportsOffVariable = layExportsVariableIfModuleObjectOfFile(globalObject, target, *module);
     RETURN_IF_EXCEPTION(scope, false);
-    target->setExportsObject(exports);
+    // Ahead of the body, as in `bun run`: a file that throws is not run again into the same object.
     target->hasEvaluated = true;
-    return true;
+    JSValue exports = AOT::runFileForDefaultLoader(globalObject, *module);
+    bool hasThrown = scope.exception();
+    if (readsExportsOffVariable)
+        return !hasThrown;
+    // `bun run` runs the text into the object's own `exports`: what the file had laid there when it threw is there.
+    target->setExportsObject(hasThrown ? AOT::moduleExports(globalObject, *module) : exports);
+    return !hasThrown;
 }
 
 static void takeOutOfProgram(Zig::GlobalObject* globalObject, const String& key, void (*takeOut)(JSGlobalObject*, AOT::ModuleID))
@@ -1103,12 +1140,48 @@ static void createModuleObject(JSGlobalObject* realm, JSString* path, AOT::Modul
         exportsAsData = JSValue();
     JSCommonJSModule* module = JSCommonJSModule::create(globalObject, path, exportsAsData, !traits.contains(AOT::ModuleObjectTrait::IsESModule), JSValue());
     RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, layOnModuleObject(globalObject, module, path, compiled, traits, out));
+}
+
+static bool layExportsVariableOnModuleObject(Zig::GlobalObject* globalObject, JSCommonJSModule* module)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Identifier& exportsName = WebCore::clientData(vm)->builtinNames().exportsPublicName();
+    // putDirectCustomAccessor() is for a name that the object does not have yet. The object that require() has made has it.
+    if (JSValue laid = module->getDirect(vm, exportsName)) {
+        if (laid.isCustomGetterSetter())
+            return true;
+        // The program may have made the property one that cannot be deleted.
+        bool isDeleted = JSCell::deleteProperty(module, globalObject, exportsName);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isDeleted)
+            return false;
+    }
+    auto* accessors = CustomGetterSetter::create(vm, getterExportsOfCompiledModule, setterExportsOfCompiledModule);
+    module->putDirectCustomAccessor(vm, exportsName, accessors, PropertyAttribute::CustomValue | 0);
+    return true;
+}
+
+// From the moment the file runs, the `exports` of its own `module` is the variable of the program.
+static bool layExportsVariableIfModuleObjectOfFile(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module)
+{
+    if (AOT::moduleObjectOverExportsVariableIfMade(globalObject, module) != target)
+        return false;
+    target->compiledModule = module.index();
+    return layExportsVariableOnModuleObject(globalObject, target);
+}
+
+static void layOnModuleObject(Zig::GlobalObject* globalObject, JSCommonJSModule* module, JSString* path, AOT::ModuleID compiled, OptionSet<AOT::ModuleObjectTrait> traits, AOT::ModuleObjects& out)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     module->compiledModule = compiled.index();
     if (traits.contains(AOT::ModuleObjectTrait::IsMain))
         module->m_id.set(vm, module, jsString(vm, String("."_s)));
     if (traits.contains(AOT::ModuleObjectTrait::HasExportsVariable)) {
-        auto* accessors = CustomGetterSetter::create(vm, getterExportsOfCompiledModule, setterExportsOfCompiledModule);
-        module->putDirectCustomAccessor(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), accessors, PropertyAttribute::CustomValue | 0);
+        layExportsVariableOnModuleObject(globalObject, module);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     out.module = module;
     if (traits.contains(AOT::ModuleObjectTrait::IsNoCommonJSFile))
@@ -1728,13 +1801,19 @@ extern "C" void Bun__AOT__willRunEntryPointAgain(JSC::JSGlobalObject* globalObje
 
 extern "C" void Bun__AOT__willRunPreloads(JSC::JSGlobalObject* globalObject)
 {
-    if (Bun::hasCompiledModules() && Bun::requireCacheListsCompiledFiles())
+    if (!Bun::hasCompiledModules())
+        return;
+    JSC::AOT::willRunPreloads(globalObject);
+    if (Bun::requireCacheListsCompiledFiles())
         JSC::AOT::willRunCodeThatKeepsFiles(globalObject);
 }
 
 extern "C" void Bun__AOT__didRunPreloads(JSC::JSGlobalObject* globalObject)
 {
-    if (Bun::hasCompiledModules() && Bun::requireCacheListsCompiledFiles())
+    if (!Bun::hasCompiledModules())
+        return;
+    JSC::AOT::didRunPreloads(globalObject);
+    if (Bun::requireCacheListsCompiledFiles())
         JSC::AOT::keepFilesThatHaveRun(globalObject);
 }
 
@@ -1915,6 +1994,7 @@ extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
 extern "C" void Bun__AOT__willRunEntryPointAgain(JSC::JSGlobalObject*, const BunString*) {}
 extern "C" void Bun__AOT__willRunPreloads(JSC::JSGlobalObject*) {}
 extern "C" void Bun__AOT__didRunPreloads(JSC::JSGlobalObject*) {}
+extern "C" void Bun__AOT__setPluginsSilent(bool) {}
 extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString*) { return false; }
 extern "C" bool Bun__AOT__mayHoldPathStartingWith(BunAOTBytes) { return false; }
 extern "C" bool Bun__AOT__isLeftToCodeOutsideImage(const BunString*, const BunString*) { return false; }

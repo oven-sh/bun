@@ -208,18 +208,25 @@ function onIncomingMessageResumeNodeHTTPResponse(this: $Node.IncomingMessage) {
   if (handle && !this.destroyed) handle.resume();
 }
 
+// Compiled ahead of time, a store that names the property makes room for it in every request, though an accessor above takes what is stored.
+function storeUnderName(message: $Node.IncomingMessage, name: string, value: unknown) {
+  (message as any)[name] = value;
+}
+
 function IncomingMessage(
   this: $Node.IncomingMessage,
   socket?: $Node.HttpSocket | null | typeof kHandle,
-  nativeUrl?: string,
-  nativeMethod?: string,
-  nativeHandle?: $Node.NodeHTTPResponse,
-  nativeHasBody?: boolean,
-  nativeSocket?: $Node.HttpServerSocket,
-  nativeHighWaterMark?: number,
+  nativeUrl: string | undefined = undefined,
+  nativeMethod: string | undefined = undefined,
+  _nativeHeaders: undefined = undefined,
+  _nativeRawHeaders: undefined = undefined,
+  nativeHandle: $Node.NodeHTTPResponse | undefined = undefined,
+  nativeHasBody: boolean | undefined = undefined,
+  nativeSocket: $Node.HttpServerSocket | undefined = undefined,
+  nativeHighWaterMark: number | undefined = undefined,
 ) {
   const isFromNativeServer = socket === kHandle;
-  const isUnreadFromNativeServer = isFromNativeServer && nativeHighWaterMark !== undefined;
+  const isUnreadFromNativeServer = isFromNativeServer && nativeHighWaterMark !== undefined && this._construct == null;
   if (isUnreadFromNativeServer) {
     // The stores of below for this one case, in their order, with nothing between them: behind each choice and each call a compiler ahead of time asks anew whether the object is still as it was made.
     const rawTrailers: string[] = [];
@@ -298,7 +305,7 @@ function IncomingMessage(
   this.httpVersionMajor = null;
   this.httpVersionMinor = null;
   this.httpVersion = null;
-  this.rawHeaders = [];
+  storeUnderName(this, "rawHeaders", []);
   this.joinDuplicateHeaders = false;
   this.upgrade = null;
   this.url = "";
@@ -669,7 +676,7 @@ function _addHeaderLines(this: $Node.IncomingMessage, headers: string[] | undefi
       this[kTrailersCount] = n;
       dest = this[kTrailers];
     } else {
-      this.rawHeaders = headers;
+      storeUnderName(this, "rawHeaders", headers);
       this[kHeadersCount] = n;
       dest = this[kHeaders];
     }
@@ -1081,7 +1088,6 @@ function handleToDestroyUnwatched(req: $Node.IncomingMessage, state: $Node.Reada
       req.destroy !== destroy ||
       req._destroy !== incomingMessageDestroy ||
       req._readableState !== state ||
-      !readsItsSocketUnseen(req) ||
       !isUnheard(req, "end") ||
       !readsReadableEndedThroughAccessor(req) ||
       !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
@@ -1126,10 +1132,16 @@ function mayDumpInPlace(req: $Node.IncomingMessage): boolean {
   }
 }
 
-function beginDump(req: $Node.IncomingMessage): void {
+// A listener for `removeListener` runs in the midst. Where it has touched the request, the request is resumed as _dump() resumes it, and no half of the dump is left to do.
+function beginDump(req: $Node.IncomingMessage): boolean {
   req._dumped = true;
   req.removeAllListeners("data");
-  req._readableState[kState] = kFlagsResumed | 0;
+  if (!advanceFlags(req._readableState, kFlagsUntouched, kFlagsResumed)) {
+    ("unlikely");
+    req.resume();
+    return false;
+  }
+  return true;
 }
 
 function closeUnwatched(self: $Node.IncomingMessage) {
@@ -1160,7 +1172,6 @@ function takeCloseTick(req: $Node.IncomingMessage): boolean {
     tick.next !== ring.write ||
     tick.callback !== closeUnwatched ||
     tick.first !== req ||
-    req.listenerCount !== listenerCount ||
     !isUnheard(req, "close")
   ) {
     return false;
@@ -1184,6 +1195,7 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
       (flags & ~kDecoding) !== kBodyResumed ||
       state.length !== 0 ||
       $isProxyObject(req) ||
+      !(req instanceof IncomingMessage) ||
       req._read !== incomingMessageRead
     )
       return false;
@@ -1461,6 +1473,7 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
     if (
       (state[kState] & kDestroysItselfMask) !== kDestroysItself ||
       $isProxyObject(req) ||
+      !(req instanceof IncomingMessage) ||
       req._destroy !== incomingMessageDestroy
     )
       return false;
@@ -1473,7 +1486,6 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
       req.destroy !== destroy ||
       req._readableState !== state ||
       !readsReadableEndedThroughAccessor(req) ||
-      !readsItsSocketUnseen(req) ||
       !ticksAreUnseen()
     ) {
       ("unlikely");
@@ -1533,7 +1545,6 @@ function staysUnseen(req: $Node.IncomingMessage): boolean {
       req._dumped &&
       !req._consuming &&
       !req[eofInProgress] &&
-      readsItsSocketUnseen(req) &&
       keepsItsMethods(req)
     );
   } catch {
@@ -1606,11 +1617,6 @@ function readsTheMethodsOfItsClass(req: $Node.IncomingMessage): boolean {
     readsReadableEndedThroughAccessor(req) &&
     hasNoListenerAndNoWritableSide(req)
   );
-}
-
-function readsItsSocketUnseen(req: $Node.IncomingMessage): boolean {
-  const socket = req.socket;
-  return !socket || http.requestRoad.readsDestroyedUnseen!(socket);
 }
 
 function endUnseen(req: $Node.IncomingMessage): void {

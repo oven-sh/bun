@@ -183,13 +183,13 @@ describe.concurrent("--obfuscate", () => {
   );
 
   test(
-    "--sourcemap=external builds what --obfuscate builds",
+    "--obfuscate --sourcemap=external builds what --obfuscate builds",
     () =>
       slot(async () => {
         using dir = tempDir("aot-obfuscate-sourcemap-external", program);
         const folder = String(dir);
         const obfuscated = await compile(folder, "first/app", buildFlags.obfuscate);
-        const withMap = await compile(folder, "second/app", "--sourcemap=external");
+        const withMap = await compile(folder, "second/app", buildFlags.obfuscate, "--sourcemap=external");
         expect(readFileSync(withMap + ".map", "utf8")).toBe(readFileSync(obfuscated + ".map", "utf8"));
         expect(readFileSync(withMap).equals(readFileSync(obfuscated))).toBe(true);
       }),
@@ -406,7 +406,7 @@ outermostCaller(process.argv.length);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "",
       stderr:
-        "error: --aot-symbols: cannot be used with --obfuscate or --sourcemap=external, which keep function names out of the executable\n",
+        "error: --aot-symbols: cannot be used with --obfuscate or --sourcemap=external, which keep the names of stack frames out of the executable\n",
       exitCode: 1,
     });
   });

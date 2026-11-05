@@ -100,7 +100,7 @@ impl Build<'_> {
         let views = loaded.projects.as_ref().map(|_, project| project.view());
         let runs_tests = self.options.aot.runs_tests;
         let hands_code_over_beside_program = self.hands_code_over_beside_program;
-        let (texts, (functions, added)) = run_steps_beside(
+        let (mut texts, (functions, added)) = run_steps_beside(
             &beside,
             &mut steps,
             [
@@ -252,6 +252,7 @@ impl Build<'_> {
                 )
             },
         );
+        texts.set_written_names(core::mem::take(&mut self.written_function_names));
         let (entry_points, folders, listed_modules) = added;
         let (functions, functions_without_code) = functions;
         self.leftovers.push(leftovers);

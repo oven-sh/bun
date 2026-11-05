@@ -337,6 +337,28 @@ fn map_lists_sources_names_and_mappings() {
 }
 
 #[test]
+fn short_name_is_listed_as_it_is_written() {
+    let records = [
+        named(record(0, 0, 0, 0), 0, 2),
+        named(record(1, 0, 0, 7), 2, 3),
+    ];
+    let fixture = ReportFixture::new(ResultRecords {
+        text: b"Ddmap",
+        obfuscated_sites: &records,
+        ..ResultRecords::default()
+    });
+    let mut texts = texts();
+    texts.set_written_names(b"cr\0NotFound\0Dd\0handler\0".to_vec());
+    let executable = Executable {
+        file_name: b"app",
+        debug_id: None,
+    };
+    let map = fixture.with_input(|input| write(input.engine, &texts, executable));
+    let map = BString::from(map.expect("no file has changed"));
+    assert!(map.contains_str(r#""names":["handler","map"]"#), "{map}");
+}
+
+#[test]
 fn named_function_without_text_has_a_line_of_its_own() {
     let records = [
         named(record(0, 0, PROGRAM, LINE_1_COLUMN_5), 0, 6),

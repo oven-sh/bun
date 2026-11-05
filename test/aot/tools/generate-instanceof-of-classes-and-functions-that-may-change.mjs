@@ -38,7 +38,7 @@ const deeds = {
 const places = {
   "in-a-loop": `function count(list) { let hits = 0; for (let i = 0; i < list.length; i++) if (list[i] instanceof Shelf) hits += 1 << i; return hits; }`,
   "outside-loops": `function is(value) { return value instanceof Shelf; }\nfunction count(list) { let hits = 0; for (let i = 0; i < list.length; i++) if (is(list[i])) hits += 1 << i; return hits; }`,
-  "in-a-function-called-out-of-sight": `function is(value) { return value instanceof Shelf; }
+  "in-a-function-called-out-of-sight": `function is(value) { return value instanceof Shelf; }\nglobalThis.asked = is;\nfunction count(list) { let hits = 0; for (let i = 0; i < list.length; i++) if (globalThis.asked(list[i])) hits += 1 << i; return hits; }`,
   "with-the-values-known": `function count(list) { let hits = 0; const a = new Shelf(1), b = new Crate(2); if (a instanceof Shelf) hits += 1; if (b instanceof Shelf) hits += 2; for (let i = 0; i < list.length; i++) if (list[i] instanceof Shelf) hits += 4 << i; return hits; }`,
 };
 const times = {

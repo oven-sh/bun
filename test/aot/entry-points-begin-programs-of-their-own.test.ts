@@ -240,6 +240,28 @@ worker.onmessage = async event => {
     }
   }, 600_000);
 
+  // The exports of these CommonJS files stay in compiled code, and such a file is passed to the host only as what starts the realm. The host asks for the preloads first.
+  test("a CommonJS entry point of a Worker runs behind the CommonJS files that the option preload names", async () => {
+    const folder = write(join(root, "preloads-in-commonjs"), {
+      "main.cjs": `const worker = new Worker("./worker.cjs", { preload: ["./first.cjs", "./second.cjs"] });\nworker.onmessage = event => {\n  console.log(event.data);\n  if (event.data === "the entry ran") worker.terminate();\n};\nworker.onerror = event => console.log("error:", event.message);\n`,
+      "first.cjs": `postMessage("the first preload ran");\n`,
+      "second.cjs": `postMessage("the second preload ran");\n`,
+      "worker.cjs": `postMessage("the entry ran");\n`,
+    });
+    const executable = await build(
+      folder,
+      ["./main.cjs", "./worker.cjs", "./first.cjs", "./second.cjs"],
+      "preloads-in-commonjs",
+    );
+    const ran = await spawned([executable], root, bunEnv);
+    expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+      stdout: "the first preload ran\nthe second preload ran\nthe entry ran\n",
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  }, 600_000);
+
   test("each is configured by the tsconfig.json that its entry point finds", async () => {
     const options = { target: "esnext", module: "esnext", moduleResolution: "bundler" };
     const folder = write(join(root, "configured"), {

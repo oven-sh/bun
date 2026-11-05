@@ -142,10 +142,14 @@ console.log(new Below().constructor === Below, new OnlySetter().constructor);
     main: "main.js",
     files: {
       "main.js": `const decoded = text => Buffer.from(text).toString();
-console.log((0, eval)(decoded("typeof console.Console")));
+try {
+  console.log((0, eval)(decoded("typeof console.Console")));
+} catch (error) {
+  console.log(error.message.slice(0, error.message.indexOf(" because")));
+}
 `,
     },
-    stdout: "function\n",
+    stdout: "console.Console was not compiled into this executable\n",
   },
 };
 

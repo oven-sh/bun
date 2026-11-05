@@ -47,6 +47,7 @@ pub(crate) struct LoweredUnit {
     pub functions_lowered: u64,
     pub values_lowered: u64,
     pub known_helpers: KnownHelpersLowered,
+    pub written_function_names: Vec<u8>,
     pub throws_at_load: bool,
 }
 
@@ -141,7 +142,6 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                     lowered.unit.note_commit(self.inputs.said_types);
                 }
             },
-            None,
             &driver::Passes {
                 count: driver::PassCount::Exactly(1),
                 before_next: &|| {},
@@ -502,6 +502,8 @@ impl Build<'_> {
             let known_helpers = lowered.known_helpers;
             statistics.count(StatisticId::KnownHelperFunctions, known_helpers.functions);
             statistics.count(StatisticId::KnownHelperCalls, known_helpers.calls);
+            self.written_function_names
+                .extend_from_slice(&lowered.written_function_names);
             lowered_units.push(lowered.unit);
         }
         extend_from_boxes(units, lowered_units, &in_parallel);
@@ -535,7 +537,7 @@ impl Build<'_> {
             embeds_function_text: self.options.aot.embeds_function_source,
             removable: self.options.removable,
             minifies_identifiers: self.options.minifies_identifiers,
-            obfuscates: self.options.aot.obfuscates,
+            obfuscates: self.options.aot.hides_names(),
             counts_executions: self.options.aot.counts_executions,
             runs_tests: self.options.load.runs_tests,
         }
@@ -875,6 +877,7 @@ fn finish_lowered_file(keys: &KeyContext<'_>, lowered: LoweredFile) -> LoweredUn
         diagnostics,
         queries,
         known_helpers,
+        written_function_names,
     } = lowered;
     let functions = fragment.functions.iter().map(|(_, function)| function);
     let (mut functions_lowered, mut values_lowered) = (0, 0);
@@ -889,6 +892,7 @@ fn finish_lowered_file(keys: &KeyContext<'_>, lowered: LoweredFile) -> LoweredUn
         functions_lowered,
         values_lowered,
         known_helpers,
+        written_function_names,
         throws_at_load: false,
     }
 }

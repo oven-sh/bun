@@ -216,42 +216,24 @@ function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions
     ("unlikely");
     return initializeProxyReceiver(this, opts);
   }
-  const events = this._events;
-  const hasNoEvents = events === undefined || events === Object.$getPrototypeOf(this)._events;
-  const hasNoMaxListeners = this._maxListeners == null;
-  const capturesRejections = opts?.captureRejections;
-  if (hasNoMaxListeners && !capturesRejections && !EventEmitterPrototype[kCapture]) {
-    if (hasNoEvents) {
-      this._events = Object.create(null);
-      this._eventsCount = 0;
-      this[kShapeMode] = false;
-      this._maxListeners = undefined;
-      this[kCapture] = false;
-    } else {
-      // Preallocated `_events` (streams).
-      this[kShapeMode] = true;
-      this._maxListeners = undefined;
-      this[kCapture] = false;
-    }
-    return;
-  }
-
-  if (hasNoEvents) {
+  if (this._events === undefined || this._events === Object.$getPrototypeOf(this)._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
     this[kShapeMode] = false;
   } else {
+    // Preallocated `_events` (streams).
     this[kShapeMode] = true;
   }
 
-  if (hasNoMaxListeners) this._maxListeners = undefined;
-  if (capturesRejections) {
+  this._maxListeners ??= undefined;
+  if (opts?.captureRejections) {
     ("unlikely");
     // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
-    validateBoolean(opts!.captureRejections, "options.captureRejections");
-    this[kCapture] = !!opts!.captureRejections;
+    validateBoolean(opts.captureRejections, "options.captureRejections");
+    this[kCapture] = !!opts.captureRejections;
     storeEmitWithRejectionCapture(this);
   } else {
+    this[kCapture] = EventEmitterPrototype[kCapture];
     const capture = EventEmitterPrototype[kCapture];
     this[kCapture] = capture;
     if (capture) {
@@ -539,10 +521,12 @@ const emitWithRejectionCapture = function emit(this: $Node.EventEmitter, type: $
 
 // Only an emitter that captures rejections has an own `emit`. Compiled ahead of time, a store that names the property makes room for it in
 // every emitter, and every call of `emit` asks whether it is there.
-const propertiesOfCapturingEmitter = { emit: emitWithRejectionCapture };
+function storeUnderName(emitter: $Node.EventEmitter, name: string, method: unknown) {
+  (emitter as any)[name] = method;
+}
 function storeEmitWithRejectionCapture(emitter: $Node.EventEmitter) {
   if (IS_COMPILED_AHEAD_OF_TIME) {
-    Object.assign(emitter, propertiesOfCapturingEmitter);
+    storeUnderName(emitter, "emit", emitWithRejectionCapture);
   } else {
     emitter.emit = emitWithRejectionCapture;
   }
@@ -1384,7 +1368,10 @@ Object.assign(EventEmitter, {
 // Compiled ahead of time, a native function does the same three steps: the compiler gives up on `process`, and keeps all that it can do,
 // where a statement asks what stands above it. A test that has replaced a built-in could tell the two apart.
 if (IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS) {
-  $newCppFunction("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom", 1)(EventEmitterPrototype);
+  // From here on an accessor that a program lays on this prototype answers the names that `process` lacks, with `process` as `this`.
+  // Where the program asks for such a name the compiler is told that `process` goes out of its sight; the native function does not look at it.
+  const processIfReachable = PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES ? process : undefined;
+  $newCppFunction("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom", 1)(EventEmitterPrototype, processIfReachable);
 } else {
   try {
     const processPrototype = Object.getPrototypeOf(process);

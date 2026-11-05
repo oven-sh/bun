@@ -1,10 +1,11 @@
-use bun_sema::atom::{Interner, known};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, FnOwner, Parent};
 use bun_sema::erasure::ReplacedText;
 use bun_sema::fold::{Constant, Decision, Decisions};
 use bun_sema::hir::{
-    BinOp, Branches, ExprId, ExprKind, File, FnBody, FnKind, PropKind, StmtId, StmtKind, UnOp,
-    end_of_expr, is_parenthesized, start_inside_parentheses, start_of,
+    BinOp, Branches, ExprId, ExprKind, File, FnBody, FnKind, IdList, PatId, PatKind, PropKind,
+    StmtId, StmtKind, UnOp, VarKind, end_of_expr, is_parenthesized, start_inside_parentheses,
+    start_of,
 };
 use bun_sema::hir_from_data::DataValue;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -14,6 +15,7 @@ pub(super) fn find_text_replaced_by_bundling<'s>(
     bound: &Bound<'s>,
     decisions: &Decisions<'s>,
     atoms: &Interner<'s>,
+    values_first_in_text: Vec<(ExprId, u8)>,
 ) -> Vec<ReplacedText> {
     let mut finder = Finder {
         hir,
@@ -25,6 +27,7 @@ pub(super) fn find_text_replaced_by_bundling<'s>(
         printed_as_constants: FxHashMap::default(),
         opened: FxHashSet::default(),
         defined_at_heads: FxHashSet::default(),
+        values_first_in_text,
     };
     finder.add_branches_of_statements();
     let folded = finder.find_operators_printed_as_one_operand();
@@ -46,6 +49,7 @@ struct Finder<'a, 's> {
     printed_as_constants: FxHashMap<ExprId, Constant>,
     opened: FxHashSet<ExprId>,
     defined_at_heads: FxHashSet<ExprId>,
+    values_first_in_text: Vec<(ExprId, u8)>,
 }
 
 impl Finder<'_, '_> {
@@ -65,6 +69,7 @@ impl Finder<'_, '_> {
 
     fn add_branches_of_statements(&mut self) {
         let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
+        let declared = self.find_names_declared_in_branches();
         for branch in decisions.dead_stmts() {
             let Parent::Stmt(statement) = bound.parent_of_stmt(branch) else {
                 continue;
@@ -75,18 +80,136 @@ impl Finder<'_, '_> {
             if decisions.is_dead_stmt(statement) {
                 continue;
             }
-            if branch == no {
+            let names = declared.get(&branch);
+            if branch == no && names.is_none() && self.can_lose_else(statement, yes) {
                 self.leave_out(hir[yes].loc.end, hir[no].loc.end);
                 continue;
             }
-            let (start, end) = (hir[yes].start, hir[yes].loc.end);
-            match hir[yes].kind {
-                StmtKind::Block(_) => self.leave_out(start + 1, end - 1),
-                _ if hir.text.get(end as usize - 1) == Some(&b';') => {
+            let declaration = names.map_or(Vec::new(), |names| {
+                let names: Vec<&[u8]> = names.iter().map(|&name| self.atoms.bytes(name)).collect();
+                [b"var ", &names.join(&b", "[..])[..]].concat()
+            });
+            let (start, end) = (hir[branch].start, hir[branch].loc.end);
+            match hir[branch].kind {
+                StmtKind::Block(_) => {
+                    if !declaration.is_empty() {
+                        let declaration = [b" ", &declaration[..], b"; "].concat();
+                        self.replace(start + 1, start + 1, declaration.into_boxed_slice());
+                    }
+                    self.leave_out(start + 1, end - 1);
+                }
+                _ if self.byte_at(end - 1) == Some(b';') => {
+                    self.replace(start, start, declaration.into_boxed_slice());
                     self.leave_out(start, end - 1);
                 }
                 _ => {}
             }
+        }
+    }
+
+    fn find_names_declared_in_branches(&self) -> FxHashMap<StmtId, Vec<Atom>> {
+        let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
+        let mut declared: FxHashMap<StmtId, Vec<Atom>> = FxHashMap::default();
+        for statement in decisions.dead_stmts() {
+            let StmtKind::Var(declarations) = hir[statement].kind else {
+                continue;
+            };
+            let mut patterns: Vec<PatId> = (declarations.iter())
+                .filter(|&declaration| hir[declaration].kind == VarKind::Var)
+                .map(|declaration| hir[declaration].pat)
+                .collect();
+            if patterns.is_empty() {
+                continue;
+            }
+            let Some(branch) = self.find_branch_around(statement) else {
+                continue;
+            };
+            let names = declared.entry(branch).or_default();
+            patterns.reverse();
+            while let Some(pattern) = patterns.pop() {
+                match hir[pattern].kind {
+                    PatKind::Ident(name) if !names.contains(&name) => names.push(name),
+                    PatKind::Ident(_) | PatKind::Missing => {}
+                    PatKind::Object(properties) => {
+                        patterns.extend(properties.iter().rev().map(|it| hir[it].value));
+                    }
+                    PatKind::Array(elements) => {
+                        patterns.extend(elements.iter().rev().map(|it| hir[it].pat));
+                    }
+                }
+            }
+        }
+        for hoisted in bound.runtime.annex_b_functions() {
+            if let FnOwner::Stmt(statement) = bound.fns[hoisted.function.idx()].owner
+                && decisions.is_dead_stmt(statement)
+                && let Some(branch) = self.find_branch_around(statement)
+            {
+                let name = bound.symbol(hoisted.var_symbol).name;
+                let names = declared.entry(branch).or_default();
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        declared
+    }
+
+    fn find_branch_around(&self, mut statement: StmtId) -> Option<StmtId> {
+        while let Parent::Stmt(parent) = self.bound.parent_of_stmt(statement) {
+            if !self.decisions.is_dead_stmt(parent) {
+                return matches!(self.hir[parent].kind, StmtKind::If { .. }).then_some(statement);
+            }
+            statement = parent;
+        }
+        None
+    }
+
+    fn can_lose_else(&self, mut statement: StmtId, yes: StmtId) -> bool {
+        let hir = self.hir;
+        while let Parent::Stmt(parent) = self.bound.parent_of_stmt(statement)
+            && matches!(hir[parent].kind, StmtKind::If { no, .. } if no == statement)
+        {
+            statement = parent;
+        }
+        self.is_ended(yes) && self.find_statements_around(statement).is_some()
+    }
+
+    fn is_ended(&self, mut statement: StmtId) -> bool {
+        let hir = self.hir;
+        loop {
+            statement = match hir[statement].kind {
+                StmtKind::If { yes, no, .. } => no.some().unwrap_or(yes),
+                StmtKind::For { body, .. }
+                | StmtKind::ForIn { body, .. }
+                | StmtKind::ForOf { body, .. }
+                | StmtKind::While { body, .. }
+                | StmtKind::Labeled { body, .. }
+                | StmtKind::With { body, .. } => body,
+                StmtKind::Block(_)
+                | StmtKind::Fn(_)
+                | StmtKind::Class(_)
+                | StmtKind::Switch { .. }
+                | StmtKind::Try { .. } => return true,
+                _ => return self.byte_at(hir[statement].loc.end - 1) == Some(b';'),
+            };
+        }
+    }
+
+    fn find_statements_around(&self, statement: StmtId) -> Option<IdList<StmtId>> {
+        let hir = self.hir;
+        match self.bound.parent_of_stmt(statement) {
+            Parent::Stmt(parent) => match hir[parent].kind {
+                StmtKind::Block(statements) => Some(statements),
+                StmtKind::Switch { cases, .. } => (cases.iter().map(|case| hir[case].body))
+                    .find(|&body| hir.ids(body).any(|it| it == statement)),
+                _ => None,
+            },
+            Parent::FnBody(function) => match hir[function].body {
+                FnBody::Block(statements) => Some(statements),
+                _ => None,
+            },
+            Parent::File => Some(hir.body),
+            _ => None,
         }
     }
 
@@ -169,14 +292,73 @@ impl Finder<'_, '_> {
 
     fn add_parentheses_at_heads(&mut self, folded: &[ExprId]) {
         let decided = self.decisions.decided().iter();
-        let defined = decided.filter(|entry| matches!(entry.1, Decision::Data(_)));
+        let defined = decided.filter(|entry| match entry.1 {
+            Decision::Data(_) | Decision::Constant(Constant::String(_)) => true,
+            Decision::Constant(Constant::Number(number)) => number < 0.0,
+            _ => false,
+        });
+        let values: Vec<ExprId> = self.values_first_in_text.iter().map(|it| it.0).collect();
         let mut passed = FxHashSet::default();
         let heads: Vec<(ExprId, bool)> = (folded.iter().copied())
             .chain(defined.map(|entry| entry.0))
+            .chain(values)
             .filter_map(|expression| self.find_head_that_starts_with(expression, &mut passed))
             .collect();
-        for (head, is_statement) in heads {
+        for &(head, is_statement) in &heads {
             self.add_parentheses_at_head(head, is_statement);
+        }
+        for (head, is_statement) in heads {
+            if is_statement {
+                self.end_statement_in_front(head);
+            }
+        }
+    }
+
+    fn end_statement_in_front(&mut self, head: ExprId) {
+        let hir = self.hir;
+        let Parent::Stmt(statement) = self.bound.parent_of_expr(head) else {
+            return;
+        };
+        let Some(statements) = self.find_statements_around(statement) else {
+            return;
+        };
+        let is_joined = match self.find_first_byte(head) {
+            Some(b'"' | b'\'') => true,
+            Some(b'(' | b'[' | b'`' | b'+' | b'-' | b'/') => {
+                let in_front = hir.ids(statements).take_while(|&it| it != statement);
+                let in_front = in_front.filter(|&it| !hir.is_erased_statement(it)).last();
+                in_front.is_some_and(|it| !self.is_ended(it))
+            }
+            _ => false,
+        };
+        if is_joined {
+            let start = start_of(hir, head);
+            self.replace(start, start, Box::new(*b";"));
+        }
+    }
+
+    fn find_first_byte(&self, mut first: ExprId) -> Option<u8> {
+        let hir = self.hir;
+        loop {
+            if is_parenthesized(hir, first) || self.opened.contains(&first) {
+                return Some(b'(');
+            }
+            let values = &self.values_first_in_text;
+            if let Some(kept) = self.find_operand_kept(first) {
+                first = kept;
+            } else if let Ok(index) = values.binary_search_by_key(&first, |it| it.0) {
+                return Some(values[index].1);
+            } else if matches!(hir[first].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
+                && let Some(printed) = self.print(self.decisions.decision(first))
+            {
+                return printed
+                    .first()
+                    .map(|&byte| if byte == b'{' { b'(' } else { byte });
+            } else if let Some(operand) = find_first_operand(hir, first) {
+                first = operand;
+            } else {
+                return self.byte_at(start_inside_parentheses(hir, first));
+            }
         }
     }
 

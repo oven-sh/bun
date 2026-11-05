@@ -760,36 +760,11 @@ fn is_shared_library_name(name: &[u8]) -> bool {
     !version.is_empty() && version.iter().all(is_version_byte)
 }
 
-#[cfg(target_os = "linux")]
-const ADDRESS_OF_PROGRAMS: usize = 0x3000_0000_0000;
 #[cfg(unix)]
 const ALIGNMENT_OF_PROGRAMS: usize = 64 * 1024;
 
 #[cfg(unix)]
 fn reserve_range_of_programs(size: usize) -> Option<usize> {
-    let anonymous = libc::MAP_PRIVATE | libc::MAP_ANON;
-    #[cfg(target_os = "linux")]
-    {
-        let flags = anonymous | libc::MAP_FIXED_NOREPLACE;
-        // SAFETY: a new mapping: the flag refuses a place where something stands.
-        let range = unsafe {
-            libc::mmap(
-                ADDRESS_OF_PROGRAMS as *mut _,
-                size,
-                libc::PROT_NONE,
-                flags,
-                -1,
-                0,
-            )
-        };
-        if range as usize == ADDRESS_OF_PROGRAMS {
-            return Some(ADDRESS_OF_PROGRAMS);
-        }
-        if range != libc::MAP_FAILED {
-            // SAFETY: the mapping of the call above, which nothing has seen.
-            unsafe { libc::munmap(range, size) };
-        }
-    }
     let size = size + ALIGNMENT_OF_PROGRAMS;
     // SAFETY: a new mapping, which nothing else refers to.
     let range = unsafe {
@@ -797,7 +772,7 @@ fn reserve_range_of_programs(size: usize) -> Option<usize> {
             core::ptr::null_mut(),
             size,
             libc::PROT_NONE,
-            anonymous,
+            libc::MAP_PRIVATE | libc::MAP_ANON,
             -1,
             0,
         )
@@ -843,16 +818,6 @@ pub enum SourcePathKind {
 }
 
 impl StandaloneModuleGraph {
-    pub fn address_of_program(below: usize) -> Option<u64> {
-        #[cfg(target_os = "linux")]
-        return Some((ADDRESS_OF_PROGRAMS + below) as u64);
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = below;
-            None
-        }
-    }
-
     /// `descriptor` holds the result of `to_graph_bytes` and stays open: the engine maps the code from it.
     pub fn from_descriptor(descriptor: Fd) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
         Self::from_descriptor_at(descriptor, 0)
@@ -2148,9 +2113,7 @@ pub(crate) mod tests {
             assert_eq!(graph.err(), Some(CORRUPTED));
         }
 
-        let bytes = with_request(&folder, true, |request| {
-            to_graph_bytes(request, None).unwrap()
-        });
+        let bytes = with_request(&folder, true, |request| to_graph_bytes(request).unwrap());
         let path = folder.write("graph", &bytes);
         let descriptor = bun_sys::open(&path, bun_sys::O::RDONLY, 0).unwrap();
         let graph = StandaloneModuleGraph::from_descriptor(descriptor).unwrap();

@@ -483,26 +483,6 @@ const computedOnce = [
 // Programs read these to find out which runtime they are on. The compiler folds those reads (src/aot/load/locked_builtin_defines.rs), so they are locked.
 const runtimeIdentity = ["isBun", "release", "versions"];
 
-// Every `get` and `getIfPropertyExists` on the object in BunProcess.cpp and ZigGlobalObject.cpp.
-const lookedUpByNativeCode = [
-  "_fatalException",
-  "_kill",
-  "argv",
-  "emit",
-  "env",
-  "execArgv",
-  "nextTick",
-  "noDeprecation",
-  "on",
-  "reallyExit",
-  "stderr",
-  "stdin",
-  "stdout",
-  "throwDeprecation",
-];
-// It asks whether _fatalException can be called, and whether each of the other two is true.
-const onlyInspectedByNativeCode = ["_fatalException", "noDeprecation", "throwDeprecation"];
-
 export default b.declarations(
   b.namespace(
     "process",
@@ -705,8 +685,6 @@ export default b.declarations(
     },
     {
       table: b.staticTable("src/jsc/bindings/BunProcess.cpp", "processObjectTable"),
-      namesReadByNativeCode: lookedUpByNativeCode,
-      namesOnlyInspectedByNativeCode: onlyInspectedByNativeCode,
     },
   ),
   b.namespace("process.report", {

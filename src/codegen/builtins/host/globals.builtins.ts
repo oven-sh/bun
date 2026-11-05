@@ -127,8 +127,8 @@ const converted = [b.runs("ToPrimitive")];
 const stringOrStringObject = b.union(b.string, b.instance("String"));
 const membersInspected = (...names: readonly string[]) => [b.runs(b.named(...names)), b.membersOnlyInspected];
 
-// The message of an error about a refused value prints the value the way console.log does.
-const describedAfterReading = (...names: readonly string[]) => [b.printedByFormatter(...names)];
+// The message of an error about a refused value reads its constructor.name, or prints it the way console.log does.
+const describedAfterReading = (...names: readonly string[]) => [b.printedByFormatter("constructor", ...names)];
 const describedInErrorMessage = describedAfterReading();
 
 const refusal = (operand: string, implementation: b.ImplementationSpec = b.hostCall) =>
@@ -1329,6 +1329,46 @@ const textAtPointer = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
+// builtins/Glob.ts: each hands its operand to a native method that lies on the prototype under a private symbol (glob.rs scan() | scan_sync()), and answers the object of a generator
+// function of its own. The operand is undefined, null, a text (the folder) or a dictionary; native code copies what it reads of it, keeps nothing and calls nothing of the library.
+// What the object yields goes through `yield*` over a list of texts, so through the iterator of lists as the program has left it: the row says nothing of it.
+const optionsOfScan = ["onlyFiles", "throwErrorOnBrokenSymlink", "followSymlinks", "absolute", "cwd", "dot"];
+const scansFolder = (name: string, made: b.TableType) => {
+  const scans = {
+    this: b.instance("Glob"),
+    returns: made,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    reads: externalState,
+    writes: externalState,
+    implementation: b.compiled("builtins/Glob", name),
+  } satisfies b.FunctionField;
+  return [
+    {
+      ...scans,
+      args: { folder: b.union(b.string, b.instance("String")).nullable },
+      uses: { this: b.inspected, folder: converted },
+    },
+    // What is neither a text nor an object is refused.
+    {
+      ...scans,
+      args: { options: b.union(b.bool, b.f64, b.bigint, b.symbol) },
+      returns: b.never,
+      uses: { this: b.inspected, options: b.inspected },
+    },
+    // A member is read through the prototype chain, and a String object under `cwd` is converted.
+    {
+      ...scans,
+      args: { options: b.dictionary(optionsOfScan) },
+      uses: {
+        this: b.inspected,
+        options: [b.readsContents(), b.runsTransitively("ToPrimitive", b.named(...optionsOfScan))],
+      },
+    },
+  ] satisfies b.FunctionField[];
+};
+
 // constructDNSObject in BunObject.cpp puts them on Bun.dns. Each answers a promise of the records.
 const queriesOfDNS = [
   "lookupService",
@@ -1734,6 +1774,8 @@ export default b.declarations(
     writes: externalState,
     implementation: { how: "CachedGetter", cppClass: "Bun::Bindgen::Generated::JSFFI", member: "m_symbolsValue" },
   }),
+  b.method("%Glob%.prototype.scan", scansFolder("scan", b.instance("AsyncGenerator"))),
+  b.method("%Glob%.prototype.scanSync", scansFolder("scanSync", b.instance("Generator"))),
   b.namespace("Bun.dns", {
     ...Object.fromEntries(["ADDRCONFIG", "ALL", "V4MAPPED"].map(name => [name, b.property(b.f64)])),
     ...Object.fromEntries(queriesOfDNS.map(name => [name, answering(promiseOf(b.plainData))])),
@@ -1854,9 +1896,6 @@ export default b.declarations(
   b.class("Performance", {
     extends: "EventTarget",
     instanceCppClass: b.cppClass("JSPerformance"),
-    // JSPerformance.cpp and Performance.cpp look up no property of `performance`. createPerformance() of builtins/useFakeTimers.ts lists the names and reads under none.
-    // node:perf_hooks lays timerify, eventLoopUtilization and nodeTiming here.
-    namesReadByNativeCodeOnPrototype: [],
     proto: {
       timeOrigin: {
         this: timeline,

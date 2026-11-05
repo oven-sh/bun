@@ -65,6 +65,13 @@ const standardStreamModulesThatTestsCanWatch = standardStreamModules.map(load =>
   ...load,
   when: b.whenTestsReplaceBuiltins,
 }));
+// Over a terminal a standard output lays a listener for "SIGWINCH" by process.on(). The whole stream has the call in its text. The light streams leave it to native code, which nobody follows:
+// so they are made only where what native code finds under the name is the method of native code.
+const whenProgramLaysItsOwnOn = b.whenProgramStores("%EventEmitter%.prototype.on");
+const modulesOfWholeOutputStream = [
+  ...standardStreamModulesThatTestsCanWatch,
+  ...standardStreamModules.map(load => ({ ...load, when: whenProgramLaysItsOwnOn })),
+];
 
 const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadSpec[]>> = {
   "node:fs/promises": evaluates("internal/fifo"),
@@ -81,14 +88,14 @@ const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadS
     },
   ],
   "process.openStdin": standardStreamModules,
-  "console._stderr": standardStreamModulesThatTestsCanWatch,
-  "console._stdout": standardStreamModulesThatTestsCanWatch,
-  "process.stderr": standardStreamModulesThatTestsCanWatch,
+  "console._stderr": modulesOfWholeOutputStream,
+  "console._stdout": modulesOfWholeOutputStream,
+  "process.stderr": modulesOfWholeOutputStream,
   "process.stdin": [
     ...standardStreamModulesThatTestsCanWatch,
     ...standardStreamModules.map(load => ({ ...load, when: b.whenProgramStores("process.nextTick") })),
   ],
-  "process.stdout": standardStreamModulesThatTestsCanWatch,
+  "process.stdout": modulesOfWholeOutputStream,
 };
 
 const pluginFunctionsOfBuild = functionsIn(
@@ -254,6 +261,8 @@ const outputStreams = [
   lightOutputStreams,
   { ...wholeOutputStream(1), when: b.whenTestsReplaceBuiltins },
   { ...wholeOutputStream(2), when: b.whenTestsReplaceBuiltins },
+  { ...wholeOutputStream(1), when: whenProgramLaysItsOwnOn },
+  { ...wholeOutputStream(2), when: whenProgramLaysItsOwnOn },
 ];
 
 const needsWholeInputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeInputStream");
@@ -425,8 +434,9 @@ const eventTargetSources = [
 
 const nodeCryptoBinding = ["native:Cpp:node_crypto_binding.cpp:createNodeCryptoBinding"];
 
-// The run time reports a promise that is rejected without a handler, and one that gets its handler afterwards.
-const promises = ["Promise"];
+// The run time warns of a promise that is rejected without a handler, and of one that gets its handler afterwards, only where `--unhandled-rejections` is set. No text can name this entry: the build names it for the option.
+const warningsOfRejections = "%WarningsOfRejections%";
+const promises = [warningsOfRejections];
 
 // The overload for a delay that fits a timer says that it runs no code.
 const timersWithOtherDelays = ["setInterval", "setTimeout"].map(path => ({ path, when: b.whenCallRunsOtherCode }));
@@ -803,6 +813,7 @@ const undeclaredNativeCode = "%UndeclaredNativeCode%";
 
 export default b.declarations(
   b.namespace(undeclaredNativeCode, {}, { callsFunctions: warningFunctionsOfUndeclaredCode }),
+  b.namespace(warningsOfRejections, {}, { listsAllMembers: true }),
   ...nativeCalls,
   callsOfInspect,
   Object.entries(loadedModulesByPath).flatMap(([path, loads]) => b.extend(path, { loads })),

@@ -208,6 +208,7 @@ const mayDumpInPlace = http.requestRoad.mayDumpInPlace!;
 const beginDump = http.requestRoad.beginDump!;
 const makeExchange = http.responseRoad.makeExchange!;
 const storeHeader = http.responseRoad.storeHeader!;
+const settleLeniency = http.responseRoad.settleLeniency!;
 const spillHeaders = http.responseRoad.spillHeaders!;
 const spillHeadersReachedThrough = http.responseRoad.spillHeadersReachedThrough!;
 const hasHeaderUnderKey = http.responseRoad.hasHeaderUnderKey!;
@@ -1197,7 +1198,7 @@ Server.prototype[kRealListen] = function (
       if (isPipelinedDispatch) {
         // The native handle holds this request's turn until its response exists, also when a throw prevents that.
         socket.$hasWaitingResponses = true;
-        (socket.$pipelinedResponses ??= []).push(handle);
+        pipelinedResponsesOf(socket).push(handle);
         // For a throw before the kick below. drainMicrotasks() further down runs this one when nothing throws.
         kickPipelineIfIdle(server, socket);
       }
@@ -1222,7 +1223,16 @@ Server.prototype[kRealListen] = function (
         socket._unrefTimer();
       }
 
-      const http_req: $Node.IncomingMessage = new RequestClass(kHandle, url, method, handle, hasBody, socket);
+      const http_req: $Node.IncomingMessage = new RequestClass(
+        kHandle,
+        url,
+        method,
+        undefined,
+        undefined,
+        handle,
+        hasBody,
+        socket,
+      );
       if (isAncientHTTP) {
         http_req.httpVersion = "1.0";
         http_req.httpVersionMajor = 1;
@@ -1725,7 +1735,17 @@ function onNodeHTTPRequest(
     socket[kSocketTimeoutTimer]?.refresh();
   }
 
-  const req: $Node.IncomingMessage = new IncomingMessage(kHandle, url, method, handle, hasBody, socket, readableMark);
+  const req: $Node.IncomingMessage = new IncomingMessage(
+    kHandle,
+    url,
+    method,
+    undefined,
+    undefined,
+    handle,
+    hasBody,
+    socket,
+    readableMark,
+  );
   let parser = socket.parser;
   if (parser == null) parser = socket.parser = createServerParserShim(socket);
   parser.incoming = req;
@@ -3082,7 +3102,9 @@ function _writeHead(
   } else if (typeof reason === "string") {
     ("unlikely");
     // writeHead(statusCode, reasonPhrase[, headers])
-    response.statusMessage = statusMessage = reason;
+    // What is looked at is what reads back: the name is no field of a response until it is stored, so an accessor of the program's may lie under it.
+    response.statusMessage = reason;
+    statusMessage = response.statusMessage!;
     if (checkInvalidHeaderChar(statusMessage)) throw $ERR_INVALID_CHAR("statusMessage");
   } else {
     // writeHead(statusCode[, headers])
@@ -3163,7 +3185,7 @@ function _writeHead(
               outgoingSetHeaderIsOurs() &&
               !response._header
             ) {
-              if (exchange.shape.count === 0) storeOnMessageAsFirstHeaderDoes(response);
+              if (exchange.shape.count === 0) storeOnMessageAsFirstHeaderDoes(response, exchange, k);
               storeHeader(exchange, k, value);
             } else responseSetHeader.$call(response, k, value);
           } else response.setHeader(k, obj[k]);
@@ -3324,7 +3346,11 @@ function ServerResponse(
   this._eventsCount = 0;
   this[kShapeMode] = false;
   this._maxListeners ??= undefined;
-  if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
+  if (options?.captureRejections) {
+    validateBoolean(options.captureRejections, "options.captureRejections");
+    this[kCapture] = !!options.captureRejections;
+    storeEmitWithRejectionCapture(this);
+  } else if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
     storeEmitWithRejectionCapture(this);
   }
   this.outputData = [];
@@ -3881,6 +3907,17 @@ function advancePipelineIfIdleNT(server: $Node.HttpServer, socket: $Node.HttpSer
 // outgoing queue: park the response behind the connection's in-flight one.
 // Its write()/end() buffer (kPipelinedQueuedState) until
 // advanceResponsePipeline assigns it the socket and replays them.
+// Whoever lists the symbols of a connection that was pipelined on finds the list, as with the other text.
+const kPipelinedResponses = Symbol("kPipelinedResponses");
+function pipelinedResponsesOf(socket: $Node.HttpSocket): $Node.PipelinedResponse[] {
+  let list = socket.$pipelinedResponses;
+  if (list === undefined) {
+    list = socket.$pipelinedResponses = [];
+    storeRarely(socket, kPipelinedResponses, list);
+  }
+  return list;
+}
+
 function queuePipelinedResponse(socket: $Node.HttpSocket, res: $Node.ServerResponse, isAncient: boolean) {
   res[kPipelinedQueuedState] = {
     ops: [],
@@ -3894,7 +3931,7 @@ function queuePipelinedResponse(socket: $Node.HttpSocket, res: $Node.ServerRespo
   const exchange = res.$exchange;
   if (exchange !== undefined) exchange.flags |= ExchangeFlags.waits_its_turn;
   (socket as any).$hasWaitingResponses = true;
-  (socket.$pipelinedResponses ??= []).push(res);
+  pipelinedResponsesOf(socket).push(res);
 }
 
 // Like Node.js's socketOnEnd: the response that gets `_last` after the client's FIN is the last one in the queue.
@@ -3912,6 +3949,7 @@ function abortQueuedPipelinedResponses(socket: $Node.HttpSocket, error: Error = 
   const pipelinedLength = pipelined ? pipelined.length : 0;
   if (pipelinedLength) {
     socket.$pipelinedResponses = undefined;
+    storeRarely(socket, kPipelinedResponses, undefined);
     for (let i = 0; i < pipelinedLength; i++) {
       const queuedRes = pipelined![i];
       // A turn that the native handle still holds: the native close path notifies that one.
@@ -4300,14 +4338,18 @@ const responseSetHeader = function setHeader(this: $Node.ServerResponse, name: s
     return OutgoingMessagePrototype.setHeader.$call(this, name, value);
   }
   if (this._header !== null && this._header) throw $ERR_HTTP_HEADERS_SENT("set");
-  if (exchange.shape.count === 0) storeOnMessageAsFirstHeaderDoes(this);
+  if (exchange.shape.count === 0) storeOnMessageAsFirstHeaderDoes(this, exchange, name);
   storeHeader(exchange, name, value);
   return this;
 };
 
 // The first header of a message stores on the message. One that is frozen refuses that, where any other message stores it.
-function storeOnMessageAsFirstHeaderDoes(response: $Node.ServerResponse): void {
+function storeOnMessageAsFirstHeaderDoes(response: $Node.ServerResponse, exchange: Exchange, name: string): void {
   const lenient = response[kLenientValidation];
+  if (lenient === undefined) {
+    settleLeniency(exchange, name);
+    return;
+  }
   try {
     response[kLenientValidation] = lenient;
   } catch {
@@ -4934,8 +4976,11 @@ const finishConnection = function onResponseFinishHandleSocket(
     }
   } else if (kind === RequestKind.dumped_in_place) {
     const flags = exchange.flags & ~ExchangeFlags.finishes_here;
-    beginDump(req);
-    if ((flags & ExchangeFlags.others_wait) !== 0) {
+    if (!beginDump(req)) {
+      ("unlikely");
+      exchange.flags = flags;
+      if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
+    } else if ((flags & ExchangeFlags.others_wait) !== 0) {
       exchange.flags = flags;
       queueDump(req, exchange.requestState!);
     } else {
@@ -5279,13 +5324,16 @@ function endAfterNativeThrow(
   exchange: Exchange | undefined,
   handle: $Node.NodeHTTPResponse | $Node.Http1ResponseHandle,
   error: unknown,
+  mayAskHandleAfterwards: boolean,
 ): $Node.ServerResponse {
   const code = (error as { code?: string } | null | undefined)?.code;
   if (code === "ERR_STREAM_ALREADY_FINISHED") {
-    // A connection that code of the program shut amid the call was open where the full road asks the handle. One that the peer shut still counts as open here.
+    // This stands in for the question that the short road did not ask in front of the head: it skips it only over a connection that is open.
+    // A connection that code of the program shut amid the call was open there. One that the peer shut still counts as open here.
     if (
+      mayAskHandleAfterwards &&
       (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0 &&
-      exchange?.connection?.$isOpen !== false &&
+      exchange?.connection?.$isOpen === true &&
       !res.finished &&
       !res.destroyed
     ) {
@@ -5469,16 +5517,18 @@ ServerResponse.prototype.end = function (
       let contentLength: number;
       try {
         contentLength =
-          handle.writeWholeResponse(
-            statusCode,
-            statusMessage,
-            renderedHeaders,
-            chunk,
-            encoding,
-            strict,
-            autoHeaders,
-            keepAliveSecs,
-          ) ??
+          (socket !== null
+            ? handle.writeWholeResponse(
+                statusCode,
+                statusMessage,
+                renderedHeaders,
+                chunk,
+                encoding,
+                strict,
+                autoHeaders,
+                keepAliveSecs,
+              )
+            : undefined) ??
           handle.writeHeadAndEnd(
             statusCode,
             statusMessage,
@@ -5490,7 +5540,7 @@ ServerResponse.prototype.end = function (
             keepAliveSecs,
           );
       } catch (error) {
-        return endAfterNativeThrow(this, exchange, handle, error);
+        return endAfterNativeThrow(this, exchange, handle, error, true);
       }
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
       if (contentLength < 0) {
@@ -5700,17 +5750,12 @@ ServerResponse.prototype.write = function (
         try {
           result = handle.write(chunk, undefined, onWritable, undefined);
         } catch (error) {
-          if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0 && !this.finished && !this.destroyed) {
-            return false;
-          }
+          if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) return false;
           throw error;
         }
         if (result <= 0) {
           ("unlikely");
-          if (result < 0) return false;
-          if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0 && !this.finished && !this.destroyed) {
-            return false;
-          }
+          if (result < 0 || (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) return false;
         }
         connection = socket;
         hasChunk = true;
@@ -5763,6 +5808,7 @@ ServerResponse.prototype.write = function (
     }
 
     if (
+      hasChunk &&
       typeof chunk === "string" &&
       callback === undefined &&
       encoding == null &&
@@ -6649,7 +6695,7 @@ function endInFull(
         renderedKeepAliveSecs,
       );
     } catch (error) {
-      return endAfterNativeThrow(res, exchange, handle, error);
+      return endAfterNativeThrow(res, exchange, handle, error, false);
     }
     storeHeaderState(res, exchange, NodeHTTPHeaderState.sent);
     if (contentLength < 0) {

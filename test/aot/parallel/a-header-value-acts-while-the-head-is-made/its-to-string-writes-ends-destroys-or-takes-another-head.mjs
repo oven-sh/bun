@@ -64,7 +64,31 @@ const answer = (req, res) => {
     res.destroy();
   }
 };
-const server = http.createServer((req, res) => {
+// CLASSES names whose classes the server makes its requests and responses of. Files beside this one set it.
+const classes =
+  {
+    "a request class": { IncomingMessage: class extends http.IncomingMessage {} },
+    "a response class": { ServerResponse: class extends http.ServerResponse {} },
+    "both classes": {
+      IncomingMessage: class extends http.IncomingMessage {},
+      ServerResponse: class extends http.ServerResponse {},
+    },
+    "classes with constructors": {
+      IncomingMessage: class extends http.IncomingMessage {
+        constructor(...values) {
+          super(...values);
+          this.madeUp = 1;
+        }
+      },
+      ServerResponse: class extends http.ServerResponse {
+        constructor(...values) {
+          super(...values);
+          this.madeUp = 1;
+        }
+      },
+    },
+  }[process.env.CLASSES] ?? {};
+const server = http.createServer(classes, (req, res) => {
   if (row[1] === "later") setImmediate(answer, req, res);
   else answer(req, res);
 });

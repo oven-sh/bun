@@ -77,6 +77,7 @@ pub(crate) struct ProgramContents {
     pub names_added_to_builtins: Vec<(BuiltinId, Atom)>,
     pub mocks_any_module: bool,
     pub stores_loader_functions: bool,
+    pub hands_process_to_code_laid_above: bool,
     pub any_module_loads_again: bool,
     pub loads_by_unknown_name: bool,
     pub loads_by_unknown_path: bool,
@@ -86,6 +87,12 @@ pub(crate) struct ProgramContents {
     pub starts_worker_out_of_sight: bool,
     pub run: RunContents,
     pub any_file_may_become_main_module: bool,
+}
+
+impl ProgramContents {
+    pub(crate) fn can_replace_builtins(&self) -> bool {
+        !self.replaced_builtins.is_empty() || !self.names_added_to_builtins.is_empty()
+    }
 }
 
 pub(crate) struct ContentsInput<'a, 's> {
@@ -123,6 +130,7 @@ struct FoundInFiles {
     names_added: Vec<(BuiltinId, Atom)>,
     mocks_any_module: bool,
     stores_loader_functions: bool,
+    hands_process_to_code_laid_above: bool,
     any_module_loads_again: bool,
     loads_by_unknown_name: bool,
     loads_by_unknown_path: bool,
@@ -139,6 +147,7 @@ impl FoundInFiles {
             names_added: take(&mut self.names_added),
             mocks_any_module: true,
             stores_loader_functions: true,
+            hands_process_to_code_laid_above: true,
             any_module_loads_again: true,
             loads_by_unknown_name: true,
             loads_by_unknown_path: true,
@@ -184,6 +193,7 @@ impl FoundInFiles {
             names_added: Vec::new(),
             mocks_any_module,
             stores_loader_functions,
+            hands_process_to_code_laid_above: builtins.hands_process_to_code_laid_above(),
             any_module_loads_again,
             loads_by_unknown_name,
             loads_by_unknown_path,
@@ -200,6 +210,7 @@ impl FoundInFiles {
         self.names_added.append(&mut following.names_added);
         self.mocks_any_module |= following.mocks_any_module;
         self.stores_loader_functions |= following.stores_loader_functions;
+        self.hands_process_to_code_laid_above |= following.hands_process_to_code_laid_above;
         self.any_module_loads_again |= following.any_module_loads_again;
         self.loads_by_unknown_name |= following.loads_by_unknown_name;
         self.loads_by_unknown_path |= following.loads_by_unknown_path;
@@ -401,6 +412,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
             || run.mocks_any_module
             || all.stores_loader_functions,
         stores_loader_functions: all.stores_loader_functions,
+        hands_process_to_code_laid_above: all.hands_process_to_code_laid_above,
         any_module_loads_again: match is_test_run {
             true => run.loads.is_every_file,
             false => all.any_module_loads_again,

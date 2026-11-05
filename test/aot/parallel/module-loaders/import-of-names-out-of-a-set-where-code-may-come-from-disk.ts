@@ -2,7 +2,7 @@
 // A for..of over a Set hands its body what the Set holds and never the undefined of the step that finds the end,
 // so the build knows both names here and the executable holds those two modules of the library and little else.
 // Flags: --aot-allow-code-from-disk
-// STATISTIC: ImageFunctionsEmitted <= 400
+// STATISTIC: ImageFunctionsEmitted <= 400 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 // STATISTIC: FactEdges <= 30000
 const names = new Set<string>();
 names.add("os");

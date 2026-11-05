@@ -206,6 +206,19 @@ fn an_else_branch_that_is_a_conditional_counts() {
 }
 
 #[test]
+fn a_constant_that_is_folded_with_its_neighbor_is_not_printed_where_it_is_read() {
+    let places = describe(
+        "const FIRST = 4;
+const SECOND = 5;
+export function folded(given: number) {
+  return [FIRST + SECOND, given + FIRST];
+}
+",
+    );
+    assert_eq!(places, ["b 0 119", "f 42 118 0 57", "o 14 15 109"]);
+}
+
+#[test]
 fn a_branch_that_is_a_function_has_no_count_beside_that_of_the_function() {
     let places = describe(
         "export function given(flag: boolean, made = () => 1) { return flag ? () => 2 : made; }\n",

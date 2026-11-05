@@ -118,6 +118,16 @@ impl Manifests {
                     ways.extend(text_of(field.value));
                     ways.extend(several.filter_map(|it| text_of(it.value)));
                 }
+                b"exports" => {
+                    let mut nested = vec![field.value];
+                    while let Some(value) = nested.pop() {
+                        ways.extend(text_of(value).filter(|way| !way.contains(&b'*')));
+                        nested.extend(fields_of(value).iter().map(|it| hir[it].value));
+                        if let ExprKind::Array(items) = hir[value].kind {
+                            nested.extend(hir.ids(items));
+                        }
+                    }
+                }
                 b"dependencies" | b"peerDependencies" | b"optionalDependencies" => {
                     let names = several.filter_map(|it| it.key.name());
                     (self.packages_of_product).extend(names.map(|it| atoms.bytes(it).to_vec()));
@@ -209,6 +219,7 @@ struct CodeOnDisk<'a> {
     root: &'a [u8],
     in_memory_files: &'a [(Vec<u8>, Vec<u8>)],
     is_compiled: &'a (dyn Fn(&[u8]) -> bool + Sync),
+    ways_into_project: &'a FxHashSet<Vec<u8>>,
     in_parallel: InParallel<'a>,
 }
 
@@ -395,7 +406,8 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
         }
     }
     let mut taken_by: Vec<Option<usize>> = vec![None; sought.len()];
-    let roots = (asked.len()..sought.len()).filter(|&place| !is_imported[place]);
+    let roots = (asked.len()..sought.len())
+        .filter(|&place| !is_imported[place] || disk.ways_into_project.contains(&sought[place]));
     let mut pending: Vec<usize> = roots.collect();
     while let Some(importer) = pending.pop() {
         for &(imported, takes_for_itself) in &imports[importer] {
@@ -418,8 +430,10 @@ pub(crate) fn find_importer_outside_run(
     file: &[u8],
     is_compiled: &(dyn Fn(&[u8]) -> bool + Sync),
 ) -> Option<Vec<u8>> {
+    let no_ways = FxHashSet::default();
     let disk = CodeOnDisk {
         root: &from_native(root),
+        ways_into_project: &no_ways,
         in_memory_files: &[],
         is_compiled: &|path| is_compiled(to_native(path)),
         in_parallel: &crate::ir::parallel::run_serially,
@@ -459,6 +473,40 @@ impl FilesByImports<'_, '_> {
         ways.map(|index| FileId(index as u32)).collect()
     }
 
+    fn find_files_that_product_comes_to(&self, stays: &[bool]) -> Vec<bool> {
+        let files = self.files;
+        let count = self.referrers.len();
+        let runs = |index: usize| parsed_source(files, FileId(index as u32)).is_some();
+        let imports_of = |index: usize| files.module(FileId(index as u32)).code_edges.iter();
+        let mut is_imported = vec![false; count];
+        for &file in files.entry_points() {
+            is_imported[file.idx()] = true;
+        }
+        for index in (0..count).filter(|&index| runs(index)) {
+            for target in imports_of(index).filter(|it| it.idx() != index) {
+                is_imported[target.idx()] = true;
+            }
+        }
+        let mut pending: Vec<usize> = (0..count)
+            .filter(|&index| {
+                let begins = stays[index] || self.is_in_package[index] || !is_imported[index];
+                begins && !self.is_of_tests[index] && runs(index)
+            })
+            .collect();
+        let mut is_come_to = vec![false; count];
+        for &index in &pending {
+            is_come_to[index] = true;
+        }
+        while let Some(index) = pending.pop() {
+            for target in imports_of(index).map(|it| it.idx()) {
+                if !self.is_of_tests[target] && !is_come_to[target] {
+                    is_come_to[target] = true;
+                    pending.push(target);
+                }
+            }
+        }
+        is_come_to
+    }
     fn find_files_that_tests_alone_come_to(&self, stays: &[bool]) -> Vec<FileId> {
         let files = self.files;
         let count = self.referrers.len();
@@ -572,8 +620,16 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
     for file in by_imports.find_ways_into_product() {
         is_of_product_for_sure[file.idx()] = true;
     }
-    let asked_of = by_imports.find_files_that_tests_alone_come_to(&is_of_product_for_sure);
-    let mut helpers = asked_of.clone();
+    let mut helpers = by_imports.find_files_that_tests_alone_come_to(&is_of_product_for_sure);
+    let mut product_comes_to = by_imports.find_files_that_product_comes_to(&is_of_product_for_sure);
+    let asked_of: Vec<FileId> = compiled()
+        .filter(|file| {
+            let index = file.idx();
+            !product_comes_to[index]
+                && !by_imports.is_in_package[index]
+                && !by_imports.is_of_tests[index]
+        })
+        .collect();
     if !asked_of.is_empty() {
         let name_of = |file: FileId| files.module(file).file_name();
         let mut asked: Vec<Vec<u8>> = asked_of.iter().map(|&it| name_of(it).to_vec()).collect();
@@ -588,6 +644,7 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
                     .get(path)
                     .is_some_and(|it| files.is_compiled(it))
             },
+            ways_into_project: &by_imports.manifests.ways_into_project,
             in_parallel: input.in_parallel,
         };
         let importers = find_importers_outside_run(&disk, &asked);
@@ -604,6 +661,7 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
                 is_of_product_for_sure[file.idx()] = true;
             }
             helpers = by_imports.find_files_that_tests_alone_come_to(&is_of_product_for_sure);
+            product_comes_to = by_imports.find_files_that_product_comes_to(&is_of_product_for_sure);
         }
     }
     let mut is_behind_helper = vec![false; count];
@@ -631,7 +689,10 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
         manifests,
         ..
     } = by_imports;
-    let own = compiled().filter(|file| !is_of_tests[file.idx()] && !is_in_package[file.idx()]);
+    let own = compiled().filter(|file| {
+        let index = file.idx();
+        !is_of_tests[index] && !is_in_package[index] && product_comes_to[index]
+    });
     let is_of_product =
         find_files_loaded_from(files, own.collect(), &|file| is_of_tests[file.idx()]);
     let package_of_file = |file: FileId| package_of(files.module(file).file_name());

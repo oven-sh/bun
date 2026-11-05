@@ -58,8 +58,7 @@ struct Collector {
     work_stack: Vec<BuiltinId>,
     collected: Collected,
     has_unknown_module_loader: bool,
-    reads_members_by_key: bool,
-    finds_code_without_names: bool,
+    marks_met: Marks,
     lets_in_what_nobody_names: bool,
     finds_language_by_names: bool,
     holds_functions_for_any_host_object: bool,
@@ -72,8 +71,7 @@ struct Reached {
     exports_read: Box<[(RuntimeModule, &'static str)]>,
     functions: Box<[u32]>,
     has_unknown_module_loader: bool,
-    reads_members_by_key: bool,
-    finds_code_without_names: bool,
+    marks_met: Marks,
 }
 
 fn reached_from(
@@ -108,8 +106,7 @@ fn reached_from(
             exports_read: exports_read.into(),
             functions: rows.filter(|&row| functions.is_set(row as usize)).collect(),
             has_unknown_module_loader: collector.has_unknown_module_loader,
-            reads_members_by_key: collector.reads_members_by_key,
-            finds_code_without_names: collector.finds_code_without_names,
+            marks_met: collector.marks_met,
         })
     })
 }
@@ -241,6 +238,7 @@ fn has_code_of_library(id: BuiltinId) -> bool {
     !(entry.loads().is_empty()
         && entry.calls().is_empty()
         && entry.calls_for_texts().is_empty()
+        && entry.calls_where_call_runs_other_code().is_empty()
         && entry.implemented_by().is_empty()
         && entry.guessed_functions().is_empty())
         || objects_of_class_of(id).any(|object| !table::entry(object).calls().is_empty())
@@ -275,17 +273,10 @@ bitflags::bitflags! {
 fn marks_of(id: BuiltinId) -> Marks {
     static MARKS: OnceLock<Box<[Marks]>> = OnceLock::new();
     let marks = MARKS.get_or_init(|| {
-        let called_for_promise = table::entry(BuiltinId::Promise).calls();
         let mut marks: Box<[Marks]> = BuiltinId::ALL
             .into_iter()
             .map(|id| {
-                let entry = table::entry(id);
-                let mut listed = entry.calls().iter().chain(entry.guessed_functions());
                 let mut marks = Marks::empty();
-                marks.set(
-                    Marks::MAKES_PROMISE,
-                    listed.any(|function| called_for_promise.contains(function)),
-                );
                 marks.set(
                     Marks::READS_MEMBER_BY_KEY,
                     reads_member_under_key_it_is_handed(id),
@@ -293,6 +284,9 @@ fn marks_of(id: BuiltinId) -> Marks {
                 marks
             })
             .collect();
+        for &id in table::ENTRIES_THAT_MAKE_PROMISES {
+            marks[id.to_wire() as usize] |= Marks::MAKES_PROMISE;
+        }
         let leading = table::ENTRIES_LEADING_TO_STARTUP_LOADS.iter().copied();
         for id in leading.chain([BuiltinId::BunInspectCustom]) {
             marks[id.to_wire() as usize] |= Marks::LEADS_TO_PRINTER;
@@ -472,8 +466,7 @@ impl Collector {
             work_stack: Vec::new(),
             collected: Collected::new(),
             has_unknown_module_loader: false,
-            reads_members_by_key: false,
-            finds_code_without_names: false,
+            marks_met: Marks::empty(),
             lets_in_what_nobody_names: false,
             finds_language_by_names: false,
             holds_functions_for_any_host_object: false,
@@ -599,12 +592,9 @@ impl Collector {
             return;
         }
         let entry = table::entry(id);
-        self.has_unknown_module_loader |= entry.flags.intersects(UNKNOWN_MODULE_LOADERS);
         let marks = marks_of(id);
         if !marks.is_empty() {
-            self.reads_members_by_key |= marks.contains(Marks::READS_MEMBER_BY_KEY);
-            self.finds_code_without_names |=
-                marks.intersects(Marks::LEADS_TO_PRINTER | Marks::HANDS_OUT_MEMBER_BY_KEY);
+            self.marks_met |= marks;
             if marks.contains(Marks::MAKES_PROMISE) {
                 (self.work_stack).extend_from_slice(holders_that_come_with_first_promise());
             }
@@ -614,6 +604,17 @@ impl Collector {
                 self.add_functions(table::FUNCTIONS_FOR_ANY_HOST_OBJECT);
             }
         }
+        self.add_functions(entry.calls_where_call_runs_other_code());
+        self.add_entry_called_without_other_code(id);
+    }
+
+    fn add_entry_called_without_other_code(&mut self, id: BuiltinId) {
+        let id = table::canonical_id(id);
+        if !table::exists_on(id, self.platform) {
+            return;
+        }
+        let entry = table::entry(id);
+        self.has_unknown_module_loader |= entry.flags.intersects(UNKNOWN_MODULE_LOADERS);
         for load in entry.loads() {
             self.add_load(load.module, load.exports_read);
         }
@@ -651,8 +652,7 @@ impl Collector {
                 collected.functions.set(row as usize);
             }
             self.has_unknown_module_loader |= reached.has_unknown_module_loader;
-            self.reads_members_by_key |= reached.reads_members_by_key;
-            self.finds_code_without_names |= reached.finds_code_without_names;
+            self.marks_met |= reached.marks_met;
         }
     }
 
@@ -719,6 +719,7 @@ pub fn reaches_unknown_module_loader(
 pub struct Mentions<'a> {
     pub mentioned: &'a [BuiltinId],
     pub called_with_other_texts: &'a [BuiltinId],
+    pub called_without_other_code: &'a [BuiltinId],
     pub exposed: &'a [BuiltinId],
     pub linked_functions: &'a [RuntimeFunction],
     pub members_read: &'a [BuiltinName],
@@ -762,6 +763,7 @@ impl Collector {
         let Mentions {
             mentioned,
             called_with_other_texts,
+            called_without_other_code,
             exposed,
             linked_functions,
             members_read,
@@ -791,11 +793,15 @@ impl Collector {
         collector.finds_language_by_names = true;
         collector.holds_functions_for_any_host_object = holds_language;
         for &id in mentioned.iter().filter(|id| !is_held(id)) {
-            match called_with_other_texts.binary_search(&id) {
-                Ok(_) => collector.add_entry_called_with_other_texts(id),
-                Err(_) => collector.add_entry(id),
+            if called_without_other_code.binary_search(&id).is_ok() {
+                collector.add_entry_called_without_other_code(id);
+            } else {
+                match called_with_other_texts.binary_search(&id) {
+                    Ok(_) => collector.add_entry_called_with_other_texts(id),
+                    Err(_) => collector.add_entry(id),
+                }
+                collector.expose_class_of(id);
             }
-            collector.expose_class_of(id);
             collector.add_what_is_written_in_place_of(id);
         }
         if !is_of_program {
@@ -828,9 +834,12 @@ impl Collector {
             || called.any(|id| {
                 table::entry(id).flags.intersects(EVALUATORS) || id == BuiltinId::SymbolFor
             });
+        let finds_code_without_names = (collector.marks_met)
+            .intersects(Marks::LEADS_TO_PRINTER | Marks::HANDS_OUT_MEMBER_BY_KEY);
         collector.lets_in_what_nobody_names =
-            is_of_program && (lets_in_what_nobody_names || collector.finds_code_without_names);
-        let reads_by_unknown_key = reads_by_unknown_key || collector.reads_members_by_key;
+            is_of_program && (lets_in_what_nobody_names || finds_code_without_names);
+        let reads_by_unknown_key =
+            reads_by_unknown_key || collector.marks_met.contains(Marks::READS_MEMBER_BY_KEY);
         if collector.lets_in_what_nobody_names {
             return Some(collector);
         }

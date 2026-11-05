@@ -377,6 +377,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             layouts,
             functions,
             known_helpers_lowered,
+            shown_names,
             ..
         } = self;
         task.layout_places = layouts.into_places();
@@ -386,6 +387,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             diagnostics,
             queries,
             known_helpers: known_helpers_lowered,
+            written_function_names: shown_names.written_function_names,
         }
     }
 

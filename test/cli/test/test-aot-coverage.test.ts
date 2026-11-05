@@ -88,6 +88,9 @@ export function makers(flag, given = () => {
 }
 `,
   "constants.js": `const STEP = 3;
+const FIRST = 4;
+const SECOND = 5;
+const WORD = "w";
 
 export function steps(a, b) {
   return a
@@ -95,6 +98,10 @@ export function steps(a, b) {
     : b
       ? "second"
       : "third";
+}
+
+export function folded(given) {
+  return [FIRST + SECOND, -FIRST, \`\${SECOND}\`, WORD + "x", given + WORD];
 }
 `,
   "throws.js": `function fails() {
@@ -178,7 +185,7 @@ module.exports = { used, unused };
 import { pick, loops, chain, byKind, makers } from "./branches.js";
 import { callsWhatThrows, catches, waits, neverResumed } from "./throws.js";
 import common from "./common.cjs";
-import { steps } from "./constants.js";
+import { folded, steps } from "./constants.js";
 
 test("branches", () => {
   expect(pick(20)).toBe("big");
@@ -192,6 +199,7 @@ test("branches", () => {
   expect(makers(true).length).toBe(2);
   expect(steps(1, 0) + steps(1, 0)).toBe(6);
   expect(steps(0, 1)).toBe("second");
+  expect(folded(1).length + folded(2).length).toBe(10);
 });
 
 test("throws", async () => {

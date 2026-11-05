@@ -1,5 +1,5 @@
 // fetch.preconnect counts its operands, converts the first to a string and refuses what is no address.
-// STATISTIC: ImageFunctionsEmitted <= 40
+// STATISTIC: ImageFunctionsEmitted <= 40 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 const refused = call => {
   try {
     call();

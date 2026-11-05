@@ -2,7 +2,9 @@ use super::SourceDialect;
 use super::mentions::mentioned_id;
 use super::resolver::{ExprState, HolderKind, ResolvedValue, Resolver, is_of_loader};
 use super::written_members::{follows_unlisted_names_of, holder_of, writes_on_first_operand};
-use crate::builtins::table::{self, BuiltinId, BuiltinKind, Intrinsic, Scope};
+use crate::builtins::table::{
+    self, BuiltinId, BuiltinKind, BuiltinName, Intrinsic, Prototype, Scope,
+};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingStability, Parent, SymbolId};
 use bun_sema::hir::{
@@ -19,6 +21,21 @@ pub(super) enum MentionUse {
     Aliased,
     Destructured(PatId),
     Exposed,
+}
+
+fn lookup_passes_holder_linked_anew(holder: BuiltinId, name: Option<BuiltinName>) -> bool {
+    let mut object = table::canonical_id(holder);
+    loop {
+        if name.is_some_and(|name| table::own_member(object, name).is_some()) {
+            return false;
+        }
+        let entry = table::entry(object);
+        match entry.prototype {
+            Prototype::Unknown => return entry.kind == BuiltinKind::Prototype,
+            Prototype::Null => return false,
+            Prototype::Builtin(parent) => object = table::canonical_id(parent),
+        }
+    }
 }
 
 fn looks_at_first_operand(builtin: BuiltinId) -> bool {
@@ -84,6 +101,7 @@ impl Resolver<'_, '_> {
             ExprKind::Binary { op: BinOp::Comma, right, .. } if node == right => {
                 return ControlFlow::Continue(parent);
             }
+            ExprKind::Binary { op: BinOp::Instanceof, left, right } if node == left && !matches!(hir[e].kind, ExprKind::This) && !self.is_resolved(hir.skip_type_assertions(right)) => MentionUse::Exposed,
             ExprKind::Binary { .. } => MentionUse::Inspected,
             ExprKind::Cond { test, .. } if node != test && self.is_resolved(parent) => MentionUse::Aliased,
             ExprKind::Cond { test, .. } if node != test => return ControlFlow::Continue(parent),
@@ -203,6 +221,7 @@ impl Resolver<'_, '_> {
         };
         asked == holder
             && !self.is_inherited_object_prototype_member(Some(object.path.id), name)
+            && !self.may_be_answered_by_accessor_above(object.path.id, name)
             && !self.is_deleted(member)
             && !self.is_callee(self.outermost_assertion_of(member))
             && self.find_named_member(object, name).is_none()
@@ -291,6 +310,86 @@ impl Resolver<'_, '_> {
         let holds_member_itself =
             object.is_some_and(|object| table::own_member(holder_of(object), name).is_some());
         table::own_member(BuiltinId::ObjectPrototype, name).is_some() && !holds_member_itself
+    }
+
+    pub(super) fn is_handed_to_code_laid_above(&self, e: ExprId, object: BuiltinId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        if !lookup_passes_holder_linked_anew(holder_of(object), None) {
+            return false;
+        }
+        let mut node = e;
+        loop {
+            let parent = match bound.parent_of_expr(node) {
+                Parent::Expr(parent) => parent,
+                Parent::PropKey(_)
+                | Parent::MethodKey(_)
+                | Parent::PatKey(_)
+                | Parent::MemberKey(_) => return true,
+                _ => return false,
+            };
+            match hir[parent].kind {
+                ExprKind::Binary {
+                    op: BinOp::EqEqEq | BinOp::NotEqEq,
+                    ..
+                } => return false,
+                ExprKind::Binary {
+                    op: BinOp::And,
+                    left,
+                    ..
+                } if node == left => return false,
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    ..
+                } if node == left => return false,
+                ExprKind::Binary {
+                    op: BinOp::Instanceof,
+                    left,
+                    ..
+                } => return node != left,
+                ExprKind::Binary {
+                    op: BinOp::In,
+                    left,
+                    ..
+                } => return node == left,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
+                    ..
+                } => {}
+                ExprKind::Binary { .. } | ExprKind::Template { .. } => return true,
+                ExprKind::Unary { op, .. } => {
+                    return !matches!(op, UnOp::Not | UnOp::Typeof | UnOp::Void | UnOp::Delete);
+                }
+                ExprKind::Assign {
+                    op: Some(op),
+                    target,
+                    ..
+                } if node == target => {
+                    return !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish);
+                }
+                ExprKind::Cond { test, .. } if node == test => return false,
+                ExprKind::Cond { .. }
+                | ExprKind::As { .. }
+                | ExprKind::Satisfies { .. }
+                | ExprKind::AsConst(_)
+                | ExprKind::NonNull(_) => {}
+                ExprKind::Index { obj, .. } if node != obj => return true,
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                    return match hir.member_key(parent) {
+                        Some((_, MemberKey::Name(name))) => {
+                            self.may_be_answered_by_accessor_above(object, name)
+                        }
+                        _ => false,
+                    };
+                }
+                _ => return false,
+            }
+            node = parent;
+        }
+    }
+
+    pub(super) fn may_be_answered_by_accessor_above(&self, object: BuiltinId, name: Atom) -> bool {
+        lookup_passes_holder_linked_anew(holder_of(object), self.input.names.get(name))
     }
 
     fn hands_function_on(&self, member: ExprId) -> bool {

@@ -804,7 +804,8 @@ export function either(n: number, c: boolean) { const kept = c ? { last: null } 
 { "extends": "../../tsconfig.json", "compilerOptions": { "strict": false } }
 //// non-strict-empty-literals/main.queries.txt
 # `inner/` is written without `strictNullChecks`, the program with it. There `[]` is `any[]` and `null` is `any` wherever a declaration, a member of a literal or a result starts from one, as for a local variable.
-inner/empty-literals.ts:0 role `` = Checked
+# The one checker of a build has `strictNullChecks` once, so the file is not checked: nothing is reported in it.
+inner/empty-literals.ts:0 role `` = Inferred
 inner/empty-literals.ts:1 class member `Queue` = items Field Member 1 unwritten checked any[]
 inner/empty-literals.ts:1 class member `Queue` = last Field Member 1 unwritten checked any
 inner/empty-literals.ts:2 binding `shared` = any[]
@@ -825,7 +826,7 @@ absent: inner/empty-literals.ts:8 diagnostic TS2322 = Semantic StopsBuild
 import { Queue, remember, collect, one, state, either } from "./inner/empty-literals.ts";
 console.log(new Queue().add(1), remember(1), collect(1), one(1), state(1), either(1, true));
 //// null-checks-off-alone/inner/only-reported.ts
-// What `strictNullChecks` only reports, and makes no type of, is asked of the file.
+// The folder turns `strictNullChecks` off, which the one checker of a build has once: nothing is reported here.
 export function half(n: number): number { if (n < 0) return; return n / 2; }
 export class Point { x: number; }
 export class Early { y: number; constructor() { console.log(this.y); this.y = 1; } }
@@ -835,9 +836,9 @@ export class Early { y: number; constructor() { console.log(this.y); this.y = 1;
 # `inner/` turns `strictNullChecks` off and keeps the rest of `strict`, the program has all of it.
 main.ts:0 option strictPropertyInitialization `` = true
 inner/only-reported.ts:0 option strictPropertyInitialization `` = true
-inner/only-reported.ts:0 role `` = Checked
+inner/only-reported.ts:0 role `` = Inferred
 
-# TypeScript asks for `strictNullChecks` in front of each of these three. They make no type: the function returns `number`, the fields are `number`.
+# The file is not checked, so none of these three is reported. They make no type: the function returns `number`, the fields are `number`.
 inner/only-reported.ts:2 returns `half` = number
 absent: inner/only-reported.ts:2 diagnostic TS2322 = Semantic StopsBuild
 absent: inner/only-reported.ts:3 diagnostic TS2564 = Style StopsBuild
@@ -2600,7 +2601,8 @@ all.F.X;
 export enum Other { Inexact = 3 ** 100 }
 //// written-type/enum-member-inexact-power.queries.txt
 # An enum member whose value rests on a power that is not exact is no constant of the build: its digits are those of the engine's arithmetic, so the program computes it.
-enum-member-inexact-power.ts:6 enum member `A = inlined` = 5.153775207320113e+47 rests on inexact power
+# The compiler lowers the tree that it has checked: nothing lays the value of `inlined` in the place of the name first, so the member reads a variable.
+enum-member-inexact-power.ts:6 enum member `A = inlined` = 5.153775207320113e+47 reads other file or variable rests on inexact power
 enum-member-inexact-power.ts:11 enum member `Exact = 2 ** 10` = 1024
 enum-member-inexact-power.ts:12 enum member `AfterExact` = 1025
 enum-member-inexact-power.ts:13 enum member `Inexact = 3 ** 100` = 5.153775207320113e+47 rests on inexact power

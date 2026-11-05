@@ -64,6 +64,9 @@ export function sameProgram(part: number) {
     `declare const console: { log(...values: unknown[]): void };\nconsole.log(first(1), first.name.length);\n`;
 
   async function build(directory: string, entry: string, threads: number) {
+    // Most bytes of an executable are Bun's own file, read again from its path where a build ends.
+    const hashOfBun = async () => Bun.hash.xxHash3(await Bun.file(bunExe()).bytes()).toString(16);
+    const bunInFront = await hashOfBun();
     const { stderr, exitCode } = await run(
       [
         bunExe(),
@@ -88,6 +91,7 @@ export function sameProgram(part: number) {
       errors: stderr.split("\n").filter(line => line.startsWith("error")).length,
       program: await hashOf("emitted.program"),
       executable: await hashOf(isWindows ? "app.exe" : "app"),
+      bun: `${bunInFront} in front, ${await hashOfBun()} behind`,
     };
     await Promise.all(
       ["emitted.program", "app", "app.exe"].map(name =>
@@ -136,6 +140,7 @@ export function sameProgram(part: number) {
           errors: 60,
           program: "",
           executable: "",
+          bun: expect.any(String),
         });
     });
 

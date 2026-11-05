@@ -1,7 +1,8 @@
 use super::entries::{
     BuiltinEntry, BuiltinFlags, BuiltinKind, CallsForTexts, ClassData, Dependencies, HostRead,
     HostReadContext, HostReadUse, ModuleData, ModuleFlags, ModuleLoad, Mutability, Origin,
-    Platforms, Prototype, RuntimeFunctionData, RuntimeFunctionRole, Scope, StartupLoad, TypeName,
+    Platforms, Prototype, QuietCall, RuntimeFunctionData, RuntimeFunctionRole, Scope, StartupLoad,
+    TypeName, WrittenOperand,
 };
 use super::ids::{BuiltinClass, BuiltinId, BuiltinName, RuntimeFunction, RuntimeModule};
 use crate::ir::{ContentsSlot, WellKnownSymbol};
@@ -47,6 +48,14 @@ impl BuiltinEntry {
 
     pub fn calls_for_texts(&self) -> &'static [CallsForTexts] {
         self.dependencies().calls_for_texts
+    }
+
+    pub fn calls_where_call_runs_other_code(&self) -> &'static [RuntimeFunction] {
+        self.dependencies().calls_where_call_runs_other_code
+    }
+
+    pub fn calls_that_run_no_other_code(&self) -> &'static [QuietCall] {
+        self.dependencies().calls_that_run_no_other_code
     }
 
     pub fn implemented_by(&self) -> &'static [RuntimeFunction] {

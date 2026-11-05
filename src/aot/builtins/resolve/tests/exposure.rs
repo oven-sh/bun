@@ -145,7 +145,9 @@ const FOLLOWED: &[&str] = &[
     "Object.getPrototypeOf(process);",
     "Object.getPrototypeOf(process) !== null;",
     "typeof Reflect.getPrototypeOf(process);",
-    "const above = Object.getPrototypeOf(process); above !== x; if (above instanceof f) {}",
+    "const above = Object.getPrototypeOf(process); above !== x; if (above instanceof Object) {}",
+    "process instanceof Object;",
+    "process instanceof (Map as any);",
     "const above = Object.getPrototypeOf(process); Object.getPrototypeOf(above) === null;",
     "Object.defineProperty(process, \"own\", { value: f, writable: true });",
     "Object.defineProperty(process, \"own\", { get: () => 1, set: v => {} });",
@@ -276,6 +278,98 @@ fn code_of_bun_may_link_what_stands_above_an_object_again() {
     with_case(RUNTIME, kept, |case| {
         assert!(case.exposes(BuiltinId::Process))
     });
+}
+
+#[test]
+fn what_is_laid_above_process_answers_what_process_lacks() {
+    for source in [
+        "process.madeUp;",
+        "process.madeUp = 1;",
+        "process.madeUp ??= 1;",
+        "process?.madeUp;",
+        "typeof process.madeUp;",
+        "(process as any).madeUp;",
+        "globalThis.process.madeUp;",
+        "const p = process; p.madeUp;",
+        "const { madeUp } = process;",
+        "`${process}`;",
+        "process + x;",
+        "+process;",
+        "process++;",
+        "--process;",
+        "process += x;",
+        "process == x;",
+        "process < x;",
+        "(x || process) + y;",
+        "x instanceof process;",
+        "o[process];",
+        "process in o;",
+        "({ [process]: 1 });",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.resolved.hands_process_to_code_laid_above(), "{source}");
+            assert!(case.resolved.exposed().is_empty(), "{source}");
+        });
+        with_case(RUNTIME, source, |case| {
+            assert!(
+                !case.resolved.hands_process_to_code_laid_above(),
+                "{source}"
+            );
+            assert!(case.exposes(BuiltinId::Process), "{source}");
+        });
+    }
+    let kept = "var a; (a = process).own ?? (a.own = {});";
+    with_case(PROGRAM, kept, |case| {
+        assert!(
+            case.resolved.hands_process_to_code_laid_above() || case.exposes(BuiltinId::Process)
+        );
+    });
+    for source in [
+        "process.title;",
+        "process.on;",
+        "process.title = x;",
+        "const { pid, emit } = process;",
+        "process === x;",
+        "process instanceof x;",
+        "\"madeUp\" in process;",
+        "typeof process;",
+        "!process;",
+        "if (process) {}",
+        "process && x;",
+        "process ? x : y;",
+        "Math.madeUp;",
+        "`${Math}`;",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(
+                !case.resolved.hands_process_to_code_laid_above(),
+                "{source}"
+            );
+        });
+    }
+}
+
+#[test]
+fn left_of_instanceof_is_handed_to_the_method_of_the_right() {
+    for source in [
+        "process instanceof x;",
+        "class K { static [Symbol.hasInstance](v) { return v; } } process instanceof K;",
+        "const p = process; p instanceof x;",
+        "(y || process) instanceof x;",
+        "switch (true) { case process instanceof x: }",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.exposes(BuiltinId::Process), "{source}")
+        });
+    }
+    for source in [
+        "process instanceof Map;",
+        "import { EventEmitter } from \"node:events\"; process instanceof EventEmitter;",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(!case.exposes(BuiltinId::Process), "{source}")
+        });
+    }
 }
 
 #[test]

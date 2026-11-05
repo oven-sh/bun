@@ -10,7 +10,7 @@ use crate::StandaloneModuleGraph::{
 use crate::compiled_program::{
     CompiledProgramInput, EntryPointPathPointers, ImagePlace, append_record,
 };
-use crate::executable_file::{ImageRange, ImageSymbols, PayloadParts, relocate_image};
+use crate::executable_file::{ImageRange, ImageSymbols, PayloadParts};
 
 pub struct GraphRequest<'a> {
     pub target: &'a CompileTarget,
@@ -201,22 +201,10 @@ pub(crate) fn graph_bytes(request: &GraphRequest<'_>) -> crate::Result<GraphByte
     )
 }
 
-pub struct PlaceOfProgram {
-    pub mapped_at: u64,
-}
-
-pub fn to_graph_bytes(
-    request: &GraphRequest<'_>,
-    place: Option<&PlaceOfProgram>,
-) -> crate::Result<Vec<u8>> {
-    let mut graph = graph_bytes(request)?;
+pub fn to_graph_bytes(request: &GraphRequest<'_>) -> crate::Result<Vec<u8>> {
+    let graph = graph_bytes(request)?;
     if graph.bytes.is_empty() {
         return Err(crate::Error::CorruptedCompiledProgram);
-    }
-    if let (Some(image), Some(place)) = (graph.image, place) {
-        let address = place.mapped_at + size_of::<u64>() as u64 + u64::from(image.offset);
-        let image = &mut graph.bytes[image.offset as usize..][..image.length as usize];
-        relocate_image(image, address);
     }
     let mut bytes: Vec<u8> = Vec::with_capacity(size_of::<u64>() + graph.bytes.len());
     bytes.extend_from_slice(&(graph.bytes.len() as u64).to_le_bytes());

@@ -21,8 +21,8 @@ use super::program_reach::{TOP_LEVEL, find_parent_past_casts, is_only_read};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self};
 use crate::builtins::{
-    AsksOfText, BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ResolveInput,
-    Resolved, RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
+    BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ResolveInput, Resolved,
+    RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
 };
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
@@ -1265,12 +1265,10 @@ impl<'a, 's> Walk<'a, 's> {
 
     fn reach_what_application_asks(&mut self, application: &Files<'_>, graph: &ModuleGraph) {
         let input = self.input;
-        self.reach_uses(&uses_of_what_start_reads(
-            input.used_at_start,
-            input.platform,
-        ));
+        let used_at_start = uses_of_what_start_reads(input.used_at_start, input.platform);
+        self.reach_uses(&used_at_start);
         let files = application.compiled_files().iter();
-        let mut asks = AsksOfText::default();
+        let mut asks = used_at_start.asks;
         for &file in files.filter(|&&file| !asks_nothing_of_library(application, graph, file)) {
             let read_by_name = self.reach_named_imports(application, graph, file);
             let compiled = application.compiled(file);

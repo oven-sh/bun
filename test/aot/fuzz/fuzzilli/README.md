@@ -326,6 +326,16 @@ A build costs about the same for one small program as for ten. `--together 10` b
 
 `--shuffles-costs 50` builds every second program once more under one of the words of `--aot-testing` that may change what the code costs and nothing else: guesses fail unasked, expected types are ignored or shuffled, so are the frequencies of blocks and the choices by cost, Link is given more. The seed is drawn and stands in the report. An answer that changes there is a miscompilation.
 
+### One loop out of tables that do not know of each other
+
+A compiler decides most about a loop at its head, for all turns at once: which kind a variable has, how far an index goes, what a call can change. `write-loops.ts` puts one function with one loop, or one loop in another, together from tables: what is walked (a list, a view between two others on one buffer, records, a text, a set, a generator, an iterator written by hand), how the head counts, where each variable lives (the function, the file, a maker's closure, a field), what kind of function it is, with what it is called. The body is a motif: two or three statements that act on one variable together, such as a test of it and a store of another kind into it. Statements drawn one by one would hardly ever meet. A function declares only what its loop names, and what is walked is made in plain sight: a closure over the walked parameter, or a list of views out of a `map`, hid the fault that the scene was to show.
+
+`lane.ts --kind loops` draws them by tens. `--changes-draws 20` makes the small changes of `write-kin.ts` to every fifth of them.
+
+### Ask, change, ask again
+
+A compiler proves things about the objects and classes of a program: which names an object has, where a method is found, what stands above what. Each proof holds until something changes. `write-changes.ts` puts a scene together from tables: who is made and how (a row of classes, their statics, constructor functions, literals, `Object.create`), what is asked of them and where (written out, in a function, in a loop), what changes, on whom and by which road. In JavaScript each name is a method, a field, an accessor or nothing at each level of the row. The same questions are asked in front of the change and behind it. Some changes come in pairs that belong together: a link is laid between an instance and its class and then cut off, a name comes and goes. Whoever is asked is named where it is asked: a list of all of them would let them out of sight, and the compiler would prove nothing that could turn out false. `lane.ts --kind changes` draws them by tens.
+
 ### Scenes of one deed
 
 A generator of random operations seldom puts together what people write every day. `write-single-deeds.ts` holds tables of such deeds, a few lines to a scene: something that can be walked goes into something that walks it, a view is read beside its length in a loop, a closure of a function that runs once is lent or kept, a list typed as a class holds an object that no constructor made. `write-hidden-effects.ts` has a lookup, a conversion or a protocol run code that writes what a neighbor in the same expression reads. `write-typed-places.ts` gives a place of a declared type what the type doesn't allow.

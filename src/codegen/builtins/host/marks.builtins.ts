@@ -101,6 +101,8 @@ export default b.declarations(
   marked("IsReplacedByHostThatSaysSo", ["Bun.env", "process.env"]),
   marked("IsCalledWithoutStartupLoads", ["Buffer.prototype.inspect"]),
   marked("InstancesHaveMethodCalledWithStartupLoads", classesWithInspectMethod),
+  // console_print_runtime_object_inner() in src/runtime/jsc_hooks.rs prints them and walks no prototype.
+  marked("InstancesArePrintedByCodeOfTheirOwn", ["%Immediate%", "%Timeout%", "Blob", "Request", "Response"]),
   // These reject napi_env and napi_value in a signature (reject_napi_types_error in ffi_body.rs). Only cc() accepts them.
   marked("LoadsCodeWithoutJSAccess", [
     "%NativeFunctions%.FfiBindTsLinkLibrary",

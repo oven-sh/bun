@@ -10,7 +10,6 @@ use bun_options_types::aot_options::ReadListener;
 use bun_options_types::context::{HotReload, TestGlobals};
 use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
-use bun_standalone_graph::executable_request::PlaceOfProgram;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
 use bun_watcher::{ChangedFilePath, WatchEvent, WatchList, Watcher, WatcherContext};
@@ -389,13 +388,6 @@ fn number_behind_word(prefix: &[u8]) -> Option<u32> {
     let mut words = bun_core::strings::split(words, b",");
     let digits = words.find_map(|word| word.strip_prefix(prefix))?;
     bun_core::fmt::parse_int::<u32>(digits, 10).ok()
-}
-
-/// Where `use_graph_descriptor` and `load_program_file` map the program.
-pub(crate) fn place_of_program_being_built() -> Option<PlaceOfProgram> {
-    Some(PlaceOfProgram {
-        mapped_at: Graph::address_of_program(0)?,
-    })
 }
 
 fn hand_over(

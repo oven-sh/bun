@@ -37,7 +37,10 @@ function from<T extends $Node.Readable>(
   }
 
   const readable =
-    IS_COMPILED_AHEAD_OF_TIME && opts === undefined && (Readable as unknown) === require("internal/streams/readable")
+    IS_COMPILED_AHEAD_OF_TIME &&
+    !CAN_REPLACE_BUILT_INS &&
+    opts === undefined &&
+    (Readable as unknown) === require("internal/streams/readable")
       ? (require("internal/streams/state").internals.makeObjectReadable!(1) as T)
       : new Readable({
           objectMode: true,

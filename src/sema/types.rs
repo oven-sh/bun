@@ -9,7 +9,7 @@ use crate::local::{HashIndex, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
-use crate::util::memory::{OWN, Placeholder, Placeholders, Segmented};
+use crate::util::memory::{AppendVec, OWN, Placeholder, Placeholders, Segmented};
 use crate::util::{
     FxHashMap, FxHasher, LocalVec, SharedSort, Window, Windowed, WindowedSlots, fx_hash,
     spread_in_window, spread_of,
@@ -23,7 +23,7 @@ use std::hash::{Hash, Hasher};
 use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 /// A list that's stored once, as one exactly sized block in the arena of the thread that built it.
 /// It's as wide as `Box<[T]>`. Dropping it frees the block, on any thread.
@@ -1992,12 +1992,12 @@ mod fact {
     pub(super) const HAS_GENERIC_ARGUMENTS: u8 = 1 << 6;
 }
 
-/// A type's `TypeRecord::summary` and its `Rank`. Two per cache line.
+/// A type's `TypeRecord::summary` and the place of its `Rank`. Four per cache line.
 ///
 /// The fields are atomic because `set` writes to a `Summary` that `TypeStore::reserve_ids` has already added to the
 /// shared table. `Relaxed` is enough for the fields `set` writes, because a thread only gets a type's id through
 /// something that orders the creator's earlier writes before the read (see `AppendVec`). The rank is written later, by
-/// any thread. See `set_rank`.
+/// any thread. See `Types::set_rank`.
 struct Summary {
     flags: AtomicU32,
     /// See `Types::member_flags`. The top three bits aren't type flags (see `HAS_FRESH_LITERAL`).
@@ -2010,28 +2010,24 @@ struct Summary {
     /// creation. See `fact` for the bits and `Types::add_facts` for what may be stored here. Facts
     /// learned about a task-local type aren't published with it.
     facts: AtomicU8,
-    /// The three `Rank` fields.
-    height: AtomicU32,
-    last_syntax: AtomicU64,
-    content: AtomicU64,
+    /// 0 if the rank hasn't been computed, else one more than its index in `TypeStore::ranks`, or in `OwnStore::ranks`
+    /// for a task-local type.
+    rank: AtomicU32,
 }
 
-const _: () = assert!(size_of::<Summary>() == 32);
+const _: () = assert!(size_of::<Summary>() == 16);
 
 impl Summary {
     /// The type has no rank yet.
     #[inline]
     fn new(summary: TypeSummary) -> Summary {
-        let rank = Rank::NONE;
         Summary {
             flags: AtomicU32::new(summary.flags),
             member_flags: AtomicU32::new(summary.member_flags),
             object_flags: AtomicU16::new(summary.object_flags.bits()),
             class: AtomicU8::new(summary.class as u8),
             facts: AtomicU8::new(summary.facts()),
-            height: AtomicU32::new(rank.height),
-            last_syntax: AtomicU64::new(rank.last_syntax),
-            content: AtomicU64::new(rank.content),
+            rank: AtomicU32::new(0),
         }
     }
 
@@ -2043,27 +2039,6 @@ impl Summary {
         self.object_flags.store(summary.object_flags.bits(), order);
         self.class.store(summary.class as u8, order);
         self.facts.store(summary.facts(), order);
-    }
-
-    /// Returns `None` if the rank hasn't been computed.
-    #[inline]
-    fn rank(&self) -> Option<Rank> {
-        match self.height.load(Ordering::Acquire) {
-            0 => None,
-            height => Some(Rank {
-                height,
-                last_syntax: self.last_syntax.load(Ordering::Relaxed),
-                content: self.content.load(Ordering::Relaxed),
-            }),
-        }
-    }
-
-    /// Any thread may call this at any time, because every thread computes the same rank for a type. The height is
-    /// stored last, so a thread that reads it also reads the rest.
-    fn set_rank(&self, rank: Rank) {
-        self.last_syntax.store(rank.last_syntax, Ordering::Relaxed);
-        self.content.store(rank.content, Ordering::Relaxed);
-        self.height.store(rank.height, Ordering::Release);
     }
 }
 
@@ -2548,6 +2523,8 @@ pub struct OwnStore<'s> {
     mappers: Own<'s, MapperRecord<'s>>,
     sigs: Own<'s, SigData<'s>>,
     summaries: TaskRecords<'s, Summary>,
+    /// See `Summary::rank`.
+    ranks: LocalVec<Rank, &'s Arena>,
     /// Ids the task has reserved but not used yet, by pool (`ID_POOLS`). Only used with
     /// `Sharing::Publishes`.
     ids: [Cell<Placeholders<'s>>; ID_POOLS],
@@ -2577,6 +2554,7 @@ impl<'s> OwnStore<'s> {
             sigs: Own::new_in(arena, Some(published.sigs.items)),
             types: Own::new_in(arena, Some(published.types.items)),
             summaries,
+            ranks: LocalVec::new_in(arena),
             unimported_files: Bits(Vec::new()),
             has_unresolved_names: Cell::new(false),
             first_request: Cell::new(FirstRequest::NONE),
@@ -2626,6 +2604,7 @@ impl<'s> OwnStore<'s> {
             visited_files,
             of_visited_files,
             summaries,
+            ranks,
         } = self;
         atoms.clear();
         components.clear();
@@ -2633,6 +2612,7 @@ impl<'s> OwnStore<'s> {
         sigs.clear();
         types.clear();
         summaries.clear();
+        ranks.clear();
         unimported_files.0.clear();
         has_unresolved_names.set(false);
         first_request.set(FirstRequest::NONE);
@@ -2664,6 +2644,7 @@ impl<'s> OwnStore<'s> {
             visited_files,
             of_visited_files,
             summaries,
+            ranks,
         } = self;
         let has_no_ids = |ids: &Cell<Placeholders<'s>>| {
             let taken = ids.take();
@@ -2677,6 +2658,7 @@ impl<'s> OwnStore<'s> {
             && sigs.is_like_new()
             && types.is_like_new()
             && summaries.len() == 0
+            && ranks.len() == 0
             && unimported_files.0.is_empty()
             && !has_unresolved_names.get()
             && first_request.get() == FirstRequest::NONE
@@ -3026,6 +3008,8 @@ pub struct TypeStore<'s> {
     types: Interned<'s, TypeRecord<'s>>,
     /// Arena-allocated, like `Interned::items`.
     summaries: &'s PublishedRecords<'s, Summary>,
+    /// Arena-allocated too. See `Summary::rank`.
+    ranks: &'s AppendVec<Rank, &'s Session>,
     sigs: Interned<'s, SigData<'s>>,
     mappers: Interned<'s, MapperRecord<'s>>,
     components: Interned<'s, List<'s, IndexComponent>>,
@@ -3196,6 +3180,7 @@ impl<'s> TypeStore<'s> {
             session,
             types: Interned::new_in(session),
             summaries: session.arena().alloc(summaries),
+            ranks: session.arena().alloc(AppendVec::new_in(session)),
             sigs: Interned::new_in(session),
             mappers: Interned::new_in(session),
             components: Interned::new_in(session),
@@ -4129,9 +4114,29 @@ impl<'p, 's> Types<'p, 's> {
         false
     }
 
+    /// Returns `None` if the rank hasn't been computed.
+    #[inline]
+    fn known_rank(&self, id: TypeId) -> Option<Rank> {
+        match (self.own.summaries.get_layered(id.0).rank).load(Ordering::Acquire) {
+            0 => None,
+            place if id.0 & LOCAL != 0 => Some(*self.own.ranks.get(place - 1)),
+            place => Some(*self.published.ranks.get(place - 1)),
+        }
+    }
+
+    /// Any thread may call this at any time, because every thread computes the same rank for a type. The place is
+    /// stored last, so a thread that reads it also reads the rank.
+    fn set_rank(&self, id: TypeId, rank: Rank) {
+        let index = match id.0 & LOCAL != 0 {
+            true => self.own.ranks.push(rank),
+            false => self.published.ranks.push(rank),
+        };
+        (self.own.summaries.get_layered(id.0).rank).store(index + 1, Ordering::Release);
+    }
+
     #[inline]
     fn rank(&self, id: TypeId) -> Rank {
-        match self.own.summaries.get_layered(id.0).rank() {
+        match self.known_rank(id) {
             Some(rank) => rank,
             None => self.rank_on_first_use(id),
         }
@@ -4150,7 +4155,7 @@ impl<'p, 's> Types<'p, 's> {
             // Every type has flags. An id that's reserved but not used yet doesn't, and it has no rank.
             let known = match summary.flags.load(Ordering::Relaxed) {
                 0 => Some(Rank::NONE),
-                _ => summary.rank(),
+                _ => self.known_rank(next),
             };
             if let Some(known) = known {
                 last = known;
@@ -4158,7 +4163,7 @@ impl<'p, 's> Types<'p, 's> {
                 continue;
             }
             match self.rank_of_type(&self.record(next).created) {
-                Ok(rank) => summary.set_rank(rank),
+                Ok(rank) => self.set_rank(next, rank),
                 Err(mentioned) => unranked.extend(mentioned),
             }
         }
@@ -5654,7 +5659,7 @@ impl Visitor for Ranking<'_, '_> {
     }
     #[inline]
     fn ty(&mut self, id: TypeId) {
-        let Some(rank) = self.types.own.summaries.get_layered(id.0).rank() else {
+        let Some(rank) = self.types.known_rank(id) else {
             self.unranked.push(id);
             return;
         };

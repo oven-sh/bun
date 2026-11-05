@@ -2046,7 +2046,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         candidates: Candidates<'_>,
     ) -> ValueId {
         let modules = self.file.inputs.modules;
-        if matches!(load, ComputedLoad::Import)
+        let asks_nobody = matches!(
+            load,
+            ComputedLoad::Import
+                | ComputedLoad::Require {
+                    looks_in_cache: false,
+                    ..
+                }
+        );
+        if asks_nobody
             || !modules.computed_names_ask_loader_functions()
             || !modules.is_code_of_program(self.current_module())
         {

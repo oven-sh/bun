@@ -254,7 +254,8 @@ bun build <entry points>
   <code>--no-compile-function-source</code>: a library that reads <code>fn.toString()</code> gets{" "}
   <code>[native code]</code>. The path of a module stays only where your code can read it, such as through{" "}
   <code>import.meta.path</code>, and the other modules don't show up when your code lists the folders inside the
-  executable. Same as <code>--sourcemap=external</code>
+  executable. The <code>name</code> of every function and class is empty. <code>--sourcemap=external</code> does the
+  same and leaves <code>name</code> alone
 </ParamField>
 
 <ParamField path="--trim" type="boolean">

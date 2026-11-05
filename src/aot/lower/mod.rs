@@ -73,6 +73,7 @@ pub struct LoweredFile {
     pub diagnostics: DiagnosticBuffer,
     pub queries: QueryStatistics,
     pub known_helpers: KnownHelpersLowered,
+    pub written_function_names: Vec<u8>,
 }
 
 #[derive(Copy, Clone, Default)]

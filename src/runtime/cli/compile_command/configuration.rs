@@ -489,11 +489,7 @@ pub(super) fn request_from_context<'r>(
         entry_points.map(|path| -> &'static [u8] { arena.alloc_slice_copy(&path[..]) }),
     );
     let embeds_source_maps = transpiler.options.source_map != options::SourceMapOption::None;
-    // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
-    let env = unsafe { &mut *transpiler.env };
-    // SAFETY: `create_context_data` set `ctx.log`, which lives as long as the process. The build
-    // writes to it through this reference or through the transpiler's pointer, never both at once.
-    let log = unsafe { &mut *ctx.log };
+    let env = transpiler.env;
 
     CompileRequest {
         origin,
@@ -551,7 +547,7 @@ pub(super) fn request_from_context<'r>(
             assets: &ctx.bundler_options.compile_assets,
             embeds_source_maps,
         },
-        log,
+        log: ctx.log,
     }
 }
 

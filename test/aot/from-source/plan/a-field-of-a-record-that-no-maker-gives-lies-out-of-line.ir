@@ -1,14 +1,14 @@
-# `interface Message { text: string; isMeta?: boolean; .. }`: the type lists all that some message may hold. What no literal in sight lists and no maker goes on to store is what a name is that Link appended: its slot is a granule of the Extension,
+# `interface Parcel { text: string; isMarked?: boolean; .. }`: the type lists all that some parcel may hold. What no literal in sight lists and no maker goes on to store is what a name is that Link appended: its slot is a granule of the Extension,
 # which an object gets where something is stored. `origin` is listed by one of the two makers and `more` beside a spread: they lie in the cell. `never` is stored by nothing in the program: its granule is never filled.
 # `given` is listed, as `undefined` alone: the key is of the birth and the slot out of line, as in an instance: it may exist without storage. The others are absent where they have no granule. `later` is stored on some of the objects: the layout has the word that names an Extension whatever becomes of the others.
 # -- source: records.ts
-# interface Message { text: string; id: number; isMeta?: boolean; origin?: string; note?: string; more?: number; never?: string; given?: string }
-# function make(text: string, id: number): Message { return { text, id, given: undefined }; }
-# function makeWithOrigin(text: string, id: number, origin: string): Message { return { text, id, origin }; }
-# function mark(message: Message) { message.isMeta = true; message.note = "noted"; (message as any).later = 1; }
-# function copy(message: Message): Message { return { ...message, more: 4 }; }
+# interface Parcel { text: string; id: number; isMarked?: boolean; origin?: string; note?: string; more?: number; never?: string; given?: string }
+# function make(text: string, id: number): Parcel { return { text, id, given: undefined }; }
+# function makeWithOrigin(text: string, id: number, origin: string): Parcel { return { text, id, origin }; }
+# function mark(parcel: Parcel) { parcel.isMarked = true; parcel.note = "noted"; (parcel as any).later = 1; }
+# function copy(parcel: Parcel): Parcel { return { ...parcel, more: 4 }; }
 # const plain = make("plain", 1), from = makeWithOrigin("from", 2, "here"), marked = make("marked", 3); mark(marked);
-# function show(m: Message) { return Object.keys(m).join() + (m.never === undefined ? " none " : " some ") + (m.isMeta ? "meta " : "plain ") + (m.origin ?? "nowhere") + (m.given ?? " not given"); }
+# function show(m: Parcel) { return Object.keys(m).join() + (m.never === undefined ? " none " : " some ") + (m.isMarked ? "marked " : "plain ") + (m.origin ?? "nowhere") + (m.given ?? " not given"); }
 # console.log(show(plain) + " | " + show(from) + " | " + show(marked) + " | " + show(copy(marked)));
 # -- end of source
 # RUN: plan layouts mechanisms=all
@@ -16,7 +16,7 @@
 # CHECK: layout L0 CompiledObject size=64 extension=
 # CHECK-NEXT: slot 0 "given" JSValue OutOfLine offset=8 {{*}}may-exist-without-storage
 # CHECK-NEXT: slot 1 "id" {{*}}Inline
-# CHECK-NEXT: slot 2 "isMeta" JSValue OutOfLine offset=16 record=2
+# CHECK-NEXT: slot 2 "isMarked" JSValue OutOfLine offset=16 record=2
 # CHECK-NEXT: slot 3 "more" {{*}}Inline
 # CHECK-NEXT: slot 4 "never" JSValue OutOfLine offset=24 record=4
 # CHECK-NEXT: slot 5 "note" JSValue OutOfLine offset=32 record=5

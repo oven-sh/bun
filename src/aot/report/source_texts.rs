@@ -1,6 +1,7 @@
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::messages::Category;
 use bun_sema_driver::{self as driver, TextLocator};
+use rustc_hash::FxHashMap;
 
 use crate::diagnostics::{SourcePosition, new_driver_diagnostic};
 use crate::engine::Position;
@@ -127,11 +128,24 @@ impl ModuleSource {
 #[derive(Default)]
 pub struct SourceTexts {
     modules: Vec<Option<ModuleSource>>,
+    written_names: Vec<u8>,
 }
 
 impl SourceTexts {
     pub fn new(modules: Vec<Option<ModuleSource>>) -> SourceTexts {
-        SourceTexts { modules }
+        SourceTexts {
+            modules,
+            written_names: Vec::new(),
+        }
+    }
+
+    pub fn set_written_names(&mut self, names: Vec<u8>) {
+        self.written_names = names;
+    }
+
+    pub fn written_names(&self) -> FxHashMap<&[u8], &[u8]> {
+        let mut parts = self.written_names.split(|&byte| byte == 0);
+        core::iter::from_fn(|| Some((parts.next()?, parts.next()?))).collect()
     }
 
     pub fn get(&self, module: ModuleId) -> Option<&ModuleSource> {

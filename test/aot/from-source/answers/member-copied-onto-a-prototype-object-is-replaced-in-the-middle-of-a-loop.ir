@@ -1,0 +1,23 @@
+# -- source: main.js
+# function mixin(target, source) { Object.getOwnPropertyNames(source).forEach(function (name) { if (name !== "constructor") Object.defineProperty(target, name, Object.getOwnPropertyDescriptor(source, name)); }); return target; }
+# var Sized = { size: function () { return this.items.length; }, first: function () { return this.items[0]; } };
+# function Bag(a, b) { this.items = [a, b]; }
+# function Sack(a, b) { this.items = [a, b]; }
+# mixin(Bag.prototype, Sized);
+# mixin(Sack.prototype, Sized);
+# function join(a, b) { return a + b; }
+# function bags(count) { var total = 0; for (var i = 0; i < count; i++) { var bag = new Bag(i & 7, 1); if (i === 5) Bag.prototype[join("si", "ze")] = function () { return 1000; }; total += bag.size() + bag.first(); } return total; }
+# function sacks(count) { var total = 0; for (var i = 0; i < count; i++) { var sack = new Sack(i & 7, 1); if (i === 5) Sack.prototype.size = function () { return 2000; }; total += sack.size() + sack.first(); } return total; }
+# print(bags(10), sacks(10));
+# -- end of source
+# In turn five of ten another function is stored under `size`. Under a key that is worked out Link goes on expecting the function that was copied: the store ends the guard of the name, and from that turn on the call finds what stands there.
+# Under the written name two functions are seen to be laid, and nothing is expected.
+# RUN: run-in-shell
+# CHECK: 5039 10039
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 5039 10039
+# CALLED-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=all-Guesses
+# CLOSED: 5039 10039
+# CLOSED-NEXT: exited with 0

@@ -73,6 +73,8 @@ const late = await import("./lib.ts");
 console.log(sum(1000), far(3), Object.keys(whole).join(), [lib, late].length);
 `,
     },
+    // A built-in is read for the first time behind the \`await\`.
+    moreInTestRun: { "main.ts:0  CoroutineBody": ["InitializeBuiltin Closed 1"] },
   },
   "a namespace object that goes somewhere, and a spy on some object under a name that nothing exports": {
     files: {
@@ -87,6 +89,7 @@ const late = await import("./lib.ts");
 console.log(sum(1000), far(3), Object.keys(whole).join(), [lib, late].length);
 `,
     },
+    moreInTestRun: { "main.ts:0  CoroutineBody": ["InitializeBuiltin Closed 1"] },
     testFile: `
 import { expect, spyOn, test } from "bun:test";
 import "./main.ts";

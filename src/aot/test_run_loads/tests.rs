@@ -753,6 +753,10 @@ fn text_that_comes_in_lets_no_body_run_again() {
             true,
         ),
         ("globalThis.keep(require.cache);\n", true),
+        (
+            "Bun.plugin({ name: \"p\", setup() {} });\nglobalThis.keep(require.cache);\n",
+            true,
+        ),
     ];
     for (text, takes_out) in helpers {
         with_graph_around_state(("helper.cjs", text), |files, graph| {

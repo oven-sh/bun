@@ -3,7 +3,7 @@ use super::mention_use::MentionUse;
 use super::module_cache::{is_function_that_loader_calls, is_module_cache, is_table_of_loaders};
 use super::resolver::{ExprState, ResolvedValue, Resolver};
 use crate::builtins::table::{
-    self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic,
+    self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic, QuietCall, WrittenOperand,
 };
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::decorator_metadata::{MetadataReference, entity_names};
@@ -100,6 +100,13 @@ impl Resolver<'_, '_> {
     pub(super) fn mention(&mut self, id: BuiltinId) {
         self.output.gets_at_entries_of_module_cache |= is_module_cache(id);
         self.output.mentioned.push(id);
+    }
+
+    fn hand_to_code_laid_above(&mut self, id: BuiltinId) {
+        match self.input.dialect {
+            SourceDialect::Program => self.output.hands_process_to_code_laid_above = true,
+            SourceDialect::Runtime => self.expose(id),
+        }
     }
 
     pub(super) fn expose(&mut self, id: BuiltinId) {
@@ -227,6 +234,8 @@ impl Resolver<'_, '_> {
             !matches!(state, ExprState::Held(_)) || self.input.hir.member_key(expr).is_some();
         if makes_value && self.is_called_with_other_texts(expr, id) {
             self.output.called_with_other_texts.push(id);
+        } else if makes_value && self.is_only_called_without_other_code(expr) {
+            self.output.called_without_other_code.push(id);
         } else if makes_value {
             self.output.mentioned.push(id);
         }
@@ -238,6 +247,9 @@ impl Resolver<'_, '_> {
         }
         if is_function_that_loader_calls(id) {
             self.note_use_of_function_that_loader_calls(expr);
+        }
+        if self.is_handed_to_code_laid_above(expr, id) {
+            self.hand_to_code_laid_above(id);
         }
         match self.classify_use(expr) {
             MentionUse::Called(call) if self.is_import_site(call) => {}
@@ -485,6 +497,124 @@ impl Resolver<'_, '_> {
         !values.is_empty() && values.iter().all(is_other_text)
     }
 
+    pub(super) fn folds_to_primitive(&self, expr: ExprId) -> bool {
+        matches!(
+            self.input.decisions.constant(self.input.hir, expr),
+            FoldedValue::Constant(_) | FoldedValue::ConstantOutsideDeadZone(_)
+        )
+    }
+
+    fn writes_operand(&self, operand: Option<ExprId>, expected: WrittenOperand) -> bool {
+        let hir = self.input.hir;
+        let operand = operand.map(|operand| hir.skip_type_assertions(operand));
+        let kind = operand.map(|operand| hir[operand].kind);
+        if matches!(kind, Some(ExprKind::Spread(_))) {
+            return false;
+        }
+        let folded = operand.map(|operand| self.input.decisions.constant(hir, operand));
+        let written = match &folded {
+            Some(FoldedValue::Constant(value) | FoldedValue::ConstantOutsideDeadZone(value)) => {
+                Some(value)
+            }
+            _ => None,
+        };
+        match expected {
+            WrittenOperand::Any | WrittenOperand::AnyFurther => true,
+            WrittenOperand::Function => {
+                matches!(kind, Some(ExprKind::Fn(function)) if hir[function].kind == FnKind::Arrow)
+            }
+            WrittenOperand::Integer {
+                least,
+                most,
+                may_be_left_out,
+            } => match (operand, written) {
+                (None, _) => may_be_left_out,
+                (_, Some(&Constant::Number(number))) => {
+                    number.fract() == 0.0
+                        && !(number == 0.0 && number.is_sign_negative())
+                        && number >= least as f64
+                        && number <= most as f64
+                }
+                _ => false,
+            },
+            WrittenOperand::PrimitivesFurther {
+                null,
+                boolean,
+                number,
+                string,
+            } => match written {
+                Some(Constant::Null) => null,
+                Some(Constant::Boolean(_)) => boolean,
+                Some(Constant::Number(_)) => number,
+                Some(Constant::String(_)) => string,
+                _ => false,
+            },
+        }
+    }
+
+    fn writes_operands(&self, call: CallId, expected: &[WrittenOperand]) -> bool {
+        let hir = self.input.hir;
+        let mut operands = hir.ids(hir[call].args);
+        for &expected in expected {
+            match expected {
+                WrittenOperand::AnyFurther | WrittenOperand::PrimitivesFurther { .. } => {
+                    return operands.all(|operand| self.writes_operand(Some(operand), expected));
+                }
+                _ if !self.writes_operand(operands.next(), expected) => return false,
+                _ => {}
+            }
+        }
+        operands.next().is_none()
+    }
+
+    pub(super) fn find_quiet_call(&self, call: ExprId) -> Option<&'static QuietCall> {
+        let ExprKind::Call(operands) = self.input.hir[call].kind else {
+            return None;
+        };
+        let id = mentioned_id(self.state(self.input.hir[operands].callee))?;
+        let entry = table::entry(table::canonical_id(id));
+        if self.input.dialect != SourceDialect::Program || !entry.calls_for_texts().is_empty() {
+            return None;
+        }
+        let mut quiet = entry.calls_that_run_no_other_code().iter();
+        quiet.find(|quiet| self.writes_operands(operands, quiet.operands))
+    }
+
+    pub(super) fn is_function_that_quiet_call_wants(&self, function: ExprId) -> bool {
+        let hir = self.input.hir;
+        let Parent::Expr(call) = self.input.bound.parent_of_expr(function) else {
+            return false;
+        };
+        let (Some(quiet), ExprKind::Call(operands)) = (self.find_quiet_call(call), hir[call].kind)
+        else {
+            return false;
+        };
+        let position = hir.ids(hir[operands].args).position(|it| it == function);
+        self.hands_on_no_object(call, quiet)
+            && position.is_some_and(|at| quiet.operands.get(at) == Some(&WrittenOperand::Function))
+    }
+
+    pub(super) fn hands_on_no_object(&self, call: ExprId, quiet: &QuietCall) -> bool {
+        if quiet.answers_primitive || matches!(self.classify_use(call), MentionUse::Inspected) {
+            return true;
+        }
+        let Parent::FnBody(function) = self.input.bound.parent_of_expr(call) else {
+            return false;
+        };
+        match self.input.bound.fns[function.idx()].owner {
+            FnOwner::Expr(written) => self.is_function_that_quiet_call_wants(written),
+            _ => false,
+        }
+    }
+
+    fn is_only_called_without_other_code(&self, function: ExprId) -> bool {
+        let MentionUse::Called(call) = self.classify_use(function) else {
+            return false;
+        };
+        let quiet = self.find_quiet_call(call);
+        quiet.is_some_and(|quiet| self.hands_on_no_object(call, quiet))
+    }
+
     fn is_called_with_other_texts(&self, function: ExprId, id: BuiltinId) -> bool {
         let lists = table::entry(table::canonical_id(id)).calls_for_texts();
         if lists.is_empty() {
@@ -531,6 +661,9 @@ impl Resolver<'_, '_> {
                 if prop.is_rest {
                     self.expose(holder.path.id);
                     continue;
+                }
+                if self.may_be_answered_by_accessor_above(holder.path.id, name) {
+                    self.hand_to_code_laid_above(holder.path.id);
                 }
                 if self.is_inherited_object_prototype_member(Some(holder.path.id), name) {
                     self.expose(holder.path.id);

@@ -4,7 +4,9 @@
 // A scene prints one text at its end, and nothing in it calls the host before that.
 import { combinations, conversions, predicates } from "./hand-over-built-ins.ts";
 import { randomFrom } from "./print-members-of-objects.ts";
+import { writeSceneOfAChange } from "./write-changes.ts";
 import { writeSceneOfHiddenEffects } from "./write-hidden-effects.ts";
+import { writeSceneOfALoop } from "./write-loops.ts";
 import { writeSceneOfASingleDeed } from "./write-single-deeds.ts";
 import { writeSceneOfTypedPlaces } from "./write-typed-places.ts";
 
@@ -3637,6 +3639,16 @@ class Scenes {
   sceneOfHiddenEffects() {
     if (!this.isTypeScript) return this.sceneOfChangesInTheMiddle();
     this.lines.push(...writeSceneOfHiddenEffects(this.random, ++this.count));
+  }
+
+  /** Ask, change, ask again (write-changes.ts). */
+  sceneOfAChange() {
+    this.lines.push(...writeSceneOfAChange(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** One function with one loop, put together from tables that do not know of each other (write-loops.ts). */
+  sceneOfALoop() {
+    this.lines.push(...writeSceneOfALoop(this.random, ++this.count, this.isTypeScript));
   }
 
   /** A few lines around one deed (write-single-deeds.ts). */
@@ -8285,6 +8297,34 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
         () => scenes.sceneOfTypedPlaces(),
         () => scenes.sceneOfTypedPlaces(),
         () => scenes.sceneOfTypedPlaces(),

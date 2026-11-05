@@ -4855,13 +4855,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether a part of `checkExpression` that resolves more than the type of the expression is run where tsgo reaches it.
-    /// FOR SPEED: with nothing in resolution it can wait for the walk of the file, which resolves the same things.
-    /// A build asks for types (`Requested::Types`, `Requested::EarlyErrors`) and walks next to no file. The first to ask for the
-    /// expression would decide, by what it has in resolution, whether anybody ever runs that part, and which task is the first
-    /// is a matter of timing. So in a build nobody runs it.
+    /// A check always does. It once let that part wait for the walk of the file where nothing was in resolution. The walk of a
+    /// file then stored the type of an expression without going around a ring that an earlier file goes around, closed no cycle,
+    /// and so was trusted ahead of the order of the program: what `bun check` reported hung on which thread came first.
+    /// Whoever asks for types alone (`Requested::Types`, `Requested::EarlyErrors`) walks next to no file, and a build asks for the
+    /// types of a file behind its walk and of other files ahead of theirs. There nobody runs it ahead: the walk of the file does,
+    /// so that the answer hangs on no order of tasks.
     fn runs_checks_ahead_of_the_walk(&self) -> bool {
         !matches!(self.expected, Requested::Types | Requested::EarlyErrors)
-            && self.stack.iter().any(|&q| self.is_resolution(q))
+            && !self.files().is_compile_build()
     }
 
     /// `checkSourceElement` for a type node in an expression, run at the point where

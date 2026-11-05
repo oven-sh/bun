@@ -1,6 +1,6 @@
-// The executable holds the part of Bun's library that the program uses. Text that is decoded at run time is unknown to the compiler, and what it asks for may have been left out: a stand-in answers then.
-// For a function the stand-in knows the name, the length and whether there is a prototype. It knows nothing else, and of a value nothing at all, and says so: a member read off it, `in`, a descriptor and its own names are refused aloud.
-// They were those of an empty function, in silence: `typeof Bun.sql.unsafe` was "undefined".
+// The executable holds the part of Bun's library that the program uses. Text that is decoded at run time is unknown to the compiler, and what it asks for may have been left out: the read is refused aloud, by the name of the member.
+// A stand-in answered it once, in silence: `typeof process.finalization` was "function" where `bun <file>` says "object".
+// A look that reads nothing still gets a stand-in: `in`, a descriptor, the names of the holder, and the printer, which goes through all members. For a function it knows the name, the length and whether there is a prototype. It knows nothing else, and of a value nothing at all, and says so.
 const decoded = text => Buffer.from(text).toString();
 function outcome(error) {
   const message = String(error.message);
@@ -30,12 +30,16 @@ attempt("typeof process.allowedNodeEnvironmentFlags.has");
 attempt("Bun.sql === Bun.sql");
 attempt("Bun.sql instanceof Function");
 attempt("Bun.inspect(Bun).length > 0");
+attempt("'sql' in Bun");
+attempt("typeof Object.getOwnPropertyDescriptor(Bun, 'SQL').value");
+attempt("Object.getOwnPropertyDescriptor(Bun, 'SQL').value.name");
+attempt("typeof Object.getOwnPropertyDescriptor(Bun, 'SQL').value.MySQLError");
 console.log("the program goes on");
 /* Output:
-typeof Bun.sql: function
-Bun.sql.name + Bun.sql.length: sql2
-typeof Bun.SQL.prototype: object
-'prototype' in Bun.sql: false
+typeof Bun.sql: refused: Bun.sql
+Bun.sql.name + Bun.sql.length: refused: Bun.sql
+typeof Bun.SQL.prototype: refused: Bun.SQL
+'prototype' in Bun.sql: refused: Bun.sql
 new Bun.sql('postgres://localhost:1/none'): refused: Bun.sql
 typeof Bun.sql.unsafe: refused: Bun.sql
 'options' in Bun.sql: refused: Bun.sql
@@ -46,12 +50,16 @@ Bun.sql[0]: refused: Bun.sql
 Object.hasOwn(Bun.SQL, 'MySQLError'): refused: Bun.SQL
 typeof Bun.sql.call: refused: Bun.sql
 String(Bun.sql).length > 0: refused: Bun.sql
-typeof process.finalization: function
+typeof process.finalization: refused: process.finalization
 typeof process.finalization.register: refused: process.finalization
 process.finalization.name + process.finalization.length: refused: process.finalization
 typeof process.allowedNodeEnvironmentFlags.has: refused: process.allowedNodeEnvironmentFlags
-Bun.sql === Bun.sql: true
-Bun.sql instanceof Function: true
+Bun.sql === Bun.sql: refused: Bun.sql
+Bun.sql instanceof Function: refused: Bun.sql
 Bun.inspect(Bun).length > 0: true
+'sql' in Bun: true
+typeof Object.getOwnPropertyDescriptor(Bun, 'SQL').value: function
+Object.getOwnPropertyDescriptor(Bun, 'SQL').value.name: SQL
+typeof Object.getOwnPropertyDescriptor(Bun, 'SQL').value.MySQLError: refused: Bun.SQL
 the program goes on
 */

@@ -3953,7 +3953,7 @@ declare module "bun" {
      *
      * With `false`, `fn.toString()` returns `function name() { [native code] }` and the executable
      * is smaller. `--preload` in `BUN_OPTIONS` is an error at startup, with `inspector` too.
-     * `obfuscate` implies `false`.
+     * `obfuscate` and `sourcemap: "external"` imply `false`.
      *
      * Equivalent CLI flag: `--no-compile-function-source`
      *
@@ -4027,7 +4027,8 @@ declare module "bun" {
     aot?: boolean;
     /**
      * With `aot`: strip function names and file names from the executable and write a source map
-     * next to it. `sourcemap: "external"` does the same.
+     * next to it. `sourcemap: "external"` does the same for stack traces and leaves the `name` of
+     * functions and classes alone. With `obfuscate` it is `""`.
      *
      * Equivalent CLI flag: `--obfuscate`
      *

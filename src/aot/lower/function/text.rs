@@ -13,6 +13,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         let atoms = &self.queries.files().atoms;
         let written = self.values_written_in_place.take();
+        let mut values_first_in_text = Vec::new();
         let replaced = written.into_iter().filter_map(|(expression, value)| {
             let (start, end) = (hir[expression].pos, hir[expression].end);
             if start >= end || end as usize > hir.text.len() {
@@ -25,6 +26,9 @@ impl FileLowering<'_, '_, '_, '_> {
                 Constant::String(text) => print_string(atoms.bytes(text))?,
                 _ => return None,
             };
+            if let Some(&first @ (b'(' | b'"')) = text.first() {
+                values_first_in_text.push((expression, first));
+            }
             Some(ReplacedText {
                 start,
                 end,
@@ -38,8 +42,14 @@ impl FileLowering<'_, '_, '_, '_> {
             self.add_names_of_containers(&mut replaced);
         }
         let decisions = self.decisions();
+        values_first_in_text.sort_unstable();
+        values_first_in_text.dedup();
         replaced.append(&mut find_text_replaced_by_bundling(
-            hir, self.bound, decisions, atoms,
+            hir,
+            self.bound,
+            decisions,
+            atoms,
+            values_first_in_text,
         ));
         let ranges = find_type_ranges_beside(hir, replaced);
         if !ranges.is_empty() {

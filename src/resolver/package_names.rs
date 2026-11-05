@@ -5,7 +5,9 @@ use core::ptr::NonNull;
 use bun_ast::{ImportKind, Log};
 use bun_paths::is_sep_native;
 
-use crate::compiled_program::{compare_source_paths, normalize_separator, public_path_from_root};
+use crate::compiled_program::{
+    ENDS_SEARCH, LEADS_OUTSIDE, compare_source_paths, normalize_separator, public_path_from_root,
+};
 use crate::package_json::Package;
 use crate::resolver::{Resolver, TSConfigRef};
 
@@ -171,6 +173,40 @@ pub fn add_written_names(
     names
 }
 
+/// The folder whose `node_modules` holds the package that `folder` belongs to, and the name of that package.
+fn find_place_of_package(folder: &[u8]) -> Option<(&[u8], Vec<u8>)> {
+    let name = find_name_of_package(&[folder, &[bun_paths::SEP], b"."].concat())?;
+    let mut above = folder;
+    while last_component(above) != NODE_MODULES {
+        above = parent(above)?;
+    }
+    Some((parent(above)?, name))
+}
+
+/// What may stand behind the name of a file where a program writes the name without it.
+const SPELLINGS: [&[u8]; 11] = [
+    b"", b".tsx", b".ts", b".mts", b".cts", b".jsx", b".js", b".mjs", b".cjs", b".json", b".node",
+];
+
+/// The names other than its own under which the executable finds a file called `base`: without its extension, and with the extension of JavaScript that its extension of TypeScript stands for.
+fn list_other_names(base: &[u8]) -> Vec<Vec<u8>> {
+    let Some(dot) = base
+        .iter()
+        .rposition(|&byte| byte == b'.')
+        .filter(|&dot| dot > 0)
+    else {
+        return Vec::new();
+    };
+    let (stem, extension) = base.split_at(dot);
+    let written: &[&[u8]] = match extension {
+        b".ts" | b".tsx" => &[b"", b".js", b".jsx"],
+        b".mts" => &[b"", b".js", b".jsx", b".mjs"],
+        b".cts" => &[b"", b".cjs"],
+        _ => &[b""],
+    };
+    written.iter().map(|&it| [stem, it].concat()).collect()
+}
+
 /// `names` and `hidden`, each name once.
 pub fn add_hidden_names(mut names: Vec<PackageName>, hidden: Vec<PackageName>) -> Vec<PackageName> {
     names.extend(hidden);
@@ -308,6 +344,154 @@ impl Resolver<'_> {
         self.prefer_module_field = prefers_module_field;
         names.sort_by(|a, b| a.path.cmp(&b.path));
         names.dedup_by(|later, earlier| later.path == earlier.path);
+        names
+    }
+
+    /// A mark for each folder of a package on disk that lies nearer to one of `folders`, the folders of the compiled files, than a copy of that package with compiled files.
+    pub fn find_nearer_packages(&mut self, folders: &[BuildPaths<'_>]) -> Vec<PackageName> {
+        let mut compiled: Vec<(Vec<u8>, &[u8])> = folders
+            .iter()
+            .filter_map(|folder| find_place_of_package(folder.source_path))
+            .map(|(place, name)| (name, place))
+            .collect();
+        compiled.sort_unstable();
+        compiled.dedup();
+        let separator = &[bun_paths::SEP][..];
+        let mut names = Vec::new();
+        for place in list_places(folders) {
+            let has_node_modules = self
+                .read_dir_info_ignore_error(place.source_path)
+                .is_some_and(|directory| directory.has_node_modules());
+            if !has_node_modules {
+                continue;
+            }
+            let lies_below = |above: &[u8]| {
+                strip_folder(place.source_path, above)
+                    .is_some_and(|rest| rest.first().is_some_and(|&byte| is_sep_native(byte)))
+            };
+            let mut further_up: Vec<&[u8]> = compiled
+                .iter()
+                .filter(|(_, above)| lies_below(above))
+                .map(|(name, _)| &name[..])
+                .collect();
+            further_up.dedup();
+            for package in further_up {
+                let parts = [
+                    place.source_path,
+                    separator,
+                    NODE_MODULES,
+                    separator,
+                    package,
+                ];
+                if self.read_dir_info_ignore_error(&parts.concat()).is_none() {
+                    continue;
+                }
+                names.push(PackageName {
+                    public_path: [place.public_path, b"/node_modules/", package, ENDS_SEARCH]
+                        .concat()
+                        .into_iter()
+                        .map(normalize_separator)
+                        .collect(),
+                    required: None,
+                    imported: None,
+                    hides_other_paths: false,
+                    is_hidden_from_require: false,
+                    is_hidden_from_import: false,
+                });
+            }
+        }
+        names
+    }
+
+    /// A mark for each name under which the executable finds one of `files`, the compiled files, and `bun run` another file on the disk of the build, which was not compiled.
+    pub fn find_names_that_lead_outside(&mut self, files: &[BuildPaths<'_>]) -> Vec<PackageName> {
+        let mut compiled: Vec<&[u8]> = files.iter().map(|file| file.source_path).collect();
+        compiled.sort_unstable_by(|a, b| compare_source_paths(a, b));
+        let mut asked: Vec<(BuildPaths<'_>, Vec<u8>, bool)> = Vec::new();
+        for file in files {
+            let (Some(source_path), Some(public_path)) =
+                (parent(file.source_path), parent(file.public_path))
+            else {
+                continue;
+            };
+            let folder = BuildPaths {
+                source_path,
+                public_path,
+            };
+            let names = list_other_names(last_component(file.source_path));
+            if names.first().is_some_and(|stem| stem == b"index")
+                && let (Some(source_path), Some(public_path)) =
+                    (parent(folder.source_path), parent(folder.public_path))
+            {
+                let above = BuildPaths {
+                    source_path,
+                    public_path,
+                };
+                asked.push((above, last_component(folder.source_path).to_vec(), true));
+            }
+            asked.extend(names.into_iter().map(|name| (folder, name, false)));
+        }
+        asked.sort_unstable();
+        asked.dedup();
+        let separator = &[bun_paths::SEP][..];
+        let generation = self.generation;
+        let mut unread_log = Log::default();
+        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut names = Vec::new();
+        for (folder, name, is_folder) in &asked {
+            let Some(directory) = self.read_dir_info_ignore_error(folder.source_path) else {
+                continue;
+            };
+            let names_main_file = *is_folder
+                && self
+                    .read_dir_info_ignore_error(
+                        &[folder.source_path, separator, &name[..]].concat(),
+                    )
+                    .is_some_and(|it| it.get_entry(generation, b"package.json").is_some());
+            let is_compiled = |path: &[u8]| {
+                compiled
+                    .binary_search_by(|file| compare_source_paths(file, path))
+                    .is_ok()
+            };
+            let spellings = SPELLINGS.iter().skip(usize::from(*is_folder));
+            let lies_beside = spellings.into_iter().any(|&spelling| {
+                let base = [&name[..], spelling].concat();
+                directory.get_entry(generation, &base).is_some()
+                    && !is_compiled(&[folder.source_path, separator, &base].concat())
+            });
+            if !lies_beside && !names_main_file {
+                continue;
+            }
+            // The resolver keeps what it is asked for.
+            let store = &self.fs_ref().dirname_store;
+            let Ok(specifier) = store.append_parts(&[b"./", &name[..]]) else {
+                continue;
+            };
+            let mut leads_outside = |kind: ImportKind| {
+                let found = self.resolve(folder.source_path, specifier, kind).ok();
+                found.is_some_and(|found| !is_compiled(found.path_pair.primary.text()))
+            };
+            let is_hidden_from_require = leads_outside(ImportKind::Require);
+            let is_hidden_from_import = leads_outside(ImportKind::Dynamic);
+            if !is_hidden_from_require && !is_hidden_from_import {
+                continue;
+            }
+            names.push(PackageName {
+                public_path: [folder.public_path, b"/", &name[..], LEADS_OUTSIDE]
+                    .concat()
+                    .into_iter()
+                    .map(normalize_separator)
+                    .collect(),
+                required: None,
+                imported: None,
+                hides_other_paths: false,
+                is_hidden_from_require,
+                is_hidden_from_import,
+            });
+        }
+        self.log = log_of_build;
+        self.prefer_module_field = prefers_module_field;
         names
     }
 
@@ -627,6 +811,30 @@ mod tests {
                 String::from_utf8_lossy(file)
             );
         }
+    }
+
+    #[test]
+    fn other_names_of_a_file() {
+        let names = |base: &[u8]| list_other_names(base).join(&b" "[..]);
+        assert_eq!(names(b"lib.js"), b"lib");
+        assert_eq!(names(b"mod.ts"), b"mod mod.js mod.jsx");
+        assert_eq!(names(b"a.b.cts"), b"a.b a.b.cjs");
+        assert_eq!(names(b"LICENSE"), b"");
+        assert_eq!(names(b".hidden"), b"");
+    }
+
+    #[test]
+    fn place_of_the_package_of_a_folder() {
+        assert_eq!(
+            find_place_of_package(b"/app/node_modules/orm/node_modules/driver/lib"),
+            Some((&b"/app/node_modules/orm"[..], b"driver".to_vec()))
+        );
+        assert_eq!(
+            find_place_of_package(b"/app/node_modules/@scope/driver"),
+            Some((&b"/app"[..], b"@scope/driver".to_vec()))
+        );
+        assert_eq!(find_place_of_package(b"/app/node_modules/@scope"), None);
+        assert_eq!(find_place_of_package(b"/app/lib"), None);
     }
 
     #[test]

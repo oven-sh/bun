@@ -8,6 +8,7 @@ use smallvec::SmallVec;
 
 use super::{FileLowering, LoweringOptions, SourceKind};
 use crate::ir::StringId;
+use crate::load::test_runner_names::written_name_of_local;
 
 #[derive(Default)]
 pub(super) struct ShownNames {
@@ -15,6 +16,7 @@ pub(super) struct ShownNames {
     scopes_around_evals: Vec<ScopeId>,
     short_binding_names: Vec<Option<StringId>>,
     short_function_names: Option<FxHashMap<SymbolId, StringId>>,
+    pub(super) written_function_names: Vec<u8>,
 }
 
 impl ShownNames {
@@ -43,6 +45,7 @@ impl ShownNames {
             scopes_around_evals,
             short_binding_names: vec![None; FIRST_CHARACTERS.len()],
             short_function_names: options.minifies_identifiers.then(FxHashMap::default),
+            written_function_names: Vec::new(),
         }
     }
 }
@@ -131,6 +134,12 @@ impl FileLowering<'_, '_, '_, '_> {
             &mut text,
         );
         let name = self.intern_bytes(&text);
+        let written = self.queries.atom_bytes(self.bound.symbol(symbol).name);
+        let listed = &mut self.shown_names.written_function_names;
+        for part in [&text[..], written_name_of_local(written)] {
+            listed.extend_from_slice(part);
+            listed.push(0);
+        }
         let names = self.shown_names.short_function_names.as_mut()?;
         names.insert(symbol, name);
         Some(name)

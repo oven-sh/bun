@@ -257,29 +257,23 @@ const ONLY_CALL_BUILT_INS_WITH_WRITTEN_PRIMITIVES: &[&str] = &[
 
 const MAY_HAND_A_VALUE_TO_A_NATIVE: &[&str] = &[
     "console.log(a);",
-    "const a = 'a'; console.log(a);",
     "function h(console) { console.log(1); }",
     "console.log([1]);",
     "console.log({ a: 1 });",
     "console.log(() => {});",
-    "console.log(1 + 2);",
-    "console.log(-1);",
-    "console.log(`a${1}`);",
-    "console.log(1 as number);",
-    "console.log(String(1));",
+    "console.log(String(f));",
     "console.log(process.title);",
     "console.log(console.log);",
     "console.log(Math);",
     "console.log(...a);",
     "const log = console.log; log(1);",
-    "const a = console.log(1);",
+    "const a = setTimeout(() => {}, 1);",
     "new Map();",
     "f(1);",
     "a.b(1);",
     "'a'.at(0);",
     "console.log`a`;",
     "console.log(this);",
-    "console.log(undefined);",
 ];
 
 #[test]
@@ -336,10 +330,48 @@ fn what_any_operand_may_be_asked_for_is_held_where_a_value_may_reach_native_code
 
 #[test]
 fn what_any_operand_is_asked_for_makes_no_promise() {
-    let called_for_promise = table::entry(BuiltinId::Promise).calls();
-    let mut found = table::FUNCTIONS_FOUND_ON_ANY_OPERAND.iter();
-    assert!(found.len() > 0);
-    assert!(found.all(|function| !called_for_promise.contains(function)));
+    let found = table::FUNCTIONS_FOUND_ON_ANY_OPERAND;
+    assert!(!found.is_empty());
+    let prototypes = table::PROTOTYPES_THAT_COME_WITH_FIRST_PROMISE;
+    assert!(prototypes.contains(&BuiltinId::PromisePrototype));
+    let mut asked = 0;
+    for member in BuiltinId::ALL {
+        let entry = table::entry(member);
+        let own = entry.implemented_by();
+        if own.is_empty()
+            || !entry
+                .holder
+                .is_some_and(|holder| prototypes.contains(&holder))
+        {
+            continue;
+        }
+        asked += 1;
+        let mut own = own.iter();
+        assert!(
+            !own.all(|function| found.contains(function)),
+            "{}",
+            table::text_of(member)
+        );
+    }
+    assert!(asked > 10, "{asked}");
+}
+
+const ARE_QUIET_BY_SYNTAX_AND_BRING_CODE_OR_EXPOSE: &[&str] = &[
+    "Promise.resolve(1);",
+    "Array.from('ab');",
+    "Object.keys('ab');",
+    "process.allowedNodeEnvironmentFlags;",
+];
+
+#[test]
+fn a_text_that_is_quiet_by_its_syntax_and_brings_code_of_the_library_may_hand_values_to_natives() {
+    for source in ARE_QUIET_BY_SYNTAX_AND_BRING_CODE_OR_EXPOSE {
+        with_case(PROGRAM, source, |case| {
+            let uses = case.resolved.uses();
+            let is_loud = uses.asks.may_hand_values_to_natives || uses.lets_in_what_nobody_names;
+            assert!(is_loud, "{source}");
+        });
+    }
 }
 
 #[test]

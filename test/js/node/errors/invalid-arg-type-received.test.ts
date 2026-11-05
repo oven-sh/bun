@@ -36,6 +36,10 @@ test.each([
   [{ constructor: { name: "Fake" } }, "an instance of Fake"],
   [Object.create({ constructor: Bar }), "an instance of Bar"],
   [Object.create(null), "[Object: null prototype] {}"],
+  [{ __proto__: null, held: { deeper: 1 } }, "[Object: null prototype]"],
+  [{ constructor: undefined, held: 1 }, "[Object]"],
+  [Object.defineProperty({}, "constructor", { value: undefined }), "{}"],
+  [{ __proto__: null, [Symbol.for("nodejs.util.inspect.custom")]: () => "CUSTOM" }, "CUSTOM"],
 ])("object %#", (value, expected) => {
   expect(received(value)).toBe(expected);
 });

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 const decoded = text => Buffer.from(text).toString();
-const sql = (0, eval)(decoded("Bun.sql"));
+const sql = (0, eval)(decoded("Object.getOwnPropertyDescriptor(Bun, 'sql').value"));
 console.log(typeof sql);
 let message = "";
 try {

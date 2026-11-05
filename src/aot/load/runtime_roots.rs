@@ -42,7 +42,8 @@ pub(crate) fn builtins_used_at_start(options: &AotOptions) -> Vec<BuiltinId> {
         _ => None,
     };
     let features = options.features_of_embedded_options.iter();
-    features.filter_map(read_for).collect()
+    let warnings = (options.warns_of_rejections).then_some(BuiltinId::WarningsOfRejections);
+    features.filter_map(read_for).chain(warnings).collect()
 }
 
 pub(crate) fn uses_of_what_start_reads(
@@ -83,7 +84,7 @@ pub(crate) fn collect_runtime_roots(
     let mut named: Vec<RuntimeModule> = Vec::new();
     let mut lets_in_what_nobody_names =
         further.has_file_that_asks_for_it || used_at_start.lets_in_what_nobody_names;
-    let mut asks_of_texts = AsksOfText::default();
+    let mut asks_of_texts = used_at_start.asks.clone();
     for &file in application.compiled_files() {
         lets_in_what_nobody_names |=
             loader_by_name(application.module(file).file_name()) == Loader::Napi;
@@ -379,6 +380,22 @@ mod tests {
         let by_text = collect_roots_of("f(Bun.sql);", &runtime);
         assert!(by_option.holds_what_unseen_code_finds);
         for path in &by_text.paths {
+            assert!(by_option.paths.contains(path));
+        }
+    }
+
+    #[test]
+    fn what_warns_of_rejections_is_a_root_where_the_option_is_embedded() {
+        let runtime = runtime_modules();
+        let further = FurtherLibraryCode {
+            used_at_start: &[BuiltinId::WarningsOfRejections],
+            ..NOTHING_FURTHER
+        };
+        let by_option = collect_roots_beside("console.log(1);", &runtime, further);
+        let without = collect_roots_of("console.log(1);", &runtime);
+        assert!(by_option.paths.len() > without.paths.len());
+        let of_a_printed_value = collect_roots_of("console.log(f);", &runtime);
+        for path in &of_a_printed_value.paths {
             assert!(by_option.paths.contains(path));
         }
     }

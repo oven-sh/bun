@@ -158,6 +158,12 @@ pub enum PackageLookup {
 /// In a public path, a `..` that leaves the root directory of the build.
 const PARENT_OF_ROOT: &[u8] = b"_.._";
 
+/// Behind the public path of the folder of a package: the disk of the build held that folder, so `bun run` finds no copy of the package further up.
+pub const ENDS_SEARCH: &[u8] = b"//";
+
+/// Behind a public path without its extension, or that of a folder: on the disk of the build `bun run` finds a file under it that was not compiled.
+pub const LEADS_OUTSIDE: &[u8] = b"//.";
+
 pub(crate) fn is_relative_specifier(specifier: &[u8]) -> bool {
     let after_dots = specifier
         .strip_prefix(b"..")
@@ -536,7 +542,17 @@ impl CompiledProgram {
         specifier: &[u8],
     ) -> bool {
         self.allows_code_from_disk
-            && !self.preserves_source_paths
+            && self.looks_for_package_from_disk(public_root, source_dir, specifier)
+    }
+
+    /// No compiled file lies in `source_dir` or below it: the build never asked what is found from there.
+    pub fn looks_for_package_from_disk(
+        &self,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+    ) -> bool {
+        !self.preserves_source_paths
             && bun_paths::is_package_path(specifier)
             && bun_paths::is_absolute(source_dir)
             && !is_bun_standalone_file_path(source_dir)
@@ -791,6 +807,12 @@ impl CompiledProgram {
         search: &ExtensionSearch<'_>,
         lookup: Lookup<'_>,
     ) -> Option<&'static [u8]> {
+        let leads_outside = !how.names_directory
+            && !self.package_names.is_empty()
+            && self.is_hidden_name(&[path, LEADS_OUTSIDE].concat(), how.is_require);
+        if leads_outside {
+            return None;
+        }
         if let Some(file) = find_file(path, how.names_directory, search, lookup) {
             return Some(file);
         }
@@ -999,6 +1021,15 @@ impl CompiledProgram {
                 }
                 if let Some(found) = self.find_file_or_directory(&path, how, search, lookup) {
                     return Found(found);
+                }
+                // `bun build --compile` finds a path below a package from the root directory, whoever asks.
+                let ends_search = package.is_some_and(|package| {
+                    let mark = [&node_modules[..], package, ENDS_SEARCH].concat();
+                    (self.allows_code_from_disk || package.len() == specifier.len())
+                        && self.find_package_name(&mark, is_require).is_some()
+                });
+                if ends_search {
+                    return Unknown;
                 }
             }
             // Above the root directory of the build there are as many folders as an entry point or a name lies above it: a package there need not hold an entry point.
@@ -1634,7 +1665,13 @@ mod tests {
                     module_path: path,
                 });
                 let order = (0..FILES.len() as u32).collect();
-                let names: [(&[u8], Option<u32>, Option<u32>, bool); 9] = [
+                let names: [(&[u8], Option<u32>, Option<u32>, bool); 10] = [
+                    (
+                        b"/$bunfs/root/held/node_modules/driver//",
+                        None,
+                        None,
+                        false,
+                    ),
                     (b"/$bunfs/root/node_modules/@scope/closed", None, None, true),
                     (
                         b"/$bunfs/root/node_modules/@scope/closed/feature",
@@ -1726,6 +1763,18 @@ mod tests {
                     false,
                 );
                 assert_eq!(imported, Unknown);
+            }
+
+            #[test]
+            fn folder_that_only_the_disk_of_the_build_held_ends_the_search() {
+                let held: &[u8] = b"/$bunfs/root/held/deep/";
+                assert_eq!(require(held, b"driver"), Unknown);
+                assert_eq!(require(held, b"driver/lib/extra.js"), Found(FILES[2]));
+                assert_eq!(require(held, b"both"), Found(FILES[4]));
+                assert_eq!(require(ROOT, b"driver"), Found(FILES[1]));
+                let open = program(false).with_code_from_disk(true);
+                assert_eq!(find_in(&open, held, b"driver", true), Unknown);
+                assert_eq!(find_in(&open, held, b"driver/lib/extra.js", true), Unknown);
             }
 
             #[test]

@@ -195,6 +195,7 @@ impl FileFacts {
 pub(super) struct ResolverOutput {
     pub(super) mentioned: Vec<BuiltinId>,
     pub(super) called_with_other_texts: Vec<BuiltinId>,
+    pub(super) called_without_other_code: Vec<BuiltinId>,
     pub(super) called: Vec<BuiltinId>,
     pub(super) loaded: Vec<BuiltinId>,
     pub(super) exposed: Vec<BuiltinId>,
@@ -211,6 +212,7 @@ pub(super) struct ResolverOutput {
     pub(super) hands_mock_on: bool,
     pub(super) resets_modules: bool,
     pub(super) stores_loader_functions: bool,
+    pub(super) hands_process_to_code_laid_above: bool,
     pub(super) tables_of_loaders_written: Vec<ExprId>,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
@@ -733,13 +735,21 @@ impl<'a, 's> Resolver<'a, 's> {
             .extend(symbols.iter().map(|entry| entry.1.id));
         let mut called_with_other_texts = output.called_with_other_texts;
         called_with_other_texts.retain(|id| !output.mentioned.contains(id));
+        let mut called_without_other_code = output.called_without_other_code;
+        called_without_other_code
+            .retain(|id| !output.mentioned.contains(id) && !called_with_other_texts.contains(id));
         output.mentioned.extend_from_slice(&called_with_other_texts);
+        output
+            .mentioned
+            .extend_from_slice(&called_without_other_code);
         let called_with_other_texts = sorted_unique(called_with_other_texts);
+        let called_without_other_code = sorted_unique(called_without_other_code);
         let mentioned = sorted_unique(output.mentioned);
         let exposed = sorted_unique(output.exposed);
         let mentions = Mentions {
             mentioned: &mentioned,
             called_with_other_texts: &called_with_other_texts,
+            called_without_other_code: &called_without_other_code,
             exposed: &exposed,
             linked_functions: &output.linked_functions,
             members_read: &sorted_unique(output.members_read),
@@ -824,6 +834,7 @@ impl<'a, 's> Resolver<'a, 's> {
             hands_mock_on: output.hands_mock_on,
             resets_modules: output.resets_modules,
             stores_loader_functions: output.stores_loader_functions,
+            hands_process_to_code_laid_above: output.hands_process_to_code_laid_above,
             tables_of_loaders_written: output.tables_of_loaders_written.into_boxed_slice(),
             unlocked: OnceLock::new(),
             mentioned,

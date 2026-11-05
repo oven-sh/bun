@@ -39,6 +39,7 @@ mod module_objects;
 mod module_values;
 mod parts_of_a_file;
 mod paths;
+mod quiet_calls;
 mod runtime_dialect;
 mod stores_behind_tests;
 mod unknown_keys;

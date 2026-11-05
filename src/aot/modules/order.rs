@@ -28,6 +28,7 @@ use bun_sema::import_sites::{
 };
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
+use std::borrow::Cow;
 use std::cell::{OnceCell, RefCell};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -743,6 +744,22 @@ struct LoadsSeenByProgram {
     may_be_imported_while_it_runs: Vec<bool>,
 }
 
+fn list_what_file_may_require<'a>(
+    file: FileId,
+    file_sites: &'a FileSites,
+    texts_that_spell_files: &'a [TextThatSpellsFile],
+) -> impl Iterator<Item = (ModuleRef, ModuleRef)> + 'a {
+    let first = texts_that_spell_files.partition_point(|text| text.written_in < file);
+    let texts = texts_that_spell_files[first..].iter();
+    let texts = texts.take_while(move |text| text.written_in == file);
+    let spelled = texts.map(move |text| (ModuleRef::File(file), ModuleRef::File(text.spelled)));
+    let sites = file_sites.sites.iter();
+    let sites = sites.map(|site| (site.referrer, site.target));
+    sites
+        .chain(file_sites.required_candidates.iter().copied())
+        .chain(spelled)
+}
+
 fn find_loads_seen_by_program(
     scans: &Scans,
     modules: &ModuleSet,
@@ -750,6 +767,7 @@ fn find_loads_seen_by_program(
     edges: &[Vec<u32>],
     is_code_of_program: &[bool],
     planned: &[(FileId, FileSites)],
+    texts_that_spell_files: &[TextThatSpellsFile],
 ) -> LoadsSeenByProgram {
     let count = is_code_of_program.len();
     let mut seen = LoadsSeenByProgram {
@@ -788,6 +806,11 @@ fn find_loads_seen_by_program(
         return seen;
     }
 
+    let mut edges = Cow::Borrowed(edges);
+    for text in texts_that_spell_files {
+        edges.to_mut()[text.written_in.idx()].push(text.spelled.0);
+    }
+    let edges = &edges[..];
     let imported = imports.iter().map(|(_, file)| file.0).collect();
     let runs_during_load = find_reached(edges, imported);
     let mut component_of = None;
@@ -827,9 +850,8 @@ fn find_loads_seen_by_program(
                 }
             }
         }
-        let sites = file_sites.sites.iter();
-        let sites = sites.map(|site| (site.referrer, site.target));
-        for (referrer, target) in sites.chain(file_sites.required_candidates.iter().copied()) {
+        let required = list_what_file_may_require(*file, file_sites, texts_that_spell_files);
+        for (referrer, target) in required {
             let Some((target, ModuleKind::SourceText)) = kind_of(target) else {
                 continue;
             };
@@ -878,10 +900,9 @@ fn find_loads_seen_by_program(
             asks(ModuleRef::File(file), request.target);
         }
     }
-    for (_, file_sites) in planned {
-        let sites = file_sites.sites.iter();
-        let sites = sites.map(|site| (site.referrer, site.target));
-        for (referrer, target) in sites.chain(file_sites.required_candidates.iter().copied()) {
+    for (file, file_sites) in planned {
+        let required = list_what_file_may_require(*file, file_sites, texts_that_spell_files);
+        for (referrer, target) in required {
             asks(referrer, target);
         }
     }
@@ -1035,6 +1056,7 @@ pub(super) fn compute_order(
         &edges,
         &is_code_of_program,
         &planned,
+        texts_that_spell_files.as_deref().unwrap_or_default(),
     );
     let ask_for_several_types = find_importers_that_ask_for_several_types(modules);
     if !ask_for_several_types.is_empty() {

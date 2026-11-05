@@ -291,6 +291,7 @@ export default b.declarations(
     implementation: b.hostCall,
   }),
   // It calls what it finds as process.on, with "SIGWINCH" and the function. The method of native code tells the listeners for "newListener" and keeps the function, which from then on is listed as any listener is and called as any: on the object that a listener was last added through.
+  // The light standard streams alone call it, and they are made only where nobody has laid anything under process.on (runtime-dependencies.builtins.ts): so what it finds there is the method of native code.
   b.static(cpp("BunProcess.cpp", "jsFunctionListenForSizeOfTerminal"), {
     args: { listener: b.any },
     returns: b.undefined,
@@ -337,10 +338,11 @@ export default b.declarations(
   // from a native emitter comes by the operand. `process` is the object of the realm, whatever the global of that name holds. Code runs only where a program has laid a proxy above `process`.
   b.static(cpp("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom"), {
     // It refuses nothing: what is no object goes nowhere.
-    args: { prototype: b.any.optional },
+    args: { prototype: b.any.optional, handedToWhatLiesOnIt: b.any.optional },
     returns: b.undefined,
     capability: "js",
-    uses: { prototype: [b.retained] },
+    uses: { prototype: [b.retained], handedToWhatLiesOnIt: [b.retained] },
+    marks: ["LaysOperandAbovePrototype"],
     implementation: b.hostCall,
   }),
   b.static(cpp("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"), {

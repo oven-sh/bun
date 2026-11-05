@@ -1,0 +1,28 @@
+# Object.defineProperty() with a descriptor written in place creates the field in its slot, like a store: `size` lies boxed and is held to a whole number or a text. A raw number that a direct call gives is whole
+# by a claim alone, and its box would be cut by that claim: in front of the definition it is asked as it lies, as in front of a store (a-raw-number-that-a-call-gives-is-asked-for-the-part-that-the-slot-takes.ir).
+# f2 = the constructor of Gauge
+# -- source: a-raw-number-laid-by-a-definition-is-asked-for-the-part-that-the-slot-takes.js
+# function unsigned(n) { return n >>> 0; }
+# class Gauge {
+#   constructor(n, text) {
+#     this.tag = 1;
+#     if (text)
+#       Object.defineProperty(this, "size", { value: "none", writable: true, enumerable: true, configurable: true });
+#     else
+#       Object.defineProperty(this, "size", { value: unsigned(n), writable: true, enumerable: true, configurable: true });
+#   }
+# }
+# let last = "";
+# for (let i = 0; i < 4; i++) last += new Gauge(i - 2, i === 1).size + " ";
+# print(last);
+# -- end of source
+# RUN(PLACED): plan layouts mechanisms=all
+# PLACED: "size" JSValue {{*}}doors=int|string
+# RUN(ASKED): walk f2 mechanisms=all-Inlining
+# ASKED-LABEL: code f2:Body
+# ASKED: [[given]]: int @Double = CallDirect {{*}}function=f1
+# ASKED: CheckProof [[given]] checkedType=int typeWithoutProof=number source=Field
+# ASKED: DefineOwnProperty
+# RUN(RIGHT): run-in-shell
+# RIGHT: 4294967294 none 0 1
+# RIGHT-NEXT: exited with 0

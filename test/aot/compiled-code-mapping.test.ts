@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isGlibc, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isGlibc, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
 import { chmodSync, copyFileSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
@@ -540,21 +540,43 @@ test.skipIf(!isLinux || refusesExecuteOnlyStart)(
   120_000,
 );
 
+// A further block of entries is mapped out of the executable's file. Where the file cannot be had the block is copied into fresh memory that is then made executable.
+// An executable forbids itself just that at its start where the kernel knows how (PR_SET_MDWE with PR_MDWE_NO_INHERIT, Linux 6.7): there no more than the entries loaded with the code can be had.
+// So each program asks the kernel what holds for it and says so in front of what it did.
+const makes600Callbacks = `const { prctl } = dlopen(${JSON.stringify(isLinux ? libcPathForDlopen() : "")}, {
+  prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
+}).symbols;
+const getMDWE = 66;
+const mayMakeMemoryExecutable = prctl(getMDWE, 0, 0, 0, 0) <= 0;
+function make600Callbacks() {
+  let sum = 0, made = 0;
+  try {
+    for (; made < 600; made++) { const n = made; sum += CFunction({ ptr: new JSCallback(() => n, { returns: "int32_t", args: [] }).ptr, returns: "int32_t", args: [] })(); }
+  } catch (error) {
+    return [mayMakeMemoryExecutable, "made", made, (error as Error).name].join(" ");
+  }
+  return [mayMakeMemoryExecutable, "called", sum].join(" ");
+}
+`;
+const allOrWhatIsLoaded = ["true called 179700", "false made 256 RangeError"];
+
 test.skipIf(!isLinux || refusesExecuteOnlyStart || process.geteuid!() === 0)(
   "an executable that may be run but not read makes more callbacks for native code than are loaded with its code",
   async () => {
     using dir = tempDir("aot-callbacks-unreadable", {
-      "program.ts": `import { CFunction, JSCallback } from "bun:ffi";
-let sum = 0;
-for (let n = 0; n < 600; n++) sum += CFunction({ ptr: new JSCallback(() => n, { returns: "int32_t", args: [] }).ptr, returns: "int32_t", args: [] })();
-console.log("called", sum);
+      "program.ts": `import { CFunction, dlopen, FFIType, JSCallback } from "bun:ffi";
+${makes600Callbacks}console.log(make600Callbacks());
 `,
     });
     const executable = await build(String(dir));
     const file = readFileSync(executable);
     chmodSync(executable, 0o111);
     if (!canMoveFileMappings && isLinkedAtFixedAddress(file)) return;
-    expect(await run([executable])).toMatchObject({ stdout: "called 179700\n", exitCode: 0 });
+    const { stdout, exitCode } = await run([executable]);
+    expect({ said: allOrWhatIsLoaded.indexOf(stdout.trimEnd()) >= 0 ? "one of the two" : stdout, exitCode }).toEqual({
+      said: "one of the two",
+      exitCode: 0,
+    });
   },
   120_000,
 );
@@ -563,20 +585,20 @@ test.skipIf(!isLinux)(
   "an executable that has no descriptor left makes more callbacks for native code than are loaded with its code",
   async () => {
     using dir = tempDir("aot-callbacks-without-descriptors", {
-      "program.ts": `import { CFunction, JSCallback } from "bun:ffi";
+      "program.ts": `import { CFunction, dlopen, FFIType, JSCallback } from "bun:ffi";
 import { openSync } from "node:fs";
-let end = "no limit in sight";
+${makes600Callbacks}let end = "no limit in sight";
 try { for (let n = 0; n < 5000; n++) openSync("/dev/null", "r"); } catch (error) { end = (error as { code: string }).code; }
-let sum = 0;
-for (let n = 0; n < 600; n++) sum += CFunction({ ptr: new JSCallback(() => n, { returns: "int32_t", args: [] }).ptr, returns: "int32_t", args: [] })();
-console.log(end, "called", sum);
+console.log(end, make600Callbacks());
 `,
     });
     const executable = await build(String(dir));
-    expect(await run(["sh", "-c", `ulimit -n 300 && exec "$0"`, executable])).toMatchObject({
-      stdout: "EMFILE called 179700\n",
-      exitCode: 0,
-    });
+    const { stdout, exitCode } = await run(["sh", "-c", `ulimit -n 300 && exec "$0"`, executable]);
+    const said = stdout.trimEnd().replace(/^EMFILE /, "");
+    expect({
+      said: said !== stdout.trimEnd() && allOrWhatIsLoaded.includes(said) ? "one of the two" : stdout,
+      exitCode,
+    }).toEqual({ said: "one of the two", exitCode: 0 });
   },
   120_000,
 );
@@ -628,6 +650,31 @@ test.skipIf(!isLinux)(
       return;
     }
     expectCodeAtAnotherAddressEachTime(await placesOfCode(executable, codeOffset, cmd));
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  "a program that is compiled and run in one go lies at another address in every run",
+  async () => {
+    using dir = tempDir("aot-address-of-a-program", {
+      "program.ts": `import { readFileSync } from "node:fs";
+console.log(readFileSync("/proc/self/maps", "utf8"));
+`,
+    });
+    const starts: number[][] = [];
+    for (let turn = 0; turn < 3; turn++) {
+      const { stdout, exitCode } = await run([bunExe(), "run", "--debug-aot", join(String(dir), "program.ts")]);
+      expect(exitCode).toBe(0);
+      starts.push(
+        mappingsOf(stdout)
+          .filter(mapping => mapping.path.includes("bun-compiled-program"))
+          .map(mapping => mapping.start),
+      );
+    }
+    expect(starts.map(ofRun => ofRun.length > 0)).toEqual([true, true, true]);
+    const seen = starts.flat();
+    expect(new Set(seen).size).toBe(seen.length);
   },
   120_000,
 );

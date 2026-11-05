@@ -51,6 +51,7 @@ pub(in crate::lower::scope) fn walk_file(
         if needs_shared_place
             && !is_looked_at[read.symbol.idx()]
             && !sees_itself
+            && !input.hir[read.function].flags.contains(Flags::GENERATOR)
             && !input.bound.is_visible_to_eval(read.symbol)
         {
             walk.created_at_each_read.push(read.symbol);

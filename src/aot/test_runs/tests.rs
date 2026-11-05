@@ -190,10 +190,10 @@ fn what_a_preload_imports_goes_by_the_rule_for_every_file_of_the_tests() {
     ];
     with_run(&files, (2, 1), |files, run| {
         assert_eq!(whose(files, run, "patch.ts"), WhoseFile::OfTests);
-        assert_eq!(whose(files, run, "deeper.ts"), WhoseFile::OfProduct);
-        assert_eq!(whose(files, run, "deepest.ts"), WhoseFile::OfProduct);
+        assert_eq!(whose(files, run, "deeper.ts"), WhoseFile::OfNeither);
+        assert_eq!(whose(files, run, "deepest.ts"), WhoseFile::OfNeither);
         assert_eq!(whose(files, run, "writes.ts"), WhoseFile::OfTests);
-        assert_eq!(whose(files, run, "below.ts"), WhoseFile::OfProduct);
+        assert_eq!(whose(files, run, "below.ts"), WhoseFile::OfNeither);
     });
     let mut files = files.to_vec();
     files.push(("main.ts", "import { shared } from './shared';\nshared();\n"));
@@ -208,7 +208,7 @@ fn what_a_preload_imports_goes_by_the_rule_for_every_file_of_the_tests() {
 fn of_what_lies_deeper_than_a_step_only_a_file_that_asks_for_it_is_the_tests() {
     with_run(&PROJECT, (2, 1), |files, run| {
         assert_eq!(whose(files, run, "src/app.ts"), WhoseFile::OfTests);
-        assert_eq!(whose(files, run, "src/lib.ts"), WhoseFile::OfProduct);
+        assert_eq!(whose(files, run, "src/lib.ts"), WhoseFile::OfNeither);
     });
     let asking = [
         "export const lib = (path: string) => import(path);\n",
@@ -226,7 +226,7 @@ fn of_what_lies_deeper_than_a_step_only_a_file_that_asks_for_it_is_the_tests() {
         with_run(&files, (2, 1), |files, run| {
             assert_eq!(
                 whose(files, run, "src/lib.ts"),
-                WhoseFile::OfProduct,
+                WhoseFile::OfNeither,
                 "{text}"
             );
             assert_eq!(
@@ -281,8 +281,8 @@ fn what_stands_behind_a_file_that_only_hands_names_on_is_imported_by_whoever_imp
         ] {
             assert_eq!(whose(files, run, name), WhoseFile::OfTests, "{name}");
         }
-        assert_eq!(whose(files, run, "below.ts"), WhoseFile::OfProduct);
-        assert_eq!(whose(files, run, "behind-code.ts"), WhoseFile::OfProduct);
+        assert_eq!(whose(files, run, "below.ts"), WhoseFile::OfNeither);
+        assert_eq!(whose(files, run, "behind-code.ts"), WhoseFile::OfNeither);
     });
     let mut files = files.to_vec();
     files.push(("main.ts", "import { put } from './put';\nput({});\n"));
@@ -290,6 +290,135 @@ fn what_stands_behind_a_file_that_only_hands_names_on_is_imported_by_whoever_imp
         assert_eq!(whose(files, run, "barrel.ts"), WhoseFile::OfTests);
         assert_eq!(whose(files, run, "put.ts"), WhoseFile::OfProduct);
     });
+}
+
+#[test]
+fn a_file_two_steps_below_a_test_file_that_nothing_speaks_for_is_nobodys_and_so_is_the_package_it_alone_loads()
+ {
+    let files = [
+        (
+            "tests/one.test.ts",
+            "import { test } from 'bun:test';\nimport { main } from '../src/main';\nimport { count } from './support/count';\ntest('a', () => { count(main); });\n",
+        ),
+        (
+            "tests/support/count.ts",
+            "import { wrap } from './wrap';\nexport const count = (it: unknown) => wrap(it, 'get');\n",
+        ),
+        (
+            "tests/support/wrap.ts",
+            "import 'tool';\nimport { shared } from '../../src/shared';\nexport const wrap = (sample: any, name: string) => { Object.getPrototypeOf(sample)[name] = shared; };\n",
+        ),
+        (
+            "src/main.ts",
+            "import 'dep';\nimport { shared } from './shared';\nexport const main = () => shared();\n",
+        ),
+        ("src/shared.ts", "export const shared = () => 1;\n"),
+        (
+            "node_modules/dep/package.json",
+            r#"{ "name": "dep", "version": "1.0.0", "main": "index.js" }"#,
+        ),
+        ("node_modules/dep/index.js", "exports.dep = 1;\n"),
+        (
+            "node_modules/tool/package.json",
+            r#"{ "name": "tool", "version": "1.0.0", "main": "index.js" }"#,
+        ),
+        ("node_modules/tool/index.js", "exports.tool = 1;\n"),
+        (
+            MANIFEST.0,
+            r#"{ "name": "project", "type": "module", "main": "./src/main.ts" }"#,
+        ),
+    ];
+    with_run(&files, (1, 0), |files, run| {
+        let rows = [
+            ("tests/support/count.ts", WhoseFile::OfTests),
+            ("tests/support/wrap.ts", WhoseFile::OfNeither),
+            ("node_modules/tool/index.js", WhoseFile::OfNeither),
+            ("src/main.ts", WhoseFile::OfProduct),
+            ("src/shared.ts", WhoseFile::OfProduct),
+            ("node_modules/dep/index.js", WhoseFile::OfProduct),
+        ];
+        let plan = run.plan_of_files();
+        for (name, expected) in rows {
+            assert_eq!(whose(files, run, name), expected, "{name}");
+            let file = files.by_path.get(format!("/project/{name}").as_bytes());
+            let index = file.unwrap().idx();
+            assert_eq!(
+                plan.finds_builtins_read_only[index],
+                expected == WhoseFile::OfProduct,
+                "{name}"
+            );
+            assert_eq!(
+                plan.loads_compiled_files_alone[index],
+                expected != WhoseFile::OfTests,
+                "{name}"
+            );
+        }
+    });
+}
+
+#[test]
+fn whose_a_file_is_does_not_hang_on_which_other_test_files_run() {
+    let manifest = r#"{ "name": "project", "type": "module", "main": "./src/main.ts" }"#;
+    let files = [
+        (
+            "a.test.ts",
+            "import { test } from 'bun:test';\nimport { patch } from './src/patch';\ntest('a', () => { patch(Object.getPrototypeOf([]), 'push', () => 7); });\n",
+        ),
+        (
+            "b.test.ts",
+            "import { test } from 'bun:test';\nimport './src/main';\ntest('b', () => {});\n",
+        ),
+        (
+            "src/main.ts",
+            "import { patch } from './patch';\nexport const keep = patch;\n",
+        ),
+        (
+            "src/patch.ts",
+            "export function patch(holder: any, name: string, value: unknown) { holder[name] = value; }\n",
+        ),
+        (MANIFEST.0, manifest),
+    ];
+    for test_files in [1, 2] {
+        with_run(&files, (test_files, 0), |files, run| {
+            assert_eq!(
+                whose(files, run, "src/patch.ts"),
+                WhoseFile::OfProduct,
+                "{test_files}"
+            );
+        });
+    }
+    let mut unnamed = files.to_vec();
+    unnamed.retain(|file| file.0 != MANIFEST.0);
+    unnamed.push(MANIFEST);
+    with_run(&unnamed, (1, 0), |files, run| {
+        assert_eq!(whose(files, run, "src/patch.ts"), WhoseFile::OfTests);
+    });
+}
+
+#[test]
+fn every_text_under_the_exports_of_a_manifest_is_a_way_into_the_product() {
+    for (exports, side) in [
+        (r#""./src/app.ts""#, WhoseFile::OfProduct),
+        (r#"{ ".": "./src/app.ts" }"#, WhoseFile::OfProduct),
+        (
+            r#"{ ".": { "import": { "default": "./src/app.ts" } } }"#,
+            WhoseFile::OfProduct,
+        ),
+        (
+            r#"{ ".": ["./src/none.ts", "./src/app.ts"] }"#,
+            WhoseFile::OfProduct,
+        ),
+        (r#"{ "./*": "./src/*.ts" }"#, WhoseFile::OfTests),
+    ] {
+        let manifest =
+            format!(r#"{{ "name": "project", "type": "module", "exports": {exports} }}"#);
+        let mut files = PROJECT.to_vec();
+        files.retain(|file| file.0 != MANIFEST.0);
+        files.push((MANIFEST.0, manifest.as_str()));
+        with_run(&files, (2, 1), |files, run| {
+            assert_eq!(whose(files, run, "src/app.ts"), side, "{exports}");
+        });
+    }
 }
 
 #[test]
@@ -301,7 +430,7 @@ fn a_text_that_a_deeper_file_holds_takes_it_to_no_side() {
         ("src/deep.ts", "export const MOD = `globalThis.ArrayBuffer = function () {}; Date.now = () => 1;`;\nexport const lib = () => MOD;\n"),
     ]);
     with_run(&files, (2, 1), |files, run| {
-        assert_eq!(whose(files, run, "src/deep.ts"), WhoseFile::OfProduct);
+        assert_eq!(whose(files, run, "src/deep.ts"), WhoseFile::OfNeither);
     });
 }
 
@@ -313,7 +442,7 @@ fn a_file_that_gives_an_imported_function_a_value_that_nobody_reads_asks_for_not
     for (taker, side) in [
         (
             "export const take = (name: string) => name.length;\n",
-            WhoseFile::OfProduct,
+            WhoseFile::OfNeither,
         ),
         ("export const take = require;\n", WhoseFile::OfTests),
     ] {
@@ -327,7 +456,7 @@ fn a_file_that_gives_an_imported_function_a_value_that_nobody_reads_asks_for_not
         with_run(&files, (2, 1), |files, run| {
             assert_eq!(
                 whose(files, run, "src/lib.ts"),
-                WhoseFile::OfProduct,
+                WhoseFile::OfNeither,
                 "{taker}"
             );
             assert_eq!(whose(files, run, "src/deep.ts"), side, "{taker}");
@@ -336,7 +465,7 @@ fn a_file_that_gives_an_imported_function_a_value_that_nobody_reads_asks_for_not
 }
 
 #[test]
-fn a_ring_of_imports_that_the_tests_enter_stays_the_products_with_what_it_imports() {
+fn a_ring_of_imports_that_the_tests_alone_enter_is_nobodys_with_what_it_imports() {
     let mut files = PROJECT.to_vec();
     files.retain(|file| !matches!(file.0, "src/app.ts" | "src/lib.ts"));
     files.extend([
@@ -346,9 +475,15 @@ fn a_ring_of_imports_that_the_tests_enter_stays_the_products_with_what_it_import
     ]);
     with_run(&files, (2, 1), |files, run| {
         for name in ["src/app.ts", "src/lib.ts", "src/leaf.ts"] {
-            assert_eq!(whose(files, run, name), WhoseFile::OfProduct, "{name}");
+            assert_eq!(whose(files, run, name), WhoseFile::OfNeither, "{name}");
         }
         assert_eq!(whose(files, run, "shared/help.ts"), WhoseFile::OfTests);
+    });
+    files.push(("src/main.ts", "import { lib } from './lib';\nlib();\n"));
+    with_run(&files, (2, 1), |files, run| {
+        for name in ["src/app.ts", "src/lib.ts", "src/leaf.ts"] {
+            assert_eq!(whose(files, run, name), WhoseFile::OfProduct, "{name}");
+        }
     });
 }
 

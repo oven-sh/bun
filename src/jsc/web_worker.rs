@@ -1682,9 +1682,14 @@ unsafe fn resolve_entry_point_specifier<'s>(
     }
 
     // SAFETY: per fn contract — `parent` is this thread's VM, and only its own
-    // thread mutates its `transpiler` and the log that it writes to.
-    let log = unsafe { &mut *(*parent).transpiler.log };
-    let said_before = (log.msgs.len(), log.errors);
+    // thread mutates its `transpiler` and the log that it writes to. No two
+    // references to the log overlap: this one ends with the statement,
+    // `resolve_entry_point` makes its own where it fails, and the one in the
+    // `Err` arm is made when that call has returned.
+    let said_before = {
+        let log = unsafe { &*(*parent).transpiler.log };
+        (log.msgs.len(), log.errors)
+    };
     // SAFETY: as above.
     let resolved_entry_point = match unsafe {
         (*parent).transpiler.resolve_entry_point(str, dot_slash)
@@ -1697,6 +1702,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 .filter(|_| crate::compiled_program::program_of_executable().is_some())
                 .and_then(|graph| str.strip_prefix(graph.base_public_path_with_default_suffix()));
             if let Some(below_root) = below_root {
+                // SAFETY: as above.
+                let log = unsafe { &mut *(*parent).transpiler.log };
                 log.msgs.truncate(said_before.0);
                 log.errors = said_before.1;
                 log.add_error_fmt(

@@ -1,5 +1,5 @@
-// The run time reports a promise that is rejected without a handler, by code of Bun's library. A program whose promises come from async functions, generators and import() alone
-// names no `Promise`, and has that code all the same: with --aot it says what it says without.
+// Under --unhandled-rejections the run time warns of a promise that is rejected without a handler, by code of Bun's library. The option that is written into the executable brings
+// that code, whatever makes the promises: async functions, generators and import() name no `Promise`. With --aot the program says what it says without.
 import { describe, expect, test } from "bun:test";
 import { bunEnv } from "harness";
 import { unsupported } from "./harness/compiler";

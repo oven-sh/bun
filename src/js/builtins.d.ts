@@ -46,8 +46,10 @@ declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
 declare const CAN_LOAD_ADDONS_AT_RUN_TIME: boolean;
 /** False in an executable that was compiled ahead of time from a program that never names `node:cluster`. */
 declare const CAN_BE_CLUSTER_WORKER: boolean;
-/** False in what was compiled ahead of time, but for a test run one of whose tests replaces a built-in function. Where it is false no program can tell which built-in functions Bun's own code calls. */
+/** False in what was compiled ahead of time, but for a test run one of whose tests replaces a built-in function or adds a name to `Object.prototype` or `Function.prototype`. Where it is false no program can tell which built-in functions Bun's own code calls, or which names it reads off its own objects. */
 declare const CAN_REPLACE_BUILT_INS: boolean;
+/** False in what was compiled ahead of time from a program that asks `process` only for what Bun gives it. Another name, or a conversion to a text or a number, is answered by what the program has laid on `EventEmitter.prototype`, with `process` as `this`. */
+declare const PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES: boolean;
 /** True in an executable that was compiled ahead of time, false in `bun run`. Only for a choice between two ways that a program cannot tell apart. */
 declare const IS_COMPILED_AHEAD_OF_TIME: boolean;
 /** Calls `callee`. A compiled executable never inlines the call. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`. */
@@ -59,17 +61,21 @@ declare function $callNoInline<This, Arguments extends unknown[], Result>(
 
 /**
  * True only where a lookup of `name` on `object` finds the method or accessor that the class of `object` declares or inherits, as the source text defines it.
- * That class may be an heir of the one you mean: ask for the prototype of `object` as well. False says nothing: ask the object and its prototypes then.
+ * That class may be an heir of the one you mean: name the one you mean as `Class`: then it is true only where the member found is declared by `Class` or by a class above it,
+ * and an heir that declares the name itself gets a no. False says nothing: ask the object and its prototypes then.
  * Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
  */
-declare function $findsDeclaredMember(object: object, name: string): boolean;
+declare function $findsDeclaredMember(object: object, name: string, Class?: Function): boolean;
 
 /**
  * True only where `object` was made by `Class` itself, not by an heir, no field that `Class` declares was made an accessor or defined anew under other attributes,
  * and above the object stands the prototype of `Class`, with at most plain objects in between that hide no member of it.
  * Then a read of a declared field runs no code of the program: read the fields in any order, as often as you like, or not at all.
  * Stores into the fields and properties under other names leave it true. A deleted field is like one that was never stored: it is absent, and the answer stays true.
+ * A yes also says that `object instanceof Class` is true and runs no code.
  * It says nothing about methods: ask `$findsDeclaredMember` for each one that you count on. It says nothing about frozen objects.
+ * A name under which `Class` or a class above it declares an accessor is a member, not a field, though a constructor stores under it.
+ * Lay such an accessor where the compiler sees it: a field over an accessor that it does not see makes the answer false for every object.
  * It holds until code of the program runs again. False says nothing: take the road that reads everything then.
  * `Class` is the binding of a class or constructor function that is evaluated once. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
  */

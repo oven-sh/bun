@@ -180,6 +180,10 @@ fn options_fill_record() {
         expected_record(|record| record.output = OutputOptions::OBFUSCATE)
     );
     assert_eq!(
+        filled_record(|options| options.keeps_names = true),
+        expected_record(|record| record.output = OutputOptions::KEEPS_FUNCTION_NAMES)
+    );
+    assert_eq!(
         filled_record(|options| options.runs_in_several_realms = true),
         expected_record(|record| record.output = OutputOptions::RUNS_IN_SEVERAL_REALMS)
     );

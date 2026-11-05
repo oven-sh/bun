@@ -50,7 +50,9 @@ pub struct AotBuildRequest<'r, 'a> {
     pub executable_identity: ExecutableIdentity,
     pub image_form: Option<TargetImageForm>,
     pub module_prefix: &'r [u8],
-    pub log: &'r mut Log,
+    /// `transpiler.log`. The resolver and the bundler write through that pointer while the build
+    /// runs, so no reference to the log is held across a call that may reach them.
+    pub log: *mut Log,
     pub arena: &'a bun_alloc::Arena,
     pub event_loop: EventLoop,
     pub worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
@@ -127,7 +129,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         working_directory: crate::bun_fs::FileSystem::get().top_level_dir(),
         node_path: transpiler.env().get(b"NODE_PATH"),
     };
-    let Some(options) = options_from_bundler(&input, log) else {
+    // SAFETY: the log outlives the build, and nothing below this call reaches the transpiler.
+    let Some(options) = options_from_bundler(&input, unsafe { &mut *log }) else {
         return Err(failure_before_pipeline(false));
     };
     transpiler.options.root_dir = Box::from(&options.paths.root_directory[..]);
@@ -149,7 +152,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     let mut bundle = match started {
         Ok(bundle) => bundle,
         Err(error) => {
-            log.add_error_fmt(
+            // SAFETY: the log outlives the build, and the reference ends with the statement.
+            unsafe { &mut *log }.add_error_fmt(
                 None,
                 Loc::EMPTY,
                 format_args!("{} while starting the build", error.name()),
@@ -169,7 +173,10 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         module_prefix,
         &aot.user_defined_names,
     );
-    let result = bun_aot::compile(&options, &services, log);
+    let mut said_by_compiler = Log::init();
+    let result = bun_aot::compile(&options, &services, &mut said_by_compiler);
+    // SAFETY: the log outlives the build, and the reference ends with the statement.
+    said_by_compiler.append_to(unsafe { &mut *log });
 
     let refused_names = services.take_refused_names();
     let embedded = services.shut_down();
@@ -200,6 +207,28 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         }
         Ok(_) | Err(_) => (Vec::new(), Vec::new()),
     };
+    let package_names = match &result {
+        Ok(compilation) if !aot.runs_in_place => {
+            let folders = compilation.summary.folders.iter();
+            let folders: Vec<BuildPaths<'_>> = folders
+                .map(|it| BuildPaths {
+                    source_path: &it.source_path,
+                    public_path: &it.public_path,
+                })
+                .collect();
+            let files = compilation.program_files.iter();
+            let files: Vec<BuildPaths<'_>> = files
+                .map(|it| BuildPaths {
+                    source_path: &it.source_path,
+                    public_path: &it.public_path,
+                })
+                .collect();
+            let resolver = &mut bundle.transpiler.resolver;
+            let names = add_hidden_names(package_names, resolver.find_nearer_packages(&folders));
+            add_hidden_names(names, resolver.find_names_that_lead_outside(&files))
+        }
+        Ok(_) | Err(_) => package_names,
+    };
     // A program that runs in place reads the package.json files itself.
     let package_names = match result.is_ok() && !aot.runs_in_place && !refused_names.is_empty() {
         true => {
@@ -216,7 +245,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         false => package_names,
     };
     let further_package_names = match &result {
-        Ok(compilation) if !compilation.program_files.is_empty() => {
+        Ok(compilation) if aot.loads_code_from_disk && !compilation.program_files.is_empty() => {
             let files = compilation.program_files.iter();
             let files: Vec<BuildPaths<'_>> = files
                 .map(|it| BuildPaths {

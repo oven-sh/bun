@@ -659,7 +659,7 @@ function impostorsAmongInstances({ pick, chance, typed, cast, n }: Draw): string
     `const mark = ${read};`,
     `if (item.skip) return "skipped";`,
     `const weight = item.weight;`,
-    `const name = mark${cast(asked)};`,
+    `const name = mark${cast(`unknown as ${asked}`)};`,
     `if (at > 90) return "far";`,
   ];
   if (chance(25)) steps.splice(4, 2, steps[5], steps[4]);
@@ -847,7 +847,7 @@ function kindsOfFilesBehindComputedTests({ pick, cast, n }: Draw): string[] {
     ["", "(null ?? true)"],
     ["", "[].length === 0"],
     ["", "Math.max(1, 5) === 5"],
-    ["", 'typeof window === "undefined"'],
+    ["", 'typeof globalThis.window === "undefined"'],
     ["", 'process.env.NODE_ENV !== "made-up"'],
   ]);
   const guarded = pick([
@@ -889,8 +889,8 @@ function iteratorsWrittenByHand({ pick, chance, typed, cast, n }: Draw): string[
     ? `sum += await (v === bad ? Promise.reject(new RangeError("turn")) : v);`
     : `if (v === bad) throw new RangeError("turn"); sum += v;`;
   const beside = pick([
-    [`printValue("beside ${n}", [...Iterator.concat([1], [2, 3])].join());`],
-    [`printValue("beside ${n}", [...Iterator.concat([1], [2, 3])].join());`],
+    [`printValue("beside ${n}", [...(Iterator${cast("any")}).concat([1], [2, 3])].join());`],
+    [`printValue("beside ${n}", [...(Iterator${cast("any")}).concat([1], [2, 3])].join());`],
     [
       `function drive(it${any}) { let seen = 0; for (;;) { const step = it.next; const stop = it.return; const got = step.call(it); if (got.done) return seen; if (++seen > 1) { stop?.call(it); return seen; } } }`,
       `printValue("beside ${n}", drive(JSON.parse("[4,5,6]").values()), drive(new Set([1]).values()));`,
@@ -1110,7 +1110,7 @@ function heirsOfLibraryClasses({ pick, typed, cast, n }: Draw): string[] {
   return [
     ...head.split("\n").filter(Boolean),
     `let heard = 0;`,
-    `class Mine extends ${parent}${parent === "Map" || parent === "Array" || parent === "Promise" ? (typed("") ? "<any" + (parent === "Map" ? ", any" : "") + ">" : "") : ""} { ${pick(members)} }`,
+    `class Mine extends ${parent === "Map" || parent === "Array" || parent === "Promise" ? parent + (typed("") ? "<any" + (parent === "Map" ? ", any" : "") + ">" : "") : typed("") ? `(${parent} as any)` : parent} { ${pick(members)} }`,
     // The library works on an object of its own class as well, in the same function or in a second one of the same text: what it learns there must not be believed of the heir.
     ...(isOneSite ? [worker("work")] : [worker("work"), worker("workOnHeir")]),
     `printValue("heir ${n}", String(await work(${made.replace("Mine", parent)})), String(await ${isOneSite ? "work" : "workOnHeir"}(${made})));`,
@@ -1120,7 +1120,14 @@ function heirsOfLibraryClasses({ pick, typed, cast, n }: Draw): string[] {
 /** A direct eval in a function that runs many times: in one turn its text declares, writes, reads or deletes a name that the function, a closure of it or the file also knows. */
 function namesThatEvalTouches({ pick, chance, typed, cast, n }: Draw): string[] {
   const any = typed("any");
-  const outer = pick(["var made = 0;", "var made = 0;", "let made = 0;", "const made = 0;", ""]);
+  // A `const` with a literal is written into its uses by `bun <file>`, whatever an eval declares in between: its value comes out of a call here.
+  const outer = pick([
+    "var made = 0;",
+    "var made = 0;",
+    "let made = 0;",
+    "const made = Number(0);",
+    typed("") ? "var made = 0;" : "",
+  ]);
   const own = pick(["", "", "", "let local = turn;", "var made = turn;", "let made = turn;"]);
   const text = pick([
     "var made = 12",
@@ -1281,7 +1288,7 @@ function textsKeptAcrossWaits({ pick, typed, n }: Draw): string[] {
   ]);
   return [
     `function same(value${typed("string")})${typed("string")} { return value; }`,
-    `${head} gather(limit${typed("number")})${typed("any")} {`,
+    `${head} gather(limit${typed("number")})${typed(head === "async function" ? "Promise<any>" : head === "function*" ? "Generator<any>" : "AsyncGenerator<any>")} {`,
     `  const turns = limit | 0;`,
     `  const list${typed("string[]")} = [];`,
     `  let text = "", kept = "", at = 0;`,
@@ -1708,7 +1715,415 @@ function generatorsThatYieldOutsideTheirLoops({ pick, chance, typed, n }: Draw):
   ];
 }
 
+/** A plain object is laid between an instance and the prototype of its class, and is cut off or hung elsewhere later. `instanceof` is asked before and behind, in a loop and outside. */
+function linksLaidBelowClasses({ pick, chance, typed, cast, n }: Draw): string[] {
+  const any = typed("any");
+  const cut = pick([
+    `Object.setPrototypeOf(link, null);`,
+    `Object.setPrototypeOf(link, null);`,
+    `Reflect.setPrototypeOf(link, null);`,
+    `link.__proto__ = null;`,
+    `Object.setPrototypeOf(link, Other${n}.prototype);`,
+    `Object.setPrototypeOf(link, {});`,
+    `(0, eval)("(link => Object.setPrototypeOf(link, null))")(link);`,
+    `unseen(Object.setPrototypeOf)(link, null);`,
+    `Object.setPrototypeOf(made, null);`,
+    `Object.setPrototypeOf(made, Other${n}.prototype);`,
+  ]);
+  const lays = pick([
+    `Object.setPrototypeOf(made, link);`,
+    `Object.setPrototypeOf(made, link);`,
+    `Reflect.setPrototypeOf(made, link);`,
+    `made.__proto__ = link;`,
+  ]);
+  const asks = pick([
+    `value instanceof Gauge${n}`,
+    `value instanceof Gauge${n}`,
+    `value instanceof Gauge${n} ? value.read() : "cut"`,
+    `Gauge${n}.prototype.isPrototypeOf(value)`,
+    `value instanceof Gauge${n} && value.level`,
+    `typeof value.read`,
+  ]);
+  return [
+    `const unseen = (x${any})${any} => [x][JSON.parse("0")];`,
+    `class Gauge${n} { level = 1; read() { ${chance(50) ? work : "const work = 0;"} return this.level + work; } }`,
+    `class Other${n} { level = 2; read() { return "other"; } }`,
+    `function ask(value${any})${any} { return ${asks}; }`,
+    `function count(values${typed("any[]")}) { let found = 0; for (let i = 0; i < values.length; i++) if (values[i] instanceof Gauge${n}) found++; return found; }`,
+    `const made${any} = new Gauge${n}();`,
+    `const link${any} = ${pick([`Object.create(Gauge${n}.prototype)`, `Object.create(Gauge${n}.prototype)`, `{ __proto__: Gauge${n}.prototype }`, `Object.create(Gauge${n}.prototype, { tag: { value: 1 } })`])};`,
+    lays,
+    `const values = [new Gauge${n}(), made, new Gauge${n}()];`,
+    `printValue("linked ${n}", String(ask(made)), count(values));`,
+    cut,
+    `printValue("linked ${n}", String(ask(made)), count(values), String(ask(values[0]${cast("any")})));`,
+  ];
+}
+
+/** A derived constructor calls `super` in a loop, on one of two ways, in a closure or behind a `try`, below a parent that is written out or that a variable holds. */
+function superCallsInOddPlaces({ pick, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const parent = pick([
+    `Base`,
+    `Base`,
+    `Base`,
+    `First${n}`,
+    `(unseen(1) ? First${n} : Second${n})`,
+    `unseen(First${n})`,
+  ]);
+  const body = pick([
+    `const last = n || 0; for (let i = 0; i <= last; i++) { if (i === last) super(i); }`,
+    `const last = n || 0; for (let i = 0; i <= last; i++) { if (i === last) super(i); }`,
+    `let i = 0; while (true) { if (i++ === n) { super(i); break; } }`,
+    `for (const each of [n]) super(each);`,
+    `if (n > 1) super(n); else super(-n);`,
+    `n > 1 ? super(n) : super(0);`,
+    `try { super(n); } finally { heard += 1; }`,
+    ...(typed("") ? [] : [`const call = () => super(n); call();`, `[n].forEach(each => super(each));`]),
+    `switch (n) { case 3: super(30); break; default: super(n); }`,
+    `do { super(n); } while (false);`,
+    `for (let i = 0; i < 2; i++) { super(i); }`,
+  ]);
+  return [
+    `const unseen = (x${any})${any} => [x][JSON.parse("0")];`,
+    `let heard = 0;`,
+    `class First${n} { n${any}; constructor(n${any}) { this.n = n; } }`,
+    `class Second${n} { n${any}; constructor(n${any}) { this.n = -n; } }`,
+    `const Base${any} = unseen(1) ? First${n} : Second${n};`,
+    `class Below${n} extends ${parent} { constructor(n${any}) { ${body} } }`,
+    `for (const given of [3, 0, 1]) { let said${any}; try { said = new Below${n}(given).n; } catch (error) { said = (error${typed("") ? " as any" : ""}).name; } printValue("super ${n}", said, heard); }`,
+  ];
+}
+
+/** A row of classes in which a name is a static method on one, a static field on another, an accessor or nothing on a third. Then the name is stored, defined or deleted on one of them. */
+function staticsInARowOfClasses({ pick, typed, cast, n }: Draw): string[] {
+  const method = (value: number) => `static make() { return ${value}; }`;
+  const field = (value: number) => `static make${typed("any")} = ${value};`;
+  const member = (value: number) =>
+    pick([
+      ...[method(value), method(value), method(value), field(value), field(value), field(value), ``],
+      `static get make()${typed("any")} { return ${value}; }`,
+      `static get make()${typed("any")} { return ${value}; } static set make(value${typed("any")}) { heard += 1; }`,
+    ]);
+  const target = pick(["Lowest", "Lowest", "Lowest", "Lowest", "Middle", "Base"]) + n;
+  const store = `(${target}${cast("any")}).make = 3;`;
+  const deed = pick([
+    ...[store, store, store, store, store],
+    `Object.defineProperty(${target}, "make", { value: 3, configurable: true });`,
+    `delete (${target}${cast("any")}).make;`,
+    `(${target}${cast("any")})[["ma", "ke"].join("")] = 3;`,
+    `Reflect.set(${target}, "make", 3);`,
+    `(${target}${cast("any")}).make = () => 3;`,
+    `Object.setPrototypeOf(${target}, Function.prototype);`,
+  ]);
+  // Each class is named where it is asked: a list of the three would let them out of sight. So would a question in front of the deed, most of the time.
+  const own = [member(1), member(2), pick(["", "", "", member(4)])];
+  const classes = [`Base${n}`, `Middle${n}`, `Lowest${n}`];
+  const asked = (name: string) =>
+    `(typeof (${name}${cast("any")}).make === "function" ? "f" + (${name}${cast("any")}).make() : String((${name}${cast("any")}).make))`;
+  const isMethod = (at: number): boolean =>
+    own[at] ? own[at].startsWith("static make()") : at > 0 && isMethod(at - 1);
+  const plainly = classes
+    .map((name, at) => `(${name}${cast("any")}).make${isMethod(at) && name !== target ? "()" : ""}`)
+    .join(", ");
+  const guarded = classes.map(asked).join(", ");
+  const inTry = (line: string) =>
+    pick([true, false, false]) ? `try { ${line} } catch (error) { heard += 10; }` : line;
+  return [
+    `let heard = 0;`,
+    ...classes.map((name, at) => `class ${name}${at ? ` extends ${classes[at - 1]}` : ""} { ${own[at]} }`),
+    ...(pick([true, false, false]) ? [`printValue("statics ${n}", ${guarded});`] : []),
+    ...(pick([true, true, false]) ? [classes.map(name => `new ${name}();`).join(" ")] : []),
+    ...pick([
+      [inTry(deed)],
+      [
+        `function change(value${typed("number")}) { ${work} ${inTry(deed.replace("= 3;", "= value;"))} return work; }`,
+        `change(3);`,
+      ],
+    ]),
+    `printValue("statics ${n}", ${pick([plainly, plainly, guarded])}, heard);`,
+  ];
+}
+
+/** Two views of one buffer are walked under one counter with a shift, and a test of the sign stands in front of the loop. A third view beside them shows a store that fell outside. */
+function twoViewsUnderOneCounter({ pick, typed, isTypeScript, n }: Draw): string[] {
+  const not = isTypeScript ? "!" : "";
+  const View = pick(["Int32Array", "Int32Array", "Int32Array", "Uint8Array", "Float64Array", "Uint16Array"]);
+  const number = typed("number");
+  const at = pick(["i + shift", "i + shift", "i + shift", "i", "i - shift", "shift + i", "i + shift + 1"]);
+  const guard = pick([
+    "if (from + shift >= 0) return -1;",
+    "if (from + shift >= 0) return -1;",
+    "if (from + shift >= 0) return -1;",
+    "if (from + shift < 0) heard += 1;",
+    "if (from >= 0) return -1;",
+    "if (shift >= 0) return -1;",
+    "if (to + shift > first.length) return -2;",
+    "",
+  ]);
+  const deed = pick([
+    `first[${at}] = 7; second[${at}] = 7;`,
+    `first[${at}] = 7; second[${at}] = 7;`,
+    `first[${at}] = 7; second[${at}] = 7;`,
+    `second[${at}] = first[${at}]${not} + 1;`,
+    `sum += first[${at}]${not} + second[${at}]${not};`,
+    `first[${at}] = 7; sum += second[${at}]${not};`,
+    `second[${at}] = 7;`,
+    `first[${at}] = second[i]${not};`,
+  ]);
+  return [
+    `let heard = 0;`,
+    `function lay${n}(first${typed(View)}, second${typed(View)}, start${number}, end${number}, move${number})${number} { const from = start | 0, to = end | 0, shift = move | 0; let sum = 0; ${guard} for (let i = from; i < to; i++) { ${deed} } return sum + 2; }`,
+    `const room = new ArrayBuffer(12 * ${View}.BYTES_PER_ELEMENT);`,
+    `const front = new ${View}(room, 0, 4);`,
+    `const middle = new ${View}(room, 4 * ${View}.BYTES_PER_ELEMENT, 4);`,
+    `const behind = new ${View}(room, 8 * ${View}.BYTES_PER_ELEMENT, 4);`,
+    `for (let at = 0; at < 4; at++) { front[at] = 100 + at; middle[at] = at + 1; behind[at] = 70 + at; }`,
+    ...[
+      [pick(["front", "behind", "front"]), "middle", -1, 3, -1],
+      ["middle", pick(["behind", "behind", "middle"]), 0, 3, pick([-2, -1, 0])],
+      ["front", "middle", pick([-2, 1]), 6, pick([0, 1, -1])],
+    ].map(
+      ([first, second, from, to, shift]) =>
+        `printValue("two views ${n}", lay${n}(${first}, ${second}, ${from}, ${to}, ${shift}), front.join(), middle.join(), behind.join(), heard);`,
+    ),
+  ];
+}
+
+/** A function is laid under a name on another function and called there with one kind of value. Then it is read off one of two functions, or by another road, and called with another kind. */
+function namesLaidOnFunctions({ pick, typed, cast, n }: Draw): string[] {
+  const any = typed("any");
+  const holder = pick([
+    "function Ok() {}",
+    "function Ok() {}",
+    "function Ok() {}",
+    "const Ok = function () {};",
+    "const Ok = () => {};",
+    "class Ok {}",
+    "const Ok = {};",
+  ]);
+  const body = pick([
+    "last = v; return v;",
+    "last = v; return v;",
+    "last = v; return v;",
+    "last = v; return v + 1;",
+    "last = [v]; return v;",
+    "return (last = v);",
+  ]);
+  const lays = pick([
+    `(Ok${cast("any")}).of = function (v${any}) { ${body} };`,
+    `(Ok${cast("any")}).of = function (v${any}) { ${body} };`,
+    `(Ok${cast("any")}).of = (v${any}) => { ${body} };`,
+    `Object.assign(Ok, { of(v${any}) { ${body} } });`,
+    `Object.defineProperty(Ok, "of", { value(v${any}) { ${body} }, writable: true });`,
+  ]);
+  const road = pick([
+    `const chosen${any} = JSON.parse("true") ? Ok : Err; const taken = chosen.of; taken(OTHER);`,
+    `const chosen${any} = JSON.parse("true") ? Ok : Err; const taken = chosen.of; taken(OTHER);`,
+    `const chosen${any} = JSON.parse("true") ? Ok : Err; chosen.of(OTHER);`,
+    `const taken = (Ok${cast("any")}).of; taken(OTHER);`,
+    `const { of: taken } = Ok${cast("any")}; taken(OTHER);`,
+    `(Ok${cast("any")})[["o", "f"].join("")](OTHER);`,
+    `for (const each of [Ok, Err]${cast("any[]")}) each.of?.(OTHER);`,
+    `Reflect.apply((Ok${cast("any")}).of, undefined, [OTHER]);`,
+    `(Err${cast("any")}).of = (Ok${cast("any")}).of; (Err${cast("any")}).of(OTHER);`,
+  ]).replaceAll("OTHER", pick(['"text"', '"text"', "null", "undefined", "0.5", "{}", "[1]", "true"]));
+  return [
+    `let last${any} = 0;`,
+    holder,
+    `function Err() {}`,
+    lays,
+    `let sum = 0;`,
+    `for (let i = 0; i < ${pick([300, 300, 3, 1])}; i++) sum += (Ok${cast("any")}).of(i);`,
+    road,
+    `printValue("laid ${n}", sum, typeof last, String(last));`,
+  ];
+}
+
+/**
+ * The program lays a loader of its own under `Module._extensions` or `require.extensions`. It throws once, or changes what the file exports, and the file is asked for again.
+ * The file is in the executable by a `require` that never runs. It is asked for under a name that is made in the run: a written name is bound when the program is built.
+ */
+function loadersOfTheProgramItself({ pick, n }: Draw): string[] {
+  const table = pick([
+    `require("node:module")._extensions`,
+    `require("node:module")._extensions`,
+    `require.extensions`,
+  ]);
+  const deed = pick([
+    `if (calls === 1) throw new Error("made up");`,
+    `if (calls === 1) throw new Error("made up");`,
+    `if (calls === 1) throw new Error("made up");`,
+    `if (calls === 2) throw new Error("made up");`,
+    ``,
+    `module.exports = { early: calls };`,
+    `module.laid = calls;`,
+  ]);
+  const behind = pick([
+    ``,
+    ``,
+    ``,
+    `module.exports.more = calls;`,
+    `if (calls === 2) module.exports = { replaced: true };`,
+  ]);
+  return [
+    `// stays a script`,
+    `const table = ${table};`,
+    `const original = table[".js"];`,
+    `let calls = 0;`,
+    `table[".js"] = function (module, filename) { calls++; ${deed} ${behind ? `original(module, filename); ${behind}` : "return original(module, filename);"} };`,
+    `if (Date.now() < 0) require("./part${n}.js");`,
+    `const name = "./" + JSON.parse('"part${n}"') + ".js";`,
+    `const said = [];`,
+    `for (let turn = 0; turn < ${pick([2, 2, 3])}; turn++) { try { said.push(JSON.stringify(require(name))); } catch (error) { said.push("threw " + error.message); } }`,
+    `printValue("own loader ${n}", said.join(";"), calls);`,
+    `// @filename: ./part${n}.js`,
+    pick([
+      `module.exports = { value: 41 };`,
+      `module.exports = { value: 41 };`,
+      `exports.value = 41;`,
+      `module.exports = { value: 41, laid: String(module.laid) };`,
+    ]),
+  ];
+}
+
+/** `using` and `await using` over what a maker gives: something to dispose of, nothing, or a throw, always or by what comes in. */
+function thingsToDisposeOf({ pick, typed, cast, n }: Draw): string[] {
+  const any = typed("any");
+  const isAsync = pick([false, false, false, true]);
+  const symbol = isAsync ? pick(["Symbol.asyncDispose", "Symbol.asyncDispose", "Symbol.dispose"]) : "Symbol.dispose";
+  const gives = pick([
+    `throw new Error("made up");`,
+    `throw new Error("made up");`,
+    `throw new Error("made up");`,
+    `if (given > 0) throw new Error("made up"); return { [${symbol}]() { said.push("gone " + given); } };`,
+    `return { [${symbol}]() { said.push("gone " + given); } };`,
+    `return { [${symbol}]() { said.push("gone " + given); } };`,
+    `return { [${symbol}]() { said.push("gone " + given); throw new RangeError("late"); } };`,
+    `return given > 0 ? null : undefined;`,
+    `return {};`,
+    `return given;`,
+  ]);
+  const maker = pick([
+    `function make(given${any})${any} { ${gives} }`,
+    `function make(given${any})${any} { ${gives} }`,
+    `const make = (given${any})${any} => { ${gives} };`,
+  ]);
+  const word = isAsync ? "await using" : "using";
+  const body = pick([
+    `${word} held = make(given); said.push("in");`,
+    `${word} held = make(given); said.push("in");`,
+    `${word} held = make(given); said.push("in");`,
+    `${word} first = make(0), second = make(given); said.push("in");`,
+    `{ ${word} held = make(given); said.push("in"); } said.push("behind");`,
+    `for (let turn = 0; turn < 2; turn++) { ${word} held = make(given + turn); said.push("turn"); }`,
+    `for (${word} held of [make(given)]) said.push("in");`,
+    `try { ${word} held = make(given); said.push("in"); } finally { said.push("at last"); }`,
+    `${word} held = make(given); if (given) return "early"; said.push("in");`,
+    `${word} held = make(given); throw new TypeError("body");`,
+  ]);
+  const caught = `catch (error) { said.push((error${cast("any")}).name + " " + (error${cast("any")}).message); }`;
+  const inAFunction = [
+    `${isAsync ? "async " : ""}function run(given${any})${typed(isAsync ? "Promise<any>" : "any")} { ${body} return "end"; }`,
+    `for (const given of [1, 0]) { try { said.push(String(${isAsync ? "await " : ""}run(given))); } ${caught} }`,
+  ];
+  const atTheTop = [`const given = 1;`, `try { ${body.replace(/if \(given\) return "early"; /, "")} } ${caught}`];
+  return [
+    `const said${typed("string[]")} = [];`,
+    maker,
+    ...pick([inAFunction, inAFunction, atTheTop]),
+    `printValue("disposed ${n}", said.join("|"));`,
+  ];
+}
+
+/** A member that is made when it is first asked for, such as the `prototype` of a function, is reached twice, by reads or through what the function makes: both times it is one thing. */
+function membersThatAreMadeWhenRead({ pick, typed, cast, n }: Draw): string[] {
+  const any = typed("any");
+  const [made, call] = pick<[string, string]>([
+    [`function* made() { yield given; }`, "made()"],
+    [`function* made() { yield given; }`, "made()"],
+    [`function* made() { yield given; }`, "made()"],
+    [`async function* made() { yield given; }`, "made()"],
+    [`function made(${typed("") ? "this: any" : ""}) { this.given = given; }`, `new (made${cast("any")})()`],
+    [`class made { given = given; }`, "new made()"],
+    [`const made = function* () { yield given; };`, "made()"],
+  ]);
+  const users = pick([
+    `const first = () => ${call}, second = () => ${call};`,
+    `const first = () => ${call}, second = () => ${call};`,
+    `const first = () => ${call}, second = () => ${call};`,
+    `function first() { return ${call}; } function second() { return ${call}; }`,
+    `const first = () => ${call}, second = first;`,
+    `const first = () => ${call}; const second = () => [first][0]();`,
+  ]);
+  const asks = pick([
+    `Object.getPrototypeOf(first()) === Object.getPrototypeOf(second())`,
+    `Object.getPrototypeOf(first()) === Object.getPrototypeOf(second())`,
+    `Object.getPrototypeOf(first()) === Object.getPrototypeOf(second())`,
+    `Object.getPrototypeOf(first()) === Object.getPrototypeOf(first())`,
+    `Object.getPrototypeOf(first()) === (made${cast("any")}).prototype`,
+    `(made${cast("any")}).prototype === (made${cast("any")}).prototype`,
+    `first() instanceof made && second() instanceof made`,
+    `(() => { Object.getPrototypeOf(first()).mark = 1; return (second()${cast("any")}).mark; })()`,
+    `(made${cast("any")}).prototype.isPrototypeOf(second())`,
+  ]);
+  return [
+    `const given = JSON.parse("3");`,
+    `function outer${n}()${any} {`,
+    `  ${made}`,
+    `  ${users}`,
+    `  return ${asks};`,
+    `}`,
+    `printValue("made when read ${n}", String(outer${n}()), String(outer${n}()));`,
+  ];
+}
+
+/** Functions of the host look at instances that hold private names, accessors, symbols or fields that cannot be listed. */
+function instancesThatTheHostLooksAt({ pick, typed, cast, n }: Draw): string[] {
+  const any = typed("any");
+  const body = pick([
+    `#s${any}; constructor(s${any}) { this.#s = s; }`,
+    `#s${any}; constructor(s${any}) { this.#s = s; }`,
+    `#s${any}; constructor(s${any}) { this.#s = s; }`,
+    `#s${any}; open${any} = 1; constructor(s${any}) { this.#s = s; }`,
+    `#s${any}; constructor(s${any}) { this.#s = s; } get s() { return this.#s; }`,
+    `static #count = 0; s${any}; constructor(s${any}) { this.s = s; Held${n}.#count++; }`,
+    `s${any}; constructor(s${any}) { this.s = s; Object.defineProperty(this, "hidden", { value: s, enumerable: false }); }`,
+    `[Symbol.for("s")]${any}; constructor(s${any}) { this[Symbol.for("s")] = s; }`,
+    `s${any}; constructor(s${any}) { this.s = s; }`,
+    `#s${any}; constructor(s${any}) { this.#s = s; } #tell() { return this.#s; } tell() { return this.#tell(); }`,
+  ]);
+  const looks = pick([
+    `Bun.deepMatch(new Held${n}(2), new Held${n}(1))`,
+    `Bun.deepMatch(new Held${n}(2), new Held${n}(1))`,
+    `Bun.deepEquals(new Held${n}(2), new Held${n}(1))`,
+    `Bun.deepEquals(new Held${n}(1), new Held${n}(1), true)`,
+    `Bun.inspect(new Held${n}(1))`,
+    `JSON.stringify(new Held${n}(1))`,
+    `JSON.stringify(structuredClone(new Held${n}(1)))`,
+    `Reflect.ownKeys(new Held${n}(1)).length`,
+    `JSON.stringify({ ...new Held${n}(1) })`,
+    `JSON.stringify(Object.getOwnPropertyDescriptors(new Held${n}(1)))`,
+    `require("node:util").isDeepStrictEqual(new Held${n}(2), new Held${n}(1))`,
+    `require("node:util").inspect(new Held${n}(1), { showHidden: true })`,
+    `(() => { try { require("node:assert").deepStrictEqual(new Held${n}(2), new Held${n}(1)); return "equal"; } catch (error) { return (error${cast("any")}).code; } })()`,
+  ]);
+  return [
+    `class Held${n} { ${body} }`,
+    `printValue("looked at ${n}", ${looks}, ${pick([looks, `Bun.deepMatch(new Held${n}(1), new Held${n}(1))`])});`,
+  ];
+}
+
 const deeds = {
+  thingsToDisposeOf,
+  membersThatAreMadeWhenRead,
+  instancesThatTheHostLooksAt,
+  loadersOfTheProgramItself,
+  namesLaidOnFunctions,
+  twoViewsUnderOneCounter,
+  linksLaidBelowClasses,
+  superCallsInOddPlaces,
+  staticsInARowOfClasses,
   neighborsInViews,
   generatorsThatYieldOutsideTheirLoops,
   closuresOfTheTurnBefore,
@@ -1816,7 +2231,8 @@ export function writeSceneOfASingleDeed(
     name =>
       name !== "graphsOfModules" &&
       name !== "deepVisitors" &&
-      (!isTypeScript || (name !== "namesThroughWith" && name !== "roadsToTheLoader")),
+      (!isTypeScript ||
+        (name !== "namesThroughWith" && name !== "roadsToTheLoader" && name !== "loadersOfTheProgramItself")),
   );
   return withNamesOfItsOwn(deeds[only ?? pick(names)](draw), n);
 }

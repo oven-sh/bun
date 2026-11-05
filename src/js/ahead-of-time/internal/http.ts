@@ -78,7 +78,7 @@ const requestRoad: {
   continueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   queueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
-  beginDump?: (request: $Node.IncomingMessage) => void;
+  beginDump?: (request: $Node.IncomingMessage) => boolean;
   readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
 } = {};
 const responseRoad: {
@@ -89,6 +89,7 @@ const responseRoad: {
     requestState: $Node.ReadableState | null,
   ) => $Node.HttpExchange;
   storeHeader?: (exchange: $Node.HttpExchange, name: string, value: $Node.HttpHeaderValue) => void;
+  settleLeniency?: (exchange: $Node.HttpExchange, name: string) => void;
   spillHeaders?: (exchange: $Node.HttpExchange) => void;
   spillHeadersReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
   hasHeaderUnderKey?: (

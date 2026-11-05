@@ -901,10 +901,8 @@ JSValue fetchCommonJSModule(
         JSC::AOT::AskerOfModule asker(globalObject, pathOfAsker);
         bool hasRun = requireCompiledModule(globalObject, target, specifierWtfString, !!typeAttribute);
         RETURN_IF_EXCEPTION(scope, {});
-        if (hasRun) {
-            target->hasEvaluated = true;
+        if (hasRun)
             RELEASE_AND_RETURN(scope, target);
-        }
     }
 
     BunString specifier = Bun::toString(specifierWtfString);

@@ -53,7 +53,6 @@ pub fn decide_roles<'s>(
             requested: &|file| requested_diagnostics(loaded.origin(file), false),
             after_file: None,
             after_commit: &|_| {},
-            beside_file: None,
             frees_tree: &|_| false,
             is_last_pass: &|| false,
             note_cycles_entered: None,

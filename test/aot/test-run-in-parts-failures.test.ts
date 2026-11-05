@@ -52,8 +52,14 @@ test("a test file with a syntax error is reported by that error, not as a worker
     "g.test.ts": `import { test, expect } from "bun:test";\ntest("g", () => {\n  expect(1).toBe(1;\n});\n`,
   });
   const junit = ["--reporter=junit", "--reporter-outfile=out.xml"];
-  const { stderr } = await run([bunExe(), "test", "--preload", "./preload.ts", "--aot", ...junit], String(dir));
-  expect(stderr).toContain("TS1005");
+  const reportOfRun = async (...flags: string[]) => {
+    const { stderr } = await run([bunExe(), "test", "--preload", "./preload.ts", ...flags, ...junit], String(dir));
+    return /^error: .*\n +at .*g\.test\.ts:\d+:\d+$/m.exec(stderr)?.[0];
+  };
+  // Such a file too is left to the loader of the run, which reports the error in the words of plain `bun test`.
+  const plain = await reportOfRun();
+  expect(plain).toContain('Expected ")" but found ";"');
+  expect(await reportOfRun("--aot")).toBe(plain);
   const cases = [...readFileSync(join(String(dir), "out.xml"), "utf8").matchAll(/<testcase name="([^"]*)"/g)];
   expect(cases.map(match => match[1])).not.toContain("(worker crashed)");
 }, 120_000);

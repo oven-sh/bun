@@ -53,6 +53,7 @@ pub fn write(
 ) -> Result<Vec<u8>, SourceChanged> {
     let records = sort_records(engine.obfuscated_sites());
     let located = locate_records(&records, texts);
+    let written_names = texts.written_names();
     let mut sources: ArrayHashMap<Source, ()> = ArrayHashMap::default();
     let mut frame_names: ArrayHashMap<&[u8], ()> = ArrayHashMap::default();
     let sites: Vec<Site> = records
@@ -60,6 +61,7 @@ pub fn write(
         .zip(located)
         .map(|(record, located)| {
             let name = engine.text(record.name);
+            let name = written_names.get(name).copied().unwrap_or(name);
             let name = (!name.is_empty()).then(|| intern(&mut frame_names, name));
             let original = match (located, name) {
                 (Some(found), _) => Some(Original {

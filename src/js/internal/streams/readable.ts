@@ -1140,8 +1140,7 @@ Readable.prototype.unpipe = function (this: $Node.Readable, dest?: $Node.AnyStre
   const index = ArrayPrototypeIndexOf.$call(state.pipes, dest);
   if (index === -1) return this;
 
-  if (IS_COMPILED_AHEAD_OF_TIME && index === state.pipes.length - 1) state.pipes.pop();
-  else state.pipes.splice(index, 1);
+  state.pipes.splice(index, 1);
   if (state.pipes.length === 0) this.pause();
 
   dest.emit("unpipe", this, unpipeInfo);
@@ -1153,9 +1152,15 @@ Readable.prototype.unpipe = function (this: $Node.Readable, dest?: $Node.AnyStre
 // Ensure readable listeners eventually get something.
 Readable.prototype.on = function (this: $Node.Readable, ev: $Node.EventName, fn: $Node.Listener) {
   const res = Stream.prototype.on.$call(this, ev, fn);
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
+    (typeof ev !== "string" || (ev.length !== 4 && ev.length !== 8)) &&
+    !$isProxyObject(this)
+  ) {
+    return res;
+  }
   const state: ReadableState = this._readableState;
 
-  if (IS_COMPILED_AHEAD_OF_TIME && (typeof ev !== "string" || (ev.length !== 4 && ev.length !== 8))) return res;
   if (ev === "data") {
     state[kState] |= Flag.DataListening;
 
@@ -1189,11 +1194,17 @@ const removingMethod = (Readable.prototype.removeListener = function (
   ev: $Node.EventName,
   fn: $Node.Listener,
 ) {
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
+    (typeof ev !== "string" || (ev.length !== 4 && ev.length !== 8)) &&
+    !$isProxyObject(this)
+  ) {
+    return Stream.prototype.removeListener.$call(this, ev, fn);
+  }
   const state: ReadableState = this._readableState;
 
   const res = Stream.prototype.removeListener.$call(this, ev, fn);
 
-  if (IS_COMPILED_AHEAD_OF_TIME && (typeof ev !== "string" || (ev.length !== 4 && ev.length !== 8))) return res;
   if (ev === "readable") {
     // We need to check if there is someone still listening to
     // readable and reset the state. However this needs to happen
@@ -1689,6 +1700,10 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     enumerable: false,
     get(this: $Node.Readable) {
+      if (IS_COMPILED_AHEAD_OF_TIME && !$isProxyObject(this)) {
+        const state = this._readableState;
+        return state ? errorOfState(state) : null;
+      }
       return this._readableState ? errorOfState(this._readableState) : null;
     },
   },
@@ -1696,6 +1711,11 @@ ObjectDefineProperties(Readable.prototype, {
   closed: {
     __proto__: null,
     get(this: $Node.Readable) {
+      if (IS_COMPILED_AHEAD_OF_TIME && !$isProxyObject(this)) {
+        const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
+        if (!state) return false;
+        return isReadableState(state) ? (state[kState] & Flag.Closed) !== 0 : state.closed;
+      }
       if (!this._readableState) return false;
       const state = this._readableState as ReadableState | $Node.ForeignState;
       return isReadableState(state) ? (state[kState] & Flag.Closed) !== 0 : state.closed;
@@ -1706,6 +1726,10 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     enumerable: false,
     get(this: $Node.Readable) {
+      if (IS_COMPILED_AHEAD_OF_TIME && !$isProxyObject(this)) {
+        const state = this._readableState;
+        return state ? isStateDestroyed(state) : false;
+      }
       return this._readableState ? isStateDestroyed(this._readableState) : false;
     },
     set(this: $Node.Readable, value) {
@@ -1727,6 +1751,10 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     enumerable: false,
     get(this: $Node.Readable) {
+      if (IS_COMPILED_AHEAD_OF_TIME && !$isProxyObject(this)) {
+        const state = this._readableState;
+        return state ? hasStateEmittedEnd(state) : false;
+      }
       return this._readableState ? hasStateEmittedEnd(this._readableState) : false;
     },
   },
@@ -1910,7 +1938,7 @@ function endWritableNT(stream: $Node.Duplex) {
   }
 }
 
-// What `new Readable({ objectMode: true, highWaterMark })` makes. Nobody sees which options are asked for in a list that the library has written.
+// What `new Readable({ objectMode: true, highWaterMark })` makes. Nobody sees which options are asked for in a list that the library has written, unless a name lies on `Object.prototype`: the caller asks `CAN_REPLACE_BUILT_INS`.
 function makeObjectReadable(highWaterMark: number): $Node.Readable {
   const stream = new (Readable as $Node.ReadableConstructor)();
   const state: ReadableState = stream._readableState;

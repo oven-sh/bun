@@ -810,6 +810,117 @@ import "./quake.js";
 export const length = words.length;`,
     "src/twig.js": `export { kind } from "./leaf.js";`,
   },
+  "a file that has left is still to be loaded": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("b190", async () => {
+  const asked = [];
+  const said = args => asked.push(args.path + "<" + args.importer.split("/").pop());
+  const second = () => plugin({ name: "second", setup(later) {
+    later.onResolve({ filter: /^\\.\\/part\\.js$/ }, asks => (said(asks), { path: import.meta.dir + "/src/fake.js" }));
+  } });
+  const tried = load => { try { load(); return "LOADED"; } catch (error) { return "FAILED " + error.name; } };
+  plugin({ name: "first", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(trigger)\\.js$/ }, args => {
+      said(args);
+      if (args.path === "./boom.js") {  }
+      if (args.path === "./trigger.js") second();
+    });
+  } });
+  console.log("SAID WAS", require("./src/c.js").kind);
+  delete require.cache[import.meta.dir + "/src/c.js"];
+  console.log("SAID", tried(() => require("./src/root.js")));
+  console.log("SAID IS", require("./src/c.js").kind);
+  console.log("SAID ASKED", asked.join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/a.js": `import "./a2.js";`,
+    "src/a2.js": `import "./trigger.js";`,
+    "src/boom.js": `export {};`,
+    "src/c.js": `export { kind } from "./part.js";`,
+    "src/d.js": `export { kind } from "./part.js";`,
+    "src/fake.js": `export const kind = "fake";`,
+    "src/part.js": `export const kind = "real";`,
+    "src/root.js": `import "./a.js";
+import "./c.js";`,
+    "src/trigger.js": `export {};`,
+  },
+  "a file leaves twice": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("a file leaves twice", async () => {
+  const asked = [];
+  const said = args => { asked.push(args.path + "<" + args.importer.split("/").pop()); };
+  const second = () => plugin({ name: "second", setup(later) {
+    later.onResolve({ filter: /^\\.\\/part\\.js$/ }, asks => (said(asks), { path: import.meta.dir + "/src/fake.js" }));
+  } });
+  plugin({ name: "first", setup(build) {
+    build.onResolve({ filter: /^\\.\\/trigger2?\\.js$/ }, args => {
+      said(args);
+      if (args.path === "./trigger.js") second();
+      if (args.path === "./trigger2.js") plugin.clearAll();
+    });
+  } });
+  console.log("SAID WAS", require("./src/c.js").kind);
+  delete require.cache[import.meta.dir + "/src/c.js"];
+  require("./src/root.js");
+  console.log("SAID THEN", require("./src/c.js").kind);
+  delete require.cache[import.meta.dir + "/src/c.js"];
+  require("./src/root2.js");
+  console.log("SAID IS", require("./src/c.js").kind);
+  console.log("SAID ASKED", asked.join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/a.js": `import "./a2.js";`,
+    "src/a2.js": `import "./trigger.js";`,
+    "src/b.js": `import "./b2.js";`,
+    "src/b2.js": `import "./trigger2.js";`,
+    "src/c.js": `export { kind } from "./part.js";`,
+    "src/fake.js": `export const kind = "fake";`,
+    "src/part.js": `export const kind = "real";`,
+    "src/root.js": `import "./a.js";
+import "./c.js";`,
+    "src/root2.js": `import "./b.js";
+import "./c.js";`,
+    "src/trigger.js": `export {};`,
+    "src/trigger2.js": `export {};`,
+  },
+  "a file that has left stands beside a file that is given up": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("a file that has left, and a throw", async () => {
+  const asked = [];
+  const said = args => { asked.push(args.path + "<" + args.importer.split("/").pop()); };
+  const second = () => plugin({ name: "second", setup(later) {
+    later.onResolve({ filter: /^\\.\\/part\\.js$/ }, asks => (said(asks), { path: import.meta.dir + "/src/fake.js" }));
+  } });
+  const tried = load => { try { load(); return "LOADED"; } catch (error) { return "FAILED " + error.message; } };
+  plugin({ name: "first", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(trigger|boom)\\.js$/ }, args => {
+      said(args);
+      if (args.path === "./boom.js") throw new Error("thrown at " + args.path);
+      second();
+    });
+  } });
+  console.log("SAID WAS", require("./src/c.js").kind);
+  delete require.cache[import.meta.dir + "/src/c.js"];
+  console.log("SAID", tried(() => require("./src/root.js")));
+  console.log("SAID IS", tried(() => "" + console.log("SAID KIND", require("./src/c.js").kind)));
+  console.log("SAID ASKED", asked.join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/a.js": `import "./a2.js";`,
+    "src/a2.js": `import "./trigger.js";`,
+    "src/b.js": `import "./boom.js";`,
+    "src/boom.js": `export {};`,
+    "src/c.js": `export { kind } from "./part.js";`,
+    "src/fake.js": `export const kind = "fake";`,
+    "src/part.js": `export const kind = "real";`,
+    "src/root.js": `import "./a.js";
+import "./b.js";
+import "./c.js";`,
+    "src/trigger.js": `export {};`,
+  },
 };
 
 const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_crashOnDisallowedVMEntry: "1" };

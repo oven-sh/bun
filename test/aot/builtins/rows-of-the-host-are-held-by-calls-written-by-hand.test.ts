@@ -317,6 +317,22 @@ const symbolsWithCode: [string, string, (note: () => void) => object][] = [
   ],
 ];
 
+// builtins/Glob.ts over glob.rs scan() | scan_sync(). No file has the ending, so nothing is yielded.
+const scansOfGlob = (["scan", "scanSync"] as const).map(
+  name =>
+    [
+      `Bun.Glob.prototype.${name}`,
+      (options?: unknown) => new Bun.Glob("*.nothing-has-this-ending")[name](options as string),
+    ] as const,
+);
+const casesOfGlob = scansOfGlob.map(([row, scan]): Case => ({
+  row,
+  mode: "Call",
+  place: "the result",
+  typesIn: result,
+  see: () => [scan(), scan("."), scan(new String(".")), scan({ cwd: ".", dot: true })].map(value => ({ value })),
+}));
+
 const casesOfFFI: Case[] = [
   ...(
     [
@@ -471,6 +487,7 @@ const casesOfFFI: Case[] = [
 
 const cases: Case[] = [
   ...casesOfFFI,
+  ...casesOfGlob,
   {
     row: "native:Bindgen:node_util_binding.bind.ts:parseEnv",
     mode: "Call",
@@ -732,6 +749,49 @@ function errorWithMessage(note: () => void): Error {
 }
 
 const codeThatRuns: CodeThatRuns[] = [
+  ...scansOfGlob.flatMap(([row, scan]) =>
+    (
+      [
+        [
+          "Named",
+          "an accessor of the options",
+          note => ({
+            get cwd() {
+              note();
+              return ".";
+            },
+          }),
+        ],
+        [
+          "Named",
+          "an accessor that the options inherit",
+          note => ({
+            __proto__: {
+              get dot() {
+                note();
+                return false;
+              },
+            },
+          }),
+        ],
+        [
+          "ToPrimitive",
+          "toString() of a String object under `cwd`",
+          note => {
+            const cwd = new String(".");
+            cwd.toString = () => (note(), ".");
+            return { cwd };
+          },
+        ],
+      ] as [string, string, (note: () => void) => object][]
+    ).map(([protocol, what, options]): CodeThatRuns => ({
+      row,
+      operand: 0,
+      protocol,
+      what,
+      provoke: note => scan(options(note)),
+    })),
+  ),
   ...(
     [
       ["Bun.FFI.viewSource", (...operands) => ffi.viewSource(...operands)],
@@ -1247,6 +1307,42 @@ function defineTests() {
       Reflect.construct(ffi.CString, [0]),
       ffi.CString(address, 1, 2),
     ]).toEqual(["text", "text", "", "ex"]);
+  });
+
+  test("the formatter reads every getter of native code above what it prints, but for the classes that it prints by code of its own", () => {
+    const gettersAbove = (prototype: string) =>
+      dump.entries
+        .filter(entry => entry.kind === "Accessor" && entry.holder === prototype && !entry.isSymbolName)
+        .map(entry => entry.name);
+    const timer = setTimeout(() => {}, 0);
+    const immediate = setImmediate(() => {});
+    clearTimeout(timer);
+    clearImmediate(immediate);
+    const printedByTheirOwnCode: [string, unknown][] = [
+      ["TimeoutPrototype", timer],
+      ["ImmediatePrototype", immediate],
+      ["BlobPrototype", new Blob(["made up"])],
+      ["RequestPrototype", new Request("http://made.up/")],
+      ["ResponsePrototype", new Response("made up")],
+    ];
+    const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const walked: [string, unknown][] = [
+      ["AbortSignalPrototype", new AbortController().signal],
+      ["TextDecoderPrototype", new TextDecoder()],
+      ["ListenerPrototype", listener],
+    ];
+    const namesLeftOut = ([prototype, instance]: [string, unknown]) => {
+      const names = gettersAbove(prototype);
+      expect(names).not.toBeEmpty();
+      const printed = Bun.inspect(instance);
+      return names.filter(name => !printed.includes(`${name}: `));
+    };
+    try {
+      for (const one of printedByTheirOwnCode) expect(namesLeftOut(one)).not.toBeEmpty();
+      for (const one of walked) expect(namesLeftOut(one)).toEqual([]);
+    } finally {
+      listener.stop(true);
+    }
   });
 
   // The judge refuses: a type without any part takes in nothing.

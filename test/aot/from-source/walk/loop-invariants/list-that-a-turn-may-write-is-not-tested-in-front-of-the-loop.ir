@@ -23,8 +23,8 @@
 # three of them are tested all the same: the arm that stores behind the end, stores through the other name or converts stands in the other copy alone. Where the typed copy comes to it the turn begins again there, with nothing of it done.
 # So nothing in the typed copy writes a list or runs other code, and the list is as the row in front has found it
 # RUN(BEHIND): walk f2 mechanisms=all
-# BEHIND: = HasArrayStorage
 # BEHIND: = PutArrayElement
+# BEHIND: = HasArrayStorage
 # BEHIND: = GetArrayStorage
 # BEHIND: isLoopHead=true
 # BEHIND-NOT: = Put
@@ -41,8 +41,8 @@
 # HOLE-NOT: = HasArrayStorage
 # HOLE-NOT: = GetArrayStorage
 # RUN(OTHER): walk f7 mechanisms=all
-# OTHER: = HasArrayStorage
 # OTHER: = PutArrayElement
+# OTHER: = HasArrayStorage
 # OTHER: = GetArrayStorage
 # OTHER: isLoopHead=true
 # OTHER-NOT: = Put
@@ -53,8 +53,8 @@
 # GETTER-NOT: = HasArrayStorage
 # GETTER-NOT: = GetArrayStorage
 # RUN(CONVERTS): walk f10 mechanisms=all
-# CONVERTS: = HasArrayStorage
 # CONVERTS: = Mul
+# CONVERTS: = HasArrayStorage
 # CONVERTS: = GetArrayStorage
 # CONVERTS: isLoopHead=true
 # CONVERTS-NOT: = Mul

@@ -74,10 +74,10 @@ pub(crate) fn options_from_bundler<'r>(
                 && !input.bundle_options.is_library,
         },
         lists_modules: input.bundle_options.metafile,
-        // An obfuscated executable shows no name, and its source map has the names as they are written.
+        // An obfuscated executable shows no name.
         minifies_identifiers: input.bundle_options.minify_identifiers
             && !input.bundle_options.keep_names
-            && !input.aot.obfuscates,
+            && !input.aot.hides_names(),
     })
 }
 

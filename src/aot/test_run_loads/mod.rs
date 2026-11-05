@@ -139,11 +139,13 @@ fn look_at_what_goes_out_of_sight(
     let hands_table_on = builtins.hands_module_cache_on();
     let mut mentioned = builtins.mentioned().iter();
     let names_plugin = mentioned.any(|&id| table::is_plugin(id));
-    let why = if names_plugin {
-        (WhyEveryFile::NamesPlugin, plugin)
-    } else if hands_table_on {
+    let why = if hands_table_on {
         (WhyEveryFile::HandsTableOn, table_itself)
-    } else if builtins.names_plugin() || builtins.resets_modules() {
+    } else if builtins.resets_modules() {
+        (WhyEveryFile::ResetsModules, reset)
+    } else if names_plugin {
+        (WhyEveryFile::NamesPlugin, plugin)
+    } else if builtins.names_plugin() {
         (WhyEveryFile::ResetsModules, reset)
     } else {
         (WhyEveryFile::StoresLoader, loaders)

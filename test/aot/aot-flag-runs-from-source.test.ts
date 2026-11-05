@@ -200,26 +200,38 @@ describe("bun test --aot", () => {
     expect(passed(stderr)).toEqual(["mocked", "spied"]);
     expect(exitCode).toBe(0);
   });
-  // The build opens the members that it sees a test replace: tests-replace-members-of-built-ins.test.ts. These objects and names are made when the tests run.
-  test("a spy on a read-only member of a built-in object is refused by name", async () => {
+  // The build opens the members that it sees a test replace: tests-replace-members-of-built-ins.test.ts. Here the names are made when the tests run.
+  // The prototype of a value from somewhere is an object that the build cannot follow, so nothing is opened for that spy. The look at the global object lets the library in, which takes `normalize` for what the realm was created with.
+  test("a spy on a member that compiled code takes for a constant is refused by name", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
       "one.test.ts": `import { expect, spyOn, test } from "bun:test";
         const made = (...parts: string[]): any => (process.argv.length > 1000 ? "at" : parts.join(""));
         test("on a prototype", () => { spyOn(Object.getPrototypeOf(made("a")), made("norm", "alize")); });
-        test("on a namespace object", () => { spyOn((globalThis as any)[made("Ma", "th")], made("m", "ax")); });
-        test("unchanged", () => { expect(["a".normalize(), Math.max(1, 2)]).toEqual(["a", 2]); });`,
+        test("unchanged", () => { expect(["a".normalize(), typeof (globalThis as any)[made("Ma", "th")]]).toEqual(["a", "object"]); });`,
     });
     const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
     expect(passed(stderr)).toEqual(["unchanged"]);
-    for (const [object, name] of [
-      ["String.prototype", "normalize"],
-      ["Math", "max"],
-    ])
-      expect(stderr).toContain(
-        `TypeError: Cannot spy on ${object}.${name} because built-in objects are read-only in compiled code, and the build didn't see a test replace this one. Spell out the object and the name where the test does it, as in ${object}.${name} = f or spyOn(${object}, "${name}") (https://bun.com/docs/compiler/debugging#run-your-tests-compiled)`,
-      );
+    expect(stderr).toContain(
+      `TypeError: Cannot spy on String.prototype.normalize because built-in objects are read-only in compiled code, and the build didn't see a test replace this one. Spell out the object and the name where the test does it, as in String.prototype.normalize`,
+    );
     expect(exitCode).toBe(1);
+  });
+  // What the global object holds under a name that nobody can read is one of the objects that it holds, and the build knows them all: their members are no constants in this run.
+  test("a spy on a member of what the global object holds under a made name is laid, and compiled code calls it", async () => {
+    using dir = tempDir("aot-flag-runs-from-source", {
+      "tsconfig.json": tsconfig,
+      "one.test.ts": `import { expect, mock, spyOn, test } from "bun:test";
+        const made = (...parts: string[]): any => (process.argv.length > 1000 ? "at" : parts.join(""));
+        const largest = (left: number, right: number) => Math.max(left, right);
+        test("on a namespace object", () => { spyOn((globalThis as any)[made("Ma", "th")], made("m", "ax")).mockReturnValue(7); });
+        test("on a prototype", () => { spyOn((globalThis as any)[made("Str", "ing")].prototype, made("norm", "alize")).mockReturnValue("spied"); });
+        test("seen", () => { expect(["a".normalize(), Math.max(1, 2), largest(1, 2)]).toEqual(["spied", 7, 7]); });
+        test("restored", () => { mock.restore(); expect(["a".normalize(), Math.max(1, 2), largest(1, 2)]).toEqual(["a", 2, 2]); });`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
+    expect(passed(stderr)).toEqual(["on a namespace object", "on a prototype", "restored", "seen"]);
+    expect(exitCode).toBe(0);
   });
   test("a spy replaces a member that a program may replace, and a function of the global object", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {

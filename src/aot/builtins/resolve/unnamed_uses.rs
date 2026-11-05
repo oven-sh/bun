@@ -134,8 +134,8 @@ impl Resolver<'_, '_> {
     fn collect_syntax_inside_expressions(&mut self) {
         for expr in self.evaluated_exprs() {
             self.note_texts_under_which_evaluators_hang(expr);
-            self.output.may_hand_values_to_natives = self.output.may_hand_values_to_natives
-                || !self.only_calls_builtin_with_literals(expr);
+            self.output.may_hand_values_to_natives =
+                self.output.may_hand_values_to_natives || !self.hands_natives_nothing_to_ask(expr);
             match self.state(expr) {
                 ExprState::NotEvaluated => {}
                 ExprState::Intrinsic(
@@ -152,16 +152,13 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn only_calls_builtin_with_literals(&self, expr: ExprId) -> bool {
+    fn hands_natives_nothing_to_ask(&self, expr: ExprId) -> bool {
         let is_bound_to_builtin =
             |expr: ExprId| matches!(self.state(expr), ExprState::Builtin(_) | ExprState::Held(_));
         match self.input.hir[expr].kind {
             _ if matches!(self.state(expr), ExprState::NotEvaluated) => true,
-            ExprKind::String(_)
-            | ExprKind::Number(_)
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Null => true,
+            _ if self.folds_to_primitive(expr) => true,
+            ExprKind::Fn(_) => self.is_function_that_quiet_call_wants(expr),
             ExprKind::Ident(_) | ExprKind::Dot { .. } => {
                 is_bound_to_builtin(expr)
                     && matches!(
@@ -170,8 +167,13 @@ impl Resolver<'_, '_> {
                     )
             }
             ExprKind::Call(call) => {
+                let hands_on_no_object = || {
+                    let quiet = self.find_quiet_call(expr);
+                    quiet.is_some_and(|quiet| self.hands_on_no_object(expr, quiet))
+                };
                 is_bound_to_builtin(self.input.hir[call].callee)
-                    && matches!(self.classify_use(expr), MentionUse::Inspected)
+                    && (matches!(self.classify_use(expr), MentionUse::Inspected)
+                        || hands_on_no_object())
             }
             _ => false,
         }

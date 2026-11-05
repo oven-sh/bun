@@ -6241,10 +6241,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeOfPropertyOfType`: unlike in a property access, no index signature substitutes for a
     /// missing property, and `any` has no properties.
     pub(super) fn type_of_property_of_type(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
-        match self.type_of_property_or_index_signature(ty, name)? {
-            (_, Found::ByIndex) => None,
-            (found, _) => Some(found),
+        if self.has_any_flag(ty) {
+            return None;
         }
+        self.find_declared_property(ty, name, Access::Read).ok()
     }
 
     /// `getTypeOfPropertyOrIndexSignatureOfType`, plus which of the two it found. A property that
@@ -8533,23 +8533,10 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         access: Access,
     ) -> Option<(TypeId, Found)> {
-        let is_plain_object = self.is_plain_object_type(apparent_type);
-        if !is_plain_object && self.is_any(apparent_type) {
-            return Some((apparent_type, Found::Property));
-        }
-        let skips = is_plain_object && self.is_const_enum_object_by_record(apparent_type);
-        if let Some((prop, mapper)) = self.get_property_of_type_ex(apparent_type, name, skips) {
-            let found = if access == Access::Written {
-                self.write_type_of_prop(prop, mapper)
-            } else {
-                self.type_of_prop(prop, mapper)
-            };
-            return Some((found, Found::Property));
-        }
-        let apparent = self.reduced_apparent_type(apparent_type);
-        if self.is_any(apparent) {
-            return Some((apparent, Found::Property));
-        }
+        let apparent = match self.find_declared_property(apparent_type, name, access) {
+            Ok(found) => return Some((found, Found::Property)),
+            Err(apparent) => apparent,
+        };
         // `!ast.IsPrivateIdentifier(right)`: no index signature substitutes for the `#x` of a class. And nothing is
         // written through an index signature of a type parameter's constraint.
         if self.atoms().is_private_symbol_name(name)
@@ -8562,6 +8549,32 @@ impl<'p, 's> Checker<'p, 's> {
         let members = self.members_for_index_infos(apparent)?;
         let info = self.applicable_index_info_for_name(&members, name)?;
         Some((info.value, Found::ByIndex))
+    }
+
+    /// The type of the property `name` of `apparent_type` itself, or the reduced apparent type that has none.
+    fn find_declared_property(
+        &mut self,
+        apparent_type: TypeId,
+        name: Atom,
+        access: Access,
+    ) -> Result<TypeId, TypeId> {
+        let is_plain_object = self.is_plain_object_type(apparent_type);
+        if !is_plain_object && self.is_any(apparent_type) {
+            return Ok(apparent_type);
+        }
+        let skips = is_plain_object && self.is_const_enum_object_by_record(apparent_type);
+        if let Some((prop, mapper)) = self.get_property_of_type_ex(apparent_type, name, skips) {
+            return Ok(if access == Access::Written {
+                self.write_type_of_prop(prop, mapper)
+            } else {
+                self.type_of_prop(prop, mapper)
+            });
+        }
+        let apparent = self.reduced_apparent_type(apparent_type);
+        if self.is_any(apparent) {
+            return Ok(apparent);
+        }
+        Err(apparent)
     }
 
     /// `getRestTypeOfTupleType` of the apparent type of `ty`, if that is a tuple: the type of its

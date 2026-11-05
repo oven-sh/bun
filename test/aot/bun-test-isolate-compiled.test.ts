@@ -389,11 +389,11 @@ import { existsSync } from "node:fs";
 ${mark}
 const hidden = (text: string) => new Function(JSON.parse(JSON.stringify(text)))();
 test("reads what no code that the compiler can follow reads", () => {
-  // A member that the host makes, a getter of the library, and the error of a call.
-  const sql = hidden("return Bun.sql");
-  expect(Reflect.ownKeys(sql).includes("unsafe")).toBe(false);
-  expect(typeof hidden('return process.getBuiltinModule("node:fs").promises')).toBe("function");
-  expect(() => sql("select 1")).toThrow();
+  // node:fs is in the image without its getter \`promises\`, which nothing calls: a stand-in lies in its place. The stand-in, a read that calls it, and the error of each.
+  const getter = hidden('return Object.getOwnPropertyDescriptor(process.getBuiltinModule("node:fs"), "promises").get');
+  expect(typeof getter).toBe("function");
+  expect(() => getter()).toThrow("was not compiled into this executable");
+  expect(() => hidden('return process.getBuiltinModule("node:fs").promises')).toThrow("was not compiled into this executable");
   expect(existsSync(".")).toBe(true);
 });`,
     "e.test.ts": fileThatDoesNothing,

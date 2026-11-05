@@ -7,7 +7,6 @@ use bun_sema::program::{FileId, Files, ReadingTask};
 use bun_sema::util::SharedSort;
 use bun_threading::{Condvar, Guarded};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 #[derive(Copy, Clone)]
@@ -42,7 +41,6 @@ fn run_pass_over<'s>(
             requested,
             after_file: Some(after_file),
             after_commit: &|_| {},
-            beside_file: None,
             frees_tree: &|_| options.frees_trees,
             is_last_pass: &|| false,
             note_cycles_entered: None,
@@ -112,62 +110,6 @@ fn each_file_is_visited() {
         assert_eq!(report.rounds[0].files, calls.len());
         assert!(report.diagnostics.is_empty());
         assert!(report.incomplete.is_empty());
-    });
-}
-
-#[test]
-fn a_second_thread_works_beside_a_file_that_takes_as_long_as_the_round() {
-    let long: String = (0..3000)
-        .map(|index| format!("export const value{index} = one + one + one + one;\n"))
-        .collect();
-    let long = format!("const one = 1;\n{long}");
-    let files = [
-        ("main.ts", "import \"./long.ts\";\nimport \"./short.ts\";\n"),
-        ("long.ts", &long[..]),
-        ("short.ts", "export const one = 1;\n"),
-    ];
-    with_program(&files, &["./main.ts"], 4, |program| {
-        let long_file = program.file("long.ts");
-        let beside: Guarded<Vec<(FileId, ThreadId)>> = Guarded::new(Vec::new());
-        let has_worked_beside = Condvar::new();
-        let visiting_thread: Guarded<Option<ThreadId>> = Guarded::new(None);
-        let all = program.files().modules.len() as u32;
-        let mut to_check: Vec<FileId> = (0..all).map(FileId).collect();
-        to_check.shared_sort_by_key(|&file| program.files().rank_of_file(file));
-        run_queue(
-            program.loaded,
-            program.host,
-            program.request,
-            to_check,
-            &FileWork {
-                requested: &|_| Requested::All,
-                after_file: Some(&|_, file| {
-                    if file != long_file {
-                        return;
-                    }
-                    *visiting_thread.lock() = Some(std::thread::current().id());
-                    let mut beside = beside.lock();
-                    while beside.iter().all(|it| it.0 != long_file) {
-                        has_worked_beside.wait_guarded(&mut beside);
-                    }
-                }),
-                after_commit: &|_| {},
-                beside_file: Some(&|file| {
-                    beside.lock().push((file, std::thread::current().id()));
-                    has_worked_beside.notify_all();
-                }),
-                frees_tree: &|_| false,
-                is_last_pass: &|| false,
-                note_cycles_entered: None,
-                cycles_entered_before: &Default::default,
-                first_round: LOWERING_ROUNDS,
-                left_out_bodies: None,
-            },
-        );
-        let beside = beside.lock();
-        assert_eq!(beside.len(), 1);
-        assert_eq!(beside[0].0, long_file);
-        assert_ne!(Some(beside[0].1), *visiting_thread.lock());
     });
 }
 
@@ -248,7 +190,6 @@ fn is_tree_of_last_file_gone(is_last_pass: bool) -> bool {
                     *committed.lock() += 1;
                     has_committed.notify_all();
                 },
-                beside_file: None,
                 frees_tree: &|_| true,
                 is_last_pass: &|| is_last_pass,
                 note_cycles_entered: None,

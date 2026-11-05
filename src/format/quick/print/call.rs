@@ -1050,7 +1050,8 @@ impl Quick {
         return Ok((self.print_call.ch_top - base) >> 1);
     }
 
-    /// Is the link `n` of a chain a call? The head `(a?.())` is a ChainExpression in the trees of TypeScript's and of Flow's parser.
+    /// Is `n`, the head of a chain or what a link of it calls, a call? `(a?.())` is a ChainExpression in the trees of TypeScript's and
+    /// of Flow's parser.
     fn is_call_link(&self, n: i32) -> bool {
         self.is_call_expression(n)
             && ((self.n.at(n) & (F_PAREN | F_CHAIN)) != (F_PAREN | F_CHAIN)
@@ -1382,7 +1383,11 @@ impl Quick {
         while i < count {
             'c2: {
                 let node = self.print_call.ch.at(base + i * 2);
-                if !self.is_call_link(node) {
+                if !(if i == 0 {
+                    self.is_call_link(node)
+                } else {
+                    self.is_call_expression(node)
+                }) {
                     break 'c2;
                 }
                 calls += 1;
@@ -1462,7 +1467,11 @@ impl Quick {
             while i < count - 1 && !expanded_only {
                 'c7: {
                     let node = self.print_call.ch.at(base + i * 2);
-                    if !self.is_call_link(node) {
+                    if !(if i == 0 {
+                        self.is_call_link(node)
+                    } else {
+                        self.is_call_expression(node)
+                    }) {
                         break 'c7;
                     }
                     let args = self.n.at(node + 5);

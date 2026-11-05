@@ -5079,6 +5079,14 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js.flow", "--print-width=20", "class a{static b:X=>Y}\n"],
     ["a.js.flow", "--print-width=34", 'declare module""{declare module.exports:X=>Y}\n'],
     ["a.js.flow", "--print-width=24", "declare export default X=>Y\n"],
+    ["a.js.flow", "--arrow-parens=avoid", "class a{static b:X=>Y;c:X=>Y}\ndeclare class d{static b:X=>Y;c:X=>Y}\n"],
+    [
+      "a.js.flow",
+      "--arrow-parens=avoid",
+      'declare module""{declare module.exports:X=>Y}\ndeclare export default X=>Y\n',
+    ],
+    ["a.js.flow", "--arrow-parens=avoid", "type A={[string]:X=>Y,...X=>Y,[[a]]:X=>Y,b:X=>Y}\n"],
+    ["a.js.flow", "--print-width=30", "class A {\n  _a: {\n    [string]: (boolean) => void,\n  } = {};\n}\n"],
     // Flow: `a < b > c`, which the long way may take for type arguments.
     ["a.js", "", "//@flow\nc<[...X]>(y)\n"],
     // Flow: `interface {}` as the only type argument, where it does not fit.
@@ -5120,6 +5128,8 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "--print-width=17", "(a?.()).i.d().l()\n"],
     ["a.js", "--print-width=17", "(a?.()).i.d().l()\n"],
     ["a.js.flow", "--print-width=17", "(a?.()).i.d().l()\n"],
+    ["a.ts", "", "(o?.().c().d((``,2)));\n(l?.().c().e(((()=>{}))));\nnew(a.b?.()().d([()=>f]));\n"],
+    ["a.ts", "--print-width=28", "(a?.().e().r((c>{})))\n"],
     [
       "a.ts",
       "--print-width=17",

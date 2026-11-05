@@ -2666,20 +2666,17 @@ impl<'a> Scanner<'_, 'a> {
             has_blank_to_write = false;
             fits = fits || column.saturating_add(needed) <= line_width;
             let is_next_to_word = next.is_some_and(|it| !it.has_space_before);
-            // There is no line between `/>` and a word.
+            // There is no line between `/>` and a word. A word behind an end tag prints its `>`.
+            let own_width = piece.width - usize::from(is_next_to_word);
             let is_broken = !fits
                 && ((piece.is_void && is_next_to_word)
-                    || column.saturating_add(piece.width + own_suffix) > line_width);
+                    || column.saturating_add(own_width + own_suffix) > line_width);
             if is_broken {
-                // The word behind it prints the `>` of its end tag.
-                let fits_without_end = !piece.is_void
-                    && is_next_to_word
-                    && column.saturating_add(piece.width) <= line_width + 1;
                 let starts_line = match previous {
                     Some(_) => piece.has_space_before && column == indentation,
                     None => true,
                 };
-                if fits_without_end || !starts_line || own_suffix > 0 {
+                if !starts_line || own_suffix > 0 {
                     return None;
                 }
                 column = self.put_broken_piece(piece, level, column, parent, is_next_to_word)?;

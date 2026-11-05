@@ -2520,6 +2520,11 @@ describe.skipIf(!hasFlag)("HTML", () => {
         `<p>\n  a <br class="${href}" />b <br />${href}${href} <wbr class="${href}">c\n</p>\n`,
       ];
     }),
+    // It is a column narrower than it is written if the word behind it prints the `>` of its end tag.
+    ...[57, 58, 59, 60, 61, 62].flatMap(length => [
+      `<p>\n  ${full}\n  <a href="${"h".repeat(length)}">text</a>. b\n</p>\n`,
+      `<p>\n  ${full} <a href="${"h".repeat(length)}">text</a>, b\n  <code class="${"h".repeat(length - 3)}">&lt;x&gt;</code>.\n</p>\n`,
+    ]),
     // An inline element around an `<svg>` around one element: each prints a part of the tags of the other.
     ...[1, 20, 24, 26, 28, 30, 32, 34, 60, 80].flatMap(length => {
       const c = "c".repeat(length);

@@ -2297,6 +2297,18 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
     // A `<template>` that is not broken, is empty, is in another language, has attributes.
     "<template>a</template>\n",
     "<template>\n  a\n</template>\n",
+    "<template>\n  a\n  <div></div>\n</template>\n",
+    "<template>\n  a\n\n  <div></div>\n</template>\n",
+    "<template>\n  a <b>c</b>\n  <div></div>\n</template>\n",
+    "<template>\n  a\n  b\n  <div></div>\n</template>\n",
+    "<template>\n  a\n  {{ b }}\n</template>\n",
+    // An empty block has its end tag on the line of its start tag.
+    "<style scoped></style>\n",
+    '<script lang="ts" setup></script>\n<style>\na {\n}\n</style>\n',
+    '<script lang="ts"></script>\n\n<template>\n  <p :a="b  as c"></p>\n</template>\n',
+    "<script setup></script >\n",
+    "<script setup> </script>\n",
+    "<script setup></script>a\n",
     "<template>\n  {{ a }}\n</template>\n",
     "<template>\n  <!-- a -->\n</template>\n",
     "<template>\n  <b>a</b> c\n</template>\n",
@@ -2600,6 +2612,21 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
       `<template>\n  <div>\n    <p a="b" style="${value}" c>d</p>\n  </div>\n</template>\n`,
       `<template>\n  <i style="${value}" />\n  <component-with-a-long-name style="${value}" />\n</template>\n`,
     ]),
+    // What is not as wide as it is long, next to `{{ }}`.
+    ...["Value：{{ a }}", "{{ a + 1 }}期", "中{{ a }}文{{ b }}字", "é{{ a }}", "́{{ a }}", "{{ a }}́", "{{ a }}️⃣", "😀{{ a }}😀 b"].flatMap(
+      words => [
+        `<template>\n  <div class="demonstration">${words}</div>\n</template>\n`,
+        `<template>\n  <p>${words} ${words} ${words} ${words}</p>\n  <span>c ${words}</span>\n</template>\n`,
+        `<template>\n  <div>\n    ${words}\n  </div>\n</template>\n`,
+      ],
+    ),
+    // A comment that starts with a tag is a comment like another, unless it ends a conditional comment.
+    ...["<!-- <a> -->", "<!--<a b>-->", "<!-- <a\n  b\n/> -->", "<!--<![endif]-->", "<!--<! [endif]-->", "<!-- <![endif] -->", "<!--<-->", "<!--<!-->"].map(
+      comment => `<template>\n  ${comment}\n  <div>\n      ${comment}\n    <p   a>b</p>\n  </div>\n</template>\n`,
+    ),
+    // Code behind something that goes the long way.
+    `<template>\n  <p #a="{ b: { c } }"></p>\n  <p :d="[e,f]" :g="[${wide},${wide},${wide}]">{{ h  ( i ) }}</p>\n</template>\n`,
+    `<template>\n  <div>\n    <p #a="{ b: { c } }"></p>\n    <p :d="e  as f">{{ g  as h }}</p>\n  </div>\n</template>\n\n<script lang="ts">\ni;\n</script>\n`,
     // A tab is as wide as the options say, which matters on one line.
     ...["M1,2\n\tz", "M1,2\tz", "\tM1\n", "a\t\nb"].flatMap(value =>
       ["d", "class", ":d", "title"].map(name => `<template>\n  <path a="b" ${name}="${value}" />\n</template>\n`),

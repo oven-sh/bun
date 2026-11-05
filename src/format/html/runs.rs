@@ -87,6 +87,12 @@ pub(crate) struct Guests<'g> {
     pub(crate) scripts: &'g mut super::Scripts,
 }
 
+/// The same, kept by a `Runs` while the lexer asks it.
+pub(crate) struct OwnGuests {
+    pub(crate) options: FormatOptions,
+    pub(crate) scripts: super::Scripts,
+}
+
 /// What the children of a run are in.
 #[derive(Copy, Clone)]
 pub(crate) struct Parent<'a> {
@@ -704,6 +710,8 @@ pub(crate) struct Runs {
     pub(crate) assumes_typescript: Option<bool>,
     /// See `Scanner::formatted`.
     formatted: Vec<u8>,
+    /// For `scan` where it is handed none.
+    pub(crate) guests: Option<Box<OwnGuests>>,
 }
 
 impl Runs {
@@ -721,6 +729,7 @@ impl Runs {
             has_typescript_script: false,
             assumes_typescript: None,
             formatted: Vec::new(),
+            guests: None,
         }
     }
 
@@ -812,6 +821,10 @@ impl Runs {
                 return;
             }
         }
+        let guests = guests.or_else(|| {
+            let OwnGuests { options, scripts } = &mut **self.guests.as_mut()?;
+            Some(Guests { options, scripts })
+        });
         let definition = (parent.element).map_or(&data::DEFAULT_TAG_DEFINITION, |it| it.1);
         let printed_so_far = printed.len();
         let first = (start, printed_so_far);
@@ -1085,9 +1098,14 @@ impl<'a> Scanner<'_, 'a> {
             Some(bytes) => data::key_of_start(bytes, name.len()),
             None => data::key_of_name(name),
         };
+        let mut lower = smallvec::SmallVec::<[u8; 32]>::new();
+        if has_capital {
+            lower.extend_from_slice(name);
+            lower.make_ascii_lowercase();
+        }
         // The lexer goes by the name alone.
         let facts = match has_capital {
-            true => data::facts(data::key_of_name(&name.to_ascii_lowercase())),
+            true => data::facts(data::key_of_name(&lower)),
             false => data::facts(key),
         };
         let definition = facts.definition;
@@ -1124,9 +1142,9 @@ impl<'a> Scanner<'_, 'a> {
         // `<foreignObject>`, which is in the namespace of `<svg>` wherever it is.
         if has_capital
             && (data::has_tag_definition(name)
-                || data::has_tag_definition(&name.to_ascii_lowercase())
-                || data::css_display_of_tag(&name.to_ascii_lowercase()).is_some()
-                || data::is_pre_tag(&name.to_ascii_lowercase()))
+                || data::has_tag_definition(&lower)
+                || data::css_display_of_tag(&lower).is_some()
+                || data::is_pre_tag(&lower))
         {
             return None;
         }
@@ -1546,13 +1564,19 @@ impl<'a> Scanner<'_, 'a> {
         if rest.starts_with(b"<template>") {
             let (name_end, open_end) = (start + 9, start + 10);
             let (first, line_breaks) = self.skip_space(open_end);
-            // With nothing but a text in it, it is only broken if it does not fit on a line.
-            let starts_with_tag = self.at(first) == b'<'
-                && matches!(self.at(first + 1), b'a'..=b'z' | b'A'..=b'Z' | b'!');
-            if line_breaks == 0 || !starts_with_tag {
+            let key = data::key_of_name(b"template");
+            // With nothing but a text in it, it is only broken if it does not fit on a line. A text that something
+            // follows on its line is laid out together with that.
+            let starts_with_child_on_lines = match (self.at(first), self.at(first + 1)) {
+                (b'<', next) => matches!(next, b'a'..=b'z' | b'A'..=b'Z' | b'!'),
+                _ => self.words(first, 1).is_some_and(|words| {
+                    self.end_tag(words.close, b"template", key).is_none()
+                        && self.ends_line(words.end)
+                }),
+            };
+            if line_breaks == 0 || !starts_with_child_on_lines {
                 return Item::No;
             }
-            let key = data::key_of_name(b"template");
             let (printed_from, mark) = (self.out.len(), self.out.mark());
             self.out.source(start, open_end);
             self.levels.push(Level {
@@ -1610,7 +1634,20 @@ impl<'a> Scanner<'_, 'a> {
             (b"style", Some(b"less")) => Language::Less,
             _ => return Item::No,
         };
-        let item = self.element_with_code(start, (name, name_end), width, at + 1, Some(language));
+        let item = match self.end_tag(at + 1, name, data::key_of_name(name)) {
+            // The end tag is on the line of the start tag.
+            Some(end)
+                if self.ends_line(end)
+                    && width + 1 + name.len() + 3 <= self.settings.line_width =>
+            {
+                self.put_whole_tag(start, name_end, false);
+                self.put_end_tag_at(name, at + 1, end);
+                self.ends_in_text = false;
+                Item::Ends(end)
+            }
+            Some(_) => Item::No,
+            None => self.element_with_code(start, (name, name_end), width, at + 1, Some(language)),
+        };
         if matches!(item, Item::Ends(_)) && name == b"script" {
             self.has_typescript_script |= matches!(lang, Some(b"ts" | b"typescript"));
         }
@@ -2459,7 +2496,7 @@ impl<'a> Scanner<'_, 'a> {
     /// wide.
     #[inline(never)]
     fn word(&mut self, start: usize, can_have_interpolations: bool) -> Option<(usize, usize)> {
-        let (mut at, mut is_wide) = (start, false);
+        let (mut at, mut is_wide, mut excess) = (start, false, 0);
         // What is in front of this has been written.
         let mut from = start;
         loop {
@@ -2470,6 +2507,10 @@ impl<'a> Scanner<'_, 'a> {
                         return None;
                     }
                     self.out.source(from, at);
+                    if std::mem::take(&mut is_wide) {
+                        let part = self.text.get(from..at)?;
+                        excess += part.len() - width_of_word(part).min(part.len());
+                    }
                     at = self.interpolation(at)?;
                     from = at;
                     continue;
@@ -2482,16 +2523,18 @@ impl<'a> Scanner<'_, 'a> {
             }
             at += 1;
         }
-        if at == start || (self.at(at) == b'<' && !self.ends_text(at)) || (is_wide && from != start)
-        {
+        if at == start || (self.at(at) == b'<' && !self.ends_text(at)) {
             return None;
         }
         self.out.source(from, at);
-        let word = self.text.get(start..at)?;
-        let excess = match is_wide {
-            true => word.len() - width_of_visible_word(word)?.min(word.len()),
-            false => 0,
-        };
+        if is_wide {
+            let part = self.text.get(from..at)?;
+            let width = match from == start {
+                true => width_of_visible_word(part)?,
+                false => width_of_word(part),
+            };
+            excess += part.len() - width.min(part.len());
+        }
         Some((at, excess))
     }
 
@@ -3512,7 +3555,7 @@ impl<'a> Scanner<'_, 'a> {
         let said = &rest[space.count()..];
         if matches!(
             said,
-            [] | [b'[' | b'<' | 0xC2 | 0xE1 | 0xE2 | 0xE3 | 0xEF, ..]
+            [] | [b'<'] | [b'<', b'!', ..] | [b'[' | 0xC2 | 0xE1 | 0xE2 | 0xE3 | 0xEF, ..]
         ) || said.starts_with(b"prettier-ignore")
             || said.starts_with(b"display:")
         {

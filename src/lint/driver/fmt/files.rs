@@ -212,6 +212,10 @@ impl Kind {
         if SCRIPTS.iter().any(|it| path.ends_with(it)) {
             return Some(Kind::Script);
         }
+        // No name and no extension that the other languages go by ends like this, and they are asked first.
+        if path.ends_with(b".vue") {
+            return Some(Kind::Html(bun_format::html::Parser::Vue));
+        }
         // Prettier's `getLanguageByFileName` compares the lowercased name.
         let lowered;
         let name = match paths::basename(path) {

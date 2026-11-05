@@ -177,6 +177,11 @@ impl Lazy {
                     if let Some(fd) = reopened_tty {
                         fd
                     } else {
+                        // The reader owns the duplicate and `Fd::close` skips 0 to 2:
+                        // a closed stdio number must not be taken.
+                        #[cfg(unix)]
+                        let duped = sys::dup_at_least(*pl_fd, 3);
+                        #[cfg(not(unix))]
                         let duped = sys::dup_with_flags(*pl_fd, 0);
 
                         let fd: Fd = match duped {

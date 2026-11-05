@@ -368,14 +368,17 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         input.once("data", () => setTimeout(() => {
           input.pause();
           console.log("paused");
-          setTimeout(() => {
+          // The next key is typed once "paused" is seen. Wait for it to be buffered, not for time.
+          const poll = setInterval(() => {
+            if (input.readableLength === 0) return;
+            clearInterval(poll);
             console.log("buffered " + input.readableLength);
             input.once("data", () => {
               input.setRawMode(false);
               input.destroy();
             });
             input.resume();
-          }, 200);
+          }, 10);
         }, 30));
         console.log("ready");
       `,

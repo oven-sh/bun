@@ -75,18 +75,11 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
     this._construct = undefined;
     require("internal/fs/streams").ReadStream.$apply(this, ["", { fd, highWaterMark: 0 }]);
     require("internal/streams/native-readable").attachNativeSource(this, native, 64 * 1024);
-    this.push = pushCountingBytes;
   } else {
     require("internal/fs/streams").ReadStream.$apply(this, ["", { fd }]);
   }
   this.isRaw = false;
   this.isTTY = isTTY;
-}
-
-// fs.ReadStream counts bytesRead in its _read. The native _read pushes straight into the stream.
-function pushCountingBytes(this: $Node.TTYReadStream, chunk: Buffer | null, encoding?: BufferEncoding) {
-  if (chunk != null) this.bytesRead += chunk.length;
-  return require("internal/fs/streams").ReadStream.prototype.push.$call(this, chunk, encoding);
 }
 
 // The class stands below fs.ReadStream, and internal/fs/streams loads node:stream. So it is put there when it is first read.

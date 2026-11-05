@@ -29,6 +29,8 @@ let dynamicallyAdjustChunkSize = (_?) => (
 
 interface NativeReadable extends $Node.Readable {
   $bunNativePtr: NativePtr | undefined;
+  /** As `socket.bytesRead` and `fs.ReadStream.bytesRead`. */
+  bytesRead: number;
   $start?: typeof ensureConstructed;
   ref: typeof ref;
   unref: typeof unref;
@@ -57,6 +59,7 @@ let debugId = 0;
 
 function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
   const stream = new Readable(options) as NativeReadable;
+  stream.bytesRead = 0;
   attachNativeSource(stream, readableStream, options.highWaterMark);
   stream._destroy = destroy;
   stream.ref = ref;
@@ -122,7 +125,8 @@ function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
 // how many bytes they want to read (ie. when reading only part of a file)
 // ObjectDefinePrivateProperty(NativeReadable.prototype, "_getRemainingChunk", );
 function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
-  maxToRead ??= stream[kHighWaterMark] as number;
+  // A Readable with highWaterMark 0 calls _read(0): no limit from the Readable.
+  if (!maxToRead) maxToRead = stream[kHighWaterMark] as number;
   var chunk = stream[kRemainingChunk];
   if ((chunk?.byteLength ?? 0) < MIN_BUFFER_SIZE) {
     var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
@@ -219,6 +223,7 @@ function pushEof(stream: NativeReadable) {
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
+  stream.bytesRead += chunk.byteLength;
   if (!stream.push(chunk)) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);

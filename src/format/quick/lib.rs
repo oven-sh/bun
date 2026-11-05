@@ -42,6 +42,8 @@ mod printer;
 mod root;
 mod scan;
 mod stands;
+#[cfg(feature = "tally")]
+pub mod tally;
 mod text;
 mod width_table;
 mod words;

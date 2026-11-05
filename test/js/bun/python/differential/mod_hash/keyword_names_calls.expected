@@ -1,0 +1,341 @@
+status: 0
+script: 005c295bd4e1b190
+---
+seed 1: status 0, 335 rows, 3a2d61e286118aac 
+f(**kw) | S | [('S', 'a')] | 
+f(**kw) | L | [('L', 'a')] | hash
+f(**kw) | No | [('No', 'a')] | hash
+f(**kw) | Else | [('Else', 'a')] | hash
+f(a) | S | ('a', 1) | 
+f(a) | L | ('a', 1) | eq(str)
+f(a) | No | !TypeError: f_a() got an unexpected keyword argument 'a' | eq(str)
+f(a) | Else | !TypeError: f_a() got an unexpected keyword argument 'a' | eq(str)
+f(a, **kw) | S | ('a', 1, []) | 
+f(a, **kw) | L | ('a', 1, []) | eq(str)
+f(a, **kw) | No | ('a', None, [('No', 'a')]) | eq(str) hash
+f(a, **kw) | Else | ('a', None, [('Else', 'a')]) | eq(str) hash
+f(a, **kw), b | S | ('a', None, [('S', 'b')]) | 
+f(a, **kw), b | L | ('a', None, [('L', 'b')]) | eq(str) hash
+f(a, **kw), b | No | ('a', None, [('No', 'b')]) | eq(str) hash
+f(a, **kw), b | Else | ('a', None, [('Else', 'b')]) | eq(str) hash
+f(other, **kw) | S | ('other', None, [('S', 'a')]) | 
+f(other, **kw) | L | ('other', None, [('L', 'a')]) | eq(str) hash
+f(other, **kw) | No | ('other', None, [('No', 'a')]) | eq(str) hash
+f(other, **kw) | Else | ('other', 1, []) | eq(str)
+C(**kw) | S | [('S', 'a')] | 
+C(**kw) | L | [('L', 'a')] | eq(str) hash
+C(**kw) | No | [('No', 'a')] | eq(str) hash
+C(**kw) | Else | [('Else', 'a')] | eq(str) hash
+o.m(**kw) | S | [('S', 'a')] | 
+o.m(**kw) | L | [('L', 'a')] | eq(str) hash
+o.m(**kw) | No | [('No', 'a')] | eq(str) hash
+o.m(**kw) | Else | [('Else', 'a')] | eq(str) hash
+dict(**m) | S | [('S', 'a')] | 
+dict(**m) | L | [('L', 'a')] | hash
+dict(**m) | No | [('No', 'a')] | hash
+dict(**m) | Else | [('Else', 'a')] | hash
+d.update(**m) | S | [('S', 'a')] | 
+d.update(**m) | L | [('L', 'a')] | 
+d.update(**m) | No | [('No', 'a')] | 
+d.update(**m) | Else | [('Else', 'a')] | 
+{'a': 0}.update(**m) | S | [('str', 'a')] | 
+{'a': 0}.update(**m) | L | [('str', 'a')] | eq(str)
+{'a': 0}.update(**m) | No | [('str', 'a'), ('No', 'a')] | eq(str) eq(str) eq(str)
+{'a': 0}.update(**m) | Else | [('str', 'a'), ('Else', 'a')] | 
+OrderedDict(**m) | S | [('S', 'a')] | 
+OrderedDict(**m) | L | [('L', 'a')] | hash hash
+OrderedDict(**m) | No | [('No', 'a')] | hash hash
+OrderedDict(**m) | Else | [('Else', 'a')] | hash hash
+OrderedDict().update(**m) | S | [('S', 'a')] | 
+OrderedDict().update(**m) | L | [('L', 'a')] | hash hash
+OrderedDict().update(**m) | No | [('No', 'a')] | hash hash
+OrderedDict().update(**m) | Else | [('Else', 'a')] | hash hash
+Counter(**m) | S | [('S', 'a')] | 
+Counter(**m) | L | [('L', 'a')] | hash hash
+Counter(**m) | No | [('No', 'a')] | hash hash
+Counter(**m) | Else | [('Else', 'a')] | hash hash
+defaultdict(None, **m) | S | [('S', 'a')] | 
+defaultdict(None, **m) | L | [('L', 'a')] | 
+defaultdict(None, **m) | No | [('No', 'a')] | 
+defaultdict(None, **m) | Else | [('Else', 'a')] | 
+UserDict(**m) | S | [('S', 'a')] | 
+UserDict(**m) | L | [('L', 'a')] | hash hash hash
+UserDict(**m) | No | [('No', 'a')] | hash hash hash
+UserDict(**m) | Else | [('Else', 'a')] | hash hash hash
+SimpleNamespace(**m) | S | [('S', 'a')] | 
+SimpleNamespace(**m) | L | [('L', 'a')] | 
+SimpleNamespace(**m) | No | [('No', 'a')] | 
+SimpleNamespace(**m) | Else | [('Else', 'a')] | 
+SimpleNamespace repr | S | namespace(a=1) | 
+SimpleNamespace repr | L | namespace(a=1) | hash
+SimpleNamespace repr | No | namespace(a=1) | hash
+SimpleNamespace repr | Else | namespace(a=1) | hash
+SimpleNamespace .a | S | 1 | 
+SimpleNamespace .a | L | 1 | eq(str)
+SimpleNamespace .a | No | !AttributeError: 'types.SimpleNamespace' object has no attribute 'a' | eq(str) eq(str) eq(str)
+SimpleNamespace .a | Else | !AttributeError: 'types.SimpleNamespace' object has no attribute 'a' | 
+copy.replace(ns, **m) | S | [('str', 'a')] | 
+copy.replace(ns, **m) | L | [('str', 'a')] | hash hash eq(str)
+copy.replace(ns, **m) | No | [('str', 'a'), ('No', 'a')] | hash hash eq(str) eq(str) eq(str)
+copy.replace(ns, **m) | Else | [('str', 'a'), ('Else', 'a')] | hash hash
+partial(f, **m).keywords | S | [('S', 'a')] | 
+partial(f, **m).keywords | L | [('L', 'a')] | 
+partial(f, **m).keywords | No | [('No', 'a')] | 
+partial(f, **m).keywords | Else | [('Else', 'a')] | 
+partial(f, **m)() | S | [('S', 'a')] | 
+partial(f, **m)() | L | [('L', 'a')] | hash
+partial(f, **m)() | No | [('No', 'a')] | hash
+partial(f, **m)() | Else | [('Else', 'a')] | hash
+partial(f)(**m) | S | [('S', 'a')] | 
+partial(f)(**m) | L | [('L', 'a')] | hash
+partial(f)(**m) | No | [('No', 'a')] | hash
+partial(f)(**m) | Else | [('Else', 'a')] | hash
+partial(f, a=0)(**m) | S | [('str', 'a')] | 
+partial(f, a=0)(**m) | L | [('str', 'a')] | hash eq(str) hash eq(str)
+partial(f, a=0)(**m) | No | [('str', 'a'), ('No', 'a')] | hash eq(str) eq(str) eq(str) hash eq(str) eq(str) eq(str)
+partial(f, a=0)(**m) | Else | [('str', 'a'), ('Else', 'a')] | hash hash
+partial(f, **m)(a=0) | S | [('S', 'a')] | 
+partial(f, **m)(a=0) | L | [('L', 'a')] | eq(str) eq(str) hash
+partial(f, **m)(a=0) | No | [('No', 'a'), ('str', 'a')] | eq(str) eq(str) eq(str) hash eq(str) eq(str) eq(str)
+partial(f, **m)(a=0) | Else | [('Else', 'a'), ('str', 'a')] | hash
+partial(f_a, **m)() | S | ('a', 1) | 
+partial(f_a, **m)() | L | ('a', 1) | eq(str)
+partial(f_a, **m)() | No | !TypeError: f_a() got an unexpected keyword argument 'a' | eq(str)
+partial(f_a, **m)() | Else | !TypeError: f_a() got an unexpected keyword argument 'a' | eq(str)
+partial(partial(f, **m), **m) | S | [('S', 'a')] | 
+partial(partial(f, **m), **m) | L | [('L', 'a')] | 
+partial(partial(f, **m), **m) | No | [('No', 'a')] | 
+partial(partial(f, **m), **m) | Else | [('Else', 'a')] | 
+partial repr | S | functools.partial(<built-in function print>, a=1) | 
+partial repr | L | functools.partial(<built-in function print>, a=1) | 
+partial repr | No | functools.partial(<built-in function print>, a=1) | 
+partial repr | Else | functools.partial(<built-in function print>, a=1) | 
+partialmethod | S | [('S', 'a')] | 
+partialmethod | L | [('L', 'a')] | hash eq(str) hash
+partialmethod | No | [('No', 'a')] | hash eq(str) hash
+partialmethod | Else | [('Else', 'a')] | hash eq(str) hash
+lru_cache | S | ([('S', 'a')], [('S', 'a')], (1, 1)) | 
+lru_cache | L | ([('L', 'a')], [('L', 'a')], (1, 1)) | hash hash hash
+lru_cache | No | ([('No', 'a')], [('No', 'a')], (1, 1)) | hash hash hash
+lru_cache | Else | ([('Else', 'a')], [('Else', 'a')], (1, 1)) | hash hash hash
+lru_cache, then plain | S | ([('S', 'a')], [('S', 'a')], (1, 1)) | 
+lru_cache, then plain | L | ([('L', 'a')], [('L', 'a')], (1, 1)) | hash hash eq(str)
+lru_cache, then plain | Else | ([('Else', 'a')], [('str', 'a')], (0, 2)) | hash hash
+lru_cache typed | S | ([('S', 'a')], [('S', 'a')], (1, 1)) | 
+lru_cache typed | L | ([('L', 'a')], [('L', 'a')], (1, 1)) | hash hash hash
+lru_cache typed | No | ([('No', 'a')], [('No', 'a')], (1, 1)) | hash hash hash
+lru_cache typed | Else | ([('Else', 'a')], [('Else', 'a')], (1, 1)) | hash hash hash
+cache f(a) | S | (1, 1, (1, 1)) | 
+cache f(a) | L | (1, 1, (1, 1)) | hash eq(str) hash
+cache f(a) | No | !TypeError: cached_a() got an unexpected keyword argument 'a' | hash eq(str)
+cache f(a) | Else | !TypeError: cached_a() got an unexpected keyword argument 'a' | hash eq(str)
+str.format | S | 1 | 
+str.format | L | 1 | eq(str)
+str.format | No | !KeyError: 'a' | eq(str) eq(str) eq(str)
+str.format | Else | !KeyError: 'a' | 
+str.format other | S | !KeyError: 'other' | 
+str.format other | L | !KeyError: 'other' | 
+str.format other | No | !KeyError: 'other' | 
+str.format other | Else | 1 | eq(str)
+format_map | S | 1 | 
+format_map | L | 1 | eq(str)
+format_map | No | !KeyError: 'a' | eq(str) eq(str) eq(str)
+format_map | Else | !KeyError: 'a' | 
+type(n, b, d, **m) | S | [('S', 'a')] | 
+type(n, b, d, **m) | L | [('L', 'a')] | hash eq(str) hash
+type(n, b, d, **m) | No | [('No', 'a')] | hash eq(str) hash
+type(n, b, d, **m) | Else | [('Else', 'a')] | hash eq(str) hash
+class X(Sub, **m) | S | [('S', 'a')] | 
+class X(Sub, **m) | L | [('L', 'a')] | hash hash eq(str) hash
+class X(Sub, **m) | No | [('No', 'a')] | hash hash eq(str) hash
+class X(Sub, **m) | Else | [('Else', 'a')] | hash hash eq(str) hash
+class X(metaclass=Meta, **m) | S | [('S', 'a')] | prepare [('S', 'a')]
+class X(metaclass=Meta, **m) | L | [('L', 'a')] | hash eq(str) eq(str) eq(str) hash prepare [('L', 'a')] eq(str) eq(str) eq(str) eq(str) hash eq(str) eq(str) eq(str) eq(str) hash
+class X(metaclass=Meta, **m) | No | [('No', 'a')] | hash eq(str) eq(str) eq(str) hash prepare [('No', 'a')] eq(str) eq(str) eq(str) eq(str) hash eq(str) eq(str) eq(str) eq(str) hash
+class X(metaclass=Meta, **m) | Else | [('Else', 'a')] | hash eq(str) eq(str) eq(str) hash prepare [('Else', 'a')] eq(str) eq(str) eq(str) eq(str) hash eq(str) eq(str) eq(str) eq(str) hash
+Meta(n, b, d, **m) | S | [('S', 'a')] | 
+Meta(n, b, d, **m) | L | [('L', 'a')] | eq(str) eq(str) eq(str) eq(str) hash eq(str) eq(str) eq(str) eq(str) hash
+Meta(n, b, d, **m) | No | [('No', 'a')] | eq(str) eq(str) eq(str) eq(str) hash eq(str) eq(str) eq(str) eq(str) hash
+Meta(n, b, d, **m) | Else | [('Else', 'a')] | eq(str) eq(str) eq(str) eq(str) hash eq(str) eq(str) eq(str) eq(str) hash
+types.new_class | S | [('S', 'a')] | 
+types.new_class | L | [('L', 'a')] | hash eq(str) hash
+types.new_class | No | [('No', 'a')] | hash eq(str) hash
+types.new_class | Else | [('Else', 'a')] | hash eq(str) hash
+ast.Name(**m) | S | [('S', 'id'), ('str', 'ctx')] | 
+ast.Name(**m) | L | [('L', 'id'), ('str', 'ctx')] | eq(str) hash eq(str) hash hash
+ast.Name(**m) | No | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'id' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name(**m) | Else | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'id' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name(**m).id | S | 1 | 
+ast.Name(**m).id | L | 1 | eq(str) hash eq(str) hash hash eq(str)
+ast.Name(**m).id | No | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'id' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name(**m).id | Else | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'id' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name(**m), unknown | S | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'foo' | 
+ast.Name(**m), unknown | L | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'foo' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name(**m), unknown | No | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'foo' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name(**m), unknown | Else | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'foo' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name dump | S | Name(id=1) | 
+ast.Name dump | L | Name(id=1) | eq(str) hash eq(str) hash hash eq(str)
+ast.Name dump | No | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'id' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name dump | Else | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'id' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name(**m), lineno | S | [('str', 'id'), ('S', 'lineno'), ('str', 'ctx')] | 
+ast.Name(**m), lineno | L | [('str', 'id'), ('L', 'lineno'), ('str', 'ctx')] | eq(str) eq(str) eq(str) hash hash
+ast.Name(**m), lineno | No | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'lineno' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name(**m), lineno | Else | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'lineno' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name('x', **m), twice | S | !TypeError: ast.Name got multiple values for argument 'id' | 
+ast.Name('x', **m), twice | L | !TypeError: ast.Name got multiple values for argument 'id' | eq(str) hash
+ast.Name('x', **m), twice | No | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'id' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+ast.Name('x', **m), twice | Else | !TypeError: ast.Name.__init__ got an unexpected keyword argument 'id' | eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+namedtuple(**m) | S | P(a=1, b=2) | 
+namedtuple(**m) | L | P(a=1, b=2) | eq(str) eq(str)
+namedtuple(**m) | No | !TypeError: P.__new__() got an unexpected keyword argument 'a' | eq(str) eq(str) eq(str)
+namedtuple(**m) | Else | !TypeError: P.__new__() got an unexpected keyword argument 'a' | eq(str) eq(str) eq(str)
+_replace(**m) | S | P(a=1, b=2) | 
+_replace(**m) | L | P(a=1, b=2) | hash eq(str)
+_replace(**m) | No | !TypeError: Got unexpected field names: ['a'] | hash eq(str) eq(str) eq(str)
+_replace(**m) | Else | !TypeError: Got unexpected field names: ['a'] | hash
+methodcaller | S | [('S', 'a')] | 
+methodcaller | L | [('L', 'a')] | eq(str) hash
+methodcaller | No | [('No', 'a')] | eq(str) hash
+methodcaller | Else | [('Else', 'a')] | eq(str) hash
+methodcaller repr | S | operator.methodcaller('m', a=1) | 
+methodcaller repr | L | operator.methodcaller('m', a=1) | 
+methodcaller repr | No | operator.methodcaller('m', a=1) | 
+methodcaller repr | Else | operator.methodcaller('m', a=1) | 
+sorted | S | [2, 1] | 
+sorted | L | [2, 1] | 
+sorted | No | [2, 1] | 
+sorted | Else | [2, 1] | 
+list.sort | S | [2, 1] | 
+list.sort | L | [2, 1] | 
+list.sort | No | [2, 1] | 
+list.sort | Else | [2, 1] | 
+print | S | None | 
+print | L | None | hash
+print | No | None | hash
+print | Else | None | hash
+max | S | 1 | 
+max | L | 1 | 
+max | No | 1 | 
+max | Else | 1 | 
+min key | S | 1 | 
+min key | L | 1 | hash
+min key | No | 1 | hash
+min key | Else | 1 | hash
+enumerate | S | [(1, 'a')] | 
+enumerate | L | [(1, 'a')] | 
+enumerate | No | [(1, 'a')] | 
+enumerate | Else | [(1, 'a')] | 
+sum | S | 2 | 
+sum | L | 2 | 
+sum | No | 2 | 
+sum | Else | 2 | 
+split | S | ['a', 'b c'] | 
+split | L | ['a', 'b c'] | 
+split | No | ['a', 'b c'] | 
+split | Else | ['a', 'b c'] | 
+round | S | 1.3 | 
+round | L | 1.3 | 
+round | No | 1.3 | 
+round | Else | 1.3 | 
+pow | S | 3 | 
+pow | L | 3 | hash
+pow | No | 3 | hash
+pow | Else | 3 | hash
+encode | S | b'x' | 
+encode | L | b'x' | hash
+encode | No | b'x' | hash
+encode | Else | b'x' | hash
+to_bytes | S | b'\x01' | 
+to_bytes | L | b'\x01' | 
+to_bytes | No | b'\x01' | 
+to_bytes | Else | b'\x01' | 
+date.replace | S | 0001-01-01 | 
+date.replace | L | 0001-01-01 | 
+date.replace | No | 0001-01-01 | 
+date.replace | Else | 0001-01-01 | 
+code.replace | S | x | 
+code.replace | L | x | hash
+code.replace | No | x | hash
+code.replace | Else | x | hash
+range | S | !TypeError: range() takes no keyword arguments | 
+range | L | !TypeError: range() takes no keyword arguments | 
+range | No | !TypeError: range() takes no keyword arguments | 
+range | Else | !TypeError: range() takes no keyword arguments | 
+len | S | !TypeError: len() takes no keyword arguments | 
+len | L | !TypeError: len() takes no keyword arguments | 
+len | No | !TypeError: len() takes no keyword arguments | 
+len | Else | !TypeError: len() takes no keyword arguments | 
+object | S | !TypeError: object() takes no arguments | 
+object | L | !TypeError: object() takes no arguments | 
+object | No | !TypeError: object() takes no arguments | 
+object | Else | !TypeError: object() takes no arguments | 
+local(**m) | S | [('S', 'a')] | 
+local(**m) | L | [('L', 'a')] | eq(str) hash
+local(**m) | No | [('No', 'a')] | eq(str) hash
+local(**m) | Else | [('Else', 'a')] | eq(str) hash
+compile | S | <module> | 
+compile | L | <module> | 
+compile | No | <module> | 
+compile | Else | <module> | 
+open | S | None | 
+open | L | None | hash
+open | No | None | hash
+open | Else | None | hash
+memoryview.cast | S | B | 
+memoryview.cast | L | B | hash
+memoryview.cast | No | B | hash
+memoryview.cast | Else | B | hash
+a dataclass | S | 1 | 
+a dataclass | L | 1 | eq(str) eq(str)
+a dataclass | No | !TypeError: D.__init__() got an unexpected keyword argument 'a' | eq(str) eq(str)
+a dataclass | Else | !TypeError: D.__init__() got an unexpected keyword argument 'a' | eq(str) eq(str)
+Thread | S | n | 
+Thread | L | n | hash eq(str) eq(str) eq(str) eq(str)
+Thread | No | !TypeError: Thread.__init__() got an unexpected keyword argument 'name' | hash eq(str) eq(str) eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+Thread | Else | !TypeError: Thread.__init__() got an unexpected keyword argument 'name' | hash eq(str) eq(str) eq(str) eq(str) eq(str) eq(str) eq(str) eq(str)
+super().__init__ | S | [('S', 'a')] | 
+super().__init__ | L | [('L', 'a')] | eq(str) hash eq(str) hash
+super().__init__ | No | [('No', 'a')] | eq(str) hash eq(str) hash
+super().__init__ | Else | [('Else', 'a')] | eq(str) hash eq(str) hash
+exec | S | None | 
+exec | L | None | hash
+exec | No | None | hash
+exec | Else | None | hash
+frozenset | S | !TypeError: frozenset() takes no keyword arguments | 
+frozenset | L | !TypeError: frozenset() takes no keyword arguments | 
+frozenset | No | !TypeError: frozenset() takes no keyword arguments | 
+frozenset | Else | !TypeError: frozenset() takes no keyword arguments | 
+slice | S | !TypeError: slice() takes no keyword arguments | 
+slice | L | !TypeError: slice() takes no keyword arguments | 
+slice | No | !TypeError: slice() takes no keyword arguments | 
+slice | Else | !TypeError: slice() takes no keyword arguments | 
+BaseException | S | !TypeError: BaseException() takes no keyword arguments | 
+BaseException | L | !TypeError: BaseException() takes no keyword arguments | 
+BaseException | No | !TypeError: BaseException() takes no keyword arguments | 
+BaseException | Else | !TypeError: BaseException() takes no keyword arguments | 
+staticmethod call | S | [('S', 'a')] | 
+staticmethod call | L | [('L', 'a')] | hash
+staticmethod call | No | [('No', 'a')] | hash
+staticmethod call | Else | [('Else', 'a')] | hash
+bound method of a builtin | S | !TypeError: dict.get() takes no keyword arguments | 
+bound method of a builtin | L | !TypeError: dict.get() takes no keyword arguments | 
+bound method of a builtin | No | !TypeError: dict.get() takes no keyword arguments | 
+bound method of a builtin | Else | !TypeError: dict.get() takes no keyword arguments | 
+__call__ | S | [('S', 'a')] | 
+__call__ | L | [('L', 'a')] | eq(str) hash
+__call__ | No | [('No', 'a')] | eq(str) hash
+__call__ | Else | [('Else', 'a')] | eq(str) hash
+f.__call__ | S | [('S', 'a')] | 
+f.__call__ | L | [('L', 'a')] | hash
+f.__call__ | No | [('No', 'a')] | hash
+f.__call__ | Else | [('Else', 'a')] | hash
+type.__call__ | S | [('S', 'a')] | 
+type.__call__ | L | [('L', 'a')] | eq(str) hash
+type.__call__ | No | [('No', 'a')] | eq(str) hash
+type.__call__ | Else | [('Else', 'a')] | eq(str) hash
+class X(**{K(metaclass): Meta}) | S | ('Meta', []) | prepare []
+class X(**{K(metaclass): Meta}) | L | ('Meta', []) | hash hash eq(str) prepare []
+class X(**{K(metaclass): Meta}) | No | !TypeError: class_statement_metaclass_key.<locals>.X.__init_subclass__() takes no keyword arguments | hash hash eq(str) eq(str) eq(str) hash
+class X(**{K(metaclass): Meta}) | Else | !TypeError: class_statement_metaclass_key.<locals>.X.__init_subclass__() takes no keyword arguments | hash hash hash
+seed 2: status 0, 335 rows, 12747c3de7f10ce0 
+seed 3: status 0, 335 rows, 12747c3de7f10ce0 

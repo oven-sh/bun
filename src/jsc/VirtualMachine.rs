@@ -1866,6 +1866,7 @@ impl VirtualMachine {
     }
 
     /// Whether something other than a queued immediate keeps the loop alive: the rule for what must not do so by itself.
+    #[cold]
     pub fn is_event_loop_kept_alive(&self) -> bool {
         // `bun test` runs on after an unhandled error.
         (self.unhandled_error_counter == 0 || isBunTest.load(core::sync::atomic::Ordering::Relaxed))

@@ -6598,6 +6598,12 @@ class ClientHttp2Session extends Http2Session {
       // A pending stream that was close()d (but not destroyed) is still submitted: node sends its
       // HEADERS and follows up with the RST_STREAM once the id is known (see close()).
       if (req.destroyed) continue;
+      // The signal's native listeners run before its JS ones: a slot freed by an abort can reach
+      // here before abortRequestStream did. An aborted request never touches the wire.
+      if (options?.signal?.aborted) {
+        abortRequestStream.$call(req, options.signal);
+        continue;
+      }
       const stream_id: number = parser.getNextStream();
       if (stream_id < 0) {
         process.nextTick(emitOutofStreamErrorNT, req);

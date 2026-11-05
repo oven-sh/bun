@@ -212,6 +212,48 @@ for (const [how, cancel] of [
   });
 }
 
+test("an abort shared by an active and a queued request cancels both and keeps the session", async () => {
+  // The signal's native listener frees the active request's slot before its JS listener runs
+  // for the queued one. The queued request must not go out as a reset of a stream the peer
+  // never saw (a connection error for a conforming server).
+  const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
+  const streams: http2.ServerHttp2Stream[] = [];
+  server.on("stream", stream => {
+    streams.push(stream);
+    if (streams.length === 2) stream.respond({ ":status": 200 }, { endStream: true });
+  });
+  const port = await listen(server);
+  const client = http2.connect(`http://127.0.0.1:${port}`);
+  const sessionError = Promise.withResolvers<never>();
+  client.on("error", sessionError.reject);
+  try {
+    await once(client, "remoteSettings");
+    const controller = new AbortController();
+    const first = client.request({ ":path": "/1" }, { signal: controller.signal });
+    const firstError = once(first, "error").then(([e]) => e.name);
+    first.end();
+    const second = client.request({ ":path": "/2" }, { signal: controller.signal });
+    const secondError = once(second, "error").then(([e]) => e.name);
+    second.end();
+    expect(second.pending).toBe(true);
+    await once(first, "ready");
+    controller.abort();
+    expect(await Promise.all([firstError, secondError])).toEqual(["AbortError", "AbortError"]);
+    const third = client.request({ ":path": "/3" });
+    const answered = new Promise<number>((resolve, reject) => {
+      third.on("response", headers => resolve(headers[":status"] as number));
+      third.on("error", reject);
+      third.resume();
+      third.end();
+    });
+    expect(await Promise.race([answered, sessionError.promise])).toBe(200);
+    expect(streams.length).toBe(2);
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 test("remoteSettings reports the pre-SETTINGS limit like node", async () => {
   // A raw peer that never sends SETTINGS, so the session stays in the pre-SETTINGS window.
   const server = net.createServer(socket => socket.on("data", () => {}));

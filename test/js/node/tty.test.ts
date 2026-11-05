@@ -401,6 +401,41 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A pause() inside 'data' stops the reads at once: the next key stays in the terminal for the next reader.
+  test("pause() inside 'data' leaves the next key to a child with inherited stdio", async () => {
+    let wrote = 0;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => {
+          input.pause();
+          input.setRawMode(false);
+          console.log("paused");
+          const child = Bun.spawn({
+            cmd: [process.execPath, "-e", "process.stdin.once('data', d => { console.log('child got ' + JSON.stringify(d.toString())); process.exit(0); })"],
+            stdio: ["inherit", "inherit", "inherit"],
+            env: process.env,
+          });
+          child.exited.then(code => {
+            console.log("child " + code + " buffered " + input.readableLength);
+            input.destroy();
+          });
+        });
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (wrote === 0 && output.includes("ready")) {
+          wrote = 1;
+          terminal.write("a");
+        } else if (wrote === 1 && output.includes("paused")) {
+          wrote = 2;
+          terminal.write("b\n");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', "paused", "b", 'child got "b\\n"', "child 0 buffered 0"]);
+    expect(exitCode).toBe(0);
+  });
+
   // fs.ReadStream constructs on the next tick. A terminal stream is born constructed, as Node's, so a read() in
   // the same tick starts the poll and a 'readable' listener gets the key.
   test("read() in the constructing tick starts reading", async () => {
@@ -594,7 +629,6 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
 
   // A write-only fd is not reopened for reading: the read fails with EBADF, as it does on the fd itself.
   test("a write-only terminal fd does not read the terminal", async () => {
-    let wrote = false;
     const { lines, exitCode } = await runInTerminal(
       `
         const fs = require("fs");
@@ -602,16 +636,10 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         const input = new tty.ReadStream(fs.openSync("/dev/tty", "w"));
         input.on("error", err => console.log("error " + err.code));
         input.on("data", chunk => console.log("key " + JSON.stringify(String(chunk))));
-        console.log("ready");
       `,
-      (output, terminal) => {
-        if (!wrote && output.includes("ready")) {
-          wrote = true;
-          terminal.write("a\n");
-        }
-      },
+      () => {},
     );
-    expect(lines.filter(line => line !== "a")).toEqual(["ready", "error EBADF"]);
+    expect(lines).toEqual(["error EBADF"]);
     expect(exitCode).toBe(0);
   });
 

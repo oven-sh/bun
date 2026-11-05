@@ -233,8 +233,10 @@ function pushEof(stream: NativeReadable) {
 // `push()` returning false means the Readable's buffer is at/above hwm (or
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
+// A Readable with highWaterMark 0 (a terminal) reads nothing ahead: a pause()
+// from inside 'data' stops the reader too, before the next chunk.
 function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
-  if (!stream.push(chunk)) {
+  if (!stream.push(chunk) || (stream.readableFlowing === false && stream.readableHighWaterMark === 0)) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }

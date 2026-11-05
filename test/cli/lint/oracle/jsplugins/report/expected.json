@@ -1,0 +1,917 @@
+[
+ {
+  "ruleId": "demo/errors-all",
+  "severity": 2,
+  "message": "m",
+  "line": 1,
+  "column": 1,
+  "endLine": 6,
+  "endColumn": 3,
+  "fix": {
+   "range": [
+    0,
+    42
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/errors-all",
+  "severity": 2,
+  "message": "m",
+  "line": 1,
+  "column": 1,
+  "endLine": 6,
+  "endColumn": 3,
+  "suggestions": [
+   {
+    "desc": "d",
+    "fix": {
+     "range": [
+      0,
+      42
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/errors-all",
+  "severity": 2,
+  "message": "[\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be an object\",\"TypeError: Missing `message` property in report() call; add a message that describes the linting problem.\",\"TypeError: context.report() called with a message and a messageId. Please only pass one.\",\"TypeError: context.report() called with a messageId of 'unknown' which is not present in the 'messages' config: {\\n  \\\"known\\\": \\\"Known.\\\",\\n  \\\"withData\\\": \\\"With {{x}} and {{ y }}.\\\"\\n}\",\"TypeError: context.report() called with a messageId of 'toString' which is not present in the 'messages' config: {\\n  \\\"known\\\": \\\"Known.\\\",\\n  \\\"withData\\\": \\\"With {{x}} and {{ y }}.\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"range\\\": [\\n    0,\\n    \\\"1\\\"\\n  ],\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix objects must not be overlapped in a report.\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: context.report() called with a suggest option that doesn't have either a `desc` or `messageId`\",\"TypeError: context.report() called with a suggest option without a fix function. See: {\\n  \\\"desc\\\": \\\"d\\\"\\n}\",\"TypeError: context.report() called with a suggest option that defines both a 'messageId' and an 'desc'. Please only pass one.\",\"TypeError: context.report() called with a suggest option with a messageId 'unknown' which is not present in the 'messages' config: {\\n  \\\"known\\\": \\\"Known.\\\",\\n  \\\"withData\\\": \\\"With {{x}} and {{ y }}.\\\"\\n}\",\"undefined\",\"undefined\",\"Error: RuleFixer 1 0 constructor,insertTextAfter,insertTextAfterRange,insertTextBefore,insertTextBeforeRange,replaceText,replaceTextRange,remove,removeRange 0 false true {\\\"range\\\":[0,1],\\\"text\\\":\\\"\\\"} TypeError TypeError\",\"report,0,function,false\"]",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/errors-none",
+  "severity": 2,
+  "message": "m",
+  "line": 1,
+  "column": 1,
+  "endLine": 6,
+  "endColumn": 3,
+  "fix": {
+   "range": [
+    0,
+    42
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/errors-none",
+  "severity": 2,
+  "message": "m",
+  "line": 1,
+  "column": 1,
+  "endLine": 6,
+  "endColumn": 3,
+  "suggestions": [
+   {
+    "desc": "d",
+    "fix": {
+     "range": [
+      0,
+      42
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/errors-none",
+  "severity": 2,
+  "message": "[\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be an object\",\"TypeError: Missing `message` property in report() call; add a message that describes the linting problem.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"Error: Fix has invalid range: {\\n  \\\"range\\\": [\\n    0,\\n    \\\"1\\\"\\n  ],\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix objects must not be overlapped in a report.\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: context.report() called with a suggest option that doesn't have either a `desc` or `messageId`\",\"TypeError: context.report() called with a suggest option without a fix function. See: {\\n  \\\"desc\\\": \\\"d\\\"\\n}\",\"TypeError: context.report() called with a suggest option with a messageId 'known', but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a suggest option with a messageId 'unknown', but no messages were present in the rule metadata.\",\"Error: Fixable rules must set the `meta.fixable` property to \\\"code\\\" or \\\"whitespace\\\".\",\"Error: Rules with suggestions must set the `meta.hasSuggestions` property to `true`.\",\"Error: RuleFixer 1 0 constructor,insertTextAfter,insertTextAfterRange,insertTextBefore,insertTextBeforeRange,replaceText,replaceTextRange,remove,removeRange 0 false true {\\\"range\\\":[0,1],\\\"text\\\":\\\"\\\"} TypeError TypeError\",\"report,0,function,false\"]",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/errors-old",
+  "severity": 2,
+  "message": "m",
+  "line": 1,
+  "column": 1,
+  "endLine": 6,
+  "endColumn": 3,
+  "fix": {
+   "range": [
+    0,
+    42
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/errors-old",
+  "severity": 2,
+  "message": "m",
+  "line": 1,
+  "column": 1,
+  "endLine": 6,
+  "endColumn": 3,
+  "suggestions": [
+   {
+    "desc": "d",
+    "fix": {
+     "range": [
+      0,
+      42
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/errors-old",
+  "severity": 2,
+  "message": "[\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be an object\",\"TypeError: Missing `message` property in report() call; add a message that describes the linting problem.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"Error: Fix has invalid range: {\\n  \\\"range\\\": [\\n    0,\\n    \\\"1\\\"\\n  ],\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix objects must not be overlapped in a report.\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: context.report() called with a suggest option that doesn't have either a `desc` or `messageId`\",\"TypeError: context.report() called with a suggest option without a fix function. See: {\\n  \\\"desc\\\": \\\"d\\\"\\n}\",\"TypeError: context.report() called with a suggest option with a messageId 'known', but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a suggest option with a messageId 'unknown', but no messages were present in the rule metadata.\",\"Error: Fixable rules must set the `meta.fixable` property to \\\"code\\\" or \\\"whitespace\\\".\",\"Error: Rules with suggestions must set the `meta.hasSuggestions` property to `true`. `meta.docs.suggestion` is ignored by ESLint.\",\"Error: RuleFixer 1 0 constructor,insertTextAfter,insertTextAfterRange,insertTextBefore,insertTextBeforeRange,replaceText,replaceTextRange,remove,removeRange 0 false true {\\\"range\\\":[0,1],\\\"text\\\":\\\"\\\"} TypeError TypeError\",\"report,0,function,false\"]",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"a;\"",
+  "line": 1,
+  "column": 1,
+  "endLine": 1,
+  "endColumn": 3
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "positional X",
+  "line": 1,
+  "column": 1,
+  "endLine": 1,
+  "endColumn": 3
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "positional with a fix",
+  "line": 1,
+  "column": 1,
+  "endLine": 1,
+  "endColumn": 3,
+  "fix": {
+   "range": [
+    0,
+    2
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"\\\"é\\\";\"",
+  "line": 2,
+  "column": 1,
+  "endLine": 2,
+  "endColumn": 5
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "a loc that is 0",
+  "line": 2,
+  "column": 1,
+  "endLine": 2,
+  "endColumn": 5
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "a loc that is empty",
+  "line": 2,
+  "column": 1,
+  "endLine": 2,
+  "endColumn": 5
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"b;\"",
+  "line": 2,
+  "column": 6,
+  "endLine": 2,
+  "endColumn": 8
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"\\\"€\\\";\"",
+  "line": 3,
+  "column": 1,
+  "endLine": 3,
+  "endColumn": 5
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"c;\"",
+  "line": 3,
+  "column": 6,
+  "endLine": 3,
+  "endColumn": 8
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"\\\"😀\\\";\"",
+  "line": 4,
+  "column": 1,
+  "endLine": 4,
+  "endColumn": 6
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"d;\"",
+  "line": 4,
+  "column": 7,
+  "endLine": 4,
+  "endColumn": 9
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"\\\"😀😀\\\";\"",
+  "line": 5,
+  "column": 1,
+  "endLine": 5,
+  "endColumn": 8
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"e;\"",
+  "line": 5,
+  "column": 9,
+  "endLine": 5,
+  "endColumn": 11
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "ExpressionStatement \"f;\"",
+  "line": 6,
+  "column": 1,
+  "endLine": 6,
+  "endColumn": 3
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "plain",
+  "line": 100,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "AAA",
+  "line": 101,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "0 null undefined {{d}}",
+  "line": 102,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "{A} {{a}b}} {{a{b}} {{}} {{ }} {{a",
+  "line": 103,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "{{b}}",
+  "line": 104,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "$& $1 $$",
+  "line": 105,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "function toString() { [native code] } dotted zero",
+  "line": 106,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "inherited",
+  "line": 107,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "é é😀 😀 face",
+  "line": 108,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "{{a}}",
+  "line": 109,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "{{a}}",
+  "line": 110,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "Known.",
+  "line": 111,
+  "column": 1,
+  "messageId": "known"
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "With X and {{ y }}.",
+  "line": 112,
+  "column": 1,
+  "messageId": "withData"
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "positional with loc X",
+  "line": 113,
+  "column": 1,
+  "fix": {
+   "range": [
+    0,
+    2
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "start and end",
+  "line": 114,
+  "column": 1,
+  "endLine": 115,
+  "endColumn": 4
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "only start",
+  "line": 115,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "node and loc",
+  "line": 116,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 117,
+  "column": 1,
+  "fix": {
+   "range": [
+    8,
+    8
+   ],
+   "text": "A"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 118,
+  "column": 1,
+  "fix": {
+   "range": [
+    8,
+    8
+   ],
+   "text": "B"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 119,
+  "column": 1,
+  "fix": {
+   "range": [
+    4,
+    4
+   ],
+   "text": "C"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 120,
+  "column": 1,
+  "fix": {
+   "range": [
+    4,
+    4
+   ],
+   "text": "D"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 121,
+  "column": 1,
+  "fix": {
+   "range": [
+    4,
+    8
+   ],
+   "text": "Eé😀"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 122,
+  "column": 1,
+  "fix": {
+   "range": [
+    4,
+    8
+   ],
+   "text": "F"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 123,
+  "column": 1,
+  "fix": {
+   "range": [
+    4,
+    8
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 124,
+  "column": 1,
+  "fix": {
+   "range": [
+    4,
+    8
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 125,
+  "column": 1,
+  "fix": {
+   "range": [
+    9,
+    10
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 126,
+  "column": 1,
+  "fix": {
+   "range": [
+    -1,
+    0
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 127,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 128,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 129,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 130,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 131,
+  "column": 1,
+  "fix": {
+   "range": [
+    0,
+    2
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 132,
+  "column": 1,
+  "fix": {
+   "range": [
+    0,
+    11
+   ],
+   "text": "(a;)\r\n\"é\"; "
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 133,
+  "column": 1,
+  "fix": {
+   "range": [
+    0,
+    4
+   ],
+   "text": "xy\r\nz"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 134,
+  "column": 1,
+  "fix": {
+   "range": [
+    0,
+    0
+   ],
+   "text": "123"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 135,
+  "column": 1,
+  "fix": {
+   "range": [
+    -1,
+    8
+   ],
+   "text": "a;\r\n"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 136,
+  "column": 1,
+  "fix": {
+   "range": [
+    0,
+    8
+   ],
+   "text": "\r\n"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 137,
+  "column": 1,
+  "fix": {
+   "range": [
+    0,
+    8
+   ],
+   "text": "ga;\r\n"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 138,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "fix",
+  "line": 139,
+  "column": 1,
+  "fix": {
+   "range": [
+    1,
+    2
+   ],
+   "text": "by hand"
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 140,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 141,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 142,
+  "column": 1,
+  "suggestions": [
+   {
+    "desc": "Plain.",
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 143,
+  "column": 1,
+  "suggestions": [
+   {
+    "desc": "Use b.",
+    "data": {
+     "name": "b"
+    },
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 144,
+  "column": 1,
+  "suggestions": [
+   {
+    "messageId": "known",
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    },
+    "desc": "Known."
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 145,
+  "column": 1,
+  "suggestions": [
+   {
+    "messageId": "withData",
+    "data": {
+     "x": "X",
+     "y": "Y"
+    },
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    },
+    "desc": "With X and Y."
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 146,
+  "column": 1
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 147,
+  "column": 1,
+  "suggestions": [
+   {
+    "desc": "After a hole.",
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 148,
+  "column": 1,
+  "suggestions": [
+   {
+    "desc": "Data of all kinds.",
+    "data": {
+     "n": 1,
+     "b": true,
+     "nothing": null,
+     "list": [
+      1,
+      "2"
+     ],
+     "deep": {
+      "a": {}
+     }
+    },
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 149,
+  "column": 1,
+  "suggestions": [
+   {
+    "desc": "Empty data.",
+    "data": {},
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 150,
+  "column": 1,
+  "suggestions": [
+   {
+    "desc": "Second.",
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    }
+   },
+   {
+    "desc": "Merged.",
+    "fix": {
+     "range": [
+      0,
+      8
+     ],
+     "text": "\r\n"
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "inner",
+  "line": 151,
+  "column": 1,
+  "fix": {
+   "range": [
+    0,
+    2
+   ],
+   "text": ""
+  }
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "outer",
+  "line": 151,
+  "column": 1,
+  "fix": {
+   "range": [
+    4,
+    8
+   ],
+   "text": ""
+  }
+ }
+]

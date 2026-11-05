@@ -100,8 +100,8 @@ declare module "bun" {
 
 declare namespace WebAssembly {
   interface ValueTypeMap extends Bun.WebAssembly.ValueTypeMap {}
-  interface GlobalDescriptor<T extends keyof ValueTypeMap = keyof ValueTypeMap>
-    extends Bun.WebAssembly.GlobalDescriptor<T> {}
+  interface GlobalDescriptor<T extends keyof ValueTypeMap = keyof ValueTypeMap> extends Bun.WebAssembly
+    .GlobalDescriptor<T> {}
   interface MemoryDescriptor extends Bun.WebAssembly.MemoryDescriptor {}
   interface ModuleExportDescriptor extends Bun.WebAssembly.ModuleExportDescriptor {}
   interface ModuleImportDescriptor extends Bun.WebAssembly.ModuleImportDescriptor {}

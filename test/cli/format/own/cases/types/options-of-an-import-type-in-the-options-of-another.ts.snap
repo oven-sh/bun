@@ -1,0 +1,97 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = import(
+  "./a",
+  { with: { k: 0 as import("./c", { with: { inner: 1 } }), outer: 2 } }
+);
+type B = import(
+  "./a",
+  { with: { outer: 2, k: 0 as import("./c", { with: { inner: 1 } }) } }
+);
+import data from "./d.json" with { type: "json" };
+type C = import(
+  "./m",
+  {
+    with: {
+      a: 0 as import("./n", { with: { x: () => q } }),
+      b: 0 as import("./o", { with: { y: () => q } }),
+      c: () => q,
+    },
+  }
+);
+type D = import(
+  "./m",
+  {
+    with: {
+      a: 0 as import(
+        "./n",
+        {
+          with: {
+            x: 0 as import("./o", { with: { y: () => q } }),
+            x2: () => q,
+          },
+        }
+      ),
+      c: () => q,
+    },
+  }
+);
+type E = import("./m", {
+  with: {
+    a: () => {
+      let u: import("./n", { with: { b: { x: 1 }, c: () => 2 } });
+      return u;
+    },
+  },
+});
+type F = import(
+  "./a",
+  { with: { k: 0 as import("./c", { with: { inner: "v1" } }), outer: "v2" } }
+);
+type G = import("./a", { with: { outer: "1" } })<
+  import("./c", { with: { inner: "2" } })
+>;
+type H = import("./a")<import("./c", { with: { inner: "2" } })>;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = import("./a", { with: { k: 0 as import("./c", { with: { inner: 1 } }), outer: 2 } });
+type B = import("./a", { with: { outer: 2, k: 0 as import("./c", { with: { inner: 1 } }) } });
+import data from "./d.json" with { type: "json" };
+type C = import(
+  "./m",
+  {
+    with: {
+      a: 0 as import("./n", { with: { x: () => q } }),
+      b: 0 as import("./o", { with: { y: () => q } }),
+      c: () => q,
+    },
+  }
+);
+type D = import(
+  "./m",
+  {
+    with: {
+      a: 0 as import(
+        "./n",
+        { with: { x: 0 as import("./o", { with: { y: () => q } }), x2: () => q } }
+      ),
+      c: () => q,
+    },
+  }
+);
+type E = import("./m", {
+  with: {
+    a: () => {
+      let u: import("./n", { with: { b: { x: 1 }, c: () => 2 } });
+      return u;
+    },
+  },
+});
+type F = import("./a", { with: { k: 0 as import("./c", { with: { inner: "v1" } }), outer: "v2" } });
+type G = import("./a", { with: { outer: "1" } })<import("./c", { with: { inner: "2" } })>;
+type H = import("./a")<import("./c", { with: { inner: "2" } })>;
+
+===================== End =====================

@@ -22,10 +22,10 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { downloadWithRetry, extractTarGz, fetchPrebuilt, gitArchive, parseGitArchiveUrl } from "./download.ts";
+import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { formatElapsed } from "./tty.ts";
@@ -48,11 +48,11 @@ async function main(): Promise<void> {
 
   switch (kind) {
     case "dep": {
-      // fetch-cli.ts dep <name> <url> <ref> <dest> <cache> [...patches]
-      const [name, url, ref, dest, cache, ...patches] = args;
-      assert(name !== undefined && url !== undefined && ref !== undefined, "dep: missing name/url/ref");
+      // fetch-cli.ts dep <name> <repo> <commit> <dest> <cache> [...patches]
+      const [name, repo, commit, dest, cache, ...patches] = args;
+      assert(name !== undefined && repo !== undefined && commit !== undefined, "dep: missing name/repo/commit");
       assert(dest !== undefined && cache !== undefined, "dep: missing dest/cache");
-      return fetchDep(name, url, ref, dest, cache, patches);
+      return fetchDep(name, repo, commit, dest, cache, patches);
     }
 
     case "subst": {
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
         text = text.split(pairs[i]!).join(pairs[i + 1]!);
       }
       // dep_subst is restat=1 — preserve mtime when the rendered text is
-      // unchanged so depfile-tracked .o files (libarchive ← zlib.h) don't
+      // unchanged so depfile-tracked .o files (lsquic ← zlib.h) don't
       // recompile after a no-op re-fetch.
       writeIfChanged(outPath, text);
       return;
@@ -90,6 +90,18 @@ async function main(): Promise<void> {
       return checkUndefined(name, nm, rspfile, stamp, symbols.split(","));
     }
 
+    case "check-defined": {
+      // fetch-cli.ts check-defined <name> <lib> <stamp> <symbols>
+      // <symbols> is comma-separated. Writes <stamp> when <lib> names every
+      // one of them. See Provides.requireDefined in source.ts.
+      const [name, lib, stamp, symbols] = args;
+      assert(
+        name !== undefined && lib !== undefined && stamp !== undefined && symbols !== undefined,
+        "check-defined: missing name/lib/stamp/symbols",
+      );
+      return checkDefined(name, lib, stamp, symbols.split(","));
+    }
+
     case "prebuilt": {
       // fetch-cli.ts prebuilt <name> <url> <dest> <identity> [...rm_paths]
       const [name, url, dest, identity, ...rmPaths] = args;
@@ -97,6 +109,17 @@ async function main(): Promise<void> {
         name !== undefined && url !== undefined && dest !== undefined && identity !== undefined,
         "prebuilt: missing name/url/dest/identity",
       );
+      // A job that builds `codegen` alone reads the engine's code generators and nothing else of WebKit's tarball. A
+      // release has them as an asset of its own. An older one does not, and then it is the tarball after all.
+      if (name === "WebKit" && process.env.BUN_WEBKIT_GENERATORS_ONLY === "1") {
+        const generators = new URL("bun-webkit-aot-sources.tar.gz", url).href;
+        try {
+          return await fetchPrebuilt(name, generators, dest, `${identity}-generators-only`, rmPaths);
+        } catch (error) {
+          if (!(error instanceof BuildError)) throw error;
+          console.log(`${generators} could not be fetched, fetching ${url}`);
+        }
+      }
       return fetchPrebuilt(name, url, dest, identity, rmPaths);
     }
 
@@ -116,7 +139,7 @@ const USAGE = `\
 Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
-  dep             <name> <url> <ref> <dest> <cache> [...patches]
+  dep             <name> <repo> <commit> <dest> <cache> [...patches]
   prebuilt        <name> <url> <dest> <identity> [...rm_paths]
   subst           <in> <out> [<from> <to>]...
   check-undefined <name> <nm> <rspfile> <stamp> <symbol,...>
@@ -153,7 +176,7 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
   const forbidden = new Set(symbols);
   let undefinedSymbols = 0;
   const offenders: string[] = [];
-  for (let start = 0; start < objects.length; ) {
+  for (let start = 0; start < objects.length;) {
     let end = start;
     let length = 0;
     do {
@@ -192,18 +215,49 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// dep fetch: download tarball (or sparse git fetch), extract, patch, stamp
+// check-defined: a prebuilt library has to name the given symbols
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetch a source tree, extract, apply patches, write .ref stamp.
- *
- * `url` is a tarball URL (a GitHub `/archive/` URL or any release asset), or
- * a `git+https://github.com/<repo>@<commit>?sparse=<patterns>` pseudo-URL
- * (download.ts gitArchiveUrl) for a sparse git fetch, which is cached as a
- * tarball of the same shape — everything from extraction on is one path.
- * `ref` seeds the identity stamp: the commit for github sources,
- * `sha256:<digest>` for tarballs (the download is verified against it).
+ * An archive's index and the string table of each member, object or bitcode,
+ * hold a name as plain bytes, so this needs no tool that may be missing. Only
+ * the definition names these symbols: nothing in the library refers to them.
+ */
+function checkDefined(name: string, lib: string, stamp: string, symbols: string[]): void {
+  const found = new Set<string>();
+  const longest = Math.max(...symbols.map(symbol => symbol.length));
+  const buffer = Buffer.allocUnsafe(64 << 20);
+  const descriptor = openSync(lib, "r");
+  try {
+    // What is kept from one read to the next is a name that lies across the two.
+    for (let kept = 0, read; (read = readSync(descriptor, buffer, kept, buffer.length - kept, null)) > 0;) {
+      const bytes = buffer.subarray(0, kept + read);
+      for (const symbol of symbols) if (bytes.includes(symbol)) found.add(symbol);
+      kept = Math.min(longest - 1, bytes.length);
+      buffer.copyWithin(0, bytes.length - kept, bytes.length);
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+  const missing = symbols.filter(symbol => !found.has(symbol));
+  if (missing.length > 0) {
+    throw new BuildError(
+      `${name}: ${lib} was not compiled with what this build asks of it. It does not define ${missing.join(", ")}`,
+      {
+        hint: `requireDefined in scripts/build/deps/${name.toLowerCase()}.ts says which option each symbol stands for. Take a version of ${name} whose prebuilts are compiled with it, or compile ${name} here`,
+      },
+    );
+  }
+  // dep_check_defined is restat=1: an existing stamp keeps its mtime.
+  writeIfChanged(stamp, "");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// github-archive dep fetch: download tarball, extract, patch, stamp
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch a github archive, extract, apply patches, write .ref stamp.
  *
  * Idempotent: if .ref exists and matches the computed identity, does nothing.
  * The ninja rule has restat=1, so a no-op fetch won't trigger downstream.
@@ -214,14 +268,13 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
  */
 async function fetchDep(
   name: string,
-  url: string,
-  ref: string,
+  repo: string,
+  commit: string,
   dest: string,
   cache: string,
   patches: string[],
 ): Promise<void> {
   const refPath = join(dest, ".ref");
-  assertManagedSource(name, dest, refPath);
 
   // Read patch contents (needed for identity + applying later).
   // If a listed patch doesn't exist, that's a bug in the dep definition.
@@ -237,8 +290,7 @@ async function fetchDep(
     }
   }
 
-  const git = parseGitArchiveUrl(url);
-  const identity = computeSourceIdentity(ref, git?.sparse ?? [], patchContents);
+  const identity = computeSourceIdentity(commit, patchContents);
 
   // Short-circuit: already fetched at this identity?
   if (existsSync(refPath)) {
@@ -253,32 +305,18 @@ async function fetchDep(
     console.log(`source identity changed (was ${existing.slice(0, 8)}, now ${identity.slice(0, 8)})`);
   }
 
-  console.log(`fetching ${git ? `${git.repo}@${git.commit.slice(0, 8)}` : url}`);
+  console.log(`fetching ${repo}@${commit.slice(0, 8)}`);
   const started = performance.now();
 
   // ─── Download (with cache) ───
+  const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
   const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
   const tarballPath = join(cache, `${name}-${urlHash}.tar.gz`);
 
   await mkdir(cache, { recursive: true });
 
   if (!existsSync(tarballPath)) {
-    if (git) await gitArchive(git.repo, git.commit, git.sparse, tarballPath);
-    else await downloadWithRetry(url, tarballPath, name);
-  }
-
-  // A `sha256:<hex>` ref pins the file's contents (release tarballs, whose
-  // URL says nothing about the bytes). Checked on the cached copy too, and a
-  // mismatching file is removed so the next run downloads afresh.
-  if (ref.startsWith("sha256:")) {
-    const expected = ref.slice("sha256:".length);
-    const actual = await sha256File(tarballPath);
-    if (actual !== expected) {
-      await rm(tarballPath, { force: true });
-      throw new BuildError(`${name}: ${url} has sha256 ${actual}, expected ${expected}`, {
-        hint: `If the upstream file legitimately changed, update sha256 in deps/${name}.ts`,
-      });
-    }
+    await downloadWithRetry(url, tarballPath, name);
   }
 
   // ─── Extract ───
@@ -286,7 +324,7 @@ async function fetchDep(
   await rm(dest, { recursive: true, force: true });
   await mkdir(dest, { recursive: true });
 
-  // Github archives (and release tarballs) have one top-level directory. Strip it.
+  // Github archives have a top-level directory <repo>-<commit>/. Strip it.
   await extractTarGz(tarballPath, dest);
 
   // ─── Apply patches / overlays ───
@@ -311,61 +349,9 @@ async function fetchDep(
 }
 
 /**
- * A vendor/<name>/ holding a `.git` but no `.ref` is somebody's clone, not a
- * tree the build fetched (those never contain `.git`). Refuse to touch it —
- * the fetch would otherwise wipe it, local branches and all. vendor/WebKit is
- * the case that matters: it is where a full WebKit clone has always lived.
- */
-export function assertManagedSource(name: string, srcDir: string, refStamp: string): void {
-  if (existsSync(refStamp) || !existsSync(join(srcDir, ".git"))) return;
-  throw new BuildError(`${srcDir} is a git clone, not a source tree fetched by the build; refusing to replace it`, {
-    hint:
-      name === "WebKit"
-        ? `vendor/WebKit is where the build fetches the pinned WebKit sources now. Move your clone out of the ` +
-          `repository (e.g. \`mv vendor/WebKit ../WebKit\`) and \`export BUN_WEBKIT_PATH=<that path>\` — every ` +
-          `worktree can then share the one clone: \`bun run build:local\` builds it ` +
-          `(--local-deps=WebKit=$BUN_WEBKIT_PATH), plain \`bun run build\` fetches the pinned commit here.`
-        : `To build that clone, pass --local-deps=${name}=${srcDir}. To let the build fetch the pinned commit here instead, move or delete it.`,
-  });
-}
-
-/**
- * The identity a dep's `.ref` should hold for (ref, sparse, patches), with
- * the patch files read from disk. A missing patch hashes as "<missing>" so the
- * identity can't match and the fetch that follows reports the real error.
- */
-export function expectedSourceIdentity(ref: string, sparse: string[], patchPaths: string[]): string {
-  const patchContents = patchPaths.map(p => {
-    try {
-      return readFileSync(p, "utf8");
-    } catch {
-      return "<missing>";
-    }
-  });
-  return computeSourceIdentity(ref, sparse, patchContents);
-}
-
-/** Whether `dest/.ref` records exactly this (ref, sparse, patches). */
-export function sourceIsCurrent(dest: string, ref: string, sparse: string[], patchPaths: string[]): boolean {
-  try {
-    return readFileSync(join(dest, ".ref"), "utf8").trim() === expectedSourceIdentity(ref, sparse, patchPaths);
-  } catch {
-    return false;
-  }
-}
-
-async function sha256File(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
-  return hash.digest("hex");
-}
-
-/**
- * Source identity: sha256(commit + sparse set + patch_contents)[:16]. This is
- * what goes in the .ref stamp. Hashing patch CONTENTS (not paths) means
- * editing a patch invalidates the source without a commit bump. An empty
- * sparse set contributes nothing, so whole-tree identities are just
- * sha256(commit + patch_contents).
+ * Source identity: sha256(commit + patch_contents)[:16]. This is what goes
+ * in the .ref stamp. Hashing patch CONTENTS (not paths) means editing a
+ * patch invalidates the source without a commit bump.
  *
  * CRLF→LF normalized before hashing: git autocrlf may have converted
  * LF→CRLF on Windows checkout. Without normalization, the same patch
@@ -378,13 +364,9 @@ async function sha256File(path: string): Promise<string> {
  * Exported so source.ts can compute the same identity at configure time
  * (for the preemptive-delete-on-mismatch check).
  */
-export function computeSourceIdentity(commit: string, sparse: string[], patchContents: string[]): string {
+export function computeSourceIdentity(commit: string, patchContents: string[]): string {
   const h = createHash("sha256");
   h.update(commit);
-  for (const pattern of sparse) {
-    h.update("\0sparse\0");
-    h.update(pattern);
-  }
   for (const content of patchContents) {
     h.update("\0"); // Separator so patch concatenation can't produce collisions.
     h.update(normalizeLf(content));

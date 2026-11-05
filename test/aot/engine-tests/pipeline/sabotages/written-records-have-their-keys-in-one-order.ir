@@ -1,0 +1,6 @@
+# sabotage=WrittenRecordsHaveTheirKeysInOneOrder: the build stops
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=WrittenRecordsHaveTheirKeysInOneOrder
+# DIAGNOSTIC: InvalidGuard
+# PROGRAM-OF: written-records-have-their-keys-in-one-order-left-alone.ir

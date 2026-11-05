@@ -1,38 +1,28 @@
 /**
- * Platform shims — small dylibs/objects linked into the bun executable to
+ * Platform shims — small host tools/objects used at link time to
  * work around toolchain or OS bugs.
  *
  * Each shim is a ninja build edge (source → output), so ninja handles
  * rebuild-on-change. `emitShims()` registers the edges and returns the
- * linker flags + implicit inputs to spread into the final link() call.
+ * implicit inputs to spread into the final link() call.
  *
  * Every shim MUST have an entry in workarounds.ts that fails configure
  * once the upstream fix ships — see that file for the pattern.
  */
 
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote } from "./shell.ts";
-
-export interface ShimLinkOpts {
-  /** Extra ldflags to append to the link() call. */
-  ldflags: string[];
-  /** Implicit inputs — ninja relinks if these change. */
-  implicitInputs: string[];
-}
-
-const ASAN_DYLD_SHIM = "asan-dyld-shim.dylib";
+import { toolIdentityFile } from "./tools.ts";
 
 /**
  * macOS-from-Linux cross links need a post-link fixup pass over every
  * Mach-O executable they produce (the linked bun-profile/bun-debug AND the
  * stripped bun):
  *
- *   - ld64.lld parses `-stack_size` but doesn't implement it (LLVM 21 prints
+ *   - ld64.lld parses `-stack_size` but doesn't implement it (LLVM 23 still prints
  *     "not yet implemented"), so LC_MAIN.stacksize stays 0 → the 8 MB
  *     default instead of the 18 MB JSC needs. Tracked in workarounds.ts
  *     ("darwin-cross-stack-size").
@@ -96,71 +86,11 @@ export function machoPostlinkImplicitInputs(cfg: Config): string[] {
 }
 
 /**
- * ELF + rust-lld: rust-lang/llvm-project builds lld without LLVM_ENABLE_ZLIB,
- * so `-Wl,--compress-debug-sections=zlib` is dropped when the crosslang-LTO
- * rust-lld swap is active (flags.ts). Uncompressed DWARF makes bun-profile
- * ~2x larger (~900MB), and every `bun build --compile` in the test suite
- * copies the running binary, so the size shows up as CI test timeouts, not
- * just artifact bloat. Compress after the link with llvm-objcopy instead —
- * same tool the musl CRT decompress shim already relies on.
- */
-export function needsElfDebugCompressPostlink(cfg: Config): boolean {
-  return (cfg.linux || cfg.freebsd) && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld;
-}
-
-/**
- * Command suffix for the link rule: `... -o $out && llvm-objcopy
- * --compress-debug-sections=zlib $out`. Empty when not needed so callers
- * can append unconditionally (mutually exclusive with machoPostlinkCommand).
- */
-export function elfDebugCompressPostlinkCommand(cfg: Config): string {
-  if (!needsElfDebugCompressPostlink(cfg)) return "";
-  const llvmObjcopy = resolve(dirname(cfg.cc), "llvm-objcopy");
-  return ` && ${quote(existsSync(llvmObjcopy) ? llvmObjcopy : "llvm-objcopy", false)} --compress-debug-sections=zlib $out`;
-}
-
-/**
- * musl + rust-lld: Alpine ships the libc CRT objects (Scrt1.o, crti.o,
- * crtn.o) with ELFCOMPRESS_ZLIB debug sections, but rust-lang/llvm-project
- * builds lld without LLVM_ENABLE_ZLIB so rust-lld errors at input-section
- * parse time ("compressed with ELFCOMPRESS_ZLIB, but lld is not built with
- * zlib support") — before --strip-debug or any output decision could skip
- * them. We only fall onto rust-lld for cross-language LTO (config.ts swap),
- * so when that swap fires on musl we copy the CRTs through `objcopy
- * --decompress-debug-sections` into the build dir and prepend it as a -B
- * search path so clang's driver picks the decompressed copies.
- */
-function needsMuslCrtDecompress(cfg: Config): boolean {
-  return cfg.linux && cfg.abi === "musl" && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld;
-}
-
-/** CRT objects clang's linux driver may pass. crt1/Scrt1 both covered so PIE-default changes don't matter. */
-const MUSL_CRT_OBJECTS = ["Scrt1.o", "crt1.o", "crti.o", "crtn.o"];
-
-/**
  * Register shim compile rules. Call once from rules.ts alongside the
  * other registerXxxRules() calls.
  */
 export function registerShimRules(n: Ninja, cfg: Config): void {
   const q = (p: string) => quote(p, false);
-
-  if (cfg.darwin && cfg.asan) {
-    // -install_name @rpath/<name> so dyld resolves it next to the
-    // executable: clang's Darwin driver adds `-rpath @executable_path` to
-    // every -fsanitize=address link (for the ASan runtime), which is every
-    // link this shim goes into. __DATA,__interpose only works from dylibs
-    // (not object files linked into the main binary), hence -dynamiclib.
-    // Same deployment target as everything else, or ld warns the dylib was
-    // "built for newer version" than the executable loading it.
-    const minos =
-      cfg.osxDeploymentTarget !== undefined && cfg.osxSysroot !== undefined
-        ? ` -mmacosx-version-min=${cfg.osxDeploymentTarget} -isysroot ${q(cfg.osxSysroot)}`
-        : "";
-    n.rule("shim_dylib", {
-      command: `${q(cfg.cc)}${minos} -dynamiclib -O2 -install_name @rpath/$name -o $out $in`,
-      description: "shim $name",
-    });
-  }
 
   if (needsMachoPostlink(cfg)) {
     // Host tool — compiled for the BUILD machine (no --target/-isysroot),
@@ -170,35 +100,14 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
       description: "host-tool $out",
     });
   }
-
-  if (needsMuslCrtDecompress(cfg)) {
-    // llvm-objcopy (multi-target; host GNU objcopy rejects foreign-arch ELF).
-    // Resolve it next to clang (debian has no unversioned symlink on PATH).
-    // restat=1: a no-op decompress keeps the mtime so the link doesn't re-run.
-    const llvmObjcopy = resolve(dirname(cfg.cc), "llvm-objcopy");
-    n.rule("shim_crt_decompress", {
-      command: `${q(existsSync(llvmObjcopy) ? llvmObjcopy : "llvm-objcopy")} --decompress-debug-sections $in $out`,
-      description: "decompress-crt $out",
-      restat: true,
-    });
-  }
 }
 
-const emittedShims = new WeakMap<Ninja, ShimLinkOpts>();
-
 /**
- * The link environment every *target* executable in the graph needs (bun,
- * testFFI, a dep's `exe` steps such as JSC's LLInt extractors): emits the
- * shim edges once per graph and returns the flags / implicit inputs each of
- * those links appends. A link that skipped them would, e.g., hand rust-lld
- * Alpine's compressed CRT objects on musl, or miss the macho-postlink tool.
+ * Emit shim build edges and return the link's implicit inputs. Call before the link() call (emitBun).
  *
  * See scripts/build/workarounds.ts for the self-obsoleting check on each.
  */
-export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
-  const done = emittedShims.get(n);
-  if (done !== undefined) return done;
-  const ldflags: string[] = [];
+export function emitShims(n: Ninja, cfg: Config): string[] {
   const implicitInputs: string[] = [];
 
   if (needsMachoPostlink(cfg)) {
@@ -210,57 +119,10 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
       outputs: [machoPostlinkToolPath(cfg)],
       rule: "host_tool_cc",
       inputs: [resolve(cfg.cwd, "scripts", "build", "shims", "macho-postlink.c")],
+      implicitInputs: [toolIdentityFile(cfg, "cc")],
     });
     implicitInputs.push(...machoPostlinkImplicitInputs(cfg));
   }
 
-  if (cfg.darwin && cfg.asan) {
-    // macOS 26.4 ASAN dyld deadlock — see shims/asan-dyld-shim.c.
-    const src = resolve(cfg.cwd, "scripts", "build", "shims", "asan-dyld-shim.c");
-    const out = resolve(cfg.buildDir, ASAN_DYLD_SHIM);
-    n.build({
-      outputs: [out],
-      rule: "shim_dylib",
-      inputs: [src],
-      vars: { name: ASAN_DYLD_SHIM },
-    });
-    // No -rpath of our own: the driver's ASan one (see shim_dylib) covers
-    // @rpath/<name>, and a second identical -rpath is an ld warning.
-    ldflags.push(out);
-    implicitInputs.push(out);
-  }
-
-  if (needsMuslCrtDecompress(cfg)) {
-    const crtDir = resolve(cfg.buildDir, "crt");
-    // Pre-create at configure time (matches configure.ts mkdirAll pattern;
-    // tiny dir, no point routing through the obj-dir set).
-    mkdirSync(crtDir, { recursive: true });
-
-    // Cross-compiling musl from a glibc host: point the probe at the musl
-    // sysroot so clang resolves the CRT there instead of the host /usr/lib.
-    // Native musl (sysroot undefined) keeps the bare probe.
-    const probeArgs = cfg.sysroot !== undefined ? [`--target=${cfg.crossTarget!}`, `--sysroot=${cfg.sysroot}`] : [];
-
-    for (const name of MUSL_CRT_OBJECTS) {
-      // Ask clang where it would find this startfile. Legitimate
-      // configure-time spawn (environment probe, not a build artifact).
-      // If the file isn't installed clang echoes the bare name back —
-      // skip those rather than emit a broken edge.
-      const found = spawnSync(cfg.cc, [...probeArgs, `-print-file-name=${name}`], {
-        encoding: "utf8",
-      }).stdout.trim();
-      if (!found || found === name) continue;
-      const out = resolve(crtDir, name);
-      n.build({ outputs: [out], rule: "shim_crt_decompress", inputs: [found] });
-      implicitInputs.push(out);
-    }
-
-    // -B prepends to clang's startfile/library search paths, so the driver
-    // resolves Scrt1.o/crti.o/crtn.o here before /usr/lib.
-    ldflags.push(`-B${crtDir}`);
-  }
-
-  const result = { ldflags, implicitInputs };
-  emittedShims.set(n, result);
-  return result;
+  return implicitInputs;
 }

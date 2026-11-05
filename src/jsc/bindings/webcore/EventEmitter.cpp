@@ -24,21 +24,16 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
     return adoptRef(*new EventEmitter(context));
 }
 
-bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
+void EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
-
-    if (prepend) {
-        if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), once))
-            return false;
-    } else {
-        if (!ensureEventEmitterData().eventListenerMap.add(eventType, listener.copyRef(), once))
-            return false;
-    }
+    if (prepend)
+        ensureEventEmitterData().eventListenerMap.prepend(eventType, WTF::move(listener), once);
+    else
+        ensureEventEmitterData().eventListenerMap.add(eventType, WTF::move(listener), once);
 
     eventListenersDidChange();
     if (this->onDidChangeListener)
         this->onDidChangeListener(*this, eventType, true);
-    return true;
 }
 
 void EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener, bool once, bool prepend)
@@ -65,7 +60,6 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
 
     if (data->eventListenerMap.remove(eventType, listener)) {
         eventListenersDidChange();
-        clearMaxListenersWarnedIfBelowLimit(eventType);
 
         if (this->onDidChangeListener)
             this->onDidChangeListener(*this, eventType, false);
@@ -74,21 +68,20 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
     return false;
 }
 
-bool EventEmitter::markMaxListenersWarned(const Identifier& eventType)
+bool EventEmitter::removeListener(const Identifier& eventType, SimpleRegisteredEventListener& registration)
 {
-    if (m_maxListenersWarned.contains(eventType))
+    auto* data = eventTargetData();
+    if (!data)
         return false;
-    m_maxListenersWarned.append(eventType);
-    return true;
-}
 
-// Node clears `warned` once a type is back to one listener.
-void EventEmitter::clearMaxListenersWarnedIfBelowLimit(const Identifier& eventType)
-{
-    if (m_maxListenersWarned.isEmpty())
-        return;
-    if (listenerCount(eventType) <= 1)
-        m_maxListenersWarned.removeFirst(eventType);
+    if (data->eventListenerMap.remove(eventType, registration)) {
+        eventListenersDidChange();
+
+        if (this->onDidChangeListener)
+            this->onDidChangeListener(*this, eventType, false);
+        return true;
+    }
+    return false;
 }
 
 void EventEmitter::removeAllListenersForBindings(const Identifier& eventType)
@@ -108,7 +101,6 @@ bool EventEmitter::removeAllListeners()
     // refs, listener-count mirrors) observes the post-removal zero counts.
     Vector<Identifier> eventTypes = map.eventTypes();
     map.clear();
-    m_maxListenersWarned.clear();
     this->m_thisObject.clear();
     if (any) {
         eventListenersDidChange();
@@ -128,7 +120,6 @@ bool EventEmitter::removeAllListeners(const Identifier& eventType)
 
     if (data->eventListenerMap.removeAll(eventType)) {
         eventListenersDidChange();
-        clearMaxListenersWarnedIfBelowLimit(eventType);
         if (this->onDidChangeListener)
             this->onDidChangeListener(*this, eventType, false);
         return true;
@@ -263,7 +254,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         // Do this before invocation to avoid reentrancy issues.
         if (registeredListener->isOnce())
-            removeListener(eventType, callback);
+            removeListener(eventType, *registeredListener);
 
         if (!jsFunction) [[unlikely]]
             continue;
@@ -285,7 +276,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
                 // If the event type is error, report the exception to the console.
-                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
+                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
             } else if (hasErrorListener) {
                 MarkedArgumentBuffer expcep;
                 JSValue errorValue = exception->value();

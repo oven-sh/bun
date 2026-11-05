@@ -1,21 +1,26 @@
 /**
- * CMake-language parser (cmake-language(7)): source text → the list of
- * command invocations, each with its arguments exactly as written and the
- * chain of flow-control blocks enclosing it. It does not evaluate anything —
- * no variable expansion, no conditions taken — so its output is a faithful,
- * position-independent rendering of what the file *says*.
+ * Reads the file lists out of a project's CMake files without running cmake.
  *
- * deps/webkit-check-cmake.ts uses it to notice when the WebKit CMake
- * statements bun's build transcribes (deps/webkit.ts) change upstream.
+ * deps/webkit.ts compiles a local WebKit checkout in bun's own graph. Which
+ * files that is (`WTF_SOURCES`, `JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS`, …)
+ * is written in WebKit's CMakeLists.txt as `set()` / `list(APPEND)` statements
+ * under `if (WIN32)`-style conditions, and changes with the checkout.
  *
- * Grammar covered: bracket arguments `[==[ … ]==]` and bracket comments,
- * quoted arguments with escape sequences and `\` line continuations, unquoted
- * arguments (including the legacy embedded-quote and `$(VAR)` forms and
- * nested parentheses), `#` line comments, case-insensitive command names.
+ * `parseCMake()` is the language (cmake-language(7)): text → command
+ * invocations. `evaluateCMake()` runs the statements that assign variables
+ * (`set`, `unset`, `list(APPEND|REMOVE_ITEM)`), takes `if`/`elseif`/`else`
+ * branches by cmake's rules, and follows `include()` of a file next to the
+ * including one. Every other command is skipped, and so are the bodies of
+ * `foreach`/`while`/`function`/`macro`. A condition it cannot decide is an
+ * error, never a guess.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { BuildError } from "./error.ts";
+
 export interface Arg {
-  /** Argument text with quoting removed and escapes applied (bracket content verbatim). Variable references stay as written. */
+  /** Quoting removed and escapes applied (bracket content verbatim). Variable references stay as written. */
   text: string;
   kind: "unquoted" | "quoted" | "bracket";
 }
@@ -26,25 +31,16 @@ export interface Invocation {
   args: Arg[];
   file: string;
   line: number;
-  /**
-   * Enclosing blocks, outermost first, as the header that opens each one
-   * would print: `if(NOT WIN32)`, `else() # if(APPLE)`, `foreach(_f IN LISTS X)`,
-   * `macro(GENERATE_HASH_LUT _input _output)`. An `else`/`elseif` names the
-   * `if` it belongs to after `#`.
-   */
-  context: string[];
 }
 
-export class CMakeSyntaxError extends Error {}
-
-/** Parse one file's text. Throws CMakeSyntaxError with file:line on malformed input. */
+/** Parse one file's text. Throws a BuildError with file:line on malformed input. */
 export function parseCMake(src: string, file: string): Invocation[] {
   const out: Invocation[] = [];
   const n = src.length;
   let i = 0;
   let line = 1;
   const fail = (msg: string): never => {
-    throw new CMakeSyntaxError(`${file}:${line}: ${msg}`);
+    throw new BuildError(`${file}:${line}: ${msg}`);
   };
 
   /** At a `[`: the `=` count of a bracket open `[==[`, or -1 if it is not one. */
@@ -67,8 +63,8 @@ export function parseCMake(src: string, file: string): Invocation[] {
     else if (body.startsWith("\n")) body = body.slice(1);
     return body;
   };
+  /** i at `#`. */
   const skipComment = (): void => {
-    // i at '#'
     const eqs = bracketOpenAt(i + 1);
     if (eqs >= 0) {
       i++;
@@ -77,10 +73,14 @@ export function parseCMake(src: string, file: string): Invocation[] {
       while (i < n && src[i] !== "\n") i++;
     }
   };
-
-  // Block stack for `context`.
-  const stack: string[] = [];
-  const ifHeaders: string[] = []; // header of the `if` each open if-block started with
+  const escapeSequence = (ch: string | undefined): string => {
+    if (ch === "n") return "\n";
+    if (ch === "t") return "\t";
+    if (ch === "r") return "\r";
+    if (ch === undefined) return fail("backslash at end of input");
+    if (/[A-Za-z0-9]/.test(ch)) return fail(`invalid escape sequence \\${ch}`);
+    return ch;
+  };
 
   while (i < n) {
     const c = src[i]!;
@@ -100,7 +100,6 @@ export function parseCMake(src: string, file: string): Invocation[] {
     const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i, i + 256));
     if (!m) fail(`expected a command name, got ${JSON.stringify(src.slice(i, i + 24))}`);
     const rawName = m![0];
-    const name = rawName.toLowerCase();
     const cmdLine = line;
     i += rawName.length;
     while (i < n && (src[i] === " " || src[i] === "\t")) i++;
@@ -164,7 +163,7 @@ export function parseCMake(src: string, file: string): Invocation[] {
               i += 3;
               continue;
             }
-            text += escapeSequence(nx, fail);
+            text += escapeSequence(nx);
             i += 2;
             continue;
           }
@@ -175,14 +174,13 @@ export function parseCMake(src: string, file: string): Invocation[] {
         args.push({ text, kind: "quoted" });
         continue;
       }
-      // Unquoted argument.
       let text = "";
       while (i < n) {
         const u = src[i]!;
         if (u === " " || u === "\t" || u === "\r" || u === "\n" || u === "(" || u === ")" || u === "#") break;
         if (u === "\\") {
           const nx = src[i + 1];
-          text += nx === ";" ? "\\;" : escapeSequence(nx, fail);
+          text += nx === ";" ? "\\;" : escapeSequence(nx);
           i += 2;
           continue;
         }
@@ -217,113 +215,207 @@ export function parseCMake(src: string, file: string): Invocation[] {
       }
       args.push({ text, kind: "unquoted" });
     }
-
-    // Flow-control bookkeeping for `context` (the invocation itself is still emitted).
-    const header = `${name}(${args.map(renderArg).join(" ")})`;
-    switch (name) {
-      case "endif":
-      case "endforeach":
-      case "endwhile":
-      case "endfunction":
-      case "endmacro":
-      case "endblock":
-        if (stack.length === 0) fail(`stray ${name}()`);
-        stack.pop();
-        if (name === "endif") ifHeaders.pop();
-        break;
-      case "else":
-      case "elseif":
-        if (ifHeaders.length === 0) fail(`stray ${name}()`);
-        stack[stack.length - 1] = `${header} # ${ifHeaders[ifHeaders.length - 1]}`;
-        break;
-    }
-    out.push({ name, args, file, line: cmdLine, context: [...stack] });
-    switch (name) {
-      case "if":
-        ifHeaders.push(header);
-        stack.push(header);
-        break;
-      case "foreach":
-      case "while":
-      case "function":
-      case "macro":
-      case "block":
-        stack.push(header);
-        break;
-    }
+    out.push({ name: rawName.toLowerCase(), args, file, line: cmdLine });
   }
-  if (stack.length > 0) fail(`unterminated block: ${stack[stack.length - 1]}`);
   return out;
 }
 
-function escapeSequence(ch: string | undefined, fail: (m: string) => never): string {
-  switch (ch) {
-    case "n":
-      return "\n";
-    case "t":
-      return "\t";
-    case "r":
-      return "\r";
-    case ";":
-      return ";";
-    case undefined:
-      return fail("backslash at end of input");
-    default:
-      if (/[A-Za-z0-9]/.test(ch)) fail(`invalid escape sequence \\${ch}`);
-      return ch;
-  }
+export interface CMakeEvaluation {
+  /** A variable's value as a list; empty when it is not set. */
+  list(name: string): string[];
+  /** Every file read, the `include()`d ones too: what the result depends on. */
+  files: string[];
 }
 
-/** An argument as CMake source: re-quoted when it was quoted or needs it, bracket form for bracket args. */
-export function renderArg(a: Arg): string {
-  if (a.kind === "bracket") {
-    let eqs = "";
-    while (a.text.includes(`]${eqs}]`)) eqs += "=";
-    return `[${eqs}[${a.text}]${eqs}]`;
-  }
-  if (a.kind === "quoted")
-    return `"${a.text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
-  return a.text;
+export interface CMakeEvaluateOptions {
+  /** Variables set before the first statement: what the surrounding project and cmake itself would have defined. */
+  variables: Record<string, string>;
+  /** Project macros that amount to an `include()`: lower-cased command name → file, relative to the calling file's directory. A missing file is skipped. */
+  includeMacros?: Record<string, string>;
 }
 
-/** `${NAME}`, `$ENV{NAME}` and `$CACHE{NAME}` references in an argument (nested refs inside a name are returned too). `@NAME@` is not a reference in command arguments — CMake only substitutes it in configure_file()/string(CONFIGURE) input. */
-export function variableReferences(a: Arg): string[] {
-  if (a.kind === "bracket") return [];
-  const names: string[] = [];
-  for (const m of a.text.matchAll(/\$(?:ENV|CACHE)?\{([A-Za-z0-9_.+/-]+)\}?/g)) names.push(m[1]!);
-  return names;
-}
+/** The blocks whose bodies are definitions or loops, not straight-line assignments: skipped whole. */
+const skippedBlocks: Record<string, string> = {
+  foreach: "endforeach",
+  while: "endwhile",
+  function: "endfunction",
+  macro: "endmacro",
+};
 
-/**
- * Canonical multi-line rendering of an invocation for snapshotting: the
- * context chain as comment lines, then `name(` with one argument per line at
- * keyword boundaries. Independent of the original's whitespace and comments.
- */
-export function renderInvocation(inv: Invocation, keywords: ReadonlySet<string> = NO_KEYWORDS): string {
-  const lines: string[] = inv.context.map(c => `# in ${c}`);
-  const flat = `${inv.name}(${inv.args.map(renderArg).join(" ")})`;
-  if (flat.length <= 100 && !inv.args.some(a => a.kind === "unquoted" && keywords.has(a.text))) {
-    lines.push(flat);
-    return lines.join("\n");
-  }
-  lines.push(`${inv.name}(`);
-  let cur: string[] = [];
-  const flush = () => {
-    if (cur.length) lines.push("    " + cur.join(" "));
-    cur = [];
+const falseConstant = /^(|0|OFF|NO|FALSE|N|IGNORE|NOTFOUND|.*-NOTFOUND)$/i;
+const trueConstant = /^(ON|YES|TRUE|Y|-?[0-9]*\.?[0-9]*[1-9][0-9]*\.?[0-9]*)$/i;
+
+export function evaluateCMake(file: string, options: CMakeEvaluateOptions): CMakeEvaluation {
+  const vars = new Map(Object.entries(options.variables));
+  const files: string[] = [];
+
+  const expand = (text: string): string => {
+    // Innermost references first, so ${${_framework}_SOURCES} resolves.
+    for (let next = text; ; text = next) {
+      next = text.replace(/\$\{([A-Za-z0-9_.+/-]*)\}/g, (_, name: string) => vars.get(name) ?? "");
+      if (next === text) return text;
+    }
   };
-  for (const a of inv.args) {
-    const r = renderArg(a);
-    if (a.kind === "unquoted" && keywords.has(a.text)) {
-      flush();
-      cur.push(r);
-    } else if (cur.length >= 1 && (cur.length >= 6 || cur.join(" ").length + r.length > 100)) {
-      flush();
-      cur.push("   " + r); // continuation indent under its keyword
-    } else cur.push(r);
-  }
-  flush();
-  lines.push(")");
-  return lines.join("\n");
+  /** cmake's argument evaluation: an unquoted argument that expands to a list is that many arguments. */
+  const expandArgs = (args: Arg[]): string[] =>
+    args.flatMap(a =>
+      a.kind === "bracket"
+        ? [a.text]
+        : a.kind === "quoted"
+          ? [expand(a.text)]
+          : expand(a.text)
+              .split(";")
+              .filter(s => s !== ""),
+    );
+
+  const condition = (inv: Invocation): boolean => {
+    const fail = (why: string): never => {
+      throw new BuildError(`${inv.file}:${inv.line}: cannot evaluate ${inv.name}(${render(inv.args)}): ${why}`, {
+        hint: "scripts/build/cmake.ts only implements the conditions that WebKit's file lists use. Add this one to it",
+      });
+    };
+    const tokens = inv.args.flatMap(a =>
+      a.kind === "unquoted"
+        ? expand(a.text)
+            .split(";")
+            .filter(s => s !== "")
+            .map(text => ({ text, quoted: false }))
+        : [{ text: a.kind === "quoted" ? expand(a.text) : a.text, quoted: true }],
+    );
+    let at = 0;
+    const isWord = (word: string) => at < tokens.length && !tokens[at]!.quoted && tokens[at]!.text === word;
+    /** An operand of a comparison: an unquoted name of a set variable stands for its value. */
+    const value = (t: { text: string; quoted: boolean }) => (t.quoted ? t.text : (vars.get(t.text) ?? t.text));
+    const truth = (t: { text: string; quoted: boolean }): boolean => {
+      if (trueConstant.test(t.text)) return true;
+      if (falseConstant.test(t.text) || t.quoted) return false;
+      const v = vars.get(t.text);
+      return v !== undefined && !falseConstant.test(v);
+    };
+    const primary = (): boolean => {
+      if (isWord("(")) {
+        at++;
+        const inner = or();
+        if (!isWord(")")) fail("unbalanced parentheses");
+        at++;
+        return inner;
+      }
+      if (isWord("NOT")) {
+        at++;
+        return !primary();
+      }
+      const t = tokens[at++] ?? fail("operand missing");
+      if (!t.quoted && (t.text === "DEFINED" || t.text === "EXISTS")) {
+        const operand = tokens[at++] ?? fail(`${t.text} without an operand`);
+        return t.text === "DEFINED" ? vars.has(operand.text) : existsSync(operand.text);
+      }
+      // No targets or commands exist here: nothing is built and no macro is defined.
+      if (!t.quoted && (t.text === "TARGET" || t.text === "COMMAND")) {
+        at++;
+        return false;
+      }
+      const op = tokens[at];
+      if (op !== undefined && !op.quoted && (op.text === "STREQUAL" || op.text === "MATCHES")) {
+        const rhs = tokens[at + 1] ?? fail(`${op.text} without a right-hand side`);
+        at += 2;
+        return op.text === "STREQUAL" ? value(t) === value(rhs) : new RegExp(rhs.text).test(value(t));
+      }
+      if (op !== undefined && !op.quoted && !["AND", "OR", ")"].includes(op.text)) fail(`operator ${op.text}`);
+      return truth(t);
+    };
+    const and = (): boolean => {
+      let result = primary();
+      while (isWord("AND")) {
+        at++;
+        const rhs = primary();
+        result = result && rhs;
+      }
+      return result;
+    };
+    const or = (): boolean => {
+      let result = and();
+      while (isWord("OR")) {
+        at++;
+        const rhs = and();
+        result = result || rhs;
+      }
+      return result;
+    };
+    const result = or();
+    if (at !== tokens.length) fail(`unexpected ${tokens[at]!.text}`);
+    return result;
+  };
+
+  const run = (path: string): void => {
+    files.push(path);
+    const invocations = parseCMake(readFileSync(path, "utf8"), path);
+    const include = (name: string): void => {
+      const target = isAbsolute(name) ? name : resolve(dirname(path), name);
+      if (existsSync(target)) run(target);
+    };
+    // One entry per open if(): is its current branch running, and has any branch of it run yet.
+    const ifs: Array<{ live: boolean; taken: boolean; outer: boolean }> = [];
+    const live = () => ifs.length === 0 || ifs[ifs.length - 1]!.live;
+
+    for (let i = 0; i < invocations.length; i++) {
+      const inv = invocations[i]!;
+      const end = skippedBlocks[inv.name];
+      if (end !== undefined) {
+        for (let depth = 1; depth > 0;) {
+          const next = invocations[++i];
+          if (next === undefined) throw new BuildError(`${inv.file}:${inv.line}: ${inv.name}() without ${end}()`);
+          if (next.name === inv.name) depth++;
+          else if (next.name === end) depth--;
+        }
+        continue;
+      }
+      switch (inv.name) {
+        case "if": {
+          const outer = live();
+          const taken = outer && condition(inv);
+          ifs.push({ live: taken, taken, outer });
+          continue;
+        }
+        case "elseif":
+        case "else": {
+          const top = ifs[ifs.length - 1];
+          if (top === undefined) throw new BuildError(`${inv.file}:${inv.line}: stray ${inv.name}()`);
+          top.live = top.outer && !top.taken && (inv.name === "else" || condition(inv));
+          top.taken ||= top.live;
+          continue;
+        }
+        case "endif":
+          if (ifs.pop() === undefined) throw new BuildError(`${inv.file}:${inv.line}: stray endif()`);
+          continue;
+      }
+      if (!live()) continue;
+
+      const macroInclude = options.includeMacros?.[inv.name];
+      if (macroInclude !== undefined) {
+        include(macroInclude);
+        continue;
+      }
+      const [first, second, ...rest] = expandArgs(inv.args);
+      if (inv.name === "include" && first !== undefined) include(first);
+      else if (inv.name === "unset" && first !== undefined) vars.delete(first);
+      else if (inv.name === "set" && first !== undefined) {
+        const values = second === undefined ? [] : [second, ...rest];
+        const stop = values.findIndex(v => v === "CACHE" || v === "PARENT_SCOPE");
+        if (values.length === 0) vars.delete(first);
+        else vars.set(first, (stop < 0 ? values : values.slice(0, stop)).join(";"));
+      } else if (inv.name === "list" && second !== undefined) {
+        const current = (vars.get(second) ?? "").split(";").filter(s => s !== "");
+        if (first === "APPEND") vars.set(second, [...current, ...rest].join(";"));
+        else if (first === "REMOVE_ITEM") vars.set(second, current.filter(item => !rest.includes(item)).join(";"));
+      }
+    }
+    if (ifs.length > 0) throw new BuildError(`${path}: if() without endif()`);
+  };
+  run(file);
+
+  return { list: name => (vars.get(name) ?? "").split(";").filter(s => s !== ""), files };
 }
-const NO_KEYWORDS: ReadonlySet<string> = new Set();
+
+function render(args: Arg[]): string {
+  return args.map(a => (a.kind === "quoted" ? JSON.stringify(a.text) : a.text)).join(" ");
+}

@@ -1,0 +1,30 @@
+# const above = { get on() { return handedOver(this); } }; Object.setPrototypeOf(Object.getPrototypeOf(process), above); delete Object.getPrototypeOf(process).on; process.on
+# The member may be gone, so the read goes on to the object above the native prototype: the getter is entered with `process` as its receiver and hands it over
+# LIBRARY: own
+# RUN: valueflow-why escaped-builtin=Process
+# CHECK: escaped-builtin=Process
+# CHECK-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = NewDictionary
+    v2 = NewClosure function=f1
+    DefineGetter v1, v2 key="on"
+    v4 = Builtin builtin=ObjectSetPrototypeOf
+    v5 = Builtin builtin=EventEmitterPrototype
+    v6 = Call v4, v0, v5, v1
+    v7 = Builtin builtin=Process
+    v8 = PropDelete v5 key="on" mode=Sloppy
+    v9 = PropGet v7 key="on"
+    Return v9
+}
+function f1 name="on" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="handedOver" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}

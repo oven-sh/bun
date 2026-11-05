@@ -30,7 +30,6 @@ namespace WebCore {
 class JSCloseEvent : public JSEvent {
 public:
     using Base = JSEvent;
-    using DOMWrapped = CloseEvent;
     static JSCloseEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<CloseEvent>&& impl)
     {
         JSCloseEvent* ptr = new (NotNull, JSC::allocateCell<JSCloseEvent>(globalObject->vm())) JSCloseEvent(structure, *globalObject, WTF::move(impl));

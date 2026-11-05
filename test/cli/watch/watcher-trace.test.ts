@@ -63,7 +63,7 @@ test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
     expect(typeof event.files).toBe("object");
 
     // Validate files object structure
-    for (const [path, fileEvent] of Object.entries(event.files)) {
+    for (const [path, fileEvent] of Object.entries<any>(event.files)) {
       expect(typeof path).toBe("string");
       expect(fileEvent).toHaveProperty("events");
       expect(Array.isArray(fileEvent.events)).toBe(true);
@@ -131,7 +131,7 @@ test("BUN_WATCHER_TRACE with --watch flag", async () => {
     expect(typeof event.files).toBe("object");
 
     // Check for script.js events
-    for (const [path, fileEvent] of Object.entries(event.files)) {
+    for (const [path, fileEvent] of Object.entries<any>(event.files)) {
       expect(fileEvent).toHaveProperty("events");
       expect(Array.isArray(fileEvent.events)).toBe(true);
 

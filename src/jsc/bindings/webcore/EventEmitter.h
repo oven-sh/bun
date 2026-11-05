@@ -7,7 +7,6 @@
 #include "ContextDestructionObserver.h"
 #include "ScriptWrappable.h"
 #include <memory>
-#include <optional>
 #include <variant>
 #include <wtf/Forward.h>
 
@@ -53,7 +52,7 @@ public:
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
-    WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT void addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
@@ -70,13 +69,9 @@ public:
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
 
-    unsigned getMaxListeners() const { return m_maxListeners.value_or(m_defaultMaxListeners); }
+    unsigned getMaxListeners() const { return m_maxListeners; };
 
     void setMaxListeners(unsigned count);
-    void setDefaultMaxListeners(unsigned count) { m_defaultMaxListeners = count; }
-
-    // True on the first overflow of an event type, like node's `existing.warned`.
-    bool markMaxListenersWarned(const Identifier& eventType);
 
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
@@ -107,13 +102,11 @@ private:
     {
     }
 
+    bool removeListener(const Identifier& eventType, SimpleRegisteredEventListener&);
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
-    void clearMaxListenersWarnedIfBelowLimit(const Identifier& eventType);
 
     EventEmitterData m_eventTargetData;
-    std::optional<unsigned> m_maxListeners;
-    unsigned m_defaultMaxListeners { 10 };
-    Vector<Identifier, 1> m_maxListenersWarned;
+    unsigned m_maxListeners { 10 };
 
     mutable JSC::Weak<JSC::JSObject> m_thisObject { nullptr };
 };

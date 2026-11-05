@@ -32,6 +32,11 @@ casts/after-something-that-is-not-formatted.js
 119 135 L ParenthesizedExpression 136 145 -
 149 165 L ParenthesizedExpression 166 169 -
 182 198 L ParenthesizedExpression 199 221 -
+casts/argument-in-a-chain-of-calls.js
+10 26 L ParenthesizedExpression 27 30 -
+44 60 L ParenthesizedExpression 61 64 -
+78 94 L MemberExpression 95 100 -
+109 125 L ParenthesizedExpression 126 129 -
 casts/argument-of-return-that-breaks.js
 28 49 L ParenthesizedExpression 50 146 -
 178 198 L ParenthesizedExpression 199 295 -

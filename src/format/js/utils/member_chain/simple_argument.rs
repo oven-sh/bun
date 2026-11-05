@@ -1,17 +1,18 @@
 //! Prettier's `isSimpleCallArgument`.
 
+use crate::js::utils::typecast::is_cast_target_that_hides_its_kind;
 use crate::options::Flavor;
 use crate::prelude::*;
 use smallvec::SmallVec;
 
 /// A call argument that can be checked for being "simple": a literal, a name, or something small made of those. A chain
 /// of calls with simple arguments is more likely to stay on one line.
-#[derive(Debug, Copy, Clone)]
-pub(crate) struct SimpleArgument<'a>(Expr<'a>, Flavor);
+#[derive(Copy, Clone)]
+pub(crate) struct SimpleArgument<'a, 'f>(Expr<'a>, &'f Formatter<'a>);
 
-impl<'a> SimpleArgument<'a> {
-    pub(crate) fn new(argument: Expr<'a>, f: &Formatter<'a>) -> Self {
-        Self(argument, f.options().flavor)
+impl<'a, 'f> SimpleArgument<'a, 'f> {
+    pub(crate) fn new(argument: Expr<'a>, f: &'f Formatter<'a>) -> Self {
+        Self(argument, f)
     }
 
     pub(crate) fn is_simple(self) -> bool {
@@ -31,16 +32,21 @@ fn is_short_pattern(pattern: &[u8], flavor: Flavor) -> bool {
     }
 }
 
-fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
+fn is_simple<'a>(e: Expr<'a>, depth: u8, f: &Formatter<'a>) -> bool {
     if depth >= 2 {
         return false;
     }
+    let flavor = f.options().flavor;
     // The expressions still to check. All of them are at the same depth as `e`: a chain of accesses and calls can be
     // long, and so can `a[b[c[..]]]`.
-    let mut pending = SmallVec::<[Expr<'_>; 4]>::new();
+    let mut pending = SmallVec::<[Expr<'a>; 4]>::new();
     let mut next = Some(e);
     while let Some(mut e) = next {
         loop {
+            // `/** @type {A} */ (b)` is a `ParenthesizedExpression`.
+            if is_cast_target_that_hides_its_kind(e, f) {
+                return false;
+            }
             e = match e.kind() {
                 ExprKind::Null
                 | ExprKind::True
@@ -54,7 +60,7 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
                 | ExprKind::Super => break,
                 ExprKind::Regex(regex) if is_short_pattern(regex.pattern(), flavor) => break,
                 ExprKind::Template(template)
-                    if is_simple_template_literal(template, depth + 1, flavor) =>
+                    if is_simple_template_literal(template, depth + 1, f) =>
                 {
                     break;
                 }
@@ -65,7 +71,7 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
                             !prop.key().is_some_and(Key::is_computed)
                                 && prop
                                     .value()
-                                    .is_some_and(|value| is_simple(value, depth + 1, flavor))
+                                    .is_some_and(|value| is_simple(value, depth + 1, f))
                         }
                         _ => false,
                     }) =>
@@ -76,7 +82,7 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
                     if elements.iter().all(|element| match element.kind() {
                         ExprKind::Missing => true,
                         ExprKind::Spread(_) => false,
-                        _ => is_simple(element, depth + 1, flavor),
+                        _ => is_simple(element, depth + 1, f),
                     }) =>
                 {
                     break;
@@ -98,12 +104,10 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
                     pending.push(obj);
                     index
                 }
-                ExprKind::New(call) | ExprKind::Call(call)
-                    if are_simple(call.args(), depth, flavor) =>
-                {
+                ExprKind::New(call) | ExprKind::Call(call) if are_simple(call.args(), depth, f) => {
                     call.callee()
                 }
-                ExprKind::ImportCall { args } if are_simple(args, depth, flavor) => break,
+                ExprKind::ImportCall { args } if are_simple(args, depth, f) => break,
                 _ => return false,
             };
         }
@@ -113,15 +117,15 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
 }
 
 /// A call's arguments: the deeper the call, the fewer it may have.
-fn are_simple<'a>(arguments: List<'a, Expr<'a>>, depth: u8, flavor: Flavor) -> bool {
+fn are_simple<'a>(arguments: List<'a, Expr<'a>>, depth: u8, f: &Formatter<'a>) -> bool {
     arguments.len() + usize::from(depth) <= 2
         && arguments
             .iter()
-            .all(|argument| is_simple(argument, depth + 1, flavor))
+            .all(|argument| is_simple(argument, depth + 1, f))
 }
 
 /// No text of the template has a line break, and all substitutions are simple.
-fn is_simple_template_literal(template: Template<'_>, depth: u8, flavor: Flavor) -> bool {
+fn is_simple_template_literal<'a>(template: Template<'a>, depth: u8, f: &Formatter<'a>) -> bool {
     (0..template.quasi_count()).all(|i| !bun_core::strings::contains_char(template.raw(i), b'\n'))
-        && template.exprs().iter().all(|e| is_simple(e, depth, flavor))
+        && template.exprs().iter().all(|e| is_simple(e, depth, f))
 }

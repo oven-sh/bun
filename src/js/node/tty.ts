@@ -146,9 +146,8 @@ const prototypeOfReadStream = {
             return this;
           }
         }
-      } else {
-        // A destroyed stream has no fd: a no-op, as Node's `this._handle?.setRawMode(flag)`.
-        if (this.fd == null) return this;
+      } else if (this.fd != null) {
+        // A destroyed stream has no fd and only records the flag, as Node's `this._handle?.setRawMode(flag)`.
         const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
         const err = ttySetMode(this.fd, flag, state);
         if (err) {

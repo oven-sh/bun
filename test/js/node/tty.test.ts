@@ -570,7 +570,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         }
       },
     );
-    expect(lines).toEqual(["ready", 'key "a"', 'after {"fd":null,"isRaw":true,"destroyed":true}']);
+    expect(lines).toEqual(["ready", 'key "a"', 'after {"fd":null,"isRaw":false,"destroyed":true}']);
     expect(exitCode).toBe(0);
   });
 

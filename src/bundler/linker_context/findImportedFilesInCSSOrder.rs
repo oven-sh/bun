@@ -227,12 +227,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             // return above intentionally skips it.
 
             // Iterate over the top-level "@import" rules
-            let mut import_record_idx: usize = 0;
             for rule in top_level_rules.v.iter() {
                 if let BundlerCssRule::Import(import_rule) = rule {
-                    // `defer import_record_idx += 1;` — increment at end of this arm
-                    let record =
-                        &self.all_import_records[source_index.get() as usize][import_record_idx];
+                    let record = &self.all_import_records[source_index.get() as usize]
+                        [import_rule.import_record_idx as usize];
 
                     // Follow internal dependencies
                     if record.source_index.is_valid() {
@@ -258,7 +256,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             if !followed {
                                 return;
                             }
-                            import_record_idx += 1;
                             continue;
                         }
                         if !self.visit_import(
@@ -269,7 +266,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         ) {
                             return;
                         }
-                        import_record_idx += 1;
                         continue;
                     }
 
@@ -312,8 +308,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         );
                         self.has_external_import = true;
                     }
-
-                    import_record_idx += 1;
                 }
             }
 
@@ -452,8 +446,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         // Borrowck: `order.at(i)` and `order.mut_(i)`
         // cannot overlap, and `is_conditional_import_redundant` needs to read
         // both `entry.conditions` and `order.at(j).conditions`. Hold raw
-        // pointers into the Vec buffer; `order.mut_(i)` only writes `.kind` and
-        // never reallocates, so the conditions pointer stays valid.
+        // pointers into the Vec buffer; `order.mut_(i)` never reallocates, and
+        // `entry` is not read after it.
         let order_ptr = order.as_mut_ptr();
         'next_backward: while i != 0 {
             i -= 1;
@@ -502,11 +496,20 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // still introduce layers to the layer order. Represent this as a
                             // file with an empty layer list, or keep the "@import" where
                             // nothing else can do that among the hoisted imports.
-                            if !can_mask_external_import(&order.slice()[..i as usize], entry) {
+                            let earlier = &order.slice()[..i as usize];
+                            let has_earlier_copy = has_earlier_copy(earlier, entry);
+                            if !has_earlier_copy && !can_mask_external_import(earlier, entry) {
                                 break;
                             }
-                            order.mut_(i as usize).kind =
-                                CssImportOrderKind::Layers(Layers::Owned(Vec::new()));
+                            let masked = order.mut_(i as usize);
+                            masked.kind = CssImportOrderKind::Layers(Layers::Owned(Vec::new()));
+                            if has_earlier_copy {
+                                // The earlier copy declares the layers. Declaring them here
+                                // too could print a block ahead of a hoisted "@import".
+                                // SAFETY: 0 <= capacity. The truncated tail is arena-owned
+                                // (`fork_conditions`) and bulk-freed with the arena.
+                                unsafe { masked.conditions.set_len(0) };
+                            }
                             continue 'next_backward;
                         }
                     }
@@ -909,20 +912,23 @@ fn prints_as_layer_statement(no_names: bool, conditions: &[ImportConditions]) ->
     }
 }
 
-/// Whether an external "@import" can give way to a later copy. If its conditions
-/// have a layer, something at its place must still declare that layer. An earlier
-/// copy can, and so can a statement ahead of all the hoisted imports.
+/// Whether an earlier entry is the same import under the same conditions.
+fn has_earlier_copy(earlier: &[CssImportOrder], import: &CssImportOrder) -> bool {
+    earlier.iter().any(|e| {
+        css_import_orders_are_equal(core::slice::from_ref(e), core::slice::from_ref(import))
+    })
+}
+
+/// Whether an external "@import" with no earlier copy can give way to a later one.
+/// If its conditions have a layer, something at its place must still declare that
+/// layer. A statement ahead of all the hoisted imports can.
 fn can_mask_external_import(earlier: &[CssImportOrder], import: &CssImportOrder) -> bool {
     let conditions = import.conditions.slice();
     if !conditions.iter().any(|c| c.layer.is_some()) {
         return true;
     }
     let is_external = |e: &CssImportOrder| matches!(e.kind, CssImportOrderKind::ExternalPath(_));
-    let is_copy = |e: &CssImportOrder| {
-        css_import_orders_are_equal(core::slice::from_ref(e), core::slice::from_ref(import))
-    };
-    (prints_as_layer_statement(true, conditions) && !earlier.iter().any(is_external))
-        || earlier.iter().any(is_copy)
+    prints_as_layer_statement(true, conditions) && !earlier.iter().any(is_external)
 }
 
 fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {

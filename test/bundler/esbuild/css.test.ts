@@ -2738,6 +2738,57 @@ describe("bundler", () => {
       },
       out: `@layer first;@import "https://example.com/e.css";@import "https://example.com/f.css";@unknown x;.a{c:d}`,
     },
+    ImportOfAFileBehindAnUnknownAtRule: {
+      files: {
+        "/entry.css": /* css */ `
+          @unknown x;
+          @import "./b.css";
+          .a { c: d }
+        `,
+        "/b.css": `.b { c: d }`,
+      },
+      out: ".b{c:d}@unknown x;.a{c:d}",
+    },
+    ConditionalImportsBehindAnUnknownAtRule: {
+      files: {
+        "/entry.css": /* css */ `
+          @unknown x;
+          @import "./b.css" layer(x) supports(display: grid) screen;
+          @import "https://example.com/e.css" layer(y) print;
+          .a { c: d }
+        `,
+        "/b.css": `.b { c: d }`,
+      },
+      out: `@import "https://example.com/e.css" layer(y) print;@media screen{@supports (display:grid){@layer x{.b{c:d}}}}@unknown x;.a{c:d}`,
+    },
+    // The "url()" has an import record of its own, ahead of the one of the "@import".
+    ImportBehindAnUnknownAtRuleWithAURL: {
+      files: {
+        "/entry.css": /* css */ `
+          @unknown url(./x.png);
+          @import "./b.css";
+          @import "https://example.com/e.css";
+          .a { c: d }
+        `,
+        "/b.css": `.b { c: d }`,
+        "/x.png": `png`,
+      },
+      out: `@import "https://example.com/e.css";.b{c:d}@unknown url(data:image/png;base64,cG5n);.a{c:d}`,
+    },
+    // A block between the imports would make the ones after it invalid.
+    ThreeCopiesOfAnExternalImportInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "https://example.com/ext.css" layer(w);
+          @import "https://example.com/ext.css" layer(w);
+          @import "https://example.com/other.css" layer(v);
+          @import "https://example.com/ext.css" layer(w);
+          .a { c: d }
+        `,
+      },
+      out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@import "data:text/css,@import \\"https://example.com/other.css\\" layer(v);" layer;@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{.a{c:d}}`,
+    },
     // A copy with no layer does not cover a list under "layer(w)": the list is what declares "w" ahead of "u".
     ListForADuplicateImportUnderLayer: {
       files: {

@@ -397,10 +397,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             // Preserve the "@layer" statements from the
                             // prefix and append the remaining tail.
                             let mut new_rules: ArenaVec<BundlerCssRule> =
-                                ArenaVec::with_capacity_in(
-                                    layer_count + (original_rules.len() - prefix_end),
-                                    bump,
-                                );
+                                ArenaVec::with_capacity_in(original_rules.len() - dropped, bump);
                             keep_layers = keep_leading_layers;
                             for rule in &original_rules[0..prefix_end] {
                                 keep_layers |= matches!(rule, BundlerCssRule::Import(_));

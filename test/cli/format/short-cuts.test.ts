@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -2260,7 +2260,7 @@ describe.skipIf(!hasFlag)("Vue", () => {
 });
 
 describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
-  const template = "<template>\n  <div :a=\"b\">\n    <p>{{ c }}</p>\n  </div>\n</template>\n";
+  const template = '<template>\n  <div :a="b">\n    <p>{{ c }}</p>\n  </div>\n</template>\n';
   const script = '<script setup lang="ts">\nimport { a } from "a";\nconst b   = a<number>(1)\n</script>\n';
   const style = "<style scoped>\n.a{color:red}\n\n\n.b {\n  color: blue;\n}\n</style>\n";
   const inputs = [
@@ -2549,7 +2549,25 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
     "/a\\d/.test(b)",
     "$emit('a',  b)",
   ];
-  const names = [":a", ".a", "v-bind:a", "v-bind", "v-if", "v-model", "v-html", "@a", "v-on:a", "@a.b", ":[a]", "v-for", "#a", "v-slot:a", "slot-scope", "a", "onclick"];
+  const names = [
+    ":a",
+    ".a",
+    "v-bind:a",
+    "v-bind",
+    "v-if",
+    "v-model",
+    "v-html",
+    "@a",
+    "v-on:a",
+    "@a.b",
+    ":[a]",
+    "v-for",
+    "#a",
+    "v-slot:a",
+    "slot-scope",
+    "a",
+    "onclick",
+  ];
   // What is in front of a colon can be a namespace, and then the name that counts is another one than is written.
   names.push("::a", ":a:b", ":a::b", "@a:b", "@:a", ".a:b", "a:b", "a::b", "v:a", "v-bind::a", "v-on::a", ":::a");
   const scripts = [
@@ -2558,16 +2576,21 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
     "\n<script setup lang='ts'>\nlet a;\n</script>\n",
     '\n<script lang="typescript">\nlet a;\n</script>\n',
     '\n<script lang="tsx">\nlet a;\n</script>\n',
-    '\n<script>\nlet a = \'<script lang="ts">\';\n</script>\n',
+    "\n<script>\nlet a = '<script lang=\"ts\">';\n</script>\n",
     '\n<!-- <script lang="ts"> -->\n<script>\nlet a;\n</script>\n',
     '\n<docs>\n<script lang="ts">\n</script>\n</docs>\n',
     '\n<script lang="ts" src="a">\n</script>\n',
   ];
   const inputs = [
     ...values.flatMap(value =>
-      names.map(name => `<template>\n  <div>\n    <p b="c" ${name}="${value}" d>e</p>\n  </div>\n</template>\n${scripts[1]}`),
+      names.map(
+        name => `<template>\n  <div>\n    <p b="c" ${name}="${value}" d>e</p>\n  </div>\n</template>\n${scripts[1]}`,
+      ),
     ),
-    ...values.map(value => `<template>\n  <div>\n    {{ ${value} }}\n    <p>{{${value}}}</p>\n    <p>a {{ ${value} }} b</p>\n  </div>\n</template>\n${scripts[1]}`),
+    ...values.map(
+      value =>
+        `<template>\n  <div>\n    {{ ${value} }}\n    <p>{{${value}}}</p>\n    <p>a {{ ${value} }} b</p>\n  </div>\n</template>\n${scripts[1]}`,
+    ),
     // Whether the code is TypeScript.
     ...scripts.flatMap(script => [
       `<template>\n  <p :a="b  as c" @d="(e: f) => g!">{{ h  as i }}</p>\n</template>\n${script}`,
@@ -2626,21 +2649,30 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
       `<template>\n  <i style="${value}" />\n  <component-with-a-long-name style="${value}" />\n</template>\n`,
     ]),
     // What is not as wide as it is long, next to `{{ }}`.
-    ...["Value：{{ a }}", "{{ a + 1 }}期", "中{{ a }}文{{ b }}字", "é{{ a }}", "́{{ a }}", "{{ a }}́", "{{ a }}️⃣", "😀{{ a }}😀 b"].flatMap(
-      words => [
-        `<template>\n  <div class="demonstration">${words}</div>\n</template>\n`,
-        `<template>\n  <p>${words} ${words} ${words} ${words}</p>\n  <span>c ${words}</span>\n</template>\n`,
-        `<template>\n  <div>\n    ${words}\n  </div>\n</template>\n`,
-      ],
-    ),
+    ...[
+      "Value：{{ a }}",
+      "{{ a + 1 }}期",
+      "中{{ a }}文{{ b }}字",
+      "é{{ a }}",
+      "́{{ a }}",
+      "{{ a }}́",
+      "{{ a }}️⃣",
+      "😀{{ a }}😀 b",
+    ].flatMap(words => [
+      `<template>\n  <div class="demonstration">${words}</div>\n</template>\n`,
+      `<template>\n  <p>${words} ${words} ${words} ${words}</p>\n  <span>c ${words}</span>\n</template>\n`,
+      `<template>\n  <div>\n    ${words}\n  </div>\n</template>\n`,
+    ]),
     // `{{ }}` that does not fit on its line: the braces stay with the tags of an inline element that has no white space
     // in it, if the start tag fits together with them.
-    ...["a", wide, `t('${wide}')`, `t("${wide}")`, `${wide} + ${wide}`, `f(${wide}, ${wide})`, `${wide}  .b`].flatMap(code => [
-      `<template>\n  <span class="b">{{ ${code} }}</span>\n  <span>{{${code}}}</span>\n  <i ${wide}>{{ ${code} }}</i>\n</template>\n`,
-      `<template>\n  <div class="b">{{ ${code} }}</div>\n  <span> {{ ${code} }} </span>\n  <span> {{ ${code} }}</span>\n  <span>{{ ${code} }} </span>\n</template>\n`,
-      `<template>\n  <div>\n    {{ ${code} }}\n  </div>\n  <span>{{\n    ${code}\n  }}</span>\n  <ul>\n    {{ ${code} }}\n  </ul>\n  {{\n    ${code}\n  }}\n</template>\n`,
-      `<template>\n  <span>{{ ${code} }}{{ ${code} }}</span>\n  <span>c{{ ${code} }}</span>\n  <span><b>{{ ${code} }}</b></span>\n</template>\n`,
-    ]),
+    ...["a", wide, `t('${wide}')`, `t("${wide}")`, `${wide} + ${wide}`, `f(${wide}, ${wide})`, `${wide}  .b`].flatMap(
+      code => [
+        `<template>\n  <span class="b">{{ ${code} }}</span>\n  <span>{{${code}}}</span>\n  <i ${wide}>{{ ${code} }}</i>\n</template>\n`,
+        `<template>\n  <div class="b">{{ ${code} }}</div>\n  <span> {{ ${code} }} </span>\n  <span> {{ ${code} }}</span>\n  <span>{{ ${code} }} </span>\n</template>\n`,
+        `<template>\n  <div>\n    {{ ${code} }}\n  </div>\n  <span>{{\n    ${code}\n  }}</span>\n  <ul>\n    {{ ${code} }}\n  </ul>\n  {{\n    ${code}\n  }}\n</template>\n`,
+        `<template>\n  <span>{{ ${code} }}{{ ${code} }}</span>\n  <span>c{{ ${code} }}</span>\n  <span><b>{{ ${code} }}</b></span>\n</template>\n`,
+      ],
+    ),
     // `v-for`: names on the left side, code on the right side.
     ...[
       "a in b+c",
@@ -2677,9 +2709,16 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
       `<template>\n  <component-with-a-long-name v-for="${value}" />\n  <i v-for="${value}" />\n</template>\n`,
     ]),
     // A comment that starts with a tag is a comment like another, unless it ends a conditional comment.
-    ...["<!-- <a> -->", "<!--<a b>-->", "<!-- <a\n  b\n/> -->", "<!--<![endif]-->", "<!--<! [endif]-->", "<!-- <![endif] -->", "<!--<-->", "<!--<!-->"].map(
-      comment => `<template>\n  ${comment}\n  <div>\n      ${comment}\n    <p   a>b</p>\n  </div>\n</template>\n`,
-    ),
+    ...[
+      "<!-- <a> -->",
+      "<!--<a b>-->",
+      "<!-- <a\n  b\n/> -->",
+      "<!--<![endif]-->",
+      "<!--<! [endif]-->",
+      "<!-- <![endif] -->",
+      "<!--<-->",
+      "<!--<!-->",
+    ].map(comment => `<template>\n  ${comment}\n  <div>\n      ${comment}\n    <p   a>b</p>\n  </div>\n</template>\n`),
     // Code behind something that goes the long way.
     `<template>\n  <p #a="{ b: { c } }"></p>\n  <p :d="[e,f]" :g="[${wide},${wide},${wide}]">{{ h  ( i ) }}</p>\n</template>\n`,
     `<template>\n  <div>\n    <p #a="{ b: { c } }"></p>\n    <p :d="e  as f">{{ g  as h }}</p>\n  </div>\n</template>\n\n<script lang="ts">\ni;\n</script>\n`,
@@ -2981,8 +3020,8 @@ describe("Handlebars", () => {
     "{{someHelper someArgument anotherArgument yetAnotherArgument andOneMoreArgument key=value other=another}}",
     "{{someHelper (someOtherHelper someArgument anotherArgument yetAnotherArgument andOneMoreArgument) key=(a b)}}",
     "{{someHelper key=(someOtherHelper someArgument anotherArgument yetAnotherArgument andOneMore key=(a b))}}",
-    "{{true}}{{false}}{{null}}{{undefined}}{{1}}{{\"a\"}}{{'a'}}{{\"...attributes\"}}\n{{true a}}\n{{1 a}}",
-    "{{a \"it's\"}}{{a 'say \"b\"'}}{{a \"\\\"\"}}{{a \"b\\\\\"}}{{a \"{{\"}}{{a \"}}\"}}{{a \"é\"}}{{a \"\n\"}}",
+    '{{true}}{{false}}{{null}}{{undefined}}{{1}}{{"a"}}{{\'a\'}}{{"...attributes"}}\n{{true a}}\n{{1 a}}',
+    '{{a "it\'s"}}{{a \'say "b"\'}}{{a "\\""}}{{a "b\\\\"}}{{a "{{"}}{{a "}}"}}{{a "é"}}{{a "\n"}}',
     "{{a 0}}{{a 00}}{{a 1.5}}{{a -1}}{{a 123456789012345}}{{a 1234567890123456}}",
     "{{a -0}}{{a -00}}{{a 0.0}}{{a -0.5}}{{a 1.50}}{{a 10.25}}{{a 0.000001}}{{a 0.0000001}}{{-1}}{{0.5}}{{a b=-1.5}}",
     "{{a 123456789.123456}}{{a 1234567890.123456}}{{a 0.12345678901234}}{{a 0.123456789012345}}",
@@ -3002,7 +3041,7 @@ describe("Handlebars", () => {
     '{{#this}}{{else this "" q}}{{/this}}',
     "{{#if a}}b{{else}}{{#if c}}d{{/if}}{{/if}}\n{{#if a}}b{{else}} {{#if c}}d{{/if}}{{/if}}\n{{#if a}}b{{else if}}c{{/if}}\n{{#if a}}b{{else if as |c|}}d{{/if}}",
     "{{~#if a~}}b{{~else~}}c{{~/if~}}\n{{~#if a~}} b {{~else if c~}} d {{~/if~}}",
-    "{{#each a as |b c|}}d{{/each}}\n{{#each a key=\"b\" as | c |}}d{{/each}}\n{{#a as |b|}}c{{/a}}\n{{#a}}b{{/a}}\n{{# a }}b{{/ a }}",
+    '{{#each a as |b c|}}d{{/each}}\n{{#each a key="b" as | c |}}d{{/each}}\n{{#a as |b|}}c{{/a}}\n{{#a}}b{{/a}}\n{{# a }}b{{/ a }}',
     "{{#let (hash someKey=this.some.long.path.toSomething anotherKey=this.another.long.path) as |value|}}\n  {{value}}\n{{/let}}",
     "{{#someBlock someArgument anotherArgument yetAnotherArgument andOneMoreArgument andYetAnotherOne key=value as |a|}}b{{/someBlock}}",
     "{{#a as |true|}}{{/a}}",
@@ -3013,26 +3052,26 @@ describe("Handlebars", () => {
     "{{#if a}}b{{/unless}}",
     "{{#if a}}<b>{{/if}}</b>",
     "<b>{{#if a}}</b>{{/if}}",
-    "{{^a}}b{{/a}}\n{{#a}}b{{^}}c{{/a}}\n{{#>a}}b{{/a}}\n{{#*inline \"a\"}}b{{/inline}}",
+    '{{^a}}b{{/a}}\n{{#a}}b{{^}}c{{/a}}\n{{#>a}}b{{/a}}\n{{#*inline "a"}}b{{/inline}}',
     // Attributes.
-    "<a b c=\"d\" e='f' g=h i={{j}} k=\"{{l}}\" m=\"n {{o}} p\" ...attributes {{on \"q\" r}} {{! s }} as |t u|>v</a>",
-    "<SomeComponent @someArgument={{this.someValue}} @anotherArgument=\"another value\" class=\"some classes\" as |value|>a</SomeComponent>",
+    '<a b c="d" e=\'f\' g=h i={{j}} k="{{l}}" m="n {{o}} p" ...attributes {{on "q" r}} {{! s }} as |t u|>v</a>',
+    '<SomeComponent @someArgument={{this.someValue}} @anotherArgument="another value" class="some classes" as |value|>a</SomeComponent>',
     "<SomeComponent @someArgument={{someHelper this.someValue this.anotherValue this.yetAnotherValue key=this.value}} />",
     "<a\n  b\n>c</a>\n<a\n  b\n/>\n<a\n>c</a>\n<a b\n  c>d</a>",
-    "<a class=\"\"><a class=\" \"><a class=\" b  c \"><a class=\"b\n  c\"><a class='b'><a CLASS=\" b \"><a class=b></a></a></a></a></a></a></a>",
-    "<a class=\"b {{c}}\"><a class=\"{{c}} b\"><a class=\"{{c}} \"><a class=\" {{c}}\"><a class=\"{{c}}{{d}} {{e}}\"><a class=\"b{{c}}d\"></a></a></a></a></a></a>",
+    '<a class=""><a class=" "><a class=" b  c "><a class="b\n  c"><a class=\'b\'><a CLASS=" b "><a class=b></a></a></a></a></a></a></a>',
+    '<a class="b {{c}}"><a class="{{c}} b"><a class="{{c}} "><a class=" {{c}}"><a class="{{c}}{{d}} {{e}}"><a class="b{{c}}d"></a></a></a></a></a></a>',
     "<div class=\"some-class another-class yet-another-class {{if this.condition 'one-more-class'}} and-a-last-one\">a</div>",
     "<div class=\"some-class another-class yet-another-class and-one-more-class\n  {{if this.condition 'one-more-class'}}\">a</div>",
     "<div\n  class=\"some-class another-class yet-another-class and-one-more-class-here\n    {{if this.condition 'one-more-class'}}\"\n>a</div>",
     "<b class=\"{{if this.someCondition (concat 'some-class-' this.someSuffix) (concat 'another-class-' this.anotherSuffix)}}\">a</b>",
-    "<a title=\"it's\"><a title='say \"b\"'><a title='c'><a title=\"&quot;\"><a title=\"é\"><a title=\"a\nb\"><a title=\"a\\\"></a></a></a></a></a></a></a>",
-    "<a title='\"\" {{b}}'><a title=\"'' {{b}}\"><a title=\"{{b \"c\"}}\"><a title='{{b \"c\"}}'><a title=\"{{b 'c' d=\"e\"}}\"></a></a></a></a></a>",
-    "<a href=\"some-very-long-address-that-does-not-fit-on-the-line-at-all/{{this.id}}/and-goes-on-and-on-behind-it\">b</a>",
-    "<a href=\"some-very-long-address-that-does-not-fit-on-the-line-at-all/{{if a b}}/and-goes-on-and-on-behind-it\">b</a>",
-    "<a b = \"c\"></a>\n<a b= \"c\"></a>\n<a b=\"c\"d=\"e\"></a>\n<a b=c/>\n<a b=/c></a>\n<a b={{c}}d></a>\n<a b={{c}}/>\n<a {{b}}c></a>",
+    '<a title="it\'s"><a title=\'say "b"\'><a title=\'c\'><a title="&quot;"><a title="é"><a title="a\nb"><a title="a\\"></a></a></a></a></a></a></a>',
+    '<a title=\'"" {{b}}\'><a title="\'\' {{b}}"><a title="{{b "c"}}"><a title=\'{{b "c"}}\'><a title="{{b \'c\' d="e"}}"></a></a></a></a></a>',
+    '<a href="some-very-long-address-that-does-not-fit-on-the-line-at-all/{{this.id}}/and-goes-on-and-on-behind-it">b</a>',
+    '<a href="some-very-long-address-that-does-not-fit-on-the-line-at-all/{{if a b}}/and-goes-on-and-on-behind-it">b</a>',
+    '<a b = "c"></a>\n<a b= "c"></a>\n<a b="c"d="e"></a>\n<a b=c/>\n<a b=/c></a>\n<a b={{c}}d></a>\n<a b={{c}}/>\n<a {{b}}c></a>',
     "<a {{true}}></a>",
     "<a {{~b}}></a>\n<a {{b~}}></a>\n<a {{{b}}}></a>\n<a {{! prettier-ignore }} b = c></a>\n<a {{#if b}}c{{/if}}></a>",
-    "<a as></a>\n<a as b></a>\n<a aspect=\"b\"></a>\n<a as |b| c></a>\n<a as|b|></a>\n<a |b|></a>",
+    '<a as></a>\n<a as b></a>\n<a aspect="b"></a>\n<a as |b| c></a>\n<a as|b|></a>\n<a |b|></a>',
     "<iMg>\n<dIv></dIv>\n<BR>\n<a$b></a$b>\n<a.></a.>\n<x-></x->",
     "</a>",
     "<a></a >\n<a></a\n>\n<Foo></Foo >",
@@ -3182,11 +3221,12 @@ describe("Handlebars", () => {
         neighbors.flatMap(after => places.map(([open, close]) => `${open}${before}${construct}${after}${close}`)),
       ),
     );
-    expectSame(
-      "a.hbs",
-      isDebug ? all.filter((_, index) => index % 16 === 0) : all,
-      [[], ["--print-width=30"], ["--print-width=16"], ["--print-width=8"]],
-    );
+    expectSame("a.hbs", isDebug ? all.filter((_, index) => index % 16 === 0) : all, [
+      [],
+      ["--print-width=30"],
+      ["--print-width=16"],
+      ["--print-width=8"],
+    ]);
   });
 
   test.skipIf(!hasFlag)("what has been formatted", async () => {
@@ -3337,13 +3377,13 @@ describe("templates in another language", () => {
     '@Component({\n  selector: "a",\n  template: `<p>\\u{</p>`,\n})\nclass A {}\n',
     '@Component({\n  selector: "a",\n  template: `<p>${a}</p>${b}`,\n})\nclass A {}\n',
     // Markup with all that a template of Angular has.
-    "@Component({\n  selector: \"a\",\n  template: `\n    <div   class=\"a  b\"  [title]=\"title | async\"   (click)=\"onClick($event); other()\">\n      <span *ngIf=\"items.length > 0; else empty\">{{ items.length | number: '1.0-0' }} items</span>\n      <li *ngFor=\"let item of items; trackBy: trackById; let i = index\" [class.active]=\"item.id === selected?.id && !disabled\">{{item.name}}</li>\n      <ng-template #empty><p>nothing here, and this is a rather long text that has to be wrapped somewhere</p></ng-template>\n      <button type=\"button\" (click)=\"save({ id: item.id, name: item.name, description: item.description, more: true })\">Save</button>\n      @if (a > b) {\n        {{a}} is greater than {{b}}\n      } @else {\n        <b i18n=\"x|y@@z\">c</b>\n      }\n      @for (item of items; track item.id; let idx = $index) { <li>{{item}}</li> } @empty { none }\n      @let name = user.name + \"x\";\n    </div>\n  `,\n  styles: [`\n    :host { display:block; color : red }\n    .a, .b > .c { margin: 0 auto; background: url(foo.png) no-repeat }\n  `],\n})\nexport class A {}\n",
+    '@Component({\n  selector: "a",\n  template: `\n    <div   class="a  b"  [title]="title | async"   (click)="onClick($event); other()">\n      <span *ngIf="items.length > 0; else empty">{{ items.length | number: \'1.0-0\' }} items</span>\n      <li *ngFor="let item of items; trackBy: trackById; let i = index" [class.active]="item.id === selected?.id && !disabled">{{item.name}}</li>\n      <ng-template #empty><p>nothing here, and this is a rather long text that has to be wrapped somewhere</p></ng-template>\n      <button type="button" (click)="save({ id: item.id, name: item.name, description: item.description, more: true })">Save</button>\n      @if (a > b) {\n        {{a}} is greater than {{b}}\n      } @else {\n        <b i18n="x|y@@z">c</b>\n      }\n      @for (item of items; track item.id; let idx = $index) { <li>{{item}}</li> } @empty { none }\n      @let name = user.name + "x";\n    </div>\n  `,\n  styles: [`\n    :host { display:block; color : red }\n    .a, .b > .c { margin: 0 auto; background: url(foo.png) no-repeat }\n  `],\n})\nexport class A {}\n',
     "@Component({ template: `<a>{{x}}</a>`, styles: `a{b:c}` })\nclass B {}\n@Component({ template: `<a>${x}</a><b></b>` })\nclass C {}\n@Component({ template: ` <a>${x}</a><b></b>` })\nclass D {}\n@Component({ template: `<a>${x}</a><b></b> ` })\nclass E {}\n@Component({ template: ` <a>${x}</a> ` })\nclass F {}\n",
     "@Component({ template: `<p title=\"a &quot;b&quot; 'c'\" [a]=\"'x' + &quot;y&quot;\" (b)=\"c = 'd'\">\\${{ price }} \\`x\\` \\\\ \\u00e9</p>` })\nclass A {}\n",
-    "@Component({ template: `<div style=\"color:red;background:blue\" onclick=\"a(1);b()\" class=\"  b   a \"><style>a{b:c}</style><script>let  a = `x${1}`</script><pre>\n  x\n</pre><textarea> a </textarea></div>` })\nclass A {}\n",
-    "@Component({ template: `<a [b]=\"c // d\"></a><a (b)=\"c; // d\"></a>{{ a // b\n}}<i>{{}}</i><i a=\"{{ }}\"></i>` })\nclass A {}\n",
+    '@Component({ template: `<div style="color:red;background:blue" onclick="a(1);b()" class="  b   a "><style>a{b:c}</style><script>let  a = `x${1}`</script><pre>\n  x\n</pre><textarea> a </textarea></div>` })\nclass A {}\n',
+    '@Component({ template: `<a [b]="c // d"></a><a (b)="c; // d"></a>{{ a // b\n}}<i>{{}}</i><i a="{{ }}"></i>` })\nclass A {}\n',
     // Substitutions in every place of markup.
-    "const h = html`<div class=\"${cls}\" @click=${handler} ${attr} a${b}c=\"d${e}f\">${content}  <p>text ${a + b} more</p><${tag}>x</${tag}></div>`;\nconst i = /* HTML */ `\n  <ul>${items.map(i => html`<li>${i}</li>`)}</ul>\n`;\nfoo(html`<a>${veryLongFunctionName(withSomeArguments, andSomeMoreArguments, andEvenMoreArgumentsThanThat)}</a>`);\nconst f = () => html`<b>${x}</b>`;\n",
+    'const h = html`<div class="${cls}" @click=${handler} ${attr} a${b}c="d${e}f">${content}  <p>text ${a + b} more</p><${tag}>x</${tag}></div>`;\nconst i = /* HTML */ `\n  <ul>${items.map(i => html`<li>${i}</li>`)}</ul>\n`;\nfoo(html`<a>${veryLongFunctionName(withSomeArguments, andSomeMoreArguments, andEvenMoreArgumentsThanThat)}</a>`);\nconst f = () => html`<b>${x}</b>`;\n',
     "o(html`\n<${b}>`);\na.c(/* HTML */ ` <${b}><script></script>\n`).d();\n",
     "a = html`<script>html\\`<a>\\${b}</a>\\`</script>${c}`;\n",
     // A text of nothing but white space, as it is written or by its escapes.
@@ -3352,24 +3392,24 @@ describe("templates in another language", () => {
     // Style sheets.
     "const s = styled.div`\n  color: ${props => props.color};\n  ${mixin};\n  margin: ${a}px ${b}px;\n  ${Button}:hover & { a: b }\n  /* c\n     d */\n  // e\n`;\nconst t = styled(Foo).attrs({ a: 1 })`a{b:c}`;\nfoo(css`a{b:c}`);\nconst f = () => css.global`a{b:c}`;\n",
     "x = css`2:a //\n${(a,b)}`;\ny = css`v{grid-template:''\n${tionName(MoreArguments,andEvenMoreArgumentsThanThat)}'main sidebar'}`;\n",
-    "a = css`& [=\"\n\"]{}`;\nb = css`a [b=\"\n\"], c{}`;\nc = css`a{b: \"x\\\n y\" c}`;\n",
+    'a = css`& [="\n"]{}`;\nb = css`a [b="\n"], c{}`;\nc = css`a{b: "x\\\n y" c}`;\n',
     "a = css`---\ne:\n-\n---s{}`;\n",
     "function f(){return css.resolve`@use\"\"(n:(,,))''`}\n",
     "o={a:css.global`@import(//\n}${a})`}\n",
     "a = css`a{b:@prettier-placeholder-7-id}`;\nb = css`a{b:${c} @prettier-placeholder-7-id}`;\nc = css`a{${b}`;\n",
     // Queries.
     "const q = gql`\n  query Foo($a: Int) { a(b: $a) { c d } }\n\n  ${fragment}\n\n  # comment\n  ${other}\n`;\nconst r = graphql(schema, `{ a }`);\nconst s = /* GraphQL */ `{ a }`;\nconst t = graphql.experimental`{a}`;\n",
-    "s={a:/* GraphQL */`#\\ud800`}\nt = gql`{ a(b: \"\\\\\") }`;\nu = gql`# a ${b}`;\nv = gql`\n# a\n\n# b\n`;\nw = gql`{a}\u00a0`;\n",
+    's={a:/* GraphQL */`#\\ud800`}\nt = gql`{ a(b: "\\\\") }`;\nu = gql`# a ${b}`;\nv = gql`\n# a\n\n# b\n`;\nw = gql`{a}\u00a0`;\n',
     // Markdown.
     "const m = markdown`\n  # Title\n  * a\n  * b\n\n  some   text\n`;\nconst n = md`\n# Title\n\n\\`\\`\\`js\nlet  a\n\\`\\`\\`\n`;\n",
     "someFunction(markdown`>c\n`);\na.c(md`>c\n`).d();\nmd`a|||\n-|-|-`;\na=markdown` \\`\n\\``;\nconst b=await foo(async()=>md` this is a long long long long long long long long paragraph.`);\n",
     // What is nearly a template in another language, or is one in two.
     "graphql?.(`{a{b}}`);\nx=graphql?.(` `);\ngraphql?.(`${f()}`);\na?.graphql(`{a{b}}`);\nnew graphql(`{a}`);\ngraphql(a)(`{a}`);\n",
     "x = /* GraphQL */ css`{ a }`;\nx = /* GraphQL */ css`a{`;\nx = /* GraphQL */ md`{ a`;\nx = /* HTML */ markdown`<a`;\nx = /* HTML */ gql`{a}`;\nx = /* HTML */ /* GraphQL */ `{a}`;\n",
-    "x = styled?.div`a{b:c}`;\nx = styled[\"div\"]`a{b:c}`;\nx = css.foo`a{b:c}`;\nx = (styled.div)`a{b:c}`;\nx = html.foo`<a></a>`;\nx = /*GraphQL*/ `{a}`;\nx = /** GraphQL */ `{a}`;\n",
+    'x = styled?.div`a{b:c}`;\nx = styled["div"]`a{b:c}`;\nx = css.foo`a{b:c}`;\nx = (styled.div)`a{b:c}`;\nx = html.foo`<a></a>`;\nx = /*GraphQL*/ `{a}`;\nx = /** GraphQL */ `{a}`;\n',
     "@Component({ 'template': `<a></a>` })\nclass A {}\n@ng.Component({ template: `<a></a>` })\nclass B {}\n@Component({ a: { template: `<a></a>` } })\nclass C {}\n@Component({ styles: [[`a{b:c}`]] })\nclass D {}\n@Component({ template: (`<a></a>`) })\nclass E {}\nComponent({ template: `<a></a>` });\n",
     // A template in a substitution of a template, on another line.
-    "(html`<script type=\"text/x-handlebars-template\"><div><h1></h1><div></div></div></script><script>\n  ${(m>html`<`)}</script>`)\n",
+    '(html`<script type="text/x-handlebars-template"><div><h1></h1><div></div></div></script><script>\n  ${(m>html`<`)}</script>`)\n',
     // A text without width.
     "/* HTML */` he fix happened. \u000b\n`;\n",
   ];
@@ -3403,12 +3443,17 @@ describe("JavaScript that is deep, long or full of comments", () => {
         nest("", "a", "(b)", 5000),
         nest("", "a", ".b()", 5000),
         nest("", "a", "[0]", 7000),
-        nest("{a:", "1", "}", 2700),
-        nest("[", "", "]", 2700),
-        nest("<a>", "", "</a>", 2700),
-        nest("f(", "", ")", 2700),
         nest("a ? b : ", "c", "", 5000),
         nest("", "a", ".b", 20000),
+        // The frames of such a build are larger, and the long way's more so: it runs out of stack first.
+        ...(isDebug || isASAN
+          ? []
+          : [
+              nest("{a:", "1", "}", 2700),
+              nest("[", "", "]", 2700),
+              nest("<a>", "", "</a>", 2700),
+              nest("f(", "", ")", 2700),
+            ]),
       ],
       [["--use-tabs"]],
     ));
@@ -3426,7 +3471,9 @@ describe("JavaScript that is deep, long or full of comments", () => {
   describe("rows of comments", () =>
     expectSame(
       "a.js",
-      [3, 511, 513, 3000].flatMap(count => rows(ascii, count)).concat([513, 3000].flatMap(count => rows(beyondAscii, count))),
+      [3, 511, 513, 3000]
+        .flatMap(count => rows(ascii, count))
+        .concat([513, 3000].flatMap(count => rows(beyondAscii, count))),
       [[]],
     ));
 });
@@ -3662,7 +3709,18 @@ describe("JavaScript and TypeScript in a host", () => {
       "a \u00e9",
       "'\u4e2d\u6587'",
     ];
-    const names = [":a", "v-if", "@a", "v-bind:a", ".a", ":class", "v-model", "v-for", "#a", ":aaaaaaaaaaaaaaaaaaaaaaaa"];
+    const names = [
+      ":a",
+      "v-if",
+      "@a",
+      "v-bind:a",
+      ".a",
+      ":class",
+      "v-model",
+      "v-for",
+      "#a",
+      ":aaaaaaaaaaaaaaaaaaaaaaaa",
+    ];
     const script = '\n<script setup lang="ts">\nlet a;\n</script>\n';
     // Names on the left side, and what is more than a name.
     const lefts = [
@@ -3716,7 +3774,11 @@ describe("JavaScript and TypeScript in a host", () => {
       ...names.map(name => [/"/, script, (code: string) => `  <div ${name}="${code}"></div>`] as [RegExp, string, any]),
       [/"/, "", code => `  <div :a="${code}"></div>`],
       [/"/, script, code => `  <a :b="${code}" />`],
-      [/"/, script, code => `  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>`],
+      [
+        /"/,
+        script,
+        code => `  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>`,
+      ],
       [/"/, script, code => `  <span :b="${code}">c</span>d`],
       [/"/, script, code => `  <pre :b="${code}">\nc</pre>`],
       [/[{}<]/, script, code => `  <p>{{ ${code} }}</p>`],
@@ -3739,10 +3801,7 @@ describe("JavaScript and TypeScript in a host", () => {
           ),
         ]),
         ...shapes.flatMap(([alone, end, element]) => [
-          file(
-            expressions.filter(code => !alone.test(code)).map(element),
-            end,
-          ),
+          file(expressions.filter(code => !alone.test(code)).map(element), end),
           ...expressions.filter(code => alone.test(code)).map(code => file([element(code)], end)),
         ]),
       ],
@@ -3768,7 +3827,10 @@ describe("JavaScript and TypeScript in a host", () => {
     const at = (depth: number, tag: string, code: string) => {
       const names = ["html", "body", "div", "section", "main"].slice(0, depth);
       const open = names.map((name, level) => `${"  ".repeat(level)}<${name}>\n`).join("");
-      const close = names.map((name, level) => `${"  ".repeat(level)}</${name}>\n`).reverse().join("");
+      const close = names
+        .map((name, level) => `${"  ".repeat(level)}</${name}>\n`)
+        .reverse()
+        .join("");
       const by = "  ".repeat(depth);
       return `${open}${by}${tag}\n${indented(code, `${by}  `)}\n${by}</script>\n${close}`;
     };
@@ -3819,8 +3881,8 @@ describe("JavaScript and TypeScript in a host", () => {
       "```js\nif (a) {\n  b();\n} else {\n  c();\n}\n\ntry {\n  d();\n} catch (e) {\n  f();\n} finally {\n  g();\n}\n```\n",
       "```js\nif (a) {\n\tb();\n}\n```\n\n```js\nif (a) {\n    b();\n}\n```\n",
       "```js\nconst a = 1;\n// @flow\n```\n\n```js\n// prettier-ignore\nconst a = 1;\n```\n\n```js\nconst a = 1; // prettier-ignore\nconst  b = 1;\n```\n",
-      "```js\nconst a = `b`;\n```\n\n```js\nconst a = css`b`;\n```\n\n```js\nconst a = 中;\n```\n\n```js\nconst a = \"中\";\n```\n",
-      "```js title=\"a\"\nconst a = 1;\n```\n\n````js\nconst a = 1;\n````\n\n~~~js\nconst a = 1;\n~~~\n\n``` js\nconst a = 1;\n```\n\n```js\nconst a = 1;\n``` \n",
+      '```js\nconst a = `b`;\n```\n\n```js\nconst a = css`b`;\n```\n\n```js\nconst a = 中;\n```\n\n```js\nconst a = "中";\n```\n',
+      '```js title="a"\nconst a = 1;\n```\n\n````js\nconst a = 1;\n````\n\n~~~js\nconst a = 1;\n~~~\n\n``` js\nconst a = 1;\n```\n\n```js\nconst a = 1;\n``` \n',
       "```js\r\nconst a = 1;\r\n```\r\n",
       // Many that aren't, then some that are.
       "```js\nconst  a=1\n```\n\n".repeat(30) + "```js\nconst a = 1;\n```\n\n".repeat(30),
@@ -3842,7 +3904,7 @@ describe("JavaScript and TypeScript in a host", () => {
         `<p>${"word ".repeat(30)}</p>`,
         "<ul>\n  <li>a</li>\n  <li><b>c</b> d</li>\n</ul>\n\n\n<p>e</p>",
         "<p>a",
-        "<p>{{ a }}</p>\n<p :b=\"c+d\"></p>",
+        '<p>{{ a }}</p>\n<p :b="c+d"></p>',
       ].flatMap(code => [
         `\`\`\`html\n${code}\n\`\`\`\n`,
         `a\n\n\`\`\`html\n${code}\n\`\`\`\n\nb\n`,
@@ -3866,7 +3928,7 @@ describe("JavaScript and TypeScript in a host", () => {
           `<A b={${"c".repeat(80)}} />\n\n<A b="${"c".repeat(40)}" d="${"e".repeat(40)}" />\n\n<A b={() => { f() }} />\n\n<A {...b} />\n\n<A b={\`c\nd\`} />\n`,
           "<A />\n<B />\n\n<A>b</A> c\n\n<A>b</A>;\n\n<A b={1: 2} />\n\n<A>{/* c */}</A>\n\n<A>{b /* c */}</A>\n\n<A b={c // d\n} />\n\n<></>\n\n<>a <b>c</b></>\n",
           "- a\n\n  <A b={1}  c='d'>\n    <B />\n    e   f\n  </A>\n\n> <A b={`c\n> d`} />\n\n<A b={css`a{color:red}`} />\n\n<A b={{ 1: c, 'd': e }} />\n",
-          "<A>\n  text   {b}   more <C>d</C>\n  {' '}\n  e\n</A>\n\n<A>&nbsp;&amp;</A>\n\n<A b=\"&quot;\" c='\"' />\n\n<a.b.c d />\n\n<a:b c:d=\"e\" />\n\n<$ />\n\n<A></$>\n",
+          '<A>\n  text   {b}   more <C>d</C>\n  {\' \'}\n  e\n</A>\n\n<A>&nbsp;&amp;</A>\n\n<A b="&quot;" c=\'"\' />\n\n<a.b.c d />\n\n<a:b c:d="e" />\n\n<$ />\n\n<A></$>\n',
         ],
         options,
       ));
@@ -4446,7 +4508,8 @@ describe("what the quick way for scripts is asked about, and what is done around
       ["--tab-width=20000"],
       ["--print-width=0"],
       ["--print-width=4000000000"],
-    ]));
+    ]),
+  );
 
   // The first "\r" decides, whatever ends the lines before it.
   describe("the end of a line", () =>
@@ -5417,7 +5480,7 @@ describe("an `if` with a statement that is no block on its line", () => {
     ["class A extends B {\n  m() {\n  ", "\n  }\n}\n"],
     ["function f() {\n  // prettier-ignore\n  ", "\n}\n"],
   ];
-  const texts = around.flatMap(([before, after]) =>
+  const texts = around.map(([before, after]) =>
     clauses.flatMap(clause => followers.map(follower => `${before}if (!a) ${clause}${follower}${after}`)),
   );
   const heads = [
@@ -5429,7 +5492,9 @@ describe("an `if` with a statement that is no block on its line", () => {
     "if (a) // c\n  b();\n",
   ];
   const options = [[], ["--print-width=30"], ["--no-semi", "--single-quote"], ["--use-tabs", "--end-of-line=crlf"]];
-  describe("TypeScript", () => expectSame("a.ts", [...texts, ...heads], options));
-  describe("JavaScript", () => expectSame("a.js", [...texts, ...heads], options));
-  describe("Flow", () => expectSame("a.js.flow", [...texts, ...heads], [[]]));
+  describe.each([...texts, heads].map((texts, index) => [index, texts] as const))("group %i", (_, texts) => {
+    describe("TypeScript", () => expectSame("a.ts", texts, options));
+    describe("JavaScript", () => expectSame("a.js", texts, options));
+    describe("Flow", () => expectSame("a.js.flow", texts, [[]]));
+  });
 });

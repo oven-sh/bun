@@ -33,6 +33,8 @@ pub(crate) struct ParseTypescript {
     pub(crate) trial_is_doubtful: bool,
     /// How many times `T?` was read where it is no element of a tuple: there it is a type of JSDoc.
     pub(crate) stray_optional_types: i32,
+    /// not 0: in a namespace or an enum, where `await` outside of a function is the operator only in front of a word, a number or a string
+    pub(crate) in_namespace: i32,
     /// What a class extends or implements, or an interface extends, is read.
     pub(crate) in_heritage: bool,
 }
@@ -47,6 +49,7 @@ impl ParseTypescript {
             export_needs_from: false,
             trial_is_doubtful: false,
             stray_optional_types: 0,
+            in_namespace: 0,
             in_heritage: false,
         }
     }
@@ -69,6 +72,7 @@ impl Quick {
         self.parse_typescript.in_head_of_for = false;
         self.parse_typescript.export_needs_from = false;
         self.parse_typescript.stray_optional_types = 0;
+        self.parse_typescript.in_namespace = 0;
         self.parse_typescript.in_heritage = false;
         self.flow_reset_context();
     }
@@ -466,6 +470,7 @@ impl Quick {
     pub(crate) fn parse_constituent(&mut self, operator: i32) -> R<i32> {
         // a function type needs parentheses here
         if self.is_start_of_function_or_constructor_type()? {
+            self.parse_typescript.trial_is_doubtful = true;
             return Err(self.unexpected());
         }
         return Ok(if operator == tk::BitOr {
@@ -580,6 +585,10 @@ impl Quick {
             }
             if operator != 0 {
                 self.next()?;
+                // without an operand; where type arguments are tried, TypeScript goes on
+                if self.lexer.tok == tk::Comma || self.starts_with_gt() {
+                    return Err(self.text_refuse());
+                }
                 let type_ = self.parse_type_operator_or_higher()?;
                 return Ok(self.node1(
                     k::TypeOperator | (operator << SUB_SHIFT),
@@ -709,7 +718,7 @@ impl Quick {
             self.leaf(k::ThisExpression)?
         } else {
             if self.lexer.tok == tk::Name {
-                self.identifier()?
+                self.parse_ident()?
             } else {
                 self.parse_ident_name()?
             }
@@ -1851,7 +1860,10 @@ impl Quick {
             }
             let key = self.parse_property_name()?;
             let initializer = if self.eat(tk::Eq)? {
-                self.parse_maybe_assign()?
+                self.parse_typescript.in_namespace += 1;
+                let value = self.parse_maybe_assign()?;
+                self.parse_typescript.in_namespace -= 1;
+                value
             } else {
                 0
             };
@@ -1884,6 +1896,7 @@ impl Quick {
         let start = self.lexer.tok_start;
         self.expect(tk::BraceL)?;
         let list_mark = self.arena.ls_pos;
+        self.parse_typescript.in_namespace += 1;
         while self.lexer.tok != tk::BraceR {
             if self.lexer.tok == tk::EOF {
                 return Err(self.unexpected());
@@ -1891,6 +1904,7 @@ impl Quick {
             let v0 = self.parse_statement()?;
             self.list_push(v0);
         }
+        self.parse_typescript.in_namespace -= 1;
         self.next()?;
         let v1 = self.lexer.prev_end;
         let v2 = self.list_finish(list_mark);
@@ -1904,9 +1918,6 @@ impl Quick {
             id = self.identifier()?;
         } else {
             self.next()?;
-            if self.is_kw(kw::Enum) {
-                return Err(self.text_refuse());
-            }
             id = if self.lexer.tok == tk::String {
                 self.string_literal()?
             } else {
@@ -2541,7 +2552,8 @@ impl Quick {
         let context = self.save_context();
         let depth = self.parse.speculating;
         let saved = self.parse_typescript.no_conditional_types;
-        let is_shift = self.lexer.tok == tk::Shl;
+        let is_shift =
+            self.lexer.tok == tk::Shl || self.t.at(self.blanks(self.lexer.tok_end)) == 60;
         self.parse_typescript.trial_is_doubtful = false;
         self.set_speculating(depth + 1);
         let mut result: i32 = 0;
@@ -2607,6 +2619,19 @@ impl Quick {
                     return Err(self.text_refuse());
                 }
                 self.restore();
+                // `a << b.c > (d)`: the same, with more that is missed
+                let mut p = self.lexer.tok_end;
+                let is_one_token = self.lexer.tok == tk::Shl;
+                loop {
+                    let c = self.t.at(p);
+                    if c == 0 || (c == 10 && is_one_token) || c == 59 {
+                        break;
+                    }
+                    if c == 62 && self.t.at(self.blanks(p + 1)) == 40 {
+                        return Err(self.text_refuse());
+                    }
+                    p += 1;
+                }
             }
         } else {
             self.unmark(m);

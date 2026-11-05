@@ -89,6 +89,8 @@ pub struct Counts {
     pub printed: Count,
     /// In the order of [`Reason::ALL`].
     pub refused: [Count; Reason::ALL.len()],
+    /// [`Reason::Rare`] by the number that the quick way gives the rare thing. The last one is for all higher numbers.
+    pub rare: [Count; 16],
 }
 
 /// What lives from one text to the next.
@@ -576,6 +578,15 @@ fn format_as(
             9 => Reason::Lost,
             _ => Reason::Other,
         };
+        let which = usize::try_from(quick.which_rare()).unwrap_or(0);
+        if reason == Reason::Rare
+            && let Some(counts) = &mut scratch.counts
+        {
+            let last = counts.rare.len().saturating_sub(1);
+            if let Some(count) = counts.rare.get_mut(which.min(last)) {
+                count.add(code.text);
+            }
+        }
         return Err(scratch.refuse(reason, code.text));
     }
     if crate::is_too_long(out.len()) {

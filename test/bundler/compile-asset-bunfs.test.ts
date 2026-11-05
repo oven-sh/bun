@@ -258,9 +258,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           import path from "node:path";
           import note from "../outside/note.txt" with { type: "file" };
 
-          const outcome = async (run: () => unknown) => {
-            try { return JSON.stringify(await run()) ?? "undefined"; } catch (e: any) { return "throws " + e.code; }
+          const attempt = async (run: () => unknown) => {
+            try { return await run(); } catch (e: any) { return "throws " + e.code; }
           };
+          const outcome = async (run: () => unknown) => JSON.stringify(await attempt(run)) ?? "undefined";
           const apis: Record<string, (p: string) => unknown> = {
             existsSync: p => fs.existsSync(p),
             statSync: p => { const stats = fs.statSync(p); return [stats.isDirectory(), stats.size]; },
@@ -309,11 +310,13 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
 
           const mod = [import.meta.dir, ".", "mod.js"].join(path.sep);
           const modules = {
-            import: (await import(mod)).default,
-            require: require([import.meta.dir, "client", "..", "mod.js"].join(path.sep)).default,
-            resolveSync:
-              Bun.resolveSync([import.meta.dir, "", "mod.js"].join(path.sep), import.meta.dir) ===
-              Bun.resolveSync(path.join(import.meta.dir, "mod.js"), import.meta.dir),
+            import: await attempt(async () => (await import(mod)).default),
+            require: await attempt(() => require([import.meta.dir, "client", "..", "mod.js"].join(path.sep)).default),
+            resolveSync: await attempt(
+              () =>
+                Bun.resolveSync([import.meta.dir, "", "mod.js"].join(path.sep), import.meta.dir) ===
+                Bun.resolveSync(path.join(import.meta.dir, "mod.js"), import.meta.dir),
+            ),
             worker: await new Promise(resolve => {
               const worker = new Worker(mod);
               worker.onmessage = event => { resolve(event.data); worker.terminate(); };
@@ -327,11 +330,15 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           console.log(JSON.stringify({
             differing,
             compared: Object.keys(apis).length * spelled.length,
-            content: fs.readFileSync(spelled[0], "utf8"),
-            entries: fs.readdirSync(spelled[5]).sort(),
+            content: await attempt(() => fs.readFileSync(spelled[0], "utf8")),
+            entries: await attempt(() => fs.readdirSync(spelled[5]).sort()),
             modules,
             // A key that holds ".." itself is found as written.
-            keyWithParent: { holdsParent: note.includes(".."), exists: fs.existsSync(note), text: await Bun.file(note).text() },
+            keyWithParent: {
+              holdsParent: note.includes(".."),
+              exists: fs.existsSync(note),
+              text: await attempt(() => Bun.file(note).text()),
+            },
             // ".." does not lead out of the root of the executable to a file on disk.
             outsideTheRoot: fs.existsSync([import.meta.dir, "..", ".."].join(path.sep) + executable),
           }));

@@ -1918,6 +1918,42 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
     );
   });
 
+  test("capitalized-comments tests oxlint's ignorePattern against each line without its leading whitespace", async () => {
+    // oxlint trims each line and removes one `*` and one space after it before it tests the pattern. ESLint removes
+    // only the asterisks, so `^noinspection` matches `// noinspection` for oxlint alone.
+    const code = [
+      "//noinspection NoSpace",
+      "// noinspection WithSpace",
+      "/* noinspection Block */",
+      "/** noinspection Doc */",
+      "/* * noinspection TwoStars */",
+      "/*** noinspection ThreeStars */",
+      "/*",
+      " * noinspection Multi",
+      " */",
+      "/**  noinspection TwoSpaces */",
+      "/*\t* noinspection Tab */",
+      "// x noinspection Late",
+      "export const x = 1;",
+      "",
+    ].join("\n");
+    const rules = { "capitalized-comments": ["error", "always", { ignorePattern: "^noinspection|late" }] };
+    const [inOxlint, inEslint] = await Promise.all([
+      lint({ "a.js": code, ".oxlintrc.json": JSON.stringify({ rules }) }, ["-f", "unix"]),
+      lint({ "a.js": code, ...flat(rules) }, ["-f", "json"]),
+    ]);
+    const reported = (stdout: string) => stdout.split("\n").filter(line => line.startsWith("a.js:"));
+    expect(reported(inOxlint.stdout)).toEqual(
+      [6, 7, 10, 12].map(
+        line =>
+          `a.js:${line}:1: Comments should not begin with a lowercase letter [Error/eslint(capitalized-comments)]`,
+      ),
+    );
+    expect(problems(inEslint.stdout)).toEqual(
+      [2, 3, 4, 5, 6, 7, 10, 11, 12].map(line => `a.js:${line} capitalized-comments`),
+    );
+  });
+
   test("an oxlint config reports rules under oxlint's names", async () => {
     const { stdout, exitCode } = await lint(
       {

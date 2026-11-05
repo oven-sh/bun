@@ -49,6 +49,32 @@ fn without_asterisks(value: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
+/// oxlint's `normalize_comment_text`, which its `ignorePattern` is tested against: each line of the value without its
+/// leading whitespace, one `*` and one space after the `*`. ESLint tests the value with only its asterisks removed, so
+/// an anchored pattern such as `^noinspection` matches `// noinspection` for oxlint and not for ESLint.
+fn oxlint_normalized(value: &[u8]) -> Cow<'_, [u8]> {
+    fn normalize_line(line: &[u8]) -> &[u8] {
+        let line = strings::trim_js_whitespace_start(line.strip_suffix(b"\r").unwrap_or(line));
+        match line.strip_prefix(b"*") {
+            Some(rest) => rest.strip_prefix(b" ").unwrap_or(rest),
+            None => line,
+        }
+    }
+    if !strings::contains_char(value, b'\n') {
+        return Cow::Borrowed(normalize_line(value));
+    }
+    // Like Rust's `str::lines`, which oxlint uses: a final line break ends the last line and starts no empty one.
+    let value = value.strip_suffix(b"\n").unwrap_or(value);
+    let mut normalized = Vec::with_capacity(value.len());
+    for (i, line) in strings::split(value, b"\n").enumerate() {
+        if i > 0 {
+            normalized.push(b'\n');
+        }
+        normalized.extend_from_slice(normalize_line(line));
+    }
+    Cow::Owned(normalized)
+}
+
 /// `/^\s*[^:/?#\s]+:\/\/[^?#]/u`, for the value of a comment without its asterisks.
 fn is_maybe_url(value: &[u8]) -> bool {
     let mut rest = strings::wtf8_codepoints(value)
@@ -174,8 +200,12 @@ impl CapitalizedComments {
             false if cx.language().has_no_foreign_config && oxlint_is_directive(comment, value) => true,
             false => ast_utils::matches_comments_ignore_pattern(value) || is_maybe_url(value),
         };
+        let is_ignored = |pattern: &Regex| match cx.language().is_oxlint {
+            true => pattern.test(&oxlint_normalized(value)),
+            false => pattern.test(&without_asterisks(value)),
+        };
         if is_directive
-            || (options.ignore_pattern.as_ref()).is_some_and(|it| it.test(&without_asterisks(value)))
+            || options.ignore_pattern.as_ref().is_some_and(is_ignored)
             || options.ignore_inline_comments && is_inline_comment(cx.file(), comment)
             || options.ignore_consecutive_comments && is_consecutive_comment(cx.file(), comment)
         {

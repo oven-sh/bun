@@ -4907,6 +4907,8 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // Flow: `|` at the start of the supertype of an opaque type, `interface {}` in an intersection.
     ["a.js.flow", "", "opaque type a:|X\n"],
     ["a.js.flow", "", "type a=interface{}&Y\n"],
+    // Flow: the supertype of an opaque type in parentheses.
+    ["a.js.flow", "", "opaque type a:(|X)\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

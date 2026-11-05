@@ -1531,8 +1531,8 @@ impl Quick {
         let mut upper: i32 = 0;
         let mut impl_: i32 = 0;
         if self.eat(tk::Colon)? {
-            // (the long way writes `extends` for the `:` then)
-            if self.lexer.tok == tk::BitOr {
+            // (`| A`, `(| A)`: the long way writes `extends` for the `:` then)
+            if self.lexer.tok == tk::BitOr || self.lexer.tok == tk::ParenL {
                 return Err(self.rare(rare::UNLIKE_PRETTIER));
             }
             supertype = self.flow_parse_type_fresh()?;

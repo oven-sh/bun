@@ -5,6 +5,27 @@ use crate::doc::ALIGN_DEDENT;
 use crate::print::statics::{_EXTENDS_, COLON_SPACE, LPAREN, QUESTION_SPACE, RPAREN, SPACE};
 use crate::{Quick, R, Words};
 
+/// What print_ternary() has found out about the conditional whose parts it is printing. A conditional among these parts belongs to the same
+/// chain, asks the same questions, and need not climb past this one or walk the whole chain again.
+#[derive(Clone, Copy)]
+pub(crate) struct PrintTernary {
+    pub(crate) known: i32,
+    last_conditional_parent: i32,
+    /// The node above that one, or 0.
+    above: i32,
+    chain_contains_jsx: bool,
+}
+impl PrintTernary {
+    pub(crate) fn new() -> Self {
+        Self {
+            known: 0,
+            last_conditional_parent: 0,
+            above: 0,
+            chain_contains_jsx: false,
+        }
+    }
+}
+
 impl Quick {
     pub(crate) fn chain_contains_jsx(&self, n: i32) -> R<bool> {
         self.stack()?;
@@ -108,11 +129,18 @@ impl Quick {
         let mut force_no_indent = parent_is_conditional && !is_parent_test;
         let mut previous_parent = n;
         let mut current_parent = parent;
+        let mut is_known = false;
         while current_parent != 0
             && (self.n.at(current_parent) & 0xff) == kind
             && self.n.at(current_parent + 4) != previous_parent
             && (is_expression || self.n.at(current_parent + 5) != previous_parent)
         {
+            if current_parent == self.print_ternary.known {
+                previous_parent = self.print_ternary.last_conditional_parent;
+                current_parent = self.print_ternary.above;
+                is_known = true;
+                break;
+            }
             previous_parent = current_parent;
             current_parent = self.n.at(current_parent + 3);
         }
@@ -122,11 +150,22 @@ impl Quick {
             parent
         };
         let last_conditional_parent = previous_parent;
+        let chain_contains_jsx = if is_known {
+            self.print_ternary.chain_contains_jsx
+        } else {
+            is_expression && self.chain_contains_jsx(last_conditional_parent)?
+        };
+        let own = PrintTernary {
+            known: n,
+            last_conditional_parent,
+            above: current_parent,
+            chain_contains_jsx,
+        };
         let jsx_mode = is_expression
             && (self.is_jsx_element(test)
                 || self.is_jsx_element(consequent)
                 || self.is_jsx_element(alternate)
-                || self.chain_contains_jsx(last_conditional_parent)?);
+                || chain_contains_jsx);
         if jsx_mode {
             force_no_indent = true;
         }
@@ -146,9 +185,11 @@ impl Quick {
         if is_alternate {
             self.align_open(2);
         }
+        self.print_ternary = own;
         self.print(test)?;
         if !is_expression {
             self.text(_EXTENDS_);
+            self.print_ternary = own;
             self.print(self.n.at(n + 5))?;
         }
         if is_alternate {
@@ -160,6 +201,7 @@ impl Quick {
         if jsx_mode {
             self.text(SPACE);
             self.text(QUESTION_SPACE);
+            self.print_ternary = own;
             if self.is_nil(consequent) {
                 self.print(consequent)?;
             } else {
@@ -167,6 +209,7 @@ impl Quick {
             }
             self.text(SPACE);
             self.text(COLON_SPACE);
+            self.print_ternary = own;
             if (self.n.at(alternate) & 0xff) == k::ConditionalExpression || self.is_nil(alternate) {
                 self.print(alternate)?;
             } else {
@@ -188,12 +231,14 @@ impl Quick {
             if consequent_is_conditional {
                 self.if_break_text(0, LPAREN, 0);
             }
+            self.print_ternary = own;
             self.print_branch(consequent)?;
             if consequent_is_conditional {
                 self.if_break_text(0, RPAREN, 0);
             }
             self.line();
             self.text(COLON_SPACE);
+            self.print_ternary = own;
             self.print_branch(alternate)?;
             if !plain {
                 self.indent_close();

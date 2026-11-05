@@ -44,6 +44,11 @@ pub mod flow {
     };
 }
 
+/// The quick way for JavaScript and TypeScript, which is tried before a file is parsed.
+pub mod quick {
+    pub use crate::js::quick::{Code, Count, Counts, Reason, Refused, Scratch, format};
+}
+
 /// Import sorting.
 pub mod sort_imports {
     pub use crate::js::sort_imports::{Settings, SortImports, sorted_text};

@@ -13,6 +13,7 @@ bun_semver.workspace = true
 bun_threading.workspace = true
 bun_ast.workspace = true
 bun_core.workspace = true
+bun_format_quick.workspace = true
 bun_collections.workspace = true
 bun_glob.workspace = true
 bun_highway.workspace = true

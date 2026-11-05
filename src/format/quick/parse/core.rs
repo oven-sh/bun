@@ -857,6 +857,7 @@ impl Quick {
         let column = self.parse.list_depth.wrapping_mul(self.options.tab_width);
         let head = k::Ready | F_STANDS | self.fast.ready_flags | decided | (kind << SUB_SHIFT);
         if last != 0
+            && self.arena.ls_pos > 0
             && self.arena.ls.at(self.arena.ls_pos - 1) == last
             && self.n.at(last + 6) == column
         {

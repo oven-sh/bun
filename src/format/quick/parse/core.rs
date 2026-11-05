@@ -7,8 +7,8 @@ use crate::ast::{
     EXT_AT, F_ACCESSOR, F_AFTER_EMPTY, F_ANY_WIDTH, F_ASYNC, F_AWAIT, F_CHAIN, F_COMPUTED,
     F_DECIDED, F_DEFINITE, F_DELEGATE, F_ESCAPE, F_EXPR_BODY, F_EXT, F_EXTRA, F_GENERATOR, F_LINES,
     F_OPTIONAL, F_PAREN, F_PREFIX, F_SELF_CLOSING, F_SHORTHAND, F_STANDS, F_STATIC, IK_SHIFT,
-    IK_TYPE, M_CONSTRUCTOR, M_GET, M_MASK, M_METHOD, M_SET, P_DEFER, P_MODULE, P_NONE, P_SOURCE,
-    V_AWAIT_USING, V_CONST, V_LET, V_USING, V_VAR, k,
+    IK_TYPE, M_CONSTRUCTOR, M_GET, M_MASK, M_METHOD, M_SET, MOD_DECLARE, P_DEFER, P_MODULE, P_NONE,
+    P_SOURCE, V_AWAIT_USING, V_CONST, V_LET, V_USING, V_VAR, k,
 };
 use crate::fast::{
     AFTER_BLOCK, AFTER_REFUSED, BLOCK_ARROW, BLOCK_ASYNC, BLOCK_CLASS, BLOCK_CONSTRUCTOR,
@@ -22,6 +22,7 @@ use crate::lexer::{
 };
 use crate::mode::SINGLE_JSX_IN_MARKDOWN;
 use crate::options::{EOL_LF, QUOTE_PROPS_CONSISTENT};
+use crate::parse::typescript::{PARAMETERS_OF_CONSTRUCTOR, PARAMETERS_OF_METHOD, PARAMETERS_PLAIN};
 use crate::{Quick, R, Stop, Words, why, zeros};
 
 pub(crate) struct Parse {
@@ -90,6 +91,8 @@ pub(crate) struct Parse {
     pub(crate) saw_typed_item: i32,
     /// TypeScript, Flow: the arguments that are parsed next may be the parameters of `async (..) => ..`
     pub(crate) arguments_may_be_parameters: i32,
+    /// Among the arguments that were parsed last is one with a `?` or a type.
+    pub(crate) arguments_were_typed: bool,
     /// The object that is parsed next is known to be a pattern.
     pub(crate) object_is_binding: bool,
     /// Set by parse_attributes: F_EXTRA when the keyword is `assert`.
@@ -215,6 +218,7 @@ impl Parse {
             in_decorator: 0,
             saw_typed_item: 0,
             arguments_may_be_parameters: 0,
+            arguments_were_typed: false,
             object_is_binding: false,
             attributes_flag: 0,
             place: NOWHERE,
@@ -231,6 +235,14 @@ impl Parse {
         }
     }
 }
+
+/// By the kind of method: M_METHOD, M_GET, M_SET, M_CONSTRUCTOR.
+static PARAMETERS_OF: [i32; 4] = [
+    PARAMETERS_OF_METHOD,
+    PARAMETERS_PLAIN,
+    PARAMETERS_OF_METHOD,
+    PARAMETERS_OF_CONSTRUCTOR,
+];
 
 // ---- which language: 0 JavaScript, 1 TypeScript, 2 Flow
 pub(crate) const TYPED_TS: i32 = 1;
@@ -537,7 +549,9 @@ impl Quick {
                 self.list_push(v0);
             }
         }
-        if self.parse.place.only_for_patterns != 0 {
+        if self.parse.place.only_for_patterns != 0
+            || self.parse_typescript.stray_optional_types != 0
+        {
             return Err(self.text_refuse());
         }
         let body = self.list_finish(mark);
@@ -1406,8 +1420,13 @@ impl Quick {
                 looked = (flags & (BLOCK_INTERFACE | BLOCK_OBJECT)) != 0;
                 self.parse.lexer_stays = !looked;
                 let block = if (flags & BLOCK_CLASS) != 0 {
+                    // (only the head of a declaration is read that way)
+                    let outer_is_declaration = self.parse_typescript.in_class_declaration;
+                    self.parse_typescript.in_class_declaration = true;
                     self.parse.next_class_is_derived = (flags & BLOCK_DERIVED) != 0;
-                    self.parse_class_body()?
+                    let body = self.parse_class_body()?;
+                    self.parse_typescript.in_class_declaration = outer_is_declaration;
+                    body
                 } else {
                     if (flags & BLOCK_INTERFACE) != 0 {
                         self.ts_parse_interface_body()?
@@ -2098,6 +2117,9 @@ impl Quick {
     /// TypeScript, Flow: `?` and `: type` behind the name or pattern `n`, which has room for them.
     pub(crate) fn parse_binding_suffix(&mut self, n: i32) -> R<()> {
         if self.lexer.tok == tk::Question {
+            if (self.n.at(n) & 0xff) == k::RestElement && self.parse.typed == TYPED_TS {
+                return Err(self.text_refuse());
+            }
             self.n.put(n, self.n.at(n) | F_OPTIONAL);
             self.next()?;
             self.n.put(n + 2, self.lexer.prev_end);
@@ -2141,6 +2163,14 @@ impl Quick {
                     flags = F_DEFINITE;
                     self.n.put(id, self.n.at(id) | F_DEFINITE);
                     self.next()?;
+                    // `let a!: A;`, and nothing else
+                    if (self.n.at(id) & 0xff) != k::Identifier
+                        || kind > V_LET
+                        || (self.parse.no_in & 1) != 0
+                        || self.lexer.tok != tk::Colon
+                    {
+                        return Err(self.text_refuse());
+                    }
                 }
                 if self.lexer.tok == tk::Colon {
                     self.parse_binding_suffix(id)?;
@@ -2148,6 +2178,9 @@ impl Quick {
             }
             let mut init: i32 = 0;
             if self.eat(tk::Eq)? {
+                if flags != 0 {
+                    return Err(self.text_refuse());
+                }
                 init = self.parse_maybe_assign()?;
             }
             last = self.node2(
@@ -2251,15 +2284,29 @@ impl Quick {
                 if var_kind == V_AWAIT_USING {
                     self.next()?;
                 }
+                if var_kind < 0 && kw == kw::Let && self.parse.typed == TYPED_TS {
+                    // always a declaration
+                    return Err(self.text_refuse());
+                }
             }
             let saved_no_in = self.parse.no_in;
+            let outer_head = self.parse_typescript.in_head_of_for;
             self.parse.no_in = 1;
+            self.parse_typescript.in_head_of_for = self.parse.typed == TYPED_TS;
             if var_kind >= 0 {
                 init = self.parse_var(init_start, var_kind)?;
             } else {
                 init = self.parse_expression()?;
             }
             self.parse.no_in = saved_no_in;
+            self.parse_typescript.in_head_of_for = outer_head;
+            if self.parse.typed == TYPED_TS {
+                self.ts_check_head_of_for(
+                    init,
+                    var_kind,
+                    self.lexer.tok == tk::In || self.is_kw(kw::Of),
+                )?;
+            }
             if self.lexer.tok == tk::In || self.is_kw(kw::Of) {
                 let kind = if self.lexer.tok == tk::In {
                     k::ForInStatement
@@ -2400,12 +2447,18 @@ impl Quick {
     // -------------------------------------------------------------------------------------------------------- functions
     /// `( params )`; returns the list.
     pub(crate) fn parse_params(&mut self) -> R<i32> {
+        return self.parse_params_of(PARAMETERS_PLAIN);
+    }
+
+    /// `owner`: PARAMETERS_PLAIN ..
+    pub(crate) fn parse_params_of(&mut self, owner: i32) -> R<i32> {
         self.expect(tk::ParenL)?;
         let saved_no_in = self.parse.no_in;
         self.parse.no_in = 0;
         let mark = self.arena.ls_pos;
         let outer = self.parse.place.in_parameters;
         self.parse.place.in_parameters = true;
+        let odd = self.parse_typescript.odd_parameters;
         while self.lexer.tok != tk::ParenR {
             let v0 = self.parse_binding_element()?;
             self.list_push(v0);
@@ -2421,6 +2474,9 @@ impl Quick {
             }
         }
         self.parse.place.in_parameters = outer;
+        if self.parse_typescript.odd_parameters != odd {
+            self.ts_check_parameters(mark, owner)?;
+        }
         self.next()?;
         self.parse.no_in = saved_no_in;
         return Ok(self.list_finish(mark));
@@ -2511,8 +2567,27 @@ impl Quick {
         };
         let element_start = self.lexer.tok_start;
         let mut element: i32;
+        if self.parse.typed == TYPED_TS {
+            if (modifiers | decorators) != 0 {
+                self.parse_typescript.odd_parameters += 1;
+            }
+            if self.lexer.tok == tk::This {
+                // the type of `this`, written as a parameter: nothing before it, and only the type behind it
+                if (modifiers | decorators) != 0 {
+                    return Err(self.text_refuse());
+                }
+                element = self.identifier()?;
+                if self.lexer.tok == tk::Colon {
+                    self.parse_binding_suffix(element)?;
+                }
+                return Ok(element);
+            }
+        }
         if self.lexer.tok == tk::Ellipsis {
             self.next()?;
+            if self.lexer.tok == tk::This && self.parse.typed == TYPED_TS {
+                return Err(self.unexpected());
+            }
             let argument = self.parse_binding_atom()?;
             // the type of a rest parameter belongs to the name in Flow
             if self.parse.typed == TYPED_FLOW {
@@ -2727,7 +2802,7 @@ impl Quick {
             && !self.mode.is_babel_flow
         {
             // an overload, or `declare function`
-            if self.parse.typed == TYPED_FLOW {
+            if self.parse.typed == TYPED_FLOW || (flags & F_GENERATOR) != 0 {
                 return Err(self.text_refuse());
             }
             self.parse.place.scope = outer_scope;
@@ -2799,7 +2874,11 @@ impl Quick {
         } else {
             SCOPE_METHOD
         };
-        let params = self.parse_params()?;
+        let params = self.parse_params_of(if (head & 0xff) == k::ClassMethod {
+            PARAMETERS_OF.at(((head as u32) >> SUB_SHIFT) as i32 & 3)
+        } else {
+            PARAMETERS_PLAIN
+        })?;
         self.parse.in_async = a;
         self.parse.in_generator = g;
         // a getter has no parameter, a setter has one (TypeScript's parser does not count)
@@ -2810,6 +2889,10 @@ impl Quick {
                 || (method == M_SET && (self.n.at(self.n.at(params + 1)) & 0xff) == k::RestElement))
         {
             return Err(self.text_refuse());
+        }
+        let needs_body = self.parse_typescript.parameters_need_body;
+        if needs_body {
+            self.parse_typescript.parameters_need_body = false;
         }
         let return_type = if self.parse.typed != 0 && self.lexer.tok == tk::Colon {
             self.ts_parse_return_type()?
@@ -2822,6 +2905,9 @@ impl Quick {
         {
             // an overload, an abstract method, a method of a `declare class`
             self.parse.place.scope = outer_scope;
+            if needs_body {
+                return Err(self.text_refuse());
+            }
             self.semicolon()?;
             return Ok(self.function_node(
                 head,
@@ -2936,7 +3022,13 @@ impl Quick {
             if self.parse.typed == TYPED_TS {
                 // any expression that can be called, but `@a [b]() {}` is a decorator before a computed key
                 let expr_start = self.lexer.tok_start;
+                if self.lexer.tok == tk::Lt {
+                    return Err(self.text_refuse());
+                }
                 let atom = self.parse_expr_atom()?;
+                if self.is_bare_arrow(atom) {
+                    return Err(self.text_refuse());
+                }
                 self.parse.in_decorator = 1;
                 expression = self.parse_subscripts(atom, expr_start, false)?;
                 self.parse.in_decorator = 0;
@@ -3259,7 +3351,7 @@ impl Quick {
             id = self.parse_ident()?;
         }
         let type_parameters = if self.parse.typed != 0 && self.lexer.tok == tk::Lt {
-            self.ts_parse_type_parameters()?
+            self.ts_parse_type_parameters_of(true)?
         } else {
             0
         };
@@ -3277,9 +3369,18 @@ impl Quick {
             }
             if self.parse.typed == TYPED_FLOW {
                 self.parse.no_record_expression = 1;
+            } else if self.parse.typed == TYPED_TS
+                && (self.lexer.tok == tk::Lt
+                    || (self.lexer.tok == tk::Name
+                        && self.lexer.tok_end - self.lexer.tok_start == 10
+                        && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"implements")))
+            {
+                return Err(self.text_refuse());
             }
             self.parse.is_operand = true;
+            self.parse_typescript.in_heritage = true;
             super_class = self.parse_expr_subscripts()?;
+            self.parse_typescript.in_heritage = false;
             self.parse.is_operand = false;
             self.parse.no_record_expression = 0;
             if self.is_bare_arrow(super_class) {
@@ -3303,7 +3404,10 @@ impl Quick {
             };
         }
         self.parse.next_class_is_derived = super_class != 0;
+        let outer_is_declaration = self.parse_typescript.in_class_declaration;
+        self.parse_typescript.in_class_declaration = (kind & 0xff) == k::ClassDeclaration;
         let body = self.parse_class_body()?;
+        self.parse_typescript.in_class_declaration = outer_is_declaration;
         let n = self.class_node(
             kind,
             start,
@@ -3664,7 +3768,7 @@ impl Quick {
                     self.to_assignable(left)?;
                 }
                 if self.parse.typed == TYPED_TS {
-                    self.check_target_of_type_script(left)?;
+                    self.check_target_of_type_script(left, op == tk::Eq)?;
                 } else {
                     self.check_target(left, op == tk::Eq)?;
                 }
@@ -3784,6 +3888,8 @@ impl Quick {
         min_prec: i32,
     ) -> R<i32> {
         self.stack()?;
+        // the precedence of the operator of `left`, if it was read here
+        let mut last_prec = i32::MAX;
         loop {
             let op = self.lexer.tok;
             let prec = PREC.at(op);
@@ -3799,6 +3905,10 @@ impl Quick {
                     && self.ts_is_as_or_satisfies()
                 {
                     left = self.ts_parse_as_or_satisfies(left, left_start)?;
+                    if PREC.at(self.lexer.tok) > last_prec && self.parse.typed == TYPED_TS {
+                        // `a + b as T * c`
+                        return Err(self.text_refuse());
+                    }
                     continue;
                 }
                 return Ok(left);
@@ -3808,12 +3918,17 @@ impl Quick {
             if op == tk::Pipeline {
                 return Err(self.text_refuse());
             }
+            if op == tk::In && self.parse_typescript.in_head_of_for {
+                // TypeScript forgets in few places that it is in the head of a `for`
+                return Err(self.text_refuse());
+            }
             let v0 = self.parse_maybe_unary()?;
             let right =
                 self.parse_expr_op(v0, right_start, if op == tk::Pow { prec - 1 } else { prec })?;
             if self.is_bare_arrow(right) {
                 return Err(self.text_refuse());
             }
+            last_prec = prec;
             if op == tk::LOr || op == tk::LAnd || op == tk::Nullish {
                 if self.mixes_with(left, op) || self.mixes_with(right, op) {
                     return Err(self.text_refuse());
@@ -3902,6 +4017,10 @@ impl Quick {
             tk::Inc | tk::Dec => {
                 let op = self.lexer.tok;
                 self.next()?;
+                if self.lexer.tok == tk::Lt && self.parse.typed == TYPED_TS {
+                    // `++<T>a`
+                    return Err(self.text_refuse());
+                }
                 let argument = self.parse_maybe_unary()?;
                 self.check_target(argument, false)?;
                 return Ok(self.node1(
@@ -3993,6 +4112,7 @@ impl Quick {
             may_be_parameters = self.parse.arguments_may_be_parameters;
             saved_typed_item = self.parse.saw_typed_item;
             self.parse.arguments_may_be_parameters = 0;
+            self.parse.saw_typed_item = 0;
         }
         let mark = self.arena.ls_pos;
         while self.lexer.tok != tk::ParenR {
@@ -4040,6 +4160,7 @@ impl Quick {
         }
         if self.parse.typed != 0 {
             self.parse.paren_item = 0;
+            self.parse.arguments_were_typed = self.parse.saw_typed_item != 0;
             self.parse.saw_typed_item = saved_typed_item;
         }
         self.parse.list_depth = saved_depth;
@@ -4135,6 +4256,9 @@ impl Quick {
             match self.lexer.tok {
                 tk::Dot => {
                     self.next()?;
+                    if self.lexer.tok_nl != 0 {
+                        self.ts_check_name_on_new_line()?;
+                    }
                     let property = if self.lexer.tok == tk::PrivateName {
                         if (self.n.at(base) & 0xff) == k::Super {
                             return Err(self.text_refuse());
@@ -4196,6 +4320,9 @@ impl Quick {
                             property,
                         );
                     } else {
+                        if self.lexer.tok_nl != 0 {
+                            self.ts_check_name_on_new_line()?;
+                        }
                         let property = if self.lexer.tok == tk::PrivateName {
                             self.private_name()?
                         } else {
@@ -4256,6 +4383,7 @@ impl Quick {
                     {
                         return Err(self.text_refuse());
                     }
+                    let are_typed = maybe_async && self.parse.arguments_were_typed;
                     if maybe_async && self.lexer.tok == tk::Arrow && self.lexer.tok_nl == 0 {
                         if (self.parse.suspensions != suspensions && self.parse.typed != TYPED_TS)
                             || self.parse.await_names != await_names
@@ -4291,6 +4419,10 @@ impl Quick {
                             return Ok(arrow);
                         }
                         self.list_truncate(list_mark);
+                    }
+                    if are_typed {
+                        // they were parameters, and there is no function
+                        return Err(self.text_refuse());
                     }
                     base = self.call_node(
                         k::CallExpression | chain,
@@ -4371,6 +4503,9 @@ impl Quick {
                             type_arguments,
                         ));
                     } else {
+                        if self.lexer.tok == tk::Dot || self.lexer.tok == tk::QuestionDot {
+                            return Err(self.text_refuse());
+                        }
                         base = self.node2(
                             k::InstantiationExpression,
                             start,
@@ -4569,6 +4704,24 @@ impl Quick {
                     // another element? They need something around them.
                     if self.lexer.tok == tk::Lt {
                         return Err(self.text_refuse());
+                    }
+                    if self.parse.typed == TYPED_TS {
+                        // nothing goes on behind an element
+                        match self.lexer.tok {
+                            tk::Dot
+                            | tk::QuestionDot
+                            | tk::ParenL
+                            | tk::BracketL
+                            | tk::BackQuote => {
+                                return Err(self.text_refuse());
+                            }
+                            tk::Not => {
+                                if self.lexer.tok_nl == 0 {
+                                    return Err(self.text_refuse());
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                     return Ok(element);
                 }
@@ -4836,6 +4989,9 @@ impl Quick {
             return Ok(self.node2(k::MetaProperty, start, self.lexer.prev_end, meta, property));
         }
         let callee_start = self.lexer.tok_start;
+        if self.lexer.tok == tk::Lt && self.parse.typed == TYPED_TS {
+            return Err(self.text_refuse());
+        }
         let v0 = if self.lexer.tok == tk::New {
             self.parse_new()?
         } else {
@@ -4895,6 +5051,9 @@ impl Quick {
             if self.is_kw(kw::Defer) {
                 phase = P_DEFER;
             } else if self.is_kw(kw::Source) && self.lang.lang != lang::Flow {
+                if self.parse.typed == TYPED_TS {
+                    return Err(self.text_refuse());
+                }
                 phase = P_SOURCE;
             } else {
                 return Err(self.unexpected());
@@ -5552,28 +5711,35 @@ impl Quick {
         return Ok(false);
     }
 
-    /// TypeScript's parser takes `=` behind whatever is a "left-hand side expression" by its form, `3 = a` included.
-    pub(crate) fn check_target_of_type_script(&self, n: i32) -> R<()> {
+    /// What stands before `=` in TypeScript, if it is no name and no member: a pattern, or a name or member with `!` behind it or, in parentheses, with a type.
+    /// TypeScript's parser takes more (`3 = a`), and what is printed then is left to the long way.
+    pub(crate) fn check_target_of_type_script(&self, n: i32, patterns: bool) -> R<()> {
         let head = self.n.at(n);
-        if (head & F_PAREN) != 0 {
+        if patterns
+            && ((head & (0xff | F_PAREN)) == k::ObjectPattern
+                || (head & (0xff | F_PAREN)) == k::ArrayPattern)
+        {
             return Ok(());
         }
-        match head & 0xff {
-            k::BinaryExpression
-            | k::LogicalExpression
-            | k::ConditionalExpression
-            | k::UnaryExpression
-            | k::UpdateExpression
-            | k::AwaitExpression
-            | k::YieldExpression
-            | k::ArrowFunctionExpression
-            | k::AssignmentExpression => {
-                if self.parse.speculating != 0 {
-                    return Err(self.unexpected());
-                }
-                return Err(self.fail(self.n.at(n + 1)));
+        if ((head & F_PAREN) != 0 || (head & 0xff) == k::NonNullExpression)
+            && self.ts_is_valid_target(n)
+        {
+            return Ok(());
+        }
+        return Err(self.text_refuse());
+    }
+
+    /// TypeScript: a pattern or a default in parentheses, inside of a pattern, is printed in a way of its own.
+    #[inline(always)]
+    fn ts_check_element_of_pattern(&self, n: i32) -> R<()> {
+        if (self.n.at(n) & F_PAREN) != 0 && self.parse.typed == TYPED_TS {
+            let kind = self.n.at(n) & 0xff;
+            if kind == k::ObjectExpression
+                || kind == k::ArrayExpression
+                || kind == k::AssignmentExpression
+            {
+                return Err(self.text_refuse());
             }
-            _ => {}
         }
         Ok(())
     }
@@ -5596,9 +5762,12 @@ impl Quick {
                     let member = self.n.at(l + i);
                     let kind = self.n.at(member) & 0xff;
                     if kind == k::ObjectProperty {
+                        self.ts_check_element_of_pattern(self.n.at(member + 5))?;
                         self.to_assignable(self.n.at(member + 5))?;
                     } else if kind == k::SpreadElement {
                         self.to_assignable(member)?;
+                    } else if kind == k::ObjectMethod && self.parse.typed == TYPED_TS {
+                        return Err(self.text_refuse());
                     } else if kind == k::Ready && (self.n.at(member) & F_EXTRA) == 0 {
                         return Err(self.redo());
                     }
@@ -5612,6 +5781,7 @@ impl Quick {
                 let count = self.n.at(l);
                 let mut i: i32 = 1;
                 while i <= count {
+                    self.ts_check_element_of_pattern(self.n.at(l + i))?;
                     self.to_assignable(self.n.at(l + i))?;
                     i += 1;
                 }
@@ -5619,6 +5789,7 @@ impl Quick {
             }
             k::SpreadElement => {
                 self.set_kind_keep_flags(n, k::RestElement);
+                self.ts_check_element_of_pattern(self.n.at(n + 4))?;
                 self.to_assignable(self.n.at(n + 4))?;
                 return Ok(());
             }
@@ -5781,6 +5952,10 @@ impl Quick {
                     && !(self.lexer.tok_kw == kw::From && self.peek_is_string())
             };
             if is_phase {
+                // TypeScript knows `defer`, and not together with `type`
+                if self.parse.typed == TYPED_TS && (kw != kw::Defer || import_kind != 0) {
+                    return Err(self.text_refuse());
+                }
                 phase = if kw == kw::Defer {
                     P_DEFER
                 } else {
@@ -6048,6 +6223,9 @@ impl Quick {
                     decorators,
                 )?;
             } else if self.lexer.tok == tk::At {
+                if decorators != 0 && self.parse.typed == TYPED_TS {
+                    return Err(self.text_refuse());
+                }
                 let own = self.parse_decorators()?;
                 if decorators != 0 || self.lexer.tok != tk::Class {
                     return Err(self.unexpected());
@@ -6058,13 +6236,22 @@ impl Quick {
                 if self.parse.typed == TYPED_TS && self.lexer.tok == tk::Name {
                     // export default interface X {}, export default abstract class X {}
                     self.parse.pending_decorators = decorators;
-                    declaration =
-                        self.ts_parse_statement(if decorators != 0 { start } else { decl_start })?;
+                    declaration = self
+                        .parse_declaration(if decorators != 0 { start } else { decl_start }, 0)?;
                     self.parse.pending_decorators = 0;
                     let k = self.n.at(declaration) & 0xff;
-                    if declaration != 0 && k != k::InterfaceDeclaration && k != k::ClassDeclaration
+                    if declaration != 0
+                        && (k != k::InterfaceDeclaration && k != k::ClassDeclaration
+                            || (self.n.at(declaration) & (MOD_DECLARE << SUB_SHIFT)) != 0)
                     {
                         return Err(self.unexpected());
+                    }
+                    if declaration == 0
+                        && self.lexer.tok_end - self.lexer.tok_start == 9
+                        && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"interface")
+                    {
+                        // never a name here
+                        return Err(self.text_refuse());
                     }
                 }
                 if self.parse.typed == TYPED_FLOW && self.lexer.tok == tk::Name {
@@ -6207,6 +6394,7 @@ impl Quick {
     pub(crate) fn parse_export_specifiers(&mut self) -> R<bool> {
         self.expect(tk::BraceL)?;
         let mut needs_from = false;
+        self.parse_typescript.export_needs_from = false;
         while self.lexer.tok != tk::BraceR {
             let spec_start = self.lexer.tok_start;
             if self.parse.typed == TYPED_TS
@@ -6270,6 +6458,8 @@ impl Quick {
             attributes = self.parse_attributes()?;
         } else if needs_from {
             return Err(self.unexpected());
+        } else if self.parse_typescript.export_needs_from {
+            return Err(self.text_refuse());
         }
         let end = self.lexer.prev_end;
         self.semicolon()?;
@@ -6472,6 +6662,10 @@ impl Quick {
             }
         }
         if opening == 0 {
+            if self.t.at(start + 1) == 47 && self.parse.typed == TYPED_TS {
+                // a comment: `</` is one token for TypeScript
+                return Err(self.text_refuse());
+            }
             self.set_pos(start + 1);
             self.next_jsx_tag()?;
             if self.lexer.tok == tk::Gt {
@@ -6696,6 +6890,13 @@ impl Quick {
                     self.save();
                     let comments_before = self.lexer.c_count;
                     self.next_jsx_tag()?;
+                    if self.parse.typed == TYPED_TS
+                        && ((self.lexer.tok == tk::Div) != (self.t.at(tag_start + 1) == 47)
+                            || self.lexer.tok_start != tag_start + 1)
+                    {
+                        // `</` is one token for TypeScript: `< /a>` closes nothing, and `</* */ a>` does
+                        return Err(self.text_refuse());
+                    }
                     if self.lexer.tok == tk::Div {
                         self.next_jsx_tag()?;
                         if self.lexer.tok == tk::Gt {

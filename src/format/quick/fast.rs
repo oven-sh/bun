@@ -914,6 +914,12 @@ impl Quick {
                 if kw != 0 && (kw & 255) != tk::Name && (kw & 255) != tk::This {
                     return Ok(self.no(refusal::FunctionType));
                 }
+                // `this` has a type and nothing else; `...a?` is printed in a way of its own
+                if ((kw & 255) == tk::This || self.t.at(q - 1) == 46)
+                    && (self.t.at(e) == 63 || (kw & 255) == tk::This && self.t.at(q - 1) == 46)
+                {
+                    return Ok(self.no(refusal::FunctionType));
+                }
                 q = e;
                 if self.t.at(q) == 63 {
                     q += 1;
@@ -3681,6 +3687,9 @@ impl Quick {
                 if (CC.at(self.t.at(e)) & BEYOND) != 0 {
                     return self.no(refusal::NotAscii);
                 }
+                if (self.keyword_at(q, e - q) & 255) > tk::Name {
+                    return self.no(refusal::Import);
+                }
             }
             let is_word_of_language = Self::is_word_of_language(self.keyword_at(q, e - q));
             if is_word_of_language {
@@ -3774,6 +3783,9 @@ impl Quick {
                 e = self.word_end(q);
                 if (CC.at(self.t.at(e)) & BEYOND) != 0 {
                     return self.no(refusal::NotAscii);
+                }
+                if (self.keyword_at(q, e - q) & 255) > tk::Name {
+                    return self.no(refusal::Import);
                 }
             }
             let is_word_of_language = Self::is_word_of_language(self.keyword_at(q, e - q));
@@ -4077,7 +4089,7 @@ impl Quick {
             return self.no(refusal::Start);
         }
         let mut q = self.word_end(p);
-        if !is_plain_name(self.keyword_at(p, q - p)) {
+        if !is_plain_name(self.keyword_at(p, q - p)) || self.word_is(p, b"implements") {
             return self.no(refusal::Start);
         }
         while self.t.at(q) == 46 {
@@ -4450,7 +4462,7 @@ _ => {}
         return Ok(self.open_block(q, 0));
     }
 
-    /// The words that start a declaration of TypeScript, depending on what follows.
+    /// The words that start a declaration of TypeScript, or are no start of a statement, depending on what follows.
     pub(crate) fn is_declaration_word(&self, p: i32, length: i32) -> bool {
         let e = p + length;
         match length {
@@ -4458,16 +4470,22 @@ _ => {}
                 return self.text_is(p, e, b"type") || self.text_is(p, e, b"enum");
             }
             6 => {
-                return self.text_is(p, e, b"module") || self.text_is(p, e, b"global");
+                return self.text_is(p, e, b"module")
+                    || self.text_is(p, e, b"global")
+                    || self.text_is(p, e, b"public");
             }
             7 => {
-                return self.text_is(p, e, b"declare");
+                return self.text_is(p, e, b"declare") || self.text_is(p, e, b"private");
             }
             8 => {
-                return self.text_is(p, e, b"abstract");
+                return self.text_is(p, e, b"abstract")
+                    || self.text_is(p, e, b"readonly")
+                    || self.text_is(p, e, b"accessor");
             }
             9 => {
-                return self.text_is(p, e, b"interface") || self.text_is(p, e, b"namespace");
+                return self.text_is(p, e, b"interface")
+                    || self.text_is(p, e, b"namespace")
+                    || self.text_is(p, e, b"protected");
             }
             _ => {}
         }
@@ -4546,7 +4564,11 @@ impl Quick {
                     if self.text_is(p, e, b"static") {
                         MODIFIER_STATIC
                     } else {
-                        MODIFIER_NONE
+                        if self.text_is(p, e, b"export") {
+                            MODIFIER_REFUSED
+                        } else {
+                            MODIFIER_NONE
+                        }
                     }
                 };
             }
@@ -4557,7 +4579,11 @@ impl Quick {
                     if self.text_is(p, e, b"declare") {
                         MODIFIER_DECLARE
                     } else {
-                        MODIFIER_NONE
+                        if self.text_is(p, e, b"default") {
+                            MODIFIER_REFUSED
+                        } else {
+                            MODIFIER_NONE
+                        }
                     }
                 };
             }
@@ -4639,7 +4665,8 @@ impl Quick {
     /// A member of a class or an interface; p is at its start.
     pub(crate) fn member(&mut self, p: i32, where_: i32) -> R<i32> {
         let mut q = p;
-        if self.t.at(q) == 64 {
+        let has_decorators = self.t.at(q) == 64;
+        if has_decorators {
             if where_ != MEMBER_OF_CLASS {
                 return Ok(self.no(refusal::Start));
             }
@@ -4713,6 +4740,14 @@ impl Quick {
             }
             q = self.spaced(e);
         }
+        // A constructor has parameters, and nothing but its accessibility before it.
+        if e - q == 11
+            && self.text_is(q, e, b"constructor")
+            && where_ == MEMBER_OF_CLASS
+            && (self.t.at(e) != 40 || rank > MODIFIER_ACCESSIBILITY || has_decorators)
+        {
+            return Ok(self.no(refusal::Start));
+        }
         // `constructor`, `prototype`, a private name: there are rules about those
         let mut is_constructor = false;
         if where_ == MEMBER_OF_CLASS
@@ -4752,6 +4787,9 @@ impl Quick {
         let name = q;
         q = e;
         if self.t.at(q) == 63 && self.fast.ts {
+            if is_accessor {
+                return Ok(self.no(refusal::Start));
+            }
             q += 1;
         }
         if self.t.at(q) == 40 {
@@ -4771,6 +4809,9 @@ impl Quick {
             }
             let r = self.blanks(q);
             if self.t.at(r) == 123 && where_ == MEMBER_OF_CLASS {
+                if is_abstract {
+                    return Ok(self.no(refusal::Start));
+                }
                 if self.fast.parameters_need >= 0 && !self.head_is_too_wide(q, 2) {
                     return Ok(self.no(refusal::Paren));
                 }
@@ -4803,7 +4844,7 @@ impl Quick {
                 return Ok(s + 1);
             }
             // a signature: an overload, an abstract method, a method of an interface
-            if !self.fast.ts || is_async {
+            if !self.fast.ts || is_async || has_decorators {
                 return Ok(self.no(refusal::Start));
             }
             self.fast.ready_kind = if where_ == MEMBER_OF_CLASS {
@@ -4820,13 +4861,17 @@ impl Quick {
         if is_async || is_accessor {
             return Ok(self.no(refusal::Start));
         }
-        if self.t.at(q) == 33
+        let is_definite = self.t.at(q) == 33
             && self.t.at(q + 1) == 58
             && self.fast.ts
             && where_ == MEMBER_OF_CLASS
-            && self.t.at(q - 1) != 63
-        {
+            && self.t.at(q - 1) != 63;
+        if is_definite {
             q += 1;
+        }
+        // (whether an abstract property can have decorators depends on the class)
+        if is_abstract && (is_definite || has_decorators) {
+            return Ok(self.no(refusal::Start));
         }
         if self.t.at(q) == 58 {
             if !self.fast.has_types {
@@ -4845,8 +4890,8 @@ impl Quick {
         self.fast.ready_kind = k::ClassProperty;
         let r = self.blanks(q);
         if self.t.at(r) == 61 && self.assignment_operator(r) == 1 {
-            // the value of an abstract property is not printed
-            if is_abstract {
+            // there is none behind `abstract` or `!`
+            if is_abstract || is_definite {
                 return Ok(self.no(refusal::Start));
             }
             self.fast.tail = TAIL_MEMBER;

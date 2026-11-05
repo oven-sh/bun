@@ -1313,6 +1313,14 @@ impl Quick {
                     if self.t.at(p + 1) == 33 && self.t.at(p + 2) == 45 && self.t.at(p + 3) == 45 {
                         return Err(self.text_refuse());
                     }
+                    if self.t.at(p + 1) == 47
+                        && self.t.at(p + 2) != 42
+                        && self.parse.jsx_enabled
+                        && self.parse.typed == TYPED_TS
+                    {
+                        // `<// comment`: one token, `</`, for TypeScript in a file with JSX
+                        return Err(self.text_refuse());
+                    }
                     self.lexer_finish(tk::Lt, p + 1);
                 }
                 return Ok(());

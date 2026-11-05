@@ -385,8 +385,6 @@ pub(crate) mod type_keyword {
     pub(crate) const Empty: i32 = 16;
     /// `*`
     pub(crate) const All: i32 = 17;
-    /// `?`
-    pub(crate) const JsdocUnknown: i32 = 18;
 }
 // NullableType
 pub(crate) const NT_NULLABLE: i32 = 0;

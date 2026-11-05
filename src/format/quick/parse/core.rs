@@ -23,7 +23,7 @@ use crate::lexer::{
 use crate::mode::SINGLE_JSX_IN_MARKDOWN;
 use crate::options::{EOL_LF, QUOTE_PROPS_CONSISTENT};
 use crate::parse::typescript::{PARAMETERS_OF_CONSTRUCTOR, PARAMETERS_OF_METHOD, PARAMETERS_PLAIN};
-use crate::{Bytes, Quick, R, Stop, Words, why, zeros};
+use crate::{Bytes, Quick, R, Stop, Words, rare, why, zeros};
 
 pub(crate) struct Parse {
     // ---- context
@@ -372,9 +372,23 @@ impl Quick {
     }
 
     /// Consumes a semicolon, written or inserted.
+    /// The token is a `;` or the `,` of a member of a type. Where the empty lines around it and the comments behind it go, and what these
+    /// count for, depends on where the node before it is taken to end. Code without semicolons has `;[a].b()` and `;(a)()`, which are plain.
+    #[inline(always)]
+    pub(crate) fn check_semicolon_at_line_start(&self) -> R<()> {
+        if self.lexer.tok_nl != 0 {
+            let next = self.t.at(self.lexer.tok_end);
+            if next <= 32 || next == 47 || next == 59 {
+                return Err(self.rare(rare::SEMICOLON));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn semicolon(&mut self) -> R<()> {
         self.parse.content_end = self.lexer.prev_end;
         if self.lexer.tok == tk::Semi {
+            self.check_semicolon_at_line_start()?;
             self.next()?;
         } else if self.lexer.tok != tk::BraceR
             && self.lexer.tok != tk::EOF
@@ -463,7 +477,7 @@ impl Quick {
     // ---------------------------------------------------------------------------------------------------------- program
     pub(crate) fn parse_program(&mut self) -> R<i32> {
         self.reserve_ast((self.text.src_end - self.text.src_start) * 2 + 1024);
-        self.reset_lexer();
+        self.reset_lexer()?;
         self.parse.no_in = 0;
         self.parse.in_generator = 0;
         self.parse.in_async = 0;
@@ -472,7 +486,7 @@ impl Quick {
         self.reset_typed();
         self.parse.known_blocks_count = 0;
         self.parse.refused_at = 0;
-        self.parse.list_depth = 0;
+        self.parse.list_depth = self.options.indentation;
         // (a syntax error can have left these as they were)
         self.parse.lexer_stays = false;
         self.parse.cases_depth = -1;
@@ -1649,6 +1663,12 @@ impl Quick {
                     return self.parse_block();
                 }
                 tk::Semi => {
+                    // The body of a loop or of an `if` stands behind a `)` or a word.
+                    let before = self.t.at(self.lexer.prev_end - 1);
+                    if self.lexer.tok_nl == 0 && (before == 125 || before == 59) {
+                        return Err(self.rare(rare::SEMICOLON));
+                    }
+                    self.check_semicolon_at_line_start()?;
                     self.next()?;
                     return Ok(self.node0(k::EmptyStatement, start, self.lexer.prev_end));
                 }
@@ -1973,20 +1993,7 @@ impl Quick {
             ));
         }
         let end = self.lexer.prev_end;
-        // TypeScript says nothing about a missing semicolon behind `declare`: what follows should have been a declaration
-        if self.parse.typed == TYPED_TS
-            && self.lexer.tok != tk::Semi
-            && (self.n.at(expression) & (0xff | F_PAREN)) == k::Identifier
-            && self.text_is(
-                self.n.at(expression + 1),
-                self.n.at(expression + 2),
-                b"declare",
-            )
-        {
-            self.parse.content_end = end;
-        } else {
-            self.semicolon()?;
-        }
+        self.semicolon()?;
         return Ok(self.node1(k::ExpressionStatement, start, end, expression));
     }
 
@@ -3163,8 +3170,8 @@ impl Quick {
                 end = self.lexer.tok_end;
                 break;
             }
-            if self.eat(tk::Semi)? {
-                continue;
+            if self.lexer.tok == tk::Semi {
+                return Err(self.rare(rare::SEMICOLON));
             }
             if self.lexer.tok == tk::EOF {
                 return Err(self.unexpected());

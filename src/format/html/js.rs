@@ -108,6 +108,7 @@ pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> Forma
         require_pragma: false,
         check_ignore_pragma: false,
         is_in_markdown: false,
+        is_at_margin: false,
         is_mdx_jsx: false,
         is_mdx_es_syntax: false,
         sort_imports: None,

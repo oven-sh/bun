@@ -13,7 +13,7 @@ use crate::ast::{
 use crate::fast::MEMBER_OF_INTERFACE;
 use crate::lexer::{PREC, kw, tk};
 use crate::words::w;
-use crate::{Quick, R, Stop, Words, why};
+use crate::{Quick, R, Stop, Words, rare, why};
 
 pub(crate) struct ParseTypescript {
     /// In the `extends` part of a conditional type another conditional type needs parentheses.
@@ -1151,6 +1151,9 @@ impl Quick {
     // ------------------------------------------------------------------------------------------------------ type members
     pub(crate) fn type_member_semicolon(&mut self) -> R<()> {
         if self.lexer.tok == tk::Comma || self.lexer.tok == tk::Semi {
+            if self.lexer.tok_nl != 0 {
+                return Err(self.rare(rare::SEMICOLON));
+            }
             self.next()?;
         } else if self.lexer.tok != tk::BraceR && self.lexer.tok_nl == 0 {
             return Err(self.unexpected());

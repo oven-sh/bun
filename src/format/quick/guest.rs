@@ -201,6 +201,14 @@ impl Sink<'_> {
         columns
     }
 
+    /// The writers of the document trust that there is room.
+    #[inline(always)]
+    fn room(&mut self) {
+        if self.q.doc.d_pos + 1024 > self.q.doc.d_cap {
+            self.q.reserve();
+        }
+    }
+
     /// `${` is escaped in a template. The filter sees one text at a time.
     fn note_ends(&mut self, text: &[u8], written_from: i32) {
         if self.q.doc.text_filter == 0 {
@@ -244,19 +252,22 @@ impl Sink<'_> {
         match *text {
             [] => {}
             [first] if (0x20..0x7f).contains(&first) => {
-                self.q.reserve();
+                self.room();
                 self.q.text(op::Short | (1 << 5) | (i32::from(first) << 13));
             }
             [first, second] if (0x20..0x7f).contains(&first) && (0x20..0x7f).contains(&second) => {
-                self.q.reserve();
+                self.room();
                 self.q.text(
                     op::Short | (2 << 5) | (i32::from(first) << 13) | (i32::from(second) << 21),
                 );
             }
             _ => {
                 let (start, end) = self.place(text);
-                self.q.reserve();
-                self.slice(start, end);
+                self.room();
+                match text.iter().all(|byte| (0x20..0x7f).contains(byte)) {
+                    true => self.q.slice(start, end),
+                    false => self.slice(start, end),
+                }
             }
         }
         self.note_ends(text, from);
@@ -266,7 +277,7 @@ impl Sink<'_> {
     pub fn text_of_width(&mut self, text: &[u8], width: i32) {
         let from = self.q.doc.d_pos;
         let (start, end) = self.place(text);
-        self.q.reserve();
+        self.room();
         self.q.slice_w(start, end, width);
         self.note_ends(text, from);
     }
@@ -278,7 +289,7 @@ impl Sink<'_> {
         let mut from = start;
         loop {
             let at = crate::Bytes::index_of(self.q.t.sub(0, end), 10, from);
-            self.q.reserve();
+            self.room();
             self.slice(from, if at < 0 { end } else { at });
             if at < 0 {
                 return self.note_ends(text, written_from);
@@ -293,34 +304,34 @@ impl Sink<'_> {
     }
 
     pub fn line(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.line();
     }
 
     pub fn softline(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.softline();
     }
 
     pub fn hardline(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.hardline();
     }
 
     pub fn literalline(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.literalline();
     }
 
     /// `hardlineWithoutBreak`
     pub fn hardline_without_break(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.hardline_without_break();
     }
 
     /// `literallineWithoutBreak`
     pub fn literalline_without_break(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.literalline_without_break();
     }
 
@@ -333,69 +344,69 @@ impl Sink<'_> {
     }
 
     pub fn group_open(&mut self) -> Open {
-        self.q.reserve();
+        self.room();
         Open(self.q.group_open())
     }
 
     pub fn group_close(&mut self, group: Open, should_break: bool, id: GroupId) {
-        self.q.reserve();
+        self.room();
         self.q.group_close_with(group.0, should_break, id);
     }
 
     pub fn indent_open(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.indent_open();
     }
 
     /// Closes what any of `indent_open`, `align_open`, `align_text_open`, `dedent_open`, `dedent_to_root_open`,
     /// `mark_as_root_open` and `indent_if_break_open` has opened.
     pub fn indent_close(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.indent_close();
     }
 
     /// `align(n, ..)` for a number above 0.
     pub fn align_open(&mut self, n: i32) {
-        self.q.reserve();
+        self.room();
         self.q.align_open(n.clamp(0, 1 << 24));
     }
 
     /// `align(text, ..)`: the lines start with `text`, which is ASCII. Blanks stay blanks where tabs indent.
     pub fn align_text_open(&mut self, text: &[u8]) {
         let (start, end) = self.place(text);
-        self.q.reserve();
+        self.room();
         self.q.align_text_open(start, end - start);
     }
 
     pub fn dedent_open(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.dedent_open();
     }
 
     pub fn dedent_to_root_open(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.dedent_to_root_open();
     }
 
     pub fn mark_as_root_open(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.mark_as_root_open();
     }
 
     pub fn indent_if_break_open(&mut self, id: GroupId, negate: bool) {
-        self.q.reserve();
+        self.room();
         self.q.indent_if_break_open(id, negate);
     }
 
     /// What follows is printed if the group `id` breaks (0: the group around it).
     pub fn if_break_open(&mut self, id: GroupId) -> Open {
-        self.q.reserve();
+        self.room();
         Open(self.q.if_break_open(id))
     }
 
     /// What follows is printed if it does not.
     pub fn if_break_else(&mut self, open: Open) {
-        self.q.reserve();
+        self.room();
         self.q.if_break_else(open.0);
     }
 
@@ -404,72 +415,72 @@ impl Sink<'_> {
     }
 
     pub fn fill_open(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.fill_open();
     }
 
     pub fn fill_item(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.fill_item();
     }
 
     pub fn fill_separator(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.fill_sep();
     }
 
     pub fn fill_close(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.fill_close();
     }
 
     pub fn line_suffix_open(&mut self) -> Open {
-        self.q.reserve();
+        self.room();
         Open(self.q.line_suffix_open())
     }
 
     pub fn line_suffix_close(&mut self, open: Open) {
-        self.q.reserve();
+        self.room();
         self.q.line_suffix_close(open.0);
     }
 
     pub fn line_suffix_boundary(&mut self) {
-        self.q.reserve();
+        self.room();
         self.q.line_suffix_boundary();
     }
 
     pub fn variants_open(&mut self) -> Open {
-        self.q.reserve();
+        self.room();
         Open(self.q.cond_open())
     }
 
     pub fn variant_open(&mut self) -> Open {
-        self.q.reserve();
+        self.room();
         Open(self.q.state_open())
     }
 
     pub fn variant_close(&mut self, open: Open) {
-        self.q.reserve();
+        self.room();
         self.q.state_close(open.0);
     }
 
     pub fn variants_close(&mut self, open: Open, should_break: bool) {
-        self.q.reserve();
+        self.room();
         self.q.cond_close(open.0, should_break);
     }
 
     pub fn detach_open(&mut self) -> Open {
-        self.q.reserve();
+        self.room();
         Open(self.q.detach_open())
     }
 
     pub fn detach_close(&mut self, open: Open) -> Detached {
-        self.q.reserve();
+        self.room();
         Detached(self.q.detach_close(open.0))
     }
 
     pub fn call(&mut self, detached: Detached) {
-        self.q.reserve();
+        self.room();
         self.q.call(detached.0);
     }
 

@@ -76,6 +76,8 @@ pub(crate) struct Doc {
     pub(crate) cache_count: i32,
     pub(crate) cache_log: Vec<i32>,
     pub(crate) cache_log_pos: i32,
+    /// Not 0 while the only parameter of a function and its return type are written, see print_parameters_and_return_type().
+    pub(crate) depends_on_what_breaks: i32,
 }
 impl Doc {
     pub(crate) fn new() -> Self {
@@ -108,6 +110,7 @@ impl Doc {
             cache_count: 0,
             cache_log: zeros(256),
             cache_log_pos: 0,
+            depends_on_what_breaks: 0,
         }
     }
 }
@@ -198,6 +201,8 @@ pub(crate) const G_FORCE_FLAT: i32 = 128;
 // Groups: there is a fill inside. A fill measures for itself. In a group that was measured and fits, all its measurements come out
 // as "fits"; in one that is flat because the group around it is (which may be flat only up to a forced line break) they may not.
 pub(crate) const G_HAS_FILL: i32 = 256;
+/// groups: see stays_expanded()
+pub(crate) const G_STAYS_EXPANDED: i32 = 512;
 /// the same in the second word of a detached doc
 pub(crate) const D_HAS_FILL: i32 = 1 << 16;
 pub(crate) const ALIGN_BIAS: i32 = 1024;
@@ -248,6 +253,7 @@ impl Quick {
         self.doc.group_ids = 0;
         self.doc.es_pos = 0;
         self.doc.label = 0;
+        self.doc.depends_on_what_breaks = 0;
     }
 
     #[cold]
@@ -862,6 +868,23 @@ impl Quick {
 
     pub(crate) fn group_close(&mut self, h: i32) {
         self.group_close_with(h, false, 0);
+    }
+
+    /// For the group `h`, just closed, of an object or an object type, which is written to break the next time if it breaks now.
+    #[inline(always)]
+    pub(crate) fn stays_expanded(&mut self, h: i32) {
+        if self.doc.depends_on_what_breaks != 0 {
+            self.mark_stays_expanded(h);
+        }
+    }
+
+    /// The layout measures such a group step by step, and gives up if it does not fit.
+    #[cold]
+    fn mark_stays_expanded(&mut self, h: i32) {
+        if self.options.object_wrap_preserve {
+            self.d
+                .put(h, (self.d.at(h) | (G_STAYS_EXPANDED << 5)) & !(G_PURE << 5));
+        }
     }
 
     /// Closes a group that is printed flat even where it does not fit. Nothing in it may force a break.

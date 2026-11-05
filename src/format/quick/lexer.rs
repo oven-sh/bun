@@ -5,7 +5,7 @@ use crate::ast::{F_BLANK, F_BLANK_LINE, F_ESCAPE, F_QUOTE, F_SLOW_TEXT, F_TAIL};
 use crate::id_table::{ID_PART, ID_START};
 use crate::lang::lang;
 use crate::parse::core::TYPED_TS;
-use crate::{Bytes, Quick, R, Words, zeros};
+use crate::{Bytes, Quick, R, Words, rare, zeros};
 
 pub(crate) struct Lexer {
     // ---- state
@@ -287,7 +287,7 @@ impl Quick {
     }
 
     /// Starts at the beginning of the window. The comments of this run are C[c_base .. c_count).
-    pub(crate) fn reset_lexer(&mut self) {
+    pub(crate) fn reset_lexer(&mut self) -> R<()> {
         self.lexer.pos = self.text.src_start;
         self.lexer.tok = tk::EOF;
         let v0 = self.text.src_start;
@@ -302,12 +302,22 @@ impl Quick {
         // #! line
         if self.t.at(self.lexer.pos) == 35 && self.t.at(self.lexer.pos + 1) == 33 {
             let mut p = self.lexer.pos;
-            while p < self.text.src_end && self.t.at(p) != 10 && !self.is_line_separator(p) {
+            while p < self.text.src_end && self.t.at(p) != 10 {
+                let c = self.t.at(p);
+                if (c < 32 || c >= 127) && c != 9 {
+                    let length = self.length_in_comment(p);
+                    if length == 0 {
+                        return Err(self.rare(rare::ODD_BYTES));
+                    }
+                    p += length;
+                    continue;
+                }
                 p += 1;
             }
             self.push_comment(self.lexer.pos, p, CF_HASHBANG);
             self.lexer.pos = p;
         }
+        Ok(())
     }
 
     pub(crate) fn save(&mut self) {
@@ -419,6 +429,25 @@ impl Quick {
             i += 1;
         }
         return shift + 12;
+    }
+
+    /// How many bytes the character at `p` of a comment has, which is neither a printable character of ASCII nor a tab; 0 if it is a
+    /// control character, white space or no character: comments are trimmed, line by line, and measured.
+    #[cold]
+    pub(crate) fn length_in_comment(&self, p: i32) -> i32 {
+        if self.t.at(p) < 128 || self.unicode_space(p) != 0 {
+            0
+        } else {
+            self.character_length(p)
+        }
+    }
+
+    /// The byte at `p` of a string, a template, a regular expression or the text of an element, which is not a printable character of
+    /// ASCII, a tab or a line feed, is a control character, or starts U+2028 or U+2029: what counts as a line differs from place to place.
+    #[inline(always)]
+    pub(crate) fn is_odd_in_text(&self, p: i32) -> bool {
+        let c = self.t.at(p);
+        c < 128 || (c == 0xe2 && self.is_line_separator(p))
     }
 
     /// How many bytes the character has that starts with the byte at p, which is not ASCII; 0 if this is not UTF-8.
@@ -545,6 +574,14 @@ impl Quick {
                                 break;
                             }
                             flags = 0;
+                            if e != 9 {
+                                let length = self.length_in_comment(p);
+                                if length == 0 {
+                                    return Err(self.rare(rare::ODD_BYTES));
+                                }
+                                p += length;
+                                continue;
+                            }
                         }
                         p += 1;
                     }
@@ -609,10 +646,16 @@ impl Quick {
                                 nl = 1;
                             } else if e == 0 && p >= self.text.src_end {
                                 return Err(self.fail(start));
-                            } else if e == 0xe2 && self.is_line_separator(p) {
-                                return Err(self.text_refuse());
                             }
                             flags &= !CF_PLAIN;
+                            if e != 9 {
+                                let length = self.length_in_comment(p);
+                                if length == 0 {
+                                    return Err(self.rare(rare::ODD_BYTES));
+                                }
+                                p += length;
+                                continue;
+                            }
                         }
                         p += 1;
                     }
@@ -624,18 +667,9 @@ impl Quick {
                 } else {
                     break;
                 }
-            } else if c == 11 || c == 12 {
-                p += 1;
-            } else if c >= 128 {
-                let w = self.unicode_space(p);
-                if w == 0 {
-                    break;
-                }
-                if w > 16 {
-                    // the end of a line for some, and for some purposes
-                    return Err(self.text_refuse());
-                }
-                p += w;
+            } else if c == 11 || c == 12 || (c >= 128 && self.unicode_space(p) != 0) {
+                // Whether it ends a line, is part of an empty one or of a comment's text is asked in too many places.
+                return Err(self.rare(rare::ODD_BYTES));
             } else {
                 break;
             }
@@ -1054,6 +1088,9 @@ impl Quick {
                 if c == 10 || c == 13 || (c == 0 && p >= self.text.src_end) {
                     return Err(self.fail(start));
                 }
+                if c != 9 && self.is_odd_in_text(p) {
+                    return Err(self.rare(rare::ODD_BYTES));
+                }
                 flags |= F_SLOW_TEXT;
                 if c >= 128 {
                     let length = self.character_length(p);
@@ -1160,6 +1197,9 @@ impl Quick {
                 return Ok(());
             }
             44 => {
+                if self.lexer.tok_nl != 0 {
+                    return Err(self.rare(rare::COMMA));
+                }
                 self.lexer_finish(tk::Comma, p + 1);
                 return Ok(());
             }
@@ -1441,8 +1481,8 @@ impl Quick {
             } else if c == 47 && !in_class {
                 break;
             } else if c < 32 || c >= 127 {
-                if c == 0xe2 && self.is_line_separator(p) {
-                    return Err(self.fail(start));
+                if c != 9 && self.is_odd_in_text(p) {
+                    return Err(self.rare(rare::ODD_BYTES));
                 }
                 flags |= F_SLOW_TEXT;
                 if c >= 128 {
@@ -1506,6 +1546,11 @@ impl Quick {
             if c < 32 || c >= 127 {
                 if c == 0 && p >= self.text.src_end {
                     return Err(self.fail(from));
+                }
+                if c != 9 && c != 10 {
+                    if self.is_odd_in_text(p) {
+                        return Err(self.rare(rare::ODD_BYTES));
+                    }
                 }
                 flags |= F_SLOW_TEXT;
                 if c >= 128 {
@@ -1575,6 +1620,11 @@ impl Quick {
                         } else if d < 32 || d >= 127 {
                             if d == 0 && q >= self.text.src_end {
                                 return Err(self.fail(p));
+                            }
+                            if d != 9 && d != 10 {
+                                if self.is_odd_in_text(q) {
+                                    return Err(self.rare(rare::ODD_BYTES));
+                                }
                             }
                             flags |= F_SLOW_TEXT;
                             if d >= 128 {
@@ -1683,8 +1733,10 @@ impl Quick {
                 if d == 0 {
                     return Err(self.fail(p));
                 }
-                if d == 0xe2 && self.is_line_separator(q) {
-                    return Err(self.text_refuse());
+                if d != 9 && d != 10 {
+                    if self.is_odd_in_text(q) {
+                        return Err(self.rare(rare::ODD_BYTES));
+                    }
                 }
                 flags |= F_SLOW_TEXT;
                 if d >= 128 {

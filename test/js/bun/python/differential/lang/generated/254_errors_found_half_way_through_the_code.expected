@@ -1,0 +1,214 @@
+status: 0
+script: 73befe1bafba24ab
+source: 3929b52a61520fcd
+---
+SyntaxError alternative patterns bind different names 2 10 2 19
+SyntaxError multiple assignments to name 'a' in pattern 2 14 2 15
+SyntaxError wildcard makes remaining patterns unreachable 2 10 2 11
+SyntaxError name capture 'y' makes remaining patterns unreachable 2 10 2 11
+SyntaxError mapping pattern checks duplicate key ('k') 2 10 2 26
+SyntaxError multiple starred names in sequence pattern 2 10 2 18
+SyntaxError attribute name repeated in class pattern: a 2 19 2 20
+SyntaxError name capture 'y' makes remaining patterns unreachable 2 15 2 16
+SyntaxError multiple starred expressions in assignment 1 1 1 10
+SyntaxError default 'except:' must be last 3 1 4 9
+SyntaxError multiple starred expressions in assignment 1 7 1 13
+SyntaxError 'return' outside function 2 5 2 13
+SyntaxError alternative patterns bind different names 4 18 4 27
+SyntaxError alternative patterns bind different names 3 14 3 23
+SyntaxError 'yield' inside list comprehension 1 15 1 20
+SyntaxError alternative patterns bind different names 3 14 3 23
+SyntaxError multiple assignments to name 'a' in pattern 3 18 3 19
+SyntaxError wildcard makes remaining patterns unreachable 3 14 3 15
+SyntaxError name capture 'y' makes remaining patterns unreachable 3 14 3 15
+SyntaxError mapping pattern checks duplicate key ('k') 3 14 3 30
+SyntaxError multiple starred names in sequence pattern 3 14 3 22
+SyntaxError attribute name repeated in class pattern: a 3 23 3 24
+SyntaxError name capture 'y' makes remaining patterns unreachable 3 19 3 20
+SyntaxError multiple starred expressions in assignment 2 5 2 14
+SyntaxError default 'except:' must be last 4 5 5 13
+SyntaxError multiple starred expressions in assignment 2 11 2 17
+SyntaxError 'return' outside function 3 9 3 17
+SyntaxError alternative patterns bind different names 5 22 5 31
+SyntaxError alternative patterns bind different names 4 18 4 27
+SyntaxError 'yield' inside list comprehension 2 19 2 24
+SyntaxError alternative patterns bind different names 4 14 4 23
+SyntaxError multiple assignments to name 'a' in pattern 4 18 4 19
+SyntaxError wildcard makes remaining patterns unreachable 4 14 4 15
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 14 4 15
+SyntaxError mapping pattern checks duplicate key ('k') 4 14 4 30
+SyntaxError multiple starred names in sequence pattern 4 14 4 22
+SyntaxError attribute name repeated in class pattern: a 4 23 4 24
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 19 4 20
+SyntaxError multiple starred expressions in assignment 3 5 3 14
+SyntaxError default 'except:' must be last 5 5 6 13
+SyntaxError multiple starred expressions in assignment 3 11 3 17
+SyntaxError 'return' outside function 4 9 4 17
+SyntaxError alternative patterns bind different names 6 22 6 31
+SyntaxError alternative patterns bind different names 5 18 5 27
+SyntaxError 'yield' inside list comprehension 3 19 3 24
+SyntaxError alternative patterns bind different names 4 14 4 23
+SyntaxError multiple assignments to name 'a' in pattern 4 18 4 19
+SyntaxError wildcard makes remaining patterns unreachable 4 14 4 15
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 14 4 15
+SyntaxError mapping pattern checks duplicate key ('k') 4 14 4 30
+SyntaxError multiple starred names in sequence pattern 4 14 4 22
+SyntaxError attribute name repeated in class pattern: a 4 23 4 24
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 19 4 20
+SyntaxError multiple starred expressions in assignment 3 5 3 14
+SyntaxError default 'except:' must be last 5 5 6 13
+SyntaxError multiple starred expressions in assignment 3 11 3 17
+SyntaxError 'return' outside function 4 9 4 17
+SyntaxError alternative patterns bind different names 6 22 6 31
+SyntaxError alternative patterns bind different names 5 18 5 27
+SyntaxError 'yield' inside list comprehension 3 19 3 24
+SyntaxError alternative patterns bind different names 4 14 4 23
+SyntaxError multiple assignments to name 'a' in pattern 4 18 4 19
+SyntaxError wildcard makes remaining patterns unreachable 4 14 4 15
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 14 4 15
+SyntaxError mapping pattern checks duplicate key ('k') 4 14 4 30
+SyntaxError multiple starred names in sequence pattern 4 14 4 22
+SyntaxError attribute name repeated in class pattern: a 4 23 4 24
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 19 4 20
+SyntaxError multiple starred expressions in assignment 3 5 3 14
+SyntaxError default 'except:' must be last 5 5 6 13
+SyntaxError multiple starred expressions in assignment 3 11 3 17
+SyntaxError 'return' outside function 4 9 4 17
+SyntaxError alternative patterns bind different names 6 22 6 31
+SyntaxError alternative patterns bind different names 5 18 5 27
+SyntaxError 'yield' inside list comprehension 3 19 3 24
+SyntaxError alternative patterns bind different names 5 22 5 31
+SyntaxError multiple assignments to name 'a' in pattern 5 26 5 27
+SyntaxError wildcard makes remaining patterns unreachable 5 22 5 23
+SyntaxError name capture 'y' makes remaining patterns unreachable 5 22 5 23
+SyntaxError mapping pattern checks duplicate key ('k') 5 22 5 38
+SyntaxError multiple starred names in sequence pattern 5 22 5 30
+SyntaxError attribute name repeated in class pattern: a 5 31 5 32
+SyntaxError name capture 'y' makes remaining patterns unreachable 5 27 5 28
+SyntaxError multiple starred expressions in assignment 4 13 4 22
+SyntaxError default 'except:' must be last 6 13 7 21
+SyntaxError multiple starred expressions in assignment 4 19 4 25
+SyntaxError 'return' outside function 5 17 5 25
+SyntaxError alternative patterns bind different names 7 30 7 39
+SyntaxError alternative patterns bind different names 6 26 6 35
+SyntaxError 'yield' inside list comprehension 4 27 4 32
+SyntaxError alternative patterns bind different names 5 22 5 31
+SyntaxError multiple assignments to name 'a' in pattern 5 26 5 27
+SyntaxError wildcard makes remaining patterns unreachable 5 22 5 23
+SyntaxError name capture 'y' makes remaining patterns unreachable 5 22 5 23
+SyntaxError mapping pattern checks duplicate key ('k') 5 22 5 38
+SyntaxError multiple starred names in sequence pattern 5 22 5 30
+SyntaxError attribute name repeated in class pattern: a 5 31 5 32
+SyntaxError name capture 'y' makes remaining patterns unreachable 5 27 5 28
+SyntaxError multiple starred expressions in assignment 4 13 4 22
+SyntaxError default 'except:' must be last 6 13 7 21
+SyntaxError multiple starred expressions in assignment 4 19 4 25
+SyntaxError 'return' outside function 5 17 5 25
+SyntaxError alternative patterns bind different names 7 30 7 39
+SyntaxError alternative patterns bind different names 6 26 6 35
+SyntaxError 'yield' inside list comprehension 4 27 4 32
+SyntaxError alternative patterns bind different names 6 22 6 31
+SyntaxError multiple assignments to name 'a' in pattern 6 26 6 27
+SyntaxError wildcard makes remaining patterns unreachable 6 22 6 23
+SyntaxError name capture 'y' makes remaining patterns unreachable 6 22 6 23
+SyntaxError mapping pattern checks duplicate key ('k') 6 22 6 38
+SyntaxError multiple starred names in sequence pattern 6 22 6 30
+SyntaxError attribute name repeated in class pattern: a 6 31 6 32
+SyntaxError name capture 'y' makes remaining patterns unreachable 6 27 6 28
+SyntaxError multiple starred expressions in assignment 5 13 5 22
+SyntaxError default 'except:' must be last 7 13 8 21
+SyntaxError multiple starred expressions in assignment 5 19 5 25
+SyntaxError 'return' outside function 6 17 6 25
+SyntaxError alternative patterns bind different names 8 30 8 39
+SyntaxError alternative patterns bind different names 7 26 7 35
+SyntaxError 'yield' inside list comprehension 5 27 5 32
+SyntaxError alternative patterns bind different names 7 26 7 35
+SyntaxError multiple assignments to name 'a' in pattern 7 30 7 31
+SyntaxError wildcard makes remaining patterns unreachable 7 26 7 27
+SyntaxError name capture 'y' makes remaining patterns unreachable 7 26 7 27
+SyntaxError mapping pattern checks duplicate key ('k') 7 26 7 42
+SyntaxError multiple starred names in sequence pattern 7 26 7 34
+SyntaxError attribute name repeated in class pattern: a 7 35 7 36
+SyntaxError name capture 'y' makes remaining patterns unreachable 7 31 7 32
+SyntaxError multiple starred expressions in assignment 6 17 6 26
+SyntaxError default 'except:' must be last 8 17 9 25
+SyntaxError multiple starred expressions in assignment 6 23 6 29
+SyntaxError 'return' outside function 7 21 7 29
+SyntaxError alternative patterns bind different names 9 34 9 43
+SyntaxError alternative patterns bind different names 8 30 8 39
+SyntaxError 'yield' inside list comprehension 6 31 6 36
+SyntaxError alternative patterns bind different names 7 22 7 31
+SyntaxError multiple assignments to name 'a' in pattern 7 26 7 27
+SyntaxError wildcard makes remaining patterns unreachable 7 22 7 23
+SyntaxError name capture 'y' makes remaining patterns unreachable 7 22 7 23
+SyntaxError mapping pattern checks duplicate key ('k') 7 22 7 38
+SyntaxError multiple starred names in sequence pattern 7 22 7 30
+SyntaxError attribute name repeated in class pattern: a 7 31 7 32
+SyntaxError name capture 'y' makes remaining patterns unreachable 7 27 7 28
+SyntaxError multiple starred expressions in assignment 6 13 6 22
+SyntaxError default 'except:' must be last 8 13 9 21
+SyntaxError multiple starred expressions in assignment 6 19 6 25
+SyntaxError 'return' outside function 7 17 7 25
+SyntaxError alternative patterns bind different names 9 30 9 39
+SyntaxError alternative patterns bind different names 8 26 8 35
+SyntaxError 'yield' inside list comprehension 6 27 6 32
+SyntaxError alternative patterns bind different names 5 22 5 31
+SyntaxError multiple assignments to name 'a' in pattern 5 26 5 27
+SyntaxError wildcard makes remaining patterns unreachable 5 22 5 23
+SyntaxError name capture 'y' makes remaining patterns unreachable 5 22 5 23
+SyntaxError mapping pattern checks duplicate key ('k') 5 22 5 38
+SyntaxError multiple starred names in sequence pattern 5 22 5 30
+SyntaxError attribute name repeated in class pattern: a 5 31 5 32
+SyntaxError name capture 'y' makes remaining patterns unreachable 5 27 5 28
+SyntaxError multiple starred expressions in assignment 4 13 4 22
+SyntaxError default 'except:' must be last 6 13 7 21
+SyntaxError multiple starred expressions in assignment 4 19 4 25
+SyntaxError 'return' outside function 5 17 5 25
+SyntaxError alternative patterns bind different names 7 30 7 39
+SyntaxError alternative patterns bind different names 6 26 6 35
+SyntaxError 'yield' inside list comprehension 4 27 4 32
+SyntaxError alternative patterns bind different names 4 14 4 23
+SyntaxError multiple assignments to name 'a' in pattern 4 18 4 19
+SyntaxError wildcard makes remaining patterns unreachable 4 14 4 15
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 14 4 15
+SyntaxError mapping pattern checks duplicate key ('k') 4 14 4 30
+SyntaxError multiple starred names in sequence pattern 4 14 4 22
+SyntaxError attribute name repeated in class pattern: a 4 23 4 24
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 19 4 20
+SyntaxError multiple starred expressions in assignment 3 5 3 14
+SyntaxError default 'except:' must be last 5 5 6 13
+SyntaxError multiple starred expressions in assignment 3 11 3 17
+SyntaxError 'return' outside function 4 9 4 17
+SyntaxError alternative patterns bind different names 6 22 6 31
+SyntaxError alternative patterns bind different names 5 18 5 27
+SyntaxError 'yield' inside list comprehension 3 19 3 24
+SyntaxError alternative patterns bind different names 4 18 4 27
+SyntaxError multiple assignments to name 'a' in pattern 4 22 4 23
+SyntaxError wildcard makes remaining patterns unreachable 4 18 4 19
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 18 4 19
+SyntaxError mapping pattern checks duplicate key ('k') 4 18 4 34
+SyntaxError multiple starred names in sequence pattern 4 18 4 26
+SyntaxError attribute name repeated in class pattern: a 4 27 4 28
+SyntaxError name capture 'y' makes remaining patterns unreachable 4 23 4 24
+SyntaxError multiple starred expressions in assignment 3 9 3 18
+SyntaxError default 'except:' must be last 5 9 6 17
+SyntaxError multiple starred expressions in assignment 3 15 3 21
+SyntaxError 'return' outside function 4 13 4 21
+SyntaxError alternative patterns bind different names 6 26 6 35
+SyntaxError alternative patterns bind different names 5 22 5 31
+SyntaxError 'yield' inside list comprehension 3 23 3 28
+SyntaxError alternative patterns bind different names 6 26 6 35
+SyntaxError multiple assignments to name 'a' in pattern 6 30 6 31
+SyntaxError wildcard makes remaining patterns unreachable 6 26 6 27
+SyntaxError name capture 'y' makes remaining patterns unreachable 6 26 6 27
+SyntaxError mapping pattern checks duplicate key ('k') 6 26 6 42
+SyntaxError multiple starred names in sequence pattern 6 26 6 34
+SyntaxError attribute name repeated in class pattern: a 6 35 6 36
+SyntaxError name capture 'y' makes remaining patterns unreachable 6 31 6 32
+SyntaxError multiple starred expressions in assignment 5 17 5 26
+SyntaxError default 'except:' must be last 7 17 8 25
+SyntaxError multiple starred expressions in assignment 5 23 5 29
+SyntaxError 'return' outside function 6 21 6 29
+SyntaxError alternative patterns bind different names 8 34 8 43
+SyntaxError alternative patterns bind different names 7 30 7 39
+SyntaxError 'yield' inside list comprehension 5 31 5 36

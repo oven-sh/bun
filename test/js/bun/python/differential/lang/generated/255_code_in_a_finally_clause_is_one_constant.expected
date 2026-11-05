@@ -1,0 +1,66 @@
+status: 0
+script: 5faeb8e6a06eb57e
+source: a8915c3df910bdb6
+---
+def
+    f 1
+        g 5
+async def
+    f 1
+        g 5
+with annotations
+    f 1
+        __annotate__ 5
+        g 5
+with type parameters
+    f 1
+        <generic parameters of g> 5
+            __annotate__ 5
+            g 5
+class
+    f 1
+        C 5
+            m 6
+lambda
+    f 1
+        <lambda> 5
+generator expression
+    f 1
+        <genexpr> 5
+sum of one
+    f 1
+        <genexpr> 5
+any of one
+    f 1
+        <genexpr> 5
+type alias
+    f 1
+        A 5
+return in the body
+    f 1
+        <lambda> 5
+in a loop
+    f 1
+        <lambda> 8
+one in another
+    f 1
+        <lambda> 8
+in a handler too
+    f 1
+        <lambda> 5
+        <lambda> 7
+two that look alike
+    f 1
+        <lambda> 5
+        <lambda> 5
+with
+    f 1
+        <lambda> 3
+in a module
+    g 4
+in a class
+    C 1
+        g 5
+not reached
+    f 1
+False True 5 6

@@ -319,7 +319,8 @@ for f in function, Class.method, generator, coroutine, fails:
   });
 
   test("the same source gives the same file in every process", async () => {
-    // Whatever the compiler goes through in the order of a hash table that goes by addresses comes out differently from run to run.
+    // Whatever the compiler goes through in the order of a hash table that goes by addresses comes out differently from run to run,
+    // and so does a frozenset of strs among the constants, if it is written in its own order: hashes have another key in each process.
     const lines = ["import asyncio", "def f(a, b, c):"];
     for (let i = 0; i < 12; i++) {
       lines.push(
@@ -327,6 +328,8 @@ for f in function, Class.method, generator, coroutine, fails:
       );
       lines.push(`    y${i} = {k${i}: v${i} for k${i}, v${i} in a if (w${i} := k${i})}`);
     }
+    lines.push("    z = a in {'one', 'two', 'three', 'four', 'five', b'six', ('seven', 7), None, 8.5}");
+    lines.push("    for w in {'p', 'q', 'r', 's', 't', 'u', 'v'}: z = [w for w in a if w in {'x', 'y'}]");
     lines.push("    return {1, 'a', b'b', 2.5, None, ('c', 3)}, locals()");
     lines.push(
       "class C:",
@@ -337,7 +340,8 @@ for f in function, Class.method, generator, coroutine, fails:
     const dir = String(tmp);
     const written = new Set<string>();
     for (let i = 0; i < 4; i++) {
-      expect(await run(dir, ["main.py"], { PYTHONPYCACHEPREFIX: join(dir, `cache${i}`) })).toEqual(printed(""));
+      const env = { PYTHONPYCACHEPREFIX: join(dir, `cache${i}`), PYTHONHASHSEED: ["random", "0", "1", "4294967295"][i] };
+      expect(await run(dir, ["main.py"], env)).toEqual(printed(""));
       written.add(readFileSync(join(dir, `cache${i}`, dir, "mod.bun-315.pyc")).toString("hex"));
     }
     expect(written.size).toBe(1);

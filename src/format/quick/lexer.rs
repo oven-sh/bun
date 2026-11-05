@@ -1720,6 +1720,10 @@ impl Quick {
                 }
                 flags |= F_SLOW_TEXT;
                 if d >= 128 {
+                    // (no white space for JSX, but the long way trims it)
+                    if self.unicode_space(q) != 0 {
+                        return Err(self.rare(rare::ODD_BYTES));
+                    }
                     let length = self.character_length(q);
                     if length == 0 {
                         return Err(self.text_refuse());

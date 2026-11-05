@@ -1131,8 +1131,8 @@ impl Quick {
         // Most tokens follow the previous one at once or after one blank. Anything else is for skip_space().
         p += (self.t.at(p) == 32) as i32;
         let mut c = self.t.at(p);
-        self.lexer.pos = p;
         if c <= 32 || c == 47 || c >= 128 {
+            self.lexer.pos = p;
             self.skip_space()?;
             p = self.lexer.pos;
             c = self.t.at(p);
@@ -1148,27 +1148,36 @@ impl Quick {
         #[cfg(feature = "tally")]
         crate::tally::token(p);
         if (CT.at(c) & C_ASCII_START) != 0 {
-            // A name: nearly every second token.
-            let q = self.name_end(p + 1);
-            let e = self.t.at(q);
-            if e < 128 && e != 92 {
-                self.lexer.tok = tk::Name;
-                self.lexer.tok_kw = kw::None;
-                self.lexer.tok_end = q;
-                self.lexer.pos = q;
-                let len = q - p;
-                if (KW_LENGTHS.at(c).wrapping_shr(len as u32) & 1) != 0 {
-                    self.classify_name(p, len);
-                }
-                return Ok(());
-            }
+            // nearly every second token
+            return self.next_name(p, c);
         }
         let alone = ALONE.at(c);
         if alone != 0 {
             self.lexer_finish(alone, p + 1);
             return Ok(());
         }
+        self.lexer.pos = p;
         self.next_of_many_kinds(p, c)
+    }
+
+    /// next() for a name, which starts at p with the letter, `_` or `$` `c`.
+    #[inline(never)]
+    fn next_name(&mut self, p: i32, c: i32) -> R<()> {
+        let q = self.name_end(p + 1);
+        let e = self.t.at(q);
+        if e >= 128 || e == 92 {
+            self.lexer.pos = p;
+            return self.next_of_many_kinds(p, c);
+        }
+        self.lexer.tok = tk::Name;
+        self.lexer.tok_kw = kw::None;
+        self.lexer.tok_end = q;
+        self.lexer.pos = q;
+        let len = q - p;
+        if (KW_LENGTHS.at(c).wrapping_shr(len as u32) & 1) != 0 {
+            self.classify_name(p, len);
+        }
+        Ok(())
     }
 
     /// next() for what is neither a plain name nor a token of one byte: the token starts at p with `c`.

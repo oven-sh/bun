@@ -34,6 +34,8 @@ where
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
+    // The abort checks in `NodeFS` are for a pool thread.
+    debug_assert!(args.signal().is_none(), "a sync parse keeps no signal");
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned

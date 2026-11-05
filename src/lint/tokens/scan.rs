@@ -117,7 +117,7 @@ impl Marks {
         let end_of = |e: hir::ExprId| hir.exprs.get(e.idx()).map_or(0, |e| e.end);
         for (e, id) in hir.exprs.iter().zip(0..) {
             match e.kind {
-                ExprKind::Regex => marks.regexes.push((e.pos, e.end)),
+                ExprKind::Regex { .. } => marks.regexes.push((e.pos, e.end)),
                 ExprKind::Jsx(_) => marks.elements.push(e.pos),
                 ExprKind::Binary {
                     op: BinOp::Shl | BinOp::Shr | BinOp::UShr | BinOp::Ge,

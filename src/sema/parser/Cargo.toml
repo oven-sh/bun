@@ -15,5 +15,81 @@ bun_ast.workspace = true
 bun_threading.workspace = true
 smallvec.workspace = true
 
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../standalone", features = ["test_support"] }
+
+[[test]]
+name = "tree_nodes"
+path = "tests/tree_nodes.rs"
+
+[[test]]
+name = "bind_binding_kinds"
+path = "../bind/source_tests/binding_kinds.rs"
+
+[[test]]
+name = "bind_decorator_metadata"
+path = "../bind/source_tests/decorator_metadata.rs"
+
+[[test]]
+name = "bind_labeled_functions"
+path = "../bind/source_tests/labeled_functions.rs"
+
+[[test]]
+name = "bind_private_names"
+path = "../bind/source_tests/private_names.rs"
+
+[[test]]
+name = "bind_runtime_bindings"
+path = "../bind/source_tests/runtime_bindings.rs"
+
+[[test]]
+name = "bind_runtime_references"
+path = "../bind/source_tests/runtime_references.rs"
+
+[[test]]
+name = "bind_runtime_scopes"
+path = "../bind/source_tests/runtime_scopes.rs"
+
+[[test]]
+name = "bind_same_tables"
+path = "../bind/source_tests/same_tables.rs"
+
+[[test]]
+name = "bind_stability"
+path = "../bind/source_tests/stability.rs"
+
+[[test]]
+name = "bind_static_referent"
+path = "../bind/source_tests/static_referent.rs"
+
+[[test]]
+name = "analysis_fold"
+path = "../file_analysis/source_tests/fold.rs"
+
+[[test]]
+name = "analysis_fold_constants"
+path = "../file_analysis/source_tests/fold_constants.rs"
+
+[[test]]
+name = "analysis_module_format"
+path = "../file_analysis/source_tests/module_format.rs"
+
+[[test]]
+name = "analysis_import_sites"
+path = "../file_analysis/source_tests/import_sites.rs"
+
+[[test]]
+name = "analysis_jsx_imports"
+path = "../file_analysis/source_tests/jsx_imports.rs"
+
+[[test]]
+name = "analysis_data_modules"
+path = "../file_analysis/source_tests/data_modules.rs"
+
+[[test]]
+name = "analysis_type_ranges"
+path = "../file_analysis/source_tests/type_ranges.rs"
+
 [lints]
 workspace = true

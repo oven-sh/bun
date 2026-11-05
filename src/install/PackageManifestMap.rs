@@ -149,7 +149,7 @@ impl PackageManifestMap {
                 let demote = matches!(
                     value_ptr,
                     Value::Manifest(m)
-                        if needs_extended_manifest && !m.pkg.has_extended_manifest
+                        if needs_extended_manifest && !m.pkg.has_extended_manifest()
                 );
                 if demote {
                     let Value::Manifest(m) = core::mem::replace(value_ptr, Value::NotFound) else {
@@ -180,7 +180,7 @@ impl PackageManifestMap {
                     .ok()
                     .flatten()
                     {
-                        if needs_extended_manifest && !manifest.pkg.has_extended_manifest {
+                        if needs_extended_manifest && !manifest.pkg.has_extended_manifest() {
                             let value_ptr = vac.insert(Value::Expired(manifest));
                             if let Some(expiry) = is_expired {
                                 *expiry = true;

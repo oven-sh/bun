@@ -158,9 +158,7 @@ impl<'a> Val<'a> {
     /// `value[key]`, for a value that isn't nullish.
     pub(super) fn get(self, key: Key, dialect: Dialect) -> Val<'a> {
         use Property as P;
-        // oxlint's nodes have `start` and `end` too.
-        let has_offsets =
-            |node: VNode| dialect == Dialect::Espree || node.file().language().is_oxlint;
+        let has_offsets = |node: VNode| crate::estree::has_start_end(node.file());
         let string = |text: &[u8]| match key.property {
             P::Length => Val::Number(f64::from(bun_core::strings::wtf8_len_utf16(text))),
             P::Index(index) => unit_at(text, index).map_or(Val::Undefined, Val::Short),

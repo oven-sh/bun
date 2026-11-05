@@ -329,4 +329,25 @@ describe.concurrent("process.argv[1] is path.resolve of the entry argument", () 
       expect(exitCode).toBe(0);
     },
   );
+
+  test.skipIf(!isMacOS || isCaseInsensitiveFs)(
+    "a directory symlink that differs from its target by case alone keeps the link path",
+    async () => {
+      using dir = tempDir("argv-case-dirlink", { "FOO/entry.mjs": printEntry });
+      const root = String(dir);
+      const entryPath = join(root, "FOO", "entry.mjs");
+      symlinkSync("FOO", join(root, "foo"));
+
+      const { stdout, stderr, exitCode } = await run(root, "foo/entry.mjs");
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        argv1: join(root, "foo", "entry.mjs"),
+        url: pathToFileURL(entryPath).href,
+        metaMain: true,
+        bunMain: entryPath,
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });

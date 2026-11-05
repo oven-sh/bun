@@ -2962,20 +2962,37 @@ impl RunCommand {
         let is_entry_path = joined == entry_path
             || (cfg!(any(windows, target_os = "macos"))
                 && bun_core::strings::eql_case_insensitive_ascii(joined, entry_path, true)
-                && !Self::is_symlink(joined));
+                && !Self::has_symlink_component(joined));
         if joined.is_empty() || is_entry_path {
             return None;
         }
         Some(joined.to_vec().into_boxed_slice())
     }
 
-    fn is_symlink(path: &[u8]) -> bool {
+    /// Whether any component of the absolute `path` is a symlink.
+    fn has_symlink_component(path: &[u8]) -> bool {
         if path.len() >= MAX_PATH_BYTES {
             return false;
         }
+        let root_len = if cfg!(windows) {
+            paths::resolve_path::windows_filesystem_root(path).len()
+        } else {
+            1
+        };
         let mut buf = bun_paths::path_buffer_pool::get();
-        bun_sys::lstat(paths::resolve_path::z(path, &mut buf))
-            .is_ok_and(|st| bun_sys::S::ISLNK(st.st_mode as _))
+        let mut end = root_len;
+        while end < path.len() {
+            end = match strings::index_of_char_usize(&path[end + 1..], paths::SEP) {
+                Some(i) => end + 1 + i,
+                None => path.len(),
+            };
+            if bun_sys::lstat(paths::resolve_path::z(&path[..end], &mut buf))
+                .is_ok_and(|st| bun_sys::S::ISLNK(st.st_mode as _))
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Whether `path` is the same inode as `entry`.

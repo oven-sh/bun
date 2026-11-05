@@ -22,6 +22,9 @@ pub(crate) struct ParseFlow {
     pub(crate) flow_predicate: i32,
     /// The type arguments that are parsed next are those of a type: there may be none between the `<` and the `>`.
     pub(crate) may_be_empty: bool,
+    /// A type parameter has been read that the long way takes for none where a function could be an element of JSX: see
+    /// try_parse_generic_arrow().
+    pub(crate) has_odd_type_parameter: bool,
 }
 impl ParseFlow {
     pub(crate) fn new() -> Self {
@@ -30,6 +33,7 @@ impl ParseFlow {
             flow_no_conditional_types: 0,
             flow_predicate: 0,
             may_be_empty: false,
+            has_odd_type_parameter: false,
         }
     }
 }
@@ -102,11 +106,16 @@ impl Quick {
 
     pub(crate) fn flow_parse_union(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
-        if self.lexer.tok == tk::BitOr && !self.is_exact_end() {
+        let has_leading_operator = self.lexer.tok == tk::BitOr && !self.is_exact_end();
+        if has_leading_operator {
             self.next()?;
         }
         let first = self.flow_parse_intersection()?;
         if self.lexer.tok != tk::BitOr || self.is_exact_end() {
+            // (for the long way there is a union, which is what comments next to it are given to)
+            if has_leading_operator {
+                return Err(self.rare(rare::FLOW));
+            }
             return Ok(first);
         }
         let list_mark = self.arena.ls_pos;
@@ -123,9 +132,12 @@ impl Quick {
 
     pub(crate) fn flow_parse_intersection(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
-        self.eat(tk::BitAnd)?;
+        let has_leading_operator = self.eat(tk::BitAnd)?;
         let first = self.flow_parse_anon_function_without_parens()?;
         if self.lexer.tok != tk::BitAnd {
+            if has_leading_operator {
+                return Err(self.rare(rare::FLOW));
+            }
             return Ok(first);
         }
         let list_mark = self.arena.ls_pos;
@@ -1408,6 +1420,9 @@ impl Quick {
             );
             self.next()?;
         }
+        if variance != 0 || self.lexer.tok != tk::Name || self.lexer.tok_kw == kw::Enum {
+            self.parse_flow.has_odd_type_parameter = true;
+        }
         let name = self.parse_ident_name()?;
         let mut bound: i32 = 0;
         let mut default_type: i32 = 0;
@@ -1971,6 +1986,10 @@ impl Quick {
             {
                 declaration = self.flow_parse_declared(self.lexer.tok_start, 0)?;
             } else {
+                // (the long way expects a declaration behind `interface`)
+                if self.word() == w::Interface {
+                    return Err(self.text_refuse());
+                }
                 declaration = self.flow_parse_type_fresh()?;
                 // (`A => B`: the long way does not break its parameters)
                 if (self.n.at(declaration) & 0xff) == k::FunctionType

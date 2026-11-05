@@ -24,6 +24,8 @@ use crate::{Quick, R, Stop, Words, rare, why};
 pub(crate) struct ParseTypescript {
     /// In the `extends` part of a conditional type another conditional type needs parentheses.
     pub(crate) no_conditional_types: i32,
+    /// how many conditional types have been read
+    pub(crate) conditional_types: i32,
     /// How many parameters with modifiers or decorators there have been in the file.
     pub(crate) odd_parameters: i32,
     /// The parameters that were read last have modifiers or decorators that only a function with a body can have.
@@ -51,6 +53,7 @@ impl ParseTypescript {
     pub(crate) fn new() -> Self {
         Self {
             no_conditional_types: 0,
+            conditional_types: 0,
             odd_parameters: 0,
             parameters_need_body: false,
             in_class_declaration: false,
@@ -428,6 +431,7 @@ impl Quick {
             self.next()?;
             head = (head & !0xff) | k::ConstructorType;
         }
+        let conditional_types = self.parse_typescript.conditional_types;
         let type_parameters = if self.lexer.tok == tk::Lt {
             self.ts_parse_type_parameters()?
         } else {
@@ -440,6 +444,13 @@ impl Quick {
         self.parse_typescript.open_type_lists += 1;
         let params = self.parse_params()?;
         self.parse_typescript.open_type_lists -= 1;
+        // `A extends (b: C extends D ? E : F) => G ? H : I`: where TypeScript reads no conditional type, it reads none as the type of a
+        // parameter or as what a type parameter extends either, unless something is around it.
+        if self.parse_typescript.no_conditional_types != 0
+            && self.parse_typescript.conditional_types != conditional_types
+        {
+            return Err(self.text_refuse());
+        }
         let arrow_start = self.lexer.tok_start;
         if self.lexer.tok != tk::Arrow
             && (self.lexer.tok == tk::Comma || self.starts_with_gt() || self.is_start_of_type())
@@ -484,6 +495,7 @@ impl Quick {
             let true_type = self.ts_parse_type()?;
             self.expect(tk::Colon)?;
             let false_type = self.ts_parse_type()?;
+            self.parse_typescript.conditional_types += 1;
             return Ok(self.node4(
                 k::ConditionalType,
                 start,
@@ -1268,8 +1280,7 @@ impl Quick {
                 self.expect(tk::Comma)?;
             }
         }
-        // (`[]`: two line breaks in a row where it breaks, which the long way writes as one)
-        if self.parse_typescript.odd_parameters != odd || self.arena.ls_pos == list_mark {
+        if self.parse_typescript.odd_parameters != odd {
             return Err(self.text_refuse());
         }
         self.next()?;
@@ -2854,7 +2865,9 @@ impl Quick {
         self.set_speculating(depth + 1);
         let mut result: i32 = 0;
         let v0 = (|| -> R<Option<i32>> {
+            self.parse_flow.has_odd_type_parameter = false;
             let type_parameters = self.ts_parse_type_parameters()?;
+            let is_odd = self.parse_flow.has_odd_type_parameter;
             let params = self.parse_params()?;
             let return_type = if self.lexer.tok == tk::Colon {
                 self.ts_parse_arrow_return_type()?
@@ -2863,6 +2876,10 @@ impl Quick {
             };
             if self.lexer.tok != tk::Arrow || self.lexer.tok_nl != 0 {
                 return Err(self.unexpected());
+            }
+            // Flow: `<+A>() => b`, `<void>() => b`
+            if is_odd {
+                return Err(self.text_refuse());
             }
             self.set_speculating(depth);
             result =

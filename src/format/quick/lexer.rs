@@ -1564,6 +1564,7 @@ impl Quick {
         let c = self.t.at(p);
         if (CT.at(c) & C_ID_START) != 0 {
             let mut q = p;
+            let mut has_hyphen = false;
             loop {
                 let d = self.t.at(q);
                 if (CT.at(d) & C_ID_PART) != 0 || d == 45 {
@@ -1573,12 +1574,17 @@ impl Quick {
                         }
                         self.lexer.tok_flags |= F_SLOW_TEXT;
                         let length = self.character_length(q);
-                        if length == 0 || !self.is_in_name(q, q == p) {
+                        // (in Flow the long way reads ASCII only behind a `-`)
+                        if length == 0
+                            || !self.is_in_name(q, q == p)
+                            || (has_hyphen && self.mode.is_flow)
+                        {
                             return Err(self.text_refuse());
                         }
                         q += length;
                         continue;
                     }
+                    has_hyphen |= d == 45;
                     q += 1;
                 } else {
                     break;

@@ -281,7 +281,7 @@ pub(crate) const F_STANDS: i32 = F_ASYNC;
 pub(crate) const F_LINES: i32 = F_COMPUTED;
 /// K.Ready with F_LINES: where the lines are broken was decided for the column of word 6, and for no other
 pub(crate) const F_DECIDED: i32 = F_OPTIONAL;
-/// K.ReadyWrap: the first text stays on its line whether it fits or not
+/// K.ReadyWrap: the first text stays on its line whether it fits or not. K.Ready: `<a />`, in which there is no group and nothing to break.
 pub(crate) const F_ANY_WIDTH: i32 = F_CHAIN;
 pub(crate) const F_NEXT_LINE_KNOWN: i32 = F_PREFIX;
 pub(crate) const F_NEXT_LINE_EMPTY: i32 = F_QUOTE;

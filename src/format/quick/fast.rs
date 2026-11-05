@@ -6645,7 +6645,11 @@ impl Quick {
                 return Ok(JSX_REFUSED);
             }
             self.fast.ready_end = p;
-            self.fast.ready_flags = F_EXTRA;
+            self.fast.ready_flags = if self.fast.attribute_count == 0 {
+                F_EXTRA | F_ANY_WIDTH
+            } else {
+                F_EXTRA
+            };
             return Ok(if self.fast_finish(start, p) {
                 JSX_ELEMENT
             } else {

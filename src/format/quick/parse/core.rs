@@ -2460,6 +2460,11 @@ impl Quick {
             let mut test: i32 = 0;
             if self.eat(tk::Case)? {
                 test = self.parse_expression()?;
+                // `case (a): { if (b) {} }`: TypeScript's parser, and the long way in JavaScript too, tries `(a): {..` as the head of an
+                // arrow function, and takes it for one if a `{` or a `=>` follows what it has read as the return type.
+                if (self.n.at(test) & F_PAREN) != 0 {
+                    return Err(self.rare(rare::OTHER));
+                }
             } else {
                 self.expect(tk::Default)?;
                 if has_default {
@@ -3467,9 +3472,7 @@ impl Quick {
             {
                 return Err(self.text_refuse());
             }
-            if self.parse.typed == TYPED_FLOW {
-                self.parse.no_record_expression = 1;
-            } else if self.parse.typed == TYPED_TS
+            if self.parse.typed == TYPED_TS
                 && (self.lexer.tok == tk::Lt
                     || (self.lexer.tok == tk::Name
                         && self.lexer.tok_end - self.lexer.tok_start == 10
@@ -3479,7 +3482,15 @@ impl Quick {
             }
             self.parse.is_operand = true;
             self.parse_typescript.in_heritage = true;
-            super_class = self.parse_expr_subscripts()?;
+            let super_start = self.lexer.tok_start;
+            super_class = self.parse_expr_atom()?;
+            if !self.is_bare_arrow(super_class) {
+                // (not before the atom: in parentheses there is no superclass)
+                if self.parse.typed == TYPED_FLOW {
+                    self.parse.no_record_expression = 1;
+                }
+                super_class = self.parse_subscripts(super_class, super_start, false)?;
+            }
             self.parse_typescript.in_heritage = false;
             self.parse.is_operand = false;
             self.parse.no_record_expression = 0;

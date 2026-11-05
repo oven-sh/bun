@@ -4,10 +4,11 @@ use crate::arena::SUB_SHIFT;
 use crate::ast::{
     EXT_AT, F_ASYNC, F_CHAIN, F_COMPUTED, F_EXT, F_GENERATOR, F_METHOD, F_OPTIONAL, F_REST,
     F_STATIC, F_THIS, FN_PREDICATE, FN_RETURN_TYPE, FN_TYPE_PARAMETERS, M_GET, M_MASK, M_SET,
-    MOD_DECLARE, TO_KEYOF, V_CONST, V_MASK, k,
+    MOD_DECLARE, TO_KEYOF, V_CONST, V_MASK, k, type_keyword,
 };
 use crate::options::TRAILING_COMMA_ALL;
 use crate::print::core::{ARG_EXPAND_LAST, ARG_SHARE};
+use crate::print::jsx::KIND_AND_SUB;
 use crate::print::statics::{
     _ARROW_, ASYNC_, COLON_SPACE, COMMA, DECLARE_, ELLIPSIS, FUNCTION, GET_, HOOK, LPAREN,
     QUESTION, RPAREN, SEMI, SET_, SPACE, STAR,
@@ -270,13 +271,15 @@ impl Quick {
             }
             return Ok(());
         }
-        // (`a<> => b`: to the long way `a<>` is a simple type)
+        // (`a<> => b`, `* => b`: to the long way `a<>` and `*` are simple types)
         if self.mode.is_flow && count == 1 {
             let type_ = self.n.at(self.n.at(params + 1) + 5);
             if (self.n.at(self.n.at(params + 1)) & 0xff) == k::FunctionTypeParam
-                && (self.n.at(type_) & 0xff) == k::TypeReference
-                && self.n.at(type_ + 5) != 0
-                && self.n.at(self.n.at(self.n.at(type_ + 5) + 4)) == 0
+                && (((self.n.at(type_) & 0xff) == k::TypeReference
+                    && self.n.at(type_ + 5) != 0
+                    && self.n.at(self.n.at(self.n.at(type_ + 5) + 4)) == 0)
+                    || (self.n.at(type_) & KIND_AND_SUB)
+                        == (k::KeywordType | (type_keyword::All << SUB_SHIFT)))
             {
                 return Err(self.rare(rare::FLOW));
             }

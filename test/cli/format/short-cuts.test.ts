@@ -4492,6 +4492,15 @@ describe("TypeScript that the long way rejects", () => {
     });
   }
   expectRejected("a.ts", [
+    // `case (a): {`, which TypeScript tries as the head of an arrow function
+    "switch($){case(a):{if(b){c}}}",
+    "switch($){case(a):{switch(b){case 1:}}}",
+    // a conditional type in the parameters or type parameters of a function type, where there can be no conditional type
+    "type a=b extends(s:p extends o?a:a)=>d?r:n",
+    "type a=b extends new(s:p extends o?a:a)=>d?r:n",
+    "let a:a extends(infer o extends(s:p extends/**/o?a:a)=>d)?r:n",
+    "type a=b extends<T extends p extends o?a:a>()=>d?r:n",
+    "type a=b extends<T=p extends o?a:a>()=>d?r:n",
     // modifiers of class members
     "class A { public private a }",
     "class A { public public a() {} }",
@@ -5748,6 +5757,42 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // A call without arguments is a short argument by its name alone, whatever its type arguments are.
     ["a.tsx", "--print-width=15", "e=o(\ne<ayValue>()\n);\n"],
     ["a.tsx", "--print-width=15", "e=o(\ne<ayValue>()\n).g;\n"],
+    // `<a />` is no group, so that what is measured anew behind a forced line break in a fill is what follows it.
+    ["a.js", "--print-width=15 --tab-width=4", '<a><b>/<c/>\n<d/>\n</b>{<b/>}{" "}{b&<n/>}</a>\n'],
+    ["a.js", "--print-width=13", '<a><b>x\n<d/>\n</b>{<b/>}{" "}{b&<n/>}</a>\n'],
+    // A comment that waits for the end of the line, before something that ends the line for it.
+    ["a.cjs", "--print-width=100000", "a||(//\n<a a={[<b/>,<c/>]}/>)\n"],
+    ["a.tsx", "--print-width=100000", 'o||(//\n<a<{[t]:c}>a={""}/>)\n'],
+    // What is awaited, and an element, in the parentheses of a cast of JSDoc.
+    ["a.js", "--print-width=13", "await/**@type*/(await o).l\n"],
+    ["a.jsx", "--print-width=10 --tab-width=6", "/**@type*/(await n).p\n"],
+    ["a.jsx", "--print-width=6", '/**@type*/(<a>{""}</a>)\n'],
+    // A pattern with nothing in it: with a type, as the only parameter; with a comment, in a catch clause.
+    ["a.tsx", "--print-width=27", "function a({}:{l}):h<(l),l>\n"],
+    ["a.ts", "--print-width=30", "const a=({}:{l}):h<l,l>=>{}\n"],
+    ["a.tsx", "--print-width=47", "try{namespace o{}}catch({//\n}){declare function a():v}\n"],
+    // A block comment with a line break in it before the `:` of a case.
+    ["a.mjs", "--print-width=13", "{switch(e){case(``):default/*\nd*/:v=t()}}\n"],
+    ["a.mjs", "--print-width=13", "{switch(e){default/*\nd*/:v=t()}}\n"],
+    // A line comment on the line of a bracket of a computed key.
+    ["a.tsx", "--print-width=4", "const{[1//\n]:a}\n"],
+    ["a.js", "--print-width=4", "({[//\n1]:a})\n"],
+    // Flow: `*` as the only parameter of a function type, one type behind a `|` or a `&`, a comment in a getter.
+    ["a.js", "--print-width=21", "//@flow\n(<a>{()=>{(async function(){class \u00e9{\u6587:* =>[]}})}}</a>)\n"],
+    ["a.js", "--print-width=23", "//@flow\n(<a>{//\n()=>{switch(a){case 1:{const l:{e:((*))=>e}=(5)}}}}</a>)\n"],
+    ["a.js", "--print-width=89", '//@flow\n(async function(){(a=>{let d:/**/|a=""})})\n'],
+    ["a.js", "--print-width=74", "//@flow\nfor(;;){type \u00e9=\u6587<//\n(|{\u00e9:g})/**/>}\n"],
+    ["a.js.flow", "", "let d:/**/&a\n"],
+    ["a.js", "--print-width=20", "//@flow\nconst a:{get \u00e9(/**/):{\u672c\u8a9e:T}}\n"],
+    ["a.js.flow", "", "const a:{set e(/**/b:T):void}\n"],
+    // Line comments in a member of an enum, comments on both sides of a `.`.
+    ["a.ts", "--print-width=12", "enum a{b=//\naaaa.bbbb()}\n"],
+    ["a.ts", "", "enum a{b=\n//c\n1}\n"],
+    ["a.js", "--print-width=9", "x=e()//\n./**/b.c().d()\n"],
+    // A line that is broken on a line with nothing on it.
+    ["a.js", "--print-width=29 --trailing-comma=es5", "a(()=>()=>//\n()=>()=>()=>()=>()=>()=>()=>//\n()=>({}))\n"],
+    // A cast of JSDoc is no simple argument.
+    ["a.js", "--print-width=196", "o().c().d(/**@type*/(d))\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {
@@ -5816,6 +5861,9 @@ describe("JavaScript and Flow that the long way rejects", () => {
     });
   }
   expectRejected("a.js", "a.js", [
+    // `case (a): {`, which TypeScript tries as the head of an arrow function
+    "switch($){case(a):{if(b){c}}}",
+    "switch($){case(a):{switch(b){case 1:}}}",
     // jumps
     "function f() {\n  a();\n  break;\n}\n",
     "function f() {\n  if (a) {\n    continue;\n  }\n}\n",
@@ -5979,6 +6027,25 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "function f() {\n  break\u00a0;\n}\n",
   ]);
   expectRejected("a.js.flow", "a.js.flow", [
+    // type parameters of an arrow function: with a variance, with a word of the language for a name
+    "a=<+a>()=>b",
+    "a=async<-a>()=>b",
+    "a=<void>()=>c",
+    "a=<null>()=>c",
+    "a=<typeof>()=>c",
+    "a=<extends>()=>c",
+    "a=<enum>()=>c",
+    // a name of JSX that goes on beyond ASCII behind a `-`
+    '<a b-é={""}/>',
+    "<a-é/>",
+    '<a é-文={""}/>',
+    // an interface without a name as the default export
+    "declare export default interface{d:l}",
+    // type arguments in the parentheses of a superclass
+    "class a extends(d<x>){}",
+    "class a extends(d<x>,e){}",
+    "class a extends(d<x>||e){}",
+    "class a extends(a<a<b<{():t}>>>){}",
     // jumps
     "function f() {\n  a();\n  break;\n}\n",
     // super

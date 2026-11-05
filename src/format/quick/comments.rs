@@ -8,8 +8,8 @@
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     CL_EXTENDS, CL_IMPLEMENTS, CL_MIXINS, CL_TYPE_PARAMETERS, EXT_AT, F_CHAIN, F_DANGLING, F_EXT,
-    F_IGNORED, F_LEADING, F_PAREN, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, MOD_ABSTRACT,
-    MOD_DECLARE, SHAPE, k,
+    F_IGNORED, F_LEADING, F_PAREN, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, M_MASK, M_METHOD,
+    MOD_ABSTRACT, MOD_DECLARE, SHAPE, k,
 };
 use crate::lexer::{
     C_ENCLOSING, C_END, C_FLAGS, C_FOLLOWING, C_NEXT, C_NODE, C_PRECEDING, C_START, C_STRIDE,
@@ -205,7 +205,8 @@ fn comments_taken_in(kind: i32) -> i32 {
         k::ArrowFunctionExpression | k::ModuleBlock => OWN_LINE | OWN_BLOCK | END_LINE,
         k::MappedType | k::ReturnStatement => OWN_LINE | OWN_BLOCK | MID_BLOCK,
         k::UnaryExpression => END_LINE | MID_BLOCK,
-        k::AssignmentPattern | k::EnumMember | k::FunctionTypeParam => OWN_BLOCK | MID_BLOCK,
+        k::EnumMember => OWN_LINE | OWN_BLOCK | END_LINE | MID_BLOCK,
+        k::AssignmentPattern | k::FunctionTypeParam => OWN_BLOCK | MID_BLOCK,
         k::DoWhileStatement => OWN_LINE,
         _ => 0,
     }
@@ -606,29 +607,30 @@ impl Quick {
                     && behind != 61
                     && (((self.n.at(c.h_enclosing) as u32) >> SUB_SHIFT) as i32 & MOD_DECLARE) == 0
             }
-            // (not behind the `.` if another one is before it, nor in a decorator or before `as`)
+            // (not in a decorator or before `as`)
             k::MemberExpression => {
                 (match before == 46 {
-                    true => {
-                        form == MID_BLOCK
-                            && !(i > self.lexer.c_base
-                                && self.lexer.c.at((i - 1) * C_STRIDE + C_START)
-                                    >= self.n.at(c.h_enclosing + 1))
-                    }
+                    true => form == MID_BLOCK,
                     false => c.h_preceding_kind == k::CallExpression,
                 }) && !matches!(
                     self.n.at(self.n.at(c.h_enclosing + 3)) & 0xff,
                     k::Decorator | k::AsExpression | k::SatisfiesExpression
                 )
             }
-            // before the parentheses of a function, or parentheses that go
-            k::ObjectProperty => behind != 40,
+            // before the parentheses of a function, or parentheses that go; on the line of a bracket of the key, in the brackets
+            k::ObjectProperty => {
+                behind != 40 && !(form == END_LINE && (before == 91 || behind == 93))
+            }
             // before an object or an array that would stand on the line of the operator
             k::LogicalExpression => {
                 !matches!(c.h_following_kind, k::ObjectExpression | k::ArrayExpression)
             }
             // before the `...` of a rest parameter
             k::FunctionType => behind != 46,
+            // in a getter or a setter
+            k::ObjectTypeProperty => {
+                ((self.n.at(c.h_enclosing) as u32) >> SUB_SHIFT) as i32 & M_MASK == M_METHOD
+            }
             // between the name and the type arguments
             k::TypeReference => behind != 60,
             // next to the `in` or the `of`

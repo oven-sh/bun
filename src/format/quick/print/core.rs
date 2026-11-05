@@ -9,6 +9,7 @@ use crate::ast::{
 };
 use crate::lexer::tk;
 use crate::options::EOL_LF;
+use crate::print::jsx::{KIND_AND_SUB, READY_ELEMENT};
 use crate::print::statics::{
     AT, AWAIT, BANG, DEBUGGER, DOT, ELLIPSIS, EQ_SPACES, LPAREN, OPERATOR, QUESTION, RPAREN, SEMI,
     SPACE, YIELD, YIELD_STAR,
@@ -782,6 +783,11 @@ impl Quick {
                         self.n.at(n + 7),
                         (self.n.at(n) & F_DECIDED) != 0,
                     );
+                    return Ok(());
+                }
+                // (what fitted() writes stands for a group, and the first group behind a forced line break in something flat is measured anew)
+                if (self.n.at(n) & (KIND_AND_SUB | F_ANY_WIDTH)) == (READY_ELEMENT | F_ANY_WIDTH) {
+                    self.slice(self.n.at(n + 4), self.n.at(n + 4) + self.n.at(n + 5));
                     return Ok(());
                 }
                 // behind a property stands a comma

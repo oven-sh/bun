@@ -816,6 +816,10 @@ impl Quick {
                                 while o > 0 {
                                     let last = self.printer.out.at(o - 1);
                                     if last != 32 && last != 9 {
+                                        // see slow_step()
+                                        if last == 10 && kind < LINE_HARD {
+                                            return Err(self.rare(rare::BROKEN));
+                                        }
                                         break;
                                     }
                                     o -= 1;
@@ -865,6 +869,13 @@ impl Quick {
                             while o > 0 {
                                 let last = self.printer.out.at(o - 1);
                                 if last != 32 && last != 9 {
+                                    // see slow_step()
+                                    if last == 10
+                                        && kind < LINE_HARD
+                                        && self.d.at(pc - 1) != (op::Line | (LINE_NORMAL << 5))
+                                    {
+                                        return Err(self.rare(rare::BROKEN));
+                                    }
                                     break;
                                 }
                                 o -= 1;
@@ -1331,7 +1342,10 @@ impl Quick {
                                 pc += 1;
                                 continue 'l1;
                             }
-                            if pos + len + ((w >> 5) & 1) > width || o + len > cap {
+                            if pos + len + ((w >> 5) & 1) > width
+                                || o + len > cap
+                                || (waiting & WAIT_SUFFIX) != 0
+                            {
                                 break 's2;
                             }
                             // It stands for a group, and the first group behind a forced line break in something flat is the one that
@@ -1733,6 +1747,14 @@ impl Quick {
                             o -= 1;
                         }
                     }
+                    // A line that can be a blank or nothing is broken on a line with nothing on it: Prettier leaves that line empty, the long
+                    // way skips the line break. Right behind another line it is meant to: an empty line between two elements of an array.
+                    if kind < LINE_HARD
+                        && matches!(self.printer.out.at(o - 1), 10 | 13)
+                        && self.d.at(pc - 1) != (op::Line | (LINE_NORMAL << 5))
+                    {
+                        return Err(self.rare(rare::BROKEN));
+                    }
                     if (waiting & WAIT_CURSOR) != 0 {
                         // the white space at the end of the line is gone, and a cursor that stood in it stands at the end of the line
                         let mut i: i32 = 0;
@@ -2102,8 +2124,11 @@ impl Quick {
                     return Ok(true);
                 }
                 op::Nop => {
-                    // the text was written on the guess that it fits
-                    if pos + ((w as u32) >> 6) as i32 + ((w >> 5) & 1) > width {
+                    // The text was written on the guess that it fits, and that it starts its line. Behind a comment that waits for the end of
+                    // the line it does not, and whether there is something in it that ends the line for the comment cannot be seen.
+                    if pos + ((w as u32) >> 6) as i32 + ((w >> 5) & 1) > width
+                        || (waiting & WAIT_SUFFIX) != 0
+                    {
                         return Err(self.stop(why::REDO));
                     }
                     // the buffer is full

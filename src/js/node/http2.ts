@@ -76,6 +76,7 @@ type Http2ConnectOptions = {
   maxConcurrentStreams?: number;
   maxOutstandingSettings?: number;
   maxReservedRemoteStreams?: number;
+  peerMaxConcurrentStreams?: number;
   maxOriginSetSize?: number;
   remoteCustomSettings?: number[];
   strictFieldWhitespaceValidation?: boolean;
@@ -5195,7 +5196,11 @@ class ClientHttp2Session extends Http2Session {
   // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
   // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
   #pendingSettingsCallbacks: Array<[SettingsCallback, number] | null> = [null];
-  #remoteSettings: Settings | null = null;
+  // The peer's SETTINGS as the native engine last reported them. Until the peer's first SETTINGS
+  // frame arrives this holds the protocol defaults with maxConcurrentStreams set to the
+  // peerMaxConcurrentStreams session option (nghttp2 starts every session at 100), so requests
+  // made before that frame queue behind the same limit as later ones.
+  #remoteSettings: Settings;
   #pingCallbacks: Array<[PingCallback, number]> | null = null;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
   #maxReservedRemoteStreams: number = 200;
@@ -5722,7 +5727,7 @@ class ClientHttp2Session extends Http2Session {
 
   get remoteSettings() {
     if (this.destroyed || this.connecting) return {};
-    return (this.#remoteSettings ??= getDefaultSettings());
+    return this.#remoteSettings;
   }
 
   get localSettings() {
@@ -5872,6 +5877,11 @@ class ClientHttp2Session extends Http2Session {
 
     assertIsObject(url, "authority", ["string", "Object", "URL"]);
 
+    // node writes peerMaxConcurrentStreams into a Uint32Array without validation, so a number
+    // outside the uint32 range wraps like ToUint32.
+    this.#remoteSettings = getDefaultSettings();
+    this.#remoteSettings.maxConcurrentStreams =
+      typeof options.peerMaxConcurrentStreams === "number" ? options.peerMaxConcurrentStreams >>> 0 : 100;
     if (options.maxReservedRemoteStreams !== undefined) {
       this.#maxReservedRemoteStreams = options.maxReservedRemoteStreams;
     }
@@ -6466,11 +6476,10 @@ class ClientHttp2Session extends Http2Session {
       // a "pending" stream (no id) and sends its HEADERS frame once the session connects / a slot
       // frees, keeping stream id allocation in submission order. Deferring until connect is what
       // lets a stream destroyed before connect never reach the wire.
-      const maxConcurrentStreams = this.#remoteSettings?.maxConcurrentStreams;
       if (
         !this.#connected ||
         (this.#pendingRequests !== null && this.#pendingRequests.length > 0) ||
-        (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams)
+        this.#activeRequestCount >= this.#remoteSettings.maxConcurrentStreams
       ) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
@@ -6560,8 +6569,7 @@ class ClientHttp2Session extends Http2Session {
         }
         continue;
       }
-      const maxConcurrentStreams = this.#remoteSettings?.maxConcurrentStreams;
-      if (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams) {
+      if (this.#activeRequestCount >= this.#remoteSettings.maxConcurrentStreams) {
         break;
       }
       const { req, headers, wireHeaders, sensitiveNames, options } = queue.shift()!;

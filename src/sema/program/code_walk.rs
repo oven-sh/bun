@@ -134,6 +134,12 @@ impl PluginReadTimes {
 }
 
 #[derive(Default)]
+struct ImportersOfRequires {
+    scanned_again: Option<Vec<u32>>,
+    by_exporter: Option<FxHashMap<u32, Vec<u32>>>,
+}
+
+#[derive(Default)]
 struct WalkState<'s, 'r> {
     files: Vec<WalkedFile<'s, 'r>>,
     index_of: FxHashMap<LoadKey<'r>, u32>,
@@ -156,6 +162,7 @@ struct WalkState<'s, 'r> {
     to_revisit: Vec<FileToRevisit<'s, 'r>>,
     barrels: BarrelRequests,
     has_exported_requires: bool,
+    importers_of_requires: ImportersOfRequires,
     has_exported_file_changers: bool,
     names_looked_up: NamesLookedUp,
     unfinished: Vec<u32>,
@@ -672,9 +679,12 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let context = self.context;
         let mut state = self.state.lock();
         debug_assert!(state.is_drained && state.in_progress == 0);
+        state.importers_of_requires = ImportersOfRequires::default();
         loop {
-            let goes_on = fold_files_that_import_constants_again(context, &mut state)
-                || scan_importers_of_requires_again(context, &mut state)
+            let has_folded = fold_files_that_import_constants_again(context, &mut state);
+            let has_learned = !has_folded && scan_importers_of_requires_again(context, &mut state);
+            let goes_on = has_folded
+                || has_learned
                 || scan_askers_of_data_files_again(&context.atoms, &mut state)
                 || scan_importers_of_file_changers_again(context, &mut state)
                 || scan_askers_of_other_files_again(context, &mut state)
@@ -683,6 +693,9 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 || self.follow_chosen_imports(&mut state)
                 || self.begin_at_found_entry_points(&mut state)
                 || forget_files_folded_with_main_module(context, &mut state);
+            if goes_on && !has_learned {
+                state.importers_of_requires = ImportersOfRequires::default();
+            }
             self.log_round(&state);
             if !goes_on {
                 state.is_finished = true;
@@ -1327,18 +1340,34 @@ fn finish_files(state: &mut WalkState<'_, '_>) -> bool {
     !unfinished.is_empty()
 }
 
-fn names_export(hir: &hir::File<'_>, site: ImportSiteKind, export: Atom) -> bool {
+fn find_names_written_in(hir: &hir::File<'_>, site: ImportSiteKind) -> FxHashSet<Atom> {
+    match site {
+        ImportSiteKind::Import(import) => {
+            let named = hir[import].named.iter();
+            named.map(|it| hir[it].imported).collect()
+        }
+        ImportSiteKind::ExportFrom(statement) => {
+            let items = hir[statement].items.iter();
+            items.map(|it| hir[it].local).collect()
+        }
+        _ => FxHashSet::default(),
+    }
+}
+
+fn names_export(
+    hir: &hir::File<'_>,
+    site: ImportSiteKind,
+    written: &FxHashSet<Atom>,
+    export: Atom,
+) -> bool {
     match site {
         ImportSiteKind::Import(import) => {
             let import = &hir[import];
             import.namespace.is_some()
                 || export == known::default && import.default.is_some()
-                || import.named.iter().any(|it| hir[it].imported == export)
+                || written.contains(&export)
         }
-        ImportSiteKind::ExportFrom(statement) => {
-            let mut items = hir[statement].items.iter();
-            items.any(|it| hir[it].local == export)
-        }
+        ImportSiteKind::ExportFrom(_) => written.contains(&export),
         ImportSiteKind::ExportStar(statement) => {
             let passes_names_on = matches!(hir[statement].kind, StmtKind::ExportStar { alias, .. } if alias.is_none());
             passes_names_on && export != known::default
@@ -1371,8 +1400,12 @@ fn find_imported_requires(
         let Some(exporting) = &exporter.parsed else {
             continue;
         };
+        if exporting.code.exported_requires.is_empty() {
+            continue;
+        }
+        let written = find_names_written_in(&parsed.parse.hir, site.kind);
         for require in &exporting.code.exported_requires {
-            if names_export(&parsed.parse.hir, site.kind, require.export) {
+            if names_export(&parsed.parse.hir, site.kind, &written, require.export) {
                 found.push(ImportedRequire {
                     specifier,
                     export: require.export,
@@ -1393,17 +1426,78 @@ fn scan_importers_of_requires_again(
     if !state.has_exported_requires {
         return false;
     }
+    let ImportersOfRequires {
+        scanned_again,
+        mut by_exporter,
+    } = std::mem::take(&mut state.importers_of_requires);
     let files = &state.files[..];
-    let importers = find_in_every_file(context.host, files, &|file| {
-        let found = find_imported_requires(&context.atoms, files, file);
-        (found != file.imported_requires).then_some(found)
-    });
+    let importers = match scanned_again {
+        None => find_in_every_file(context.host, files, &|file| {
+            find_requires_not_yet_imported(&context.atoms, files, file)
+        }),
+        Some(scanned_again) => {
+            let importers = match &mut by_exporter {
+                Some(importers) => {
+                    note_importers(importers, files, scanned_again.iter().copied());
+                    importers
+                }
+                None => {
+                    let importers = by_exporter.insert(FxHashMap::default());
+                    note_importers(importers, files, 0..files.len() as u32);
+                    importers
+                }
+            };
+            let of_scanned = scanned_again
+                .iter()
+                .filter_map(|index| importers.get(index));
+            let mut due: Vec<u32> = of_scanned.flatten().copied().collect();
+            due.extend(&scanned_again);
+            due.shared_sort_unstable();
+            due.dedup();
+            let learned = due.into_iter().filter_map(|index| {
+                let file = &files[index as usize];
+                Some((
+                    index,
+                    find_requires_not_yet_imported(&context.atoms, files, file)?,
+                ))
+            });
+            learned.collect()
+        }
+    };
+    let scanned_again = importers.iter().map(|importer| importer.0).collect();
     let has_importers = !importers.is_empty();
     for (index, found) in importers {
         state.files[index as usize].imported_requires = found;
         scan_parsed_file_again(state, index);
     }
+    state.importers_of_requires = ImportersOfRequires {
+        scanned_again: Some(scanned_again),
+        by_exporter,
+    };
     has_importers
+}
+
+fn find_requires_not_yet_imported(
+    atoms: &Interner<'_>,
+    files: &[WalkedFile<'_, '_>],
+    file: &WalkedFile<'_, '_>,
+) -> Option<Vec<ImportedRequire>> {
+    let found = find_imported_requires(atoms, files, file);
+    (found != file.imported_requires).then_some(found)
+}
+
+fn note_importers(
+    importers: &mut FxHashMap<u32, Vec<u32>>,
+    files: &[WalkedFile<'_, '_>],
+    importing: impl Iterator<Item = u32>,
+) {
+    for index in importing {
+        for &target in &files[index as usize].targets {
+            if target != NOT_LOADED {
+                importers.entry(target).or_default().push(index);
+            }
+        }
+    }
 }
 
 fn read_text_of_data(mut value: &DataValue<'_>, atoms: &Interner<'_>, path: &[u8]) -> Option<Atom> {

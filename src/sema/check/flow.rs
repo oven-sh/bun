@@ -137,6 +137,16 @@ impl Reference {
         })
     }
 
+    /// `x`, `this`, `x.a.b`: two of them that are equal match the same expressions.
+    fn is_plain_chain(&self) -> bool {
+        matches!(self.root, Root::Symbol(_) | Root::This)
+            && self.has_key
+            && self.unresolved.get() == 0
+            && (self.unkeyed, self.satisfies, self.assigned) == (usize::MAX, usize::MAX, usize::MAX)
+            && self.accesses == self.path.len()
+            && (self.path.iter()).all(|step| matches!(step.name.get(), AccessedName::Some(_)))
+    }
+
     /// A reference that isn't an expression in the source: `root`, or `root.a.b`.
     fn synthetic(file: FileId, root: Root, path: SmallVec<[Step; 4]>, node: Node) -> Reference {
         Reference {
@@ -214,8 +224,8 @@ pub(super) struct FlowMemo {
     /// `finalArrayType` of an evolving array type whose element type is a union.
     final_array_types: FxHashMap<TypeId, TypeId>,
     /// Not in tsgo. Keyed by a flow node, which is an array mutation or shared, and the `root_key`
-    /// of a name. See `evolved_array_at`.
-    evolved_arrays: FxHashMap<(FileId, FlowId, u32), EvolvedArray>,
+    /// and the `path_key` of a reference. See `evolved_array_at`.
+    evolved_arrays: FxHashMap<(FileId, FlowId, u32, u64), EvolvedArray>,
     evolving_elements: Vec<EvolvingElements>,
     /// Two bits per flow node of the file `settled_calls_of`. The first marks a `Flow::Call` node
     /// whose call has an entry in `effects_signatures` (settled). The second marks one whose entry
@@ -262,6 +272,8 @@ pub(super) struct FlowMemo {
     reads_of_types_in_loops: u64,
     /// How many times `getNarrowableTypeForReference` may have returned another type than it was given.
     narrowable_types_not_as_given: u64,
+    /// How many times `isConstantReference` looked at where a reference with a path stands.
+    chains_asked_where_they_stand: u64,
     /// The depth of `stack` when each `ExhaustiveState::Computing` was set, the innermost last.
     exhaustive_states_computing: SmallVec<[usize; 2]>,
     /// `last_assignment_pos`
@@ -373,13 +385,15 @@ struct RunNode {
     next_shared: u32,
 }
 
-/// What a walk for a name of an automatic type finds at a flow node, if every walk for the name
-/// finds the same there. See `Walk::is_unshareable`.
+/// What a walk that has `Walk::marks` finds at a flow node, if every walk for the reference finds
+/// the same there. See `Walk::is_unshareable`.
 #[derive(Copy, Clone)]
 struct EvolvedArray {
     /// The declared type of the name and `initial_of`.
     declared: TypeId,
     initial: TypeId,
+    /// The reference, if it has a path, as an index into `FlowMemo::flow_loop_references`.
+    reference: u32,
     /// The type at the node. With `unmade`, the type that those elements are added to.
     ty: TypeId,
     unmade: Option<ElementsSoFar>,
@@ -483,11 +497,15 @@ impl FlowMemo {
         cached.iter().find(is_same).map(|c| c.1)
     }
 
-    fn cache_flow_loop_type(&mut self, key: FlowLoopKey, reference: &Reference, ty: TypeId) {
+    fn keep_reference(&mut self, reference: &Reference) -> u32 {
         if self.flow_loop_references.last() != Some(reference) {
             self.flow_loop_references.push(reference.clone());
         }
-        let index = (self.flow_loop_references.len() - 1) as u32;
+        (self.flow_loop_references.len() - 1) as u32
+    }
+
+    fn cache_flow_loop_type(&mut self, key: FlowLoopKey, reference: &Reference, ty: TypeId) {
+        let index = self.keep_reference(reference);
         self.flow_loop_cache
             .entry(key)
             .or_default()
@@ -724,9 +742,10 @@ struct Walk {
     /// The highest `depth` since the invocation in progress began. Unless the walk `is_exact`, as
     /// if it had found nothing in `sharedFlows`.
     deepest: u32,
-    /// `marks_of_walk` when the walk began, if it's for a name of an automatic type. While they
-    /// stay the same, what it has found is final.
-    marks: Option<((u64, u64), (u64, u64, u64), u64)>,
+    /// `marks_of_walk` when the walk began, if it's for a name of an automatic type or, while the
+    /// checker reads types alone, for a plain chain. While they stay the same, what it has found is
+    /// final.
+    marks: Option<((u64, u64), (u64, u64, u64), (u64, u64))>,
     /// What the walk has found isn't final, or depends on where its reference is, other than
     /// through `initial_of`.
     is_unshareable: bool,
@@ -2714,6 +2733,7 @@ impl<'p, 's> Checker<'p, 's> {
         let file = reference.file;
         let hir = self.hir(file);
         if !reference.path.is_empty() {
+            self.flow_memo.chains_asked_where_they_stand += 1;
             if reference.at.is_none() {
                 return false;
             }
@@ -2988,6 +3008,16 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Crossing::Yes => true,
             _ => false,
+        }
+    }
+
+    /// True if every reference to the same thing in the same function crosses as many starts of functions.
+    fn crosses_wherever_it_is(&self, walk: &Walk) -> bool {
+        match walk.crossing {
+            Crossing::PastLastAssignment(symbol, e) => {
+                self.flow_containers_up_to_declaration(walk.reference.file, symbol, e) == 0
+            }
+            _ => true,
         }
     }
 
@@ -6568,7 +6598,10 @@ impl<'p, 's> Checker<'p, 's> {
         let outer = std::mem::replace(&mut self.walk_declared, declared);
         let is_name = walk.reference.path.is_empty() && walk.reference.has_key;
         let begun = (is_name && self.is_automatic_type(declared)).then(|| self.begin_memoizable());
-        if begun.is_some() {
+        let is_kept = self.reads_types_alone
+            && self.flow_memo.far_walk != Some(u32::MAX)
+            && walk.reference.is_plain_chain();
+        if begun.is_some() || is_kept {
             walk.marks = Some(self.marks_of_walk());
         }
         let mut evolved = self.flow_type(walk, flow);
@@ -7463,7 +7496,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let is_this = arrow
                         && walk.reference.root == Root::This
                         && walk.reference.path.is_empty();
-                    walk.is_unshareable |= outer.is_some();
+                    walk.is_unshareable |= outer.is_some()
+                        && !(self.reads_types_alone && self.crosses_wherever_it_is(walk));
                     if outer.is_some() && (is_this || self.settle_crossing(walk)) {
                         flow = outer;
                         continue;
@@ -7833,6 +7867,10 @@ impl<'p, 's> Checker<'p, 's> {
             let known = EvolvedArray {
                 declared: walk.declared,
                 initial,
+                reference: match reference.path.is_empty() {
+                    true => u32::MAX,
+                    false => c.flow_memo.keep_reference(reference),
+                },
                 ty,
                 unmade,
                 invocations: deepest - (depth + 1 + at as u32),
@@ -7841,7 +7879,7 @@ impl<'p, 's> Checker<'p, 's> {
                 may_be_too_deep: !walk.is_exact,
                 follows_finally_block: walk.has_left_finally_block,
             };
-            let key = (file, node, root_key(reference.root));
+            let key = (file, node, root_key(reference.root), reference.path_key());
             c.flow_memo.evolved_arrays.insert(key, known);
         };
         if shared_flow.is_some() {
@@ -9173,9 +9211,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// FOR SPEED. Returns what an earlier walk for the same name found at `flow`. Only the depth of
-    /// the walk depends on the nodes that this one doesn't visit. Without this, n references
-    /// between n calls `a.push(x)` take n * n steps, and each step builds a union.
+    /// FOR SPEED. Returns what an earlier walk for the same reference found at `flow`. Only the depth
+    /// of the walk depends on the nodes that this one doesn't visit. Without this, n references
+    /// between n calls `a.push(x)` take n * n steps, and each step builds a union. So do n
+    /// references behind n tests of what they refer to.
     ///
     /// An invocation that isn't the outermost one of its walk may find a shared node in
     /// `sharedFlows` and end there, at a lower depth and after fewer steps. See
@@ -9186,8 +9225,14 @@ impl<'p, 's> Checker<'p, 's> {
         flow: FlowId,
         is_outermost: bool,
     ) -> Option<EvolvedArray> {
-        let key = (walk.reference.file, flow, root_key(walk.reference.root));
+        let reference = &walk.reference;
+        let (root, path) = (root_key(reference.root), reference.path_key());
+        let key = (reference.file, flow, root, path);
         let known = *self.flow_memo.evolved_arrays.get(&key)?;
+        let references = &self.flow_memo.flow_loop_references;
+        if (references.get(known.reference as usize)).is_some_and(|kept| kept != reference) {
+            return None;
+        }
         let ends_as_in_tsgo = is_outermost || !known.passes_shared_node;
         let is_exact = ends_as_in_tsgo && !known.may_be_too_deep;
         let steps = if ends_as_in_tsgo { known.steps } else { 0 };
@@ -9204,15 +9249,19 @@ impl<'p, 's> Checker<'p, 's> {
         Some(known)
     }
 
-    /// True if `walk` is for a name of an automatic type and what it has found is final.
+    /// True if `walk` has `marks` and what it has found is final.
     fn is_final_so_far(&self, walk: &Walk) -> bool {
         walk.marks == Some(self.marks_of_walk())
             && !self.relation_too_complex
             && self.reliability == 0
     }
 
-    fn marks_of_walk(&self) -> ((u64, u64), (u64, u64, u64), u64) {
-        let reads = self.flow_memo.reads_of_types_in_loops;
+    fn marks_of_walk(&self) -> ((u64, u64), (u64, u64, u64), (u64, u64)) {
+        let memo = &self.flow_memo;
+        let reads = (
+            memo.reads_of_types_in_loops,
+            memo.chains_asked_where_they_stand,
+        );
         (self.non_cacheable_mark(), self.interruptions(), reads)
     }
 

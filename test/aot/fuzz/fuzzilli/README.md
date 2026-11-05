@@ -299,6 +299,38 @@ In a typed run the profile adds five code generators (`typeScriptCodeGenerators`
 bun test/aot/fuzz/fuzzilli/lane.ts --kind few --minutes 60 --jobs 8 --out /tmp/lane
 ```
 
+## Each program as its own entry point
+
+`run-batch.ts` puts a runner, Workers and other programs into the executable that it builds. A program is never the entry point there. What a build proves only of an entry module that runs once doesn't show, and neither does what it leaves out because nothing reaches it: any second use in the same build brings it back. Of 31 programs that were known to go wrong when built by hand, `run-batch.ts` saw 12 at one program to a build.
+
+`run-alone.ts` builds each program the way a user does, `bun build --compile --aot <file>`, runs the executable as a process and holds it against `bun <file>`. It saw 27 of the 31. A build for each program costs about a second. The kinds `deeds`, `places` and `alone` of `lane.ts` use it.
+
+```sh
+bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds \
+  --scene sceneOfASingleDeed --checks-proofs 50 --writes-straight 25 --as-a-test 25 --seconds 600
+```
+
+`--programs <folder>` takes the files of a folder in place of draws. That is how to ask whether the driver sees a program that is known to go wrong.
+
+It counts these and doesn't keep them: a difference that the executable of `bun build --compile` without `--aot` shows too, such as a `tsconfig.json` in a subfolder or when an `import()` runs its file. An order in which files are loaded, unless `bun <file>` and that executable agree on it and `bun <file>` says the same twenty times. The layout of a function's text. What the compatibility page declares. A compiled test run that prints what the executable prints. An executable that dies is always kept.
+
+### Scenes of one deed
+
+A generator of random operations seldom puts together what people write every day. `write-single-deeds.ts` holds tables of such deeds, a few lines to a scene: something that can be walked goes into something that walks it, a view is read beside its length in a loop, a closure of a function that runs once is lent or kept, a list typed as a class holds an object that no constructor made. `write-hidden-effects.ts` has a lookup, a conversion or a protocol run code that writes what a neighbor in the same expression reads. `write-typed-places.ts` gives a place of a declared type what the type doesn't allow.
+
+Each table was written for a fault that the drivers had missed, and was kept once it found that fault again on a build that has it. Ask that of every new table, and again after every change to one: a scene that ends in the same error both ways finds nothing and looks clean.
+
+A scene writes only what its deed names. A helper that nothing calls is still a writer in sight of the compiler, and a `catch` that reads `error.constructor.name` reaches library code. Either can hide the fault.
+
+### One program for each member
+
+`write-member-sweep.ts` writes one program for each member of every object that the host brings, two steps deep: `typeof holder.member`, `"member" in holder`, and the own keys of each holder. That is about 24,000 programs of one line. A member that is only asked for is reached by nothing else, so this is the net under what a build leaves out. Build each one alone.
+
+```sh
+bun test/aot/fuzz/fuzzilli/write-member-sweep.ts /tmp/members
+bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds --programs /tmp/members
+```
+
 ## Try one program without Fuzzilli
 
 `reprl.py` speaks Fuzzilli's protocol to one Bun. It prints how each program ended, how long it took, and programs per second. The program as it ran, and what the two runs printed, are left beside the entry point.

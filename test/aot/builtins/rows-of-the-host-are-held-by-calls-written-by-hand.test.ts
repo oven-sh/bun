@@ -10,10 +10,11 @@ import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { serialize } from "bun:jsc";
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
 import { closeSync, openSync } from "node:fs";
 import { join, posix, win32 } from "node:path";
 import { domainToASCII, domainToUnicode } from "node:url";
+import { MIMEParams, MIMEType, parseEnv } from "node:util";
 import { describe, test } from "../supported";
 import { never } from "./differential/fixtures";
 import { Log } from "./differential/log";
@@ -93,6 +94,7 @@ function partsOf(type: DumpedType): { name: string; rest: DumpedType }[] {
       rest: { ...type, primitives: type.primitives.filter(other => other !== name) },
     })),
     ...(type.hasAnyFunction ? [{ name: "any function", rest: { ...type, hasAnyFunction: false } }] : []),
+    ...(type.hasPlainData ? [{ name: "plain data", rest: { ...type, hasPlainData: false } }] : []),
     ...type.parts.flatMap(part =>
       isBelowAnother(part)
         ? []
@@ -200,7 +202,47 @@ const readsIntoBuffer = (method: "read" | "readv") => (descriptor: number) =>
     ? fileSystem().read(descriptor, Buffer.alloc(4), 0, 4, 0)
     : fileSystem().readv(descriptor, [Buffer.alloc(4)], 0);
 
+function listenedTo(): EventTarget {
+  const target = new EventTarget();
+  target.addEventListener("made-for-this-test", () => {});
+  return target;
+}
+
 const cases: Case[] = [
+  {
+    row: "native:Bindgen:node_util_binding.bind.ts:parseEnv",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => [{ value: parseEnv("FIRST=1\nSECOND=two\n7=seven") }, { value: parseEnv("") }],
+  },
+  {
+    row: "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsGetEventListeners",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => [
+      { value: getEventListeners(listenedTo(), "made-for-this-test") },
+      { value: getEventListeners(new EventTarget(), "nobody-listens") },
+    ],
+  },
+  {
+    row: "%MIMEBinding%.MIMEType",
+    mode: "Construct",
+    place: "the result",
+    typesIn: result,
+    see: () => [
+      { value: new MIMEType("text/plain;charset=utf-8") },
+      { value: new (class extends MIMEType {})("text/plain") },
+    ],
+  },
+  {
+    row: "%MIMEBinding%.MIMEParams",
+    mode: "Construct",
+    place: "the result",
+    typesIn: result,
+    see: () => [{ value: new MIMEParams() }, { value: new (class extends MIMEParams {})() }],
+  },
   ...(["resolveWin32", "relativeWin32"] as const).map((name): Case => ({
     row: `native:Bindgen:node_path.bind.ts:${name}`,
     mode: "Call",
@@ -556,12 +598,71 @@ function defineTests() {
     },
   );
 
+  // node_fs.rs FsCompletion::reject() | resolve(). A parameter behind the operands of a call is undefined, which the type of the result does not say.
+  test.skipIf(isWindows)(
+    "%NodeJSFS%.prototype.statCb: the callback is handed the error alone, or null and the result, and the row lists both calls",
+    async () => {
+      const handedFor = async (path: string) => (await later(callback => fileSystem().statCb(callback, path))).length;
+      expect([await handedFor(missing), await handedFor(".")]).toEqual([1, 2]);
+      const rows = overloadsOf({ row: "%NodeJSFS%.prototype.statCb", mode: "Call" } as Case);
+      expect(rows).not.toBeEmpty();
+      for (const row of rows) expect(row.callbacks.map(callback => callback.arguments.length).sort()).toEqual([1, 2]);
+    },
+  );
+
   test("native:Bindgen:node_fs_binding.bind.ts:binding: it is no function, and its row for a call answers nothing", () => {
     expect(typeof fileSystem()).toBe("object");
     const rows = overloadsOf({ row: "native:Bindgen:node_fs_binding.bind.ts:binding", mode: "Call" } as Case);
     expect(rows).not.toBeEmpty();
     expect(rows.map(row => row.result.type)).toEqual(rows.map(() => never));
   });
+
+  test("native:Cpp:JSMIMEParams.cpp:createJSMIMEBinding: it is no function, its two classes throw without `new`, and their rows for a call answer nothing", () => {
+    const binding = bindingOf(realm, "native:Cpp:JSMIMEParams.cpp:createJSMIMEBinding");
+    expect(typeof binding).toBe("object");
+    expect(Reflect.ownKeys(binding).sort()).toEqual(["MIMEParams", "MIMEType"]);
+    expect([binding.MIMEParams, binding.MIMEType]).toEqual([MIMEParams, MIMEType]);
+    for (const made of [MIMEParams, MIMEType])
+      expect(() => Reflect.apply(made, undefined, ["text/plain"])).toThrow(TypeError);
+    for (const row of [
+      "native:Cpp:JSMIMEParams.cpp:createJSMIMEBinding",
+      "%MIMEBinding%.MIMEParams",
+      "%MIMEBinding%.MIMEType",
+    ]) {
+      const all = dump.entries.filter(entry => entry.path === row).flatMap(entry => entry.overloads);
+      expect(all.filter(overload => overload.isUndeclared)).toEqual([]);
+      const calls = all.filter(overload => overload.mode === "Call");
+      expect(calls).not.toBeEmpty();
+      expect(calls.map(overload => overload.result.type)).toEqual(calls.map(() => never));
+    }
+  });
+
+  // The compiler takes a read of a standard stream to hand out what a function of the library answered: native code makes no object there.
+  test.each([
+    ["a pipe", "pipe"],
+    ["a file", "file"],
+  ])(
+    "process.stdin | stdout | stderr: over %s each is an object of a class that is written in JavaScript",
+    async (_name, kind) => {
+      using dir = tempDir("aot-rows-by-hand-streams", { "in.txt": "" });
+      const program = `const said = ["stdin", "stdout", "stderr"].map(name => {
+      const made = Object.getPrototypeOf(process[name]).constructor;
+      return name + " " + typeof made + " " + !Function.prototype.toString.call(made).includes("[native code]");
+    });
+    require("node:fs").writeFileSync(process.argv[1], said.join());`;
+      const at = (name: string) => (kind === "pipe" ? "pipe" : Bun.file(join(String(dir), name)));
+      await using child = Bun.spawn([bunExe(), "-e", program, join(String(dir), "said.txt")], {
+        env: bunEnv,
+        stdin: kind === "pipe" ? "pipe" : Bun.file(join(String(dir), "in.txt")),
+        stdout: at("out.txt"),
+        stderr: at("err.txt"),
+      });
+      expect(await child.exited).toBe(0);
+      expect(await Bun.file(join(String(dir), "said.txt")).text()).toBe(
+        "stdin function true,stdout function true,stderr function true",
+      );
+    },
+  );
 
   // The compiler takes what lies there from the start for an object all of whose members the table lists: no name but those of any function.
   test("Error.prepareStackTrace: until a program stores there, a read answers the function of native code that the row names", () => {

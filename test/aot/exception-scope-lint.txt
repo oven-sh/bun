@@ -27,7 +27,6 @@ AOTFunctionTables.cpp | JSC::AOT::nameGivenTo | pending-call | JSC::AOT::ownText
 AOTFunctionTables.cpp | JSC::AOT::namesFramesAsWhenCreated | pending-call | JSC::AOT::functionName > JSC::AOT::functionName
 AOTFunctionTables.cpp | JSC::AOT::ownStringProperty | pending-call | JSC::AOT::ProgramStatics::readStringWithoutAllocating > JSC::JSString::tryGetValueWithoutGC
 AOTIterationOperations.cpp | JSC::AOT::operationAOTEnumeratorNext | unchecked-exit | JSC::AOT::findEnumeratedKey > JSC::AOT::findEnumeratedKey
-AOTJSONWriteOperations.cpp | JSC::AOT::appendJSONValueInFrame | unchecked-exit | JSC::AOT::appendJSONValue > JSC::AOT::appendJSONValue
 AOTModuleEvaluation.cpp | <lambda at AOTModuleEvaluation.cpp:274> | pending-call | JSC::AOT::Modules::throwEvaluationError > JSC::AOT::Modules::evaluateByCallingBody
 AOTModuleEvaluation.cpp | <lambda at AOTModuleEvaluation.cpp:274> | pending-call | JSC::AOT::Modules::throwEvaluationError > JSC::AOT::computeEvaluationList
 AOTModuleEvaluation.cpp | JSC::AOT::Modules::resumeDeferredLoadsWithoutImporter | unchecked-exit | JSC::AOT::Modules::resumeDeferredRequests > JSC::AOT::Modules::resumeDeferredRequests

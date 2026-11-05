@@ -1,4 +1,4 @@
-use bun_sema::check::aot::{ClassRef, RowsCarriedOver, ShapeKind};
+use bun_sema::check::aot::{Blocks, ClassRef, RowsCarriedOver, ShapeKind};
 
 use super::shape_edges::collect_edges;
 use super::{ExploredType, MappedType};
@@ -70,64 +70,15 @@ impl MemoEntry {
     }
 }
 
-const ROWS_IN_BLOCK: usize = 1 << 10;
-
-#[derive(Default)]
-struct Rows {
-    blocks: Vec<Vec<MemoEntry>>,
-    len: usize,
-}
-
-impl Rows {
-    #[inline]
-    fn get(&self, row: usize) -> Option<&MemoEntry> {
-        self.blocks
-            .get(row / ROWS_IN_BLOCK)?
-            .get(row % ROWS_IN_BLOCK)
-    }
-
-    #[inline]
-    fn get_mut(&mut self, row: usize) -> Option<&mut MemoEntry> {
-        self.blocks
-            .get_mut(row / ROWS_IN_BLOCK)?
-            .get_mut(row % ROWS_IN_BLOCK)
-    }
-
-    fn iter(&self) -> impl Iterator<Item = &MemoEntry> {
-        self.blocks.iter().flatten()
-    }
-
-    fn iter_mut(&mut self) -> impl Iterator<Item = &mut MemoEntry> {
-        self.blocks.iter_mut().flatten()
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn add_empty_rows_up_to(&mut self, row: usize) {
-        while self.len <= row {
-            let block = self.len / ROWS_IN_BLOCK;
-            if block == self.blocks.len() {
-                self.blocks.push(Vec::with_capacity(ROWS_IN_BLOCK));
-            }
-            self.blocks[block].push(MemoEntry::EMPTY);
-            self.len += 1;
-        }
-    }
-
-    fn truncate(&mut self, len: usize) {
-        debug_assert!(len <= self.len);
-        self.blocks.truncate(self.len.div_ceil(ROWS_IN_BLOCK));
-        let (last, rest) = (len / ROWS_IN_BLOCK, len % ROWS_IN_BLOCK);
-        for (index, block) in self.blocks.iter_mut().enumerate().skip(last) {
-            block.truncate(if index == last { rest } else { 0 });
-        }
-        self.len = len;
+impl Default for MemoEntry {
+    fn default() -> MemoEntry {
+        MemoEntry::EMPTY
     }
 }
 
 #[derive(Default)]
 pub(in crate::lower) struct TypeMemo {
-    rows: Rows,
+    rows: Blocks<MemoEntry>,
     is_plain: Vec<bool>,
     function_types: Vec<FunctionId>,
 }
@@ -135,10 +86,10 @@ pub(in crate::lower) struct TypeMemo {
 impl TypeMemo {
     #[inline]
     fn entry_at(&mut self, row: usize) -> &mut MemoEntry {
-        if self.rows.len <= row {
-            self.rows.add_empty_rows_up_to(row);
+        if self.rows.len() <= row {
+            self.rows.grow_to(row + 1);
         }
-        &mut self.rows.blocks[row / ROWS_IN_BLOCK][row % ROWS_IN_BLOCK]
+        &mut self.rows[row]
     }
 
     fn is_alike_in_every_file(&self, row: usize) -> bool {
@@ -180,7 +131,7 @@ impl TypeMemo {
             return next;
         };
         let mut carried_count = 0;
-        for old_row in 0..next.rows.len {
+        for old_row in 0..next.rows.len() {
             let Some(new_row) = carried.new_row(old_row as u32) else {
                 continue;
             };
@@ -515,5 +466,28 @@ mod tests {
         assert!((1..6).all(|row| !memo.is_alike_in_every_file(row)));
         assert!(memo.rows.iter().all(|entry| entry.shallow_seen_in == 0));
         assert_eq!(memo.is_plain.len(), first as usize);
+    }
+
+    #[test]
+    fn rows_cut_at_the_edge_of_a_block_grow_again_empty() {
+        let mut memo = TypeMemo::default();
+        memo.entry_at(2499);
+        for (entry, stamp) in memo.rows.iter_mut().zip(1..) {
+            entry.seen_in = stamp;
+        }
+        assert_eq!(memo.rows.iter().count(), 2500);
+
+        memo.rows.truncate(1024);
+
+        assert_eq!(memo.rows.len(), 1024);
+        let stamp_of = |memo: &TypeMemo, row: usize| memo.rows.get(row).map(|entry| entry.seen_in);
+        assert_eq!(stamp_of(&memo, 0), Some(1));
+        assert_eq!(stamp_of(&memo, 1023), Some(1024));
+        assert_eq!(stamp_of(&memo, 1024), None);
+        assert_eq!(memo.entry_at(2047).seen_in, 0);
+        assert_eq!(memo.rows.len(), 2048);
+        assert_eq!(stamp_of(&memo, 1023), Some(1024));
+        assert!(memo.rows.iter().skip(1024).all(|entry| entry.seen_in == 0));
+        assert_eq!(stamp_of(&memo, 2048), None);
     }
 }

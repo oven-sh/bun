@@ -109,6 +109,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   },
   {
     paths: /^src\/aot\/lower\/module\/loads\.rs$/,
+    lines: /match bytes\.ends_with\(b"\/"\)/,
+    reason:
+      "whether the base that is written for createRequire() ends as a folder: the last byte of a path, and a path is bound to nothing",
+  },
+  {
+    paths: /^src\/aot\/lower\/module\/loads\.rs$/,
     lines: /!name\.starts_with\(b"node:"\)/,
     reason:
       "the scheme in the name of a built-in module, which the table of built-ins has found by then: how a transpiler prints that name is a question about a path",
@@ -395,6 +401,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     paths: /^aot\/walk\/AOTWalkArguments\.cpp$/,
     lines: /BuiltinNames::callee\b/,
     reason: "`arguments.callee`: the allocation of the arguments object stands in front of the name",
+  },
+  {
+    paths: /^aot\/walk\/AOTWalkTypedAccesses\.cpp$/,
+    lines: /key == program\.keyOf\(BuiltinNames::arguments\) \|\| key == program\.keyOf\(BuiltinNames::caller\)/,
+    reason:
+      "`F.arguments`, `F.caller`: the one constructor function of the program that the type of the object names stands in front of the name. The engine answers these two for every function itself, so no member of the class is read there",
   },
 ];
 

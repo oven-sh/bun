@@ -147,6 +147,7 @@ pub(crate) struct LoadHost<'a> {
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
     may_store_path_of_main_module: AtomicBool,
+    has_file_that_asks_for_what_unseen_code_finds: AtomicBool,
     binary_entry_point_paths: Vec<Vec<u8>>,
     entry_points_that_run_despite_their_names: Vec<Vec<u8>>,
     entry_points_by_file: Vec<(Vec<u8>, Vec<u8>)>,
@@ -333,6 +334,7 @@ impl<'a> LoadHost<'a> {
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
             may_store_path_of_main_module: AtomicBool::new(false),
+            has_file_that_asks_for_what_unseen_code_finds: AtomicBool::new(false),
             extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
             background_reads: Guarded::new(Vec::new()),
@@ -744,6 +746,11 @@ impl Host for LoadHost<'_> {
 }
 
 impl LoadHost<'_> {
+    pub(crate) fn has_file_that_asks_for_what_unseen_code_finds(&self) -> bool {
+        self.has_file_that_asks_for_what_unseen_code_finds
+            .load(Ordering::Relaxed)
+    }
+
     fn import_names_or_compile_components<'s>(
         &self,
         arena: &'s Arena,
@@ -834,6 +841,10 @@ impl CodeHost for LoadHost<'_> {
             return HostResolution::Path(self.plugins.add_entry_text(text));
         }
         if is_import && let Some(resolution) = self.runtime_resolution(request.specifier) {
+            if builtin_uses::is_module_with_source(&resolution) {
+                self.has_file_that_asks_for_what_unseen_code_finds
+                    .store(true, Ordering::Relaxed);
+            }
             return resolution;
         }
         let resolution = match request.form {
@@ -1434,9 +1445,14 @@ impl CodeHost for LoadHost<'_> {
             platform: self.input.platform,
             replaced: &load.replaced_builtins,
             runs_tests: load.runs_tests,
+            holds_language: load.runs_tests || self.has_file_that_asks_for_what_unseen_code_finds(),
         };
         let mut answers =
             builtin_uses::finish_application_file(&input, needs_declarations, request, source);
+        if builtin_uses::asks_for_what_unseen_code_finds(request, source) {
+            self.has_file_that_asks_for_what_unseen_code_finds
+                .store(true, Ordering::Relaxed);
+        }
         if source.builtins.may_store_path_of_main_module() {
             self.may_store_path_of_main_module
                 .store(true, Ordering::Relaxed);

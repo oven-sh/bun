@@ -18,7 +18,6 @@ pub(super) fn emit_call(builder: &mut FunctionBuilder, callee: ValueId) -> Value
         None,
         false,
         false,
-        false,
     )
 }
 

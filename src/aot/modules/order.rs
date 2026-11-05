@@ -24,6 +24,7 @@ use bun_sema::hir::{
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, OwnRequire, find_module_printed_as_require, find_own_require,
+    may_call_have_made_base_of_require,
 };
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -536,6 +537,7 @@ impl<'a, 's> FileText<'a, 's> {
                 None => {
                     !runs_tests
                         && find_own_require(hir, bound, None, callee) == Some(OwnRequire::Made)
+                        && !may_call_have_made_base_of_require(hir, bound, callee)
                 }
             },
             _ => false,

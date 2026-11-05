@@ -66,6 +66,33 @@ for (const each of [WebSocket.prototype.send, Worker.prototype.terminate, URLPat
     console.log(error.name, error.code, error.message);
   }
 }
+//// the-constructor-found-on-the-prototype
+//@ alone
+const Found = WebSocket.prototype.constructor;
+const socket = new Found("ws://localhost:1");
+socket.onerror = () => {};
+socket.close();
+console.log(typeof socket.send, socket.readyState);
+//// a-method-of-the-prototype-that-is-bound
+//@ alone
+const bound = WebSocket.prototype.close.bind({});
+try {
+  bound();
+} catch (error) {
+  console.log(error.name, error.code, error.message);
+}
+//// instanceof-a-class-that-tests-by-its-own-code
+//@ alone
+console.log({} instanceof File, new Date() instanceof File);
+//// the-class-above-a-class-by-its-accessor
+//@ alone
+const Base = CustomEvent.__proto__;
+console.log(new Base("x").type);
+//// the-class-itself-by-the-accessor-of-species
+//@ alone
+const Kind = Float32Array[Symbol.species];
+const list = new Kind(2);
+console.log(list.length, list instanceof Object);
 //// a-getter-of-the-prototype-found-from-below
 try {
   console.log(Object.create(WebSocket.prototype).readyState);

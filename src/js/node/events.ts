@@ -285,7 +285,9 @@ function initializeProxyReceiver(emitter: any, opts?: $Node.EventEmitterOptions)
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-const EventEmitterPrototype = (EventEmitter.prototype = {} as $Node.EventEmitterPrototype);
+// Two statements: the object goes nowhere but under `prototype`, so a compiler that reads this text knows the members that are laid below.
+EventEmitter.prototype = {} as $Node.EventEmitterPrototype;
+const EventEmitterPrototype = EventEmitter.prototype;
 
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(this: $Node.EventEmitter, n: number) {
   validateNumber(n, "setMaxListeners", 0);
@@ -673,6 +675,39 @@ EventEmitterPrototype.prependOnceListener = function prependOnceListener(
   return this;
 };
 
+// The end of removeListener() once more, for an executable that was compiled ahead of time. It takes its place in a stack trace, under its name.
+const removeFromList = function removeListener(
+  emitter: $Node.EventEmitter,
+  events: $Node.Events,
+  type: $Node.EventName,
+  list: $Node.Listener[],
+  listener: $Node.Listener,
+) {
+  let position = -1;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i] === listener || list[i].listener === listener) {
+      position = i;
+      break;
+    }
+  }
+  if (position < 0) return emitter;
+
+  const n = list.length;
+  if (n === 2) {
+    events[type] = list[1 - position];
+  } else {
+    const copy = $newArrayWithSize<$Node.Listener>(n - 1);
+    for (let i = 0; i < position; i++) copy[i] = list[i];
+    for (let i = position + 1; i < n; i++) copy[i - 1] = list[i];
+    if ((list as ListenerList).warned) (copy as ListenerList).warned = true;
+    events[type] = copy;
+  }
+
+  if (events.removeListener !== undefined) emitter.emit("removeListener", type, listener.listener ?? listener);
+
+  return emitter;
+};
+
 const removeListener = function removeListener(
   this: $Node.EventEmitter,
   type: $Node.EventName,
@@ -710,6 +745,8 @@ const removeListener = function removeListener(
     return this;
   }
 
+  // Compiled ahead of time, what follows is a function of its own: behind a declared parameter the list is known to be one.
+  if (IS_COMPILED_AHEAD_OF_TIME) return removeFromList(this, events, type, list, listener);
   let position = -1;
   for (let i = list.length - 1; i >= 0; i--) {
     if (list[i] === listener || list[i].listener === listener) {

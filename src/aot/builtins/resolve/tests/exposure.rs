@@ -360,6 +360,49 @@ fn this_of_strict_code_and_of_a_file_is_not_the_global_object() {
     });
 }
 
+const THIS_THAT_IS_ONLY_STORED_THROUGH_OR_LOOKED_AT: &[&str] = &[
+    "function f() { this.own = 1; }",
+    "function f() { typeof this; }",
+    "function f() { return () => { this.own = 1; }; }",
+    "({ m() { this.own = 1; } });",
+    "function f(a = this.own) {}",
+];
+
+#[test]
+fn a_file_where_this_may_be_the_global_object_lets_in_what_nobody_names() {
+    for &source in THIS_THAT_IS_ONLY_STORED_THROUGH_OR_LOOKED_AT {
+        with_case(SCRIPT, source, |case| {
+            assert!(case.resolved.uses().lets_in_what_nobody_names, "{source}");
+        });
+        with_case(SCRIPT, &format!("'use strict'; {source}"), |case| {
+            assert!(!case.resolved.uses().lets_in_what_nobody_names, "{source}");
+        });
+        with_case(RUNTIME, source, |case| {
+            assert!(!case.resolved.uses().lets_in_what_nobody_names, "{source}");
+        });
+    }
+    with_case(SCRIPT, "class A { m() { this.own = 1; } }", |case| {
+        assert!(!case.resolved.uses().lets_in_what_nobody_names);
+    });
+}
+
+#[test]
+fn a_file_that_hands_the_global_object_to_a_native_that_defines_lets_in_what_nobody_names() {
+    for source in [
+        "Object.defineProperty(globalThis, 'other', { value: 1 });",
+        "Object.defineProperty(global, 'other', { value: 1 });",
+        "Object.defineProperties(globalThis, { other: { value: 1 } });",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.resolved.uses().lets_in_what_nobody_names, "{source}");
+        });
+    }
+    let on_another_holder = "Object.defineProperty(Math, 'other', { value: 1 });";
+    with_case(PROGRAM, on_another_holder, |case| {
+        assert!(!case.resolved.uses().lets_in_what_nobody_names);
+    });
+}
+
 case_tests! {
     accessor_defined_on_the_global_object_replaces_the_global: TEST_RUN,
         "globalThis.__defineGetter__('structuredClone', f); globalThis.__defineSetter__('fetch', f); Math.__defineGetter__('max', f);",

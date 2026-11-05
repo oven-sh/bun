@@ -355,6 +355,14 @@ function readsRawHeadersThroughAccessor(message: $Node.IncomingMessage): boolean
 
 // Whether a read of `message.readableEnded` reaches the accessor of Readable.prototype, which is not configurable.
 function readsReadableEndedThroughAccessor(message: $Node.IncomingMessage): boolean {
+  // An heir may declare an accessor of its own, and the question answers for the class that the message is of.
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
+    $findsDeclaredMember(message, "readableEnded") &&
+    ObjectGetPrototypeOf(message) === IncomingMessagePrototype
+  ) {
+    return true;
+  }
   if (ObjectHasOwn(message, "readableEnded")) return false;
   let level: object | null = ObjectGetPrototypeOf(message);
   if (level === IncomingMessagePrototype) {

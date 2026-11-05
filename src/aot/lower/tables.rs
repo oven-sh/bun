@@ -147,7 +147,7 @@ impl SharedTables {
     }
 }
 
-const TOO_MANY_PLACES: &str = "a task gives out fewer than 2^32 places";
+const TOO_MANY_PLACES: &str = "the tasks of a thread give out fewer than 2^32 places in all";
 
 pub(crate) struct Places {
     entries: Vec<u32>,

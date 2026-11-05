@@ -59,16 +59,16 @@ say(log);
 // CHECK-NEXT: Throw v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inextensible"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Builtin builtin=Object
 // CHECK-NEXT: v1 = Builtin builtin=ObjectPreventExtensions
-// CHECK-NEXT: v2 = Data data=[[d_5]]
+// CHECK-NEXT: v2 = Data data=[[d_6]]
 // CHECK-NEXT: v3 = Call v1, v0, v2 calleeName="Object.preventExtensions"
 // CHECK-NEXT: ReturnCall v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="promise"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v1 = PropGet v0 key="Promise" [isFreeName]
@@ -79,13 +79,13 @@ say(log);
 // CHECK-NEXT: ReturnCall v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="regexp"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_8]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = NewRegExp pattern="x"
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="symbolObject"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Builtin builtin=Object
 // CHECK-NEXT: v1 = Builtin builtin=Symbol

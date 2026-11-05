@@ -90,6 +90,7 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             dialect: SourceDialect::Runtime,
             replaced: &[],
             runs_tests: false,
+            holds_language: false,
         });
         test(&ScopeInput {
             file,

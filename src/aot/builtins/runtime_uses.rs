@@ -1,7 +1,8 @@
 use super::table::{
-    self, BuiltinFlags, BuiltinId, Origin, Platforms, Prototype, RuntimeFunction,
-    RuntimeFunctionRole, RuntimeModule,
+    self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, Origin, Platforms, Prototype,
+    RuntimeFunction, RuntimeFunctionRole, RuntimeModule,
 };
+use crate::ir::WellKnownSymbol;
 use bun_collections::DynamicBitSet;
 use bun_core::UnwrapOrOom as _;
 use bun_sema::util::SharedSort;
@@ -16,6 +17,23 @@ pub struct RuntimeUses {
     pub modules_read_whole: Box<[RuntimeModule]>,
     pub exports_read: Box<[(RuntimeModule, &'static str)]>,
     pub functions: Box<[RuntimeFunction]>,
+    pub lets_in_what_nobody_names: bool,
+    pub asks: AsksOfText,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct AsksOfText {
+    pub members_read: Vec<BuiltinName>,
+    pub reads_by_unknown_key: bool,
+    pub syntax: SyntaxWithHelpers,
+}
+
+impl AsksOfText {
+    pub fn add(&mut self, other: &AsksOfText) {
+        self.members_read.extend_from_slice(&other.members_read);
+        self.reads_by_unknown_key |= other.reads_by_unknown_key;
+        self.syntax |= other.syntax;
+    }
 }
 
 struct Collected {
@@ -31,7 +49,12 @@ struct Collector {
     work_stack: Vec<BuiltinId>,
     collected: Collected,
     has_unknown_module_loader: bool,
-    assumes_language_is_held: bool,
+    reads_members_by_key: bool,
+    finds_code_without_names: bool,
+    lets_in_what_nobody_names: bool,
+    finds_language_by_names: bool,
+    holds_functions_for_any_host_object: bool,
+    asks: AsksOfText,
 }
 
 struct Reached {
@@ -40,22 +63,24 @@ struct Reached {
     exports_read: Box<[(RuntimeModule, &'static str)]>,
     functions: Box<[u32]>,
     has_unknown_module_loader: bool,
+    reads_members_by_key: bool,
+    finds_code_without_names: bool,
 }
 
 fn reached_from(
     id: BuiltinId,
     platform: Platforms,
-    assumes_language_is_held: bool,
+    finds_language_by_names: bool,
 ) -> &'static Reached {
     type ByEntry = Box<[OnceLock<Box<Reached>>]>;
     const WAYS_TO_ASK: usize = (Platforms::all().bits() as usize + 1) * 2;
     static REACHED: [OnceLock<ByEntry>; WAYS_TO_ASK] = [const { OnceLock::new() }; WAYS_TO_ASK];
-    let way = platform.bits() as usize * 2 + usize::from(assumes_language_is_held);
+    let way = platform.bits() as usize * 2 + usize::from(finds_language_by_names);
     let by_entry =
         REACHED[way].get_or_init(|| (0..BuiltinId::COUNT).map(|_| OnceLock::new()).collect());
     by_entry[id.to_wire() as usize].get_or_init(|| {
         let mut collector = Collector::new(platform);
-        collector.assumes_language_is_held = assumes_language_is_held;
+        collector.finds_language_by_names = finds_language_by_names;
         collector.work_stack.push(id);
         collector.walk_reachable_entries();
         let Collected {
@@ -74,12 +99,114 @@ fn reached_from(
             exports_read: exports_read.into(),
             functions: rows.filter(|&row| functions.is_set(row as usize)).collect(),
             has_unknown_module_loader: collector.has_unknown_module_loader,
+            reads_members_by_key: collector.reads_members_by_key,
+            finds_code_without_names: collector.finds_code_without_names,
         })
     })
 }
 
 const UNKNOWN_MODULE_LOADERS: BuiltinFlags =
     BuiltinFlags::LOADS_MODULE_BY_NAME.union(BuiltinFlags::RUNS_UNSEEN_CODE);
+
+const EVALUATORS: BuiltinFlags = BuiltinFlags::EVALUATES_TEXT.union(BuiltinFlags::RUNS_UNSEEN_CODE);
+
+const WRITTEN_IN_PLACE_OF: &[(BuiltinId, &[BuiltinId])] = &[
+    (
+        BuiltinId::Array,
+        &[
+            BuiltinId::CompilerHelpersCheckedArrayLength,
+            BuiltinId::CompilerHelpersArrayOfUndefined,
+            BuiltinId::CompilerHelpersArrayFromLength,
+            BuiltinId::CompilerHelpersFilledArray,
+            BuiltinId::CompilerHelpersMappedFilledArray,
+        ],
+    ),
+    (
+        BuiltinId::ArrayFrom,
+        &[
+            BuiltinId::CompilerHelpersArrayOfUndefined,
+            BuiltinId::CompilerHelpersArrayFromLength,
+            BuiltinId::CompilerHelpersArrayFromList,
+        ],
+    ),
+];
+
+const DECORATOR_HELPERS: &[BuiltinId] = &[
+    BuiltinId::CompilerHelpersApplyAccessorDecorators,
+    BuiltinId::CompilerHelpersApplyClassDecorators,
+    BuiltinId::CompilerHelpersApplyFieldDecorators,
+    BuiltinId::CompilerHelpersApplyMethodDecorators,
+    BuiltinId::CompilerHelpersApplyPrivateAccessorDecorators,
+    BuiltinId::CompilerHelpersApplyPrivateFieldDecorators,
+    BuiltinId::CompilerHelpersApplyPrivateMethodDecorators,
+    BuiltinId::CompilerHelpersCreateDecoratorMetadata,
+    BuiltinId::CompilerHelpersCreateElement,
+    BuiltinId::CompilerHelpersCreatePrivateStorage,
+    BuiltinId::CompilerHelpersDecorateClass,
+    BuiltinId::CompilerHelpersDecorateMethod,
+    BuiltinId::CompilerHelpersDecorateParameter,
+    BuiltinId::CompilerHelpersDecorateProperty,
+    BuiltinId::CompilerHelpersDefineMetadata,
+    BuiltinId::CompilerHelpersRunInitializers,
+    BuiltinId::CompilerHelpersRunValueInitializers,
+    BuiltinId::CompilerHelpersSetDecoratorMetadata,
+];
+
+const ITERATION_HELPERS: &[BuiltinId] = &[
+    BuiltinId::CompilerHelpersOpenIterator,
+    BuiltinId::CompilerHelpersOpenWrappedIterator,
+    BuiltinId::CompilerHelpersStepIterator,
+    BuiltinId::CompilerHelpersWayToStepIterator,
+    BuiltinId::CompilerHelpersStepIteratorInWay,
+    BuiltinId::CompilerHelpersCloseIterator,
+    BuiltinId::CompilerHelpersCloseIteratorAfterThrow,
+    BuiltinId::CompilerHelpersAppendGenerator,
+    BuiltinId::CompilerHelpersAppendIterable,
+    BuiltinId::CompilerHelpersTakeFromIterable,
+    BuiltinId::CompilerHelpersNextOfStepsOverText,
+];
+
+const METHODS_OF_GENERATORS: &[BuiltinId] = &[
+    BuiltinId::GeneratorPrototypeNext,
+    BuiltinId::GeneratorPrototypeReturn,
+    BuiltinId::GeneratorPrototypeThrow,
+];
+
+const HELPERS_OF_SYNTAX: &[(SyntaxWithHelpers, &[BuiltinId])] = &[
+    (SyntaxWithHelpers::DECORATOR, DECORATOR_HELPERS),
+    (
+        SyntaxWithHelpers::DISPOSAL,
+        &[BuiltinId::CompilerHelpersGetDisposeMethod],
+    ),
+    (
+        SyntaxWithHelpers::ASYNC_DISPOSAL,
+        &[BuiltinId::CompilerHelpersGetAsyncDisposeMethod],
+    ),
+    (SyntaxWithHelpers::ITERATION, ITERATION_HELPERS),
+    (SyntaxWithHelpers::GENERATOR, METHODS_OF_GENERATORS),
+    (SyntaxWithHelpers::PROMISE, &[BuiltinId::Promise]),
+    (
+        SyntaxWithHelpers::IMPORT_CALL,
+        &[BuiltinId::CompilerHelpersImportRejectedByLoader],
+    ),
+];
+
+bitflags::bitflags! {
+    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+    pub struct SyntaxWithHelpers: u8 {
+        const DECORATOR = 1 << 0;
+        const DISPOSAL = 1 << 1;
+        const ITERATION = 1 << 2;
+        const GENERATOR = 1 << 3;
+        const PROMISE = 1 << 4;
+        const IMPORT_CALL = 1 << 5;
+        const ASYNC_DISPOSAL = 1 << 6;
+    }
+}
+
+fn reads_member_under_key_it_is_handed(id: BuiltinId) -> bool {
+    table::ENTRIES_READING_UNDER_KEYS_THEY_ARE_HANDED.contains(&id)
+}
 
 fn is_called_without_a_name(role: RuntimeFunctionRole) -> bool {
     matches!(
@@ -93,6 +220,13 @@ fn is_of_language(id: BuiltinId) -> bool {
     entry.origin == Origin::Engine || entry.flags.contains(BuiltinFlags::IS_COMPILER_HELPER)
 }
 
+fn objects_of_class_of(id: BuiltinId) -> impl Iterator<Item = BuiltinId> {
+    table::entry(id).class.into_iter().flat_map(|class| {
+        let data = table::class_data(class);
+        [data.constructor, data.prototype].into_iter().flatten()
+    })
+}
+
 fn has_code_of_library(id: BuiltinId) -> bool {
     let entry = table::entry(table::canonical_id(id));
     !(entry.loads().is_empty()
@@ -100,6 +234,7 @@ fn has_code_of_library(id: BuiltinId) -> bool {
         && entry.calls_for_texts().is_empty()
         && entry.implemented_by().is_empty()
         && entry.guessed_functions().is_empty())
+        || objects_of_class_of(id).any(|object| !table::entry(object).calls().is_empty())
 }
 
 fn language_entries_with_code() -> &'static [BuiltinId] {
@@ -107,9 +242,172 @@ fn language_entries_with_code() -> &'static [BuiltinId] {
     ENTRIES.get_or_init(|| {
         let entries = BuiltinId::ALL.into_iter();
         entries
-            .filter(|&id| is_of_language(id) && has_code_of_library(id))
+            .filter(|&id| {
+                is_of_language(id)
+                    && (has_code_of_library(id)
+                        || reads_member_under_key_it_is_handed(id)
+                        || id == BuiltinId::SymbolFor)
+            })
             .collect()
     })
+}
+
+bitflags::bitflags! {
+    #[derive(Copy, Clone)]
+    struct Marks: u8 {
+        const READS_MEMBER_BY_KEY = 1 << 0;
+        const LEADS_TO_PRINTER = 1 << 1;
+        const MAKES_PROMISE = 1 << 2;
+        const MAY_HAND_OUT_ANY_HOST_OBJECT = 1 << 3;
+        const HANDS_OUT_MEMBER_BY_KEY = 1 << 4;
+    }
+}
+
+fn marks_of(id: BuiltinId) -> Marks {
+    static MARKS: OnceLock<Box<[Marks]>> = OnceLock::new();
+    let marks = MARKS.get_or_init(|| {
+        let called_for_promise = table::entry(BuiltinId::Promise).calls();
+        let mut marks: Box<[Marks]> = BuiltinId::ALL
+            .into_iter()
+            .map(|id| {
+                let entry = table::entry(id);
+                let mut listed = entry.calls().iter().chain(entry.guessed_functions());
+                let mut marks = Marks::empty();
+                marks.set(
+                    Marks::MAKES_PROMISE,
+                    listed.any(|function| called_for_promise.contains(function)),
+                );
+                marks.set(
+                    Marks::READS_MEMBER_BY_KEY,
+                    reads_member_under_key_it_is_handed(id),
+                );
+                marks
+            })
+            .collect();
+        let leading = table::ENTRIES_LEADING_TO_STARTUP_LOADS.iter().copied();
+        for id in leading.chain([BuiltinId::BunInspectCustom]) {
+            marks[id.to_wire() as usize] |= Marks::LEADS_TO_PRINTER;
+        }
+        for &id in table::ENTRIES_THAT_MAY_HAND_OUT_ANY_HOST_OBJECT {
+            marks[id.to_wire() as usize] |= Marks::MAY_HAND_OUT_ANY_HOST_OBJECT;
+            if table::ANY_HOST_OBJECT_LEADS_TO_STARTUP_LOADS {
+                marks[id.to_wire() as usize] |= Marks::LEADS_TO_PRINTER;
+            }
+        }
+        for &id in table::ENTRIES_HANDING_OUT_WHAT_LIES_UNDER_KEYS {
+            marks[id.to_wire() as usize] |= Marks::HANDS_OUT_MEMBER_BY_KEY;
+        }
+        marks
+    });
+    marks[id.to_wire() as usize]
+}
+
+fn holders_that_come_with_first_promise() -> &'static [BuiltinId] {
+    static HOLDERS: OnceLock<Box<[BuiltinId]>> = OnceLock::new();
+    HOLDERS.get_or_init(|| {
+        let makes_promise = |id: BuiltinId| marks_of(id).contains(Marks::MAKES_PROMISE);
+        let makers = BuiltinId::ALL.into_iter();
+        let makers = makers.filter(|&id| is_of_language(id) && makes_promise(id));
+        let holders = makers.filter_map(|id| table::entry(id).holder.map(table::canonical_id));
+        let mut holders: Vec<BuiltinId> = holders
+            .filter(|&holder| {
+                makes_promise(holder) || table::entry(holder).kind == BuiltinKind::Prototype
+            })
+            .chain(
+                table::PROTOTYPES_THAT_COME_WITH_FIRST_PROMISE
+                    .iter()
+                    .copied(),
+            )
+            .collect();
+        holders.sort_unstable();
+        holders.dedup();
+        holders.into_boxed_slice()
+    })
+}
+
+fn has_members_found_by_name_alone(holder: BuiltinId) -> bool {
+    is_of_language(holder)
+        && table::entry(holder).kind != BuiltinKind::Namespace
+        && holders_that_come_with_first_promise()
+            .binary_search(&holder)
+            .is_err()
+}
+
+fn is_found_by_name_alone(id: BuiltinId) -> bool {
+    let runs_code = matches!(
+        table::entry(table::canonical_id(id)).kind,
+        BuiltinKind::Function | BuiltinKind::Method | BuiltinKind::Accessor
+    );
+    let holder = table::entry(id).holder.map(table::canonical_id);
+    runs_code && holder.is_some_and(has_members_found_by_name_alone)
+}
+
+fn language_members_with_code() -> &'static [(BuiltinName, BuiltinId)] {
+    static MEMBERS: OnceLock<Box<[(BuiltinName, BuiltinId)]>> = OnceLock::new();
+    MEMBERS.get_or_init(|| {
+        let entries = language_entries_with_code().iter();
+        let members = entries.filter(|&&id| is_found_by_name_alone(id));
+        let mut members: Vec<(BuiltinName, BuiltinId)> =
+            members.map(|&id| (table::entry(id).name, id)).collect();
+        members.sort_unstable();
+        members.into_boxed_slice()
+    })
+}
+
+fn finds_what_lets_in_what_nobody_names(name: BuiltinName) -> bool {
+    let members = language_members_with_code();
+    let first = members.partition_point(|member| member.0 < name);
+    let mut named = members[first..]
+        .iter()
+        .take_while(|member| member.0 == name);
+    named.any(|&(_, id)| {
+        id == BuiltinId::SymbolFor || marks_of(id).contains(Marks::HANDS_OUT_MEMBER_BY_KEY)
+    })
+}
+
+fn names_of_what_promises_can_do() -> &'static [bool] {
+    static NAMES: OnceLock<Box<[bool]>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut names = vec![false; BuiltinName::COUNT as usize];
+        for holder in objects_of_class_of(BuiltinId::Promise) {
+            for &member in table::members(holder) {
+                let entry = table::entry(member);
+                let runs_code = matches!(
+                    table::entry(table::canonical_id(member)).kind,
+                    BuiltinKind::Constructor | BuiltinKind::Function | BuiltinKind::Method
+                );
+                names[entry.name.0 as usize] |= runs_code && !table::is_symbol_name(entry.name);
+            }
+        }
+        names.into_boxed_slice()
+    })
+}
+
+pub fn is_name_under_which_evaluator_hangs(name: BuiltinName) -> bool {
+    static NAMES: OnceLock<Box<[bool]>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| {
+        let mut names = vec![false; BuiltinName::COUNT as usize];
+        for id in BuiltinId::ALL {
+            let entry = table::entry(id);
+            let found = table::entry(table::canonical_id(id));
+            names[entry.name.0 as usize] |=
+                entry.holder.is_some() && found.flags.intersects(EVALUATORS);
+        }
+        names.into_boxed_slice()
+    });
+    names[name.0 as usize]
+}
+
+pub fn is_name_of_language_member_with_code(name: BuiltinName) -> bool {
+    static NAMES: OnceLock<Box<[bool]>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| {
+        let mut names = names_of_what_promises_can_do().to_vec();
+        for &(name, _) in language_members_with_code() {
+            names[name.0 as usize] = true;
+        }
+        names.into_boxed_slice()
+    });
+    names[name.0 as usize]
 }
 
 fn create_id_set(id_count: u32) -> DynamicBitSet {
@@ -151,6 +449,8 @@ impl Collected {
             modules_read_whole: list_modules(&self.modules_read_whole),
             exports_read: self.exports_read.clone().into(),
             functions: functions.collect(),
+            lets_in_what_nobody_names: false,
+            asks: AsksOfText::default(),
         }
     }
 }
@@ -163,7 +463,12 @@ impl Collector {
             work_stack: Vec::new(),
             collected: Collected::new(),
             has_unknown_module_loader: false,
-            assumes_language_is_held: false,
+            reads_members_by_key: false,
+            finds_code_without_names: false,
+            lets_in_what_nobody_names: false,
+            finds_language_by_names: false,
+            holds_functions_for_any_host_object: false,
+            asks: AsksOfText::default(),
         }
     }
 
@@ -191,7 +496,57 @@ impl Collector {
         }
     }
 
-    fn add_what_every_program_holds(&mut self) {
+    fn add_language(&mut self) {
+        for &id in language_entries_with_code() {
+            self.add_entry(id);
+        }
+    }
+
+    fn add_language_members_named(&mut self, name: BuiltinName) {
+        if names_of_what_promises_can_do()[name.0 as usize] {
+            (self.work_stack).extend_from_slice(holders_that_come_with_first_promise());
+        }
+        let members = language_members_with_code();
+        let first = members.partition_point(|member| member.0 < name);
+        let named = members[first..].iter();
+        for &(_, id) in named.take_while(|member| member.0 == name) {
+            self.add_entry(id);
+            for object in objects_of_class_of(id) {
+                self.add_functions(table::entry(object).calls());
+            }
+        }
+    }
+
+    fn add_what_is_written_in_place_of(&mut self, id: BuiltinId) {
+        let id = table::canonical_id(id);
+        let mut written = WRITTEN_IN_PLACE_OF.iter();
+        if let Some((_, helpers)) = written.find(|(replaced, _)| *replaced == id) {
+            for &helper in *helpers {
+                self.add_entry(helper);
+            }
+        }
+    }
+
+    fn add_helpers_of(&mut self, syntax: SyntaxWithHelpers) {
+        for (_, helpers) in HELPERS_OF_SYNTAX.iter().filter(|it| syntax.contains(it.0)) {
+            for &helper in *helpers {
+                self.add_entry(helper);
+            }
+        }
+        if syntax.intersects(SyntaxWithHelpers::ITERATION) {
+            for &method in METHODS_OF_GENERATORS {
+                self.add_language_members_named(table::entry(method).name);
+            }
+        }
+        if syntax.intersects(SyntaxWithHelpers::DISPOSAL) {
+            self.add_language_members_named(table::name_of_symbol(WellKnownSymbol::Dispose));
+        }
+        if syntax.intersects(SyntaxWithHelpers::ASYNC_DISPOSAL) {
+            self.add_language_members_named(table::name_of_symbol(WellKnownSymbol::AsyncDispose));
+        }
+    }
+
+    fn add_what_unseen_code_finds(&mut self) {
         for load in table::STARTUP_LOADS {
             self.add_load(load.module, load.exports_read);
         }
@@ -200,9 +555,7 @@ impl Collector {
         }
         self.add_functions(table::STARTUP_FUNCTIONS);
         self.add_entry(BuiltinId::UndeclaredNativeCode);
-        for &id in language_entries_with_code() {
-            self.add_entry(id);
-        }
+        self.add_language();
         self.add_functions(table::ACCESSOR_FUNCTIONS);
         self.add_functions(table::MODULE_LOADER_FUNCTIONS);
         self.add_functions(table::FUNCTIONS_FOR_ANY_HOST_OBJECT);
@@ -238,6 +591,20 @@ impl Collector {
         }
         let entry = table::entry(id);
         self.has_unknown_module_loader |= entry.flags.intersects(UNKNOWN_MODULE_LOADERS);
+        let marks = marks_of(id);
+        if !marks.is_empty() {
+            self.reads_members_by_key |= marks.contains(Marks::READS_MEMBER_BY_KEY);
+            self.finds_code_without_names |=
+                marks.intersects(Marks::LEADS_TO_PRINTER | Marks::HANDS_OUT_MEMBER_BY_KEY);
+            if marks.contains(Marks::MAKES_PROMISE) {
+                (self.work_stack).extend_from_slice(holders_that_come_with_first_promise());
+            }
+            let may_hand_out_any = marks.contains(Marks::MAY_HAND_OUT_ANY_HOST_OBJECT);
+            if may_hand_out_any && !self.holds_functions_for_any_host_object {
+                self.holds_functions_for_any_host_object = true;
+                self.add_functions(table::FUNCTIONS_FOR_ANY_HOST_OBJECT);
+            }
+        }
         for load in entry.loads() {
             self.add_load(load.module, load.exports_read);
         }
@@ -260,7 +627,7 @@ impl Collector {
             if !self.visit(id) {
                 continue;
             }
-            let reached = reached_from(id, self.platform, self.assumes_language_is_held);
+            let reached = reached_from(id, self.platform, self.finds_language_by_names);
             let collected = &mut self.collected;
             for module in &reached.modules {
                 collected.modules.set(module.to_wire() as usize);
@@ -275,6 +642,8 @@ impl Collector {
                 collected.functions.set(row as usize);
             }
             self.has_unknown_module_loader |= reached.has_unknown_module_loader;
+            self.reads_members_by_key |= reached.reads_members_by_key;
+            self.finds_code_without_names |= reached.finds_code_without_names;
         }
     }
 
@@ -286,10 +655,12 @@ impl Collector {
             }
             self.add_entry(id);
             let entry = table::entry(id);
-            self.work_stack.extend_from_slice(table::members(id));
+            if !(self.finds_language_by_names && has_members_found_by_name_alone(id)) {
+                self.work_stack.extend_from_slice(table::members(id));
+            }
             match entry.prototype {
                 Prototype::Builtin(parent)
-                    if self.assumes_language_is_held && is_of_language(parent) => {}
+                    if self.finds_language_by_names && is_of_language(parent) => {}
                 Prototype::Builtin(parent) => self.work_stack.push(parent),
                 Prototype::Unknown | Prototype::Null => {}
             }
@@ -298,7 +669,11 @@ impl Collector {
     }
 
     fn finish(self) -> RuntimeUses {
-        self.collected.finish(self.platform)
+        RuntimeUses {
+            lets_in_what_nobody_names: self.lets_in_what_nobody_names,
+            asks: self.asks,
+            ..self.collected.finish(self.platform)
+        }
     }
 }
 
@@ -337,12 +712,36 @@ pub struct Mentions<'a> {
     pub called_with_other_texts: &'a [BuiltinId],
     pub exposed: &'a [BuiltinId],
     pub linked_functions: &'a [RuntimeFunction],
+    pub members_read: &'a [BuiltinName],
+    pub reads_by_unknown_key: bool,
+    pub may_call_evaluator: bool,
+    pub global_object_may_be_looked_through: bool,
+    pub syntax: SyntaxWithHelpers,
+    pub called: &'a [BuiltinId],
+    pub is_of_program: bool,
+    pub holds_language: bool,
 }
 
 impl RuntimeUses {
     pub fn of_mentions(mentions: &Mentions<'_>, platform: Platforms) -> RuntimeUses {
         Collector::of_mentions(mentions, platform)
             .map_or_else(RuntimeUses::default, Collector::finish)
+    }
+
+    pub fn of_asks(asks: &AsksOfText, platform: Platforms) -> RuntimeUses {
+        let mut members_read = asks.members_read.clone();
+        members_read.sort_unstable();
+        members_read.dedup();
+        let mentions = Mentions {
+            members_read: &members_read,
+            reads_by_unknown_key: asks.reads_by_unknown_key,
+            syntax: asks.syntax,
+            ..Mentions::default()
+        };
+        let mut collector =
+            Collector::of_mentions(&mentions, platform).unwrap_or_else(|| Collector::new(platform));
+        collector.add_functions(table::FUNCTIONS_FOUND_ON_ANY_OPERAND);
+        collector.finish()
     }
 }
 
@@ -353,27 +752,98 @@ impl Collector {
             called_with_other_texts,
             exposed,
             linked_functions,
+            members_read,
+            reads_by_unknown_key,
+            may_call_evaluator,
+            global_object_may_be_looked_through,
+            syntax,
+            called,
+            is_of_program,
+            holds_language,
         } = *mentions;
-        if mentioned.is_empty() && exposed.is_empty() && linked_functions.is_empty() {
+        let is_held = |id: &BuiltinId| holds_language && is_of_language(table::canonical_id(*id));
+        let names_nothing = mentioned.iter().all(is_held)
+            && exposed.is_empty()
+            && linked_functions.is_empty()
+            && members_read.is_empty()
+            && syntax.is_empty()
+            && !reads_by_unknown_key
+            && !may_call_evaluator
+            && !global_object_may_be_looked_through;
+        if names_nothing {
             return None;
         }
         let mut collector = Collector::new(platform);
-        collector.assumes_language_is_held = true;
-        for &id in mentioned {
+        collector.finds_language_by_names = true;
+        collector.holds_functions_for_any_host_object = holds_language;
+        for &id in mentioned.iter().filter(|id| !is_held(id)) {
             match called_with_other_texts.binary_search(&id) {
                 Ok(_) => collector.add_entry_called_with_other_texts(id),
                 Err(_) => collector.add_entry(id),
             }
             collector.expose_class_of(id);
+            collector.add_what_is_written_in_place_of(id);
+        }
+        if !is_of_program {
+            for &name in members_read {
+                collector.add_language_members_named(name);
+            }
+            collector.add_helpers_of(syntax);
         }
         collector.add_functions(linked_functions);
         collector.work_stack.extend_from_slice(exposed);
         collector.add_reachable_entries();
+        let mut called = called.iter().map(|&id| table::canonical_id(id));
+        let holder_of_registry = table::entry(BuiltinId::SymbolFor).holder;
+        let mut handed_on = exposed.iter().map(|&id| table::canonical_id(id));
+        let holds_what_hands_out = |id: &BuiltinId| {
+            let id = table::canonical_id(*id);
+            let mut members = table::members(id).iter();
+            table::entry(id).kind == BuiltinKind::Namespace
+                && members.any(|&member| {
+                    marks_of(table::canonical_id(member)).contains(Marks::HANDS_OUT_MEMBER_BY_KEY)
+                })
+        };
+        let mut names_read = members_read.iter();
+        let lets_in_what_nobody_names = may_call_evaluator
+            || global_object_may_be_looked_through
+            || reads_by_unknown_key
+            || mentioned.iter().any(holds_what_hands_out)
+            || names_read.any(|&name| finds_what_lets_in_what_nobody_names(name))
+            || handed_on.any(|id| Some(id) == holder_of_registry)
+            || called.any(|id| {
+                table::entry(id).flags.intersects(EVALUATORS) || id == BuiltinId::SymbolFor
+            });
+        collector.lets_in_what_nobody_names =
+            is_of_program && (lets_in_what_nobody_names || collector.finds_code_without_names);
+        let reads_by_unknown_key = reads_by_unknown_key || collector.reads_members_by_key;
+        if collector.lets_in_what_nobody_names {
+            return Some(collector);
+        }
+        if is_of_program {
+            collector.asks = AsksOfText {
+                members_read: match reads_by_unknown_key {
+                    true => Vec::new(),
+                    false => members_read.to_vec(),
+                },
+                reads_by_unknown_key,
+                syntax,
+            };
+        } else if reads_by_unknown_key {
+            collector.add_language();
+        }
         Some(collector)
     }
 }
 
 impl RuntimeUses {
+    pub fn is_empty(&self) -> bool {
+        self.modules.is_empty()
+            && self.modules_read_whole.is_empty()
+            && self.exports_read.is_empty()
+            && self.functions.is_empty()
+    }
+
     pub fn has_module_of_host(&self) -> bool {
         let has_source = |module: &RuntimeModule| {
             (table::module_data(*module).flags).contains(table::ModuleFlags::HAS_SOURCE)
@@ -381,9 +851,9 @@ impl RuntimeUses {
         self.modules.iter().any(has_source)
     }
 
-    pub fn of_every_program(platform: Platforms) -> RuntimeUses {
+    pub fn of_unseen_code(platform: Platforms) -> RuntimeUses {
         let mut collector = Collector::new(platform);
-        collector.add_what_every_program_holds();
+        collector.add_what_unseen_code_finds();
         collector.finish()
     }
 }

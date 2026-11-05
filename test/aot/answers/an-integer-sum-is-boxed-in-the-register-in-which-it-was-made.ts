@@ -18,7 +18,7 @@
 // # RUN: run-in-shell $SHELL
 // # CHECK: 25 of 25 of 25
 // # CHECK-NEXT: exited with 0
-let kept: unknown = 0;
+let kept: unknown = "nothing yet";
 function keepSum(a: number, b: number): void { kept = (a | 0) + (b | 0); }
 function keepDifference(a: number, b: number): void { kept = (a | 0) - (b | 0); }
 const pairs = [1, 2, -1, -2, 2147483647, 1, -2147483648, -1, 2147483647, 2147483647, -2147483648, -2147483648, 0, 0, -1, 1, -2147483648, 1, 2147483647, -1, 2147483647, -2147483648, 5, -7];

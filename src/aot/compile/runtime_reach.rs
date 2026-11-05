@@ -1,6 +1,6 @@
 use core::mem::{replace, take};
 use core::ops::Range;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, FunctionFlags, Parent, SymbolId};
@@ -21,8 +21,8 @@ use super::program_reach::{TOP_LEVEL, find_parent_past_casts, is_only_read};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self};
 use crate::builtins::{
-    BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ResolveInput, Resolved,
-    RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
+    AsksOfText, BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ResolveInput,
+    Resolved, RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
 };
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
@@ -30,6 +30,9 @@ use crate::load::contents::load_names::find_library_modules_that_unknown_names_m
 use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
 use crate::lower::collect_library_functions;
 use crate::modules::{Candidates, ModuleGraph, ModuleRef, SiteAnswer};
+
+mod while_loading;
+pub(crate) use while_loading::{LoadInput, ReachWhileLoading};
 
 #[derive(Copy, Clone)]
 pub(crate) struct LibraryTree<'a, 's> {
@@ -46,13 +49,27 @@ pub(crate) enum SiteTarget {
     Nothing,
 }
 
+pub(crate) trait Library<'s>: Sync {
+    fn file_count(&self) -> usize;
+    fn code_files(&self) -> &[FileId];
+    fn atoms(&self) -> &Interner<'s>;
+    fn tree(&self, file: FileId) -> Option<LibraryTree<'_, 's>>;
+    fn version(&self, file: FileId) -> u32;
+    fn kind(&self, file: FileId) -> SourceKind;
+    fn find_site_target(&self, file: FileId, site: ImportSiteKind) -> Option<SiteTarget>;
+    fn find_module_file(&self, module: RuntimeModule) -> Option<FileId>;
+    fn find_function_file(&self, function: RuntimeFunction) -> Option<FileId>;
+    fn runtime_module(&self, file: FileId) -> Option<RuntimeModule>;
+    fn runtime_function(&self, file: FileId, export_name: &[u8]) -> Option<RuntimeFunction>;
+}
+
 pub(crate) struct LoadedLibrary<'a, 's> {
     pub files: &'a Files<'s>,
     pub sources: &'a Sources,
     pub graph: &'a ModuleGraph,
 }
 
-impl<'s> LoadedLibrary<'_, 's> {
+impl<'s> Library<'s> for LoadedLibrary<'_, 's> {
     fn file_count(&self) -> usize {
         self.files.modules.len()
     }
@@ -65,13 +82,17 @@ impl<'s> LoadedLibrary<'_, 's> {
         &self.files.atoms
     }
 
-    fn tree(&self, file: FileId) -> LibraryTree<'_, 's> {
-        LibraryTree {
+    fn tree(&self, file: FileId) -> Option<LibraryTree<'_, 's>> {
+        Some(LibraryTree {
             hir: self.files.hir(file),
             bound: self.files.bound(file),
             analysis: self.files.analysis(file),
             source: parsed_source(self.files, file),
-        }
+        })
+    }
+
+    fn version(&self, _file: FileId) -> u32 {
+        0
     }
 
     fn kind(&self, file: FileId) -> SourceKind {
@@ -93,6 +114,10 @@ impl<'s> LoadedLibrary<'_, 's> {
         self.sources.runtime_module_file(module)
     }
 
+    fn find_function_file(&self, _function: RuntimeFunction) -> Option<FileId> {
+        None
+    }
+
     fn runtime_module(&self, file: FileId) -> Option<RuntimeModule> {
         self.graph.runtime_module(file)
     }
@@ -108,13 +133,15 @@ pub(crate) enum Application<'a, 's> {
         files: &'a Files<'s>,
         graph: &'a ModuleGraph,
     },
+    Asks(&'a RuntimeUses),
 }
 
 pub(crate) struct ReachInput<'a, 's> {
     pub application: Application<'a, 's>,
-    pub library: &'a LoadedLibrary<'a, 's>,
+    pub library: &'a dyn Library<'s>,
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
+    pub holds_what_unseen_code_finds: bool,
     pub can_load_code_at_run_time: bool,
 }
 
@@ -129,11 +156,13 @@ impl ReachedRuntimeCode {
     }
 }
 
+#[derive(Clone)]
 struct Unit {
     functions: SmallVec<[FnId; 1]>,
     id: Option<RuntimeFunction>,
 }
 
+#[derive(Clone)]
 struct Piece {
     written_at: Range<u32>,
     unit: u32,
@@ -162,6 +191,7 @@ enum HolderUse {
     Other,
 }
 
+#[derive(Clone)]
 struct FileUnits {
     is_library: bool,
     units: Vec<Unit>,
@@ -938,18 +968,65 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 }
 
+struct KnownFile {
+    version: u32,
+    units: FileUnits,
+    uses: Vec<Option<RuntimeUses>>,
+    facts: Arc<OnceLock<FileFacts>>,
+}
+
+#[derive(Default)]
+pub(crate) struct KnownRegions {
+    files: FxHashMap<FileId, KnownFile>,
+}
+
+impl KnownRegions {
+    fn renumbered(self, find: &dyn Fn(FileId) -> Option<FileId>) -> KnownRegions {
+        let find_module = |module: ModuleRef| match module {
+            ModuleRef::File(file) => find(file).map(ModuleRef::File),
+            _ => Some(module),
+        };
+        let renumber = |interest: Interest| match interest {
+            Interest::Unit(_) => Some(interest),
+            Interest::Evaluation(module) => find_module(module).map(Interest::Evaluation),
+            Interest::Export(file, name) => find(file).map(|file| Interest::Export(file, name)),
+            Interest::EveryExport(module) => find_module(module).map(Interest::EveryExport),
+        };
+        let files = self.files.into_iter().filter_map(|(file, mut known)| {
+            let file = find(file)?;
+            let evaluation = Interest::Evaluation(ModuleRef::File(file));
+            for interests in &mut known.units.interests {
+                *interests = interests.iter().filter_map(|&it| renumber(it)).collect();
+            }
+            for (_, interest) in &mut known.units.named_exports {
+                *interest = renumber(*interest).unwrap_or(evaluation);
+            }
+            known.version = 0;
+            Some((file, known))
+        });
+        KnownRegions {
+            files: files.collect(),
+        }
+    }
+}
+
 struct Walk<'a, 's> {
     input: &'a ReachInput<'a, 's>,
+    known: Option<&'a mut KnownRegions>,
     files: Vec<Option<Box<FileUnits>>>,
-    facts: Vec<OnceLock<FileFacts>>,
+    facts: Vec<Option<Arc<OnceLock<FileFacts>>>>,
     function_by_id: FxHashMap<RuntimeFunction, (FileId, u32)>,
     is_file_reached: Vec<bool>,
     reads_imports_by_name: bool,
     pending: Vec<(FileId, u32)>,
+    notes_imports: bool,
+    asking_file: Option<FileId>,
+    imports: Vec<(FileId, FileId)>,
 }
 
 struct RegionText {
     file: FileId,
+    region: u32,
     ranges: Vec<Range<u32>>,
     targets: Vec<(ImportSiteKind, Option<RuntimeModule>)>,
 }
@@ -991,24 +1068,29 @@ pub(super) fn loads_modules_by_computed_names(
 
 pub(crate) fn find_reached_runtime_code(
     input: &ReachInput<'_, '_>,
+    mut known: Option<KnownRegions>,
     in_parallel: InParallel<'_>,
 ) -> ReachedRuntimeCode {
-    let mut walk = Walk::new(input);
+    let mut walk = Walk::new(input, known.as_mut());
     walk.run(in_parallel);
     walk.finish()
 }
 
 impl<'a, 's> Walk<'a, 's> {
-    fn new(input: &'a ReachInput<'a, 's>) -> Walk<'a, 's> {
+    fn new(input: &'a ReachInput<'a, 's>, known: Option<&'a mut KnownRegions>) -> Walk<'a, 's> {
         let file_count = input.library.file_count();
         let mut walk = Walk {
             input,
+            known,
             files: (0..file_count).map(|_| None).collect(),
-            facts: (0..file_count).map(|_| OnceLock::new()).collect(),
+            facts: vec![None; file_count],
             function_by_id: FxHashMap::default(),
             is_file_reached: vec![false; file_count],
             reads_imports_by_name: false,
             pending: Vec::new(),
+            notes_imports: false,
+            asking_file: None,
+            imports: Vec::new(),
         };
         for &file in input.library.code_files() {
             if input.library.kind(file) != SourceKind::RuntimeFunctions {
@@ -1029,21 +1111,60 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    fn scan(&self, file: FileId) -> FileUnits {
+    fn scan(&mut self, file: FileId) -> FileUnits {
         let input = self.input;
-        FileScan::new(input, file, input.library.tree(file)).scan()
+        let Some(tree) = input.library.tree(file) else {
+            return FileUnits::without_code();
+        };
+        let Some(known) = &mut self.known else {
+            self.facts[file.idx()] = Some(Arc::default());
+            return FileScan::new(input, file, tree).scan();
+        };
+        let version = input.library.version(file);
+        if known
+            .files
+            .get(&file)
+            .is_none_or(|it| it.version != version)
+        {
+            let units = FileScan::new(input, file, tree).scan();
+            let known_file = KnownFile {
+                version,
+                uses: vec![None; units.interests.len()],
+                units,
+                facts: Arc::default(),
+            };
+            known.files.insert(file, known_file);
+        }
+        let known_file = &known.files[&file];
+        self.facts[file.idx()] = Some(Arc::clone(&known_file.facts));
+        known_file.units.clone()
     }
 
     fn units_of(&mut self, file: FileId) -> &mut FileUnits {
         if self.files[file.idx()].is_none() {
-            self.files[file.idx()] = Some(Box::new(self.scan(file)));
+            let units = self.scan(file);
+            self.files[file.idx()] = Some(Box::new(units));
         }
         self.files[file.idx()]
             .as_mut()
             .expect("the file was scanned")
     }
 
+    fn note_import(&mut self, imported: Option<FileId>) {
+        if let (Some(importer), Some(imported)) = (self.asking_file, imported) {
+            self.imports.push((importer, imported));
+        }
+    }
+
     fn reach_uses(&mut self, uses: &RuntimeUses) {
+        if self.notes_imports {
+            for &module in &uses.modules {
+                self.note_import(self.input.library.find_module_file(module));
+            }
+            for &function in &uses.functions {
+                self.note_import(self.input.library.find_function_file(function));
+            }
+        }
         for &module in &uses.modules {
             self.evaluate(ModuleRef::Runtime(module));
         }
@@ -1113,10 +1234,17 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn reach_roots(&mut self) {
-        let Application::Bound { files, graph } = self.input.application;
-        self.reads_imports_by_name = !loads_modules_by_computed_names(files, graph);
-        self.reach_uses(&RuntimeUses::of_every_program(self.input.platform));
-        self.reach_what_application_asks(files, graph);
+        self.reads_imports_by_name = match self.input.application {
+            Application::Bound { files, graph } => !loads_modules_by_computed_names(files, graph),
+            Application::Asks(_) => false,
+        };
+        if self.input.holds_what_unseen_code_finds || self.input.can_load_code_at_run_time {
+            self.reach_uses(&RuntimeUses::of_unseen_code(self.input.platform));
+        }
+        match self.input.application {
+            Application::Bound { files, graph } => self.reach_what_application_asks(files, graph),
+            Application::Asks(uses) => self.reach_uses(uses),
+        }
         if self.input.can_load_code_at_run_time
             && let Some(threads) = table::module_by_specifier(b"node:worker_threads")
         {
@@ -1135,6 +1263,7 @@ impl<'a, 's> Walk<'a, 's> {
 
     fn reach_what_application_asks(&mut self, application: &Files<'_>, graph: &ModuleGraph) {
         let files = application.compiled_files().iter();
+        let mut asks = AsksOfText::default();
         for &file in files.filter(|&&file| !asks_nothing_of_library(application, graph, file)) {
             let read_by_name = self.reach_named_imports(application, graph, file);
             let compiled = application.compiled(file);
@@ -1149,10 +1278,14 @@ impl<'a, 's> Walk<'a, 's> {
             }
             if let Some(source) = parsed_source(application, file) {
                 self.reach_uses(source.builtins.uses());
+                asks.add(&source.builtins.uses().asks);
                 for named in source.named_modules() {
                     self.reach_every_export(ModuleRef::Runtime(named.module));
                 }
             }
+        }
+        if !(self.input.holds_what_unseen_code_finds || self.input.can_load_code_at_run_time) {
+            self.reach_uses(&RuntimeUses::of_asks(&asks, self.input.platform));
         }
         for module in find_library_modules_that_unknown_names_may_stand_for(application) {
             self.reach_every_export(ModuleRef::Runtime(module));
@@ -1231,9 +1364,11 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn reads_this(&self, file: FileId, function: FnId) -> bool {
-        let LibraryTree { hir, bound, .. } = self.input.library.tree(file);
-        hir.runtime_function_kind(function) != FnKind::Arrow
-            && (bound.fns[function.idx()].contains_this || evaluates_own_this(hir, function))
+        let tree = self.input.library.tree(file);
+        tree.is_some_and(|LibraryTree { hir, bound, .. }| {
+            hir.runtime_function_kind(function) != FnKind::Arrow
+                && (bound.fns[function.idx()].contains_this || evaluates_own_this(hir, function))
+        })
     }
 
     fn reach_export(&mut self, file: FileId, name: Atom) {
@@ -1311,20 +1446,28 @@ impl<'a, 's> Walk<'a, 's> {
         let pending = take(&mut self.pending).into_iter();
         let texts = pending.filter_map(|(file, region)| self.enter_region(file, region));
         let texts: Vec<RegionText> = texts.collect();
-        let mut regions: Vec<(RegionText, RuntimeUses)> = texts
+        let mut regions: Vec<(RegionText, Option<RuntimeUses>)> = texts
             .into_iter()
-            .map(|text| (text, RuntimeUses::default()))
+            .map(|text| {
+                let known = self.known.as_ref().and_then(|it| it.files.get(&text.file));
+                let uses = known.and_then(|it| it.uses[text.region as usize].clone());
+                (text, uses)
+            })
             .collect();
         let input = self.input;
         let (library, names, platform) = (input.library, input.names, input.platform);
+        let holds_language = input.holds_what_unseen_code_finds || input.can_load_code_at_run_time;
         let facts = &self.facts;
         for_each_mut(&mut regions, in_parallel, &|(text, uses)| {
-            let LibraryTree {
+            let Some(LibraryTree {
                 hir,
                 bound,
                 analysis,
                 ..
-            } = library.tree(text.file);
+            }) = library.tree(text.file).filter(|_| uses.is_none())
+            else {
+                return;
+            };
             let input = ResolveInput {
                 hir,
                 bound,
@@ -1337,12 +1480,39 @@ impl<'a, 's> Walk<'a, 's> {
                 dialect: SourceDialect::Runtime,
                 replaced: &[],
                 runs_tests: false,
+                holds_language,
             };
-            let facts = facts[text.file.idx()].get_or_init(|| FileFacts::new(&input));
-            *uses = resolve_within(&input, &text.ranges, facts).uses().clone();
+            let facts = facts[text.file.idx()]
+                .as_ref()
+                .expect("the file was scanned");
+            let facts = facts.get_or_init(|| FileFacts::new(&input));
+            *uses = Some(resolve_within(&input, &text.ranges, facts).into_uses());
         });
-        for (_, uses) in regions {
+        for (text, uses) in regions {
+            let uses = uses.unwrap_or_default();
+            self.asking_file = Some(text.file);
             self.reach_uses(&uses);
+            self.asking_file = None;
+            let known = self.known.as_mut();
+            if let Some(known) = known.and_then(|it| it.files.get_mut(&text.file)) {
+                known.uses[text.region as usize] = Some(uses);
+            }
+        }
+    }
+
+    fn note_imports_of_site(&mut self, file: FileId, site: ImportSiteKind) {
+        if !self.notes_imports {
+            return;
+        }
+        let targets = match self.input.library.find_site_target(file, site) {
+            Some(SiteTarget::Module(target)) => vec![target],
+            Some(SiteTarget::OneOf(targets)) => targets,
+            Some(SiteTarget::AnyModule | SiteTarget::Nothing) | None => Vec::new(),
+        };
+        for target in targets {
+            if let Some(target) = self.find_file(target) {
+                self.imports.push((file, target));
+            }
         }
     }
 
@@ -1369,8 +1539,10 @@ impl<'a, 's> Walk<'a, 's> {
         for interest in interests {
             self.follow(file, interest);
         }
-
-        self.input.library.tree(file).source?;
+        for &site in &sites {
+            self.note_imports_of_site(file, site);
+        }
+        self.input.library.tree(file)?.source?;
         let mut targets: Vec<(ImportSiteKind, Option<RuntimeModule>)> = sites
             .iter()
             .map(|&site| (site, self.find_target_module(file, site)))
@@ -1378,6 +1550,7 @@ impl<'a, 's> Walk<'a, 's> {
         targets.shared_sort_unstable_by_key(|target| target.0);
         Some(RegionText {
             file,
+            region,
             ranges,
             targets,
         })

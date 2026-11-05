@@ -164,6 +164,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
 extern "C" bool Bun__compiledProgramRunsInPlace();
 extern "C" JSC::AOT::AnswerForName Bun__AOT__onResolveAnswersFor(JSC::JSGlobalObject*, const BunString* name, const BunString* importer, BunString* foundWithoutPlugins);
+extern "C" BunString Bun__AOT__findWithoutPlugins(JSC::JSGlobalObject*, const BunString* name, const BunString* importer);
 extern "C" bool Bun__compiledProgramHoldsFileAsItIs(const BunString*);
 extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* path);
@@ -384,6 +385,16 @@ static void askingAboutNames(JSGlobalObject*, const ScopedLambda<bool(const Stri
                              })
             .iterator->value.append(WTF::move(answer));
     }
+}
+
+static String findsWithoutPlugins(JSGlobalObject* globalObject, const String& name, const String& importer)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    BunString nameArgument = Bun::toString(name);
+    BunString importerArgument = Bun::toString(importer);
+    BunString found = Bun__AOT__findWithoutPlugins(globalObject, &nameArgument, &importerArgument);
+    (void)scope.tryClearException();
+    return found.isDead() ? String() : found.transferToWTFString();
 }
 
 static AOT::AnswerForName answersForName(JSGlobalObject* globalObject, const String& name, const String& importer, String& foundWithoutPlugins)
@@ -1438,6 +1449,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &loadsFileItself,
     &hasPluginsThatAnswerForNames,
     &answersForName,
+    &findsWithoutPlugins,
     &askingAboutNames,
     &mockOperations,
     &stampOfFile,
@@ -1452,7 +1464,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &keepsTexts,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 37 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 38 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

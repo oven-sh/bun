@@ -155,6 +155,26 @@ pub extern "C" fn Bun__AOT__onResolveAnswersFor(
         Ok(Some(Ok(answer))) => answer,
         _ => return THROWN,
     };
+    let mut query_of_found = bun_core::String::EMPTY;
+    let Some(found_without_plugins) =
+        find_without_plugins(global, name, importer, &mut query_of_found)
+    else {
+        return ANSWERED;
+    };
+    *found = bun_core::String::clone_utf8(found_without_plugins.to_utf8().slice());
+    if found_without_plugins.eql(&answer) && query_of_found.eql(&query_of_answer) {
+        return DECLINED;
+    }
+    ANSWERED
+}
+
+fn find_without_plugins(
+    global: &JSGlobalObject,
+    name: &bun_core::String,
+    importer: &bun_core::String,
+    query: &mut bun_core::String,
+) -> Option<bun_core::String> {
+    use crate::virtual_machine::{ResolveMode, VirtualMachine};
     unsafe extern "C" {
         safe fn Bun__AOT__setPluginsSilent(are_silent: bool);
     }
@@ -165,25 +185,33 @@ pub extern "C" fn Bun__AOT__onResolveAnswersFor(
         bun_resolver::GlobalCache::disable,
     );
     Bun__AOT__setPluginsSilent(true);
-    let mut query_of_found = bun_core::String::EMPTY;
-    let found_without_plugins = VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
+    let found = VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         global,
         name,
         importer,
-        Some(&mut query_of_found),
+        Some(query),
         ResolveMode::Esm,
     );
     Bun__AOT__setPluginsSilent(false);
     // SAFETY: as above.
     unsafe { (*global.bun_vm_ptr()).transpiler.resolver.opts.global_cache = installs };
-    let Ok(Ok(found_without_plugins)) = found_without_plugins else {
-        return ANSWERED;
-    };
-    *found = bun_core::String::clone_utf8(found_without_plugins.to_utf8().slice());
-    if found_without_plugins.eql(&answer) && query_of_found.eql(&query_of_answer) {
-        return DECLINED;
+    match found {
+        Ok(Ok(found)) => Some(found),
+        _ => None,
     }
-    ANSWERED
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__findWithoutPlugins(
+    global: &JSGlobalObject,
+    name: &bun_core::String,
+    importer: &bun_core::String,
+) -> bun_core::String {
+    let mut query = bun_core::String::EMPTY;
+    match find_without_plugins(global, name, importer, &mut query) {
+        Some(found) => bun_core::String::clone_utf8(found.to_utf8().slice()),
+        None => bun_core::String::DEAD,
+    }
 }
 
 /// BunCompiledModules.cpp. `Dead`: the image is not asked.

@@ -19,7 +19,6 @@
 # -- end of source
 # RUN(LINK): link functions mechanisms=all
 # LINK: function f1 {{*}}
-# LINK-NEXT: parameter 0 {{*}}proven=object
-# LINK-NOT: parameter 0 {{*}}proven=L{{*}}
+# LINK-NEXT: parameter 0 {{*}}proven=L1|L2|L4|L5|L6
 # LINK: function f2 {{*}}
-# LINK-NEXT: parameter 0 {{*}}proven=object
+# LINK-NEXT: parameter 0 {{*}}proven=L1|L2|L4|L5|L6

@@ -8,6 +8,7 @@ use bun_sema::resolve::{
 };
 use bun_sema::util::SharedSort;
 
+use crate::builtins::table::{ModuleFlags, module_data};
 use crate::builtins::{
     BuiltinNames, ImportTargets, Platforms, ResolveInput, ResolvedBuiltins, RuntimeFunction,
     RuntimeModule, SourceDialect, resolve_file,
@@ -21,6 +22,7 @@ pub(crate) struct BuiltinUseInput<'a> {
     pub platform: Platforms,
     pub replaced: &'a [u32],
     pub runs_tests: bool,
+    pub holds_language: bool,
 }
 
 pub(crate) fn finish_application_file(
@@ -51,6 +53,29 @@ pub(crate) fn finish_application_file(
     }
     source.builtins = resolved;
     answers
+}
+
+pub(crate) fn is_module_with_source(resolution: &HostResolution) -> bool {
+    let module = match *resolution {
+        HostResolution::Module(id) => RuntimeModule::from_registry_id(id.0),
+        _ => None,
+    };
+    module.is_some_and(|module| (module_data(module).flags).contains(ModuleFlags::HAS_SOURCE))
+}
+
+pub(crate) fn asks_for_what_unseen_code_finds(
+    request: &FinishedFile<'_, '_>,
+    source: &ParsedSource,
+) -> bool {
+    let has_source =
+        |module: RuntimeModule| (module_data(module).flags).contains(ModuleFlags::HAS_SOURCE);
+    let uses = source.builtins.uses();
+    let mut imported = request
+        .resolutions
+        .iter()
+        .copied()
+        .filter_map(target_module);
+    uses.lets_in_what_nobody_names || uses.has_module_of_host() || imported.any(has_source)
 }
 
 pub(crate) fn finish_runtime_file(
@@ -90,6 +115,7 @@ fn resolve_builtins(
         dialect,
         replaced: input.replaced,
         runs_tests: input.runs_tests,
+        holds_language: input.holds_language,
     })
 }
 

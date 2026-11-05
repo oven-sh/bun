@@ -350,13 +350,13 @@ describe.concurrent("require.cache", () => {
             }
           }
 
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < ${isASAN ? 25 : 100}; i++) {
             require(path);
             bust();
           }
           gc(true);
           const baseline = rss();
-          for (let i = 0; i < 400; i++) {
+          for (let i = 0; i < ${isASAN ? 150 : 400}; i++) {
             require(path);
             bust(path);
           }

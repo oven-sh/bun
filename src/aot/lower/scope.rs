@@ -97,6 +97,12 @@ fn find_entry<K: Copy + PartialEq, V: Copy>(entries: &[(K, V)], key: K) -> Optio
     Some(entry.1)
 }
 
+fn sum_counts(counts: &mut [u32]) {
+    for number in 1..counts.len() {
+        counts[number] += counts[number - 1];
+    }
+}
+
 fn order_by_number<T: Copy>(
     list: impl ExactSizeIterator<Item = T> + Clone,
     number_count: usize,
@@ -109,9 +115,7 @@ fn order_by_number<T: Copy>(
     for entry in list.clone() {
         places[number_of(entry) + 1] += 1;
     }
-    for number in 0..number_count {
-        places[number + 1] += places[number];
-    }
+    sum_counts(&mut places);
     let mut ordered = vec![first; list.len()];
     for entry in list {
         let place = &mut places[number_of(entry)];

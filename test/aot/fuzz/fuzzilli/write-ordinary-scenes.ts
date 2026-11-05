@@ -4,6 +4,9 @@
 // A scene prints one text at its end, and nothing in it calls the host before that.
 import { combinations, conversions, predicates } from "./hand-over-built-ins.ts";
 import { randomFrom } from "./print-members-of-objects.ts";
+import { writeSceneOfHiddenEffects } from "./write-hidden-effects.ts";
+import { writeSceneOfASingleDeed } from "./write-single-deeds.ts";
+import { writeSceneOfTypedPlaces } from "./write-typed-places.ts";
 
 class Scenes {
   readonly lines: string[] = [];
@@ -3628,6 +3631,30 @@ class Scenes {
     }
     this.emit(1, `printValue("fields ${number}", out);`);
     this.lines.push("}");
+  }
+
+  /** TypeScript. A lookup, a conversion or a protocol runs code that writes what a neighbor in the expression reads (write-hidden-effects.ts). In JavaScript the change is written out. */
+  sceneOfHiddenEffects() {
+    if (!this.isTypeScript) return this.sceneOfChangesInTheMiddle();
+    this.lines.push(...writeSceneOfHiddenEffects(this.random, ++this.count));
+  }
+
+  /** A few lines around one deed (write-single-deeds.ts). */
+  sceneOfASingleDeed() {
+    const [own, ...others] = writeSceneOfASingleDeed(this.random, ++this.count, this.isTypeScript)
+      .join("\n")
+      .split(/^\/\/ @filename: (\S+)\n/m);
+    this.lines.push(...own.trimEnd().split("\n"));
+    for (let other = 0; other < others.length; other += 2)
+      this.files.push([others[other], others[other + 1].trimEnd() + "\n"]);
+  }
+
+  /** TypeScript. A place of a declared type is given what the type does not allow (write-typed-places.ts). In JavaScript there are no such types, and the scene is one of steps on an object. */
+  sceneOfTypedPlaces() {
+    if (!this.isTypeScript) return this.sceneOfStepsOnOneObject();
+    const lines = writeSceneOfTypedPlaces(this.random, ++this.count);
+    if (this.chance(30)) this.lines.push("{", ...lines.map(line => "  " + line), "}");
+    else this.lines.push(...lines);
   }
 
   /**
@@ -8113,13 +8140,13 @@ class Scenes {
  * `text` with one to three scenes of ordinary code. In six programs of ten they are the whole program: what the compiler knows about a function of the library depends on all its callers.
  * What is drawn depends on `text` alone.
  */
-export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: string) {
+export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: string, howMany?: number) {
   const [program, ...otherFiles] = text.split(/^(?=\/\/ @filename: )/m);
   const first = "const printValue = console.log;\n";
   if (!program.startsWith(first)) return text;
   const random = randomFrom("ordinary" + text);
   const scenes = new Scenes(random, isTypeScript);
-  for (let count = scenes.pick([1, 1, 1, 2, 2, 3]); count > 0; count--)
+  for (let count = howMany ?? scenes.pick([1, 1, 1, 2, 2, 3]); count > 0; count--)
     if (only) (scenes as unknown as Record<string, () => void>)[only]();
     else
       scenes.pick([
@@ -8248,6 +8275,50 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
         () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
         () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
         () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),

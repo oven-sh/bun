@@ -421,6 +421,26 @@ JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, I
     return requireField(globalObject, field);
 }
 
+JSValue DeclaredModuleLoad::requireModuleOnBehalfOf(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ASCIILiteral builtin)
+{
+    JSValue module = requireOnBehalfOf(globalObject, field, builtin);
+    if (module && globalObject->vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::willHandBuiltinModuleToNativeCode(globalObject, field);
+    return module;
+}
+
+JSValue DeclaredModuleLoad::requireExportOnBehalfOf(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ASCIILiteral builtin, ASCIILiteral exportName)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue module = requireOnBehalfOf(globalObject, field, builtin);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_ASSERT(module.isObject());
+    if (vm.hasCompiledCode()) [[unlikely]]
+        JSC::AOT::willHandExportOfBuiltinModuleToNativeCode(globalObject, field, exportName);
+    RELEASE_AND_RETURN(scope, asObject(module)->get(globalObject, Identifier::fromString(vm, exportName)));
+}
+
 JSValue DeclaredModuleLoad::requireNamedAtRunTime(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ErrorCode ifNotInExecutable)
 {
     uint32_t id = field;
@@ -434,7 +454,10 @@ JSValue DeclaredModuleLoad::requireNamedAtRunTime(Zig::GlobalObject* globalObjec
             return {};
         }
     }
-    return requireField(globalObject, field);
+    JSValue module = requireField(globalObject, field);
+    if (module && globalObject->vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::willHandBuiltinModuleToNativeCode(globalObject, field);
+    return module;
 }
 
 JSValue DeclaredModuleLoad::requireForCommandLine(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field)

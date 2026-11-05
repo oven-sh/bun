@@ -102,7 +102,7 @@ export const stageNames = [
 export type StageName = (typeof stageNames)[number];
 
 // Padding: a single step of a page or a code granule is more than the judge's noise of 1000 and hides how these grow, so no growth is asked of them.
-const outsideStagesOfTouches = new Set(["padding", "countedByNothing"]);
+const outsideStagesOfTouches = new Set(["padding"]);
 
 /** The counters among what a build with --explain=statistics has written to stderr. */
 export function countsIn(stderr: string) {

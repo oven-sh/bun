@@ -2,7 +2,7 @@
 // CHECK: layout [[options]] {{*}}fields=[{key="name"
 // CHECK: layout [[own]] module={{*}}fields=[{key="extra" {{*}}{key="name"
 // CHECK-NOT: supertypes=
-// CHECK: layout
+// CHECK: variable
 // CHECK: function {{*}}name="create" module=
 // CHECK-NOT: = NewDictionary
 // CHECK: [[head]] = NewObject {{*}}layout=[[own]] fields=[1, 0]

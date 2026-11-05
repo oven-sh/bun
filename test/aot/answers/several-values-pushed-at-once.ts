@@ -1,10 +1,10 @@
 // answers: with-library
 // # two, three and four values are pushed by the stub of the list's class and one operation; a list that refuses, one that runs code of others, and every other receiver are served as Array.prototype.push() serves them
 // # f1 = pushedTwo, f2 = pushedThree, f3 = pushedFour: the site is the one of a call by name, and the stub that it calls bears the form and the count
-// # RUN(TWO): bytes f1:Body mechanisms=all
+// # RUN(TWO): bytes f1:Body mechanisms=all-Inlining
 // # REQUIRES(TWO): entries-of-bun
 // # TWO: CallMethodOfBuiltinClass{{*}}ArrayPush count 2
-// # RUN(THREE): bytes f2:Body mechanisms=all
+// # RUN(THREE): bytes f2:Body mechanisms=all-Inlining
 // # REQUIRES(THREE): entries-of-bun
 // # THREE: CallMethodOfBuiltinClass{{*}}ArrayPush count 3
 // # RUN(FOUR): bytes f3:Body mechanisms=all

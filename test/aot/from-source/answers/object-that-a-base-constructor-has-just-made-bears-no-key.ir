@@ -1,0 +1,24 @@
+# -- source: main.ts
+# class Plain { id: number; note: string | undefined; next: Plain | null; constructor(id: number) { this.id = id; this.note = undefined; this.next = null; } }
+# class Noted extends Plain { mark: number; constructor(id: number, note: string) { super(id); this.note = note; this.mark = id + 1; } }
+# function Other() { }
+# let newest: Plain = new Plain(0);
+# function push() { const id = newest.id + 1; const made = id % 2 ? new Noted(id, "n" + id) : new Plain(id); made.next = newest; newest = made; }
+# for (let i = 0; i < 5; i++) push();
+# const odd = Reflect.construct(Plain, [7], Other);
+# print(newest.id, newest instanceof Noted, Object.keys(newest).join(), Object.keys(newest.next!).join(), Object.keys(odd).join(), odd instanceof Other, odd.id);
+# -- end of source
+# The prototype that new.target gives may select a class below Plain, so the layout of the object that Plain's constructor makes is not proven.
+# Whichever class it is, the object has just been made and bears no key. Behind the test of its shape the definitions know the order word that each of them leaves,
+# where the planned orders of the classes begin alike, and none of them asks the run time to list its key.
+# RUN(BASE): walk f3 mechanisms=all
+# BASE-LABEL: code f3:Body
+# BASE: NewObject
+# BASE: ShapeTest
+# BASE: PutSlotOrAdd{{*}}orderWordAfter=
+# BASE: PutSlotOrAdd{{*}}orderWordAfter=
+# BASE: PutSlotOrAdd{{*}}orderWordAfter=
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5 true id,note,next,mark id,note,next id,note,next true 7
+# RUN(CLOSED): run-in-shell mechanisms=all-Guesses
+# CLOSED: 5 true id,note,next,mark id,note,next id,note,next true 7

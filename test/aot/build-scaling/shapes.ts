@@ -828,6 +828,51 @@ export const shapes: Shape[] = [
       "main.js": `function both(a, b) { return () => a() + b(); }\nfunction looks(job) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return typeof job === "function" ? work : 0; }\nfunction chain(take, start, wants) {\n  let total = start;\n  function add() { total++; }\n  add();\n  if (!wants) return 0;\n  const c0 = () => total;\n${lines(size, index => `  const c${index + 1} = both(c${index}, c${index});`)}  const got = take(c${size});\n  return got + 1;\n}\nconsole.log(chain(looks, 5, true), chain(looks, 5, false));\n`,
     }),
   },
+  // What the ways into a join know of the fields of fresh objects was compared field by field, all that the state holds at every join: objects x joins.
+  {
+    name: "fresh objects that are still known at many joins behind them",
+    counted: "objects",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function wide(c) {\n${lines(size, index => `  const o${index} = { v: (c + ${index}) | 0 };`)}  let s = 0;\n${lines(size, index => `  if (c > ${index}) s = (s + 1) | 0;`)}${lines(size, index => `  s = (s + o${index}.v) | 0;`)}  return s;\n}\nconst five = JSON.parse("5");\nlet last = 0;\nfor (let t = 0; t < 200; t++) last = wide(five);\nconsole.log(last);\n`,
+    }),
+  },
+  // Each scope that the function had made so far was carried round each later loop as a parameter of its head: scopes x loops.
+  {
+    name: "scopes of blocks that each have a loop which hands their closure to a helper",
+    counted: "scopes",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `let calls = 0;\nfunction ring(f: (x: number) => void, i: number): void {\n  let work = 0;\n  for (let j = 0; j < 2; j++) work = (work + j) | 0;\n  calls = (calls + work) | 0;\n  f(i);\n}\nfunction run(k: number): number {\n  const m = k | 0;\n  let all = 0;\n${lines(size, index => `  { let s${index}: number = 0; const add = (x: number): void => { s${index} = (s${index} + x) | 0; }; for (let i = 0; i < m; i++) ring(add, i); all = (all + s${index}) | 0; }`)}  return all;\n}\nconst three: number = JSON.parse("3");\nlet total = 0;\nfor (let t = 0; t < 200; t++) total = (total + run(three)) | 0;\nconsole.log(total, calls);\n`,
+    }),
+  },
+  {
+    name: "scopes of blocks that each have a loop which writes their variable",
+    counted: "scopes",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `function run(k: number, odd: any): number {\n  const m = k | 0;\n  let all = 0;\n${lines(size, index => `  { let s${index}: number = 0; const get = (): number => s${index}; for (let i = 0; i < m; i++) s${index} = (s${index} + (odd > i ? 1 : 2)) | 0; all = (all + get()) | 0; }`)}  return all;\n}\nconst three: number = JSON.parse("3");\nconst seven: any = JSON.parse("7");\nlet total = 0;\nfor (let t = 0; t < 200; t++) total = (total + run(three, seven)) | 0;\nconsole.log(total);\n`,
+    }),
+  },
+  // A copy of the whole scope was made for each direct call of a closure over it, and read back behind the call: variables x calls, in the build and in the run.
+  {
+    name: "variables of one scope that closures of ten write, each closure called ten times",
+    counted: "variables",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function run(k) {\n${lines(size, index => `  let v${index} = (k + ${index}) | 0;`)}${lines(Math.ceil(size / 10), closure => `  const f${closure} = () => { let w = 0; for (let j = 0; j < 2; j++) w = (w + j) | 0;\n${upTo(Math.min(10, size - closure * 10), at => `    v${closure * 10 + at} = (v${closure * 10 + at} + w) | 0;`).join("\n")}\n  };`)}${lines(size, index => `  f${Math.floor(index / 10)}();`)}  let s = 0;\n${lines(size, index => `  s = (s + v${index}) | 0;`)}  return s;\n}\nconst three = JSON.parse("3");\nlet last = 0;\nfor (let t = 0; t < 200; t++) last = run(three);\nconsole.log(last);\n`,
+    }),
+  },
   // Each function without a loop was walked whole again for each of its writers: writers x values.
   {
     name: "one function that stores numbers into many fields",
@@ -1382,6 +1427,19 @@ export const shapes: Shape[] = [
     entry: "main.js",
     write: size => ({
       "main.js": `class C0 {}\n` + lines(size, index => `class C${index + 1} extends C${index} {}`) + `console.log(new C${size}() instanceof C0);\n`,
+    }),
+  },
+  {
+    name: "classes that each define a name of their own on this, below a row of classes without members",
+    counted: "classes",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class C0 {}\n` +
+        lines(size, index => `class C${index + 1} extends C${index} {}`) +
+        lines(100, index => `class D${index} extends ${index ? `D${index - 1}` : `C${size}`} { constructor() { super(); Object.defineProperty(this, "g${index}", { value: ${index} }); } }`) +
+        `console.log(Object.getOwnPropertyNames(new D99()).length);\n`,
     }),
   },
   // What the objects of a class hold is listed class by class up the row: a field counts where no class further down has one of its name.
@@ -3427,6 +3485,22 @@ console.log(typeof outmost.inner);
         `  return total;\n}\nconsole.log(count("text"), count([1, 2, 3]));\n`,
     }),
   },
+  // The head of each loop is expected to hold what the checker says of it, and the checker's walk for what is looped over went back through the tests of every statement in front:
+  // 1,000 loops took 3,768 M instructions where 1,084 M do.
+  {
+    name: "loops over the units of one field that is written as a text or a list, each behind a test for a text",
+    counted: "loops",
+    size: 500,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `function count(holder: { value: string | number[] }): number {\n  let total = 0;\n` +
+        lines(size, index => `  if (typeof holder.value === "string") for (const unit of holder.value) total += unit.length + ${index}; else total += holder.value.length;`) +
+        `  return total;\n}\nconsole.log(count({ value: "text" }), count({ value: [1, 2, 3] }));\n`,
+    }),
+  },
   {
     name: "lists made at the head of one function, each pushed onto in a loop of its own, all named again in the return",
     counted: "lists",
@@ -3441,6 +3515,22 @@ console.log(typeof outmost.inner);
         lines(size, index => `  for (let k = 0; k < n; k++) l${index}.push(change(k));`) +
         `  return [${upTo(size, index => `l${index}`).join(", ")}];\n}\n` +
         `const changes = [(k: number) => k, (k: number) => k * 2];\nlet total = 0;\nfor (let round = 0; round < 4; round++) for (const list of many(3, changes[round % 2])) total += list.length;\nconsole.log(total);\n`,
+    }),
+  },
+  // A loop that is built twice asked every handler of the body whether it reads what the loop makes, and each loop over a list has a handler of its own:
+  // 2,000 loops took 6,377 M instructions where 1,947 M do. So did each block whose end is walked for each way, for what is read behind it: 8,000 loops took 10,066 M where 7,477 M do.
+  {
+    name: "loops in a row over one parameter that is written as a list of texts",
+    counted: "loops",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `function count(value: string[]): number {\n  let total = 0;\n` +
+        lines(size, index => `  for (const unit of value) total += unit.length + ${index};`) +
+        `  return total;\n}\nconsole.log(count(["text"]), count(["a", "b", "c"]));\n`,
     }),
   },
   {

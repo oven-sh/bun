@@ -98,6 +98,9 @@ fn with_host<R>(then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
         unlocked_builtins: &Arc::default(),
         messages: &messages,
         unreadable: Guarded::default(),
+        manifest: Archive::embedded().manifest(),
+        reach: None,
+        reads_types: true,
     };
     then(&Fixture {
         host: &host,

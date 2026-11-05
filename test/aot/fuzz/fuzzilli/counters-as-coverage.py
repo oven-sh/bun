@@ -3,16 +3,19 @@
 #
 # Fuzzilli keeps a program in its corpus, and mutates it further, when the program sets a bit of the coverage map that no earlier program has set.
 # This file stands between Fuzzilli and the Bun that collects programs (BUN_FUZZILLI_COLLECTOR). It hands each program on to that Bun, which stores it in a folder.
+# Without BUN_FUZZILLI_COLLECTOR it stores each program as Fuzzilli wrote it, which is what that Bun does under BUN_FUZZILLI_PRINTS_VALUES=0: a typed run needs no build with --fuzzilli=on at all.
 # Then it builds the stored program with the Bun under test (BUN_FUZZILLI_COUNTS_WITH), which writes no executable. With --explain=statistics and --explain=forms the build prints several hundred counters of the compiler:
 # how often each stage touched what it works on, how many calls were inlined, how many tests leave or rejoin, and at how many sites each operation was emitted in which form.
 # A bit of the map stands for a counter and the size class of how far the program moved it from where an empty program leaves it.
 # At the end it moves the program into BUN_FUZZILLI_COLLECTS_PROGRAMS, where run-batch.ts takes it, if the program set a bit that this process has not seen set, and one in eight of the others.
-import glob, mmap, os, re, shutil, struct, subprocess, sys, zlib
+import glob, mmap, os, re, shutil, signal, struct, subprocess, sys, time, zlib
 
 EDGES = 1 << 16
 SIZE = 16 << 20
 environment = dict(os.environ)
-collector, counts_with, spool = (environment[name] for name in ("BUN_FUZZILLI_COLLECTOR", "BUN_FUZZILLI_COUNTS_WITH", "BUN_FUZZILLI_COLLECTS_PROGRAMS"))
+counts_with, spool = (environment[name] for name in ("BUN_FUZZILLI_COUNTS_WITH", "BUN_FUZZILLI_COLLECTS_PROGRAMS"))
+collector = environment.get("BUN_FUZZILLI_COLLECTOR")
+assert collector or environment.get("BUN_FUZZILLI_PRINTS_VALUES") == "0", "only the Bun that collects adds the lines that print the variables of a program"
 staged = "%s-staged-%d" % (spool.rstrip("/"), os.getpid())
 work = "%s-work-%d" % (spool.rstrip("/"), os.getpid())
 # Fuzzilli starts this file anew every few hundred programs. What an earlier process left goes.
@@ -40,7 +43,8 @@ def counters_of(path):
     except (subprocess.TimeoutExpired, OSError):
         return None
     statistics, forms = statistic.findall(built.stderr), form.findall(built.stderr)
-    if built.returncode != 0 or not statistics or not forms: return None
+    # A program of which nothing is compiled: "aot: forms: none".
+    if built.returncode != 0 or not statistics or not re.search("^aot: forms: ", built.stderr, re.MULTILINE): return None
     found = {name: int(value) for name, value in statistics if not unsteady.search(name)}
     for name, sites in forms: found[name] = int(sites.replace(",", ""))
     return found
@@ -77,15 +81,23 @@ while True:
     request = os.read(from_fuzzilli, 4)
     if request != b"exec": break
     length = struct.unpack("<Q", os.read(from_fuzzilli, 8))[0]
-    if collecting is None: collecting = start_collector()
-    child, from_child, to_child, data = collecting
-    data[:length] = script[:length]
-    os.write(to_child, b"exec" + struct.pack("<Q", length))
-    reply = os.read(from_child, 4)
-    if len(reply) != 4:
-        _, status = os.waitpid(child, 0)
-        reply = struct.pack("<I", os.WTERMSIG(status) if os.WIFSIGNALED(status) else os.WEXITSTATUS(status) << 8)
-        collecting = None
+    if collector is None:
+        # Fuzzilli sends this when it starts, to see that it notices a crash.
+        asks_for_a_crash = b"fuzzilli('FUZZILLI_CRASH', 0)" in script[:length]
+        reply = struct.pack("<I", signal.SIGABRT if asks_for_a_crash else 0)
+        if not asks_for_a_crash:
+            with open(os.path.join(staged, "%d-%d%s" % (os.getpid(), programs, extension)), "wb") as file: file.write(script[:length])
+        while len(os.listdir(spool)) >= 4096: time.sleep(0.1)
+    else:
+        if collecting is None: collecting = start_collector()
+        child, from_child, to_child, data = collecting
+        data[:length] = script[:length]
+        os.write(to_child, b"exec" + struct.pack("<Q", length))
+        reply = os.read(from_child, 4)
+        if len(reply) != 4:
+            _, status = os.waitpid(child, 0)
+            reply = struct.pack("<I", os.WTERMSIG(status) if os.WIFSIGNALED(status) else os.WEXITSTATUS(status) << 8)
+            collecting = None
     for name in os.listdir(staged):
         path = os.path.join(staged, name)
         found = counters_of(path)

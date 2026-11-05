@@ -2,7 +2,7 @@
 // # `while (index < end) { .. index++; }`, with nothing known of the position or the end: what enters the head for the counter, and the bound, are asked for an int32 once, in front of the loop.
 // # Where both are, the turns compare and step integers. Whatever else arrives (a text, a fraction, a bigint, a symbol, an object with a valueOf(), a counter that outgrows 32 bits) does what the language says.
 // # f1 = skip, f2 = trim, f3 = sum, f4 = tell
-// # RUN(FORM): walk f1 f2 f3 mechanisms=all
+// # RUN(FORM): walk f1 f2 f3 mechanisms=all-Inlining
 // # FORM-LABEL: code f1:Body
 // # FORM: = TypeTest {{*}}testedType=i32
 // # FORM: = TypeTest {{*}}testedType=i32

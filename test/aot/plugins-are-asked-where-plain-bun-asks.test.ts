@@ -489,7 +489,7 @@ test("a deeper name's callback clears the plugins", async () => {
       plugin.clearAll();
     });
   } });
-  console.log("SAID IS", (await import("./src/root.js")).told());
+  console.log("SAID IS", require("./src/root.js").told());
   console.log("SAID ASKED", [...new Set(asked)].sort().join(" "));
 });`,
     "package.json": `{ "name": "p", "type": "module" }`,
@@ -718,6 +718,97 @@ export const told = () => kind;`,
     "src/swapped.js": `export {};`,
     "src/trigger.js": `export {};`,
     "src/u.js": `import "./swapped.js";`,
+  },
+  "three files stand in front of the last name, for which the callback throws": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("b190", async () => {
+  const asked = [];
+  const said = args => asked.push(args.path + "<" + args.importer.split("/").pop());
+  const second = () => plugin({ name: "second", setup(later) {
+    later.onResolve({ filter: /^\\.\\/part\\.js$/ }, asks => (said(asks), { path: import.meta.dir + "/src/fake.js" }));
+  } });
+  const tried = load => { try { load(); return "LOADED"; } catch (error) { return "FAILED " + error.name; } };
+  plugin({ name: "first", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(boom|trigger)\\.js$/ }, args => {
+      said(args);
+      if (args.path === "./boom.js") { throw new RangeError("no"); }
+      if (args.path === "./trigger.js") second();
+    });
+  } });
+  console.log("SAID", tried(() => require("./src/root.js")));
+  console.log("SAID IS", require("./src/c.js").kind, require("./src/d.js").kind);
+  console.log("SAID ASKED", asked.join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/a.js": `import "./a2.js";`,
+    "src/a2.js": `import "./trigger.js";`,
+    "src/boom.js": `export {};`,
+    "src/c.js": `export { kind } from "./part.js";`,
+    "src/d.js": `export { kind } from "./part.js";`,
+    "src/fake.js": `export const kind = "fake";`,
+    "src/part.js": `export const kind = "real";`,
+    "src/root.js": `import "./a.js";
+import "./c.js";
+import "./d.js";
+import "./boom.js";`,
+    "src/trigger.js": `export {};`,
+  },
+  "two files stand in front of the middle name, for which the callback throws": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("b190", async () => {
+  const asked = [];
+  const said = args => asked.push(args.path + "<" + args.importer.split("/").pop());
+  const second = () => plugin({ name: "second", setup(later) {
+    later.onResolve({ filter: /^\\.\\/part\\.js$/ }, asks => (said(asks), { path: import.meta.dir + "/src/fake.js" }));
+  } });
+  const tried = load => { try { load(); return "LOADED"; } catch (error) { return "FAILED " + error.name; } };
+  plugin({ name: "first", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(boom|trigger)\\.js$/ }, args => {
+      said(args);
+      if (args.path === "./boom.js") { throw new RangeError("no"); }
+      if (args.path === "./trigger.js") second();
+    });
+  } });
+  console.log("SAID", tried(() => require("./src/root.js")));
+  console.log("SAID IS", require("./src/c.js").kind, require("./src/d.js").kind);
+  console.log("SAID ASKED", asked.join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/a.js": `import "./a2.js";`,
+    "src/a2.js": `import "./trigger.js";`,
+    "src/boom.js": `export {};`,
+    "src/c.js": `export { kind } from "./part.js";`,
+    "src/d.js": `export { kind } from "./part.js";`,
+    "src/fake.js": `export const kind = "fake";`,
+    "src/part.js": `export const kind = "real";`,
+    "src/root.js": `import "./a.js";
+import "./c.js";
+import "./boom.js";
+import "./d.js";`,
+    "src/trigger.js": `export {};`,
+  },
+  "the text of a file is imported in front of the throw": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("made-up", () => {
+  const asked = [];
+  const said = args => asked.push(args.path + "<" + args.importer.split("/").pop());
+  const tried = load => { try { load(); return "LOADED"; } catch (error) { return "FAILED " + error.name; } };
+  plugin({ name: "first", setup(build) { build.onResolve({ filter: /^\\.\\/quake\\.js$/ }, args => { said(args); throw new RangeError("no"); }); } });
+  console.log("SAID", tried(() => require("./src/trunk.js")));
+  plugin({ name: "second", setup(build) { build.onResolve({ filter: /^\\.\\/leaf\\.js$/ }, args => (said(args), { path: import.meta.dir + "/src/quake.js" })); } });
+  console.log("SAID IS", require("./src/twig.js").kind);
+  console.log("SAID ASKED", asked.join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/leaf.js": `export const kind = "real";`,
+    "src/quake.js": `export const kind = "fake";`,
+    "src/trunk.js": `import words from "./twig.js" with { type: "text" };
+import "./quake.js";
+export const length = words.length;`,
+    "src/twig.js": `export { kind } from "./leaf.js";`,
   },
 };
 

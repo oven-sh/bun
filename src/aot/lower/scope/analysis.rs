@@ -253,7 +253,6 @@ impl ScopeAnalysis {
         self.use_counts.get(symbol.idx()) == Some(&0)
     }
 
-    /// The function that the name is declared as, where its function object is made by whoever reads the name first.
     pub(in crate::lower) fn is_created_at_each_read(&self, symbol: SymbolId) -> bool {
         self.created_at_each_read.binary_search(&symbol).is_ok()
     }

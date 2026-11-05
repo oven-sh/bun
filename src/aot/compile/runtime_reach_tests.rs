@@ -13,8 +13,7 @@ fn reaches_node_dgram(program: &str, library: &[(&str, &str)]) -> bool {
             build.check_and_lower(loaded, bound);
             let sources = &loaded.projects.runtime.sources;
             let file = sources.runtime_module_file(RuntimeModule::NodeDgram);
-            let file = file.expect("what a function of a loaded module requires is loaded");
-            build.unreached_runtime_files.binary_search(&file).is_err()
+            file.is_some_and(|file| build.unreached_runtime_files.binary_search(&file).is_err())
         })
     })
 }

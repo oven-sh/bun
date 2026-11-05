@@ -213,15 +213,19 @@ fn find_modules_that_lead_to(
     leads_there
 }
 
+fn sum_counts(mut counts: Vec<u32>) -> Vec<u32> {
+    for file in 1..counts.len() {
+        counts[file] += counts[file - 1];
+    }
+    counts
+}
+
 fn find_first_places(files: impl Iterator<Item = FileId>, file_count: usize) -> Vec<u32> {
-    let mut first_places = vec![0u32; file_count + 1];
+    let mut counts = vec![0u32; file_count + 1];
     for file in files {
-        first_places[file.idx() + 1] += 1;
+        counts[file.idx() + 1] += 1;
     }
-    for file in 0..file_count {
-        first_places[file + 1] += first_places[file];
-    }
-    first_places
+    sum_counts(counts)
 }
 
 fn list_importers_in_link_order(

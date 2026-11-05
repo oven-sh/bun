@@ -1,4 +1,4 @@
-use bun_sema::hir::{ExprId, PatKind, StmtId, StmtKind, VarKind};
+use bun_sema::hir::{ExprId, StmtId, StmtKind, VarKind};
 use smallvec::SmallVec;
 
 use super::FunctionLowering;
@@ -191,11 +191,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(declaration) = declarations.iter().next() else {
             return stepped;
         };
-        let pattern = hir[declaration].pat;
-        if matches!(hir[pattern].kind, PatKind::Array(_)) {
-            return stepped;
-        }
-        let Ok(checked) = self.file.queries.binding_type(pattern) else {
+        let Ok(checked) = self.file.queries.binding_type(hir[declaration].pat) else {
             return stepped;
         };
         let expected = self.file.map_type_at(checked).ty;

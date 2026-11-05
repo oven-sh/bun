@@ -57,8 +57,8 @@ typeof console.Console: function
 (object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(process): 
 (object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(console): 
 (object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(Bun): 
-typeof process.finalization.register: undefined
-typeof process.allowedNodeEnvironmentFlags.has: undefined
+typeof process.finalization.register: refused: process.finalization was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+typeof process.allowedNodeEnvironmentFlags.has: refused: process.allowedNodeEnvironmentFlags was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 typeof process.loadEnvFile: function
 process.loadEnvFile('/nothing-there'): refused: process.loadEnvFile was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 typeof Bun.$: function

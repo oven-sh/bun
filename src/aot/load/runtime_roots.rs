@@ -1,13 +1,16 @@
+use bun_ast::Loader;
 use bun_sema::program::{CodeAnswer, Files, HostModuleId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 
 use crate::builtins::table::{ModuleFlags, module_by_specifier, module_data, runtime_function};
-use crate::builtins::{Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
+use crate::builtins::{AsksOfText, Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
 use crate::load::contents::ProgramContents;
 use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
+use crate::load::loaders::{HostLoaderKind, host_loader_kind};
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::sources::parsed_source;
+use crate::module_keys::loader_by_name;
 
 pub(crate) struct RuntimeRoots {
     pub paths: Vec<Vec<u8>>,
@@ -15,6 +18,8 @@ pub(crate) struct RuntimeRoots {
     pub modules_named_at_run_time: Vec<RuntimeModule>,
     pub imports_cluster: bool,
     pub imports_uncompiled_code: bool,
+    pub asks: RuntimeUses,
+    pub holds_what_unseen_code_finds: bool,
     pub keeps_code_without_names: bool,
 }
 
@@ -30,6 +35,8 @@ fn has_source(module: RuntimeModule) -> bool {
 pub(crate) struct FurtherLibraryCode {
     pub serves_unseen_code: bool,
     pub loads_code_from_disk: bool,
+    pub runs_tests: bool,
+    pub has_file_that_asks_for_it: bool,
 }
 
 pub(crate) fn collect_runtime_roots(
@@ -44,8 +51,14 @@ pub(crate) fn collect_runtime_roots(
     let mut imports_uncompiled_code = false;
     let mut asks_module_of_host = false;
     let mut named: Vec<RuntimeModule> = Vec::new();
+    let mut lets_in_what_nobody_names = further.has_file_that_asks_for_it;
+    let mut asks_of_texts = AsksOfText::default();
     for &file in application.compiled_files() {
+        lets_in_what_nobody_names |=
+            loader_by_name(application.module(file).file_name()) == Loader::Napi;
         if let Some(compiled) = application.compiled(file) {
+            lets_in_what_nobody_names |=
+                host_loader_kind(compiled.loader) == Some(HostLoaderKind::Loader(Loader::Napi));
             host_loaded.extend(compiled.implied_answers.iter().filter_map(implied_module));
             imports_uncompiled_code |= compiled.code_answers.iter().any(is_uncompiled_code);
             let mut imported = compiled.code_answers.iter().filter_map(implied_module);
@@ -54,7 +67,10 @@ pub(crate) fn collect_runtime_roots(
         if let Some(source) = parsed_source(application, file) {
             functions.extend(source.builtins.called_functions());
             named.extend(source.named_modules().iter().map(|it| it.module));
+            lets_in_what_nobody_names |= source.builtins.uses().lets_in_what_nobody_names
+                || source.contents.names.may_go_to_loader_of_host;
             asks_module_of_host |= source.builtins.uses().has_module_of_host();
+            asks_of_texts.add(&source.builtins.uses().asks);
         }
     }
     named.extend(find_library_modules_that_unknown_names_may_stand_for(
@@ -70,15 +86,39 @@ pub(crate) fn collect_runtime_roots(
     {
         host_loaded.extend(module_by_specifier(b"node:worker_threads"));
     }
+    let is_held_whatever_texts_ask = further.serves_unseen_code
+        || imports_uncompiled_code
+        || asks_module_of_host
+        || contents.names_worker_constructor
+        || contents.loads_by_unknown_name
+        || contents.loads_by_unknown_path
+        || further.runs_tests
+        || lets_in_what_nobody_names;
+    let answered = match is_held_whatever_texts_ask {
+        true => RuntimeUses::default(),
+        false => RuntimeUses::of_asks(&asks_of_texts, platform),
+    };
+    functions.extend(&answered.functions);
+    host_loaded.extend(&answered.modules);
+    asks_module_of_host |= answered.has_module_of_host();
     let keeps_code_without_names = further.serves_unseen_code
         || imports_uncompiled_code
         || asks_module_of_host
         || contents.names_worker_constructor
         || contents.loads_by_unknown_name
         || contents.loads_by_unknown_path;
-    let without_names = RuntimeUses::of_every_program(platform);
+    let holds_what_unseen_code_finds =
+        keeps_code_without_names || further.runs_tests || lets_in_what_nobody_names;
+    let without_names = match holds_what_unseen_code_finds {
+        true => RuntimeUses::of_unseen_code(platform),
+        false => RuntimeUses::default(),
+    };
     host_loaded.extend(&without_names.modules);
     functions.extend(&without_names.functions);
+    let asks = match holds_what_unseen_code_finds {
+        true => RuntimeUses::default(),
+        false => collect_asks(application, &named, &host_loaded, &answered),
+    };
     functions.retain(|&function| exists_on(function, platform));
     let mut host_loaded_modules: Vec<RuntimeModule> = host_loaded.into_iter().collect();
     host_loaded_modules.shared_sort_unstable_by_key(|module| module.registry_id());
@@ -94,7 +134,70 @@ pub(crate) fn collect_runtime_roots(
         modules_named_at_run_time: named,
         imports_cluster,
         imports_uncompiled_code,
+        holds_what_unseen_code_finds,
+        asks,
         keeps_code_without_names,
+    }
+}
+
+fn collect_asks(
+    application: &Files<'_>,
+    named: &[RuntimeModule],
+    host_loaded: &FxHashSet<RuntimeModule>,
+    answered: &RuntimeUses,
+) -> RuntimeUses {
+    let mut asks = Asks::default();
+    asks.add(answered);
+    for &file in application.compiled_files() {
+        if let Some(compiled) = application.compiled(file) {
+            (asks.modules_read_whole)
+                .extend(compiled.code_answers.iter().filter_map(implied_module));
+        }
+        if let Some(source) = parsed_source(application, file) {
+            asks.add(source.builtins.uses());
+        }
+    }
+    asks.modules_read_whole.extend(named);
+    asks.modules.extend(host_loaded);
+    asks.finish()
+}
+
+#[derive(Default)]
+struct Asks {
+    modules: Vec<RuntimeModule>,
+    modules_read_whole: Vec<RuntimeModule>,
+    exports_read: Vec<(RuntimeModule, &'static str)>,
+    functions: Vec<RuntimeFunction>,
+}
+
+impl Asks {
+    fn add(&mut self, uses: &RuntimeUses) {
+        self.modules.extend(&uses.modules);
+        self.modules_read_whole.extend(&uses.modules_read_whole);
+        self.exports_read.extend(&uses.exports_read);
+        self.functions.extend(&uses.functions);
+    }
+
+    fn finish(mut self) -> RuntimeUses {
+        self.modules.extend(&self.modules_read_whole);
+        for modules in [&mut self.modules, &mut self.modules_read_whole] {
+            modules.shared_sort_unstable_by_key(|module| module.registry_id());
+            modules.dedup();
+        }
+        (self.exports_read)
+            .shared_sort_unstable_by_key(|&(module, name)| (module.registry_id(), name));
+        self.exports_read.dedup();
+        self.functions
+            .shared_sort_unstable_by_key(|function| function.0);
+        self.functions.dedup();
+        RuntimeUses {
+            modules: self.modules.into(),
+            modules_read_whole: self.modules_read_whole.into(),
+            exports_read: self.exports_read.into(),
+            functions: self.functions.into(),
+            lets_in_what_nobody_names: false,
+            asks: AsksOfText::default(),
+        }
     }
 }
 
@@ -116,7 +219,6 @@ fn order_root_paths(
     function_files.dedup();
 
     let mut roots = Vec::from(runtime_modules.declaration_paths());
-    roots.extend(runtime_modules.prelude_paths());
     roots.extend(module_paths);
     roots.extend(function_files);
     roots.extend(runtime_modules.function_files_without_ids());
@@ -153,11 +255,13 @@ mod tests {
     use bun_builtin_sources::Archive;
 
     use super::*;
-    use crate::builtins::table::{MODULE_LOADER_FUNCTIONS, STARTUP_FUNCTIONS, STARTUP_MODULES};
+    use crate::builtins::table::{
+        MODULE_LOADER_FUNCTIONS, RuntimeFunctionRole, STARTUP_FUNCTIONS, STARTUP_MODULES,
+        runtime_functions,
+    };
     use crate::compile::testing::{default_settings, with_loaded_build};
     use crate::load::runtime_modules::RuntimeFileKind;
     use crate::load::{ProjectId, host_platform};
-    use crate::prelude;
 
     fn runtime_modules() -> RuntimeModules {
         RuntimeModules::new(Archive::embedded(), false)
@@ -166,6 +270,8 @@ mod tests {
     const NOTHING_FURTHER: FurtherLibraryCode = FurtherLibraryCode {
         serves_unseen_code: false,
         loads_code_from_disk: false,
+        runs_tests: false,
+        has_file_that_asks_for_it: false,
     };
 
     fn collect_roots_of(source: &str, runtime_modules: &RuntimeModules) -> RuntimeRoots {
@@ -216,11 +322,27 @@ mod tests {
     }
 
     #[test]
-    fn program_that_names_nothing_of_bun_holds_what_every_program_holds() {
+    fn program_that_names_nothing_of_bun_has_the_roots_of_what_any_operand_is_asked_for() {
         let runtime = runtime_modules();
-        let roots = collect_roots_of("export {};", &runtime);
+        let of_nothing = collect_roots_of("export {};", &runtime);
+        assert!(!of_nothing.keeps_code_without_names);
+        assert!(!of_nothing.holds_what_unseen_code_finds);
+        assert!(of_nothing.host_loaded_modules.is_empty());
+        assert!(of_nothing.paths.len() > runtime.declaration_paths().len());
+        let of_a_printed_line = collect_roots_of("console.log(1);", &runtime);
+        assert_eq!(of_a_printed_line.paths, of_nothing.paths);
+    }
+
+    #[test]
+    fn test_run_holds_what_unseen_code_finds() {
+        let runtime = runtime_modules();
+        let in_test_run = FurtherLibraryCode {
+            runs_tests: true,
+            ..NOTHING_FURTHER
+        };
+        let roots = collect_roots_beside("export {};", &runtime, in_test_run);
         assert!(!roots.keeps_code_without_names);
-        let held = RuntimeUses::of_every_program(host_platform());
+        let held = RuntimeUses::of_unseen_code(host_platform());
         assert_eq!(roots.host_loaded_modules.len(), held.modules.len());
         assert!(!held.functions.is_empty());
         for &function in &held.functions {
@@ -354,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn roots_start_with_declarations_then_prelude_files() {
+    fn roots_start_with_declarations() {
         let runtime = runtime_modules();
         let roots = order_root_paths(&runtime, vec![RuntimeModule::NodeFs], Vec::new());
         let (declarations, others) = roots.split_at(2);
@@ -362,11 +484,7 @@ mod tests {
         for path in declarations {
             assert_eq!(runtime.file_kind(path), Some(RuntimeFileKind::Declarations));
         }
-        let (prelude_files, others) = others.split_at(prelude::FILES.len());
-        for (path, (_, text)) in prelude_files.iter().zip(prelude::FILES) {
-            assert_eq!(runtime.file_kind(path), Some(RuntimeFileKind::Functions));
-            assert_eq!(runtime.read(path).unwrap(), text.as_bytes());
-        }
+        assert!(!others.is_empty());
         assert_eq!(
             others[0],
             runtime.module_path(RuntimeModule::NodeFs).unwrap()
@@ -374,13 +492,31 @@ mod tests {
     }
 
     #[test]
-    fn omitted_builtin_modules_leave_the_prelude() {
+    fn omitted_builtin_modules_leave_the_declarations() {
         let runtime = RuntimeModules::new(Archive::embedded(), true);
         let modules = vec![RuntimeModule::NodeFs];
         let roots = order_root_paths(&runtime, modules, STARTUP_FUNCTIONS.to_vec());
-        let declarations = runtime.declaration_paths().into_iter();
-        let expected: Vec<Vec<u8>> = declarations.chain(runtime.prelude_paths()).collect();
-        assert_eq!(roots, expected);
+        assert_eq!(roots, runtime.declaration_paths());
+    }
+
+    #[test]
+    fn file_of_the_prelude_is_a_root_where_one_of_its_functions_is_asked_for() {
+        let mut functions = runtime_functions().iter();
+        let written_for_compiler = functions
+            .find(|data| {
+                data.role == RuntimeFunctionRole::CompilerFunction
+                    && data.file.starts_with("prelude/")
+            })
+            .unwrap()
+            .function;
+        for omits_builtin_modules in [false, true] {
+            let runtime = RuntimeModules::new(Archive::embedded(), omits_builtin_modules);
+            let roots = order_root_paths(&runtime, Vec::new(), vec![written_for_compiler]);
+            let path = runtime.function_file_path(written_for_compiler).unwrap();
+            assert!(runtime.prelude_paths().any(|listed| listed == path));
+            assert_eq!(runtime.file_kind(&path), Some(RuntimeFileKind::Functions));
+            assert_eq!(roots[2..], [path]);
+        }
     }
 
     #[test]
@@ -406,7 +542,7 @@ mod tests {
         let mut modules_with_source = [RuntimeModule::NodeTty, RuntimeModule::NodeFs];
         modules_with_source.sort_unstable_by_key(|module| module.registry_id());
         let module_paths = modules_with_source.map(|module| runtime.module_path(module).unwrap());
-        let first_module = 2 + prelude::FILES.len();
+        let first_module = 2;
         assert_eq!(roots[first_module..][..module_paths.len()], module_paths);
     }
 }

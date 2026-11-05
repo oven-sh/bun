@@ -128,9 +128,6 @@ feature OperationsOnProxies "what compiled code calls for proxies"
 feature OperationsOfJSONParse "what compiled code calls for JSON.parse of a text whose shape the compiler knows"
   entered-from compiled-code
 
-feature OperationsOfJSONStringify "what compiled code calls for JSON.stringify"
-  entered-from compiled-code
-
 feature OperationsOnStringBuilders "what compiled code calls for strings that are built piece by piece"
   entered-from compiled-code
 

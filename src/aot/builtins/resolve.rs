@@ -12,6 +12,7 @@ mod runtime_dialect;
 mod stores_behind_tests;
 #[cfg(test)]
 mod tests;
+mod unnamed_uses;
 mod written_members;
 
 pub use self::imports::find_module_export;
@@ -172,6 +173,7 @@ pub struct ResolveInput<'a, 's> {
     pub dialect: SourceDialect,
     pub replaced: &'a [u32],
     pub runs_tests: bool,
+    pub holds_language: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -454,6 +456,10 @@ impl ResolvedBuiltins {
 
     pub fn uses(&self) -> &RuntimeUses {
         &self.uses
+    }
+
+    pub fn into_uses(self) -> RuntimeUses {
+        self.uses
     }
 
     pub fn loads_unknown_modules(&self) -> bool {

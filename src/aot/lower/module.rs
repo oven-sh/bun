@@ -17,6 +17,7 @@ use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{self, StmtId};
 use bun_sema::program::{FileId, Files};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::OnceCell;
 
 use super::commonjs::CommonJsState;
 use super::context::{FileInputs, SourceKind};
@@ -39,6 +40,7 @@ pub(crate) struct ModuleState {
     pub(in crate::lower) data: DataState,
     pub(in crate::lower) commonjs: CommonJsState,
     pub(in crate::lower) known_member_values: KnownMemberValues,
+    pub(in crate::lower) imports_replaceable_variable: OnceCell<bool>,
 }
 
 #[derive(Default, Clone)]

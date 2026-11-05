@@ -1,0 +1,10 @@
+# `WebSocket.prototype` is a data property in the table and `send` has no row: what is read so is a part of the class
+# -- source: a-method-without-a-row-that-is-taken-off-a-prototype-and-called-uses-the-class.ts
+# try {
+#   WebSocket.prototype.send.call({});
+# } catch (error) {
+#   console.log((error as Error).name);
+# }
+# -- end of source
+# RUN: features
+# CHECK: by WebSocket named

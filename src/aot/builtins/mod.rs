@@ -19,7 +19,7 @@ pub use resolve::{
     ModuleExport, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect, SpyCall,
     commonjs_variable_builtin, find_module_export, resolve_file, resolve_within,
 };
-pub use runtime_uses::RuntimeUses;
+pub use runtime_uses::{AsksOfText, RuntimeUses};
 pub use table::{
     BuiltinEntry, BuiltinKind, DirectiveKind, Intrinsic, IntrinsicPosition, Mutability, Platforms,
     PromiseStatus,

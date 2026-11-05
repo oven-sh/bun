@@ -13,6 +13,8 @@
 //                     What a run counts, how it grows and what it prints of what the compiler saves hang on when the collector runs: they are not asked, and no `// Todo:` is held to fail
 //   --instructions    how a program grows with its data, or a build with its program, is counted in instructions (`perf stat`, Linux), not taken from the clock: the same on a machine that is shared
 //   --deal            builds and runs nothing: prints a line for each program, { ms, files }, with what all its builds take. scripts/runner.node.ts deals the programs to the shards by it
+//   --keep-statistics   the first build of every program is asked what it counted, and the line of the file says it: `statistics: { <name>: <n>, .. }`, without the zeros:
+//                     for whoever sums over all programs how often each mechanism of the compiler fires, build of Bun by build of Bun. CI does not say it
 //
 // THE FRAMES OF A STACK TRACE ARE NOT HELD TO PLAIN BUN: their number, names, lines and columns. The message is. A program that does not print as its reference does is compared once more
 // without the lines that are frames and without the place behind the name of a file (`main.js:3:14`). If it still differs it may print frames as data (`error.stack.split("\n")[1]`): it is built and run once more,
@@ -193,6 +195,8 @@ const envOfEveryExecutable = Object.fromEntries(
 );
 const runsAreAsUsersRunThem = !Object.keys(envOfEveryExecutable).length;
 const countsInstructions = process.argv.includes("--instructions");
+const keepsStatistics = process.argv.includes("--keep-statistics");
+const statisticsKept = new Map<string, Record<string, number>>();
 if (countsInstructions && !Bun.which("perf")) throw new Error("--instructions: there is no `perf` here");
 let opensCounter: boolean | undefined;
 /** Asked by the first program that needs it: where no counter opens, a line on stderr says why. */
@@ -696,6 +700,7 @@ function settle(program: Program, verdict: Record<string, unknown>) {
     ways: Object.fromEntries(
       all.map(({ way, state, isCompared }) => [way, isCompared === false ? "built and run, not compared" : state]),
     ),
+    ...(statisticsKept.has(program.file) && { statistics: statisticsKept.get(program.file) }),
   });
 }
 // A long output is cut where it is shown, and the cut must not hide the difference.
@@ -1073,7 +1078,7 @@ async function run(program: Program): Promise<void> {
     "--aot",
     `--aot-threads=${threads}`,
     ...program.flags,
-    ...(program.statistics.length ? ["--explain=statistics"] : []),
+    ...(program.statistics.length || (keepsStatistics && program.way === "compiled") ? ["--explain=statistics"] : []),
     entry,
     ...program.entryPoints,
     "--outfile",
@@ -1115,6 +1120,11 @@ async function run(program: Program): Promise<void> {
         "compile",
         findErrorInProgram(build.output.stderr, program) ?? `the build ended with ${describeEnd(build.output)}`,
         build.output,
+      );
+    if (keepsStatistics && program.way === "compiled")
+      statisticsKept.set(
+        program.file,
+        Object.fromEntries([...countedByBuild(build.output.stderr)].filter(([, count]) => count)),
       );
     const unmet =
       program.way === "compiled" && !moreFlags.length

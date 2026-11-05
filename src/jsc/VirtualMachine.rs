@@ -5555,7 +5555,13 @@ impl VirtualMachine {
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-        let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
+        // A relative name means a file beside its importer. From the root it would find another file of that name.
+        let is_beside_importer = bun_paths::is_absolute(source_to_use)
+            && [&b"./"[..], b"../", b".\\", b"..\\"]
+                .iter()
+                .any(|start| normalized_specifier.starts_with(start));
+        let mut may_retry_from_root =
+            self.finds_entry_points_by_path && !is_special_source && !is_beside_importer;
         let mut source_before_root: Option<&[u8]> = None;
         let mut has_read_folders_again = false;
         let result: bun_resolver::Result = loop {

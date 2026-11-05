@@ -12,6 +12,7 @@ use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
     ImportedRequire, MemberKey, NodeData, OtherValues, PatKind, StmtKind, UnOp,
 };
+use crate::util::FxHashSet;
 use smallvec::SmallVec;
 
 fn is_node_module(specifier: Atom) -> bool {
@@ -967,8 +968,8 @@ fn find_imported_require_named(
     export: Atom,
     left: StepsLeft,
 ) -> Option<ImportedRequire> {
-    let mut imported = hir.imported_requires.iter();
-    let found = imported.find(|it| it.specifier == specifier && it.export == export)?;
+    let (imported, places) = (&hir.imported_requires, &hir.places_of_imported_requires);
+    let found = ImportedRequire::find_by_names(imported, places, specifier, export)?;
     (found.other_values <= left.most_other_values()).then_some(*found)
 }
 
@@ -1119,6 +1120,7 @@ pub fn find_exported_requires(
         })
     });
     let mut found: Vec<ExportedRequire> = exported.collect();
+    let mut taken: Option<FxHashSet<Atom>> = None;
     for statement in hir.ids(hir.body) {
         let StmtKind::ExportStar {
             spec,
@@ -1137,8 +1139,11 @@ pub fn find_exported_requires(
             .iter()
             .filter(|it| it.specifier == spec)
         {
-            let is_own = exports.iter().any(|&(export, _)| export == imported.export);
-            if !is_own && !found.iter().any(|it| it.export == imported.export) {
+            let taken = taken.get_or_insert_with(|| {
+                let own = exports.iter().map(|&(export, _)| export);
+                own.chain(found.iter().map(|it| it.export)).collect()
+            });
+            if taken.insert(imported.export) {
                 found.push(ExportedRequire {
                     export: imported.export,
                     path: Some(imported.path),

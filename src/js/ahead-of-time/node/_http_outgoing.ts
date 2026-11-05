@@ -983,88 +983,44 @@ interface ResponseEvents {
   finish: $Node.Listener | $Node.Listener[] | undefined;
 }
 
-class Exchange {
-  declare flags: number;
-  declare headerState: number;
-  declare headerBits: number;
-  declare shape: HeaderShape;
-  declare value0: number | string;
-  declare value1: number | string;
-  declare value2: number | string;
-  declare value3: number | string;
-  declare value4: number | string;
-  declare value5: number | string;
-  declare statusCode: number;
-  declare statusMessage: string;
-  declare bytesBuffered: number;
-  declare isFrozenChunked: boolean;
-  declare isImplicitFromEnd: boolean;
+interface Exchange {
+  flags: number;
+  headerState: number;
+  headerBits: number;
+  shape: HeaderShape;
+  value0: number | string;
+  value1: number | string;
+  value2: number | string;
+  value3: number | string;
+  value4: number | string;
+  value5: number | string;
+  statusCode: number;
+  statusMessage: string;
+  bytesBuffered: number;
+  isFrozenChunked: boolean;
+  isImplicitFromEnd: boolean;
   /** The socket the dispatcher already detached a synchronously-finished response from. */
-  declare detachedFrom: $Node.HttpServerSocket | null;
-  declare isReplaying: boolean;
-  declare isFlushScheduled: boolean;
-  declare mustClose: boolean;
-  declare response: $Node.ServerResponse;
-  declare connection: $Node.HttpServerSocket | null;
-  declare endCallback: $Node.HttpWriteCallback | null;
-  declare queuedTick: import("internal/process/tick_ring").Tick | null;
-  declare events: ResponseEvents;
-  declare pendingFinish: $Node.HttpWriteCallback | null | undefined;
-  declare holdsNumber: boolean;
-  declare onWritable: (() => void) | null;
-  declare awaitsClose: boolean;
-  declare dispatchPromise: Promise<void> | null;
-  declare idleTimeout: number;
-  declare requestKind: number;
-  declare moreValues: (number | string)[] | null;
-  declare oddValues: unknown[] | null;
-  declare oddMask: number;
-  declare wasEmptied: boolean;
-  declare requestState: $Node.ReadableState | null;
-
-  constructor(
-    response: $Node.ServerResponse,
-    connection: $Node.HttpServerSocket | null,
-    events: ResponseEvents,
-    requestState: $Node.ReadableState | null,
-  ) {
-    this.flags = 0;
-    this.headerState = 0;
-    this.headerBits = IS_COMPILED_AHEAD_OF_TIME ? 0 : HEADER_SPILLED;
-    this.shape = IS_COMPILED_AHEAD_OF_TIME ? noHeadersShape : spilledHeadersShape;
-    this.value0 = 0;
-    this.value1 = 0;
-    this.value2 = 0;
-    this.value3 = 0;
-    this.value4 = 0;
-    this.value5 = 0;
-    this.statusCode = 0;
-    this.statusMessage = "";
-    this.bytesBuffered = 0;
-    this.isFrozenChunked = false;
-    this.isImplicitFromEnd = false;
-    this.detachedFrom = null;
-    this.isReplaying = false;
-    this.isFlushScheduled = false;
-    this.mustClose = false;
-    this.response = response;
-    this.connection = connection;
-    this.endCallback = null;
-    this.queuedTick = null;
-    this.events = events;
-    this.pendingFinish = undefined;
-    this.holdsNumber = false;
-    this.onWritable = null;
-    this.awaitsClose = false;
-    this.dispatchPromise = null;
-    this.idleTimeout = 0;
-    this.requestKind = 0;
-    this.moreValues = null;
-    this.oddValues = null;
-    this.oddMask = 0;
-    this.wasEmptied = false;
-    this.requestState = requestState;
-  }
+  detachedFrom: $Node.HttpServerSocket | null;
+  isReplaying: boolean;
+  isFlushScheduled: boolean;
+  mustClose: boolean;
+  response: $Node.ServerResponse;
+  connection: $Node.HttpServerSocket | null;
+  endCallback: $Node.HttpWriteCallback | null;
+  queuedTick: import("internal/process/tick_ring").Tick | null;
+  events: ResponseEvents;
+  pendingFinish: $Node.HttpWriteCallback | null | undefined;
+  holdsNumber: boolean;
+  onWritable: (() => void) | null;
+  awaitsClose: boolean;
+  dispatchPromise: Promise<void> | null;
+  idleTimeout: number;
+  requestKind: number;
+  moreValues: (number | string)[] | null;
+  oddValues: unknown[] | null;
+  oddMask: number;
+  wasEmptied: boolean;
+  requestState: $Node.ReadableState | null;
 }
 
 declare global {
@@ -1087,7 +1043,45 @@ function makeExchange(
   events: ResponseEvents,
   requestState: $Node.ReadableState | null,
 ): Exchange {
-  return new Exchange(response, connection, events, requestState);
+  // One literal: a constructor that is compiled by itself does not know what `new.target` is, and asks of each store whether the object is still as it was made.
+  return {
+    flags: 0,
+    headerState: 0,
+    headerBits: IS_COMPILED_AHEAD_OF_TIME ? 0 : HEADER_SPILLED,
+    shape: IS_COMPILED_AHEAD_OF_TIME ? noHeadersShape : spilledHeadersShape,
+    value0: 0,
+    value1: 0,
+    value2: 0,
+    value3: 0,
+    value4: 0,
+    value5: 0,
+    statusCode: 0,
+    statusMessage: "",
+    bytesBuffered: 0,
+    isFrozenChunked: false,
+    isImplicitFromEnd: false,
+    detachedFrom: null,
+    isReplaying: false,
+    isFlushScheduled: false,
+    mustClose: false,
+    response,
+    connection,
+    endCallback: null,
+    queuedTick: null,
+    events,
+    pendingFinish: undefined,
+    holdsNumber: false,
+    onWritable: null,
+    awaitsClose: false,
+    dispatchPromise: null,
+    idleTimeout: 0,
+    requestKind: 0,
+    moreValues: null,
+    oddValues: null,
+    oddMask: 0,
+    wasEmptied: false,
+    requestState,
+  };
 }
 
 function bitsOfHeaderKey(key: string): number {
@@ -1304,7 +1298,7 @@ function spillHeaders(exchange: Exchange): void {
   exchange.shape = spilledHeadersShape;
   exchange.headerBits = HEADER_SPILLED;
   const count = shape.count;
-  if (count === 0 && !exchange.wasEmptied) return;
+  if (count === 0 && exchange.wasEmptied !== true) return;
   const headers = { __proto__: null } as $Node.OutgoingHttpHeaders;
   for (let index = 0; index < count; index++) {
     const node = shapeAt(shape, index);
@@ -1323,7 +1317,7 @@ function spillHeadersReachedThrough(receiver: $Node.OutgoingMessage): void {
   const exchange = receiver.$exchange;
   if (exchange === undefined) return;
   const response = exchange.response;
-  if (response !== receiver && (exchange.shape.count !== 0 || exchange.wasEmptied)) {
+  if (response !== receiver && (exchange.shape.count !== 0 || exchange.wasEmptied === true)) {
     ("unlikely");
     spillHeaders(exchange);
     outgoingIsLenientHeaderValidation.$call(response);
@@ -1658,7 +1652,7 @@ function flatHeadersWithCare(exchange: Exchange): unknown[] | null {
 // `null`: writing a value runs code of the program, so the headers are walked in their map.
 function flatHeadersOf(exchange: Exchange): unknown[] | null {
   const shape = exchange.shape;
-  if (exchange.holdsNumber || shape.count > kInlineHeaderValues) return flatHeadersWithCare(exchange);
+  if (exchange.holdsNumber === true || shape.count > kInlineHeaderValues) return flatHeadersWithCare(exchange);
   switch (shape.count) {
     case 0:
       return noHeaders;

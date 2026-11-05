@@ -343,6 +343,7 @@ pub struct ClassMember {
     pub types: PositionTypes,
     pub is_static: bool,
     pub is_optional: bool,
+    pub is_made_at_birth: bool,
     pub form: MemberForm,
 }
 

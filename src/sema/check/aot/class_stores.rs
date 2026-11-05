@@ -128,6 +128,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut this_stores = Vec::new();
         let mut binding_stores = Vec::new();
         let mut first_exits = FxHashMap::default();
+        let mut first_returns = FxHashMap::default();
         let mut has_asked_checker = false;
         let handed_this = self.find_parameters_handed_this(file, &mut first_exits);
         for &assign in assigns.of(ExprTag::Assign) {
@@ -161,7 +162,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let handing = owners_handing_this_to(&handed_this, bound_symbol(hir, bound, object));
             for (owner, birth, helper) in handing {
                 let birth =
-                    match self.is_always_evaluated_in(file, helper, assign, &mut first_exits) {
+                    match self.is_always_evaluated_in(file, helper, assign, &mut first_returns) {
                         true => birth,
                         false => u32::MAX,
                     };
@@ -224,7 +225,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 });
             }
         }
-        self.add_definitions_on_this(file, &handed_this, &mut first_exits, &mut this_stores);
+        self.add_definitions_on_this(
+            file,
+            &handed_this,
+            &mut first_exits,
+            &mut first_returns,
+            &mut this_stores,
+        );
         this_stores.shared_sort_unstable_by_key(|store| {
             (store.owner, hir[store.assign].pos, store.assign)
         });
@@ -319,6 +326,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         file: FileId,
         handed_this: &[(SymbolId, ThisOwner, u32, FnId)],
         first_exits: &mut FxHashMap<FnId, u32>,
+        first_returns: &mut FxHashMap<FnId, u32>,
         this_stores: &mut Vec<ThisStore>,
     ) {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
@@ -377,7 +385,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             for (owner, birth, helper) in own.into_iter().chain(handed) {
                 let birth = match helper {
                     Some(helper)
-                        if !self.is_always_evaluated_in(file, helper, site, first_exits) =>
+                        if !self.is_always_evaluated_in(file, helper, site, first_returns) =>
                     {
                         u32::MAX
                     }
@@ -454,19 +462,29 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         file: FileId,
         function: FnId,
         expression: ExprId,
-        first_exits: &mut FxHashMap<FnId, u32>,
+        first_returns: &mut FxHashMap<FnId, u32>,
     ) -> bool {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        if hir[function]
+            .flags
+            .intersects(Flags::ASYNC | Flags::GENERATOR)
+        {
+            return false;
+        }
         let Some(statement) = find_statement_always_evaluating(hir, bound, expression) else {
             return false;
         };
         if bound.parent_of_stmt(statement) != Parent::FnBody(function) {
             return false;
         }
-        let first_exit = *first_exits
-            .entry(function)
-            .or_insert_with(|| self.find_first_exit_with_this(file, function));
-        hir[statement].start < first_exit
+        let first_return = *first_returns.entry(function).or_insert_with(|| {
+            let returns = bound.ids(bound.fns[function.idx()].returns);
+            let live = returns.filter(|&statement| !self.c.is_dead_statement(file, statement));
+            live.map(|statement| hir[statement].start)
+                .min()
+                .unwrap_or(u32::MAX)
+        });
+        hir[statement].start < first_return
     }
 
     fn find_first_exit_with_this(&self, file: FileId, function: FnId) -> u32 {

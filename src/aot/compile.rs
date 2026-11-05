@@ -36,6 +36,7 @@ pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths, FollowedName}
 use self::load_stage::AssetReads;
 use self::module_list::ListedModules;
 use self::program_reach::LeftOutCode;
+use self::runtime_reach::KnownRegions;
 use crate::builtins::{BuiltinNames, Platforms, RuntimeFunction, table};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView};
@@ -176,7 +177,9 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub can_load_code_at_run_time: bool,
     pub loads_code_by_unknown_names_alone: bool,
     pub keeps_library_code_without_names: bool,
+    pub holds_what_unseen_code_finds: bool,
     pub finish_asset_reads: &'b dyn Fn(),
+    pub known_library_regions: &'b dyn Fn() -> Option<KnownRegions>,
 }
 
 pub(crate) struct BoundProject {

@@ -206,6 +206,11 @@ function runConstruct(stream: $Node.Readable) {
   });
 }
 
+// Compiled ahead of time, a store that names the property makes room for it in every stream, and every read of it asks whether it is there.
+function storeOwnMethod(stream: $Node.Readable, name: string, method: unknown) {
+  (stream as any)[name] = method;
+}
+
 function Readable(this: $Node.Readable, options?: $Node.ReadableOptions): void {
   if (new.target !== Readable && !(this instanceof Readable)) {
     ("unlikely");
@@ -218,11 +223,20 @@ function Readable(this: $Node.Readable, options?: $Node.ReadableOptions): void {
 
   if (options) {
     const { read, destroy, construct, signal } = options;
-    if (typeof read === "function") this._read = read;
+    if (typeof read === "function") {
+      if (IS_COMPILED_AHEAD_OF_TIME) storeOwnMethod(this, "_read", read);
+      else this._read = read;
+    }
 
-    if (typeof destroy === "function") this._destroy = destroy;
+    if (typeof destroy === "function") {
+      if (IS_COMPILED_AHEAD_OF_TIME) storeOwnMethod(this, "_destroy", destroy);
+      else this._destroy = destroy;
+    }
 
-    if (typeof construct === "function") this._construct = construct;
+    if (typeof construct === "function") {
+      if (IS_COMPILED_AHEAD_OF_TIME) storeOwnMethod(this, "_construct", construct);
+      else this._construct = construct;
+    }
 
     if (signal) addAbortSignal(signal, this);
   }
@@ -408,6 +422,29 @@ function readableAddChunkPushByteMode(stream: $Node.Readable, state: ReadableSta
 }
 
 function readableAddChunkPushObjectMode(stream: $Node.Readable, state: ReadableState, chunk, encoding): boolean {
+  if (IS_COMPILED_AHEAD_OF_TIME && chunk !== null) {
+    const flags = state[kState];
+    if (
+      (flags &
+        (Flag.Ended |
+          Flag.Destroyed |
+          Flag.Errored |
+          Flag.Decoder |
+          Flag.Sync |
+          Flag.MultiAwaitDrain |
+          Flag.Flowing |
+          Flag.DataListening)) ===
+        (Flag.Flowing | Flag.DataListening) &&
+      state.length === 0
+    ) {
+      state.awaitDrainWriters = null;
+      state[kState] = (flags & ~Flag.Reading) | Flag.DataEmitted;
+      emitData(stream, chunk);
+      maybeReadMore(stream, state);
+      return canPushMore(state);
+    }
+  }
+
   if (chunk === null) {
     state[kState] &= ~Flag.Reading;
     onEofChunk(stream, state);
@@ -441,6 +478,48 @@ function canPushMore(state: ReadableState): boolean {
   return (state[kState] & Flag.Ended) === 0 && (state.length < state.highWaterMark || state.length === 0);
 }
 
+// stream.emit(type) for a type other than "error", where emit() is the one of node:events: the same reads in the same order, and no list of arguments.
+// false: what lies under `emit` cannot be called: the caller says so in its own words.
+function emitsToListeners(stream: $Node.Readable, type: string): boolean {
+  const emitOfStream = stream.emit;
+  if (emitOfStream !== emit) {
+    ("unlikely");
+    if (typeof emitOfStream !== "function") return false;
+    emitOfStream.$call(stream, type);
+    return true;
+  }
+  const events = stream._events;
+  if (events === undefined) return true;
+  const handler = events[type];
+  if (handler === undefined) return true;
+  if (typeof handler === "function") {
+    handler.$call(stream);
+    return true;
+  }
+  for (let i = 0, length = handler.length; i < length; i++) handler[i].$call(stream);
+  return true;
+}
+
+// stream.emit("data", chunk), where emit() is the one of node:events: the same reads in the same order, and no list of arguments.
+function emitData(stream: $Node.Readable, chunk: unknown): void {
+  const emitOfStream = stream.emit;
+  if (emitOfStream !== emit) {
+    ("unlikely");
+    if (typeof emitOfStream === "function") emitOfStream.$call(stream, "data", chunk);
+    else stream.emit("data", chunk);
+    return;
+  }
+  const events = stream._events;
+  if (events === undefined) return;
+  const handler = events.data;
+  if (handler === undefined) return;
+  if (typeof handler === "function") {
+    handler.$call(stream, chunk);
+    return;
+  }
+  for (let i = 0, length = handler.length; i < length; i++) handler[i].$call(stream, chunk);
+}
+
 function addChunk(stream: $Node.Readable, state: ReadableState, chunk, length: number, addToFront: boolean): void {
   if (
     (state[kState] & (Flag.Flowing | Flag.Sync | Flag.DataListening)) === (Flag.Flowing | Flag.DataListening) &&
@@ -456,7 +535,8 @@ function addChunk(stream: $Node.Readable, state: ReadableState, chunk, length: n
     }
 
     state[kState] |= Flag.DataEmitted;
-    stream.emit("data", chunk);
+    if (IS_COMPILED_AHEAD_OF_TIME) emitData(stream, chunk);
+    else stream.emit("data", chunk);
   } else {
     // Update the buffer info.
     state.length += length;
@@ -697,7 +777,10 @@ function read(this: $Node.Readable, state: ReadableState, n: number) {
 
   if (ret !== null && (state[kState] & (Flag.ErrorEmitted | Flag.CloseEmitted)) === 0) {
     state[kState] |= Flag.DataEmitted;
-    if ((state[kState] & Flag.DataListening) !== 0 || mayHaveDataListeners(this)) this.emit("data", ret);
+    if ((state[kState] & Flag.DataListening) !== 0 || mayHaveDataListeners(this)) {
+      if (IS_COMPILED_AHEAD_OF_TIME) emitData(this, ret);
+      else this.emit("data", ret);
+    }
   }
 
   return ret;
@@ -756,7 +839,7 @@ function emitReadable_(stream: $Node.Readable) {
   const state: ReadableState = stream._readableState;
   $debug("emitReadable_");
   if ((state[kState] & (Flag.Destroyed | Flag.Errored)) === 0 && (state.length || (state[kState] & Flag.Ended) !== 0)) {
-    stream.emit("readable");
+    if (!(IS_COMPILED_AHEAD_OF_TIME && emitsToListeners(stream, "readable"))) stream.emit("readable");
     state[kState] &= ~Flag.EmittedReadable;
   }
 
@@ -1057,7 +1140,8 @@ Readable.prototype.unpipe = function (this: $Node.Readable, dest?: $Node.AnyStre
   const index = ArrayPrototypeIndexOf.$call(state.pipes, dest);
   if (index === -1) return this;
 
-  state.pipes.splice(index, 1);
+  if (IS_COMPILED_AHEAD_OF_TIME && index === state.pipes.length - 1) state.pipes.pop();
+  else state.pipes.splice(index, 1);
   if (state.pipes.length === 0) this.pause();
 
   dest.emit("unpipe", this, unpipeInfo);
@@ -1071,6 +1155,7 @@ Readable.prototype.on = function (this: $Node.Readable, ev: $Node.EventName, fn:
   const res = Stream.prototype.on.$call(this, ev, fn);
   const state: ReadableState = this._readableState;
 
+  if (IS_COMPILED_AHEAD_OF_TIME && (typeof ev !== "string" || (ev.length !== 4 && ev.length !== 8))) return res;
   if (ev === "data") {
     state[kState] |= Flag.DataListening;
 
@@ -1108,6 +1193,7 @@ const removingMethod = (Readable.prototype.removeListener = function (
 
   const res = Stream.prototype.removeListener.$call(this, ev, fn);
 
+  if (IS_COMPILED_AHEAD_OF_TIME && (typeof ev !== "string" || (ev.length !== 4 && ev.length !== 8))) return res;
   if (ev === "readable") {
     // We need to check if there is someone still listening to
     // readable and reset the state. However this needs to happen
@@ -1224,7 +1310,7 @@ function resume_(stream: $Node.Readable, state: ReadableState): void {
 
 function finishResume(stream: $Node.Readable, state: ReadableState): void {
   state[kState] &= ~Flag.ResumeScheduled;
-  stream.emit("resume");
+  if (!(IS_COMPILED_AHEAD_OF_TIME && emitsToListeners(stream, "resume"))) stream.emit("resume");
   flow(stream);
   if ((state[kState] & (Flag.Flowing | Flag.Reading)) === Flag.Flowing) stream.read(0);
 }
@@ -1258,7 +1344,7 @@ Readable.prototype.pause = function (this: $Node.Readable) {
     $debug("pause");
     state[kState] |= Flag.HasFlowing;
     state[kState] &= ~Flag.Flowing;
-    this.emit("pause");
+    if (!(IS_COMPILED_AHEAD_OF_TIME && emitsToListeners(this, "pause"))) this.emit("pause");
   }
   state[kState] |= Flag.HasPaused | Flag.Paused;
   return this;
@@ -1407,6 +1493,12 @@ function destroysItself(stream: $Node.Readable) {
   return isReadableState(state) ? (state[kState] & Flag.AutoDestroy) !== 0 : state.autoDestroy;
 }
 
+// stream.destroyed ? null : stream.read(), where `destroyed` is the accessor of Readable: what that accessor and read() read off the stream is read here, as often and in that order.
+function readUnlessDestroyed(stream: $Node.Readable) {
+  if (stream._readableState ? isStateDestroyed(stream._readableState) : false) return null;
+  return stream.read === readingMethod ? read.$call(stream, stream._readableState, NaN) : stream.read();
+}
+
 async function* createAsyncIterator(stream: $Node.Readable, options?: $Node.ReadableIteratorOptions) {
   let callback = nop;
 
@@ -1430,7 +1522,14 @@ async function* createAsyncIterator(stream: $Node.Readable, options?: $Node.Read
 
   try {
     while (true) {
-      const chunk = stream.destroyed ? null : stream.read();
+      const chunk =
+        IS_COMPILED_AHEAD_OF_TIME &&
+        $findsDeclaredMember(stream as unknown as $Node.IncomingMessage, "destroyed") &&
+        $getPrototypeOf($getPrototypeOf(stream)) === Readable.prototype
+          ? readUnlessDestroyed(stream)
+          : stream.destroyed
+            ? null
+            : stream.read();
       if (chunk !== null) {
         yield chunk;
       } else if (error) {
@@ -1769,7 +1868,7 @@ function endReadableNT(state: ReadableState, stream: $Node.Readable): void {
   // Check that we didn't get one last unshift.
   if ((state[kState] & (Flag.Errored | Flag.CloseEmitted | Flag.EndEmitted)) === 0 && state.length === 0) {
     state[kState] |= Flag.EndEmitted;
-    stream.emit("end");
+    if (!(IS_COMPILED_AHEAD_OF_TIME && emitsToListeners(stream, "end"))) stream.emit("end");
     return finishEnd(state, stream);
   }
 }
@@ -1810,6 +1909,17 @@ function endWritableNT(stream: $Node.Duplex) {
     stream.end();
   }
 }
+
+// What `new Readable({ objectMode: true, highWaterMark })` makes. Nobody sees which options are asked for in a list that the library has written.
+function makeObjectReadable(highWaterMark: number): $Node.Readable {
+  const stream = new (Readable as $Node.ReadableConstructor)();
+  const state: ReadableState = stream._readableState;
+  state[kState] |= Flag.ObjectMode;
+  state.highWaterMark = highWaterMark;
+  return stream;
+}
+
+if (IS_COMPILED_AHEAD_OF_TIME) internals.makeObjectReadable = makeObjectReadable;
 
 Readable.from = function (
   iterable: string | Buffer | Iterable<unknown> | AsyncIterable<unknown>,

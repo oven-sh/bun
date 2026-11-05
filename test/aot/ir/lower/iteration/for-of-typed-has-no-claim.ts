@@ -7,8 +7,8 @@
 // CHECK: = Call {{*}}, -, [[item]] calleeName="use"
 // CHECK-LABEL: function {{*}}name="overPairs"
 // CHECK: [[pair]] = ResultAt {{*}}index=1
-// CHECK-NOT: Convert
-// CHECK: = IteratorOpen [[pair]] {{*}}isDestructuring
+// CHECK: [[entry]] = Convert [[pair]] declared={type={{*}}Array<{{*}} flags=[IsExpected]}
+// CHECK: = IteratorOpen [[entry]] {{*}}isDestructuring
 // CHECK-LABEL: function {{*}}name="overPromises"
 // CHECK: [[settled]] = ResultAt {{*}}index=1
 // CHECK: [[awaited]] = Convert [[settled]] declared={type=number flags=[IsExpected]}
@@ -19,7 +19,6 @@
 // CLAIMS-NOT: IsClaim
 
 // The name in the head of the loop has no annotation. What a step delivers is expected to be what the checker says of the name, and nothing is claimed of it. For `for await` that is the settled value.
-// An array pattern takes what is delivered apart at once, and nothing is said of it.
 declare function use(value: unknown): void;
 
 export function overArray(items: number[]) {

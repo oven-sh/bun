@@ -31,8 +31,6 @@ pub(crate) enum Arguments {
     List(ValueId),
 }
 
-const IS_ANNOTATED_PURE: bool = false;
-
 #[derive(Copy, Clone, Debug)]
 pub(in crate::lower) struct Callee {
     pub(in crate::lower) function: ValueId,
@@ -90,9 +88,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         let builder = &mut self.builder;
         match arguments {
-            Arguments::Values(values) => {
-                builder.construct(callee, None, &values, name, IS_ANNOTATED_PURE)
-            }
+            Arguments::Values(values) => builder.construct(callee, None, &values, name),
             Arguments::List(list) => builder.construct_list(callee, None, list, name),
         }
     }
@@ -335,7 +331,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 expected_result,
                 called_builtin,
                 options.call_number,
-                IS_ANNOTATED_PURE,
                 options.is_never_inlined,
                 options.is_done_in_place,
             ),

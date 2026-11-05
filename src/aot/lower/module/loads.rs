@@ -707,6 +707,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(QuestionOnBase::IsPath { place, path }) => {
                 let test = self.branch_on_written_path(path, true, values[place]);
                 self.continue_in(test.other);
+                self.branch_if_url_of_path_is_as_written(path, values[place], test.as_written);
                 self.note_require(made);
                 self.jump(test.as_written);
                 self.continue_in(test.as_written);
@@ -732,6 +733,59 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         self.continue_in(done);
         self.builder.read_variable(called)
+    }
+
+    fn branch_if_url_of_path_is_as_written(
+        &mut self,
+        written: Atom,
+        path: ValueId,
+        as_written: BlockId,
+    ) {
+        let bytes = self.file.queries.atom_bytes(written).to_vec();
+        let below = self.emit_text(bytes.strip_prefix(b".").unwrap_or(&bytes));
+        let is_text = self.builder.type_test(path, TypeTable::STRING);
+        let of_text = self.create_block();
+        let other = self.create_block();
+        self.builder
+            .branch(is_text, Edge::to(of_text), Edge::to(other));
+
+        self.continue_in(of_text);
+        let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
+        let separators = [self.emit_text(b"//"), self.emit_text(b"/")];
+        let path = call::emit_call(self, replace_all, Some(path), &separators);
+        let ends_with = self.emit_builtin_itself(BuiltinId::StringPrototypeEndsWith);
+        let ends_as_folder = call::emit_call(self, ends_with, Some(path), &separators[1..]);
+        let ends_as_folder = self.builder.to_boolean(ends_as_folder);
+        let ends_alike = self.create_block();
+        let (of_folder, of_file) = match bytes.ends_with(b"/") {
+            true => (ends_alike, other),
+            false => (other, ends_alike),
+        };
+        self.builder
+            .branch(ends_as_folder, Edge::to(of_folder), Edge::to(of_file));
+
+        self.continue_in(ends_alike);
+        let given = self.emit_url_of_path(path);
+        for directory in self.emit_own_directories() {
+            let expected = self.builder.strcat(&[directory, below]);
+            let expected = self.emit_url_of_path(expected);
+            let is_as_written = self.builder.strict_eq(given, expected);
+            let otherwise = self.create_block();
+            self.builder
+                .branch(is_as_written, Edge::to(as_written), Edge::to(otherwise));
+            self.continue_in(otherwise);
+        }
+        self.jump(other);
+
+        self.continue_in(other);
+    }
+
+    fn emit_url_of_path(&mut self, path: ValueId) -> ValueId {
+        let convert = self.emit_builtin_itself(BuiltinId::BunPathToFileURL);
+        let url = call::emit_call(self, convert, None, &[path]);
+        let href = self.file.intern_bytes(b"href");
+        let href = PropertyName::Constant(self.file.text_key(href));
+        self.emit_get(url, href)
     }
 
     fn find_question_on_base(
@@ -974,15 +1028,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn may_way_from_file_be_replaced(&self, exporter: Option<FileId>) -> bool {
         let modules = self.file.inputs.modules;
-        let mut imported = modules.import_bindings(self.file.file).iter();
+        let imports_replaceable_variable = &self.file.modules.imports_replaceable_variable;
         modules.runs_tests()
             || modules.reaches_mock(self.file.file)
             || exporter.is_some_and(|from| {
                 modules.may_be_mocked(ModuleRef::File(from))
                     || modules.holds_replaceable_variable(from)
             })
-            || imported.any(|&(_, binding)| {
-                matches!(binding, ImportBinding::Variable(it) if modules.is_replaceable(it))
+            || *imports_replaceable_variable.get_or_init(|| {
+                let mut imported = modules.import_bindings(self.file.file).iter();
+                imported.any(|&(_, binding)| {
+                    matches!(binding, ImportBinding::Variable(it) if modules.is_replaceable(it))
+                })
             })
     }
 
@@ -2626,7 +2683,7 @@ fn lower_tested_call(
             },
         ),
     };
-    let site = site.in_one_arm(is_other_arm_read || site.maker_of_asked_require.is_some());
+    let site = site.in_one_arm(is_other_arm_read);
     let loaded = lowering.emit_operation(operation, &site, specifier);
     lowering.builder.write_variable(result, loaded);
     lowering.jump(done);

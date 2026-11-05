@@ -8,11 +8,11 @@
 # -- end of source
 # Link's proof of a parameter is tested for in front of a copy only where one look at the value settles it: primitives, one layout, or both.
 # A family or a set of closures grows with the program, and so would each question about it and each test of it, at every copy: members times copies.
-# Here the parameter is one of two layouts. The copy asks for them where it reads, as a guess with the read as written beside it.
+# Here the parameter is one of two layouts. The copy asks for them where it reads, as a guess with the call as written beside it.
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: frame 1 callee=f1
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK: [[element]]: anything{{*}} = Call
 # CHECK-NOT: = TypeTest [[element]]
-# CHECK: = PropGet [[element]] key="a"
+# CHECK: = CallDirect [[element]] function=f1 [isNeverInlined]

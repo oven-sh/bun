@@ -105,10 +105,11 @@ const findsOrMakesEmitter = [
   b.definesName(["_events"], b.instance("EventEmitter").fresh),
 ];
 
-const onOtherReceiver = (firstParameter: string): b.FunctionField => ({
+// JSEventEmitterCustom.cpp jsEventEmitterCastFast(): the emitter under `_events` of the receiver, or a new one that it lays there. The body is the same from there on, and so is what it answers.
+const onOtherReceiver = (firstParameter: string, returns: b.SignatureOptions["returns"]): b.FunctionField => ({
   this: b.any,
   args: { [firstParameter]: b.any.optional, operands: b.any.rest },
-  returns: b.any,
+  returns,
   capability: "js",
   throws: true,
   uses: {
@@ -121,7 +122,7 @@ const onOtherReceiver = (firstParameter: string): b.FunctionField => ({
 
 const methodOfEventEmitter = (signature: b.SignatureOptions): b.FunctionField[] => [
   { ...signature, this: nativeEmitter, implementation: b.generic },
-  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event"),
+  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event", signature.returns),
 ];
 
 const addsListener = [
@@ -184,7 +185,8 @@ const readsListenerLists = (signature: Pick<b.SignatureOptions, "args" | "return
     reads: listenerLists,
   });
 
-const listsListeners = readsListenerLists({ args: { event: b.propertyKey.loose }, returns: newArrayOf(b.any) });
+// A new list of what the program has handed in as listeners: the row says nothing of what lies in it.
+const listsListeners = readsListenerLists({ args: { event: b.propertyKey.loose }, returns: b.instance("Array") });
 
 // It calls the listeners that were added under the event, each with the values and with the object that a listener was last added through as `this`.
 const emitsEvent = {
@@ -739,6 +741,8 @@ export default b.declarations(
       listenerCount: readsListenerLists({ args: { event: b.propertyKey.loose }, returns: b.f64 }),
       listeners: listsListeners,
       rawListeners: listsListeners,
+      // JSEventEmitter.cpp jsEventEmitterConstructor(): the function that native code keeps for the class.
+      constructor: b.property(b.callable),
     },
   }),
   // A function of the library's JavaScript: under `new` it queues the callback and a new object is the answer.

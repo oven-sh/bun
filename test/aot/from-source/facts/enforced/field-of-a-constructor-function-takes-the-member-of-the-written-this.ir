@@ -8,7 +8,8 @@
 # interface Type { flags: TypeFlags; symbol: Sym; objectFlags: TypeFlags; size: number }
 # function Type(this: Type, flags: TypeFlags, symbol: Sym) { this.flags = flags; this.symbol = symbol; }
 # function make(flags: TypeFlags, symbol: Sym, objectFlags: TypeFlags, size: number): Type { const made: Type = new (Type as any)(flags, symbol); made.objectFlags = objectFlags; made.size = size; return made; }
-# sink(make);
+# const first: Sym = { name: "first" };
+# sink(make, first);
 # -- end of source
 # RUN: facts enforced mechanisms=all
 # REQUIRES: entries-of-bun

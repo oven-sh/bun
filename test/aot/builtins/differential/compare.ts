@@ -53,6 +53,8 @@ const toPrimitiveKeys = ["@@toPrimitive", "valueOf", "toString"];
 const iterationKeys = ["@@iterator", "@@asyncIterator", "next", "return", "throw", "done", "value"];
 const membersMaking = { Iterator: [Symbol.iterator, Symbol.asyncIterator], IteratorResult: ["next", "return", "throw"] };
 const readingActions: readonly PropertyActionKind[] = ["ReadsByKey", "ReadsGetter", "ReadsSetter"];
+// Native code throws these too, and in the table they do not stand below Error. No feature and no function of the library hangs on them, so nothing is lost where the compiler does not count them.
+const classesThrownBesideErrors = ["DOMException", "BuildMessage", "ResolveMessage"];
 const storingActions: readonly PropertyActionKind[] = ["StoresByKey", "AssignsFrom"];
 const definingActions: readonly PropertyActionKind[] = [
   "StoresByKey",
@@ -812,6 +814,7 @@ class Comparison {
     // A type that is declared only says what native code lays there. What an operand brought along is held by the uses of that operand, below.
     const cameWithOperand = overload.resultIsDeclaredOnly === true && isObject(result) && this.originOf(result) !== undefined;
     if (mismatch !== undefined && !cameWithOperand) this.report("result.type", `the result is ${mismatch}`);
+    if (types.isPromise(result) && Bun.peek.status(result) === "rejected") this.checkThrownValue("result.type", Bun.peek(result));
     this.checkSubstring(result);
     this.checkRepeated(result);
     if (!isObject(result)) return;
@@ -910,7 +913,15 @@ class Comparison {
     });
   }
 
+  // The compiler takes what is thrown, and the reason of a promise, to let no object of an unknown class exist: errors exist in every program, and what an operand brought is the program's.
+  checkThrownValue(column: string, value: unknown): void {
+    if (!isObject(value) || types.isNativeError(value) || this.originOf(value) !== undefined) return;
+    if (this.realm.classesOf(value).some(token => classesThrownBesideErrors.includes(token))) return;
+    this.report(column, `native code throws ${this.describeValue(value)}, which is no error and which no operand brought`);
+  }
+
   checkThrow(error: unknown): void {
+    this.checkThrownValue("throws", error);
     const origin = this.originOf(error);
     if (origin || (this.overload.throws && !this.overload.onlyPropagatesErrors)) return;
     if (this.hasOperandOutsideAcceptedType() || this.mayThrowInTrap()) return;

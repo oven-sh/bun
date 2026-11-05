@@ -44,6 +44,20 @@ function* steps(shelf, keys, skipped, own) { for (const key of keys) { for (cons
   "two-finallys-round-two-generators": [`function* innermost(limit) { try { for (let i = 0; i < limit; i++) yield i; } finally { note("innermost cleaned"); } }
 function* inner(limit) { try { for (const value of innermost(limit)) yield value * 2; } finally { note("inner cleaned"); } }
 function* steps(limit) { try { for (const value of inner(limit)) yield value + 1; } finally { note("outer cleaned"); } }`, `steps(LIMIT)`, 3],
+  "a-yield-on-one-arm-then-a-throw": [`function* steps(first) { yield first; if (round & 1) yield first * 10; throw "stop"; }`, `steps(LIMIT)`, 1],
+  "a-yield-on-each-arm-then-a-throw": [`function* steps(first) { if (round & 1) yield first * 10; else yield first * 20; throw "stop"; }`, `steps(LIMIT)`, 1],
+  "as-many-turns-as-the-round-then-a-throw": [`function* steps(first) { for (let i = 0; i < round; i++) yield first + i; throw "stop"; }`, `steps(LIMIT)`, 5],
+  "a-yield-on-one-arm-then-goes-on": [`function* steps(first) { yield first; if (round & 1) yield first * 10; note("joined"); yield first * 100; }`, `steps(LIMIT)`, 1],
+  "an-arm-without-a-yield": [`function* steps(first) { if (round & 1) note("no yield"); else yield first; yield first + 1; if (round & 2) return; yield first + 2; }`, `steps(LIMIT)`, 5],
+  "throws-where-the-round-says": [`function* steps(limit) { for (let i = 0; i < limit; i++) { yield i; if (i === round) throw "stop at " + i; } }`, `steps(LIMIT)`, 3],
+  "a-nameless-catch-round-a-generator-that-throws": [`function* inner(first) { yield first; if (round & 1) yield first * 10; throw "stop"; }
+function* steps(first) { try { for (const value of inner(first)) yield value; } catch { yield first * 100; } }`, `steps(LIMIT)`, 1],
+  "a-nameless-catch-round-the-yield": [`function* steps(limit) { for (let i = 0; i < limit; i++) { try { yield i; if (i === round) throw "own"; } catch { note("caught at " + i); yield 100 + i; } } }`, `steps(LIMIT)`, 3],
+  "a-finally-that-yields-out-of-a-generator": [`function* rest() { yield 71; yield 72; }
+function* steps(first) { try { yield first; yield first + 1; } finally { for (const value of rest()) yield value; } }`, `steps(LIMIT)`, 1],
+  "a-finally-that-loops-over-a-generator": [`function* rest() { yield 71; if (round & 1) yield 72; }
+function* steps(first) { try { yield first; yield first + 1; } finally { for (const value of rest()) note("rest " + value); } }`, `steps(LIMIT)`, 1],
+  "returns-on-one-arm": [`function* steps(limit) { for (let i = 0; i < limit; i++) { if (i === round) return "early"; yield i; } }`, `steps(LIMIT)`, 3],
   "walks-a-tree": [`const tree = { left: { left: null, value: 1, right: { left: null, value: 2, right: null } }, value: 3, right: { left: null, value: 4, right: null } };
 function* steps(node) { if (node === null) return; yield* steps(node.left); yield node.value; yield* steps(node.right); }`, `steps(tree)`],
   "loops-over-its-own-function": [`function* steps(depth) { yield depth; if (depth > 0) for (const below of steps(depth - 1)) yield below; }`, `steps(LIMIT)`, 3],
@@ -99,6 +113,14 @@ function consume() { const held = relay(); const seen = []; for (let i = 0; i < 
   "named-in-the-spread": [false, `function consume() { PRE if (isEndless) return "endless"; let held; const all = [...(held = CALL)]; const after = held.next(); return all.length + " " + after.done; }`],
   "second-name-right-in-front": [false, `function consume() { PRE let turns = 0; const held = CALL; for (const value of held) { note("got " + ${show}); if (++turns === 2) break; } const after = held.next(); return typeof after.value + " " + after.done; }`],
   "second-name-right-in-front-of-a-spread": [false, `function consume() { PRE if (isEndless) return "endless"; const held = CALL; const all = [...held]; const after = held.next(); return all.length + " " + after.done; }`],
+  "nameless-catch-round-the-loop-reads-the-sum": [true, `function consume() { PRE let sum = 0, turns = 0; try { for (const value of CALL) { sum += (typeof value === "number" ? value : 1000); if (++turns === 6) break; } } catch { return "caught at " + sum; } return "ended at " + sum; }`],
+  "nameless-catch-in-the-turn": [true, `function consume() { PRE let sum = 0, turns = 0; for (const value of CALL) { try { if (turns === round) throw "mine"; sum += (typeof value === "number" ? value : 1000); } catch { sum += 100000; } if (++turns === 6) break; } return sum; }`],
+  "nameless-catch-round-the-loop-in-a-loop": [true, `function consume() { PRE let total = 0; for (let again = 0; again < 2; again++) { let sum = again, turns = 0; try { for (const value of CALL) { sum += (typeof value === "number" ? value : 1000); if (++turns === 6) break; } total += 1; } catch { total += sum * 10; } } return total; }`],
+  "finally-round-the-loop-reads-the-sum": [true, `function consume() { PRE let sum = 0, turns = 0; try { for (const value of CALL) { sum += (typeof value === "number" ? value : 1000); if (++turns === 6) break; } } finally { note("sum " + sum); } return sum; }`],
+  "nameless-catch-round-a-spread": [true, `function consume() { PRE if (isEndless) return "endless"; let before = round; try { const all = [before, ...CALL]; before += all.length; } catch { return "caught at " + before; } return "ended at " + before; }`],
+  "breaks-where-the-round-says": [true, `function consume() { PRE let sum = 0, turns = 0; for (const value of CALL) { if (turns++ === round) break; sum += (typeof value === "number" ? value : 1000); } return sum + " in " + turns; }`],
+  "returns-where-the-round-says": [true, `function consume() { PRE let sum = 0, turns = 0; for (const value of CALL) { if (turns++ === round) return "left at " + sum; sum += (typeof value === "number" ? value : 1000); if (turns === 6) break; } return sum + " in " + turns; }`],
+  "two-sums-one-on-each-arm": [true, `function consume() { PRE let even = 0, odd = 0, turns = 0; try { for (const value of CALL) { if ((turns + round) & 1) odd += (typeof value === "number" ? value : 1000); else even += (typeof value === "number" ? value : 1000); if (++turns === 6) break; } } catch { return "caught " + even + " " + odd; } return even + " " + odd; }`],
   "handed-on": [false, `function drain(items) { let turns = 0; for (const value of items) { note("got " + ${show}); if (++turns > 12) break; } return turns; }
 function consume() { PRE return drain(CALL); }`],
   "kept-in-a-list": [false, `const kept = [];
@@ -115,6 +137,16 @@ function consume() { PRE const held = CALL; kept.push(held); let turns = 0; for 
 };
 
 // What stands in front of the consumer: [statements in front, the number handed over].
+Object.assign(consumers, {
+  "a-closure-on-the-way-out": [false, `function consume() { PRE let found = null; for (const value of CALL) { if (typeof value === "number" && value > 1) { const step = (value * 3) | 0; found = () => { let sum = 0; for (let i = 0; i < 4; i++) sum += step; return sum; }; break; } } return found === null ? "none" : found(); }`],
+  "a-closure-where-it-returns": [false, `function search() { PRE for (const value of CALL) { if (typeof value === "number" && value > 0) { const step = (value * 5) | 0, isOdd = (value & 1) === 1; return () => step + (isOdd ? 1 : 0); } } return null; }
+function consume() { const made = search(); return made === null ? "none" : made(); }`],
+  "a-closure-behind-the-loop": [false, `function consume() { PRE let last = 0, turns = 0; for (const value of CALL) { last = Number(value) | 0; if (++turns > 6) break; } const kept = (last * 2) | 0; const read = () => kept + 1; return read(); }`],
+  "a-closure-in-each-turn": [false, `function consume() { PRE const made = []; for (const value of CALL) { const twice = (Number(value) * 2) | 0; made.push(() => twice); if (made.length > 5) break; } return made.map(one => one()).join(); }`],
+  "a-closure-in-front-of-the-loop": [false, `function consume() { PRE const base = (pick(4) * 2) | 0; const read = () => base; let sum = 0; for (const value of CALL) { sum += read(); if (sum > 40) break; } return sum; }`],
+  "a-closure-under-a-catch-on-the-way-out": [false, `function consume() { PRE let found = null; try { for (const value of CALL) { if (typeof value === "number" && value > 1) { const step = (value * 7) | 0; found = () => step; throw new Error("out"); } } } catch (error) { note("caught " + error.message); } return found === null ? "none" : found(); }`],
+});
+
 const fronts = {
   "": limit => ["", String(limit)],
   "behind-a-ternary": limit => [`const extra = flag ? 1 : 2; note("extra " + extra);`, `(flag ? ${limit} : ${limit - 1})`],
@@ -126,6 +158,7 @@ const fronts = {
 
 const head = isEndless => `const notes = [];
 let silent = false;
+let round = 0;
 const isEndless = ${isEndless};
 const flag = process.argv.length > 0;
 const box = JSON.parse('{"limit":0,"name":"box"}');
@@ -133,13 +166,19 @@ function pick(wanted) { if (wanted < 0) return 0; return flag ? wanted : wanted 
 function note(text) { if (!silent) notes.push(text); }
 `;
 const tail = `async function attempt() { try { return "gave " + String(await consume()); } catch (error) { return "threw " + (error && error.message); } }
-for (let call = 0; call < 3; call++) { notes.length = 0; const answer = await attempt(); console.log(answer + " | " + notes.join("; ")); }
+for (let call = 0; call < 4; call++) { round = call; notes.length = 0; const answer = await attempt(); console.log(answer + " | " + notes.join("; ")); }
+`;
+
+const tailOfOneCall = `async function attempt() { try { return "gave " + String(await consume()); } catch (error) { return "threw " + (error && error.message); } }
+round = 1; const answer = await attempt(); console.log(answer + " | " + notes.join("; "));
 `;
 
 let count = 0;
 for (const [generator, [text, call, limit]] of Object.entries(generators)) {
   const isEndless = generator.startsWith("endless");
   for (const [consumer, [takesFronts, use]] of Object.entries(consumers)) {
+    writeFileSync(`${out}/${generator}--${consumer}--called-once.mjs`, head(isEndless) + text + "\n" + use.replaceAll("PRE", "").replaceAll("CALL", call.replaceAll("LIMIT", String(limit ?? 0))) + "\n" + tailOfOneCall);
+    count++;
     for (const [front, make] of Object.entries(fronts)) {
       if (front && !takesFronts)
         continue;
@@ -174,6 +213,17 @@ function consume() { const before = above.return; above.return = function (value
 const above = Object.getPrototypeOf(function* () {}).prototype;
 function consume() { let turns = 0; for (const value of steps(3)) { if (++turns === 2) break; } return Reflect.ownKeys(above).map(String).join(); }`,
 };
+for (const [generator, [text, call, limit]] of Object.entries(generators)) {
+  const made = call.replaceAll("LIMIT", String(limit ?? 0));
+  writeFileSync(`${out}/${generator}--the-body-of-the-module-consumes.mjs`, head(generator.startsWith("endless")) + text + `
+let found = null, turns = 0;
+try {
+  for (const value of ${made}) { if (++turns > 6) break; if (typeof value === "number" && value > 1) { const step = (value * 3) | 0; found = () => { let sum = 0; for (let i = 0; i < 4; i++) sum += step; return sum; }; break; } }
+} catch (error) { note("caught " + (error && error.message)); }
+console.log((found === null ? "none" : found()) + " | " + turns + " | " + notes.join("; "));
+`);
+  count++;
+}
 for (const [name, text] of Object.entries(others)) {
   writeFileSync(`${out}/${name}.mjs`, head(false) + text + "\n" + tail);
   count++;

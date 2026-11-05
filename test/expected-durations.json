@@ -28,6 +28,10 @@
     "default": 31800,
     "asan": 127200
   },
+  "aot/a-call-behind-a-failed-look-asks-no-other-class.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-call-for-a-file-that-a-require-has-run-settles-before-a-test-run-ends.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -136,6 +140,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-graph-that-is-handed-to-the-loader-costs-the-same-a-module-on-a-larger-cycle.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-helper-that-spies-below-the-test-files-opens-what-they-pass-it.test.ts": {
     "default": 7800,
     "asan": 31200
@@ -216,6 +224,10 @@
     "default": 11400,
     "asan": 45600
   },
+  "aot/a-package-left-out-lies-below-a-cycle-that-the-loader-walks.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-package-of-test-helpers-mocks-a-module-by-a-path-that-it-is-handed.test.ts": {
     "default": 7300,
     "asan": 29200
@@ -263,6 +275,10 @@
   "aot/a-require-at-the-top-of-a-commonjs-file-beside-a-stored-resolver.test.ts": {
     "default": 9900,
     "asan": 39600
+  },
+  "aot/a-require-made-for-a-folder-above-the-entry-point.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-require-of-an-es-module-looks-at-what-the-load-threw-before-it-ends-the-load.test.ts": {
     "default": 19400,
@@ -852,6 +868,10 @@
     "default": 11700,
     "asan": 46800
   },
+  "aot/many-barrels-hand-a-made-require-on-build-time.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/many-computed-loads-in-one-file-build-time.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1032,6 +1052,10 @@
     "default": 138300,
     "asan": 553200
   },
+  "aot/more-places-want-a-wide-record-than-the-room-holds.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/names-planted-on-object-prototype.test.ts": {
     "default": 4100,
     "asan": 16400
@@ -1175,10 +1199,6 @@
   "aot/reset-modules.test.ts": {
     "default": 3800,
     "asan": 15200
-  },
-  "aot/right-programs-run-under-the-word-that-holds-objects-to-staying-as-made.test.ts": {
-    "default": 60000,
-    "asan": 240000
   },
   "aot/run-parallel-full-disk-message.test.ts": {
     "default": 1400,
@@ -1491,6 +1511,10 @@
   "aot/texts-nothing-can-run.test.ts": {
     "default": 600,
     "asan": 2400
+  },
+  "aot/texts-that-come-one-a-turn-cost-the-same-a-module-in-a-larger-graph.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/the-cells-that-never-die-are-kept-over-many-pages.test.ts": {
     "default": 60000,

@@ -1,5 +1,6 @@
 // The names that an object gets late lie in storage outside its cell, and that storage doubles whenever it is full. A spread copies it at once, however often it has doubled.
-// COUNT: operation:operationAOTCopyObject <= 700
+// Without that form every copy past sixteen words is a call: 8,249. With it the calls that are left are those for a new free list: some 400, and 777 with AddressSanitizer, whose allocators have shorter ones.
+// COUNT: operation:operationAOTCopyObject <= 1000
 function filled(count, seed) {
   const made = {};
   for (let i = 0; i < count; i++) made["k" + i] = seed + i;

@@ -65,6 +65,7 @@ pub(crate) struct NamedLoads {
     pub loads_by_unknown_name: bool,
     pub loads_by_path_alone: bool,
     pub loads_by_unknown_path: bool,
+    pub may_go_to_loader_of_host: bool,
     pub unknown_names_at: Vec<u32>,
     pub sought_from_unknown_folders: Vec<(Atom, bool)>,
     pub written_arms_of_unknown_names: Vec<(Atom, bool)>,
@@ -793,6 +794,12 @@ impl ContentsScan<'_, '_> {
         if call.is_some_and(|call| analysis.decisions.is_dead_expr(call)) {
             return;
         }
+        names.may_go_to_loader_of_host |= !matches!(
+            request.resolutions[index],
+            SiteResolution::Constant(
+                CodeResolution::File(_) | CodeResolution::HostModule(_) | CodeResolution::Erased
+            )
+        );
         if input.loads_code_from_disk {
             let resolution = request.resolutions[index];
             if names_file_missing_at_build(request, input, site, resolution) {

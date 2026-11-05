@@ -1,3 +1,4 @@
+use super::runtime_reach::ReachWhileLoading;
 use super::{Build, CodeOfWorkers, EntryPointPaths, LoadedBuild, LoadedProject, Options};
 use crate::builtins::table::{self, BuiltinId};
 use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
@@ -470,6 +471,8 @@ impl<'a> Build<'a> {
         let further = FurtherLibraryCode {
             serves_unseen_code,
             loads_code_from_disk: options.aot.loads_code_from_disk,
+            runs_tests: options.load.runs_tests,
+            has_file_that_asks_for_it: host.has_file_that_asks_for_what_unseen_code_finds(),
         };
         let roots = collect_runtime_roots(
             files,
@@ -488,6 +491,7 @@ impl<'a> Build<'a> {
             && !compiled_files.any(|&file| may_run_code_outside_image(files, file));
         let session = shared.sessions.runtime;
         let inputs = self.create_runtime_load_inputs(shared, session, &roots, &contents);
+        let takes_known_regions = Cell::new(true);
         let runtime_request = self.create_runtime_request(shared, &inputs, &roots.paths);
         let RuntimeLoadInputs {
             host: ref runtime_host,
@@ -552,7 +556,14 @@ impl<'a> Build<'a> {
             can_load_code_at_run_time,
             loads_code_by_unknown_names_alone,
             keeps_library_code_without_names: roots.keeps_code_without_names,
+            holds_what_unseen_code_finds: roots.holds_what_unseen_code_finds,
             finish_asset_reads: project.finish_asset_reads,
+            known_library_regions: &|| {
+                let reach = runtime_host.reach.as_ref()?;
+                let files = runtime.files();
+                (takes_known_regions.replace(false))
+                    .then(|| reach.take_known_regions(shared.runtime_modules, files))
+            },
         };
         then(self, loaded)
     }
@@ -561,7 +572,7 @@ impl<'a> Build<'a> {
         &self,
         shared: &SharedLoadInputs<'c, 's>,
         session: &'s Session,
-        roots: &RuntimeRoots,
+        roots: &'c RuntimeRoots,
         contents: &'c ProgramContents,
     ) -> RuntimeLoadInputs<'c, 's> {
         let options = self.options;
@@ -569,6 +580,8 @@ impl<'a> Build<'a> {
         let loads_code_by_unknown_names_alone =
             !is_told_of_code && contents.loads_by_unknown_path && options.aot.loads_code_from_disk;
         let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
+        let reads_all_that_files_ask_for =
+            can_load_code_at_run_time || roots.holds_what_unseen_code_finds;
         RuntimeLoadInputs {
             fold: create_runtime_fold_inputs(
                 shared.manifest,
@@ -599,6 +612,9 @@ impl<'a> Build<'a> {
                 unlocked_builtins: &contents.run.members_that_library_looks_up,
                 messages: shared.messages,
                 unreadable: Default::default(),
+                manifest: shared.manifest,
+                reach: (!reads_all_that_files_ask_for).then(|| ReachWhileLoading::new(&roots.asks)),
+                reads_types: reads_all_that_files_ask_for || !roots.asks.is_empty(),
             },
             can_load_code_at_run_time,
             loads_code_by_unknown_names_alone,

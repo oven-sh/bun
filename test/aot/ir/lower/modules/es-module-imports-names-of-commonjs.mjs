@@ -12,7 +12,6 @@
 // RUN(FILES): link
 // FILES: function {{*}}kind=CommonJsModule
 // FILES-NOT: PropSet
-// FILES: function {{*}}role=Library
 
 // RUN(RECORDS): link
 // RECORDS: module {{*}}/imports/chain/k.cjs"{{*}}kind=CommonJs
@@ -21,7 +20,7 @@
 // MODULES-NOT: module m
 // MODULES: module [[k]] path="{{*}}/imports/chain/k.cjs"
 // MODULES-NEXT: module {{*}}path="{{*}}/es-module-imports-names-of-commonjs.mjs"{{*}}requests=[{target=[[k]] completes=true isHoisted=true}, {target=[[k]] completes=true}]
-// MODULES-NEXT: module {{*}}flags=[IsLibrary]
+// MODULES-NOT: module m
 
 // Both names are stored once, in order, by a module that nobody can see half done: a copy and a live read cannot be told apart, so the importer reads the variables of the CommonJS file, and there is no record between the two. The modules of the program are printed first, and the compiler's library behind them.
 import { one, g } from "./imports/chain/k.cjs";

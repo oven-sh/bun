@@ -300,6 +300,7 @@ export const calls: Record<string, string[]> = {
   ],
   "Intl.RelativeTimeFormat.prototype.formatToParts": ['new Intl.RelativeTimeFormat("en").formatToParts(1, "day")'],
   "native:Bindgen:node_os.bind.ts:loadavg": ['import { loadavg } from "node:os";\nloadavg()'],
+  "native:Bindgen:node_util_binding.bind.ts:parseEnv": ['import { parseEnv } from "node:util";\nparseEnv("FIRST=1\\nSECOND=two")'],
   "native:Bindgen:node_path.bind.ts:parsePosix": ['import { posix } from "node:path";\nposix.parse("/a/b.c")'],
   "native:Bindgen:node_path.bind.ts:parseWin32": ['import { win32 } from "node:path";\nwin32.parse("C:\\\\a\\\\b.c")'],
   "native:Bindgen:socket_body.bind.ts:createSocketPair": [

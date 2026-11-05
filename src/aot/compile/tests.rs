@@ -527,21 +527,24 @@ fn count_library_functions(text: &str) -> usize {
 }
 
 #[test]
-fn program_holds_the_language_and_the_code_of_bun_behind_what_it_names() {
+fn program_holds_the_code_of_bun_behind_what_it_names_and_what_its_text_may_reach() {
     let printing = count_library_functions("console.log('a line');");
     let sorting = count_library_functions("console.log([3, 1, 2].sort().join());");
-    let sorting_without_the_name = count_library_functions(
+    let sorting_by_a_pattern = count_library_functions(
         "const { sort } = [3, 1, 2]; console.log(Reflect.apply(sort, [3, 1, 2], []));",
     );
     let printing_with_a_method = count_library_functions(
         "console.log({ [Symbol.for('nodejs.util.inspect.custom')]() { return 'a line'; } });",
     );
-    assert!(printing > 100, "{printing}");
-    assert_eq!(sorting, printing);
-    assert_eq!(sorting_without_the_name, printing);
-    assert_eq!(printing_with_a_method, printing);
+    assert!(printing > 0 && printing < 30, "{printing}");
+    assert!(sorting > printing && sorting < 400, "{sorting}");
+    assert!(
+        sorting_by_a_pattern >= sorting && sorting_by_a_pattern < 400,
+        "{sorting_by_a_pattern}"
+    );
+    assert!(printing_with_a_method > 100, "{printing_with_a_method}");
     let writing = count_library_functions("process.stdout.write('a line');");
-    assert!(writing > printing, "{writing}");
+    assert!(writing > printing_with_a_method, "{writing}");
 }
 
 #[test]
@@ -953,8 +956,11 @@ fn runtime_files_are_checked_and_lowered_with_their_types() {
 }
 
 fn count_lowered_files_of_bun(source: &str) -> usize {
-    let project = TestProject::new(&[("a.js", source)], &default_settings());
-    run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+    count_lowered_files_of_bun_in(&TestProject::new(&[("a.js", source)], &default_settings()))
+}
+
+fn count_lowered_files_of_bun_in(project: &TestProject) -> usize {
+    run_build(project, BUNDLED_LIBS, &WithoutServices, |build| {
         with_bound_build(build, |build, loaded, bound| {
             let units = build.check_and_lower(loaded, bound);
             let application_files = loaded.projects.application.loaded.files().compiled_files();
@@ -964,8 +970,15 @@ fn count_lowered_files_of_bun(source: &str) -> usize {
 }
 
 #[test]
-fn small_program_lowers_little_of_bun_beside_what_every_program_holds() {
-    let of_empty_program = count_lowered_files_of_bun("export {};\n");
+fn small_program_lowers_little_of_bun_beside_what_unseen_code_finds() {
+    let of_what_operands_are_asked = count_lowered_files_of_bun("export {};\n");
+    assert!(
+        of_what_operands_are_asked < 12,
+        "{of_what_operands_are_asked}"
+    );
+    let mut beside_unseen_code = TestProject::new(&[("a.js", "export {};\n")], &default_settings());
+    beside_unseen_code.keeps_library_code_without_names = true;
+    let of_empty_program = count_lowered_files_of_bun_in(&beside_unseen_code);
     let computed = "export const loaded = require(process.argv[2]);\n";
     let of_computed_name = count_lowered_files_of_bun(computed);
     let listeners = "process.on('exit', () => {});\nprocess.once('SIGINT', () => {});\n";

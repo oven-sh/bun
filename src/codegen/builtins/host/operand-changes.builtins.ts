@@ -62,6 +62,8 @@ const methodTakingObjects = (path: b.BuiltinPath, taken: readonly number[]) => {
 // What the code of the function answers.
 const resultsOfBindingsChangingNothing: Readonly<Record<b.BuiltinPath, b.TableType>> = {
   "native:Cpp:NodeURL.cpp:Bun::createNodeURLBinding": b.string,
+  // JSEventTargetNode.cpp: a new list of the functions that the program has registered.
+  "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsGetEventListeners": b.instance("Array"),
   "native:NewCppFunction:NodeTLS.cpp:loadExtraCACertificates": b.undefined,
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": b.instance("Array").holding({ element: b.string }).fresh,
   "native:NewCppFunction:decodeURIComponentSIMD.cpp:jsFunctionDecodeURIComponentSIMD": b.union(b.string, b.undefined),

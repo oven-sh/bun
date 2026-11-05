@@ -312,6 +312,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Some(links)
     }
 
+    pub(super) fn passes_this_on_in_front_of(
+        &mut self,
+        function: FunctionRef,
+        source: ClassMemberSource,
+    ) -> bool {
+        let of_file = self.prototype_links(function.file);
+        let calls = of_file.calls_passing_this_of(function.function);
+        let hir = self.c.hir(function.file);
+        let position = find_position(hir, source);
+        calls.iter().any(|&(_, call)| hir[call.call].pos < position)
+    }
+
     pub(super) fn complete_constructor_function_shape(
         &mut self,
         function: FunctionRef,
@@ -490,6 +502,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 name,
                 kind,
                 source: ClassMemberSource::PrototypeStore(property.value),
+                is_made_at_birth: false,
                 types: PositionTypes::unwritten(checked),
                 is_static: false,
                 is_optional: true,

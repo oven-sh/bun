@@ -321,7 +321,7 @@ fn member_flags(kind: ObjectMemberKind, is_optional: bool) -> FieldFlags {
     if kind == ObjectMemberKind::Method {
         flags |= FieldFlags::IS_METHOD.0;
     }
-    FieldFlags(flags)
+    FieldFlags::from_wire(flags).unwrap_or_default()
 }
 
 pub(super) fn can_be_field(file: &FileLowering<'_, '_, '_, '_>, key: PropertyKeyId) -> bool {

@@ -92,6 +92,7 @@ impl Resolver<'_, '_> {
             ExprKind::Index { obj, .. } if node == obj => self.classify_object(e, node, parent),
             ExprKind::Index { .. } => MentionUse::Inspected,
             ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) if node == hir[call].callee => MentionUse::Called(parent),
+            ExprKind::Assign { op: Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, .. } if node == target => return ControlFlow::Continue(parent),
             ExprKind::Assign { target, .. } if node == target => MentionUse::Inspected,
             ExprKind::Assign { op: None, target, value } if hir.skip_type_assertions(value) == e && self.is_kept_for_unlisted_members(e, target) => MentionUse::Inspected,
             ExprKind::Template { .. } if self.is_tagged_template(parent) => MentionUse::Exposed,

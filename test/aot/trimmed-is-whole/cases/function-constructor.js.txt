@@ -74,7 +74,6 @@ console.log(constructorOf(constructorOf({}))(text)());
 //// descriptor
 console.log(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), "constructor").value(text)());
 //// descriptors
-//@ not-seen
 console.log(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(() => {})).constructor.value(text)());
 //// spread-of-prototype-names
 //@ not-seen

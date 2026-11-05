@@ -1,5 +1,6 @@
 // A CommonJS file leads back to an ES module that imports it, and nothing reads that import. The package says that its files have no side effects,
 // so the import goes, and mostly the file with it.
+// What this file reads off such a CommonJS file is laid before that file requires anything: in plain Bun the order of the two bodies is not the same in every run.
 import reported from "./b.mjs";
 import namesToo from "names-too/b.mjs";
 import importCall from "import-call/b.mjs";

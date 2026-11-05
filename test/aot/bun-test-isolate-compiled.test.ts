@@ -333,7 +333,11 @@ test("reads a pipe that nobody writes", async () => {
     "e.test.ts": `
 import { expect, test } from "bun:test";
 test("nothing", () => { expect(1).toBe(1); });`,
-    "f.test.ts": lastFile(""),
+    // The functions of a stream run in the interpreter, and a frame of theirs leaves the address of its code on the stack. The engine clears what lies there
+    // unused where the thread of the program conducts a collection. Where the collector's own thread does, because it is still at one that
+    // BUN_GARBAGE_COLLECTOR_LEVEL=1 asked for between two tests, that address is found, and the code keeps its global for this one collection.
+    // So one collection is waited for, and the stack is left, before the one that counts. What holds the file for good is still there then.
+    "f.test.ts": lastFile("Bun.gc(true);\nawait Bun.sleep(1);"),
   });
   expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
 });

@@ -140,6 +140,7 @@
 #include "FetchHeaders.h"
 #include "BunCompiledObjectEquality.h"
 #include "JavaScriptCore/AOTHost.h"
+#include "JavaScriptCore/AOTMembersLeftOut.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
 #include "JSCryptoKey.h"
@@ -4793,6 +4794,17 @@ extern "C" bool JSC__JSValue__isCompiledGenerator(JSC::EncodedJSValue encodedVal
 #if ENABLE(AOT)
     JSValue value = JSValue::decode(encodedValue);
     return value.isCell() && value.asCell()->vm().hasCompiledCode() && JSC::AOT::isGeneratorObject(value.asCell());
+#else
+    UNUSED_PARAM(encodedValue);
+    return false;
+#endif
+}
+
+extern "C" bool JSC__JSValue__isPlaceholderForOmittedBuiltin(JSC::EncodedJSValue encodedValue)
+{
+#if ENABLE(AOT)
+    JSValue value = JSValue::decode(encodedValue);
+    return value.isCell() && value.asCell()->vm().hasCompiledCode() && JSC::AOT::isPlaceholderForOmittedBuiltin(value.asCell());
 #else
     UNUSED_PARAM(encodedValue);
     return false;

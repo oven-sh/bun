@@ -241,6 +241,7 @@ impl Resolver<'_, '_> {
         }
         match self.classify_use(expr) {
             MentionUse::Called(call) if self.is_import_site(call) => {}
+            MentionUse::Called(call) if self.asks_for_symbol_that_host_ignores(call, id) => {}
             MentionUse::Called(call) => {
                 self.output.called.push(id);
                 if makes_require(id) && self.find_made_require(call).is_none() {
@@ -376,11 +377,15 @@ impl Resolver<'_, '_> {
             (BuiltinId::ObjectDefineProperty, Some(key), Some(descriptor))
                 if self.is_answer_dropped(answer) && self.hands_holder_to_nobody(descriptor) =>
             {
+                self.output.global_object_may_be_looked_through |=
+                    table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT);
                 self.search_for(object, id, key);
             }
             (BuiltinId::ObjectDefineProperties, Some(descriptors), _)
                 if self.is_answer_dropped(answer) =>
             {
+                self.output.global_object_may_be_looked_through |=
+                    table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT);
                 self.search_for_keys_of(object, id, descriptors);
             }
             _ => self.expose(id),

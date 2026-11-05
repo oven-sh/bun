@@ -1,5 +1,5 @@
 # f1 = hide, f3 = Row, f4 = seal, f2 = total
-# A read does not ask under which attributes a value lies in its slot. But such a field leaves its slot where a plain store makes it: an empty slot does not say that the name is missing, so the read asks the object itself (level=Expected), though Link proves the rows.
+# A read does not ask under which attributes a value lies in its slot. But such a field leaves its slot where a plain store makes it: an empty slot does not say that the name is missing, so the read asks the object itself (level=Expected), though Link proves the rows. Where the loop is built a second time the read is proven there, behind the question whether any field of the object has left its slot; the other answer leaves for the loop as written.
 # -- source: a-listed-field-under-attributes-is-read-out-of-its-slot.ts
 # function hide(row: any) { Object.defineProperty(row, "mark", { value: 7 }); }
 # class Row { size: number; constructor(n: number) { this.size = n + 1; } seal() { hide(this); } }
@@ -10,6 +10,11 @@
 # -- end of source
 # RUN(WIRE): print
 # WIRE: name="Row" {{*}}key="mark" {{*}}form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]
-# RUN: walk f2 mechanisms=all
+# RUN: walk f2 mechanisms=all-LoopInvariants
 # CHECK: = GetSlotOrUndefined {{*}}key="mark" {{*}}level=Expected
 # CHECK-NOT: key="mark" {{*}}level=Proven
+# RUN(TWICE): walk f2 mechanisms=all
+# TWICE: = GetSlotOrUndefined {{*}}key="mark" {{*}}level=Expected
+# TWICE-NOT: key="mark" {{*}}level=Proven
+# TWICE: = HasNoFieldOutsideSlot
+# TWICE: = GetSlotOrUndefined {{*}}key="mark" {{*}}level=Proven

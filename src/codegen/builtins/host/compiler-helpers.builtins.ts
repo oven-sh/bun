@@ -381,6 +381,8 @@ export default b.declarations(
       openIterator: { iterable: calledOrChanged },
       openWrappedIterator: { iterable: calledOrChanged },
       stepIterator: { iterator: calledOrChanged, next: calledOrChanged },
+      wayToStepIterator: { iterator: calledOrChanged, next: calledOrChanged },
+      stepIteratorInWay: { iterator: calledOrChanged, way: calledOrChanged },
       closeIterator: { iterator: calledOrChanged },
       closeIteratorAfterThrow: { iterator: calledOrChanged },
     }),

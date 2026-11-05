@@ -2804,6 +2804,51 @@ pub struct ImportedRequire {
     pub other_values: OtherValues,
 }
 
+impl ImportedRequire {
+    fn first_place(specifier: Atom, export: Atom, place_count: usize) -> usize {
+        let names = u64::from(specifier.0) << 32 | u64::from(export.0);
+        (names.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize & (place_count - 1)
+    }
+
+    pub fn hash_by_names(imported: &[ImportedRequire]) -> Vec<u32> {
+        let mut places = vec![0; (imported.len() * 2).next_power_of_two()];
+        for (index, it) in imported.iter().enumerate() {
+            let mut place = ImportedRequire::first_place(it.specifier, it.export, places.len());
+            while let Some(earlier) = (places[place] as usize).checked_sub(1) {
+                let earlier = &imported[earlier];
+                if earlier.specifier == it.specifier && earlier.export == it.export {
+                    break;
+                }
+                place = (place + 1) & (places.len() - 1);
+            }
+            if places[place] == 0 {
+                places[place] = index as u32 + 1;
+            }
+        }
+        places
+    }
+
+    pub fn find_by_names<'a>(
+        imported: &'a [ImportedRequire],
+        places: &[u32],
+        specifier: Atom,
+        export: Atom,
+    ) -> Option<&'a ImportedRequire> {
+        let is_named = |it: &&ImportedRequire| it.specifier == specifier && it.export == export;
+        if places.is_empty() {
+            return imported.iter().find(is_named);
+        }
+        let mut place = ImportedRequire::first_place(specifier, export, places.len());
+        loop {
+            let found = &imported[(places[place] as usize).checked_sub(1)?];
+            if is_named(&found) {
+                return Some(found);
+            }
+            place = (place + 1) & (places.len() - 1);
+        }
+    }
+}
+
 /// What code reads through the import statement `import`: the export `export` of the file that the statement names, or, with a
 /// `member`, that member of the namespace object which `export` holds. `export` is `NONE` for the name behind `* as`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -2874,6 +2919,7 @@ pub struct FileIn<S: Storage> {
     pub runs_beside_loader: bool,
     /// The imports that bind the `require` of another file. Set by the loader.
     pub imported_requires: S::Few<ImportedRequire>,
+    pub places_of_imported_requires: S::Few<u32>,
     /// The names of other files that hold a constant, among those that folding the file asked for. Set by the loader.
     pub imported_constants: S::Few<ImportedConstant>,
     pub texts_of_data_files: S::Few<TextOfDataFile>,
@@ -3597,6 +3643,7 @@ macro_rules! file_in_storage {
             is_script_with_code: $this.is_script_with_code,
             runs_beside_loader: $this.runs_beside_loader,
             imported_requires: $few!($this.imported_requires),
+            places_of_imported_requires: $few!($this.places_of_imported_requires),
             imported_constants: $few!($this.imported_constants),
             texts_of_data_files: $few!($this.texts_of_data_files),
             imported_file_changers: $few!($this.imported_file_changers),
@@ -3745,6 +3792,7 @@ impl FileBuilder {
             is_script_with_code,
             runs_beside_loader,
             imported_requires,
+            places_of_imported_requires,
             imported_constants,
             texts_of_data_files,
             imported_file_changers,
@@ -3849,6 +3897,7 @@ impl FileBuilder {
         *is_script_with_code = Default::default();
         *runs_beside_loader = Default::default();
         imported_requires.clear();
+        places_of_imported_requires.clear();
         imported_constants.clear();
         texts_of_data_files.clear();
         imported_file_changers.clear();

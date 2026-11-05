@@ -4,7 +4,7 @@
 // CHECK: [[derived]]]
 // CHECK: layout [[derived]] {{*}}fields=[{key="deep"
 // CHECK-NOT: supertypes=
-// CHECK: layout
+// CHECK: variable
 
 // RUN(SIDEWAYS): link
 // SIDEWAYS: layout [[right]] {{*}}fields=[{key="kind"{{*}}{key="right"

@@ -1,12 +1,7 @@
 // answers: without-library
 // # a callee calls push and pop on a list that its caller has made and nobody else has: the row that a list as its class makes it takes says what the call does, and the row for whatever is like a list is not asked
 // # f1 = add, f2 = take
-// # RUN(FORM): link functions mechanisms=all
-// # FORM: function f1 {{*}}returns=[
-// # FORM: function f2 {{*}}returns=[
-// # RUN(NEVER): link functions mechanisms=all
-// # NEVER-NOT: function f1 {{*}}mayCallUnknownCode
-// # NEVER-NOT: function f2 {{*}}mayCallUnknownCode
+// # Since Link's effects lean on no site of a list that comes through a parameter, add() and take() are any code to their callers; the answers are what is held.
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 3 of 3 of 3

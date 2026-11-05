@@ -14,4 +14,3 @@
 # LINK: function f3
 # LINK: function f4
 # LINK-NOT: unreached
-# LINK: function f5

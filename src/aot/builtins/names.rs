@@ -1,6 +1,8 @@
+use super::runtime_uses::is_name_of_language_member_with_code;
 use super::table::{self, BuiltinName, Intrinsic, IntrinsicPosition};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::util::FxHashMap;
+use std::sync::OnceLock;
 
 #[cfg(test)]
 mod tests;
@@ -12,6 +14,8 @@ pub struct BuiltinNames {
     by_atom: FxHashMap<Atom, BuiltinName>,
     by_private_atom: FxHashMap<Atom, BuiltinName>,
     by_symbol_key_atom: FxHashMap<Atom, BuiltinName>,
+    texts_of_symbols_that_host_looks_for: Box<[Atom]>,
+    names_of_language_members: OnceLock<Box<[Option<BuiltinName>]>>,
     atoms: Box<[Option<Atom>]>,
 }
 
@@ -51,9 +55,14 @@ impl BuiltinNames {
             .map(|name| (intern_with_prefix(atoms, SYMBOL_KEY_PREFIX, name), name))
             .collect();
         BuiltinNames {
+            names_of_language_members: OnceLock::new(),
             by_atom,
             by_private_atom,
             by_symbol_key_atom,
+            texts_of_symbols_that_host_looks_for: table::NAMES_OF_METHODS_CALLING_STARTUP_LOADS
+                .iter()
+                .map(|&name| atoms.intern(table::text_of_name(name)))
+                .collect(),
             atoms: name_atoms,
         }
     }
@@ -71,6 +80,28 @@ impl BuiltinNames {
     #[inline]
     pub fn get_symbol_key(&self, atom: Atom) -> Option<BuiltinName> {
         self.by_symbol_key_atom.get(&atom).copied()
+    }
+
+    #[inline]
+    pub fn find_name_of_language_member(&self, atom: Atom) -> Option<BuiltinName> {
+        let names = self.names_of_language_members.get_or_init(|| {
+            let of_language = all_names()
+                .zip(self.atoms.iter())
+                .filter(|&(name, _)| is_name_of_language_member_with_code(name))
+                .filter_map(|(name, &atom)| Some((atom?, name)));
+            let of_language: Vec<(Atom, BuiltinName)> = of_language.collect();
+            let last = of_language.iter().map(|&(atom, _)| atom.0 as usize).max();
+            let mut names = vec![None; last.map_or(0, |last| last + 1)];
+            for (atom, name) in of_language {
+                names[atom.0 as usize] = Some(name);
+            }
+            names.into_boxed_slice()
+        });
+        *names.get(atom.0 as usize)?
+    }
+
+    pub fn is_text_of_symbol_that_host_looks_for(&self, text: Atom) -> bool {
+        self.texts_of_symbols_that_host_looks_for.contains(&text)
     }
 
     pub fn atom_of(&self, name: BuiltinName) -> Option<Atom> {

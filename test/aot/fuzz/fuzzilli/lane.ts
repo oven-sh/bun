@@ -21,8 +21,12 @@ const rewritten =
   "--hands-over-built-ins 50 --prints-into-a-text 60 --prints-members 70 --one-scene 25 --hooks-fail 30 --names-of-globals 15 --unwraps-try-blocks 35";
 /** What a build proves of a small program it doesn't prove beside many others, and a build of many judges four times as many programs in the same time. Each kind has found what the others missed. */
 const kinds: Record<string, string> = {
-  few: `${drawn} --count 1 --together 50 --few-to-a-build 100 --families 25 --slow 10 --ignores-type-errors 100 --compares-errors --options-of-the-project 30`,
-  many: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 50 --collects 100`,
+  // Each program is built as a user builds it, by run-alone.ts: what a build proves or leaves out only where a program is its own entry point shows there alone.
+  deeds: `alone --scene sceneOfASingleDeed --checks-proofs 50 --writes-straight 25 --as-a-test 25`,
+  places: `alone --scene sceneOfTypedPlaces,sceneOfHiddenEffects --checks-proofs 100 --as-a-test 25`,
+  alone: `alone --families 30 --checks-proofs 25 --writes-straight 25 --as-a-test 25`,
+  few: `${drawn} --count 1 --together 50 --few-to-a-build 100 --families 25 --slow 10 --ignores-type-errors 100 --compares-errors --options-of-the-project 30 --writes-straight 50`,
+  many: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 50 --collects 100 --writes-straight 50`,
   packages: `${drawn} ${rewritten} --count 4,12,40 --splits 100 --collects 100`,
   external: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 60 --beside-an-external 100 --collects 100`,
 };
@@ -54,7 +58,7 @@ const alone =
     : [];
 const drivers = Array.from({ length: jobs }, (_, index) =>
   Bun.spawn({
-    cmd: [...alone, process.execPath, join(import.meta.dir, "run-batch.ts"), "--bun", bun, "--work", join(out, "work", String(index)), "--finds", join(out, "finds"), "--batches", "0", "--seconds", String(minutes * 60), "--flags=--aot-threads=1", "--draws", index % 2 ? "js" : "ts", ...kinds[kind].split(" "), ...words], // prettier-ignore
+    cmd: [...alone, process.execPath, join(import.meta.dir, kinds[kind].startsWith("alone ") ? "run-alone.ts" : "run-batch.ts"), "--bun", bun, "--work", join(out, "work", String(index)), "--finds", join(out, "finds"), "--batches", "0", "--seconds", String(minutes * 60), "--flags=--aot-threads=1", "--draws", index % 2 ? "js" : "ts", ...kinds[kind].replace(/^alone /, "").split(" "), ...words], // prettier-ignore
     cwd: join(out, "work"),
     env: {
       ...process.env,

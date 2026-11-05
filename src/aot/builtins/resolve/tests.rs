@@ -270,6 +270,7 @@ fn with_parts<R>(
         dialect: setup.dialect,
         replaced: setup.replaced,
         runs_tests: setup.runs_tests,
+        holds_language: false,
     };
     let range_of = |part: &&str| {
         let start = source.find(part).expect("the part stands in the source") as u32;

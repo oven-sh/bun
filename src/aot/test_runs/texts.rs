@@ -604,6 +604,7 @@ impl<'t> Look<'t> {
             dialect: SourceDialect::Program,
             replaced: &[],
             runs_tests: true,
+            holds_language: true,
         });
         let tree = Tree {
             hir: &hir,

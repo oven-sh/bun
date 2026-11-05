@@ -1,12 +1,16 @@
 // answers: without-library
-// # `list.push(x)` on a parameter of which Link proves that whatever arrives stays as its class makes it: the read of the method is a constant without a test, and the row that asks [Storage, Names] of its receiver sees the same proof: the code of the push stands in line, and no test is built. A list that has left the program is asked, and the frozen one goes that way too: a list whose integrity changes is no longer as its class has made it.
+// # `list.push(x)` on a parameter of which Link proves that whatever arrives stays as its class makes it: the read of the method is a constant behind the check that holds the word against the list, without a closed arm, and the row that asks [Storage, Names] of its receiver sees the same proof: the code of the push stands in line, and no test is built. A list that has left the program is asked, and the frozen one goes that way too: a list whose integrity changes is no longer as its class has made it.
 // # f1 = fill, f2 = fillWhatHasLeft
 // # RUN(INLINE): walk f1 mechanisms=all-Inlining
 // # INLINE-LABEL: code f1:Body
 // # INLINE: TryCallInline {{*}}inlineBuiltin=ArrayPush
-// # RUN(NOTEST): walk f1 mechanisms=all-Inlining
-// # NOTEST-LABEL: code f1:Body
-// # NOTEST-NOT: = IsPristine
+// # RUN(HELD): walk f1 mechanisms=all-Inlining
+// # HELD-LABEL: code f1:Body
+// # HELD-COUNT-1: = IsPristine {{*}}aspects=[Storage, Names, CellAlone]
+// # HELD-NEXT: CheckProof {{*}}checkedType=true
+// # HELD-NOT: = IsPristine
+// # RUN(CLOSED): walk f1 mechanisms=all-Inlining
+// # CLOSED-NOT: key="push"
 // # RUN(NOSTUB): bytes f1:Body mechanisms=all-Inlining
 // # NOSTUB-NOT: CallBoxedBuiltin.ArrayPush
 // # RUN(ASKED): walk f2 mechanisms=all-Inlining

@@ -287,7 +287,6 @@ fn build_body_with_references(offset: usize) -> Body {
             None,
             None,
             true,
-            true,
             false,
         );
         builder.new_template_object(&template_strings);

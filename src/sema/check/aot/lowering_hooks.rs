@@ -120,7 +120,7 @@ mod tests {
         answers.hand_on_of_lowering = Some(|_, carried| {
             let carried = carried?;
             let new_rows: Vec<Option<u32>> = (0..4).map(|row| carried.new_row(row)).collect();
-            Some(Box::new((new_rows, carried.count())))
+            Some(Box::new(new_rows))
         });
 
         let (mut memo, arena) = answers.take();
@@ -138,8 +138,8 @@ mod tests {
         answers.end_task();
         assert!(!answers.outlives_task && answers.of_lowering.is_none());
         let state = answers.of_lowering_in_last_task.take().expect("handed on");
-        let state = state.downcast::<(Vec<Option<u32>>, usize)>();
-        let expected = (vec![None, Some(0), None, None], 1);
+        let state = state.downcast::<Vec<Option<u32>>>();
+        let expected = vec![None, Some(0), None, None];
         assert_eq!(state.ok(), Some(Box::new(expected)));
 
         let (mut memo, arena) = answers.take();
@@ -174,5 +174,73 @@ mod tests {
         memo.keep_member_types(row, member(1), types);
         assert_eq!(memo.find_member_types(row, member(1)), Some(types));
         assert_eq!(memo.find_member_types(row, member(2)), None);
+    }
+
+    #[test]
+    fn rows_carried_over_cross_the_edges_of_blocks() {
+        const MEMBERS: u32 = 3;
+        let member = |property_index: u32| ListedMember {
+            name: MemberName::String(Atom(property_index + 1)),
+            kind: ObjectMemberKind::Field,
+            is_optional: false,
+            property_index,
+        };
+        let types_of = |ty: TypeId, property_index: u32| {
+            PositionTypes::unwritten(Ok(TypeId(ty.0 + property_index)))
+        };
+        let first_types = || (100..3100).map(TypeId);
+        let mut answers = KeptAnswers::default();
+        answers.hand_on_of_lowering = Some(|_, carried| {
+            let carried = carried?;
+            let new_rows: Vec<Option<u32>> = (0..3001).map(|row| carried.new_row(row)).collect();
+            Some(Box::new(new_rows))
+        });
+
+        let (mut memo, arena) = answers.take();
+        for (ty, number) in first_types().zip(0..) {
+            assert_eq!(memo.type_row(ty).number(), number);
+            let row = memo.object_row(ty);
+            memo.make_room_for_member_types(row, MEMBERS);
+            for property_index in 0..MEMBERS {
+                let types = types_of(ty, property_index);
+                memo.keep_member_types(row, member(property_index), types);
+            }
+        }
+        answers.put_back(memo, arena);
+        let (mut memo, arena) = answers.take();
+        for ty in first_types().step_by(3) {
+            memo.type_row(ty);
+        }
+        answers.put_back(memo, arena);
+
+        answers.of_lowering = Some(Box::new(7u32));
+        answers.outlives_task = true;
+        answers.end_task();
+        let state = answers.of_lowering_in_last_task.take().expect("handed on");
+        let new_rows = state.downcast::<Vec<Option<u32>>>().expect("the rows");
+        for (old_row, &new_row) in (0u32..).zip(new_rows.iter()) {
+            let is_carried = old_row < 3000 && old_row % 3 == 0;
+            assert_eq!(new_row, is_carried.then_some(old_row / 3));
+        }
+
+        let (mut memo, _arena) = answers.take();
+        for (ty, number) in first_types().step_by(3).zip(0..) {
+            assert_eq!(memo.type_row(ty).number(), number);
+            let row = memo.object_row(ty);
+            for property_index in 0..MEMBERS {
+                let found = memo.find_member_types(row, member(property_index));
+                assert_eq!(found, Some(types_of(ty, property_index)));
+            }
+        }
+        for (ty, number) in (10_000..13_000).map(TypeId).zip(1000..) {
+            assert_eq!(memo.type_row(ty).number(), number);
+            let row = memo.object_row(ty);
+            assert!(!memo.has_room_for_member_types(row));
+            assert_eq!(memo.find_member_types(row, member(0)), None);
+            memo.make_room_for_member_types(row, MEMBERS);
+            for property_index in 0..MEMBERS {
+                assert_eq!(memo.find_member_types(row, member(property_index)), None);
+            }
+        }
     }
 }

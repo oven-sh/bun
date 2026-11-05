@@ -165,16 +165,17 @@ declare const $resumeModeNext: number;
 // And no program ever holds that function: so whatever has it under `next` is what openIterator() has made, and stepIterator() steps it without a call and without an object.
 declare const $stringProtoSymbolIterator: unknown;
 declare const $nextOfStepsOverText: unknown;
+// The text and the place in it lie under names that no program spells and no object of the host has: a read of them off a value that nobody knows finds nothing else.
 interface StepsOverText {
-  text: string;
-  position: number;
+  $text: string;
+  $start: number;
   next: unknown;
 }
 
 // One code point: two code units where a trail surrogate stands behind a lead surrogate, else one. The mark of a closed iterator behind the last.
 function stepOverText(steps: StepsOverText): unknown {
-  const text: unknown = steps.text;
-  const at: unknown = steps.position;
+  const text: unknown = steps.$text;
+  const at: unknown = steps.$start;
   // Both hold, by what openIterator() lays down. They are asked so that what follows is compiled for a text and a whole number: what is written of a type proves nothing.
   if (typeof text !== "string" || typeof at !== "number") return $collectionIteratorClosedMark();
   const position = at | 0;
@@ -184,11 +185,11 @@ function stepOverText(steps: StepsOverText): unknown {
   if (first >= 0xd800 && first <= 0xdbff && position + 1 < length) {
     const second = text.charCodeAt(position + 1);
     if (second >= 0xdc00 && second <= 0xdfff) {
-      steps.position = position + 2;
+      steps.$start = position + 2;
       return text.substring(position, position + 2);
     }
   }
-  steps.position = position + 1;
+  steps.$start = position + 1;
   return text[position];
 }
 
@@ -204,7 +205,7 @@ export function openIterator(iterable: unknown): unknown {
   const method: unknown = (iterable as any).$$iterator;
   if (!$isCallable(method)) return undefined;
   if (typeof iterable === "string" && method === $stringProtoSymbolIterator)
-    return { text: iterable, position: 0, next: $nextOfStepsOverText };
+    return { $text: iterable, $start: 0, next: $nextOfStepsOverText };
   const iterator: unknown = $call(method, iterable);
   if (!$isObject(iterator)) $throwTypeError("Iterator result interface is not an object.");
   return iterator;
@@ -256,6 +257,53 @@ export function stepIterator(iterator: unknown, next: unknown): unknown {
   } else if (next === $nextOfStepsOverText) return stepOverText(iterator as StepsOverText);
   const result = $iteratorGenericNext(next, iterator);
   return result.done ? $collectionIteratorClosedMark() : result.value;
+}
+
+// WHICH WAY AN ITERATOR IS STEPPED IS SETTLED WHERE THE LOOP OPENS IT: `next` is read once, there, and the kind of a cell never changes. So a loop asks once and hands the answer to each step.
+// 0: the loop calls `next` itself. Else `next` is the own method of an iterator of the engine, of a generator, or of what openIterator() has made of a text, as in stepIterator().
+$visibility = "Private";
+export function wayToStepIterator(iterator: unknown, next: unknown): number {
+  if ($isArrayIterator(iterator)) return next === $arrayIteratorProtoNext ? 1 : 0;
+  if ($isMapIterator(iterator)) return next === $mapIteratorProtoNext ? 2 : 0;
+  if ($isSetIterator(iterator)) return next === $setIteratorProtoNext ? 3 : 0;
+  if (next === $generatorProtoNext) return 4;
+  return next === $nextOfStepsOverText ? 5 : 0;
+}
+
+// What the iterator hands out, or the mark of a closed iterator. `way` is what wayToStepIterator() has said of this iterator, and not 0.
+// The kind of the cell holds by that. It is asked so that what follows is compiled for that kind: what is written of a type proves nothing.
+$visibility = "Private";
+export function stepIteratorInWay(iterator: unknown, way: unknown): unknown {
+  if (way === 3) {
+    if ($isSetIterator(iterator)) {
+      const step = $stepSetIterator(iterator);
+      const value = $resultAt(step, $stepArrayIteratorResultValue);
+      return $resultAt(step, $stepArrayIteratorResultDone) ? $collectionIteratorClosedMark() : value;
+    }
+  } else if (way === 2) {
+    if ($isMapIterator(iterator)) {
+      const step = $stepMapIterator(iterator);
+      const value = $resultAt(step, $stepArrayIteratorResultValue);
+      return $resultAt(step, $stepArrayIteratorResultDone) ? $collectionIteratorClosedMark() : value;
+    }
+  } else if (way === 5) return stepOverText(iterator as StepsOverText);
+  else if (way === 1) {
+    if ($isArrayIterator(iterator)) {
+      const step = $stepArrayIterator(iterator);
+      const value = $resultAt(step, $stepArrayIteratorResultValue);
+      return $resultAt(step, $stepArrayIteratorResultDone) ? $collectionIteratorClosedMark() : value;
+    }
+  } else if (way === 4) {
+    const step = $stepGenerator(iterator, $resumeModeNext, undefined, $generatorStepCheckIsGenerator);
+    const value = $resultAt(step, $stepGeneratorResultValue);
+    const status = $resultAt(step, $stepGeneratorResultStatus);
+    if (status === $generatorStepStatusNotStepped) {
+      const answer = $resumeGenerator(iterator, $resumeModeNext, undefined);
+      return answer.done === true ? $collectionIteratorClosedMark() : answer.value;
+    }
+    return status === $generatorStepStatusCompleted ? $collectionIteratorClosedMark() : value;
+  }
+  return $collectionIteratorClosedMark();
 }
 
 $visibility = "Private";

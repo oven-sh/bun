@@ -527,7 +527,11 @@ impl Tag {
                 // callable namespaces and printing the contents of it is better than [Function: namespace]
                 // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
                 // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
-                tag: if js_type == JSType::InternalFunction { Tag::Object } else { Tag::Function },
+                tag: if js_type == JSType::InternalFunction && !value.is_placeholder_for_omitted_builtin() {
+                    Tag::Object
+                } else {
+                    Tag::Function
+                },
                 cell: js_type,
             });
         }
@@ -1424,7 +1428,11 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 Tag::Function => {
-                    let printable = value.get_name_property(self.global_this)?;
+                    let printable = if value.is_placeholder_for_omitted_builtin() {
+                        value.get_name(self.global_this)?
+                    } else {
+                        value.get_name_property(self.global_this)?
+                    };
 
                     if printable.is_empty() {
                         writer.print(format_args!(

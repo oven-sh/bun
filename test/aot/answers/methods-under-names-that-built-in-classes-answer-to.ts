@@ -3,7 +3,7 @@
 // # f1 = got, f3 = pushed, f4 = had: nothing is known of the receiver, and the site is the one of a call by name: the stub of the first class that answers to the name is what it calls
 // # RUN(GOT): bytes f1:Body mechanisms=all
 // # GOT: CallMethodOfBuiltinClassAtSite.MapGet
-// # RUN(PUSHED): bytes f3:Body mechanisms=all
+// # RUN(PUSHED): bytes f3:Body mechanisms=all-Inlining
 // # PUSHED: CallMethodOfBuiltinClassAtSite.ArrayPush
 // # RUN(HAD): bytes f4:Body mechanisms=all
 // # HAD: CallMethodOfBuiltinClassAtSite.MapHas

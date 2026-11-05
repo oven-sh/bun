@@ -1,2 +1,2 @@
 (globalThis.order ??= []).push("last");
-exports.x = 1;
+export const x = 1;

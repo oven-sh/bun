@@ -103,6 +103,7 @@ fn with_finished_file<R>(
         platform: host_platform(),
         replaced: &[],
         runs_tests: false,
+        holds_language: false,
     };
     let request = FinishedFile {
         path,

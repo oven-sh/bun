@@ -17,9 +17,11 @@
 # const fractions: any = [1.5, 2.5, 100.5];
 # sink(count(fractions));
 # note(fractions);
-# note([{ value: 100 }]);
-# note([{ other: 1 }]);
-# note([{ third: "x" }]);
-# note([{ fourth: true }]);
-# note([{ fifth: null }]);
+# const first = { value: 100 }, second = { other: 1 }, third = { third: "x" }, fourth = { fourth: true }, fifth = { fifth: null };
+# sink(first, second, third, fourth, fifth);
+# note([first]);
+# note([second]);
+# note([third]);
+# note([fourth]);
+# note([fifth]);
 # -- end of source

@@ -1,11 +1,13 @@
 use super::aliases::declared_names;
+use super::unnamed_uses::SyntaxOutsideExpressions;
 use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, GLOBALS_LEFT_ALONE, KeyOfModuleCache,
     LOADED_BELOW_VITEST, LOADED_BY_WORKER, ModuleObjectMention, ResolveInput, Resolved,
     ResolvedBuiltins, SourceDialect, SpyCall,
 };
 use crate::builtins::runtime_uses::{
-    Mentions, RuntimeUses, is_unknown_module_loader, reaches_unknown_module_loader,
+    Mentions, RuntimeUses, SyntaxWithHelpers, is_unknown_module_loader,
+    reaches_unknown_module_loader,
 };
 use crate::builtins::table::{
     self, BuiltinId, BuiltinName, Intrinsic, Mutability, Platforms, RuntimeFunction, RuntimeModule,
@@ -116,6 +118,7 @@ pub struct FileFacts {
     aliases_by_initializer: Vec<(u32, u32)>,
     symbols_exported_by_name: FxHashSet<SymbolId>,
     symbols_exported_where_declared: FxHashSet<SymbolId>,
+    syntax_outside_expressions: OnceLock<SyntaxOutsideExpressions>,
 }
 
 fn entries_within(entries: &[(u32, u32)], keys: Range<u32>) -> &[(u32, u32)] {
@@ -138,6 +141,7 @@ impl FileFacts {
             aliases_by_initializer: Vec::new(),
             symbols_exported_by_name: core::mem::take(&mut resolver.exported_symbols),
             symbols_exported_where_declared: FxHashSet::default(),
+            syntax_outside_expressions: OnceLock::new(),
         };
         for (name, symbol) in declared_names(input) {
             let flags = input.bound.modifier_flags(hir, Decl::Var(name));
@@ -159,6 +163,14 @@ impl FileFacts {
         facts.aliases_by_position.shared_sort_unstable();
         facts.aliases_by_initializer.shared_sort_unstable();
         facts
+    }
+
+    pub(super) fn syntax_outside_expressions(
+        &self,
+        hir: &bun_sema::hir::File<'_>,
+    ) -> &SyntaxOutsideExpressions {
+        self.syntax_outside_expressions
+            .get_or_init(|| SyntaxOutsideExpressions::of(hir))
     }
 
     fn ids_within(&self, ranges: &[Range<u32>]) -> Range<u32> {
@@ -204,6 +216,11 @@ pub(super) struct ResolverOutput {
     pub(super) loses_sight_of_module_cache: bool,
     pub(super) hands_module_cache_on: bool,
     pub(super) gets_at_entries_of_module_cache: bool,
+    pub(super) members_read: Vec<BuiltinName>,
+    pub(super) reads_by_unknown_key: bool,
+    pub(super) may_call_evaluator: bool,
+    pub(super) global_object_may_be_looked_through: bool,
+    pub(super) syntax: SyntaxWithHelpers,
 }
 
 pub(super) struct Resolver<'a, 's> {
@@ -225,8 +242,9 @@ pub(super) struct Resolver<'a, 's> {
     pub(super) kept_variables: RefCell<FxHashMap<(SymbolId, BuiltinId), bool>>,
     known_sets: RefCell<KnownSets<'a, 's>>,
     evaluated: Range<u32>,
-    computed: Vec<ExprId>,
+    pub(super) computed: Vec<ExprId>,
     calls: Vec<ExprId>,
+    pub(super) written_patterns: Vec<ExprId>,
     pub(super) found_or_this: Vec<ExprId>,
     work_stack: Vec<ExprId>,
 }
@@ -302,6 +320,9 @@ pub(super) fn run(
     resolver.collect_module_object_mentions();
     resolver.visit_implicit_references();
     resolver.visit_import_sites();
+    if !input.holds_language {
+        resolver.collect_what_is_reached_without_a_name();
+    }
     resolver.finish()
 }
 
@@ -361,6 +382,7 @@ impl<'a, 's> Resolver<'a, 's> {
             output: ResolverOutput::default(),
             computed: Vec::new(),
             calls: Vec::new(),
+            written_patterns: Vec::new(),
             found_or_this: Vec::new(),
             work_stack: Vec::new(),
         }
@@ -435,6 +457,10 @@ impl<'a, 's> Resolver<'a, 's> {
 
     fn is_unvisited(&self, expr: ExprId) -> bool {
         matches!(self.state(expr), ExprState::Unvisited)
+    }
+
+    pub(super) fn ranges(&self) -> Option<&'a [Range<u32>]> {
+        self.within
     }
 
     #[inline]
@@ -525,12 +551,19 @@ impl<'a, 's> Resolver<'a, 's> {
                 | Decision::Constant(_)
                 | Decision::Data(_)
                 | Decision::DeferredData => ExprState::Unresolved,
-                Decision::GlobalPath(_)
+                Decision::GlobalPath(path)
                     if binding_of_defined_root(input, expr) != Binding::Free =>
                 {
+                    self.note_names_of_path(path);
                     ExprState::Unresolved
                 }
-                Decision::GlobalPath(path) => self.resolve_global_path(path),
+                Decision::GlobalPath(path) => {
+                    let state = self.resolve_global_path(path);
+                    if !state.is_found() {
+                        self.note_names_of_path(path);
+                    }
+                    state
+                }
             };
             if state.is_found() || matches!(kind, ExprKind::This) {
                 self.found_or_this.push(expr);
@@ -708,6 +741,14 @@ impl<'a, 's> Resolver<'a, 's> {
             called_with_other_texts: &called_with_other_texts,
             exposed: &exposed,
             linked_functions: &output.linked_functions,
+            members_read: &sorted_unique(output.members_read),
+            reads_by_unknown_key: output.reads_by_unknown_key,
+            may_call_evaluator: output.may_call_evaluator,
+            global_object_may_be_looked_through: output.global_object_may_be_looked_through,
+            syntax: output.syntax,
+            called: &output.called,
+            is_of_program: input.dialect == SourceDialect::Program,
+            holds_language: input.holds_language,
         };
         let uses = RuntimeUses::of_mentions(&mentions, input.platform);
         let leads_alone = |id: &BuiltinId| input.runs_tests && !is_of_loader(*id);

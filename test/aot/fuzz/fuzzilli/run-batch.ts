@@ -16,6 +16,8 @@
 // `--names-of-globals 20` gives variables of 20 programs of 100 the names of globals.
 // `--unwraps-try-blocks 50` takes `try` blocks out of 50 programs of 100.
 // `--collects 100` runs each executable a second time in an environment in which it collects at every few allocations and overwrites what it frees: a program that prints something else there, or ends by a signal, is kept.
+// `--checks-proofs 100` builds each batch a second time with --aot-testing=CheckProofsAtRunTime: the executable then tests what the compiler has proven and stops where a proof is false, also where the answer happens to be right.
+// `--writes-straight 100` builds each batch a second time with --aot-testing=WritesBodiesStraight: the bodies are then emitted without the walk. The two executables must do the same, whatever `bun run` does: where they differ, one of the two ways to emit a body is at fault.
 // `--ends-early 100` runs each executable three times more, and the runner ends the Worker of each program at a moment drawn from a few milliseconds. What is printed doesn't count: a process that ends by a signal is kept.
 // `--minifies 25`: one run of this file in four builds everything with --minify-syntax --minify-whitespace, which change the shape of the code and keep its names, so `bun run` stays the yardstick.
 // `--allows-code-from-disk 50`: one run of this file in two builds everything with --aot-allow-code-from-disk, as an application does that imports its users' files: the compiler then counts on code that it hasn't seen, and what a program prints stays the same. Each entry point then starts with an `import()` of a name that only the run knows, which never runs: without one the flag changes nothing in the executable.
@@ -89,6 +91,8 @@ const { values: options } = parseArgs({
     "names-of-globals": { type: "string", default: "0" },
     "unwraps-try-blocks": { type: "string", default: "0" },
     collects: { type: "string", default: "0" },
+    "checks-proofs": { type: "string", default: "0" },
+    "writes-straight": { type: "string", default: "0" },
     "ends-early": { type: "string", default: "0" },
     minifies: { type: "string", default: "0" },
     "allows-code-from-disk": { type: "string", default: "0" },
@@ -170,7 +174,7 @@ const maxFindsIsolated = 8;
  */
 const waitingWithTheWorldOpen: string[] = [];
 const isWrittenToOpenTheWorld = (text: string) =>
-  opensTheWorld(text) || /(?<![.\w$])eval\b|\bgetBuiltinModule\((?!["'`])/.test(text);
+  opensTheWorld(text) || /(?<![.\w$])eval\b|\bgetBuiltinModule\((?!["'`])|\(globalThis as any\)\[(?!["'`])/.test(text);
 // A program that prints without end would fill the disk. How much a run can write to a file, in blocks of 512 bytes.
 const maxBlocksWritten = (256 << 20) / 512;
 
@@ -1261,9 +1265,16 @@ async function differsTogether(folder: string, texts: string[], extension: strin
   // A difference counts when a second pair of runs shows the same one.
   const second = await runBoth();
   if (wasStopped(second)) return howItWasStopped(second);
-  return ofTheProgram(second.compiled) === printed && ofTheProgram(second.plain) === expected
-    ? { compiled: printed ?? "", plain: expected, isBesideAWriteToABuiltIn: writesToBuiltins.size > 0 }
-    : undefined;
+  if (ofTheProgram(second.compiled) !== printed || ofTheProgram(second.plain) !== expected) return undefined;
+  // In which order `bun run` loads what neighbors import can differ once in twenty runs. An answer of the executable that is one of the answers of `bun run` is no difference.
+  const limit = milliseconds * 4 + 20 * texts.length;
+  for (let again = 0; again < 18; again++)
+    if (
+      ofTheProgram(await run("plain", [bun, "run", "./" + runner], folder, extension, 1, [0], limit, plainEnv)) ===
+      printed
+    )
+      return undefined;
+  return { compiled: printed ?? "", plain: expected, isBesideAWriteToABuiltIn: writesToBuiltins.size > 0 };
 }
 
 const listed = (texts: string[]) => texts.map((text, offset) => `// ---- ${offset}\n${text}`).join("\n");
@@ -1437,6 +1448,34 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
       everyEntryPoint,
       entryPoint => entryPoints[entryPoint],
       compiled,
+      add,
+    );
+  if (Math.random() * 100 < Number(options["checks-proofs"]))
+    await judgeUnderProofChecks(
+      folder,
+      texts,
+      extension,
+      1,
+      everyEntryPoint,
+      entryPoint => entryPoints[entryPoint],
+      true,
+      compiled,
+      printedTheSame,
+      milliseconds * 4 + 20 * together,
+      add,
+    );
+  if (Math.random() * 100 < Number(options["writes-straight"]))
+    await judgeWrittenStraight(
+      folder,
+      texts,
+      extension,
+      1,
+      everyEntryPoint,
+      entryPoint => entryPoints[entryPoint],
+      true,
+      compiled,
+      printedTheSame,
+      milliseconds * 4 + 20 * together,
       add,
     );
   rmSync(folder, { recursive: true, force: true });
@@ -1694,6 +1733,179 @@ async function judgeUnderCollections(
   }
 }
 
+/** What an executable says when it stops at a proof of the compiler's that does not hold: "AOT: f3 at 823: what a field holds is not of the type that the compiler has proven of it." */
+const stopAtAFalseProof = /^AOT: f\d+ at \d+: .*$/m;
+
+/**
+ * The files in `folder` built once more, with the proofs of the compiler tested at run time. Units, `membersOf`, `hasMarks`, `atDefault` and `judged` are those of judgeUnderCollections().
+ * It leaves the checking executable in the folder, so it comes last.
+ */
+async function judgeUnderProofChecks(
+  folder: string,
+  texts: string[],
+  extension: string,
+  inGroup: number,
+  units: number[],
+  membersOf: (unit: number) => number[],
+  hasMarks: boolean,
+  atDefault: Map<number, Ended>,
+  judged: Set<number>,
+  limit: number,
+  add: (kind: string, by?: number) => void,
+) {
+  const mode = ["--aot", ...buildFlags, "--aot-testing=CheckProofsAtRunTime"];
+  const command = `${bun} build --compile ${mode.join(" ")}`;
+  const { stopped } = await build(
+    folder,
+    hasMarks ? units.length : texts.length,
+    extension,
+    inGroup,
+    mode,
+    texts.length,
+  );
+  if (stopped) {
+    add("stopped the build with proof checks");
+    keepFind("build-stopped", stopped.reason, {
+      ["program" + extension]: stopped.culprit === undefined ? "" : texts[stopped.culprit],
+      "programs.txt": listed(texts),
+      "report.txt": `${stopped.reason}\n${command}\nthe same files build without the checks\n`,
+      "compiler.stderr": stopped.stderr,
+    });
+  }
+  if (!existsSync(join(folder, "batch")) || stopped) return;
+  const checked = await run("checking", [join(folder, "batch")], folder, extension, inGroup, units, limit * 4);
+  const printedBy = (ended: Ended, members: number[]) =>
+    hasMarks ? partsOf(ended.stdout).ofProgram : new Map([[members[0], removeDetailsOfErrors(ended.stdout)]]);
+  for (const unit of units) {
+    const [ended, before, members] = [checked.get(unit)!, atDefault.get(unit)!, membersOf(unit)];
+    if (isLimit(before) || before.end.startsWith("the process ended") || isLimit(ended) || wasKilled(ended)) continue;
+    const endedEarly = ended.end.startsWith("the process ended");
+    const [now, then] = [printedBy(ended, members), printedBy(before, members)];
+    const suspects = endedEarly
+      ? [members[hasMarks ? now.size : 0] ?? members.at(-1)!]
+      : members.filter(index => judged.has(index) && now.get(index) !== then.get(index));
+    add("same with proof checks", members.length - suspects.length);
+    for (const index of suspects.slice(0, 3)) {
+      const said = stopAtAFalseProof.exec(ended.stderr)?.[0];
+      const kind = said ? "false-proof" : endedEarly ? "proof-checks-signal" : "proof-checks-stdout";
+      // Alone it says whether the proof takes the company.
+      const alone = join(work, `alone-${process.pid}`);
+      layOut(alone, [texts[index]], extension, 1);
+      await build(alone, 1, extension, 1, mode);
+      const byItself = existsSync(join(alone, "batch"))
+        ? (await run("checking", [join(alone, "batch")], alone, extension, 1, [0], limit * 4)).get(0)!
+        : undefined;
+      rmSync(alone, { recursive: true, force: true });
+      add(kind);
+      const summary = `with proof checks: ${ended.end} | ${said ?? ""}\nwithout:           ${before.end}\n`;
+      keepFind(kind, summary, {
+        ["program" + extension]: texts[index],
+        ...(members.length > 1 && { "programs.txt": listed(members.map(member => texts[member])) }),
+        "report.txt": `${kind}, ${judged.has(index) ? "and without the checks the program prints what bun run prints" : "and without the checks the program differs from bun run too"}\n${command}\n${summary}built alone: ${byItself?.end ?? "no executable"} | ${byItself ? (stopAtAFalseProof.exec(byItself.stderr)?.[0] ?? "") : ""}\n`,
+        "checking.stdout": ended.stdout,
+        "checking.stderr": ended.stderr,
+        "compiled.stdout": before.stdout,
+      });
+    }
+  }
+}
+
+/**
+ * The files in `folder` built once more, with the bodies written straight. Units, `membersOf`, `hasMarks`, `atDefault` and `judged` are those of judgeUnderCollections().
+ * No yardstick is asked: a program that `bun run` cannot judge is judged here too. It leaves its executable in the folder, so it comes last.
+ */
+async function judgeWrittenStraight(
+  folder: string,
+  texts: string[],
+  extension: string,
+  inGroup: number,
+  units: number[],
+  membersOf: (unit: number) => number[],
+  hasMarks: boolean,
+  atDefault: Map<number, Ended>,
+  judged: Set<number>,
+  limit: number,
+  add: (kind: string, by?: number) => void,
+) {
+  const modes = [
+    ["--aot", ...buildFlags],
+    ["--aot", ...buildFlags, "--aot-testing=WritesBodiesStraight"],
+  ];
+  const command = `${bun} build --compile ${modes[1].join(" ")}`;
+  const { stopped } = await build(
+    folder,
+    hasMarks ? units.length : texts.length,
+    extension,
+    inGroup,
+    modes[1],
+    texts.length,
+  );
+  if (stopped) {
+    add("stopped the build written straight");
+    keepFind("straight-build", stopped.reason, {
+      ["program" + extension]: stopped.culprit === undefined ? "" : texts[stopped.culprit],
+      "programs.txt": listed(texts),
+      "report.txt": `${stopped.reason}\n${command}\nthe same files build where the walk emits the bodies\n`,
+      "compiler.stderr": stopped.stderr,
+    });
+  }
+  if (!existsSync(join(folder, "batch")) || stopped) return;
+  const straight = await run("straight", [join(folder, "batch")], folder, extension, inGroup, units, limit * 4);
+  const endedEarly = (ended: Ended) => ended.end.startsWith("the process ended");
+  const printedBy = (ended: Ended, members: number[]) =>
+    hasMarks ? partsOf(ended.stdout).ofProgram : new Map([[members[0], removeDetailsOfErrors(ended.stdout)]]);
+  for (const unit of units) {
+    const [ended, before, members] = [straight.get(unit)!, atDefault.get(unit)!, membersOf(unit)];
+    if (isLimit(before) || wasKilled(before) || isLimit(ended) || wasKilled(ended)) continue;
+    if (endedEarly(before) && endedEarly(ended)) continue;
+    const [now, then] = [printedBy(ended, members), printedBy(before, members)];
+    const suspects =
+      endedEarly(before) || endedEarly(ended)
+        ? [members[hasMarks ? Math.min(now.size, then.size) : 0] ?? members.at(-1)!]
+        : members.filter(index => now.get(index) !== then.get(index));
+    add("same written straight", members.length - suspects.length);
+    for (const index of suspects.slice(0, 3)) {
+      // Alone, twice on each side: a program that doesn't do the same twice on one side says nothing, and alone it says whether the difference takes the company.
+      const alone = join(work, `alone-${process.pid}`);
+      const byItself: Ended[][] = [];
+      for (const mode of modes) {
+        layOut(alone, [texts[index]], extension, 1);
+        await build(alone, 1, extension, 1, mode);
+        const runs: Ended[] = [];
+        for (let time = 0; time < 2 && existsSync(join(alone, "batch")); time++)
+          runs.push((await run("straight", [join(alone, "batch")], alone, extension, 1, [0], limit * 4)).get(0)!);
+        byItself.push(runs);
+        rmSync(alone, { recursive: true, force: true });
+      }
+      if (byItself.some(runs => runs.length === 2 && !agree(runs[0], runs[1]))) {
+        add("unsteady written straight");
+        continue;
+      }
+      // Written straight a frame is larger and some calls in tail position keep theirs.
+      if (/RangeError/.test(now.get(index) ?? "") && !/RangeError/.test(then.get(index) ?? "")) {
+        add("the stack ends sooner written straight");
+        continue;
+      }
+      const kind = endedEarly(before) || endedEarly(ended) ? "straight-signal" : "straight-stdout";
+      add(kind);
+      const [walked, written] = byItself.map(runs => runs[0]);
+      const difference = firstDifference(now.get(index) ?? "", then.get(index) ?? "")
+        .replace("compiled: ", "written straight: ")
+        .replace("bun run:  ", "by the walk:      ");
+      const summary = `written straight: ${ended.end}\nby the walk:      ${before.end}\n${difference}`;
+      keepFind(kind, summary, {
+        ["program" + extension]: texts[index],
+        ...(members.length > 1 && { "programs.txt": listed(members.map(member => texts[member])) }),
+        "report.txt": `${kind}, ${judged.has(index) ? "and by the walk the program prints what bun run prints" : "and bun run did not judge the program, or by the walk it differs from bun run too"}\n${command}\n${summary}built alone: ${!walked || !written ? "one side does not build" : agree(walked, written) ? "the two do the same" : "the two differ too"}\n`,
+        "straight.stdout": ended.stdout,
+        "straight.stderr": ended.stderr,
+        "compiled.stdout": before.stdout,
+        "compiled.stderr": before.stderr,
+      });
+    }
+  }
+}
+
 let extension = "";
 const lastStart = Number(options.seconds) ? performance.now() + Number(options.seconds) * 1000 : Infinity;
 for (
@@ -1925,7 +2137,9 @@ for (
                 ? "same with more time"
                 : "unsteady"
               : second.end.startsWith("the process ended")
-                ? "signal"
+                ? stopAtAFalseProof.test(second.stderr)
+                  ? "false-proof"
+                  : "signal"
                 : documentedMessages.some(says) ||
                     (!isLimit(second) && referenceAgain.stderr.includes("Maximum call stack size exceeded")) ||
                     documentedNames.some(name => texts[index].includes(name)) ||
@@ -1998,6 +2212,7 @@ for (
         "bun-run-signal",
         "unsteady",
         "signal",
+        "false-proof",
         "limit",
         "exit-code",
         "stdout",
@@ -2008,7 +2223,12 @@ for (
     )
       continue;
     // What the process wrote last, in front of the report that starts with a line of "=", tells one end by a signal from another.
-    const lastWords = kind === "signal" ? (/([^\n]*)\n={20,}\n/.exec(second.stderr)?.[1] ?? "") : "";
+    const lastWords =
+      kind === "signal"
+        ? (/([^\n]*)\n={20,}\n/.exec(second.stderr)?.[1] ?? "")
+        : kind === "false-proof"
+          ? stopAtAFalseProof.exec(second.stderr)![0]
+          : "";
     const errors = kind.startsWith("error-")
       ? `compiled ends in: ${lastError(second).name}: ${lastError(second).message}\nbun run ends in:  ${lastError(referenceAgain).name}: ${lastError(referenceAgain).message}\n`
       : "";
@@ -2081,6 +2301,34 @@ for (
     );
   if (texts.length && Math.random() * 100 < Number(options["ends-early"]))
     await judgeEndedEarly(folder, texts, extension, groupSize, all, index => [index], compiled, add);
+  if (texts.length && Math.random() * 100 < Number(options["checks-proofs"]))
+    await judgeUnderProofChecks(
+      folder,
+      texts,
+      extension,
+      groupSize,
+      all,
+      index => [index],
+      false,
+      compiled,
+      new Set(all.filter(index => !differing.includes(index))),
+      milliseconds,
+      add,
+    );
+  if (texts.length && Math.random() * 100 < Number(options["writes-straight"]))
+    await judgeWrittenStraight(
+      folder,
+      texts,
+      extension,
+      groupSize,
+      all,
+      index => [index],
+      false,
+      compiled,
+      new Set(all.filter(index => !differing.includes(index))),
+      milliseconds,
+      add,
+    );
   mkdirSync(finds, { recursive: true });
   if (batch % 20 === 0)
     writeFileSync(join(finds, `counters-${process.pid}.json`), JSON.stringify(Object.fromEntries(largestSeen)));

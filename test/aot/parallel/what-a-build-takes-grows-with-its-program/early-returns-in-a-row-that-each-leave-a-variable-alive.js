@@ -4,6 +4,7 @@
 // Sizes: 250 500 1000
 // Passes: 1
 // Grows: the build, linear
+// Todo: Not every time: the peak rises by some 530 bytes for each byte of the program, and the room no longer hides it
 const size = Number(process.env.SIZE ?? 2),
   copies = Number(process.env.PASSES ?? 1);
 const out = [

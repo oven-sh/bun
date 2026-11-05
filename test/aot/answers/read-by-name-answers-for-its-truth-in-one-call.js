@@ -3,7 +3,7 @@
 // # Every value under the name, found in the object, above it, behind a getter, a proxy, in a bag of names, on a primitive; no name at all; a receiver that has no properties; a getter that throws; a name that Object.prototype gains and loses.
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # CHECK: 1137 of 1137 of 1137
+// # CHECK: 1163 of 1163 of 1163
 // # CHECK-NEXT: exited with 0
 function asks(thing) { if (thing.mark) return "yes"; return "no"; }
 function asksNot(thing) { if (!thing.mark) return "not"; return "is"; }
@@ -16,6 +16,7 @@ function counts(things) { let marked = 0; for (let at = 0; at < things.length; a
 function follows(link) { let steps = 0; while (link.next) { link = link.next; steps++; } return steps; }
 function asksLength(thing) { if (thing.length) return "long"; return "empty"; }
 function asksDeep(thing) { if (thing.inner.mark) return "deep"; return "shallow"; }
+function asksStray(thing) { if (thing.stray) return "stray"; return "none"; }
 function tell(ask, thing) { try { return ask(thing); } catch (error) { return error.constructor.name + ": " + (typeof error.message === "string" && error.message.length > 0); } }
 let asked = 0;
 class Plain { constructor(mark) { this.mark = mark; this.other = 1; } }
@@ -35,6 +36,14 @@ const base = { };
 function belowBase(value) { const thing = Object.create(base); thing.other = value ? 4 : 5; return thing; }
 class BelowBase { constructor(value) { this.other = value ? 4 : 5; } }
 Object.setPrototypeOf(BelowBase.prototype, base);
+const strayName = JSON.parse('"stray"');
+function withStray(value) { const thing = { other: 6 }; thing[strayName] = value; return thing; }
+function strayAbove(value) { return Object.create(withStray(value)); }
+function strayBehindGetter(value) { return Object.defineProperty({ other: 7 }, strayName, { get() { asked++; return value; }, configurable: true }); }
+function strayBehindProxy(value) { return new Proxy(withStray(value), { get(target, key) { asked++; return target[key]; } }); }
+function strayLost(value) { const thing = withStray(value); delete thing[strayName]; return thing; }
+function strayInBag(value) { const bag = manyNames(0); bag[strayName] = value; return bag; }
+function driveStray() { for (const maker of [withStray, strayAbove, strayBehindGetter, strayBehindProxy, strayLost, strayInBag]) { let line = ""; for (const value of values) line += tell(asksStray, maker(value)) + ","; report(line); } let line = ""; for (const other of others) line += tell(asksStray, other) + ","; report(line); report(asked); }
 function named() { }
 named.mark = 0;
 const values = [undefined, null, false, true, 0, -0, NaN, 1, 0.5, -1, 2147483648, "", "a", 0n, 1n, Symbol.iterator, {}, [], named, new Boolean(false), new String("")];
@@ -55,6 +64,13 @@ delete base.mark;
 drive();
 Object.setPrototypeOf(base, { mark: "above the base" });
 drive();
+driveStray();
+driveStray();
+base[strayName] = 1;
+driveStray();
+report(tell(asksStray, belowBase(1)));
+delete base[strayName];
+report(tell(asksStray, belowBase(1)));
 report(counts([{ mark: 1 }, { mark: 0 }, {}, new Above("x"), behindProxy(1), "text", 5]));
 report(follows({ next: { next: { next: { next: null } } } }));
 report(follows({ next: { next: inherited(0) } }));

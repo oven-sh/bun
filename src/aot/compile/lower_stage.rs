@@ -371,6 +371,7 @@ impl Build<'_> {
             library: &library,
             names: loaded.builtin_names,
             platform: self.platform,
+            holds_what_unseen_code_finds: loaded.holds_what_unseen_code_finds,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time
                 && !(loaded.loads_code_by_unknown_names_alone
                     && bound
@@ -379,7 +380,8 @@ impl Build<'_> {
                         .left_out
                         .holds_every_load_by_unknown_name),
         };
-        find_reached_runtime_code(&reach_input, &self.parallel_runner())
+        let known = (loaded.known_library_regions)();
+        find_reached_runtime_code(&reach_input, known, &self.parallel_runner())
     }
 
     fn lower_projects(

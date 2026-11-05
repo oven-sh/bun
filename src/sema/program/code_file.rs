@@ -125,6 +125,11 @@ fn write_what_other_files_say<'s>(
     arena: &'s Arena,
 ) {
     hir.imported_requires = ArenaFew::from_iter_in(inputs.imported_requires.iter().copied(), arena);
+    let places = match inputs.imported_requires.is_empty() {
+        true => Vec::new(),
+        false => ImportedRequire::hash_by_names(inputs.imported_requires),
+    };
+    hir.places_of_imported_requires = ArenaFew::from_iter_in(places.into_iter(), arena);
     hir.imported_constants =
         ArenaFew::from_iter_in(inputs.imported_constants.iter().copied(), arena);
     hir.texts_of_data_files =

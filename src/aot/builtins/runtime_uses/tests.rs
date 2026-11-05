@@ -29,12 +29,18 @@ fn own_functions(id: BuiltinId) -> impl Iterator<Item = RuntimeFunction> {
         .calls_for_texts()
         .iter()
         .flat_map(|listed| listed.calls);
+    let may_hand_out_any = table::ENTRIES_THAT_MAY_HAND_OUT_ANY_HOST_OBJECT.contains(&id);
+    let for_any_host_object: &[RuntimeFunction] = match may_hand_out_any {
+        true => table::FUNCTIONS_FOR_ANY_HOST_OBJECT,
+        false => &[],
+    };
     let listed = entry
         .calls()
         .iter()
         .chain(entry.implemented_by())
         .chain(entry.guessed_functions())
         .chain(for_texts)
+        .chain(for_any_host_object)
         .copied();
     listed.filter(|&function| exists_on_linux(function))
 }
@@ -52,6 +58,13 @@ fn sorted_unique<T: Ord>(items: impl Iterator<Item = T>) -> Vec<T> {
     sorted.sort_unstable();
     sorted.dedup();
     sorted
+}
+
+fn with_what_promises_can_do(
+    functions: impl Iterator<Item = RuntimeFunction>,
+) -> Vec<RuntimeFunction> {
+    let of_promises = uses_of(&[BuiltinId::Promise], &[]);
+    sorted_unique(functions.chain(of_promises.functions.iter().copied()))
 }
 
 fn reachable_entries(start: BuiltinId) -> Vec<BuiltinId> {
@@ -117,6 +130,38 @@ fn entry_without_lists_needs_nothing() {
 }
 
 #[test]
+fn every_helper_of_the_compiler_comes_with_the_syntax_or_the_built_in_that_picks_it() {
+    let every_syntax = AsksOfText {
+        syntax: SyntaxWithHelpers::all(),
+        ..AsksOfText::default()
+    };
+    let by_syntax = RuntimeUses::of_asks(&every_syntax, LINUX);
+    let is_helper =
+        |id: BuiltinId| (table::entry(id).flags).contains(BuiltinFlags::IS_COMPILER_HELPER);
+    let built_ins: Vec<BuiltinId> = BuiltinId::ALL
+        .into_iter()
+        .filter(|&id| is_of_language(id) && !is_helper(id))
+        .collect();
+    let by_built_in = uses_of(&built_ins, &[]);
+    let mut count = 0;
+    for helper in BuiltinId::ALL {
+        let entry = table::entry(helper);
+        if !entry.flags.contains(BuiltinFlags::IS_COMPILER_HELPER) {
+            continue;
+        }
+        for function in entry.implemented_by() {
+            count += 1;
+            assert!(
+                by_syntax.functions.contains(function) || by_built_in.functions.contains(function),
+                "{}",
+                table::text_of(helper)
+            );
+        }
+    }
+    assert!(count > 20, "{count}");
+}
+
+#[test]
 fn logging_needs_nothing() {
     let mentioned = [BuiltinId::Console, BuiltinId::ConsoleLog];
     assert_eq!(uses_of(&mentioned, &[]), RuntimeUses::default());
@@ -142,7 +187,10 @@ fn mention_needs_own_lists() {
     assert!(own_modules(stdout).next().is_some());
     let uses = uses_of(&[stdout], &[]);
     assert_eq!(*uses.modules, *sorted_unique(own_modules(stdout)));
-    assert_eq!(*uses.functions, *sorted_unique(own_functions(stdout)));
+    assert_eq!(
+        *uses.functions,
+        *with_what_promises_can_do(own_functions(stdout))
+    );
     let other = uses_of(&[BuiltinId::ProcessPid], &[]);
     assert!(own_modules(stdout).all(|module| !other.modules.contains(&module)));
 }
@@ -214,7 +262,10 @@ fn exposed_member_skips_holder() {
     let reached_modules = reached.iter().flat_map(|&id| own_modules(id));
     assert_eq!(*uses.modules, *sorted_unique(reached_modules));
     let reached_functions = reached.iter().flat_map(|&id| own_functions(id));
-    assert_eq!(*uses.functions, *sorted_unique(reached_functions));
+    assert_eq!(
+        *uses.functions,
+        *with_what_promises_can_do(reached_functions)
+    );
 
     assert!(own_modules(BuiltinId::BunSpawn).any(|module| !uses.modules.contains(&module)));
     let holder_uses = uses_of(&[], &[BuiltinId::Bun]);
@@ -235,7 +286,10 @@ fn mentioned_method_needs_no_sibling() {
     let (_, method) = find_class_with_own_method_functions().unwrap();
     assert_eq!(table::entry(method).class, None);
     let uses = uses_of(&[method], &[]);
-    assert_eq!(*uses.functions, *sorted_unique(own_functions(method)));
+    assert_eq!(
+        *uses.functions,
+        *with_what_promises_can_do(own_functions(method))
+    );
 }
 
 #[test]
@@ -252,7 +306,7 @@ fn walk_ends_on_cycles() {
 
 #[test]
 fn language_has_every_engine_function() {
-    let language = RuntimeUses::of_every_program(LINUX);
+    let language = RuntimeUses::of_unseen_code(LINUX);
     let mut engine_function_count = 0;
     for id in BuiltinId::ALL {
         let entry = table::entry(id);
@@ -276,7 +330,7 @@ fn language_has_every_engine_function() {
 
 #[test]
 fn language_has_every_compiler_helper() {
-    let language = RuntimeUses::of_every_program(LINUX);
+    let language = RuntimeUses::of_unseen_code(LINUX);
     let helpers = table::members(BuiltinId::CompilerHelpers);
     assert!(
         helpers
@@ -299,16 +353,16 @@ fn language_has_every_compiler_helper() {
 }
 
 #[test]
-fn every_program_holds_the_startup_modules_and_no_other() {
+fn unseen_code_finds_the_startup_modules_and_no_other() {
     assert_eq!(
-        *RuntimeUses::of_every_program(LINUX).modules,
+        *RuntimeUses::of_unseen_code(LINUX).modules,
         *table::STARTUP_MODULES
     );
 }
 
 #[test]
-fn every_program_holds_nothing_else() {
-    let language = RuntimeUses::of_every_program(LINUX);
+fn unseen_code_finds_nothing_else() {
+    let language = RuntimeUses::of_unseen_code(LINUX);
     let without_names = table::runtime_functions().iter();
     let without_names = without_names.filter(|data| is_called_without_a_name(data.role));
     let functions = language_entries()
@@ -344,7 +398,7 @@ fn function_of_other_platform_is_excluded() {
     assert_eq!(*on_windows.functions, [windows_only]);
 
     let everything = uses_of(&[], &[BuiltinId::GlobalThis]);
-    let language = RuntimeUses::of_every_program(LINUX);
+    let language = RuntimeUses::of_unseen_code(LINUX);
     for &function in everything.functions.iter().chain(language.functions.iter()) {
         assert!(exists_on_linux(function), "{function:?}");
     }
@@ -367,8 +421,8 @@ fn linked_functions_are_needed() {
 }
 
 #[test]
-fn every_program_holds_the_code_behind_the_language() {
-    let held = RuntimeUses::of_every_program(LINUX);
+fn unseen_code_finds_the_code_behind_the_language() {
+    let held = RuntimeUses::of_unseen_code(LINUX);
     let mut functions = language_entries().flat_map(own_functions);
     assert!(functions.all(|function| held.functions.contains(&function)));
     for id in [
@@ -401,14 +455,14 @@ fn class_of_the_language_whose_methods_are_native_needs_nothing() {
 }
 
 #[test]
-fn class_that_hands_a_list_to_a_function_of_the_program_needs_what_steps_a_list() {
+fn what_steps_the_list_of_call_sites_comes_with_the_member_that_takes_the_function() {
     let next = table::entry(BuiltinId::ArrayIteratorPrototypeNext).implemented_by();
-    let found = uses_of(&[BuiltinId::Error], &[]);
-    let stored = uses_of(&[BuiltinId::ErrorPrepareStackTrace], &[]);
     assert!(!next.is_empty());
-    assert_eq!(&found.functions[..], next);
-    assert!(includes(&found, &stored));
-    assert!(found.modules.is_empty() && found.exports_read.is_empty());
+    assert_eq!(uses_of(&[BuiltinId::Error], &[]), RuntimeUses::default());
+    let named = uses_of(&[BuiltinId::ErrorPrepareStackTrace], &[]);
+    assert!(next.iter().all(|it| named.functions.contains(it)));
+    let held = RuntimeUses::of_unseen_code(LINUX);
+    assert!(next.iter().all(|it| held.functions.contains(it)));
 }
 
 #[test]
@@ -444,4 +498,188 @@ fn file_that_comes_by_a_symbol_of_the_host_asks_for_no_module() {
             table::text_of(id)
         );
     }
+}
+
+fn name_of(id: BuiltinId) -> BuiltinName {
+    table::entry(id).name
+}
+
+fn holds_code_of(uses: &RuntimeUses, id: BuiltinId) -> bool {
+    let mut own = table::entry(id).implemented_by().iter();
+    assert!(own.len() > 0, "{}", table::text_of(id));
+    own.all(|function| uses.functions.contains(function))
+}
+
+fn leads_to_host(uses: &RuntimeUses) -> bool {
+    let mut functions = uses.functions.iter();
+    functions.any(|&function| {
+        let data = table::runtime_function(function).unwrap();
+        data.role == RuntimeFunctionRole::HostBuiltin
+    })
+}
+
+#[test]
+fn name_that_is_read_brings_the_members_of_that_name_alone() {
+    let names = [name_of(BuiltinId::ArrayPrototypeMap)];
+    let mentions = Mentions {
+        members_read: &names,
+        ..Mentions::default()
+    };
+    let uses = RuntimeUses::of_mentions(&mentions, LINUX);
+    assert!(holds_code_of(&uses, BuiltinId::ArrayPrototypeMap));
+    assert!(holds_code_of(&uses, BuiltinId::IteratorPrototypeMap));
+    assert!(!holds_code_of(&uses, BuiltinId::ArrayPrototypeFilter));
+    assert!(!leads_to_host(&uses));
+}
+
+#[test]
+fn name_finds_no_member_of_a_namespace() {
+    assert_eq!(
+        name_of(BuiltinId::ReflectGet),
+        name_of(BuiltinId::MapPrototypeGet)
+    );
+    let names = [name_of(BuiltinId::ReflectGet)];
+    let mentions = Mentions {
+        members_read: &names,
+        ..Mentions::default()
+    };
+    let uses = RuntimeUses::of_mentions(&mentions, LINUX);
+    assert!(!holds_code_of(&uses, BuiltinId::ReflectGet));
+    assert!(!holds_code_of(&uses, BuiltinId::ArrayPrototypeMap));
+}
+
+#[test]
+fn key_that_nobody_knows_brings_all_that_the_language_has() {
+    let by_key = Mentions {
+        reads_by_unknown_key: true,
+        ..Mentions::default()
+    };
+    let by_key = RuntimeUses::of_mentions(&by_key, LINUX);
+    for reader in [
+        BuiltinId::ReflectGet,
+        BuiltinId::ObjectGetOwnPropertyDescriptor,
+    ] {
+        assert!(includes(&uses_of(&[reader], &[]), &by_key));
+    }
+    let mut functions = language_entries().flat_map(|id| table::entry(id).implemented_by());
+    assert!(
+        functions
+            .all(|function| !exists_on_linux(*function) || by_key.functions.contains(function))
+    );
+    assert!(!includes(&by_key, &RuntimeUses::of_unseen_code(LINUX)));
+}
+
+#[test]
+fn syntax_brings_the_helpers_that_are_written_for_it() {
+    let of_syntax = |syntax: SyntaxWithHelpers| {
+        let mentions = Mentions {
+            syntax,
+            ..Mentions::default()
+        };
+        RuntimeUses::of_mentions(&mentions, LINUX)
+    };
+    let walk = of_syntax(SyntaxWithHelpers::ITERATION);
+    assert!(holds_code_of(&walk, BuiltinId::CompilerHelpersStepIterator));
+    assert!(holds_code_of(&walk, BuiltinId::ArrayIteratorPrototypeNext));
+    assert!(holds_code_of(&walk, BuiltinId::GeneratorPrototypeReturn));
+    assert!(!holds_code_of(
+        &walk,
+        BuiltinId::CompilerHelpersDecorateClass
+    ));
+    assert!(!leads_to_host(&walk));
+    let decorated = of_syntax(SyntaxWithHelpers::DECORATOR);
+    assert!(holds_code_of(
+        &decorated,
+        BuiltinId::CompilerHelpersDecorateClass
+    ));
+    assert!(!holds_code_of(
+        &decorated,
+        BuiltinId::CompilerHelpersStepIterator
+    ));
+    let disposed = of_syntax(SyntaxWithHelpers::DISPOSAL);
+    assert!(holds_code_of(
+        &disposed,
+        BuiltinId::CompilerHelpersGetDisposeMethod
+    ));
+    assert!(holds_code_of(
+        &disposed,
+        BuiltinId::DisposableStackPrototypeDispose
+    ));
+}
+
+#[test]
+fn what_promises_can_do_comes_with_the_first_thing_that_makes_one() {
+    let awaited = Mentions {
+        syntax: SyntaxWithHelpers::PROMISE,
+        ..Mentions::default()
+    };
+    let awaited = RuntimeUses::of_mentions(&awaited, LINUX);
+    let made_by_name = [name_of(BuiltinId::ArrayFromAsync)];
+    let made_by_name = Mentions {
+        members_read: &made_by_name,
+        ..Mentions::default()
+    };
+    let made_by_name = RuntimeUses::of_mentions(&made_by_name, LINUX);
+    for uses in [
+        &awaited,
+        &made_by_name,
+        &uses_of(&[BuiltinId::PromiseResolve], &[]),
+    ] {
+        assert!(holds_code_of(uses, BuiltinId::PromiseAll));
+        assert!(holds_code_of(uses, BuiltinId::PromiseTry));
+        assert!(leads_to_host(uses));
+    }
+    let names = [BuiltinId::PromisePrototypeThen, BuiltinId::PromiseAll].map(name_of);
+    let only_named = Mentions {
+        members_read: &names,
+        ..Mentions::default()
+    };
+    let only_named = RuntimeUses::of_mentions(&only_named, LINUX);
+    assert!(holds_code_of(&only_named, BuiltinId::PromiseTry));
+}
+
+#[test]
+fn class_of_the_language_that_is_only_made_leads_to_no_code_of_the_host() {
+    for id in [
+        BuiltinId::Error,
+        BuiltinId::Map,
+        BuiltinId::Set,
+        BuiltinId::Date,
+        BuiltinId::JSON,
+        BuiltinId::RegExp,
+        BuiltinId::WeakMap,
+    ] {
+        assert!(
+            !leads_to_host(&uses_of(&[id], &[])),
+            "{}",
+            table::text_of(id)
+        );
+    }
+}
+
+#[test]
+fn program_that_lets_in_what_nobody_names_says_so() {
+    let holds_all = |mentioned: &[BuiltinId], called: &[BuiltinId], is_of_program: bool| {
+        let mentions = Mentions {
+            mentioned,
+            called,
+            is_of_program,
+            ..Mentions::default()
+        };
+        RuntimeUses::of_mentions(&mentions, LINUX).lets_in_what_nobody_names
+    };
+    for id in [BuiltinId::Eval, BuiltinId::SymbolFor] {
+        assert!(holds_all(&[id], &[id], true), "{}", table::text_of(id));
+        assert!(!holds_all(&[id], &[id], false), "{}", table::text_of(id));
+        assert!(!holds_all(&[id], &[], true), "{}", table::text_of(id));
+    }
+    for id in [BuiltinId::BunInspectCustom, BuiltinId::Buffer] {
+        assert!(holds_all(&[id], &[], true), "{}", table::text_of(id));
+        assert!(!holds_all(&[id], &[], false), "{}", table::text_of(id));
+    }
+    assert!(!holds_all(
+        &[BuiltinId::ConsoleLog],
+        &[BuiltinId::ConsoleLog],
+        true
+    ));
 }

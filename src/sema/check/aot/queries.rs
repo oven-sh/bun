@@ -65,6 +65,12 @@ pub struct Queries<'c, 'p, 's> {
     pub(super) lacks_stack: bool,
 }
 
+#[derive(Clone, Copy, Default)]
+struct PlaceInRow {
+    depth: u32,
+    has_form: bool,
+}
+
 fn is_accessor(kind: ObjectMemberKind) -> bool {
     matches!(
         kind,
@@ -87,6 +93,9 @@ pub(super) struct Memo<'c> {
     classes_with_accessor_at_or_above: FxHashMap<ClassDeclaration, bool>,
     names_of_accessors: FxHashSet<MemberName>,
     inherited_accessors: FxHashMap<(ClassDeclaration, MemberName), bool>,
+    places_of_classes: FxHashMap<ClassDeclaration, PlaceInRow>,
+    highest_places_of_fields: FxHashMap<MemberName, PlaceInRow>,
+    forms_given_at_or_above: FxHashMap<(ClassDeclaration, MemberName), Option<MemberForm>>,
     own_constructor_function_shapes: FxHashMap<FunctionRef, Option<&'c ClassShape<'c>>>,
     variables: FxHashMap<Sym, WrittenType>,
     pub(super) member_trusts: FxHashMap<usize, Trust>,
@@ -1218,29 +1227,102 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .then_some(false)
     }
 
+    fn find_place_in_row(&mut self, declaration: ClassDeclaration) -> PlaceInRow {
+        let mut chain = Vec::new();
+        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
+        let mut current = Some(declaration);
+        let mut above = None;
+        while let Some(class) = current {
+            if let Some(&known) = self.memo.places_of_classes.get(&class) {
+                above = Some(known);
+                break;
+            }
+            if self.shape_of(class).is_none() || !seen.insert(class) {
+                break;
+            }
+            chain.push(class);
+            current = self.declared_parent(class);
+        }
+        for &class in chain.iter().rev() {
+            let mut place =
+                above.map_or_else(PlaceInRow::default, |above: PlaceInRow| PlaceInRow {
+                    depth: above.depth + 1,
+                    ..above
+                });
+            let members = self.shape_of(class).map_or(&[][..], |shape| shape.members);
+            for entry in members
+                .iter()
+                .filter(|entry| !entry.is_static && entry.kind == ObjectMemberKind::Field)
+            {
+                let has_form = entry.form != MemberForm::default();
+                place.has_form |= has_form;
+                let highest = self
+                    .memo
+                    .highest_places_of_fields
+                    .entry(entry.name)
+                    .or_insert(PlaceInRow {
+                        depth: u32::MAX,
+                        has_form,
+                    });
+                if entry.is_made_at_birth {
+                    highest.depth = highest.depth.min(place.depth);
+                }
+                highest.has_form |= has_form;
+            }
+            self.memo.places_of_classes.insert(class, place);
+            above = Some(place);
+        }
+        above.unwrap_or_default()
+    }
+
     pub fn find_form_given_above(
         &mut self,
         shape: &ClassShape<'_>,
         name: MemberName,
     ) -> Option<MemberForm> {
-        let mut current = self.declared_parent(shape.declaration)?;
-        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
-        seen.insert(shape.declaration);
-        let mut found = None;
-        while seen.insert(current) {
-            let Some(above) = self.shape_of(current) else {
-                break;
-            };
-            let is_that_field = |entry: &&ClassMember| {
-                !entry.is_static && entry.kind == ObjectMemberKind::Field && entry.name == name
-            };
-            if let Some(entry) = above.members.iter().find(is_that_field) {
-                found = Some(entry.form);
+        let place = self.find_place_in_row(shape.declaration);
+        let highest = match self.memo.highest_places_of_fields.get(&name) {
+            Some(&highest) if place.has_form && highest.has_form => highest,
+            _ => return None,
+        };
+        if let ClassDeclaration::Function(function) = shape.declaration {
+            let is_that_name = |entry: &&ClassMember| !entry.is_static && entry.name == name;
+            let own = shape.members.iter().find(is_that_name);
+            if own.is_some_and(|entry| !self.passes_this_on_in_front_of(function, entry.source)) {
+                return None;
             }
-            let Some(next) = self.declared_parent(current) else {
+        }
+        let mut chain = Vec::new();
+        let mut current = self.declared_parent(shape.declaration);
+        let mut found = None;
+        for _ in highest.depth..place.depth {
+            let Some(class) = current else {
                 break;
             };
-            current = next;
+            if let Some(&known) = self.memo.forms_given_at_or_above.get(&(class, name)) {
+                found = known;
+                break;
+            }
+            chain.push(class);
+            current = self.declared_parent(class);
+        }
+        for &class in chain.iter().rev() {
+            if found.is_none() {
+                let members = self.shape_of(class).map_or(&[][..], |shape| shape.members);
+                let makes_that_field = |entry: &&ClassMember| {
+                    !entry.is_static
+                        && entry.kind == ObjectMemberKind::Field
+                        && entry.name == name
+                        && entry.is_made_at_birth
+                };
+                found = members
+                    .iter()
+                    .find(makes_that_field)
+                    .map(|entry| entry.form);
+            }
+            self.memo
+                .forms_given_at_or_above
+                .insert((class, name), found);
         }
         found
     }

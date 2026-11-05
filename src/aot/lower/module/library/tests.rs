@@ -78,6 +78,7 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         dialect: SourceDialect::Runtime,
         replaced: &[],
         runs_tests: false,
+        holds_language: false,
     });
     then(&LibrarySource {
         hir: &hir,

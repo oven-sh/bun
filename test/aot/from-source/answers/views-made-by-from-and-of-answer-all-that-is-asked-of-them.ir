@@ -1,0 +1,30 @@
+# Uint8Array.from(..) and Float64Array.of(..) construct their receiver, and the look at a body says so and no more. What lies below the classes and above them is still found by every road on which a
+# program asks for it: by name, under a key made at run time, up the chain from the class and from an object of it, through a class of the program below one of them, and through @@species.
+# RUN: run-in-shell mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: 2,4,6 true 3
+# CHECK-NEXT: 1.5,2.5 8
+# CHECK-NEXT: function function 1
+# CHECK-NEXT: true true TypedArray
+# CHECK-NEXT: true 7,8 true
+# CHECK-NEXT: true 2
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: exited with 0
+# -- source: views-made-by-from-and-of-answer-all-that-is-asked-of-them.ts
+# declare function print(...values: unknown[]): void;
+# const key = (text: string): string => [text][0 as number].slice(0);
+# const bytes = Uint8Array.from([1, 2, 3], (n: number) => n * 2);
+# print(bytes.join() + " " + bytes.every((n: number) => n > 1) + " " + bytes.length);
+# const floats = Float64Array.of(1.5, 2.5);
+# print(floats.join() + " " + Float64Array.BYTES_PER_ELEMENT);
+# print(typeof (bytes as any)[key("findLast")] + " " + typeof (Uint8Array as any)[key("from")] + " " + (Uint8Array as any)[key("BYTES_PER_ELEMENT")]);
+# const above = Object.getPrototypeOf(Uint8Array);
+# print(String(above === Object.getPrototypeOf(Float64Array)) + " " + (Object.getPrototypeOf(Object.getPrototypeOf(bytes)) === above.prototype) + " " + above.name);
+# class Bytes extends Uint8Array { twice() { return this.map((n: number) => n * 2); } }
+# const own = Bytes.from([7, 8]);
+# print(String(own instanceof Bytes) + " " + own.join() + " " + (own.twice() instanceof Bytes));
+# class Wide extends Uint8Array { static get [Symbol.species]() { return Uint16Array; } }
+# const wide = Wide.of(1, 2).map((n: number) => n);
+# print(String(wide instanceof Uint16Array) + " " + wide.length);
+# try { (above as any).from([1]); } catch (error) { print((error as Error).name); }
+# -- end of source

@@ -207,6 +207,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 name: self.member_name(name),
                 kind: ObjectMemberKind::Field,
                 source: ClassMemberSource::ParameterProperty(parameter),
+                is_made_at_birth: true,
                 types,
                 is_static: false,
                 is_optional: flags.contains(Flags::OPTIONAL),
@@ -302,6 +303,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             name: self.member_name(name),
             kind,
             source: ClassMemberSource::Member(id),
+            is_made_at_birth: kind == ObjectMemberKind::Field
+                && !member.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT),
             types,
             is_static,
             is_optional,
@@ -361,7 +364,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let in_every_construction = stores.iter().filter(|store| store.is_in_every_construction);
         let in_every_construction: FxHashSet<Atom> =
             in_every_construction.map(|store| store.name).collect();
+        let made_at_birth = stores.iter().filter(|store| store.birth != u32::MAX);
+        let made_at_birth: FxHashSet<Atom> = made_at_birth.map(|store| store.name).collect();
         let forms = forms_of_instance_fields(&stores);
+        let methods_of_prototype = stores.iter().filter(|store| {
+            store.place == StorePlace::Prototype && store.kind == ObjectMemberKind::Method
+        });
+        let methods_of_prototype: FxHashSet<Atom> =
+            methods_of_prototype.map(|store| store.name).collect();
         let hir = self.c.hir(file);
         for candidate in &stores {
             let name = self.member_name(candidate.name);
@@ -381,6 +391,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 if let Some(member) = only_declared {
                     member.source = candidate.source();
                     member.is_optional = !in_every_construction.contains(&candidate.name);
+                    member.is_made_at_birth = made_at_birth.contains(&candidate.name);
                     continue;
                 }
             }
@@ -389,7 +400,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     && added_accessors.insert((name, candidate.kind))
             } else {
                 let is_accessor = !is_static && prototype_accessor_names.contains(&candidate.name);
-                !is_accessor && declared.insert((name, is_static))
+                let hides_method = candidate.place == StorePlace::Instance
+                    && methods_of_prototype.contains(&candidate.name);
+                !is_accessor && !hides_method && declared.insert((name, is_static))
             };
             if !is_new {
                 continue;
@@ -412,6 +425,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 types: PositionTypes::unwritten(checked),
                 is_static,
                 is_optional: !is_always_stored,
+                is_made_at_birth: candidate.place == StorePlace::Instance
+                    && made_at_birth.contains(&candidate.name),
                 form: match candidate.place {
                     StorePlace::Instance => forms.get(&candidate.name).copied().unwrap_or_default(),
                     StorePlace::Prototype | StorePlace::Class => candidate.defined,

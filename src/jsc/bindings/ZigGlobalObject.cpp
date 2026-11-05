@@ -3466,10 +3466,7 @@ JSC::JSFunction* GlobalObject::utilInspectFunction()
 
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue inspectModule = BUN_REQUIRE_INTERNAL_MODULE(this, InternalUtilInspect, "Startup", "inspect"_s);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_ASSERT(inspectModule.isObject());
-    JSValue inspectValue = asObject(inspectModule)->get(this, Identifier::fromString(vm, "inspect"_s));
+    JSValue inspectValue = BUN_REQUIRE_INTERNAL_MODULE(this, InternalUtilInspect, "Startup", "inspect"_s);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* inspect = dynamicDowncast<JSFunction>(inspectValue);
     if (!inspect) [[unlikely]] {

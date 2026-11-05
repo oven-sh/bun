@@ -156,6 +156,7 @@ NativeBindgenUdp_socketBindTsDgramCloseFd/0: it is not called: it closes, cuts o
 NativeBindgenUdp_socketBindTsDgramCloseFd/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenUdp_socketBindTsDgramListenFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenUdp_socketBindTsDgramListenFd/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
+NativeCppJSMIMEParamsCppCreateJSMIMEBinding/0: it is not called: this realm does not have it
 NativeCppNodeURLCppBunCreateNodeICUBinding/0: it is not called: this realm does not have it
 NativeCppNodeURLCppBunCreateNodeURLBinding/0: it is not called: this realm does not have it
 NativeCppNodeURLCppBunCreateNodeURLBinding/1: it is not called: this realm does not have it

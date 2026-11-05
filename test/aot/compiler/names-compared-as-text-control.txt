@@ -376,6 +376,9 @@ finds src/aot/load/hoisted_mocks.rs matches!
     return matches!(name, known::require);
 allows src/aot/modules/referents.rs the exports of the module's own parameter
     return key == MemberKey::Name(known::exports) && bound.binding(object) == Binding::CommonJs(CommonJsVariable::Module);
+allows src/aot/lower/module/loads.rs the end of a written path
+    let bytes = self.file.queries.atom_bytes(written).to_vec();
+    let (of_folder, of_file) = match bytes.ends_with(b"/") {
 allows src/aot/lower/module/loads.rs the scheme of a built-in module
     return alias.node_builtin && !name.starts_with(b"node:");
 allows src/aot/lower/quoted_text.rs an identifier that the build has made
@@ -423,5 +426,7 @@ allows aot/facts/AOTLinkCalls.cpp what a function of Object.prototype asks in tu
     return questions.keys.contains(m_program.keyOf(BuiltinNames::toLocaleString));
 allows aot/walk/AOTWalkArguments.cpp the callee of an arguments object
     return object->allocation == Opcode::CreateMappedArguments && read.key() == program.keyOf(BuiltinNames::callee);
+allows aot/walk/AOTWalkTypedAccesses.cpp two names that every function answers for itself
+    return !classOfConstructorFunction(program, function) || key == program.keyOf(BuiltinNames::arguments) || key == program.keyOf(BuiltinNames::caller);
 finds aot/walk/AOTWalkArguments.cpp ==
     return read.key() == program.keyOf(BuiltinNames::eval);

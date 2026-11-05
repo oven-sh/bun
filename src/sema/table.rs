@@ -755,14 +755,6 @@ impl<K: NodeKey, T, A: Alloc> ByNodeIndirect<K, T, Frozen, A> {
         self.values.get(self.handles.insert(key, handle).0)
     }
 
-    #[inline]
-    pub fn get(&self, key: &K) -> Option<T>
-    where
-        T: Clone,
-    {
-        self.get_ref(key).cloned()
-    }
-
     pub fn insert(&self, key: K, value: T) -> T
     where
         T: Clone,

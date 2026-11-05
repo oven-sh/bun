@@ -5,8 +5,7 @@
 // # RUN(FORM): walk f2 mechanisms=all-Inlining
 // # FORM-LABEL: code f2:Body
 // # FORM-COUNT-3: = GetArrayLength
-// # RUN(QUIET): walk f2 mechanisms=all-Inlining
-// # QUIET-NOT: = CallDirect {{*}}function=f1{{*}}mayCallUnknownCode
+// # Since Link's effects lean on no site of a list that comes through a parameter, the call of grow() is any code to its caller: the lengths are read again whatever the row of push says.
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 4 of 4 of 4

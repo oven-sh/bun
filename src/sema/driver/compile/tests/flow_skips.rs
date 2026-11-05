@@ -35,7 +35,9 @@ fn ask_for_names(text: &str, far_walk: u32) -> (Vec<String>, usize) {
             let types = checker.with_queries(file, &inputs, |queries| {
                 let expressions = queries.hir().exprs.iter().enumerate();
                 let mut names: Vec<(u32, ExprId)> = expressions
-                    .filter(|(_, expression)| matches!(expression.kind, ExprKind::Ident(_)))
+                    .filter(|(_, expression)| {
+                        matches!(expression.kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
+                    })
                     .map(|(index, expression)| (expression.pos, ExprId(index as u32)))
                     .collect();
                 names.sort();
@@ -105,6 +107,105 @@ fn a_walk_that_skips_whole_statements_finds_what_a_walk_through_them_finds() {
         let (skipping, _) = ask_for_names(&text, 0);
         assert_eq!(skipping, through, "{statement}");
     }
+}
+
+const FAR_WALK_OF_A_BUILD: u32 = 1024;
+
+const STATEMENTS_ABOUT_A_FIELD: &[&str] = &[
+    "holder.part = 1;",
+    "if (flag) holder.part = \"text\";",
+    "if (typeof holder.part === \"number\") throw new Error(\"\");",
+    "for (const item of items) { if (item > 1) holder.part = item; }",
+    "try { holder.part = undefined; } finally { other.push(9); }",
+    "holder = { part: 2 };",
+    "assertNumber(holder.part);",
+];
+
+const FUNCTIONS_AROUND: &[(&str, &str)] = &[
+    ("", ""),
+    ("function run() {", "}\nrun();"),
+    ("const run = () => {", "};\nrun();"),
+    ("const runner = { run() {", "} };\nrunner.run();"),
+    ("class Runner { run() {", "} }\nnew Runner().run();"),
+    (
+        "function around(subject: string | number | undefined) { return () => {",
+        "}; }\naround(1)();",
+    ),
+];
+
+fn write_program_of_tests(statement: &str, padding: usize, around: (&str, &str)) -> String {
+    let mut text = String::from(
+        "declare const items: number[];
+declare const flag: boolean;
+declare function assertNumber(value: unknown): asserts value is number;
+declare function fail(): never;
+declare function make(): string | number | undefined;
+declare function take(value: unknown): void;
+const other: number[] = [];
+const constant = make();
+const isText = typeof constant === \"string\";
+",
+    );
+    writeln!(text, "{}", around.0).unwrap();
+    if !around.0.contains("subject") {
+        text.push_str("let subject = make();\n");
+    }
+    text.push_str("let holder = { part: make() };\n");
+    let tests = "if (typeof subject === \"string\") for (const unit of subject) other.push(unit.length); else take(subject);
+if (flag && typeof holder.part === \"string\") for (const unit of holder.part) other.push(unit.length); else take(holder.part);
+if (typeof constant === \"number\") other.push(constant);
+";
+    for _ in 0..padding {
+        text.push_str(tests);
+    }
+    writeln!(text, "{statement}").unwrap();
+    for _ in 0..padding {
+        text.push_str(tests);
+    }
+    text.push_str("take([subject, holder.part, constant, other]);\n");
+    writeln!(text, "{}", around.1).unwrap();
+    text
+}
+
+#[test]
+fn a_walk_that_takes_what_an_earlier_walk_left_finds_what_a_walk_through_the_tests_finds() {
+    for &around in FUNCTIONS_AROUND {
+        for statement in STATEMENTS_IN_BETWEEN.iter().chain(STATEMENTS_ABOUT_A_FIELD) {
+            let text = write_program_of_tests(statement, 6, around);
+            let (through, _) = ask_for_names(&text, u32::MAX);
+            let (taking, _) = ask_for_names(&text, FAR_WALK_OF_A_BUILD);
+            assert_eq!(taking, through, "{}: {statement}", around.0);
+        }
+    }
+}
+
+#[test]
+fn what_hangs_on_where_a_field_is_read_is_not_left_for_the_next_walk() {
+    let text = "type Fixed = { readonly part: string | number[] };
+type Loose = { part: string | number[]; extra: number };
+declare function take(value: unknown): void;
+export function count(holder: Fixed | Loose) {
+  const isText = typeof holder.part === \"string\";
+  if (\"extra\" in holder) holder.part = [1, 2, 3];
+  if (isText) {
+    if (!(\"extra\" in holder)) take(holder.part);
+    else take(holder.part);
+  }
+}
+export function apart(holder: { readonly part: string | number[] }, flag: boolean) {
+  const isText = typeof holder.part === \"string\";
+  if (isText) {
+    if (flag) take(holder.part);
+    else {
+      const { part } = holder;
+      take(part);
+    }
+  }
+}
+";
+    let (through, _) = ask_for_names(text, u32::MAX);
+    let (taking, _) = ask_for_names(text, FAR_WALK_OF_A_BUILD);
+    assert_eq!(taking, through);
 }
 
 #[test]

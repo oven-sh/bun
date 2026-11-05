@@ -819,7 +819,7 @@ export function probe(rows: Row[]) {
 }
 
 #[test]
-fn nothing_is_expected_of_what_an_array_pattern_in_the_head_of_for_of_takes_apart() {
+fn array_pattern_in_the_head_of_for_of_is_expected_to_take_apart_the_type_of_the_pattern() {
     let source = "class Key { id = 1; }
 class Held { id = \"one\"; }
 export function probe(table: Map<string, number>, pairs: [Key, Held][]) {
@@ -830,7 +830,10 @@ export function probe(table: Map<string, number>, pairs: [Key, Held][]) {
 }
 ";
     let stated = positions_stated_of_stepped_values(&lower(source, None), "probe");
-    assert!(stated.is_empty(), "{stated:?}");
+    let [entry, pair] = &stated[..] else {
+        panic!("{stated:?}");
+    };
+    assert!(entry.is_expected && pair.is_expected, "{stated:?}");
 }
 
 #[test]

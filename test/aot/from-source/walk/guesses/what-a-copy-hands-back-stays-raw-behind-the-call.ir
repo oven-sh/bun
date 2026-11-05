@@ -1,5 +1,5 @@
-# a small function is copied in line. On the way that has passed its tests it hands back a number out of a raw slot or a constant, on the ways of its closed arms anything.
-# The closed returns meet among themselves and walk what is left of the caller's block and its branch for themselves, rare and closed; the others meet in a raw parameter, and the mask behind the call is one of integers
+# a small function is copied in line. On the way that has passed its tests it hands back a number out of a raw slot or a constant, on the way of the call that stands where a test fails anything.
+# What the call returns walks what is left of the caller's block and its branch for itself, rare and closed; the others meet in a raw parameter, and the mask behind the call is one of integers
 # the function is handed to sink: nobody knows its callers. f1 = flagsOf, f2 = sort
 # -- source: what-a-copy-hands-back-stays-raw-behind-the-call.ts
 # declare function sink(...values: unknown[]): void;
@@ -11,9 +11,9 @@
 # -- end of source
 # RUN: walk f2 mechanisms=all-ParameterGuards
 # CHECK-LABEL: code f2:Body
-# CHECK: [[closed]]: anything{{*}} @JSValue = PropGet {{*}}key="objectFlags"
-# CHECK: int{{*}} @Int32 = GetSlot {{*}}key="objectFlags" {{*}}level=Proven
 # CHECK: frequency=Rare:
+# CHECK: [[closed]]: anything{{*}} @JSValue = CallDirect {{*}}function=f1 [isNeverInlined]
 # CHECK: = BitAnd [[closed]], {{*}}form=Generic
+# CHECK: int{{*}} @Int32 = GetSlot {{*}}key="objectFlags" {{*}}level=Proven
 # CHECK: ([[passing]]: int{{*}} @Int32{{*}}):
 # CHECK: = BitAnd [[passing]], {{*}}form=Integers

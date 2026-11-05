@@ -44,10 +44,17 @@ const uses = {
 
 /** `FsCompletion::reject` (node_fs.rs) and `reject_before_schedule`: an error of the system, that of a signal that has aborted, or that of a result that cannot be made. */
 const error = table.union(table.instance("Error"), table.instance("RangeError"));
-const nullOrError = table.union(table.strictNull, error);
+const calledLaterWith = (...args: table.TableType[]) =>
+  table.called({
+    afterwards: "TouchesOnlyWhatRowNames",
+    times: "Later",
+    this: table.undefined,
+    args,
+    result: "Ignored",
+  });
 
 /**
- * `xCb` keeps its callback (`FsCompletion::Callback`) and calls it once the operation is done: with the error, or with `null` and the result.
+ * `xCb` keeps its callback (`FsCompletion::Callback`) and calls it once the operation is done: with the error and nothing else, or with `null` and the result.
  * Where it fails before anything is scheduled it queues the callback with the error, and for that it calls process.nextTick.
  */
 const callsBack = (length: number, value: table.TableType) =>
@@ -58,13 +65,8 @@ const callsBack = (length: number, value: table.TableType) =>
       args: [
         ...uses.args,
         table.storedIn(table.nativeCell(callbacksOfFsCell)),
-        table.called({
-          afterwards: "TouchesOnlyWhatRowNames",
-          times: "Later",
-          this: table.undefined,
-          args: [nullOrError, value],
-          result: "Ignored",
-        }),
+        calledLaterWith(error),
+        calledLaterWith(table.strictNull, value),
       ],
     },
   }) as const;

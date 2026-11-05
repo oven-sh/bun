@@ -14,13 +14,21 @@ process.exit(0);
 `;
 
 // A getter of a prototype object refuses the prototype object itself, in both executables.
+// What stands in for a part of Bun's library that neither executable holds (Bun.sql, Bun.$, process.finalization, ..) refuses its own keys aloud, in both.
 const readsEveryName = `const seen = new Set();
 const lines = [];
 const describe = key => (typeof key === "symbol" ? "[" + String(key.description) + "]" : key);
 function visit(holder, path, depth) {
   if (seen.has(holder)) return;
   seen.add(holder);
-  for (const key of Reflect.ownKeys(holder)) {
+  let keys;
+  try {
+    keys = Reflect.ownKeys(holder);
+  } catch {
+    lines.push(path + " refuses its keys");
+    return;
+  }
+  for (const key of keys) {
     const name = path + "." + describe(key);
     let value;
     try {

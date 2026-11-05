@@ -48,6 +48,7 @@ pub(crate) struct RuntimeModules {
     answers_modules_of_own_tests: bool,
     aliases: Cfg,
     files: FxHashMap<Vec<u8>, RuntimeFile>,
+    paths: Vec<Vec<u8>>,
     directories: FxHashMap<Vec<u8>, DirectoryEntries>,
     public_specifiers: Vec<(HostModuleId, &'static [u8])>,
 }
@@ -59,8 +60,11 @@ const DECLARATION_FILES: [&[u8]; 2] = [b"builtins.d.ts", b"private.d.ts"];
 impl RuntimeModules {
     pub(crate) fn new(archive: &'static Archive, omits_builtin_modules: bool) -> RuntimeModules {
         let files = collect_files(archive);
+        let mut paths: Vec<Vec<u8>> = files.keys().cloned().collect();
+        paths.shared_sort_unstable();
         RuntimeModules {
             archive,
+            paths,
             omits_builtin_modules,
             answers_modules_of_own_tests: runs_own_tests(),
             aliases: Cfg::default(),
@@ -98,6 +102,19 @@ impl RuntimeModules {
 
     pub(crate) fn file_kind(&self, path: &[u8]) -> Option<RuntimeFileKind> {
         self.files.get(path).map(|file| file.kind)
+    }
+
+    pub(crate) fn file_count(&self) -> usize {
+        self.paths.len()
+    }
+
+    pub(crate) fn number_of(&self, path: &[u8]) -> Option<u32> {
+        let found = self.paths.binary_search_by(|it| (**it).cmp(path));
+        found.ok().map(|number| number as u32)
+    }
+
+    pub(crate) fn path_of(&self, number: u32) -> &[u8] {
+        &self.paths[number as usize]
     }
 
     pub(crate) fn is_seen_only_by_name(&self, path: &[u8]) -> bool {
@@ -246,6 +263,7 @@ impl RuntimeModules {
         (kind == RuntimeFileKind::Declarations).then_some(declarations)
     }
 
+    #[cfg(test)]
     pub(crate) fn prelude_paths(&self) -> impl Iterator<Item = Vec<u8>> {
         prelude::FILES
             .iter()

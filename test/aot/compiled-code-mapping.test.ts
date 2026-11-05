@@ -33,7 +33,7 @@ const [thisArchitecture, mmap, mprotect, pkeyMprotect, mremap] = process.arch ==
 const instructions = [
   [load, 0, 0, architecture], [jumpIfEqual, 1, 0, thisArchitecture], [answer, 0, 0, allow],
   [load, 0, 0, systemCall],
-  ...(process.argv[3]?.endsWith("mremap") ? [[jumpIfEqual, 0, 1, mremap], [answer, 0, 0, permissionDenied]] : []),
+  ...(process.argv[3] === "refuse-mremap" ? [[jumpIfEqual, 0, 1, mremap], [answer, 0, 0, permissionDenied]] : []),
   [jumpIfEqual, 0, 5, mmap],
   [load, 0, 0, protection], [jumpIfAnyBitSet, 0, 8, executable],
   [load, 0, 0, flags], [jumpIfAnyBitSet, 6, 0, denyWrite], [answer, 0, 0, permissionDenied],
@@ -536,6 +536,73 @@ test.skipIf(!isLinux || refusesExecuteOnlyStart)(
       return await expectRefusalToRunAtFixedAddress([executable]);
     const places = await placesOfCode(executable, codeOffset, [executable]);
     if (canMoveFileMappings) expectCodeAtAnotherAddressEachTime(places);
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux || refusesExecuteOnlyStart || process.geteuid!() === 0)(
+  "an executable that may be run but not read makes more callbacks for native code than are loaded with its code",
+  async () => {
+    using dir = tempDir("aot-callbacks-unreadable", {
+      "program.ts": `import { CFunction, JSCallback } from "bun:ffi";
+let sum = 0;
+for (let n = 0; n < 600; n++) sum += CFunction({ ptr: new JSCallback(() => n, { returns: "int32_t", args: [] }).ptr, returns: "int32_t", args: [] })();
+console.log("called", sum);
+`,
+    });
+    const executable = await build(String(dir));
+    const file = readFileSync(executable);
+    chmodSync(executable, 0o111);
+    if (!canMoveFileMappings && isLinkedAtFixedAddress(file)) return;
+    expect(await run([executable])).toMatchObject({ stdout: "called 179700\n", exitCode: 0 });
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  "an executable that has no descriptor left makes more callbacks for native code than are loaded with its code",
+  async () => {
+    using dir = tempDir("aot-callbacks-without-descriptors", {
+      "program.ts": `import { CFunction, JSCallback } from "bun:ffi";
+import { openSync } from "node:fs";
+let end = "no limit in sight";
+try { for (let n = 0; n < 5000; n++) openSync("/dev/null", "r"); } catch (error) { end = (error as { code: string }).code; }
+let sum = 0;
+for (let n = 0; n < 600; n++) sum += CFunction({ ptr: new JSCallback(() => n, { returns: "int32_t", args: [] }).ptr, returns: "int32_t", args: [] })();
+console.log(end, "called", sum);
+`,
+    });
+    const executable = await build(String(dir));
+    expect(await run(["sh", "-c", `ulimit -n 300 && exec "$0"`, executable])).toMatchObject({
+      stdout: "EMFILE called 179700\n",
+      exitCode: 0,
+    });
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux || !isGlibc)(
+  "attempts to make a callback for native code that are refused leave no address space behind",
+  async () => {
+    using dir = tempDir("aot-callbacks-refused", {
+      "program.ts": `import { JSCallback } from "bun:ffi";
+import { readFileSync } from "node:fs";
+const mapped = () => Number(/VmSize:\\s+(\\d+)/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
+const held: JSCallback[] = [];
+let refused = 0;
+const attempt = () => { try { held.push(new JSCallback(() => 1, { returns: "int32_t", args: [] })); } catch { refused++; } };
+for (let n = 0; n < 300; n++) attempt();
+const before = mapped();
+for (let n = 0; n < 20000; n++) attempt();
+console.log("made", held.length, "refused", refused, "grown by 64 MB", mapped() - before > 65536);
+`,
+      "launcher.ts": seccompLauncher,
+    });
+    const executable = await build(String(dir));
+    expect(await run([bunExe(), join(String(dir), "launcher.ts"), executable])).toMatchObject({
+      stdout: "made 256 refused 20044 grown by 64 MB false\n",
+      exitCode: 0,
+    });
   },
   120_000,
 );

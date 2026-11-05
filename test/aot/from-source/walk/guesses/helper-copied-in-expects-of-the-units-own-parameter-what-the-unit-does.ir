@@ -13,4 +13,5 @@
 # -- end of source
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
-# CHECK: PutSlot {{*}}key="pos" receivers=[L0] level=Expected
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: PutSlot {{*}}key="pos" receivers=[L0] level=Proven

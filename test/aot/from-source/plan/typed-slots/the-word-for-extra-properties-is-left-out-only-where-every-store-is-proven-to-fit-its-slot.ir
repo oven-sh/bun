@@ -26,6 +26,6 @@
 # LINK: layout L0 changes=[]
 # LINK-NEXT: layout L1 changes=[]
 # LINK-NEXT: layout L2 changes=[]
-# LINK: field L0.0 "text" proven=undefined|int|whole|string writers-known
+# LINK: field L0.0 "text" proven=undefined|number|string writers-known
 # LINK: field L1.0 "text" proven=undefined|string writers-known
 # LINK: field L2.0 "top" proven=undefined|L0|L1 

@@ -137,10 +137,15 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
     options = kEmptyObject;
   } else if (options == null) {
     options = kEmptyObject;
-  } else {
+  } else if (!(
+    IS_COMPILED_AHEAD_OF_TIME &&
+    typeof options === "object" &&
+    !$isProxyObject(options) &&
+    !$isJSArray(options)
+  )) {
     validateObject(options, "options");
   }
-  validateFunction(callback, "callback");
+  if (!(IS_COMPILED_AHEAD_OF_TIME && typeof callback === "function")) validateFunction(callback, "callback");
   const givenSignal = options.signal;
   if (givenSignal !== undefined) validateAbortSignal(givenSignal, "options.signal");
 

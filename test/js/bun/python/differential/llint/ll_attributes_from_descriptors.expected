@@ -1,5 +1,5 @@
 status: 0
-script: 93571c5e4b9746f8
+script: 14e0f58b5cff2c0f
 ---
 a Plain.method -> <method> | () -> method
 a Slotted.method -> <method> | () -> method
@@ -666,10 +666,10 @@ a Slotted.__dict__ -> AttributeError: 'Slotted' object has no attribute '__dict_
 a Hooked.__dict__ -> {} | () -> TypeError: 'dict' object is not callable
 a HookedRaises.__dict__ -> {} | () -> TypeError: 'dict' object is not callable
 a Shadowing.__dict__ -> {'method': 'own method', 'cm': 'own cm', 'sm': 'own sm', 'prop': 'own prop', 'data': 'own data', 'nondata': 'own nondata', 'raising': 'own raising', 'raising_data': 'own raising_data', 'plain': 'own plain', 'length': 'own length', 'set_only': 'own set_only'} | () -> TypeError: 'dict' object is not callable
-Plain.__dict__ -> mappingproxy({'__module__': '__main__', '__firstlineno__': 98, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}) | () -> TypeError: 'mappingproxy' object is not callable
+Plain.__dict__ -> mappingproxy({'__module__': '__main__', '__firstlineno__': 99, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}) | () -> TypeError: 'mappingproxy' object is not callable
 Slotted.__dict__ -> <mappingproxy> | () -> TypeError: 'mappingproxy' object is not callable
 Hooked.__dict__ -> <mappingproxy> | () -> TypeError: 'mappingproxy' object is not callable
-OfMetaHooked.__dict__ -> mappingproxy({'__module__': '__main__', '__firstlineno__': 125, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}) | () -> TypeError: 'mappingproxy' object is not callable
+OfMetaHooked.__dict__ -> mappingproxy({'__module__': '__main__', '__firstlineno__': 126, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}) | () -> TypeError: 'mappingproxy' object is not callable
 a OfMetaHooked.__dict__ -> {} | () -> TypeError: 'dict' object is not callable
 Meta.__dict__ -> <mappingproxy> | () -> TypeError: 'mappingproxy' object is not callable
 a Plain.__dict__ -> {} | () -> TypeError: 'dict' object is not callable
@@ -677,10 +677,10 @@ a Slotted.__dict__ -> AttributeError: 'Slotted' object has no attribute '__dict_
 a Hooked.__dict__ -> {} | () -> TypeError: 'dict' object is not callable
 a HookedRaises.__dict__ -> {} | () -> TypeError: 'dict' object is not callable
 a Shadowing.__dict__ -> {'method': 'own method', 'cm': 'own cm', 'sm': 'own sm', 'prop': 'own prop', 'data': 'own data', 'nondata': 'own nondata', 'raising': 'own raising', 'raising_data': 'own raising_data', 'plain': 'own plain', 'length': 'own length', 'set_only': 'own set_only'} | () -> TypeError: 'dict' object is not callable
-Plain.__dict__ -> mappingproxy({'__module__': '__main__', '__firstlineno__': 98, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}) | () -> TypeError: 'mappingproxy' object is not callable
+Plain.__dict__ -> mappingproxy({'__module__': '__main__', '__firstlineno__': 99, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}) | () -> TypeError: 'mappingproxy' object is not callable
 Slotted.__dict__ -> <mappingproxy> | () -> TypeError: 'mappingproxy' object is not callable
 Hooked.__dict__ -> <mappingproxy> | () -> TypeError: 'mappingproxy' object is not callable
-OfMetaHooked.__dict__ -> mappingproxy({'__module__': '__main__', '__firstlineno__': 125, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}) | () -> TypeError: 'mappingproxy' object is not callable
+OfMetaHooked.__dict__ -> mappingproxy({'__module__': '__main__', '__firstlineno__': 126, '__static_attributes__': (), '__dict__': <attribute '__dict__'>, '__weakref__': <attribute '__weakref__'>, '__doc__': None}) | () -> TypeError: 'mappingproxy' object is not callable
 a OfMetaHooked.__dict__ -> {} | () -> TypeError: 'dict' object is not callable
 Meta.__dict__ -> <mappingproxy> | () -> TypeError: 'mappingproxy' object is not callable
 a Plain.__doc__ -> None | () -> TypeError: 'NoneType' object is not callable
@@ -903,27 +903,27 @@ Hooked.__eq__ -> <slot wrapper '__eq__'> | () -> TypeError: descriptor '__eq__' 
 OfMetaHooked.__eq__ -> <slot wrapper '__eq__'> | () -> TypeError: descriptor '__eq__' of 'object' object needs an argument
 a OfMetaHooked.__eq__ -> <method-wrapper> | () -> TypeError: expected 1 argument, got 0
 Meta.__eq__ -> <slot wrapper '__eq__'> | () -> TypeError: descriptor '__eq__' of 'object' object needs an argument
-a Plain.__hash__ -> <method-wrapper> | () -> <int>
-a Slotted.__hash__ -> <method-wrapper> | () -> <int>
-a Hooked.__hash__ -> <method-wrapper> | () -> <int>
-a HookedRaises.__hash__ -> <method-wrapper> | () -> <int>
-a Shadowing.__hash__ -> <method-wrapper> | () -> <int>
+a Plain.__hash__ -> <method-wrapper> | () -> <a hash>
+a Slotted.__hash__ -> <method-wrapper> | () -> <a hash>
+a Hooked.__hash__ -> <method-wrapper> | () -> <a hash>
+a HookedRaises.__hash__ -> <method-wrapper> | () -> <a hash>
+a Shadowing.__hash__ -> <method-wrapper> | () -> <a hash>
 Plain.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
 Slotted.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
 Hooked.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
 OfMetaHooked.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
-a OfMetaHooked.__hash__ -> <method-wrapper> | () -> <int>
+a OfMetaHooked.__hash__ -> <method-wrapper> | () -> <a hash>
 Meta.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
-a Plain.__hash__ -> <method-wrapper> | () -> <int>
-a Slotted.__hash__ -> <method-wrapper> | () -> <int>
-a Hooked.__hash__ -> <method-wrapper> | () -> <int>
-a HookedRaises.__hash__ -> <method-wrapper> | () -> <int>
-a Shadowing.__hash__ -> <method-wrapper> | () -> <int>
+a Plain.__hash__ -> <method-wrapper> | () -> <a hash>
+a Slotted.__hash__ -> <method-wrapper> | () -> <a hash>
+a Hooked.__hash__ -> <method-wrapper> | () -> <a hash>
+a HookedRaises.__hash__ -> <method-wrapper> | () -> <a hash>
+a Shadowing.__hash__ -> <method-wrapper> | () -> <a hash>
 Plain.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
 Slotted.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
 Hooked.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
 OfMetaHooked.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
-a OfMetaHooked.__hash__ -> <method-wrapper> | () -> <int>
+a OfMetaHooked.__hash__ -> <method-wrapper> | () -> <a hash>
 Meta.__hash__ -> <slot wrapper '__hash__'> | () -> TypeError: descriptor '__hash__' of 'object' object needs an argument
 a Plain.__new__ -> <builtin_function_or_method> | () -> TypeError: object.__new__(): not enough arguments
 a Slotted.__new__ -> <builtin_function_or_method> | () -> TypeError: object.__new__(): not enough arguments
@@ -1911,46 +1911,46 @@ ellipsis absent -> AttributeError: 'ellipsis' object has no attribute 'absent' [
 NotImplementedType absent -> AttributeError: 'NotImplementedType' object has no attribute 'absent' [name='absent' obj=NotImplementedType] | () -> AttributeError: 'NotImplementedType' object has no attribute 'absent' [name='absent' obj=N
 builtin_function_or_method absent -> AttributeError: 'builtin_function_or_method' object has no attribute 'absent' [name='absent' obj=builtin_function_or_method] | () -> AttributeError: 'builtin_function_or_method' object has no attribute 'absent' [name='absen
 builtin_function_or_method absent -> AttributeError: 'builtin_function_or_method' object has no attribute 'absent' [name='absent' obj=builtin_function_or_method] | () -> AttributeError: 'builtin_function_or_method' object has no attribute 'absent' [name='absen
-int __hash__ -> <method-wrapper> | () -> 5
-int __hash__ -> <method-wrapper> | () -> -2
-int __hash__ -> <method-wrapper> | () -> 1099511627776
-int __hash__ -> <method-wrapper> | () -> 524288
-float __hash__ -> <method-wrapper> | () -> <int>
-bool __hash__ -> <method-wrapper> | () -> 1
-NoneType __hash__ -> <method-wrapper> | () -> <int>
-str __hash__ -> <method-wrapper> | () -> <int>
+int __hash__ -> <method-wrapper> | () -> <a hash>
+int __hash__ -> <method-wrapper> | () -> <a hash>
+int __hash__ -> <method-wrapper> | () -> <a hash>
+int __hash__ -> <method-wrapper> | () -> <a hash>
+float __hash__ -> <method-wrapper> | () -> <a hash>
+bool __hash__ -> <method-wrapper> | () -> <a hash>
+NoneType __hash__ -> <method-wrapper> | () -> <a hash>
+str __hash__ -> <method-wrapper> | () -> <a hash>
 list __hash__ -> None | () -> TypeError: 'NoneType' object is not callable
-tuple __hash__ -> <method-wrapper> | () -> <int>
+tuple __hash__ -> <method-wrapper> | () -> <a hash>
 dict __hash__ -> None | () -> TypeError: 'NoneType' object is not callable
 set __hash__ -> None | () -> TypeError: 'NoneType' object is not callable
-bytes __hash__ -> <method-wrapper> | () -> <int>
-complex __hash__ -> <method-wrapper> | () -> <int>
-range __hash__ -> <method-wrapper> | () -> <int>
-slice __hash__ -> <method-wrapper> | () -> <int>
-ellipsis __hash__ -> <method-wrapper> | () -> <int>
-NotImplementedType __hash__ -> <method-wrapper> | () -> <int>
-builtin_function_or_method __hash__ -> <method-wrapper> | () -> <int>
-builtin_function_or_method __hash__ -> <method-wrapper> | () -> <int>
-int __hash__ -> <method-wrapper> | () -> 5
-int __hash__ -> <method-wrapper> | () -> -2
-int __hash__ -> <method-wrapper> | () -> 1099511627776
-int __hash__ -> <method-wrapper> | () -> 524288
-float __hash__ -> <method-wrapper> | () -> <int>
-bool __hash__ -> <method-wrapper> | () -> 1
-NoneType __hash__ -> <method-wrapper> | () -> <int>
-str __hash__ -> <method-wrapper> | () -> <int>
+bytes __hash__ -> <method-wrapper> | () -> <a hash>
+complex __hash__ -> <method-wrapper> | () -> <a hash>
+range __hash__ -> <method-wrapper> | () -> <a hash>
+slice __hash__ -> <method-wrapper> | () -> <a hash>
+ellipsis __hash__ -> <method-wrapper> | () -> <a hash>
+NotImplementedType __hash__ -> <method-wrapper> | () -> <a hash>
+builtin_function_or_method __hash__ -> <method-wrapper> | () -> <a hash>
+builtin_function_or_method __hash__ -> <method-wrapper> | () -> <a hash>
+int __hash__ -> <method-wrapper> | () -> <a hash>
+int __hash__ -> <method-wrapper> | () -> <a hash>
+int __hash__ -> <method-wrapper> | () -> <a hash>
+int __hash__ -> <method-wrapper> | () -> <a hash>
+float __hash__ -> <method-wrapper> | () -> <a hash>
+bool __hash__ -> <method-wrapper> | () -> <a hash>
+NoneType __hash__ -> <method-wrapper> | () -> <a hash>
+str __hash__ -> <method-wrapper> | () -> <a hash>
 list __hash__ -> None | () -> TypeError: 'NoneType' object is not callable
-tuple __hash__ -> <method-wrapper> | () -> <int>
+tuple __hash__ -> <method-wrapper> | () -> <a hash>
 dict __hash__ -> None | () -> TypeError: 'NoneType' object is not callable
 set __hash__ -> None | () -> TypeError: 'NoneType' object is not callable
-bytes __hash__ -> <method-wrapper> | () -> <int>
-complex __hash__ -> <method-wrapper> | () -> <int>
-range __hash__ -> <method-wrapper> | () -> <int>
-slice __hash__ -> <method-wrapper> | () -> <int>
-ellipsis __hash__ -> <method-wrapper> | () -> <int>
-NotImplementedType __hash__ -> <method-wrapper> | () -> <int>
-builtin_function_or_method __hash__ -> <method-wrapper> | () -> <int>
-builtin_function_or_method __hash__ -> <method-wrapper> | () -> <int>
+bytes __hash__ -> <method-wrapper> | () -> <a hash>
+complex __hash__ -> <method-wrapper> | () -> <a hash>
+range __hash__ -> <method-wrapper> | () -> <a hash>
+slice __hash__ -> <method-wrapper> | () -> <a hash>
+ellipsis __hash__ -> <method-wrapper> | () -> <a hash>
+NotImplementedType __hash__ -> <method-wrapper> | () -> <a hash>
+builtin_function_or_method __hash__ -> <method-wrapper> | () -> <a hash>
+builtin_function_or_method __hash__ -> <method-wrapper> | () -> <a hash>
 int __bool__ -> <method-wrapper> | () -> True
 int __bool__ -> <method-wrapper> | () -> True
 int __bool__ -> <method-wrapper> | () -> True

@@ -14,11 +14,12 @@ def attempt(function, *args):
         return '%s: %s%s' % (type(e).__name__, e, extra)
 
 
-def show(value):
+def show(value, name=None):
+    # (Many come from an address.)
+    if name == '__hash__' and isinstance(value, int):
+        return '<a hash>'
     if isinstance(value, str):
         return value
-    if isinstance(value, int) and abs(value) > 10 ** 6 and value not in (2 ** 40, 2 ** 80):
-        return '<int>'
     text = repr(value)
     for noise in (' at 0x', ' object at '):
         if noise in text:
@@ -151,7 +152,7 @@ for name in NAMES:
     for round in range(2):
         for o in objects:
             label = o.__name__ if isinstance(o, type) else 'a ' + type(o).__name__
-            print('%s.%s -> %s | () -> %s' % (label, name, show(attempt(readers[name], o)), show(attempt(callers[name], o))))
+            print('%s.%s -> %s | () -> %s' % (label, name, show(attempt(readers[name], o)), show(attempt(callers[name], o), name)))
 
 
 print('--- what is read is bound to the object it was read from')
@@ -179,7 +180,7 @@ for name in ['__class__', 'real', 'imag', 'numerator', 'bit_length', 'is_integer
             if name == '__doc__' and isinstance(result, str):
                 result = result[:20]
             called = attempt(namespace['call'], value)
-            print('%s %s -> %s | () -> %s' % (type(value).__name__, name, show(result), show(called)[:90]))
+            print('%s %s -> %s | () -> %s' % (type(value).__name__, name, show(result), show(called, name)[:90]))
 
 
 print('--- the class of a descriptor changes what it is')

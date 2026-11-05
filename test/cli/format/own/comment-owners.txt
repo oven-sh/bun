@@ -124,6 +124,12 @@ casts/type-comment-without-parentheses.js
 39 65 L CallExpression 66 109 -
 127 153 L ParenthesizedExpression 154 203 -
 221 247 L CallExpression 248 296 -
+casts/what-is-awaited-in-a-cast-before-a-member.js
+29 45 L MemberExpression 46 151 -
+155 171 L ExpressionStatement 172 283 -
+287 303 L ExpressionStatement 304 415 -
+419 435 L ExpressionStatement 436 548 -
+556 572 L MemberExpression 573 681 -
 classes/comment-before-a-stray-semicolon.js
 21 31 L ClassMethod 39 45 -
 49 59 L ClassMethod 66 72 -

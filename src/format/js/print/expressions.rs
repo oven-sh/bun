@@ -14,7 +14,7 @@ use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
-use crate::js::utils::typecast::has_comments_that_count;
+use crate::js::utils::typecast::{has_comments_that_count, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 
@@ -304,7 +304,8 @@ pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mu
         AstNodes::NewExpression(new) => new.callee() == Some(e) && f.options().flavor.is_oxfmt(),
         _ => false,
     };
-    if !is_callee_or_object {
+    // `/** @type {A} */ (await a).b`: the parent is the `ParenthesizedExpression`, which indents what is in it.
+    if !is_callee_or_object || is_cast_target_that_hides_its_kind(e, f) {
         return write!(f, format_inner);
     }
 

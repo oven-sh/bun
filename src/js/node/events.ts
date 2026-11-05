@@ -59,7 +59,7 @@ let FixedQueue: typeof import("internal/fixed_queue").default.FixedQueue | undef
 const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
-let warnOfTooManyListeners: $BunModules["internal/max_listeners_warning"] | undefined;
+let warnOfTooManyListeners: $BunModules["internal/max_listeners_warning"]["warnOfTooManyListeners"] | undefined;
 
 // `process` keeps its listeners in native code, which reads the default from this slot. Without the slot it is 10.
 function setDefaultMaxListeners(n: number) {
@@ -577,7 +577,12 @@ function _addListener(target: $Node.EventEmitter, type: $Node.EventName, fn: $No
   if (m > 0 && handlers.length > m && !(handlers as ListenerList).warned) {
     ("unlikely");
     (handlers as ListenerList).warned = true;
-    (warnOfTooManyListeners ??= require("internal/max_listeners_warning"))(target, type, handlers.length, m);
+    (warnOfTooManyListeners ??= require("internal/max_listeners_warning").warnOfTooManyListeners)(
+      target,
+      type,
+      handlers.length,
+      m,
+    );
   }
 }
 

@@ -6,9 +6,11 @@ import {
   coercesEnvironmentValueCell,
   drainMicrotasksCell,
   editsWindowsEnvironmentCell,
+  emitterOverLimitCell,
   emitsProcessEventCell,
   emitsWarningCell,
   environmentCell,
+  eventOverLimitCell,
   featuresCell,
   flushesDirectStreamCell,
   handedWarningsCell,
@@ -33,7 +35,6 @@ import {
   throwsWarningCell,
   tickShownToHooksCell,
   versionsCell,
-  warnsOfTooManyListenersCell,
   windowsEnvironmentNamesCell,
   windowsEnvironmentStorageCell,
   writeWarningCell,
@@ -62,11 +63,22 @@ const standardStreamModulesThatTestsCanWatch = standardStreamModules.map(load =>
 
 const methodsAddingListeners = ["addListener", "on", "once", "prependListener", "prependOnceListener"];
 
-// JSEventEmitter::addListener is behind all five, and its one BUN_REQUIRE_INTERNAL_MODULE names `on`. The rows of the methods say what the function is called with.
+// JSEventEmitter::addListener is behind all five, and its one BUN_REQUIRE_INTERNAL_MODULE names `on`.
+// It calls the function with the emitter, the event, the number of listeners and the limit as a string. The rows of the methods say what the two cells hold.
 const warningOfTooManyListeners: readonly b.ModuleLoadSpec[] = [
   {
     module: "internal/max_listeners_warning",
-    exports: [b.exportRead("default", b.keptIn(warnsOfTooManyListenersCell))],
+    exports: [
+      b.exportRead(
+        "warnOfTooManyListeners",
+        b.calledByHost({
+          times: "Repeatedly",
+          this: b.undefined,
+          args: [b.nativeCell(emitterOverLimitCell), b.nativeCell(eventOverLimitCell), b.f64, b.string],
+          result: b.dropped,
+        }),
+      ),
+    ],
   },
 ];
 

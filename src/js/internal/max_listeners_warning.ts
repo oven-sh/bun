@@ -9,7 +9,7 @@ interface MaxListenersExceededWarning extends Error {
   count?: number;
 }
 
-export default function warnOfTooManyListeners(emitter: unknown, type: unknown, count: number, limit: unknown) {
+function warnOfTooManyListeners(emitter: unknown, type: unknown, count: number, limit: unknown) {
   // node's printer calls `process` [process]. Here its constructor is named EventEmitter, and the printer is a large module.
   const label =
     emitter === process ? "[process]" : (inspect ??= require("internal/util/inspect").inspect)(emitter, { depth: -1 });
@@ -22,3 +22,5 @@ export default function warnOfTooManyListeners(emitter: unknown, type: unknown, 
   warning.count = count;
   process.emitWarning(warning);
 }
+
+export default { warnOfTooManyListeners };

@@ -294,15 +294,20 @@ static void warnIfOverMaxListeners(JSGlobalObject* lexicalGlobalObject, JSEventE
         return;
 
     auto* globalObject = wrapper.globalObject();
-    JSValue warn = BUN_REQUIRE_INTERNAL_MODULE(globalObject, InternalMaxListenersWarning, "%EventEmitter%.prototype.on", "default"_s);
+    JSValue module = BUN_REQUIRE_INTERNAL_MODULE(globalObject, InternalMaxListenersWarning, "%EventEmitter%.prototype.on", "warnOfTooManyListeners"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue warn = module.get(globalObject, Identifier::fromString(vm, "warnOfTooManyListeners"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    // The limit goes as the text that `${m}` makes of it: the table of built-ins says so of this call.
+    JSString* limitText = limit.toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, void());
     MarkedArgumentBuffer arguments;
     arguments.append(emitter);
     arguments.append(type);
     arguments.append(jsNumber(count));
-    arguments.append(limit);
+    arguments.append(limitText);
     ASSERT(!arguments.hasOverflowed());
-    JSC::call(globalObject, warn, arguments, "internal/max_listeners_warning exports no function"_s);
+    JSC::call(globalObject, warn, arguments, "internal/max_listeners_warning exports no warnOfTooManyListeners"_s);
     RETURN_IF_EXCEPTION(scope, void());
 }
 

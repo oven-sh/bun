@@ -40,7 +40,8 @@ impl<'a> ObjectLike<'a> {
                 .func()
                 .is_some_and(|func| should_hug_function_parameters(func, false, f)),
             AstNodes::TSThisParameter(param) => param.func().is_some_and(|func| {
-                matches!(func.as_ast_nodes(), AstNodes::Function(_))
+                (!f.options().flavor.is_oxfmt()
+                    || matches!(func.as_ast_nodes(), AstNodes::Function(_)))
                     && should_hug_function_parameters(func, false, f)
             }),
             _ => false,

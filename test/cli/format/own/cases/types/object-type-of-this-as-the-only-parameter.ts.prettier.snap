@@ -1,0 +1,61 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = (this: { a: string }) => void;
+interface B {
+  (this: { a: string }): void;
+  new (this: { a: string }): void;
+  m(this: { a: string }): void;
+}
+declare function c(this: { a: string }): void;
+abstract class D {
+  abstract m(this: { a: string }): void;
+  n(this: { a: string }) {}
+}
+type E = (this: {
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: string;
+  cccccccccccccccc: number;
+}) => void;
+type F = (this: {
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string;
+}) => Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | null;
+interface G {
+  (this: {
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string;
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: string;
+    cccccccccccccccc: number;
+  }): void;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = (this: { a: string }) => void;
+interface B {
+  (this: { a: string }): void;
+  new (this: { a: string }): void;
+  m(this: { a: string }): void;
+}
+declare function c(this: { a: string }): void;
+abstract class D {
+  abstract m(this: { a: string }): void;
+  n(this: { a: string }) {}
+}
+type E = (this: {
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: string;
+  cccccccccccccccc: number;
+}) => void;
+type F = (this: {
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string;
+}) => Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | null;
+interface G {
+  (this: {
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string;
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: string;
+    cccccccccccccccc: number;
+  }): void;
+}
+
+===================== End =====================

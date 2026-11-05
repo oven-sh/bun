@@ -1,0 +1,20 @@
+status: 0
+script: d8e140ba0785d7e2
+source: d97398215397e5fc
+---
+generator_raises_again_after_a_yield KeyError [(2, 6, False)]
+generator_raises_again KeyError [(2, 5, False)]
+function_raises_again KeyError [(2, 5, False)]
+generator_raises_the_name_after_a_yield KeyError [(5, 5, True), (2, 5, False)]
+generator_yields_in_a_finally_clause KeyError [(2, 5, False)]
+raise_in_except_star_in_a_try ValueError [(6, 8, False)]
+raises_again_in_except_star ExceptionGroup [(3, None, False)]
+except_star_that_does_not_match KeyError [(2, None, False)]
+raise_in_except_star_in_a_handler ValueError [(8, None, False)]
+raises_again_in_except_star_in_a_handler ExceptionGroup [(6, None, False)]
+raise_in_a_handler_in_a_handler ValueError [(8, 8, True)]
+except_star_that_does_not_match_in_a_handler KeyError [(5, None, False)]
+raise_in_except_star_in_a_finally_clause ValueError [(8, None, False)]
+raise_in_except_star_in_a_with ValueError [(6, None, False)]
+raise_in_except_star ValueError [(5, None, False)]
+raise_in_except_star_in_a_handler_with_a_name ValueError [(7, None, False)]

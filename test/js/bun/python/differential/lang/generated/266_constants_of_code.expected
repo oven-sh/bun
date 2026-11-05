@@ -1,0 +1,1344 @@
+status: 0
+script: 7ab8993b3521cff1
+source: 71897750eb585790
+---
+'a = (1, 2)\nb = (1, 2)\nr = a is b'
+ <module> [1, (1, 2)] ('a', 'b', 'r')
+   r = True
+'def f():\n a = (1, 2)\n b = (1, 2)\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1, (1, 2)] ()
+   r = True
+'a = (1, 2)\nb = (1.0, 2)\nr = a is b'
+ <module> [1, (1, 2), (1.0, 2)] ('a', 'b', 'r')
+   r = False
+'def f():\n a = (1, 2)\n b = (1.0, 2)\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1, (1, 2), (1.0, 2)] ()
+   r = False
+'a = (1, 2)\nb = (True, 2)\nr = a is b'
+ <module> [1, (1, 2), (True, 2)] ('a', 'b', 'r')
+   r = False
+'def f():\n a = (1, 2)\n b = (True, 2)\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1, (1, 2), (True, 2)] ()
+   r = False
+"a = b'ab'\nb = b'ab'\nr = a is b"
+ <module> [b'ab'] ('a', 'b', 'r')
+   r = True
+"def f():\n a = b'ab'\n b = b'ab'\n return a is b\nr = f()"
+ <module> ['<code>'] ('f', 'r')
+   f [b'ab'] ()
+   r = True
+"a = 'ab'\nb = b'ab'\nr = a is b"
+ <module> ['ab', b'ab'] ('a', 'b', 'r')
+   r = False
+"def f():\n a = 'ab'\n b = b'ab'\n return a is b\nr = f()"
+ <module> ['<code>'] ('f', 'r')
+   f ['ab', b'ab'] ()
+   r = False
+'a = 1j\nb = 1j\nr = a is b'
+ <module> [1j] ('a', 'b', 'r')
+   r = True
+'def f():\n a = 1j\n b = 1j\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1j] ()
+   r = True
+'a = 0j\nb = -0j\nr = a is b'
+ <module> [0j, (-0-0j)] ('a', 'b', 'r')
+   r = False
+'def f():\n a = 0j\n b = -0j\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [0j, (-0-0j)] ()
+   r = False
+'a = 1.5\nb = 1.5\nr = a is b'
+ <module> [1.5] ('a', 'b', 'r')
+   r = True
+'def f():\n a = 1.5\n b = 1.5\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1.5] ()
+   r = True
+'a = 1.0\nb = 1.0\nr = a is b'
+ <module> [1.0] ('a', 'b', 'r')
+   r = True
+'def f():\n a = 1.0\n b = 1.0\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1.0] ()
+   r = True
+'a = 1.0\nb = 1\nr = a is b'
+ <module> [1.0] ('a', 'b', 'r')
+   r = False
+'def f():\n a = 1.0\n b = 1\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1.0] ()
+   r = False
+'a = 0.0\nb = -0.0\nr = a is b'
+ <module> [0.0, -0.0] ('a', 'b', 'r')
+   r = False
+'def f():\n a = 0.0\n b = -0.0\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [0.0, -0.0] ()
+   r = False
+'a = 10**30\nb = 10**30\nr = a is b'
+ <module> [10, 1000000000000000000000000000000] ('a', 'b', 'r')
+   r = True
+'def f():\n a = 10**30\n b = 10**30\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [10, 1000000000000000000000000000000] ()
+   r = True
+'a = 1000\nb = 1000\nr = a is b'
+ <module> [1000] ('a', 'b', 'r')
+   r = True
+'def f():\n a = 1000\n b = 1000\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1000] ()
+   r = True
+'a = 2**70\nb = 1180591620717411303424\nr = a is b'
+ <module> [2, 1180591620717411303424] ('a', 'b', 'r')
+   r = False
+'def f():\n a = 2**70\n b = 1180591620717411303424\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [2, 1180591620717411303424] ()
+   r = False
+'a = (1, (2, 3))\nb = (1, (2, 3))\nr = a is b'
+ <module> [1, (1, (2, 3))] ('a', 'b', 'r')
+   r = True
+'def f():\n a = (1, (2, 3))\n b = (1, (2, 3))\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1, (1, (2, 3))] ()
+   r = True
+'a = ((), ())\nb = ((), ())\nr = a is b'
+ <module> [None, ((), ())] ('a', 'b', 'r')
+   r = True
+'def f():\n a = ((), ())\n b = ((), ())\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [None, ((), ())] ()
+   r = True
+'a = ()\nb = ()\nr = a is b'
+ <module> [None, ()] ('a', 'b', 'r')
+   r = True
+'def f():\n a = ()\n b = ()\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [None, ()] ()
+   r = True
+'a = (0.0,)\nb = (-0.0,)\nr = a is b'
+ <module> [0.0, (0.0,), (-0.0,)] ('a', 'b', 'r')
+   r = False
+'def f():\n a = (0.0,)\n b = (-0.0,)\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [0.0, (0.0,), (-0.0,)] ()
+   r = False
+"a = ('a', b'a')\nb = ('a', b'a')\nr = a is b"
+ <module> ['a', ('a', b'a')] ('a', 'b', 'r')
+   r = True
+"def f():\n a = ('a', b'a')\n b = ('a', b'a')\n return a is b\nr = f()"
+ <module> ['<code>'] ('f', 'r')
+   f ['a', ('a', b'a')] ()
+   r = True
+'a = (None, ...)\nb = (None, ...)\nr = a is b'
+ <module> [None, (None, Ellipsis)] ('a', 'b', 'r')
+   r = True
+'def f():\n a = (None, ...)\n b = (None, ...)\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [None, (None, Ellipsis)] ()
+   r = True
+"a = 'a' 'b'\nb = 'ab'\nr = a is b"
+ <module> ['ab'] ('a', 'b', 'r')
+   r = True
+"def f():\n a = 'a' 'b'\n b = 'ab'\n return a is b\nr = f()"
+ <module> ['<code>'] ('f', 'r')
+   f ['ab'] ()
+   r = True
+"a = 'a' + 'b'\nb = 'ab'\nr = a is b"
+ <module> ['a', 'ab'] ('a', 'b', 'r')
+   r = True
+"def f():\n a = 'a' + 'b'\n b = 'ab'\n return a is b\nr = f()"
+ <module> ['<code>'] ('f', 'r')
+   f ['a', 'ab'] ()
+   r = True
+'a = (1,) + (2,)\nb = (1, 2)\nr = a is b'
+ <module> [1, (1, 2)] ('a', 'b', 'r')
+   r = True
+'def f():\n a = (1,) + (2,)\n b = (1, 2)\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1, (1, 2)] ()
+   r = True
+'a = 1e400\nb = 1e400\nr = a is b'
+ <module> [inf] ('a', 'b', 'r')
+   r = True
+'def f():\n a = 1e400\n b = 1e400\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [inf] ()
+   r = True
+'a = (1e400 - 1e400,)\nb = (1e400 - 1e400,)\nr = a is b'
+ <module> [inf, (nan,), (nan,)] ('a', 'b', 'r')
+   r = False
+'def f():\n a = (1e400 - 1e400,)\n b = (1e400 - 1e400,)\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [inf, (nan,), (nan,)] ()
+   r = False
+'a = -1\nb = -1\nr = a is b'
+ <module> [1] ('a', 'b', 'r')
+   r = True
+'def f():\n a = -1\n b = -1\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1] ()
+   r = True
+'a = -1000\nb = -1000\nr = a is b'
+ <module> [1000, -1000] ('a', 'b', 'r')
+   r = True
+'def f():\n a = -1000\n b = -1000\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1000, -1000] ()
+   r = True
+'a = -1.5\nb = -1.5\nr = a is b'
+ <module> [1.5, -1.5] ('a', 'b', 'r')
+   r = True
+'def f():\n a = -1.5\n b = -1.5\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1.5, -1.5] ()
+   r = True
+'a = 1 + 2j\nb = 1 + 2j\nr = a is b'
+ <module> [1, (1+2j)] ('a', 'b', 'r')
+   r = True
+'def f():\n a = 1 + 2j\n b = 1 + 2j\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1, (1+2j)] ()
+   r = True
+"a = b'a' * 3\nb = b'aaa'\nr = a is b"
+ <module> [b'a', b'aaa'] ('a', 'b', 'r')
+   r = True
+"def f():\n a = b'a' * 3\n b = b'aaa'\n return a is b\nr = f()"
+ <module> ['<code>'] ('f', 'r')
+   f [b'a', b'aaa'] ()
+   r = True
+'a = (1, 2)[:1]\nb = (1,)\nr = a is b'
+ <module> [1, (1,)] ('a', 'b', 'r')
+   r = True
+'def f():\n a = (1, 2)[:1]\n b = (1,)\n return a is b\nr = f()'
+ <module> ['<code>'] ('f', 'r')
+   f [1, (1,)] ()
+   r = True
+'def f(x):\n return x in {1, 2, 3}, x in {3, 2, 1}, x in {1, 2, 3}\n'
+ <module> ['<code>'] ('f',)
+   f [1, frozenset({1, 2, 3})] ()
+'def f(x):\n return x in {1, 2, 3}, x in {1.0, 2, 3}\n'
+ <module> ['<code>'] ('f',)
+   f [1, frozenset({1, 2, 3}), frozenset({1.0, 2, 3})] ()
+'def f(x):\n return x in [1, 2, 3], x in (1, 2, 3)\n'
+ <module> ['<code>'] ('f',)
+   f [1, (1, 2, 3)] ()
+'x = {1000, 2000, 3000, 4000}\ny = {1000, 2000, 3000, 4000}'
+ <module> [1000, frozenset({1000, 4000, 3000, 2000})] ('x', 'y')
+'def f():\n for x in (1, 2): pass\n for y in [1, 2]: pass\n'
+ <module> ['<code>'] ('f',)
+   f [1, (1, 2)] ()
+'def f(**k): pass\nf(a=1, b=2)\nf(a=3, b=4)\n'
+ <module> ['<code>', ('a', 'b')] ('f',)
+   f [None] ()
+"t = ('a', 'b')\nu = ('a', 'b')"
+ <module> ['a', ('a', 'b')] ('t', 'u')
+'match x:\n case (1, 2): pass\n'
+ <module> [2] ('x',)
+'def f(x):\n match x:\n  case (1, 2): return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000] ()
+'def f(x):\n match x:\n  case (1, 2) if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, 6000] ('g',)
+'match x:\n case [a, b]: pass\n'
+ <module> [2] ('x', 'a', 'b')
+'def f(x):\n match x:\n  case [a, b]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000] ()
+'def f(x):\n match x:\n  case [a, b] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, 6000] ('g',)
+'match x:\n case [a, *b]: pass\n'
+ <module> [1] ('x', 'a', 'b')
+'def f(x):\n match x:\n  case [a, *b]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000] ()
+'def f(x):\n match x:\n  case [a, *b] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000, 6000] ('g',)
+'match x:\n case [a, *_]: pass\n'
+ <module> [1] ('x', 'a')
+'def f(x):\n match x:\n  case [a, *_]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000] ()
+'def f(x):\n match x:\n  case [a, *_] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000, 6000] ('g',)
+'match x:\n case [a, *_, b]: pass\n'
+ <module> [2] ('x', 'a', 'b')
+'def f(x):\n match x:\n  case [a, *_, b]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000] ()
+'def f(x):\n match x:\n  case [a, *_, b] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, 6000] ('g',)
+'match x:\n case [*_, a, b]: pass\n'
+ <module> [2] ('x', 'a', 'b')
+'def f(x):\n match x:\n  case [*_, a, b]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000] ()
+'def f(x):\n match x:\n  case [*_, a, b] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, 6000] ('g',)
+'match x:\n case [*_]: pass\n'
+ <module> [None] ('x',)
+'def f(x):\n match x:\n  case [*_]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [5000] ()
+'def f(x):\n match x:\n  case [*_] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [5000, 6000] ('g',)
+'match x:\n case [*a]: pass\n'
+ <module> [None] ('x', 'a')
+'def f(x):\n match x:\n  case [*a]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [5000] ()
+'def f(x):\n match x:\n  case [*a] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [5000, 6000] ('g',)
+'match x:\n case []: pass\n'
+ <module> [0] ('x',)
+'def f(x):\n match x:\n  case []: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [0, 5000] ()
+'def f(x):\n match x:\n  case [] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [0, 5000, 6000] ('g',)
+'match x:\n case [_, _]: pass\n'
+ <module> [2] ('x',)
+'def f(x):\n match x:\n  case [_, _]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000] ()
+'def f(x):\n match x:\n  case [_, _] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, 6000] ('g',)
+'match x:\n case [1000, *_, 2000]: pass\n'
+ <module> [2, 1000, 2000] ('x',)
+'def f(x):\n match x:\n  case [1000, *_, 2000]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 1000, 2000, 5000] ()
+'def f(x):\n match x:\n  case [1000, *_, 2000] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 1000, 2000, 5000, 6000] ('g',)
+'match x:\n case {}: pass\n'
+ <module> [None] ('x',)
+'def f(x):\n match x:\n  case {}: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [5000] ()
+'def f(x):\n match x:\n  case {} if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [5000, 6000] ('g',)
+"match x:\n case {'k': v}: pass\n"
+ <module> [1, ('k',)] ('x', 'v')
+"def f(x):\n match x:\n  case {'k': v}: return 5000\n"
+ <module> ['<code>'] ('f',)
+   f [1, 5000, ('k',)] ()
+"def f(x):\n match x:\n  case {'k': v} if g(): return 5000\n  case _: return 6000\n"
+ <module> ['<code>'] ('f',)
+   f [1, 5000, 6000, ('k',)] ('g',)
+"match x:\n case {'k': 1, 'j': 2}: pass\n"
+ <module> [2, ('k', 'j')] ('x',)
+"def f(x):\n match x:\n  case {'k': 1, 'j': 2}: return 5000\n"
+ <module> ['<code>'] ('f',)
+   f [2, 5000, ('k', 'j')] ()
+"def f(x):\n match x:\n  case {'k': 1, 'j': 2} if g(): return 5000\n  case _: return 6000\n"
+ <module> ['<code>'] ('f',)
+   f [2, 5000, 6000, ('k', 'j')] ('g',)
+"match x:\n case {'k': v, **r}: pass\n"
+ <module> [1, ('k',)] ('x', 'v', 'r')
+"def f(x):\n match x:\n  case {'k': v, **r}: return 5000\n"
+ <module> ['<code>'] ('f',)
+   f [1, 5000, ('k',)] ()
+"def f(x):\n match x:\n  case {'k': v, **r} if g(): return 5000\n  case _: return 6000\n"
+ <module> ['<code>'] ('f',)
+   f [1, 5000, 6000, ('k',)] ('g',)
+'match x:\n case {**r}: pass\n'
+ <module> [None, ()] ('x', 'r')
+'def f(x):\n match x:\n  case {**r}: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [None, 5000, ()] ()
+'def f(x):\n match x:\n  case {**r} if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [None, 5000, 6000, ()] ('g',)
+'match x:\n case {K.a: 1}: pass\n'
+ <module> [1] ('x', 'K', 'a')
+'def f(x):\n match x:\n  case {K.a: 1}: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000] ('K', 'a')
+'def f(x):\n match x:\n  case {K.a: 1} if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000, 6000] ('K', 'a', 'g')
+'match x:\n case {1000: a, 2000: b}: pass\n'
+ <module> [2, (1000, 2000)] ('x', 'a', 'b')
+'def f(x):\n match x:\n  case {1000: a, 2000: b}: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, (1000, 2000)] ()
+'def f(x):\n match x:\n  case {1000: a, 2000: b} if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, 6000, (1000, 2000)] ('g',)
+'match x:\n case C(): pass\n'
+ <module> [()] ('x', 'C')
+'def f(x):\n match x:\n  case C(): return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [(), 5000] ('C',)
+'def f(x):\n match x:\n  case C() if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [(), 5000, 6000] ('C', 'g')
+'match x:\n case C(a): pass\n'
+ <module> [()] ('x', 'C', 'a')
+'def f(x):\n match x:\n  case C(a): return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [(), 5000] ('C',)
+'def f(x):\n match x:\n  case C(a) if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [(), 5000, 6000] ('C', 'g')
+'match x:\n case C(a, b): pass\n'
+ <module> [()] ('x', 'C', 'a', 'b')
+'def f(x):\n match x:\n  case C(a, b): return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [(), 5000] ('C',)
+'def f(x):\n match x:\n  case C(a, b) if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [(), 5000, 6000] ('C', 'g')
+'match x:\n case C(x=a): pass\n'
+ <module> [('x',)] ('x', 'C', 'a')
+'def f(x):\n match x:\n  case C(x=a): return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [('x',), 5000] ('C',)
+'def f(x):\n match x:\n  case C(x=a) if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [('x',), 5000, 6000] ('C', 'g')
+'match x:\n case C(a, x=b, y=c): pass\n'
+ <module> [('x', 'y')] ('x', 'C', 'a', 'b', 'c')
+'def f(x):\n match x:\n  case C(a, x=b, y=c): return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [('x', 'y'), 5000] ('C',)
+'def f(x):\n match x:\n  case C(a, x=b, y=c) if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [('x', 'y'), 5000, 6000] ('C', 'g')
+'match x:\n case C(x=1000): pass\n'
+ <module> [('x',), 1000] ('x', 'C')
+'def f(x):\n match x:\n  case C(x=1000): return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [('x',), 1000, 5000] ('C',)
+'def f(x):\n match x:\n  case C(x=1000) if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [('x',), 1000, 5000, 6000] ('C', 'g')
+'match x:\n case None: pass\n'
+ <module> [None] ('x',)
+'def f(x):\n match x:\n  case None: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [None, 5000] ()
+'def f(x):\n match x:\n  case None if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [None, 5000, 6000] ('g',)
+'match x:\n case True: pass\n'
+ <module> [True] ('x',)
+'def f(x):\n match x:\n  case True: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [True, 5000] ()
+'def f(x):\n match x:\n  case True if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [True, 5000, 6000] ('g',)
+'match x:\n case False: pass\n'
+ <module> [False] ('x',)
+'def f(x):\n match x:\n  case False: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [False, 5000] ()
+'def f(x):\n match x:\n  case False if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [False, 5000, 6000] ('g',)
+'match x:\n case 1000: pass\n'
+ <module> [1000] ('x',)
+'def f(x):\n match x:\n  case 1000: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [1000, 5000] ()
+'def f(x):\n match x:\n  case 1000 if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [1000, 5000, 6000] ('g',)
+"match x:\n case 's': pass\n"
+ <module> ['s'] ('x',)
+"def f(x):\n match x:\n  case 's': return 5000\n"
+ <module> ['<code>'] ('f',)
+   f ['s', 5000] ()
+"def f(x):\n match x:\n  case 's' if g(): return 5000\n  case _: return 6000\n"
+ <module> ['<code>'] ('f',)
+   f ['s', 5000, 6000] ('g',)
+'match x:\n case -1000: pass\n'
+ <module> [-1000] ('x',)
+'def f(x):\n match x:\n  case -1000: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [-1000, 5000] ()
+'def f(x):\n match x:\n  case -1000 if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [-1000, 5000, 6000] ('g',)
+'match x:\n case 1 + 2j: pass\n'
+ <module> [(1+2j)] ('x',)
+'def f(x):\n match x:\n  case 1 + 2j: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [(1+2j), 5000] ()
+'def f(x):\n match x:\n  case 1 + 2j if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [(1+2j), 5000, 6000] ('g',)
+'match x:\n case K.a: pass\n'
+ <module> [None] ('x', 'K', 'a')
+'def f(x):\n match x:\n  case K.a: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [5000] ('K', 'a')
+'def f(x):\n match x:\n  case K.a if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [5000, 6000] ('K', 'a', 'g')
+'match x:\n case a: pass\n'
+ <module> [None] ('x', 'a')
+'def f(x):\n match x:\n  case a: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [5000] ()
+'def f(x):\n match x:\n  case a if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [5000, 6000] ('g',)
+'match x:\n case _: pass\n'
+ <module> [None] ('x',)
+'def f(x):\n match x:\n  case _: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [5000] ()
+'def f(x):\n match x:\n  case _ if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [5000, 6000] ('g',)
+'match x:\n case 1000 | 2000: pass\n'
+ <module> [1000, 2000] ('x',)
+'def f(x):\n match x:\n  case 1000 | 2000: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [1000, 2000, 5000] ()
+'def f(x):\n match x:\n  case 1000 | 2000 if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [1000, 2000, 5000, 6000] ('g',)
+'match x:\n case (1000 | 2000) as z: pass\n'
+ <module> [1000, 2000] ('x', 'z')
+'def f(x):\n match x:\n  case (1000 | 2000) as z: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [1000, 2000, 5000] ()
+'def f(x):\n match x:\n  case (1000 | 2000) as z if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [1000, 2000, 5000, 6000] ('g',)
+'match x:\n case [a, [b, c]]: pass\n'
+ <module> [2] ('x', 'a', 'b', 'c')
+'def f(x):\n match x:\n  case [a, [b, c]]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000] ()
+'def f(x):\n match x:\n  case [a, [b, c]] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, 6000] ('g',)
+'match x:\n case [1000, [2000, *_, 3000]]: pass\n'
+ <module> [2, 1000, 2000, 3000] ('x',)
+'def f(x):\n match x:\n  case [1000, [2000, *_, 3000]]: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 1000, 2000, 3000, 5000] ()
+'def f(x):\n match x:\n  case [1000, [2000, *_, 3000]] if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 1000, 2000, 3000, 5000, 6000] ('g',)
+"match x:\n case b'x': pass\n"
+ <module> [b'x'] ('x',)
+"def f(x):\n match x:\n  case b'x': return 5000\n"
+ <module> ['<code>'] ('f',)
+   f [b'x', 5000] ()
+"def f(x):\n match x:\n  case b'x' if g(): return 5000\n  case _: return 6000\n"
+ <module> ['<code>'] ('f',)
+   f [b'x', 5000, 6000] ('g',)
+'match x:\n case 1.5: pass\n'
+ <module> [1.5] ('x',)
+'def f(x):\n match x:\n  case 1.5: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [1.5, 5000] ()
+'def f(x):\n match x:\n  case 1.5 if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [1.5, 5000, 6000] ('g',)
+'match x:\n case -1.5: pass\n'
+ <module> [-1.5] ('x',)
+'def f(x):\n match x:\n  case -1.5: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [-1.5, 5000] ()
+'def f(x):\n match x:\n  case -1.5 if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [-1.5, 5000, 6000] ('g',)
+'match x:\n case {-1: a}: pass\n'
+ <module> [1, (-1,)] ('x', 'a')
+'def f(x):\n match x:\n  case {-1: a}: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000, (-1,)] ()
+'def f(x):\n match x:\n  case {-1: a} if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000, 6000, (-1,)] ('g',)
+'match x:\n case {1 + 2j: a}: pass\n'
+ <module> [1, ((1+2j),)] ('x', 'a')
+'def f(x):\n match x:\n  case {1 + 2j: a}: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000, ((1+2j),)] ()
+'def f(x):\n match x:\n  case {1 + 2j: a} if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [1, 5000, 6000, ((1+2j),)] ('g',)
+'match x:\n case {None: a, True: b}: pass\n'
+ <module> [2, (None, True)] ('x', 'a', 'b')
+'def f(x):\n match x:\n  case {None: a, True: b}: return 5000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, (None, True)] ()
+'def f(x):\n match x:\n  case {None: a, True: b} if g(): return 5000\n  case _: return 6000\n'
+ <module> ['<code>'] ('f',)
+   f [2, 5000, 6000, (None, True)] ('g',)
+'def g():\n ()\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'()'
+ <module> [None] ()
+'def g():\n (1, 2)\n'
+ <module> ['<code>'] ('g',)
+   g [1] ()
+'(1, 2)'
+ <module> [1] ()
+'def g():\n (1000, 2000)\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'(1000, 2000)'
+ <module> [1000] ()
+'def g():\n 1 + 2\n'
+ <module> ['<code>'] ('g',)
+   g [1] ()
+'1 + 2'
+ <module> [1] ()
+'def g():\n 1000 + 2000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'1000 + 2000'
+ <module> [1000] ()
+'def g():\n __debug__\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'__debug__'
+ <module> [None] ()
+'def g():\n not 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'not 1000'
+ <module> [1000] ()
+'def g():\n -1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'-1000'
+ <module> [1000] ()
+"def g():\n 'a' 'b'\n"
+ <module> ['<code>'] ('g',)
+   g ['ab'] ()
+"'a' 'b'"
+ <module> ['ab'] ('__doc__',)
+"def g():\n 'a' + 'b'\n"
+ <module> ['<code>'] ('g',)
+   g ['a'] ()
+"'a' + 'b'"
+ <module> ['a'] ()
+'def g():\n []\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'[]'
+ <module> [None] ()
+'def g():\n [1000]\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'[1000]'
+ <module> [1000] ()
+'def g():\n {1000}\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'{1000}'
+ <module> [1000] ()
+'def g():\n 1000 if t() else 2000\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 2000] ('t',)
+'1000 if t() else 2000'
+ <module> [1000, 2000] ('t',)
+'def g():\n 1000 and 2000\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 2000] ()
+'1000 and 2000'
+ <module> [1000, 2000] ()
+'def g():\n 1000 or 2000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'1000 or 2000'
+ <module> [1000] ()
+'def g():\n t() is None\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t',)
+'t() is None'
+ <module> [None] ('t',)
+'def g():\n t() is not None\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t',)
+'t() is not None'
+ <module> [None] ('t',)
+'def g():\n None is None\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'None is None'
+ <module> [None] ()
+'def g():\n x = t() is None\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t',)
+'x = t() is None'
+ <module> [None] ('t', 'x')
+'def g():\n x = t() is not None\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t',)
+'x = t() is not None'
+ <module> [None] ('t', 'x')
+'def g():\n x = None is t()\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t',)
+'x = None is t()'
+ <module> [None] ('t', 'x')
+'def g():\n return t() is None\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t',)
+'def g():\n x = 1000 and t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'x = 1000 and t()'
+ <module> [1000] ('t', 'x')
+'def g():\n x = 0 and t()\n'
+ <module> ['<code>'] ('g',)
+   g [0] ('t',)
+'x = 0 and t()'
+ <module> [0] ('t', 'x')
+'def g():\n x = 1000 or t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'x = 1000 or t()'
+ <module> [1000] ('t', 'x')
+'def g():\n x = 0 or t()\n'
+ <module> ['<code>'] ('g',)
+   g [0] ('t',)
+'x = 0 or t()'
+ <module> [0] ('t', 'x')
+'def g():\n x = t() and 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'x = t() and 1000'
+ <module> [1000] ('t', 'x')
+'def g():\n x = t() and 1000 and u()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t', 'u')
+'x = t() and 1000 and u()'
+ <module> [1000] ('t', 'u', 'x')
+'def g():\n x = t() or 1000 and u()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t', 'u')
+'x = t() or 1000 and u()'
+ <module> [1000] ('t', 'u', 'x')
+'def g():\n x = 1000 and 2000 and t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'x = 1000 and 2000 and t()'
+ <module> [1000] ('t', 'x')
+'def g():\n x = (1000 and 2000) or t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 2000] ('t',)
+'x = (1000 and 2000) or t()'
+ <module> [1000, 2000] ('t', 'x')
+'def g():\n x = __debug__ and t()\n'
+ <module> ['<code>'] ('g',)
+   g [True] ('t',)
+'x = __debug__ and t()'
+ <module> [True] ('t', 'x')
+'def g():\n x = t() and __debug__ and u()\n'
+ <module> ['<code>'] ('g',)
+   g [True] ('t', 'u')
+'x = t() and __debug__ and u()'
+ <module> [True] ('t', 'u', 'x')
+'def g():\n x = not 1000 and t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'x = not 1000 and t()'
+ <module> [1000] ('t', 'x')
+'def g():\n x = () and t()\n'
+ <module> ['<code>'] ('g',)
+   g [None, ()] ('t',)
+'x = () and t()'
+ <module> [None, ()] ('t', 'x')
+'def g():\n x = (1000,) and t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000, (1000,)] ('t',)
+'x = (1000,) and t()'
+ <module> [1000, (1000,)] ('t', 'x')
+'def g():\n x = 1000 if 2000 else 3000\n'
+ <module> ['<code>'] ('g',)
+   g [2000, 1000] ()
+'x = 1000 if 2000 else 3000'
+ <module> [2000, 1000] ('x',)
+'def g():\n x = 1000 if t() else 3000\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 3000] ('t',)
+'x = 1000 if t() else 3000'
+ <module> [1000, 3000] ('t', 'x')
+'def g():\n x = t() if 1000 else 3000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'x = t() if 1000 else 3000'
+ <module> [1000] ('t', 'x')
+'def g():\n f(1000 and t())\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('f', 't')
+'f(1000 and t())'
+ <module> [1000] ('f', 't')
+'def g():\n x = [1000 and t()]\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'x = [1000 and t()]'
+ <module> [1000] ('t', 'x')
+'def g():\n assert 1000 and t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'assert 1000 and t()'
+ <module> [1000] ('t',)
+'def g():\n assert t(), 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'assert t(), 1000'
+ <module> [1000] ('t',)
+'def g():\n assert 1000, 2000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'assert 1000, 2000'
+ <module> [1000] ()
+'def g():\n assert 0, 2000\n'
+ <module> ['<code>'] ('g',)
+   g [0, 2000] ()
+'assert 0, 2000'
+ <module> [0, 2000] ()
+'def g():\n while 1000: t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'while 1000: t()'
+ <module> [1000] ('t',)
+'def g():\n while 1000 and t(): u()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t', 'u')
+'while 1000 and t(): u()'
+ <module> [1000] ('t', 'u')
+'def g():\n x = 1000 < 2000\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 2000] ()
+'x = 1000 < 2000'
+ <module> [1000, 2000] ('x',)
+'def g():\n x = 1000 < 2000 < t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 2000] ('t',)
+'x = 1000 < 2000 < t()'
+ <module> [1000, 2000] ('t', 'x')
+'def g():\n x = 1000 in (2000, 3000)\n'
+ <module> ['<code>'] ('g',)
+   g [1000, (2000, 3000)] ()
+'x = 1000 in (2000, 3000)'
+ <module> [1000, (2000, 3000)] ('x',)
+'def g():\n x = t() in ()\n'
+ <module> ['<code>'] ('g',)
+   g [None, ()] ('t',)
+'x = t() in ()'
+ <module> [None, ()] ('t', 'x')
+'def g():\n x = t() in []\n'
+ <module> ['<code>'] ('g',)
+   g [None, ()] ('t',)
+'x = t() in []'
+ <module> [None, ()] ('t', 'x')
+'def g():\n x = t() in {1000}\n'
+ <module> ['<code>'] ('g',)
+   g [1000, frozenset({1000})] ('t',)
+'x = t() in {1000}'
+ <module> [1000, frozenset({1000})] ('t', 'x')
+'def g():\n x = t() in {1000, 2000}\n'
+ <module> ['<code>'] ('g',)
+   g [1000, frozenset({1000, 2000})] ('t',)
+'x = t() in {1000, 2000}'
+ <module> [1000, frozenset({1000, 2000})] ('t', 'x')
+'def g():\n for q in (): pass\n'
+ <module> ['<code>'] ('g',)
+   g [None, ()] ()
+'for q in (): pass'
+ <module> [None, ()] ('q',)
+'def g():\n for q in []: pass\n'
+ <module> ['<code>'] ('g',)
+   g [None, ()] ()
+'for q in []: pass'
+ <module> [None, ()] ('q',)
+'def g():\n del x\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'del x'
+ <module> [None] ('x',)
+'def g():\n pass\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'pass'
+ <module> [None] ()
+'def g():\n ...\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'...'
+ <module> [None] ()
+'def g():\n 1000\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'1000'
+ <module> [None] ()
+"def g():\n 'doc'\n"
+ <module> ['<code>'] ('g',)
+   g ['doc'] ()
+"'doc'"
+ <module> ['doc'] ('__doc__',)
+'def g():\n x = ...\n'
+ <module> ['<code>'] ('g',)
+   g [Ellipsis] ()
+'x = ...'
+ <module> [Ellipsis] ('x',)
+"def g():\n x = f'{1000}'\n"
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+"x = f'{1000}'"
+ <module> [1000] ('x',)
+"def g():\n x = f'a{t()}b'\n"
+ <module> ['<code>'] ('g',)
+   g ['a', 'b'] ('t',)
+"x = f'a{t()}b'"
+ <module> ['a', 'b'] ('t', 'x')
+"def g():\n x = f'a' 'b'\n"
+ <module> ['<code>'] ('g',)
+   g ['ab'] ()
+"x = f'a' 'b'"
+ <module> ['ab'] ('x',)
+"def g():\n x = f'{1000!r:>{2000}}'\n"
+ <module> ['<code>'] ('g',)
+   g [1000, '>', 2000] ()
+"x = f'{1000!r:>{2000}}'"
+ <module> [1000, '>', 2000] ('x',)
+'def g():\n x = 1000,\n'
+ <module> ['<code>'] ('g',)
+   g [1000, (1000,)] ()
+'x = 1000,'
+ <module> [1000, (1000,)] ('x',)
+'def g():\n x, y = 1000, 2000\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 2000] ()
+'x, y = 1000, 2000'
+ <module> [1000, 2000] ('x', 'y')
+'def g():\n x, y = y, x\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'x, y = y, x'
+ <module> [None] ('y', 'x')
+'def g():\n x = y = 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'x = y = 1000'
+ <module> [1000] ('x', 'y')
+'def g():\n x += 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'x += 1000'
+ <module> [1000] ('x',)
+'def g():\n x = t()[1000]\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'x = t()[1000]'
+ <module> [1000] ('t', 'x')
+'def g():\n x = t()[1000:2000]\n'
+ <module> ['<code>'] ('g',)
+   g [slice(1000, 2000, None)] ('t',)
+'x = t()[1000:2000]'
+ <module> [slice(1000, 2000, None)] ('t', 'x')
+'def g():\n x = t()[1000:2000:3000]\n'
+ <module> ['<code>'] ('g',)
+   g [slice(1000, 2000, 3000)] ('t',)
+'x = t()[1000:2000:3000]'
+ <module> [slice(1000, 2000, 3000)] ('t', 'x')
+'def g():\n x = t()[:]\n'
+ <module> ['<code>'] ('g',)
+   g [slice(None, None, None)] ('t',)
+'x = t()[:]'
+ <module> [slice(None, None, None)] ('t', 'x')
+'def g():\n x = t()[None:None]\n'
+ <module> ['<code>'] ('g',)
+   g [slice(None, None, None)] ('t',)
+'x = t()[None:None]'
+ <module> [slice(None, None, None)] ('t', 'x')
+'def g():\n x = t()[-1]\n'
+ <module> ['<code>'] ('g',)
+   g [1] ('t',)
+'x = t()[-1]'
+ <module> [1] ('t', 'x')
+'def g():\n t()[1000:2000] = y\n'
+ <module> ['<code>'] ('g',)
+   g [slice(1000, 2000, None)] ('y', 't')
+'t()[1000:2000] = y'
+ <module> [slice(1000, 2000, None)] ('y', 't')
+'def g():\n del t()[1000:2000]\n'
+ <module> ['<code>'] ('g',)
+   g [slice(1000, 2000, None)] ('t',)
+'del t()[1000:2000]'
+ <module> [slice(1000, 2000, None)] ('t',)
+"def g():\n x = 'abc'[1]\n"
+ <module> ['<code>'] ('g',)
+   g ['abc', 'b'] ()
+"x = 'abc'[1]"
+ <module> ['abc', 'b'] ('x',)
+'def g():\n x = (1000, 2000)[0]\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'x = (1000, 2000)[0]'
+ <module> [1000] ('x',)
+'def g():\n x = 2 ** 10\n'
+ <module> ['<code>'] ('g',)
+   g [2, 1024] ()
+'x = 2 ** 10'
+ <module> [2, 1024] ('x',)
+'def g():\n x = 2 ** 1000\n'
+ <module> ['<code>'] ('g',)
+   g [2, 1000] ()
+'x = 2 ** 1000'
+ <module> [2, 1000] ('x',)
+'def g():\n x = 1 << 100\n'
+ <module> ['<code>'] ('g',)
+   g [1, 1267650600228229401496703205376] ()
+'x = 1 << 100'
+ <module> [1, 1267650600228229401496703205376] ('x',)
+"def g():\n x = 'a' * 10\n"
+ <module> ['<code>'] ('g',)
+   g ['a', 'aaaaaaaaaa'] ()
+"x = 'a' * 10"
+ <module> ['a', 'aaaaaaaaaa'] ('x',)
+"def g():\n x = 'a' * 10000\n"
+ <module> ['<code>'] ('g',)
+   g ['a', 10000] ()
+"x = 'a' * 10000"
+ <module> ['a', 10000] ('x',)
+'def g():\n x = (1000,) * 3\n'
+ <module> ['<code>'] ('g',)
+   g [1000, (1000, 1000, 1000)] ()
+'x = (1000,) * 3'
+ <module> [1000, (1000, 1000, 1000)] ('x',)
+'def g():\n x = 1000 // 0\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'x = 1000 // 0'
+ <module> [1000] ('x',)
+'def g():\n x = 10 % 3\n'
+ <module> ['<code>'] ('g',)
+   g [10] ()
+'x = 10 % 3'
+ <module> [10] ('x',)
+"def g():\n x = 'a%s' % 1000\n"
+ <module> ['<code>'] ('g',)
+   g ['a%s', 1000] ()
+"x = 'a%s' % 1000"
+ <module> ['a%s', 1000] ('x',)
+"def g():\n x = '%d %d' % (1000, 2000)\n"
+ <module> ['<code>'] ('g',)
+   g ['%d %d', (1000, 2000)] ()
+"x = '%d %d' % (1000, 2000)"
+ <module> ['%d %d', (1000, 2000)] ('x',)
+'def g():\n x = ~1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000, -1001] ()
+'x = ~1000'
+ <module> [1000, -1001] ('x',)
+'def g():\n x = +1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'x = +1000'
+ <module> [1000] ('x',)
+'def g():\n x = - - 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'x = - - 1000'
+ <module> [1000] ('x',)
+'def g():\n x = not not t()\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t',)
+'x = not not t()'
+ <module> [None] ('t', 'x')
+'def g():\n x = not t() is None\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t',)
+'x = not t() is None'
+ <module> [None] ('t', 'x')
+'def g():\n x = not t() in y\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t', 'y')
+'x = not t() in y'
+ <module> [None] ('t', 'y', 'x')
+'def g():\n raise E(1000)\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('E',)
+'raise E(1000)'
+ <module> [1000] ('E',)
+'def g():\n raise E from None\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('E',)
+'raise E from None'
+ <module> [None] ('E',)
+'def g():\n return\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'def g():\n return None\n'
+ <module> ['<code>'] ('g',)
+   g [None] ()
+'def g():\n return 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'def g():\n return (1000, 2000)\n'
+ <module> ['<code>'] ('g',)
+   g [1000, (1000, 2000)] ()
+'def g():\n return 1000, t()\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t',)
+'def g():\n import m\n'
+ <module> ['<code>'] ('g',)
+   g [0] ('m',)
+'import m'
+ <module> [0] ('m',)
+'def g():\n import m.n as o\n'
+ <module> ['<code>'] ('g',)
+   g [0] ('m.n', 'n')
+'import m.n as o'
+ <module> [0] ('m.n', 'n', 'o')
+'def g():\n from m import a\n'
+ <module> ['<code>'] ('g',)
+   g [0, ('a',)] ('m', 'a')
+'from m import a'
+ <module> [0, ('a',)] ('m', 'a')
+'def g():\n from m import a as b, c\n'
+ <module> ['<code>'] ('g',)
+   g [0, ('a', 'c')] ('m', 'a', 'c')
+'from m import a as b, c'
+ <module> [0, ('a', 'c')] ('m', 'a', 'b', 'c')
+'def g():\n from . import a\n'
+ <module> ['<code>'] ('g',)
+   g [1, ('a',)] ('', 'a')
+'from . import a'
+ <module> [1, ('a',)] ('', 'a')
+'def g():\n from .. import a\n'
+ <module> ['<code>'] ('g',)
+   g [2, ('a',)] ('', 'a')
+'from .. import a'
+ <module> [2, ('a',)] ('', 'a')
+'from m import *'
+ <module> [0, ('*',)] ('m',)
+'def g():\n global zz\n zz = 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('zz',)
+'global zz\nzz = 1000'
+ <module> [1000] ('zz',)
+'def g():\n with t(): pass\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t',)
+'with t(): pass'
+ <module> [None] ('t',)
+'def g():\n with t() as x: return 1000\n'
+ <module> ['<code>'] ('g',)
+   g [None, 1000] ('t',)
+'def g():\n try: t()\n except E: u()\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t', 'E', 'u')
+'try: t()\nexcept E: u()'
+ <module> [None] ('t', 'E', 'u')
+'def g():\n try: t()\n except E as e: u()\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t', 'E', 'u')
+'try: t()\nexcept E as e: u()'
+ <module> [None] ('t', 'E', 'e', 'u')
+'def g():\n try: t()\n finally: u(1000)\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('t', 'u')
+'try: t()\nfinally: u(1000)'
+ <module> [1000] ('t', 'u')
+'def g():\n try: return 1000\n finally: u(2000)\n'
+ <module> ['<code>'] ('g',)
+   g [2000, 1000] ('u',)
+'def g():\n try: t()\n except* E: u()\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('t', 'E', 'u')
+'try: t()\nexcept* E: u()'
+ <module> [None] ('t', 'E', 'u')
+'def g():\n lambda: 1000\n'
+ <module> ['<code>'] ('g',)
+   g ['<code>'] ()
+     <lambda> [1000] ()
+'lambda: 1000'
+ <module> ['<code>'] ()
+   <lambda> [1000] ()
+'def g():\n lambda a=1000: a\n'
+ <module> ['<code>'] ('g',)
+   g [1000, '<code>', (1000,)] ()
+     <lambda> [None] ()
+'lambda a=1000: a'
+ <module> [1000, '<code>', (1000,)] ()
+   <lambda> [None] ()
+'def g():\n lambda *, a=1000: a\n'
+ <module> ['<code>'] ('g',)
+   g ['a', 1000, '<code>'] ()
+     <lambda> [None] ()
+'lambda *, a=1000: a'
+ <module> ['a', 1000, '<code>'] ()
+   <lambda> [None] ()
+'def g():\n def h(a=1000, *, b=2000) -> 3000: pass\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 'b', 2000, '<code>', '<code>', (1000,)] ()
+     __annotate__ [2, 'return', 3000] ()
+     h [None] ()
+'def h(a=1000, *, b=2000) -> 3000: pass'
+ <module> [1000, 'b', 2000, '<code>', '<code>', (1000,)] ('h',)
+   __annotate__ [2, 'return', 3000] ()
+   h [None] ()
+'def g():\n def h(a: 1000): pass\n'
+ <module> ['<code>'] ('g',)
+   g ['<code>', '<code>'] ()
+     __annotate__ [2, 'a', 1000] ()
+     h [None] ()
+'def h(a: 1000): pass'
+ <module> ['<code>', '<code>'] ('h',)
+   __annotate__ [2, 'a', 1000] ()
+   h [None] ()
+'def g():\n class C: pass\n'
+ <module> ['<code>'] ('g',)
+   g ['<code>', 'C'] ()
+     C ['g.<locals>.C', ()] ('__name__', '__module__', '__qualname__', '__firstlineno__', '__static_attributes__')
+'class C: pass'
+ <module> ['<code>', 'C'] ('C',)
+   C ['C', ()] ('__name__', '__module__', '__qualname__', '__firstlineno__', '__static_attributes__')
+'def g():\n class C(B, m=1000): x = 2000\n'
+ <module> ['<code>'] ('g',)
+   g ['<code>', 'C', 1000, ('m',)] ('B',)
+     C ['g.<locals>.C', 2000, ()] ('__name__', '__module__', '__qualname__', '__firstlineno__', 'x', '__static_attributes__')
+'class C(B, m=1000): x = 2000'
+ <module> ['<code>', 'C', 1000, ('m',)] ('B', 'C')
+   C ['C', 2000, ()] ('__name__', '__module__', '__qualname__', '__firstlineno__', 'x', '__static_attributes__')
+"def g():\n class C:\n  'doc'\n  x = 1000\n"
+ <module> ['<code>'] ('g',)
+   g ['<code>', 'C'] ()
+     C ['g.<locals>.C', 'doc', 1000, ()] ('__name__', '__module__', '__qualname__', '__firstlineno__', '__doc__', 'x', '__static_attributes__')
+"class C:\n 'doc'\n x = 1000"
+ <module> ['<code>', 'C'] ('C',)
+   C ['C', 'doc', 1000, ()] ('__name__', '__module__', '__qualname__', '__firstlineno__', '__doc__', 'x', '__static_attributes__')
+'def g():\n class C:\n  def m(self): self.a = 1000\n'
+ <module> ['<code>'] ('g',)
+   g ['<code>', 'C'] ()
+     C ['g.<locals>.C', '<code>', ('a',)] ('__name__', '__module__', '__qualname__', '__firstlineno__', 'm', '__static_attributes__', '__classdictcell__')
+       m [1000] ('a',)
+'class C:\n def m(self): self.a = 1000'
+ <module> ['<code>', 'C'] ('C',)
+   C ['C', '<code>', ('a',)] ('__name__', '__module__', '__qualname__', '__firstlineno__', 'm', '__static_attributes__', '__classdictcell__')
+     m [1000] ('a',)
+'def g():\n [q for q in y]\n'
+ <module> ['<code>'] ('g',)
+   g [None] ('y',)
+'[q for q in y]'
+ <module> [None] ('y',)
+'def g():\n [q for q in y if 1000]\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('y',)
+'[q for q in y if 1000]'
+ <module> [1000] ('y',)
+'def g():\n {q: 1000 for q in y}\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('y',)
+'{q: 1000 for q in y}'
+ <module> [1000] ('y',)
+'def g():\n (q for q in y)\n'
+ <module> ['<code>'] ('g',)
+   g ['<code>'] ('y',)
+     <genexpr> [None] ()
+'(q for q in y)'
+ <module> ['<code>'] ('y',)
+   <genexpr> [None] ()
+'def g():\n x = [*y, 1000]\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('y',)
+'x = [*y, 1000]'
+ <module> [1000] ('y', 'x')
+"def g():\n x = {**y, 'k': 1000}\n"
+ <module> ['<code>'] ('g',)
+   g ['k', 1000] ('y',)
+"x = {**y, 'k': 1000}"
+ <module> ['k', 1000] ('y', 'x')
+"def g():\n x = {'k': 1000, 'j': 2000}\n"
+ <module> ['<code>'] ('g',)
+   g ['k', 1000, 'j', 2000] ()
+"x = {'k': 1000, 'j': 2000}"
+ <module> ['k', 1000, 'j', 2000] ('x',)
+'def g():\n f(*y, 1000)\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ('f', 'y')
+'f(*y, 1000)'
+ <module> [1000] ('f', 'y')
+'def g():\n f(k=1000)\n'
+ <module> ['<code>'] ('g',)
+   g [1000, ('k',)] ('f',)
+'f(k=1000)'
+ <module> [1000, ('k',)] ('f',)
+'def g():\n f(k=1000, j=2000)\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 2000, ('k', 'j')] ('f',)
+'f(k=1000, j=2000)'
+ <module> [1000, 2000, ('k', 'j')] ('f',)
+'def g():\n f(**y, k=1000)\n'
+ <module> ['<code>'] ('g',)
+   g ['k', 1000, ()] ('f', 'y')
+'f(**y, k=1000)'
+ <module> ['k', 1000, ()] ('f', 'y')
+'def g():\n f(1000, *y, k=2000, **z)\n'
+ <module> ['<code>'] ('g',)
+   g [1000, 'k', 2000] ('f', 'y', 'z')
+'f(1000, *y, k=2000, **z)'
+ <module> [1000, 'k', 2000] ('f', 'y', 'z')
+'def g():\n o.m(k=1000)\n'
+ <module> ['<code>'] ('g',)
+   g [1000, ('k',)] ('o', 'm')
+'o.m(k=1000)'
+ <module> [1000, ('k',)] ('o', 'm')
+'def g():\n type T = 1000\n'
+ <module> ['<code>'] ('g',)
+   g ['T', (1,), '<code>'] ()
+     T [2, 1000] ()
+'type T = 1000'
+ <module> ['T', (1,), '<code>'] ('T',)
+   T [2, 1000] ()
+'def g():\n def h[T](): pass\n'
+ <module> ['<code>'] ('g',)
+   g ['<code>'] ()
+     <generic parameters of h> ['T', '<code>'] ()
+       h [None] ()
+'def h[T](): pass'
+ <module> ['<code>'] ('h',)
+   <generic parameters of h> ['T', '<code>'] ()
+     h [None] ()
+'def g():\n class C[T]: pass\n'
+ <module> ['<code>'] ('g',)
+   g ['<code>'] ()
+     <generic parameters of C> ['T', '<code>', 'C'] ()
+       C ['g.<locals>.C', ()] ('__name__', '__module__', '__qualname__', '__firstlineno__', '__type_params__', '__static_attributes__')
+'class C[T]: pass'
+ <module> ['<code>'] ('C',)
+   <generic parameters of C> ['T', '<code>', 'C'] ()
+     C ['C', ()] ('__name__', '__module__', '__qualname__', '__firstlineno__', '__type_params__', '__static_attributes__')
+'def g():\n x = yield_ = 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'x = yield_ = 1000'
+ <module> [1000] ('x', 'yield_')
+'def g():\n await_ = 1000\n'
+ <module> ['<code>'] ('g',)
+   g [1000] ()
+'await_ = 1000'
+ <module> [1000] ('await_',)

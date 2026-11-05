@@ -1,0 +1,22 @@
+status: 0
+script: 8da1ec3f481d6495
+source: 0d69962ae367c145
+---
+B.method c0 l1 l2 l3 l2 l1 r1 [0, 1, 2, 3] [('LOAD_SUPER_ATTR', 'method + NULL|self')]
+B.attribute c0 l1 l2 l1 r1 [0, 1, 2] [('LOAD_SUPER_ATTR', 'attr')]
+B.with_arguments c0 l1 l2 l1 l2 l3 l2 l1 r1 [0, 1, 2, 3] [('LOAD_SUPER_ATTR', 'method + NULL|self')]
+B.attribute_with_arguments c0 l1 l2 l1 r1 [0, 1, 2] [('LOAD_SUPER_ATTR', 'attr')]
+B.on_one_line c0 l1 r1 [0, 1] [('LOAD_SUPER_ATTR', 'method + NULL|self'), ('LOAD_SUPER_ATTR', 'attr')]
+C.method c0 l1 l2 l3 l4 l3 l2 r2 [0, 1, 2, 3, 4] []
+docstring c0 l0 r0 [0] []
+annotation c0 l0 r0 [0] []
+annotations c0 l0 r0 [0] []
+docstring_and_more c0 l0 r0 [0] []
+global_statement c0 l0 r0 [0] []
+makes_nonlocal_statement.<locals>.nonlocal_statement c0 l0 r0 [0] []
+only_pass c0 l1 r1 [0, 1] []
+annotation_and_pass c0 l2 r2 [0, 2] []
+annotation_with_a_value c0 l1 r1 [0, 1] []
+annotation_of_an_attribute c0 l1 r1 [0, 1] []
+coroutine_with_an_annotation c0 l0 r0 [0] []
+generator_with_an_annotation c0 l2 r2 c2 e2 r2 [0, 2] []

@@ -362,8 +362,8 @@ group("Date, RegExp, Map, Set, weak references", { setup: "import js, datetime, 
     "m = js.Map()\nk = K()\nm.set(k, 1).set('s', 2).set(1, 'int').set(2**64, 'big')\nm.get(k), m[k], m.get('s'), m.get(1), m.get(1.0), m.get(2**64), m.size, len(m), k in m, K() in m",
     "(1, 1, 2, 'int', 'int', 'big', 4, 4, True, False)",
   ],
-  // The keys of a Map are compared as JavaScript compares them: two equal tuples are two keys.
-  ["m = js.Map([[(1, 2), 'tuple']])\nm.get((1, 2))", "None"],
+  // The keys of a Map are compared as JavaScript compares them: two equal tuples are two keys. (Equal constants of one piece of code are one tuple.)
+  ["m = js.Map([[(1, 2), 'tuple']])\nm.get(tuple([1, 2])), m.get((1, 2))", "(None, 'tuple')"],
   // A Map is a mapping: it is iterated over by its keys. What it has itself is JavaScript's, and the rest is what a mapping has.
   [
     "m = js.Map([['a', 1], [2, 'two'], ['2', 'text']])\ntype(m).__name__, list(m), m[2], m['2'], list(m.items()), dict(m), {**m}, [(k, v) for k, v in m.items()] == list(m.items())",

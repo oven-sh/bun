@@ -1,0 +1,48 @@
+status: 0
+script: 05a83357527857c4
+source: 92b7c10e67f11665
+---
+found True ['closed found']
+not found False ['closed not found']
+not in False ['closed not in, found']
+in the body of if ['closed condition']
+in the else of if ['closed condition, not in']
+in the body of while ['closed while']
+chain True ['closed chain']
+chain in a condition ['closed chain in a condition']
+generator expression True ['closed through a generator expression']
+comprehension [True, True] ['closed in a comprehension 0', 'closed in a comprehension 1']
+and True ['closed and', 'closed and 2']
+lambda True ['closed lambda']
+in __eq__ []
+in the handler ValueError('no') ['closed raises']
+in __eq__ []
+in finally ['closed raises in a function']
+after the function ValueError('no') []
+in __eq__ []
+context None ['context GeneratorExit()']
+raises while closing True ["unraisable RuntimeError('while closing') None"]
+in __eq__ []
+raises while closing, an exception waits ValueError('no') None ["unraisable RuntimeError('while closing') None"]
+ignores GeneratorExit True ["unraisable RuntimeError('generator ignored GeneratorExit') None"]
+kept True []
+2
+walrus True []
+4
+passed through True []
+2
+frame kept True ['closed framed']
+FRAMES[0].f_lineno => 240
+FRAMES[0].f_locals => {}
+__contains__ True ['closed in __contains__']
+True
+resumed ['closed in a generator']
+coroutine True ['closed in a coroutine']
+assert ['closed assert']
+ternary y ['closed ternary']
+in the function []
+reduce ValueError('three') ['closed reduce']
+in the function []
+functools.reduce ValueError('three') ['closed functools.reduce']
+3
+to the end ['closed to the end']

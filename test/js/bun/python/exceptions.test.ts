@@ -559,11 +559,13 @@ describe("in an async function of JavaScript", () => {
     gc.collect();
     expect(isAlive(reference)).toBe(false);
 
-    // Nobody has these. In an unoptimized build the frame that runs the jobs still has the last one in a slot it no longer uses.
+    // Nobody has these. The collector takes every word of the stack for a reference, and the frames that run the jobs have words that they no
+    // longer use or have never written (where the frame through which the engine is entered would save registers if something were thrown):
+    // what an earlier frame left there keeps one or two alive.
     const others: (() => unknown)[] = [];
-    for (let i = 0; i < 3; i++) others.push(await (async () => (await suspended())[1])());
+    for (let i = 0; i < 8; i++) others.push(await (async () => (await suspended())[1])());
     gc.collect();
-    expect(others.slice(0, 2).map(isAlive)).toEqual([false, false]);
+    expect(others.filter(isAlive).length).toBeLessThan(4);
   });
 
   test("in every tier", async () => {

@@ -2649,7 +2649,7 @@ impl SweepResult {
 pub type RuntimeState = *mut c_void;
 
 /// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WorkerExecArgvFlags {
     /// `!--no-addons`
     pub allow_addons: bool,

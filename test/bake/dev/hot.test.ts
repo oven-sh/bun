@@ -713,6 +713,35 @@ devTest("dev.write resolves only after the new module body has run", {
   },
 });
 
+devTest("import.meta.hot.accept(dep) disposes the modules loaded again between dep and the change", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import list from "./list.ts";
+      console.log("index " + list);
+      import.meta.hot.accept("./list.ts", m => console.log("accepted " + m.default));
+    `,
+    "list.ts": `
+      import item from "./item.ts";
+      import.meta.hot.dispose(() => console.log("disposed list:" + item));
+      export default "list:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index list:a");
+    await dev.write("item.ts", `export default "b";`);
+    await c.expectMessage("disposed list:a", "accepted list:b");
+    // Only the latest list.ts is disposed: the first one's callback ran once and is gone.
+    await dev.write("item.ts", `export default "c";`);
+    await c.expectMessage("disposed list:b", "accepted list:c");
+  },
+});
 devTest("import.meta.hot.accept(dep) takes an update reaching dep through its imports", {
   files: {
     "index.html": emptyHtmlFile({

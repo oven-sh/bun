@@ -718,12 +718,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
 
     // Every module on a path from the changed one to an accepted one, from the
-    // changed module outward, so each is loaded again after what it imports.
+    // changed module outward, so each is loaded again after what it imports, and
+    // disposed first, as a self-accepting one is.
     const seen = new Set<HMRModule>([existing]);
     const reload = (m: HMRModule) => {
       if (seen.has(m)) return;
       seen.add(m);
       for (const before of reachedFrom.get(m) ?? []) reload(before);
+      if (!toReload.has(m) && m.onDispose) toDispose.push(m);
       toReload.add(m);
     };
     for (const m of accepted) reload(m);

@@ -74,6 +74,13 @@ for make in (a_class, a_base, an_instance_of_it, a_class_of_a_metaclass, an_inst
     print('  del first', T(lambda: delattr(o, 'm')), T(lambda: o.m), items(d))
     print('  then store', T(lambda: setattr(o, 'm', 'new')), T(lambda: o.m), items(d))
 
+class WithSuper(type('B', (), {Key(): 'old'})):
+    m = 'of the class itself'
+    def plain(self): return super().m
+    def with_arguments(self): return super(WithSuper, self).m
+    def many(self): return [super().m for i in range(300)][-1]
+print('super()', T(WithSuper().plain), T(WithSuper().with_arguments), T(WithSuper().many), T(lambda: getattr(super(WithSuper, WithSuper()), 'm')), T(lambda: super(WithSuper, WithSuper).m))
+
 # ---- By name ----
 def run(source, g, l=None): return T(lambda: exec(source, g) if l is None else exec(source, g, l))
 for label, source in (('read', 'r = m'), ('store', 'm = "new"; r = m'), ('store twice', 'm = 1; m = 2; r = m'), ('del', 'del m'), ('del, read', 'del m; r = m'), ('del, store', 'del m; m = "new"; r = m'), ('augmented', 'm += "er"; r = m'),

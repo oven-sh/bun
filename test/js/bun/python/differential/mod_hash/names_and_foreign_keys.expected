@@ -1,5 +1,5 @@
 status: 0
-script: 0e13e99910b5a6aa
+script: de249a5643de1b73
 ---
 a_class read old old True [(Key(m), 'old')]
   store None new [(Key(m), 'new')] [(Key(m), 'new')]
@@ -57,6 +57,7 @@ a_function read old old True [(Key(m), 'old')]
   del again AttributeError: 'function' object has no attribute 'm' AttributeError: 'function' object has no attribute 'm' []
   del first None AttributeError: 'function' object has no attribute 'm' []
   then store None new [('m', 'new')]
+super() old old old old old
 globals, read None [(Key(m), 'old'), ('r', 'old')]
 locals, read None [] [(Key(m), 'old'), ('r', 'old')]
 globals behind locals, read None [(Key(m), 'old')] [('r', 'old')]

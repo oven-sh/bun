@@ -8,15 +8,15 @@ use crate::options::{HtmlRoot, InHtml};
 use crate::text;
 
 /// `v-for="left operator right"`
-struct VFor<'v> {
+pub(super) struct VFor<'v> {
     /// The alias, then `iterator1` and `iterator2`. A missing one is empty.
-    left: [&'v [u8]; 3],
-    operator: &'v [u8],
-    right: &'v [u8],
+    pub(super) left: [&'v [u8]; 3],
+    pub(super) operator: &'v [u8],
+    pub(super) right: &'v [u8],
 }
 
 /// `parseVueVForDirective`
-fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
+pub(super) fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
     // `/(.*?)\s+(in|of)\s+(.*)/s`
     let mut at = 0;
     let (alias, operator, right) = loop {

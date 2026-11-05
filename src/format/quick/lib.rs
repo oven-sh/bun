@@ -145,6 +145,10 @@ pub(crate) mod rare {
     pub(crate) const FLOW: i32 = 13;
     /// `tabWidth: 1` and a conditional as a branch of a conditional: the long way moves it by one column where Prettier moves it by two.
     pub(crate) const TAB_WIDTH: i32 = 14;
+    /// Where the long way is not Prettier's way, and nobody has said that it should not be: a template with a private name as its tag,
+    /// a member with the name `export` in a class of Flow, `A<B<>>` and `(a: B<>)` in Flow, import attributes on several lines with
+    /// `objectWrap: "collapse"`, a test call with `?.` in its callee.
+    pub(crate) const UNLIKE_PRETTIER: i32 = 15;
 }
 
 thread_local! {

@@ -4550,6 +4550,12 @@ impl Quick {
                     if chain != 0 {
                         return Err(self.text_refuse());
                     }
+                    // styled.#a`..` is no CSS for the long way
+                    if (self.n.at(base) & 0xff) == k::MemberExpression
+                        && (self.n.at(self.n.at(base + 5)) & 0xff) == k::PrivateName
+                    {
+                        return Err(self.rare(rare::UNLIKE_PRETTIER));
+                    }
                     let quasi = self.parse_template(false)?;
                     base = self.node3(
                         k::TaggedTemplateExpression,

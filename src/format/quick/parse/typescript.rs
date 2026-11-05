@@ -232,9 +232,15 @@ impl Quick {
         let list_mark = self.arena.ls_pos;
         let may_be_empty = self.parse_flow.may_be_empty;
         self.parse_flow.may_be_empty = false;
-        if self.starts_with_gt() && !may_be_empty {
+        if self.starts_with_gt() {
             // `<>`
-            return Err(self.text_refuse());
+            if !may_be_empty {
+                return Err(self.text_refuse());
+            }
+            // `A<B<>>`, `(a: B<>)`: the long way takes `B<>` for a simple type
+            if matches!(self.t.at(self.lexer.tok_start + 1), 62 | 41) {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
         }
         while !self.starts_with_gt() {
             let v0 = self.ts_parse_type()?;
@@ -1602,6 +1608,9 @@ impl Quick {
 
     pub(crate) fn ts_parse_class_member(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
+        if self.lexer.tok == tk::Export && self.parse.typed == FLOW {
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
+        }
         let decorators = if self.lexer.tok == tk::At {
             self.parse_decorators()?
         } else {

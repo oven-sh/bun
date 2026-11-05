@@ -9,7 +9,7 @@ use crate::print::statics::{
     _AS_, _ASSERT_, _STAR, _WITH_, BRACES, COMMA, COMMA_SPACE, DEFER_, EXPORT, EXPORT_DEFAULT,
     FROM, IMPORT, LBRACE, MODULE_, RBRACE, SEMI, SOURCE_, SPACE, STAR_AS_,
 };
-use crate::{Quick, R, Words};
+use crate::{Quick, R, Words, rare};
 
 pub(crate) fn is_standalone(k: i32) -> bool {
     return k == k::ExportNamespaceSpecifier
@@ -182,11 +182,13 @@ impl Quick {
             _WITH_
         });
         let first = self.n.at(attributes + 1);
-        let should_break = self.options.object_wrap_preserve
-            && self.has_newline_in_range(
-                self.last_index_of_outside_comments(123, self.n.at(first + 1)),
-                self.n.at(first + 1),
-            );
+        let should_break = self.has_newline_in_range(
+            self.last_index_of_outside_comments(123, self.n.at(first + 1)),
+            self.n.at(first + 1),
+        );
+        if should_break && !self.options.object_wrap_preserve {
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
+        }
         let single = self.is_single_type_import_attributes(attributes);
         if single {
             self.remove_lines_open();

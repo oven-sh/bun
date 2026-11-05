@@ -119,7 +119,34 @@ impl Quick {
     }
 
     pub(crate) fn is_test_call_callee(&self, n: i32) -> bool {
-        // the leftmost name decides quickly in nearly all cases
+        self.starts_like_test_call_callee(n) && self.is_one_of_test_callees(n)
+    }
+
+    #[cold]
+    fn starts_with_name_of_test_call(&self, n: i32) -> bool {
+        let mut root = n;
+        while (self.n.at(root) & 0xff) == k::MemberExpression {
+            root = self.n.at(root + 4);
+        }
+        (self.n.at(root) & 0xff) == k::Identifier
+            && [
+                &b"it"[..],
+                b"describe",
+                b"test",
+                b"skip",
+                b"xit",
+                b"xdescribe",
+                b"xtest",
+                b"fit",
+                b"fdescribe",
+                b"ftest",
+            ]
+            .iter()
+            .any(|name| self.name_is(root, name))
+    }
+
+    /// The leftmost name decides quickly in nearly all cases.
+    fn starts_like_test_call_callee(&self, n: i32) -> bool {
         let mut root = n;
         while (self.n.at(root) & 0xff) == k::MemberExpression {
             root = self.n.at(root + 4);
@@ -137,10 +164,7 @@ impl Quick {
             return false;
         }
         let last = self.t.at(self.n.at(root + 2) - 1);
-        if last != 116 && last != 101 && last != 112 {
-            return false;
-        }
-        return self.is_one_of_test_callees(n);
+        last == 116 || last == 101 || last == 112
     }
 
     pub(crate) fn is_angular_test_wrapper(&self, n: i32) -> bool {
@@ -170,6 +194,14 @@ impl Quick {
     pub(crate) fn is_test_call(&self, n: i32, parent: i32) -> R<bool> {
         self.stack()?;
         if n == 0 || (self.n.at(n) & (0xff | F_CHAIN)) != k::CallExpression {
+            // test?.skip("..", () => {})
+            if n != 0
+                && (self.n.at(n) & 0xff) == k::CallExpression
+                && self.n.at(self.n.at(n + 5)) >= 2
+                && self.starts_with_name_of_test_call(self.n.at(n + 4))
+            {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             return Ok(false);
         }
         let args = self.n.at(n + 5);

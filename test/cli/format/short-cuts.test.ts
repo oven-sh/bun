@@ -4394,6 +4394,21 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "--print-width=60",
       "interface Spec {\n  +getObjectShape: (arg: ?{| prop: ?number |}) => ?{| prop: ?number |};\n}\n",
     ],
+    // Where the long way is not Prettier's way: a private name as the tag of a template.
+    ["a.js", "", "class A { #y; m() { styled.#y`\n` } }\n"],
+    // A member with the name `export` in a class of Flow.
+    ["a.js.flow", "", "class A{export\n  constructor(){}}\n"],
+    // `<>` as type arguments in Flow.
+    ["a.js.flow", "--print-width=20", "class A { _transforms: $ReadOnlyArray<Transform<>>; }\n"],
+    ["a.js.flow", "", "[].reduce(()=>{[]},([]:Arraystring<>))\n"],
+    // Import attributes on several lines.
+    ["a.js", "--object-wrap=collapse", 'import a3 from "foo" with {\n  BABEL_8_BREAKING: "false", };\n'],
+    // A test call with `?.` in its callee.
+    [
+      "a.js",
+      "",
+      'test?.skip("does something really long and complicated so I have to write a very long name for the test",()=>{})\n',
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

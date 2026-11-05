@@ -3377,3 +3377,79 @@ describe("TypeScript that the long way rejects", () => {
     "<a<> />",
   ]);
 });
+
+describe("what the quick way for scripts is asked about, and what is done around it", () => {
+  const scripts = [
+    "const f = <T,>(x: T) => x;\n",
+    "a  ;\n",
+    "",
+    " \n\t\n",
+    "\n\n",
+    "﻿",
+    "﻿\n",
+    "﻿a  ;\n",
+    "﻿#!/usr/bin/env bun\na  ;\n",
+    "#!/usr/bin/env bun\n\n\na  ;",
+    "a  ;",
+    "// only a comment",
+    "/** @format */\na  ;\n",
+    "/** @noformat */\na  ;\n",
+    "// @flow\nlet a  = 1;\n",
+    "await  (x);\n",
+  ];
+  const names = ["a.js", "a.jsx", "a.mjs", "a.cjs", "a.ts", "a.tsx", "a.mts", "a.cts", "a.d.ts", "A.TS", "a.js.flow"];
+  describe.each(names)("%s", name =>
+    expectSame(name, scripts, [
+      [],
+      ["--no-insert-final-newline"],
+      ["--insert-pragma"],
+      ["--require-pragma"],
+      ["--check-ignore-pragma"],
+      ["--range-start=1"],
+      ["--range-end=3"],
+      ["--experimental-ternaries"],
+      ["--tab-width=0"],
+      ["--tab-width=20000"],
+      ["--print-width=0"],
+      ["--print-width=4000000000"],
+    ]));
+
+  // The first "\r" decides, whatever ends the lines before it.
+  describe("the end of a line", () =>
+    expectSame(
+      "a.ts",
+      [
+        "a;\nb;\r\nc;\r",
+        "a;\r\nb;\n",
+        "a;\rb;\n",
+        "a;\n\rb;",
+        "x = `a\r\nb\rc\n`;\n",
+        "/* a\r\nb */\r\nc;\n",
+        "a;\r",
+        "\r\n",
+        "\r",
+      ],
+      [
+        ["--end-of-line=auto"],
+        ["--end-of-line=lf"],
+        ["--end-of-line=crlf"],
+        ["--end-of-line=cr"],
+        ["--end-of-line=cr", "--no-insert-final-newline"],
+      ],
+    ));
+
+  describe("Flow", () =>
+    expectSame(
+      "a.js",
+      [
+        "// @flow\ntype A = {| a: 1 |};\n",
+        "/* @noflow */\nfunction f(a: number) {}\n",
+        "// @flow\nfunction f(a /*: number */) {}\n",
+        "// @flow\n/*:: type A = 1; */\n",
+        "// @flow\n/* flow-include type A = 1; */\n",
+        "#!/usr/bin/env node\n// @flow\ntype A = ?B;\n",
+        "a;\n// @flow\ntype A = ?B;\n",
+      ],
+      [[]],
+    ));
+});

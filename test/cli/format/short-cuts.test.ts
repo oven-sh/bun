@@ -4291,6 +4291,21 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "",
       'x = <A>\n  <code>one two three four</code> a b;{" "}\n  { " " }\n  <code>a</code>{" "} a{" "}\n\t</A>\n',
     ],
+    // A comment between two words of the head of a declaration or a member.
+    ["a.ts", "", "class A {\n  static // c\n  readonly a = 1;\n}\n"],
+    ["a.js", "", "class A{static// why\n  accessor x1}\n"],
+    ["a.js", "", 'import a// b\n/**\n */from"d"\n'],
+    ["a.ts", "", "export default class// b\nimplements A{}\n"],
+    // A comment that is all there is between the parentheses of a method.
+    ["a.js", "", "class C{#f(/* b */){}static{}}\n"],
+    // A comment behind the value of a class property.
+    ["a.js", "", "class A {\n  #x = (0 /* a */);\n}\n"],
+    // What may be a type cast of JSDoc, in Flow and in a conditional expression.
+    ["a.js.flow", "", "/** @type {A} */(l)\n"],
+    ["a.js", "", "a?/** @type {any} */(b?1:2):3\n"],
+    // Flow: a comment before or behind the parameters of a method of an object type.
+    ["a.js.flow", "", "declare class M{static/* 1 */():void}\n"],
+    ["a.js.flow", "", "type AndroidPlatform={get Version():/* @__PURE__ */{||}}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

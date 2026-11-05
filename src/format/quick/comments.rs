@@ -15,6 +15,7 @@ use crate::lexer::{
     C_ENCLOSING, C_END, C_FLAGS, C_FOLLOWING, C_NEXT, C_NODE, C_PRECEDING, C_START, C_STRIDE,
     CF_BLOCK, CF_CLAIMED, CF_INDENTABLE, CF_PLAIN,
 };
+use crate::parse::core::TYPED_FLOW;
 use crate::{Quick, R, Words, rare, why, zeros};
 
 pub(crate) struct Comments {
@@ -301,6 +302,14 @@ impl Quick {
         {
             return false;
         }
+        // what may be a type cast of JSDoc, where it is printed with parentheses of its own
+        if form == MID_BLOCK
+            && behind == 40
+            && self.t.at(c.h_start + 2) == 42
+            && (self.parse.typed == TYPED_FLOW || inside == k::ConditionalExpression)
+        {
+            return false;
+        }
         match inside {
             // nothing but comments in the file
             k::Program => c.h_preceding != 0 || c.h_following != 0,
@@ -318,10 +327,25 @@ impl Quick {
             k::ObjectPattern | k::ArrayPattern => c.h_following_kind != k::TypeAnnotation,
             // in braces with nothing else in them, which may be hugged
             k::TypeLiteral => c.h_preceding != 0 || c.h_following != 0,
-            // between the key and the parameters, or on the line of their `(`
+            // between the key and the parameters, on the line of their `(`, or all there is between `(` and `)`
             k::ObjectMethod | k::ClassMethod => {
-                !is_part_of_word(before) && !(before == 40 && c.h_placement == CF_END_OF_LINE)
+                !is_part_of_word(before)
+                    && !(before == 40 && (c.h_placement == CF_END_OF_LINE || behind == 41))
             }
+            // behind a modifier, the key or the value
+            k::ClassProperty | k::PropertySignature => !is_part_of_word(before),
+            // between two words of the head
+            k::ClassDeclaration
+            | k::ClassExpression
+            | k::InterfaceDeclaration
+            | k::EnumDeclaration
+            | k::ModuleDeclaration
+            | k::ImportDeclaration
+            | k::ExportNamedDeclaration
+            | k::ExportAllDeclaration
+            | k::TSDeclareFunction
+            | k::MethodSignature
+            | k::VariableDeclaration => !(is_part_of_word(before) && is_part_of_word(behind)),
             // before the `=`
             k::VariableDeclarator => !is_part_of_word(before),
             // (a DeclareTypeAlias is no TypeAlias)
@@ -334,7 +358,7 @@ impl Quick {
             k::FunctionType => behind != 46,
             // between the name and the parameters
             k::FunctionDeclaration | k::FunctionExpression => {
-                !(is_part_of_word(before) && behind == 40)
+                !(is_part_of_word(before) && (behind == 40 || is_part_of_word(behind)))
             }
             // in the key of an indexer, in an index, in the last type of a tuple
             k::UnionType => {
@@ -2036,7 +2060,10 @@ impl Quick {
                     .c
                     .put(v0, self.lexer.c.at(v0) | self.comments.h_placement);
                 if !self.is_comment_taken(i) {
-                    return Err(self.rare(rare::COMMENT));
+                    let stop = self.rare(rare::COMMENT);
+                    self.failed_at
+                        .set(self.comments.h_start - self.text.src_start);
+                    return Err(stop);
                 }
                 if self.comments.h_placement == CF_OWN_LINE {
                     if self.handle_own_line() {

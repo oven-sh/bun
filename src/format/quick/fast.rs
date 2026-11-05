@@ -2651,8 +2651,10 @@ impl Quick {
                 }
                 target = true;
             } else if d == 40 {
-                // graphql(schema, `..`)
-                if sh == SH_NAME && q - p == 7 && self.text_is(p, q, b"graphql") {
+                // graphql(schema, `..`), graphql?.(schema, `..`)
+                if ((sh == SH_NAME && q - p == 7) || (optional && q - p == 9))
+                    && self.text_is(p, p + 7, b"graphql")
+                {
                     self.fast.no_templates += 1;
                 }
                 let curried = self.t.at(q - 1) == 41;
@@ -5322,6 +5324,18 @@ impl Quick {
     }
 }
 impl Quick {
+    /// Does the line of a comment that ends at `q` end in something that is trimmed? Control characters count as such.
+    #[inline(always)]
+    pub(crate) fn ends_in_space(&self, q: i32) -> bool {
+        let c = self.t.at(q - 1);
+        c <= 32 || (c >= 127 && self.ends_in_space_beyond_ascii(q))
+    }
+
+    #[cold]
+    fn ends_in_space_beyond_ascii(&self, q: i32) -> bool {
+        self.t.at(q - 1) == 127 || self.unicode_space(q - 2) == 2 || (self.unicode_space(q - 3) & 15) == 3
+    }
+
     /// Behind p, the end of a line, in a list of statements (or of members) that is indented by `column`: the comments up to the next item, if each of them stands alone on its lines, as it
     /// is printed. Prettier gives such comments to the item that follows, and prints them in front of it with the empty lines of the source: see claim_comments() of the parser, which
     /// does the same with what the lexer has found. Returns where the last one ends, which is the end of a line, and sets comments_start, comments_last_length, ready_end and ready_flags; or 0.
@@ -5387,7 +5401,7 @@ impl Quick {
                     }
                     q += 1;
                 }
-                if self.t.at(q - 1) == 32 || self.t.at(q - 1) == 9 {
+                if self.ends_in_space(q) {
                     return 0;
                 }
                 last_line = start;
@@ -5421,7 +5435,7 @@ impl Quick {
                     }
                     if c == 10 {
                         // Each line starts with a `*`, under the one of the first line. (Other comments are printed as they are, wherever they come to stand.)
-                        if self.t.at(q - 1) == 32 || self.t.at(q - 1) == 9 {
+                        if self.ends_in_space(q) {
                             return 0;
                         }
                         last_line = q + 1 + column;

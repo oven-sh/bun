@@ -431,6 +431,8 @@ fn write_document_with_cursor<'w, 'f>(
 ) -> Result<DocumentSummary, FormatError> {
     let (content, front_matter_len) = without_front_matter(text);
     let mut tree = ast::Tree::default();
+    // A node for some twenty bytes: the list doesn't move while a small text is read.
+    tree.nodes.reserve(text.len() / 24 + 8);
     if let Some((runs, printed)) = found {
         (tree.runs, tree.printed) = (Some(runs), printed);
     }

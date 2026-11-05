@@ -808,6 +808,7 @@ impl Quick {
         }
         self.text(RBRACE);
         self.group_close_with(g, should_break, 0);
+        self.stays_expanded(g);
         Ok(())
     }
 }

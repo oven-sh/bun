@@ -1,7 +1,7 @@
 import * as internalForTesting from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import net from "net";
 import { join } from "path";
 import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
@@ -634,8 +634,9 @@ describe("gc entries", () => {
     };
   `;
 
-  // A test that has timed out cannot end its script, which holds an interval. So each script has its own limit.
-  const limit = { timeout: 4_000, killSignal: "SIGKILL" } as const;
+  // A test that has timed out cannot end its script, which holds an interval. So each script has its own limit, far
+  // above what the slowest build needs.
+  const limit = { timeout: 30_000, killSignal: "SIGKILL" } as const;
 
   async function run(
     script: string,
@@ -822,8 +823,9 @@ describe("gc entries", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a forced entry lasts until the call that forces the collection returns", async () => {
-    // As in Node v26.3.0. What the collection frees is swept before the call returns, and that takes most of the call.
+  // With a sanitizer the call ends with the sweep, which takes most of it. Without one the call then gives the memory back
+  // to the OS, and the entry does not last for that.
+  test.concurrent.skipIf(!isASAN)("a forced entry also lasts for the sweep that follows the collection", async () => {
     const { result, exitCode } = await run(`
       const text = "[" + Buffer.alloc(300000 * 9, '"string",').toString() + '""]';
       const calls = [];
@@ -949,6 +951,59 @@ describe("gc entries", () => {
       came.observe({ type: "gc" });
     `);
     expect(result).toEqual({ left: 0, came: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  // observe() then has a registration for the Node types already, and gives it the class that follows the gc observers.
+  test.concurrent("an observer of another Node type gets gc entries once it observes gc too", async () => {
+    const { result, exitCode } = await run(`
+      const got = {};
+      for (const [form, first, second] of [
+        ["type", { type: "function" }, { type: "gc" }],
+        ["entryTypes", { entryTypes: ["function"] }, { entryTypes: ["function", "gc"] }],
+      ]) {
+        const observer = new PerformanceObserver(list => {
+          if (!list.getEntries().some(isForced)) return;
+          observer.disconnect();
+          got[form] = true;
+          if (got.type && got.entryTypes) finish(got);
+        });
+        observer.observe(first);
+        observer.observe(second);
+      }
+      Bun.gc(true);
+    `);
+    expect(result).toEqual({ type: true, entryTypes: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // The thread pool answers faster than the callbacks run, so a task is queued at every point of every turn of the loop.
+  test.concurrent("an entry reaches its observers while tasks keep the event loop busy", async () => {
+    const { result, exitCode } = await run(`
+      const { stat } = require("node:fs");
+      let reads = 0;
+      let work = 0;
+      let busy = true;
+      new PerformanceObserver((list, observer) => {
+        if (!list.getEntries().some(isForced)) return;
+        observer.disconnect();
+        const reachedWhileBusy = busy;
+        busy = false;
+        finish({ reachedWhileBusy });
+      }).observe({ type: "gc" });
+      function read() {
+        if (!busy) return;
+        stat(process.execPath, () => {
+          for (let i = 0; i < 2000; i++) work += i % 7;
+          if (++reads === 2000) Bun.gc(true);
+          // Long after the collection. An entry that waits for an empty queue comes behind this.
+          if (reads === 150000) busy = false;
+          read();
+        });
+      }
+      for (let i = 0; i < 512; i++) read();
+    `);
+    expect(result).toEqual({ reachedWhileBusy: true });
     expect(exitCode).toBe(0);
   });
 
@@ -1150,6 +1205,8 @@ describe("gc entries", () => {
 
   // An idle collection is asked for after BUN_IDLE_GC_SECONDS of quiet. The JS thread then waits without heap access, so
   // on a machine that is not busy the collector thread ends the collection. On Windows the JS thread always ends it.
+  // One second of quiet is the least that Bun takes, and a debug build needs half of the default timeout for this test.
+  // So it has a timeout of its own, above the time after which the program gives up.
   test.concurrent.skipIf(isWindows)(
     "an idle collection reaches the observers of a program that waits",
     async () => {
@@ -1299,11 +1356,9 @@ describe("gc entries", () => {
     });
   `;
 
-  test.concurrent(
-    "bun test delivers entries after an unhandled error",
-    async () => {
-      const { output, exitCode } = await runTestFiles({
-        "gc-after-error.test.js": `
+  test.concurrent("bun test delivers entries after an unhandled error", async () => {
+    const { output, exitCode } = await runTestFiles({
+      "gc-after-error.test.js": `
           import { test } from "bun:test";
           import { PerformanceObserver, constants } from "node:perf_hooks";
           ${throwsWhereNothingHandlesIt}
@@ -1320,20 +1375,16 @@ describe("gc entries", () => {
             clearInterval(keepAlive);
           });
         `,
-      });
-      expect(output).toContain("unhandled on purpose");
-      expect(output).toContain("(pass) gets a gc entry afterwards");
-      expect(exitCode).toBe(1);
-    },
-    30_000,
-  );
+    });
+    expect(output).toContain("unhandled on purpose");
+    expect(output).toContain("(pass) gets a gc entry afterwards");
+    expect(exitCode).toBe(1);
+  });
 
   // An unref'd immediate asks what the hand-off of a gc entry asks: does something else keep the loop alive?
-  test.concurrent(
-    "bun test runs an unref'd immediate after an unhandled error",
-    async () => {
-      const { output, exitCode } = await runTestFiles({
-        "unrefd-after-error.test.js": `
+  test.concurrent("bun test runs an unref'd immediate after an unhandled error", async () => {
+    const { output, exitCode } = await runTestFiles({
+      "unrefd-after-error.test.js": `
           import { test } from "bun:test";
           ${throwsWhereNothingHandlesIt}
           test("an unref'd immediate runs afterwards", async () => {
@@ -1344,13 +1395,39 @@ describe("gc entries", () => {
             clearInterval(keepAlive);
           });
         `,
-      });
-      expect(output).toContain("unhandled on purpose");
-      expect(output).toContain("(pass) an unref'd immediate runs afterwards");
-      expect(exitCode).toBe(1);
-    },
-    30_000,
-  );
+    });
+    expect(output).toContain("unhandled on purpose");
+    expect(output).toContain("(pass) an unref'd immediate runs afterwards");
+    expect(exitCode).toBe(1);
+  });
+
+  // As in Node, where fake timers replace performance.now() and the clock of the collector is the real one.
+  test.concurrent("bun test: an entry has its start on the real clock under fake timers", async () => {
+    const { output, exitCode } = await runTestFiles({
+      "gc-fake-timers.test.js": `
+        import { expect, jest, test } from "bun:test";
+        import { PerformanceObserver, constants } from "node:perf_hooks";
+        test("a gc entry starts and ends on the real clock", async () => {
+          const before = performance.now();
+          jest.useFakeTimers();
+          const { promise, resolve } = Promise.withResolvers();
+          const observer = new PerformanceObserver(list => {
+            const forced = list.getEntries().find(entry => entry.detail.flags === constants.NODE_PERFORMANCE_GC_FLAGS_FORCED);
+            if (forced) resolve(forced);
+          });
+          observer.observe({ type: "gc" });
+          Bun.gc(true);
+          const entry = await promise;
+          observer.disconnect();
+          jest.useRealTimers();
+          expect(entry.startTime).toBeGreaterThanOrEqual(before);
+          expect(entry.startTime + entry.duration).toBeLessThanOrEqual(performance.now());
+        });
+      `,
+    });
+    expect(output).toContain("(pass) a gc entry starts and ends on the real clock");
+    expect(exitCode).toBe(0);
+  });
 
   // --isolate gives each file a global object of its own, and nothing disconnects the observers of a finished file.
   test.concurrent(
@@ -1386,7 +1463,6 @@ describe("gc entries", () => {
       expect(forcedLog).toBe("ab");
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 
   // The next file observes from its first line on, and counts the forced collections that its first list with one has.
@@ -1435,7 +1511,6 @@ describe("gc entries", () => {
       expect(output).toContain("(pass) the next file gets its own forced collection only");
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 
   // --isolate=modules keeps the global object, and retires the realms that a file made.
@@ -1464,7 +1539,6 @@ describe("gc entries", () => {
       expect(output).toContain("(pass) the next file gets its own forced collection only");
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 
   // Split in two: `bun test` looks for the name in the whole text of a test file, and this is one.
@@ -1517,6 +1591,5 @@ describe("gc entries", () => {
       expect(output).toContain("(pass) b gets its forced collection");
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 });

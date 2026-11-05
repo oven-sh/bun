@@ -26,10 +26,16 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32
 }
 
-// HOST_EXPORT(Bun__VM__isEventLoopKeptAliveBesideQueuedTasks, c)
-pub fn is_event_loop_kept_alive_beside_queued_tasks(this: &VirtualMachine) -> bool {
-    // A queued task can be the doing of a collection itself (a `FinalizationRegistry` cleanup, a finalizer's), so none counts.
-    !this.event_loop_shared().has_pending_tasks() && this.is_event_loop_kept_alive()
+// HOST_EXPORT(Bun__VM__isEventLoopKeptAlive, c)
+pub fn is_event_loop_kept_alive(this: &VirtualMachine) -> bool {
+    // A task that has run gives its ref back through this delta, which the next tick would take.
+    this.event_loop_shared().apply_concurrent_ref_delta();
+    this.is_event_loop_kept_alive()
+}
+
+// HOST_EXPORT(Bun__VM__hasPendingTasks, c)
+pub fn has_pending_tasks(this: &VirtualMachine) -> bool {
+    this.event_loop_shared().has_pending_tasks()
 }
 
 // HOST_EXPORT(Bun__getVM, c)
@@ -43,6 +49,11 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
     }
+    read_origin_timer_without_fake_timers(vm)
+}
+
+// HOST_EXPORT(Bun__readOriginTimerWithoutFakeTimers, c)
+pub fn read_origin_timer_without_fake_timers(vm: &VirtualMachine) -> u64 {
     vm.origin_timer.elapsed().as_nanos() as u64
 }
 

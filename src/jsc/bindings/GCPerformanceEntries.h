@@ -29,7 +29,7 @@ public:
 
     // For the request of a synchronous collection: what tells which record is its own. Null while the heap is not observed.
     RefPtr<WTF::SharedTask<void()>> willCollectSynchronously();
-    // After a synchronous collection that the program asked for, once the memory is back.
+    // After a synchronous collection that the program asked for, and the sweep that follows it.
     void didForceCollection();
 
 private:
@@ -39,6 +39,14 @@ private:
     void didGarbageCollect(JSC::CollectionScope) final;
     void doWork(JSC::VM&) final;
     void setObservesHeap(bool);
+    // What the task of a hand-off does first: see doWork().
+    enum class HandOff : uint8_t {
+        GoBehindQueuedTasks,
+        AskBehindQueuedTasks,
+        CallListeners,
+    };
+    void queueHandOff(HandOff);
+    void handOff(HandOff);
     void callListeners();
 
     struct Record {

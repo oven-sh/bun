@@ -162,7 +162,7 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
         // The native class knows no 'gc' type. It makes its checks for a request that names 'gc', as it did while the registry had no such type either.
         if (namesGC) super.observe(options);
         registration ??= this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
-        if (namesGC) require("internal/perf_hooks/gc").observeGC(registration);
+        if (namesGC) require("internal/perf_hooks/gc").observeGC(registration, constants);
       }
       if (registration) {
         if (isTypeMode) {

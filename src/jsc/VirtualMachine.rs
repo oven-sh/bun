@@ -532,7 +532,6 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
-    safe fn Bun__GCPerformanceEntries__didForceCollection(vm: &crate::VM);
 }
 
 bun_core::define_scoped_log!(teardown_log, Worker, hidden);
@@ -1984,17 +1983,25 @@ impl VirtualMachine {
         let size = self.garbage_collect(sync);
         if sync {
             bun_core::Global::mimalloc_cleanup(true);
-            // The `gc` entry of `node:perf_hooks` for this collection is a forced one, and lasts until here.
-            Bun__GCPerformanceEntries__didForceCollection(self.global().vm());
         }
         size
     }
 
     #[inline]
     pub fn auto_garbage_collect(&self) {
-        if self.aggressive_garbage_collection != GCLevel::None {
-            let _ = self.garbage_collect(self.aggressive_garbage_collection == GCLevel::Aggressive);
+        match self.aggressive_garbage_collection {
+            GCLevel::None => {}
+            GCLevel::Mild => {
+                let _ = self.garbage_collect(false);
+            }
+            GCLevel::Aggressive => self.garbage_collect_by_itself(),
         }
+    }
+
+    #[cold]
+    fn garbage_collect_by_itself(&self) {
+        bun_core::Global::mimalloc_cleanup(false);
+        let _ = self.global().vm().run_gc_by_itself();
     }
 
     /// RAII form of `auto_garbage_collect`: returns a guard that calls
@@ -4437,7 +4444,7 @@ pub fn collect_macro_vm_garbage() {
     }
     debug_assert!(!vm_ref.is_main_thread);
     debug_assert_eq!(vm_ref.macro_guard_depth, 0);
-    vm_ref.jsc_vm().run_gc(true);
+    vm_ref.jsc_vm().run_gc_by_itself();
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {

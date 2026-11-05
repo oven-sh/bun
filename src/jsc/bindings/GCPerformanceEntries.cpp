@@ -11,8 +11,9 @@
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/WeakInlines.h>
 
-extern "C" uint64_t Bun__readOriginTimer(void* bunVM);
-extern "C" bool Bun__VM__isEventLoopKeptAliveBesideQueuedTasks(void* bunVM);
+extern "C" uint64_t Bun__readOriginTimerWithoutFakeTimers(void* bunVM);
+extern "C" bool Bun__VM__isEventLoopKeptAlive(void* bunVM);
+extern "C" bool Bun__VM__hasPendingTasks(void* bunVM);
 extern "C" void Bun__VM__queueTask(void* bunVM, WebCore::EventLoopTask*);
 
 namespace Bun {
@@ -47,6 +48,9 @@ void GCPerformanceEntries::didGarbageCollect(CollectionScope scope)
         m_records.append({ *start, MonotonicTime::now() - *start, scope == CollectionScope::Full, false });
     }
     setTimeUntilFire(0_s);
+    // The timer runs when the loop turns, and a loop that sleeps, or is about to, does not turn for it.
+    if (auto* vmHandle = WebCore::clientData(m_vm)->vmHandle)
+        Bun__VmHandle__wake(vmHandle);
 }
 
 RefPtr<SharedTask<void()>> GCPerformanceEntries::willCollectSynchronously()
@@ -73,7 +77,7 @@ void GCPerformanceEntries::didForceCollection()
     if (auto end = std::exchange(m_synchronousRecordEnd, 0)) {
         auto& record = m_records[end - 1];
         record.forced = true;
-        // As in Node, the entry lasts as long as the call: the sweep after the collection is part of it.
+        // As in Node, the entry lasts nearly as long as the call: the sweep after the collection is part of it.
         record.duration = MonotonicTime::now() - record.start;
     }
 }
@@ -122,14 +126,42 @@ void GCPerformanceEntries::doWork(VM& vm)
 {
     cancelTimer();
     auto* bunVM = WebCore::clientData(vm)->bunVM;
-    // An entry reaches its observers from a ref'd immediate, and a collection must not keep the loop alive: wait for a turn that something else asks for.
-    if (!Bun__VM__isEventLoopKeptAliveBesideQueuedTasks(bunVM)) {
+    // An entry reaches its observers from a ref'd immediate, and a collection must not keep the loop alive: the hand-off waits for a turn that something else asks for.
+    if (Bun__VM__hasPendingTasks(bunVM))
+        queueHandOff(HandOff::GoBehindQueuedTasks);
+    else if (Bun__VM__isEventLoopKeptAlive(bunVM))
+        queueHandOff(HandOff::CallListeners);
+    else
         setTimeUntilFire(0_s);
-        return;
-    }
-    Bun__VM__queueTask(bunVM, new WebCore::EventLoopTask([protectedThis = Ref { *this }](WebCore::ScriptExecutionContext&) {
-        protectedThis->callListeners();
+}
+
+void GCPerformanceEntries::queueHandOff(HandOff step)
+{
+    Bun__VM__queueTask(WebCore::clientData(m_vm)->bunVM, new WebCore::EventLoopTask([protectedThis = Ref { *this }, step](WebCore::ScriptExecutionContext&) {
+        protectedThis->handOff(step);
     }));
+}
+
+void GCPerformanceEntries::handOff(HandOff step)
+{
+    auto* bunVM = WebCore::clientData(m_vm)->bunVM;
+    switch (step) {
+    case HandOff::GoBehindQueuedTasks:
+        // A queued task can be the doing of the collection itself (the cleanup of a FinalizationRegistry), and it holds the loop until it has run. So those that are queued now run first.
+        if (Bun__VM__hasPendingTasks(bunVM)) {
+            queueHandOff(HandOff::AskBehindQueuedTasks);
+            return;
+        }
+        [[fallthrough]];
+    case HandOff::AskBehindQueuedTasks:
+        if (!Bun__VM__isEventLoopKeptAlive(bunVM)) {
+            setTimeUntilFire(0_s);
+            return;
+        }
+        [[fallthrough]];
+    case HandOff::CallListeners:
+        callListeners();
+    }
 }
 
 void GCPerformanceEntries::callListeners()
@@ -154,9 +186,9 @@ void GCPerformanceEntries::callListeners()
         setObservesHeap(!m_listeners.isEmpty());
     }
 
-    // performance.now() and the clock of the records, read together, put each start on the timeline of the first.
+    // The clock of performance.now() (the real one, also under fake timers, as in Node) and the clock of the records, read together, put each start on the timeline of the first.
     auto* clientData = WebCore::clientData(m_vm);
-    double performanceNow = static_cast<double>(Bun__readOriginTimer(clientData->bunVM)) / 1000000.0;
+    double performanceNow = static_cast<double>(Bun__readOriginTimerWithoutFakeTimers(clientData->bunVM)) / 1000000.0;
     auto now = MonotonicTime::now();
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
@@ -202,12 +234,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetGCPerformanceEntryListener, (JSGlobalObjec
     }
     entries->setListener(globalObject, listener.isUndefined() ? nullptr : asObject(listener));
     return JSValue::encode(jsUndefined());
-}
-
-extern "C" void Bun__GCPerformanceEntries__didForceCollection(JSC::VM* vm)
-{
-    if (auto* entries = WebCore::clientData(*vm)->gcPerformanceEntries.get())
-        entries->didForceCollection();
 }
 
 } // namespace Bun

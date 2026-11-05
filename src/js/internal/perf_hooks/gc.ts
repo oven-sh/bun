@@ -8,11 +8,7 @@ const setGCEntryListener: (listener: typeof emitGCEntry | undefined) => void = $
 );
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
-const NODE_PERFORMANCE_GC_MAJOR = 4;
-const NODE_PERFORMANCE_GC_MINOR = 1;
-const NODE_PERFORMANCE_GC_FLAGS_NO = 0;
-const NODE_PERFORMANCE_GC_FLAGS_FORCED = 4;
-
+let constants: Record<string, number>;
 let isGCEntryListenerSet = false;
 
 // https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.h#L112-L140
@@ -20,8 +16,8 @@ function emitGCEntry(startTime: number, duration: number, isFullCollection: bool
   // As in Node, the observers that exist now get the entry, whether or not they did when the collection ran.
   if (!hasObserver("gc")) return;
   const detail = {
-    kind: isFullCollection ? NODE_PERFORMANCE_GC_MAJOR : NODE_PERFORMANCE_GC_MINOR,
-    flags: forced ? NODE_PERFORMANCE_GC_FLAGS_FORCED : NODE_PERFORMANCE_GC_FLAGS_NO,
+    kind: isFullCollection ? constants.NODE_PERFORMANCE_GC_MAJOR : constants.NODE_PERFORMANCE_GC_MINOR,
+    flags: forced ? constants.NODE_PERFORMANCE_GC_FLAGS_FORCED : constants.NODE_PERFORMANCE_GC_FLAGS_NO,
   };
   enqueueNodeEntry(new PerformanceNodeEntry("gc", "gc", startTime, duration, detail));
 }
@@ -48,8 +44,9 @@ class GCEntryObserver extends NodeEntryObserver {
 }
 
 export default {
-  /** For a registration that starts to observe 'gc'. GCEntryObserver adds no state, so it only changes class. */
-  observeGC(registration: InstanceType<typeof NodeEntryObserver>) {
+  /** For a registration that starts to observe 'gc'. GCEntryObserver adds no state, so it only changes class. The kinds and flags of an entry are read from `nodeConstants`, the `constants` of node:perf_hooks. */
+  observeGC(registration: InstanceType<typeof NodeEntryObserver>, nodeConstants: Record<string, number>) {
+    constants = nodeConstants;
     if (!(registration instanceof GCEntryObserver)) ObjectSetPrototypeOf(registration, GCEntryObserver.prototype);
   },
 };

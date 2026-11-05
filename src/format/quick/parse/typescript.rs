@@ -2518,14 +2518,7 @@ impl Quick {
                 self.next()?;
                 type_ = 0;
             } else {
-                let name = self.identifier()?;
-                type_ = self.node2(
-                    k::TypeReference,
-                    self.n.at(name + 1),
-                    self.n.at(name + 2),
-                    name,
-                    0,
-                );
+                type_ = self.const_type_reference()?;
             }
         } else {
             type_ = if self.parse.typed == FLOW {
@@ -2901,6 +2894,13 @@ impl Quick {
         self.expect_gt()?;
         let expression = self.parse_maybe_unary()?;
         self.check_operand(expression)?;
+        // (the long way puts the decorators of the classes in it on other lines)
+        if matches!(
+            self.n.at(expression) & (0xff | F_PAREN),
+            k::ClassExpression | k::FunctionExpression
+        ) {
+            return Err(self.text_refuse());
+        }
         // `<T>a++ ()`: nothing goes on behind it but what the operand has taken
         match self.lexer.tok {
             tk::Dot | tk::QuestionDot | tk::ParenL | tk::BracketL | tk::BackQuote | tk::Lt => {
@@ -2924,6 +2924,10 @@ impl Quick {
 
     pub(crate) fn const_type_reference(&mut self) -> R<i32> {
         let name = self.identifier()?;
+        if self.lexer.tok_nl == 0 && self.lexer.tok == tk::Lt {
+            // type arguments, for TypeScript
+            return Err(self.text_refuse());
+        }
         return Ok(self.node2(
             k::TypeReference,
             self.n.at(name + 1),

@@ -5855,10 +5855,20 @@ impl Quick {
             | k::NonNullExpression
             | k::AsExpression
             | k::SatisfiesExpression => {
+                if self.parse.typed == TYPED_TS
+                    && (self.n.at(n) & 0xff) != k::ParenthesizedExpression
+                    && !self.ts_is_valid_target(n)
+                {
+                    // `[{ ...a }!] = b`: no pattern for the long way
+                    return Err(self.text_refuse());
+                }
                 self.to_assignable(self.n.at(n + 4))?;
                 return Ok(());
             }
             k::TypeAssertion => {
+                if !self.ts_is_valid_target(n) {
+                    return Err(self.text_refuse());
+                }
                 self.to_assignable(self.n.at(n + 5))?;
                 return Ok(());
             }

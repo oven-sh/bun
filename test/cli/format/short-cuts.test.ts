@@ -5886,6 +5886,21 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "--print-width=58", '()=>({\u00e9:""}as{readonly[\u00e9 in \u6587]:\u00f1}?\u00e9:\u6587)\n'],
     // A value in the head of a `for` with `in`.
     ["a.jsx", "--print-width=87", 'for(var a=/**@type*/((b))in b)("")\n'],
+    // `prettier-ignore` is about one statement or member, also where those that follow stand as they are printed, one level too deep.
+    ["a.js", "", "o(\n  {\n    b() {\n      //prettier-ignore\n      a();\n      a;\n    },\n  },\n);\n"],
+    ["a.js", "", "o(\n  {\n    b() {\n      /* prettier-ignore */\n      a();\n\n      a;\n    },\n  },\n);\n"],
+    [
+      "a.js",
+      "",
+      "o(\n  {\n    b() {\n      //prettier-ignore\n      if (a) {\n        b;\n      }\n      a;\n    },\n  },\n);\n",
+    ],
+    ["a.js", "", "o(\n  {\n    b: class {\n      //prettier-ignore\n      a = 1;\n      b = 2;\n    },\n  },\n);\n"],
+    ["a.js", "", "o(\n  {\n    b: class {\n      //prettier-ignore\n      a() {}\n      b() {}\n    },\n  },\n);\n"],
+    // A block comment that starts the next line, has a `/` behind its start, and is followed by a semicolon.
+    ["a.d.ts", "--print-width=18", "const{}=a?.();\n/*/*/;/**/;(l)\n"],
+    // A block comment on a line of its own between a property and its comma.
+    ["a.jsx", "--print-width=14", "({\na,[[]]:b\n/**/\n,/**/\nb})\n"],
+    ["a.jsx", "--print-width=14", "({\na,[[]]:b\n/**/ // c\n,\nb})\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

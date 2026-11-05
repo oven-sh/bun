@@ -8,8 +8,8 @@
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     CL_EXTENDS, CL_IMPLEMENTS, CL_MIXINS, CL_TYPE_PARAMETERS, EXT_AT, F_CHAIN, F_DANGLING, F_EXT,
-    F_IGNORED, F_LEADING, F_PAREN, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, M_MASK, M_METHOD,
-    MOD_ABSTRACT, MOD_DECLARE, SHAPE, k,
+    F_IGNORED, F_LEADING, F_LINES, F_PAREN, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, M_MASK,
+    M_METHOD, MOD_ABSTRACT, MOD_DECLARE, SHAPE, k,
 };
 use crate::lexer::{
     C_ENCLOSING, C_END, C_FLAGS, C_FOLLOWING, C_NEXT, C_NODE, C_PRECEDING, C_START, C_STRIDE,
@@ -362,6 +362,8 @@ impl Quick {
             && !((form == OWN_LINE || form == OWN_BLOCK)
                 && i == c.gap_last
                 && c.h_following != 0
+                // (several items that were read as one)
+                && (self.n.at(c.h_following) & (0xff | F_LINES)) != (k::Ready | F_LINES)
                 // (`if (a) break`, the end of the line: the `break` gets its `;`, which the long way gives only to a statement of its own)
                 && !(self.options.semi
                     && matches!(

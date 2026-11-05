@@ -960,6 +960,8 @@ impl Quick {
                     v += 1;
                 }
                 if self.t.at(v) == 112 && self.text_is(v, v + 15, b"prettier-ignore") {
+                    // (what is printed as it is written is one item, which fast.rs would join with those that follow)
+                    self.parse.refused_at = self.lexer.tok_start;
                     return;
                 }
             }

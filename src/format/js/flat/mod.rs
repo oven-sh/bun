@@ -440,9 +440,13 @@ fn has_odd_line(text: &[u8]) -> bool {
 fn is_before_block_comment(source: &[u8], end: u32) -> bool {
     let mut rest = source.get(end as usize..).unwrap_or_default();
     let mut starts_line = false;
+    let mut is_behind_comment = false;
     loop {
         rest = match rest {
             [b' ' | b'\t' | b'\r', tail @ ..] => tail,
+            // `a;⏎/* b */;`: the `;` is an empty statement, which isn't printed, and the comment follows `a;` on its line.
+            // `a⏎/* b */,`, `a⏎/* b */⏎,`: the comment is printed before the comma.
+            [b',' | b';', ..] if is_behind_comment => return true,
             // A comment after other white space, also what isn't ASCII, doesn't count as one that starts its line.
             [b',' | b';' | 0x0B | 0x0C | 0x80.., tail @ ..] => {
                 starts_line = false;
@@ -457,18 +461,13 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
                 let end = strings::index_of_char_usize(tail, b'\n').unwrap_or(tail.len());
                 tail.get(end..).unwrap_or_default()
             }
-            _ if !rest.starts_with(b"/*") => return false,
-            _ if !starts_line => return true,
-            // `a;⏎/* b */;`: the `;` is an empty statement, which isn't printed, and the comment follows `a;` on its line.
-            // `a⏎/* b */,`: the comment is printed before the comma.
-            _ => {
-                let end = strings::index_of(rest, b"*/").map_or(rest.len(), |at| at + 2);
-                let mut behind = rest.get(end..).unwrap_or_default();
-                while let [b' ' | b'\t', tail @ ..] = behind {
-                    behind = tail;
-                }
-                return matches!(behind, [b';' | b',', ..]);
+            [b'/', b'*', ..] if !starts_line => return true,
+            [b'/', b'*', text @ ..] => {
+                is_behind_comment = true;
+                let end = strings::index_of(text, b"*/").map_or(text.len(), |at| at + 2);
+                text.get(end..).unwrap_or_default()
             }
+            _ => return false,
         };
     }
 }

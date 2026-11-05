@@ -1,6 +1,7 @@
-// A file that is loaded from disk may not load the files that were compiled into the executable: it has globals, built-in modules, what lies on disk and what the program hands it.
+// What a file from disk imports beside itself is the file on disk: a second module with its own state, also where its twin was compiled in.
+// Reference: bun build --compile
 // Flags: --aot-allow-code-from-disk
-// Alone: the working directory stands for the folder that it was built in
+// Alone: the file on disk is looked for from the working directory
 import * as counter from "./counter.mjs";
 import { twice } from "./pairs.mjs";
 twice();
@@ -8,6 +9,6 @@ globalThis.bumpOfProgram = counter.bump;
 await import(Buffer.from("./on-disk.mjs").toString());
 console.log("the program sees", counter.count);
 /* Output:
-exit code 1
-error: Cannot load '/$bunfs/root/counter.mjs': code that this executable loads from disk can't load the files that were compiled into it. It can use globals, built-in modules, files and packages on disk, and what the program hands it. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+the file on disk sees 0 false 2 bump,count
+the program sees 2
 */

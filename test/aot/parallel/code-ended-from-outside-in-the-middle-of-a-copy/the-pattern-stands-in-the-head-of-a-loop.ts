@@ -15,7 +15,7 @@ function keep<T>(value: T): T {
   ring[kept++ & 3] = value;
   return value;
 }
-function deed(): void {
+function deed(): void { // @ts-expect-error
   const list: Record<string, unknown>[] = [label<Note>({ kind: "note", text: "t" }, "s"), label<Note>({ kind: "note", text: "u" }, "r")];
   for (const { label_id: _id, ...rest } of list) sum += Object.keys(keep(rest)).length;
 }

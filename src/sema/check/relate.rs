@@ -3683,7 +3683,6 @@ impl<'p, 's> Checker<'p, 's> {
                             let p = self.bound(file).declarations_of_literal_member(p)[0];
                             let end = self.end_of_jsx_attr_name(file, p);
                             r.error_node = (file, self.hir(file)[p].pos, end);
-                            self.move_message_site(r.error_node);
                         }
                         self.report_unknown_jsx_attribute(r, prop, error_target);
                         return true;
@@ -3696,7 +3695,6 @@ impl<'p, 's> Checker<'p, 's> {
                             let p = self.bound(file).declarations_of_literal_member(p)[0];
                             let (hir, prop_node) = (self.hir(file), &self.hir(file)[p]);
                             r.error_node = (file, prop_node.pos, self.end_of_prop_name(file, p));
-                            self.move_message_site(r.error_node);
                             matches!(prop_node.key, PropKey::Name(_))
                                 && !matches!(
                                     hir.text.get(prop_node.pos as usize),

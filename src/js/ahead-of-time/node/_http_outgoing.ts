@@ -985,7 +985,6 @@ interface ResponseEvents {
 
 interface Exchange {
   flags: number;
-  headerState: number;
   headerBits: number;
   shape: HeaderShape;
   value0: number | string;
@@ -1046,7 +1045,6 @@ function makeExchange(
   // One literal: a constructor that is compiled by itself does not know what `new.target` is, and asks of each store whether the object is still as it was made.
   return {
     flags: 0,
-    headerState: 0,
     headerBits: IS_COMPILED_AHEAD_OF_TIME ? 0 : HEADER_SPILLED,
     shape: IS_COMPILED_AHEAD_OF_TIME ? noHeadersShape : spilledHeadersShape,
     value0: 0,

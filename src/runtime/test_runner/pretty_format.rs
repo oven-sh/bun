@@ -517,6 +517,10 @@ impl Tag {
 
         // If we check an Object has a method table and it does not
         // it will crash
+        if js_type == JSType::InternalFunction && value.is_placeholder_for_omitted_builtin() {
+            return Ok(TagResult { tag: Tag::Function, cell: js_type });
+        }
+
         if js_type != JSType::Object && value.is_callable() {
             if value.is_class(global_this) {
                 return Ok(TagResult { tag: Tag::Class, cell: js_type });
@@ -527,11 +531,7 @@ impl Tag {
                 // callable namespaces and printing the contents of it is better than [Function: namespace]
                 // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
                 // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
-                tag: if js_type == JSType::InternalFunction && !value.is_placeholder_for_omitted_builtin() {
-                    Tag::Object
-                } else {
-                    Tag::Function
-                },
+                tag: if js_type == JSType::InternalFunction { Tag::Object } else { Tag::Function },
                 cell: js_type,
             });
         }

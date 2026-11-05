@@ -81,6 +81,30 @@ for (let index = 0; index < ${n}; index++) sum += await later(index);
     }),
     sum: sumOfAll,
   },
+  "one import() after the other, behind a load that came to a module whose imports another load had listed": {
+    entry: n => `
+const long = import("./long.ts");
+const short = import("./short.ts");
+sum += (await long).one + (await short).two;
+async function later(index: number) {
+  ${cases(n, i => `return (await import("./feature${i}.ts")).run();`)}
+  return 0;
+}
+for (let index = 0; index < ${n}; index++) sum += await later(index);
+`,
+    files: feature,
+    shared: {
+      "long.ts": `import { first } from "./first.ts";\nexport const one = first;\n`,
+      "first.ts": `import { second } from "./second.ts";\nexport const first = second;\n`,
+      "second.ts": `import { third } from "./third.ts";\nexport const second = third;\n`,
+      "third.ts": `import { met } from "./met.ts";\nexport const third = met;\n`,
+      "short.ts": `import { met } from "./met.ts";\nexport const two = met;\n`,
+      "met.ts": `import { deep } from "./deep.ts";\nexport const met = deep;\n`,
+      "deep.ts": `import file from "./file.cjs";\nexport const deep = file.zero;\n`,
+      "file.cjs": `module.exports = { zero: 0 };\n`,
+    },
+    sum: sumOfAll,
+  },
   "every import() at once, of modules that share an import": {
     entry: n => `
 const features = await Promise.all([${Array.from({ length: n }, (_, i) => `import("./shared${i}.ts")`).join(", ")}]);

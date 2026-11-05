@@ -6,7 +6,7 @@ const long = new Own(9), brief = new Own(1);
 let sum = 0;
 for (let i = 0; i < 200; i++) {
   const [a, b, c] = count(5);
-  const [d, e = 50] = count(1);
+  const [d, e = 50] = count(1); // @ts-expect-error
   const [f, g] = long;
   const [h, j = 70] = brief;
   sum += a! + b! + c! + d! + e + f! + g! + h! + j;

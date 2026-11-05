@@ -249,12 +249,21 @@ impl Resolver<'_, '_> {
                 }
             }
             MentionUse::Inspected | MentionUse::Holder | MentionUse::Aliased => {}
-            MentionUse::ReadByComputedKey => self.expose(id),
-            MentionUse::Exposed => self.expose_to_user(expr, id),
+            MentionUse::ReadByComputedKey => {
+                self.note_holder_of_loader_functions_out_of_sight(expr, id);
+                self.expose(id);
+            }
+            MentionUse::Exposed => {
+                self.note_holder_of_loader_functions_out_of_sight(expr, id);
+                self.expose_to_user(expr, id);
+            }
             MentionUse::Destructured(pattern) => {
                 match self.value_of(expr).or_else(|| self.held_value_of(expr)) {
                     Some(value) => self.destructure(value, pattern),
-                    None => self.expose(id),
+                    None => {
+                        self.note_holder_of_loader_functions_out_of_sight(expr, id);
+                        self.expose(id);
+                    }
                 }
             }
         }

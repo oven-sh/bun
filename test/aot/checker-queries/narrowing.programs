@@ -1327,7 +1327,7 @@ export function read(holder: Holder) {
 interface Handler { (value: number): string; (value: string): string }
 export const describe: Handler = value => value.toFixed(1);
 //// two-call-signatures/lenient-folder/inner/tsconfig.json
-{ "extends": "../../../tsconfig.json", "compilerOptions": { "strict": false } }
+{ "extends": "../../../tsconfig.json", "compilerOptions": { "noImplicitAny": false } }
 //// two-call-signatures/lenient-folder/main.queries.txt
 # `noImplicitAny` decides whether a function under a type with two call signatures gets one signature made of both. `inner/` is written without it, the program with it.
 main.ts:0 option noImplicitAny `` = true

@@ -321,6 +321,15 @@ fn statement_with_several_declarations_needs_all_of_them() {
 }
 
 #[test]
+fn a_member_at_the_end_of_a_long_chain_of_enum_members_is_a_constant() {
+    let chain: String = (0..50_000)
+        .map(|member| format!("M{} = M{member} + 1, ", member + 1))
+        .collect();
+    let source = format!("enum Chain {{ M0 = 1, {chain}}} const MARK = [Chain.M50000];");
+    assert!(ask_one(&source, "ts", RemovableOptions::default()));
+}
+
+#[test]
 fn names_of_a_long_chain_of_operators_are_initialized() {
     let forms = [
         ("let a = 1; const MARK = (a", ", a", ");"),

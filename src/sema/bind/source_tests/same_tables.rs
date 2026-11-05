@@ -135,6 +135,7 @@ fn describe_fn(info: &FnInfo, bound: &Bound<'_>, numbering: &Numbering) -> Strin
         end,
         exit,
         contains_this,
+        is_context_sensitive,
     } = *info;
     let scope = numbering.scope(scope);
     let returns: Vec<StmtId> = bound.ids(returns).collect();
@@ -149,7 +150,8 @@ fn describe_fn(info: &FnInfo, bound: &Bound<'_>, numbering: &Numbering) -> Strin
             yields,
             end,
             exit,
-            contains_this
+            contains_this,
+            is_context_sensitive
         )
     )
 }

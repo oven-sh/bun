@@ -28,6 +28,12 @@ const shapes: Record<string, [string, (n: number) => string]> = {
   ],
   "blocks": ["js", n => `${"{".repeat(n)}console.log(1);${"}".repeat(n)}`],
   "ifs": ["js", n => `let c = 1;\n${"if (c) ".repeat(n)}console.log(c);`],
+  "loops": ["js", n => `let c = 0;\n${"while (c) ".repeat(n)}c = 0;\nconsole.log(c);`],
+  "loops round a sum": [
+    "js",
+    n =>
+      `let left = 0;\nfunction more() { return left-- > 0; }\nfunction f() {\n  let sum = 0;\n  ${"while (more()) ".repeat(n)}sum += 1;\n  return sum;\n}\nconsole.log(f());`,
+  ],
   "arrow functions": ["js", n => `const x = ${"() => ".repeat(n)}0;\nconsole.log(typeof x);`],
   "functions": ["js", n => `${"function f() { ".repeat(n)}${"}".repeat(n)}\nconsole.log(typeof f);`],
   "members": ["js", n => `const a = {}; a.b = a;\nconst x = a${".b".repeat(n)};\nconsole.log(x === a);`],
@@ -105,6 +111,8 @@ const deep = 200_000;
 // It is checked at `deep` and built at a depth at which every fault of this kind so far would have shown.
 const builtLessDeep: Record<string, number> = {
   "callers": 50_000,
+  // The front end bears it, and the engine follows the sum from the head of each loop to the head around it.
+  "loops round a sum": 3_000,
 };
 
 test.concurrent.each(Object.entries(shapes))(

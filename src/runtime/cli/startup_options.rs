@@ -81,6 +81,7 @@ enum Obstacle {
     BuiltWithoutFunctionSource,
     RunsOnlyCompiledCode,
     BuiltWithoutInspector,
+    BuiltWithoutSql,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -142,6 +143,9 @@ impl UnusableOption {
                 b" because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code"
             }
             Obstacle::BuiltWithoutInspector => b". Rebuild it with --compile-inspector",
+            Obstacle::BuiltWithoutSql => {
+                b": the program never uses Bun.sql, so it wasn't compiled in. Rebuild with --compile-exec-argv=--sql-preconnect"
+            }
         };
         out.extend_from_slice(what_happens);
         out.extend_from_slice(reason);
@@ -262,6 +266,14 @@ impl ExecArgvOptions {
 
     pub(crate) fn admits_inspector(&self) -> bool {
         self.first_with(INSPECTOR_REQUIREMENT).is_some()
+    }
+
+    pub(crate) fn features(&self) -> Vec<Feature> {
+        let feature_of = |option: &OptionRequirement| match option.requirement {
+            RuntimeRequirement::Feature(feature) => Some(feature),
+            _ => None,
+        };
+        self.requirements.iter().filter_map(feature_of).collect()
     }
 
     pub(crate) fn first_that_loads_code(&self) -> Option<&OptionRequirement> {
@@ -481,6 +493,16 @@ pub(crate) fn refuse_code_without_interpreter() {
     if is_removed(Feature::Interpreter) {
         bun_core::disallow_code_generation_for_removed_interpreter();
     }
+}
+
+/// `--sql-preconnect` as an option of the run makes the start read `Bun.sql`. Only the image says whether the build compiled what stands behind it.
+#[cold]
+#[inline(never)]
+pub(crate) fn exit_for_sql_preconnect_without_sql() -> ! {
+    exit_for(&UnusableOption {
+        origin: OptionOrigin::Flag(Box::from(&b"--sql-preconnect"[..])),
+        obstacle: Obstacle::BuiltWithoutSql,
+    })
 }
 
 /// Before `bun_jsc::initialize`, which fixes the engine's options.

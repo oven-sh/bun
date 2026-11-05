@@ -3640,13 +3640,23 @@ class Scenes {
   }
 
   /** A few lines around one deed (write-single-deeds.ts). */
-  sceneOfASingleDeed() {
-    const [own, ...others] = writeSceneOfASingleDeed(this.random, ++this.count, this.isTypeScript)
+  sceneOfASingleDeed(only?: "graphsOfModules" | "deepVisitors") {
+    const [own, ...others] = writeSceneOfASingleDeed(this.random, ++this.count, this.isTypeScript, only)
       .join("\n")
       .split(/^\/\/ @filename: (\S+)\n/m);
     this.lines.push(...own.trimEnd().split("\n"));
     for (let other = 0; other < others.length; other += 2)
       this.files.push([others[other], others[other + 1].trimEnd() + "\n"]);
+  }
+
+  /** A few files that import each other. For run-alone.ts, which knows when an order of loads counts: no table draws it. */
+  sceneOfAGraphOfModules() {
+    this.sceneOfASingleDeed("graphsOfModules");
+  }
+
+  /** A function that calls itself a few thousand times. For run-alone.ts, which judges it as it is built and under no word that makes frames larger: no table draws it. */
+  sceneOfADeepVisitor() {
+    this.sceneOfASingleDeed("deepVisitors");
   }
 
   /** TypeScript. A place of a declared type is given what the type does not allow (write-typed-places.ts). In JavaScript there are no such types, and the scene is one of steps on an object. */

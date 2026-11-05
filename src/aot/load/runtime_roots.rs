@@ -1,10 +1,15 @@
 use bun_ast::Loader;
+use bun_options_types::aot_options::AotOptions;
+use bun_removable_features::Feature;
 use bun_sema::program::{CodeAnswer, Files, HostModuleId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 
+use crate::builtins::runtime_uses::Mentions;
 use crate::builtins::table::{ModuleFlags, module_by_specifier, module_data, runtime_function};
-use crate::builtins::{AsksOfText, Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
+use crate::builtins::{
+    AsksOfText, BuiltinId, Platforms, RuntimeFunction, RuntimeModule, RuntimeUses,
+};
 use crate::load::contents::ProgramContents;
 use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
 use crate::load::loaders::{HostLoaderKind, host_loader_kind};
@@ -31,8 +36,31 @@ fn has_source(module: RuntimeModule) -> bool {
     module_data(module).flags.contains(ModuleFlags::HAS_SOURCE)
 }
 
+pub(crate) fn builtins_used_at_start(options: &AotOptions) -> Vec<BuiltinId> {
+    let read_for = |feature: &Feature| match feature {
+        Feature::Sql => Some(BuiltinId::Bun_sql),
+        _ => None,
+    };
+    let features = options.features_of_embedded_options.iter();
+    features.filter_map(read_for).collect()
+}
+
+pub(crate) fn uses_of_what_start_reads(
+    used_at_start: &[BuiltinId],
+    platform: Platforms,
+) -> RuntimeUses {
+    let handed_to_the_start = Mentions {
+        mentioned: used_at_start,
+        exposed: used_at_start,
+        is_of_program: true,
+        ..Mentions::default()
+    };
+    RuntimeUses::of_mentions(&handed_to_the_start, platform)
+}
+
 #[derive(Copy, Clone)]
-pub(crate) struct FurtherLibraryCode {
+pub(crate) struct FurtherLibraryCode<'a> {
+    pub used_at_start: &'a [BuiltinId],
     pub serves_unseen_code: bool,
     pub loads_code_from_disk: bool,
     pub runs_tests: bool,
@@ -44,14 +72,17 @@ pub(crate) fn collect_runtime_roots(
     contents: &ProgramContents,
     runtime_modules: &RuntimeModules,
     platform: Platforms,
-    further: FurtherLibraryCode,
+    further: FurtherLibraryCode<'_>,
 ) -> RuntimeRoots {
-    let mut host_loaded: FxHashSet<RuntimeModule> = FxHashSet::default();
-    let mut functions: FxHashSet<RuntimeFunction> = FxHashSet::default();
+    let used_at_start = uses_of_what_start_reads(further.used_at_start, platform);
+    let mut host_loaded: FxHashSet<RuntimeModule> = used_at_start.modules.iter().copied().collect();
+    let mut functions: FxHashSet<RuntimeFunction> =
+        used_at_start.functions.iter().copied().collect();
     let mut imports_uncompiled_code = false;
-    let mut asks_module_of_host = false;
+    let mut asks_module_of_host = used_at_start.has_module_of_host();
     let mut named: Vec<RuntimeModule> = Vec::new();
-    let mut lets_in_what_nobody_names = further.has_file_that_asks_for_it;
+    let mut lets_in_what_nobody_names =
+        further.has_file_that_asks_for_it || used_at_start.lets_in_what_nobody_names;
     let mut asks_of_texts = AsksOfText::default();
     for &file in application.compiled_files() {
         lets_in_what_nobody_names |=
@@ -267,7 +298,8 @@ mod tests {
         RuntimeModules::new(Archive::embedded(), false)
     }
 
-    const NOTHING_FURTHER: FurtherLibraryCode = FurtherLibraryCode {
+    const NOTHING_FURTHER: FurtherLibraryCode<'static> = FurtherLibraryCode {
+        used_at_start: &[],
         serves_unseen_code: false,
         loads_code_from_disk: false,
         runs_tests: false,
@@ -281,7 +313,7 @@ mod tests {
     fn collect_roots_beside(
         source: &str,
         runtime_modules: &RuntimeModules,
-        further: FurtherLibraryCode,
+        further: FurtherLibraryCode<'_>,
     ) -> RuntimeRoots {
         let files = [("main.ts", source)];
         with_loaded_build(&files, &default_settings(), |_, loaded| {
@@ -322,15 +354,33 @@ mod tests {
     }
 
     #[test]
-    fn program_that_names_nothing_of_bun_has_the_roots_of_what_any_operand_is_asked_for() {
+    fn program_that_hands_no_value_to_a_native_has_no_root_with_code() {
         let runtime = runtime_modules();
         let of_nothing = collect_roots_of("export {};", &runtime);
         assert!(!of_nothing.keeps_code_without_names);
         assert!(!of_nothing.holds_what_unseen_code_finds);
         assert!(of_nothing.host_loaded_modules.is_empty());
-        assert!(of_nothing.paths.len() > runtime.declaration_paths().len());
+        assert_eq!(of_nothing.paths.len(), runtime.declaration_paths().len());
         let of_a_printed_line = collect_roots_of("console.log(1);", &runtime);
         assert_eq!(of_a_printed_line.paths, of_nothing.paths);
+        let of_a_printed_value = collect_roots_of("console.log(f);", &runtime);
+        assert!(!of_a_printed_value.holds_what_unseen_code_finds);
+        assert!(of_a_printed_value.paths.len() > of_nothing.paths.len());
+    }
+
+    #[test]
+    fn what_the_start_reads_for_an_embedded_option_is_held_as_where_the_program_hands_it_on() {
+        let runtime = runtime_modules();
+        let further = FurtherLibraryCode {
+            used_at_start: &[BuiltinId::Bun_sql],
+            ..NOTHING_FURTHER
+        };
+        let by_option = collect_roots_beside("console.log(1);", &runtime, further);
+        let by_text = collect_roots_of("f(Bun.sql);", &runtime);
+        assert!(by_option.holds_what_unseen_code_finds);
+        for path in &by_text.paths {
+            assert!(by_option.paths.contains(path));
+        }
     }
 
     #[test]
@@ -384,7 +434,7 @@ mod tests {
     fn host_loads_worker_threads_where_code_that_nobody_reads_may_start_a_worker() {
         let runtime = runtime_modules();
         let threads = module_by_specifier(b"node:worker_threads").unwrap();
-        let is_loaded = |source: &str, further: FurtherLibraryCode| {
+        let is_loaded = |source: &str, further: FurtherLibraryCode<'_>| {
             let roots = collect_roots_beside(source, &runtime, further);
             let is_root = has_module_root(&runtime, &roots, threads);
             assert_eq!(roots.host_loaded_modules.contains(&threads), is_root);

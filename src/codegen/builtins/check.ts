@@ -10,6 +10,7 @@ export const {
   checkFieldsHoldingOnlyWhatIsStored,
   checkModel,
   checkMutability,
+  checkPlacesHoldingWhatIsThrown,
   checkResultAdmitsWhatRecordsBring,
   checkSchemaWords,
 } = engineModule;

@@ -1,9 +1,9 @@
 use std::fmt::Write;
 
 use super::generated::{
-    AmbiguousExport, Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module,
-    ModuleFailure, OpenedName, ProgramList, ReplaceableBuiltin, RuntimeFunctionEntry, SourceStamp,
-    TypeSite, Variable, WebAssemblyModule,
+    AmbiguousExport, BuiltinUsedAtStart, Data, Entry, EvalScope, ExpectedResult, Function, Layout,
+    Module, ModuleFailure, OpenedName, ProgramList, ReplaceableBuiltin, RuntimeFunctionEntry,
+    SourceStamp, TypeSite, Variable, WebAssemblyModule,
 };
 use super::ids::{FunctionId, Id};
 use super::program::{NameTables, Program};
@@ -124,6 +124,13 @@ impl<'a> Printer<'a> {
             }
             ProgramList::OpenedNames => {
                 self.print_lines(list, &program.opened_names, OpenedName::print_fields);
+            }
+            ProgramList::BuiltinsUsedAtStart => {
+                self.print_lines(
+                    list,
+                    &program.builtins_used_at_start,
+                    BuiltinUsedAtStart::print_fields,
+                );
             }
             _ => debug_assert!(list.keyword().is_none()),
         }

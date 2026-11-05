@@ -2,14 +2,14 @@
 // Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
-function Point(this: any, x: number): any { if (!new.target) return new (Point as any)(x + 100); this.x = x; this.y = new.target === Point ? 0 : 1; }
+function Point(this: any, x: number): any { if (!new.target) return new (Point as any)(x + 100); this.x = x; this.y = new.target === Point ? 0 : 1; } // @ts-expect-error
 Point.prototype.sum = function (this: any) { return this.x + this.y; };
 function Answer(this: any, kind: number): any { this.kind = kind; if (kind === 1) return { other: true }; if (kind === 2) return 7; if (kind === 3) return null; if (kind === 4) return Answer; }
 function Pair(this: any, a: number) { this.a = a; this.b = a + 1; }
 Pair.prototype.both = function (this: any) { return this.a * 10 + this.b; };
 function Other(this: any, a: number) { this.c = a; }
 Other.prototype.both = function (this: any) { return -this.c; };
-function Below(this: any, x: number) { Point.call(this, x); this.z = 5; }
+function Below(this: any, x: number) { Point.call(this, x); this.z = 5; } // @ts-expect-error
 Below.prototype = Object.create(Point.prototype);
 const record: any = { Pair };
 const holders: any[] = [record];

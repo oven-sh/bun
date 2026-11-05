@@ -11,7 +11,7 @@ class Holder {
   get read(): unknown {
     return false || "read";
   }
-  static fixed(o: any): unknown {
+  static fixed(o: any): unknown { // @ts-expect-error
     return null ?? o.a;
   }
   field = (o: any): unknown => true ? o.a : dead();
@@ -32,5 +32,5 @@ function* yields(o: any): Generator<unknown> {
 }
 const read = Object.getOwnPropertyDescriptor(Holder.prototype, "read")!.get!;
 for (const shown of [Holder.prototype.method, read, Holder.fixed, new Holder().field, literal.method, arrow, waits, yields]) {
-  console.log(shown.toString().replace(/\s+/g, ""));
+  console.log(shown.toString().replace(/\/\/ @ts-expect-error|\s+/g, ""));
 }

@@ -11,11 +11,27 @@
 // `--programs <folder>` takes the files of the folder, once each, in place of draws.
 // `--checks-proofs 50` builds 50 programs of 100 once more with --aot-testing=CheckProofsAtRunTime, `--writes-straight 50` with --aot-testing=WritesBodiesStraight. Both executables have to do as `bun <file>` does.
 // `--as-a-test 25` has a test import 25 programs of 100, under `bun test --aot` and under `bun test`. A difference counts where the compiled test run prints something else than the executable too.
+// `--shuffles-costs 50` builds 50 programs of 100 once more under a word that may only change what the code costs: guesses fail unasked, expected types are ignored or shuffled, so are the frequencies of blocks and
+// the choices by cost, Link is given more. An answer that changes there is a miscompilation.
+// `--kin 100` draws 100 programs of 100 as kin (write-kin.ts) of the stored programs under `--stored` (../../parallel), seven of ten from those that changed within `--hours` (2) of the newest.
+// `--together 10` builds ten programs into one executable first, behind an entry that imports them in a row. A build costs about the same for one small program as for ten. Where the company does as
+// `bun <file>` does, all ten count as the same. Where it parts, each member is built alone in the same way. Where none parts alone, members are taken out while the rest still parts, and what is left is kept as
+// `together-<kind>`. Company hides some faults and shows others, so this is a second net beside the first.
 // What it keeps under --finds is laid out as run-batch.ts lays it out: <kind>-<hash of the words>/<size as a power of two>/{program.<extension>, report.txt, compiled.stdout, ..}, and index.txt.
 // It prints a line with {"taken": n, ..} every 50 programs, as run-batch.ts does for each batch.
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { writeKin } from "./write-kin.ts";
 import { writeOrdinaryScenes } from "./write-ordinary-scenes.ts";
 
 const { values: options } = parseArgs({
@@ -35,6 +51,11 @@ const { values: options } = parseArgs({
     "checks-proofs": { type: "string", default: "0" },
     "writes-straight": { type: "string", default: "0" },
     "as-a-test": { type: "string", default: "0" },
+    "shuffles-costs": { type: "string", default: "0" },
+    kin: { type: "string", default: "0" },
+    stored: { type: "string", default: process.env.FUZZ_STORED_PROGRAMS ?? "" },
+    hours: { type: "string", default: "2" },
+    together: { type: "string", default: "1" },
   },
 });
 const { bun, work, finds } = options as Record<string, string>;
@@ -48,6 +69,11 @@ for (const name of [
   "checks-proofs",
   "writes-straight",
   "as-a-test",
+  "shuffles-costs",
+  "kin",
+  "stored",
+  "hours",
+  "together",
 ])
   options[name] = String(options[name]);
 if (!work || !finds) throw new Error("Expected --work and --finds");
@@ -97,6 +123,8 @@ const isDocumented = (text: string, ours: Ended) =>
     "Attempted to assign to readonly property",
     "this executable was compiled assuming",
     "Maximum call stack size exceeded",
+    // Only a program that runs code from a string may hear that something was not compiled.
+    ...(/\beval\b|\bFunction\(|node:vm/.test(text) ? ["was not compiled into this executable", "Cannot load"] : []),
   ].some(message => ours.stderr.includes(message) || ours.stdout.includes(message)) ||
   ["WeakRef", "FinalizationRegistry", "import.meta", "__filename", "__dirname", ".argv", ".stack", ".caller"].some(
     name => text.includes(name),
@@ -156,7 +184,67 @@ const given = options.programs
       .sort()
   : undefined;
 
-function draw(): { text: string; extension: string } | undefined {
+const stored = options.stored || join(import.meta.dir, "..", "..", "parallel");
+const pools: { late: string[]; all: string[] } = { late: [], all: [] };
+if (Number(options.kin) > 0) {
+  const changed = new Map<string, number>();
+  for (const name of new Bun.Glob("**/*.{ts,js,mjs,cjs,mts,cts}").scanSync({ cwd: stored })) {
+    // The folder may be laid anew while it is read.
+    const { mtimeMs = 0, size = Infinity } = statSync(join(stored, name), { throwIfNoEntry: false }) ?? {};
+    if (size < 16_000 && !name.endsWith(".d.ts") && !name.includes(".test.")) changed.set(name, mtimeMs);
+  }
+  const newest = Math.max(...changed.values());
+  pools.all = [...changed.keys()];
+  pools.late = pools.all.filter(name => changed.get(name)! > newest - Number(options.hours) * 3_600_000);
+}
+/** A stored program that stands alone and prints the same wherever it lies. */
+const standsAlone = (text: string) =>
+  !/from "\.|require\("\.|import\("\.|import "\.|bun:test|Plain Bun prints another output|import\.meta|\.argv|__filename|__dirname|^\/\/ (?:Env|Flags|Options|Arguments|@filename)/m.test(
+    text,
+  );
+function drawKin() {
+  for (let tries = 0; tries < 40; tries++) {
+    const pool = pools.late.length && Math.random() < 0.7 ? pools.late : pools.all;
+    // A folder first, then a file in it: a family of hundreds of files must not crowd out the one program that came with a unit.
+    const folders = [...new Set(pool.map(name => name.split("/")[0]))];
+    const folder = folders[Math.floor(Math.random() * folders.length)];
+    const inFolder = pool.filter(name => name.split("/")[0] === folder);
+    const name = inFolder[Math.floor(Math.random() * inFolder.length)];
+    if (!existsSync(join(stored, name))) continue;
+    const text = readFileSync(join(stored, name), "utf8").replace(/^\/\* Output:\n[^]*?\*\/\n?/m, "");
+    if (!standsAlone(text)) continue;
+    const kin = writeKin(text, Math.random);
+    if (kin.changes.length)
+      return {
+        text: `${kin.text}\n// kin of ${name}: ${kin.changes.join(", ")}\n`,
+        extension: extname(name),
+        isKin: true,
+        from: { name, text },
+      };
+  }
+}
+
+type Arm = [prefix: string, flags: string[]];
+type Company = { members: Drawn[]; left: number; found: number; arm: Arm };
+type Drawn = {
+  text: string;
+  extension: string;
+  isKin?: boolean;
+  from?: { name: string; text: string };
+  /** The programs that this one imports in a row. */
+  members?: Drawn[];
+  /** The ways to build it, where they are not drawn. */
+  arms?: Arm[];
+  /** The company that parted, for one of its members. */
+  company?: Company;
+  /** None of its members parts alone. */
+  isCompany?: boolean;
+};
+function draw(): Drawn | undefined {
+  if (Math.random() * 100 < Number(options.kin)) {
+    const kin = drawKin();
+    if (kin) return kin;
+  }
   if (given) {
     const name = given.shift();
     return name === undefined
@@ -181,20 +269,27 @@ function draw(): { text: string; extension: string } | undefined {
   );
   // A text that needs nothing of a module is a CommonJS file now and then, and always where it says that it stays a script.
   const script = text.replace(/^export \{\};\n/gm, "");
-  const canBeAScript = !/^\s*(?:import|export)\b|\bawait\b|^\/\/ @filename: /m.test(script);
-  if (canBeAScript && (script.includes("// stays a script") || Math.random() < 0.25))
+  const staysAScript = script.includes("// stays a script");
+  const [own, ...files] = script.split(/^\/\/ @filename: /m);
+  const canBeAScript = !/^\s*(?:import|export)\b|\bawait\b/m.test(own) && (staysAScript || !files.length);
+  if (canBeAScript && (staysAScript || Math.random() < 0.25))
     return { text: script, extension: options.draws === "ts" ? ".cts" : ".cjs" };
-  return script.includes("// stays a script") ? draw() : { text, extension: "." + options.draws };
+  return staysAScript ? draw() : { text, extension: "." + options.draws };
 }
 
-const counts: Record<string, number> = { taken: 0 };
-const add = (kind: string) => (counts[kind] = (counts[kind] ?? 0) + 1);
-const lastStart = Number(options.seconds) ? performance.now() + Number(options.seconds) * 1000 : Infinity;
-let started = performance.now();
-while (performance.now() < lastStart) {
-  const program = draw();
-  if (!program) break;
-  const { text, extension } = program;
+/** One executable for several programs: an entry that imports them in a row, each in a folder of its own. */
+function together(members: Drawn[]): Drawn {
+  const files = members.map((member, at) => {
+    const [main, ...others] = member.text.split(/^\/\/ @filename: \.\/(\S+)\n/m);
+    let text = `// @filename: ./k${at}/program${member.extension}\n${main.replace(/\n?$/, "\n")}`;
+    for (let other = 0; other < others.length; other += 2)
+      text += `// @filename: ./k${at}/${others[other]}\n${others[other + 1].replace(/\n?$/, "\n")}`;
+    return text;
+  });
+  const entry = members.map((member, at) => `import "./k${at}/program${member.extension}";\n`).join("");
+  return { text: entry + files.join(""), extension: ".ts", members };
+}
+function lay({ text, extension }: Drawn) {
   rmSync(folder, { recursive: true, force: true });
   mkdirSync(folder, { recursive: true });
   const [main, ...others] = text.split(/^\/\/ @filename: \.\/(\S+)\n/m);
@@ -203,55 +298,179 @@ while (performance.now() < lastStart) {
     mkdirSync(dirname(join(folder, others[other])), { recursive: true });
     writeFileSync(join(folder, others[other]), others[other + 1]);
   }
-  counts.taken++;
-  const plain = await spawn([bun, "program" + extension], 20);
-  const arms: [string, string[]][] = [["", []]];
-  let asBuilt: Ended | undefined;
+  return others.length > 0;
+}
+const build = (more: string[], entry: string, out: string) => [
+  ...[bun, "build", "--compile", "--aot", ...flags, ...more],
+  ...["./" + entry, "--outfile", join(folder, out)],
+];
+
+const counts: Record<string, number> = { taken: 0 };
+const add = (kind: string) => (counts[kind] = (counts[kind] ?? 0) + 1);
+/** Programs that are judged before anything new is drawn. */
+const waiting: Drawn[] = [];
+// How deep calls can go is asked of the executable as users build it, with nothing beside the program.
+const asksForDepth = /^function visit_\d+\(depth/m;
+const endsTheProcess = /process\.(?:exit|abort|kill|reallyExit|on|once)\b|uncaughtException|unhandledRejection/;
+
+/** So many programs that `bun <file>` runs to their end, as one. What cannot stand in company waits to be judged alone. */
+async function drawTogether(size: number): Promise<Drawn | undefined> {
+  const members: Drawn[] = [];
+  for (let tries = 0; members.length < size && tries < size * 4; tries++) {
+    const program = draw();
+    if (!program) break;
+    lay(program);
+    const plain = await spawn([bun, "program" + program.extension], 20);
+    if (plain.end === "0" && !endsTheProcess.test(program.text) && !asksForDepth.test(program.text))
+      members.push(program);
+    else if (!program.isKin) waiting.push(program);
+    else {
+      counts.taken++;
+      add(plain.end === "0" ? "a kin that ends the process" : "a kin that bun <file> does not run to its end");
+    }
+  }
+  return members.length > 1 ? together(members) : (members[0] ?? waiting.shift());
+}
+
+function drawArms(text: string): Arm[] {
+  const arms: Arm[] = [["", []]];
+  if (asksForDepth.test(text)) return arms;
   if (Math.random() * 100 < Number(options["checks-proofs"]))
     arms.push(["proof-checks-", ["--aot-testing=CheckProofsAtRunTime"]]);
   if (Math.random() * 100 < Number(options["writes-straight"]))
     arms.push(["straight-", ["--aot-testing=WritesBodiesStraight"]]);
+  if (Math.random() * 100 < Number(options["shuffles-costs"])) {
+    const seed = 1 + Math.floor(Math.random() * 1000);
+    const word = [
+      "IgnoreBranchHints",
+      `ShuffleBlockFrequencies:${seed}`,
+      "IgnoreExpectedTypes",
+      `ShuffleExpectedTypes:${seed}`,
+      "FailGuesses",
+      `FailGuesses:${1 + (seed % 7)}:${seed}`,
+      `GiveLinkMore:${seed}`,
+      `ShuffleChoices:${seed}`,
+    ][Math.floor(Math.random() * 8)];
+    arms.push([
+      `cost-${word.replace(/:.*/, "")}-`,
+      [`--aot-testing=${word}`, ...(word.startsWith("GiveLinkMore") ? ["--aot-check=FlowFindsNoLessFromMore"] : [])],
+    ]);
+  }
+  return arms;
+}
+
+/** Some stored programs are held to an output of their own. A kin that parts counts where the stored program does as `bun <file>` does: each is asked once for each way to build. */
+const isAsPlain = new Map<string, boolean>();
+async function comesOfAnOddProgram({ from, extension }: Drawn, [arm, more]: Arm) {
+  if (!from) return false;
+  const key = arm + from.name;
+  if (!isAsPlain.has(key)) {
+    writeFileSync(join(folder, "stored" + extension), from.text);
+    const reference = await spawn([bun, "stored" + extension], 20);
+    await spawn(build(more, "stored" + extension, "stored"), 300);
+    isAsPlain.set(
+      key,
+      reference.end === "0" &&
+        existsSync(join(folder, "stored")) &&
+        agree(await spawn([join(folder, "stored")], 40), reference),
+    );
+    rmSync(join(folder, "stored"), { force: true });
+  }
+  if (isAsPlain.get(key)) return false;
+  for (const pool of [pools.late, pools.all]) if (pool.includes(from.name)) pool.splice(pool.indexOf(from.name), 1);
+  add("a stored program that does not do as bun <file> does");
+  return true;
+}
+
+/** Takes out of a company each member without which it still parts. */
+async function withoutBystanders(company: Drawn, [, more]: Arm) {
+  let members = company.members!;
+  for (let at = members.length - 1; at >= 0 && members.length > 1; at--) {
+    const fewer = together(members.toSpliced(at, 1));
+    lay(fewer);
+    const plain = await spawn([bun, "program.ts"], 60);
+    await spawn(build(more, "program.ts", "executable"), 300);
+    if (!existsSync(join(folder, "executable")) || !agree(await spawn([join(folder, "executable")], 80), plain))
+      members = fewer.members!;
+  }
+  return { ...company, ...together(members) };
+}
+
+const lastStart = Number(options.seconds) ? performance.now() + Number(options.seconds) * 1000 : Infinity;
+let started = performance.now();
+function tell() {
+  console.log(
+    `${new Date().toISOString().slice(11, 19)} ${(counts.taken / ((performance.now() - started) / 1000)).toFixed(1)} programs a second | ${JSON.stringify(counts)}`,
+  );
+  for (const kind in counts) counts[kind] = 0;
+  started = performance.now();
+}
+while (performance.now() < lastStart || waiting.length) {
+  let program =
+    waiting.shift() ?? (Number(options.together) > 1 ? await drawTogether(Number(options.together)) : draw());
+  if (!program) break;
+  if (program.isCompany) program = await withoutBystanders(program, program.arms![0]);
+  const { text, extension, members, isCompany, company } = program;
+  const hasFiles = lay(program);
+  if (!program.arms) counts.taken += members?.length ?? 1;
+  const inCompany = isCompany ? "together-" : "";
+  const plain = await spawn([bun, "program" + extension], members ? 60 : 20);
+  let asBuilt: Ended | undefined;
+  /** Whether anything but "same" came of it. */
+  let parted = false;
   if (plain.end === "time") add("bun <file> does not end in time");
+  else if (program.isKin && plain.end !== "0") add("a kin that bun <file> does not run to its end");
   else
-    for (const [arm, more] of arms) {
-      const command = [
-        bun,
-        "build",
-        "--compile",
-        "--aot",
-        ...flags,
-        ...more,
-        "./program" + extension,
-        "--outfile",
-        join(folder, "executable"),
-      ];
+    for (const [arm, more] of program.arms ?? drawArms(text)) {
+      const command = build(more, "program" + extension, "executable");
       const built = await spawn(command, 300);
       const report = (kind: string, words: string) =>
-        `${kind}, the program built alone as its own entry point\n${command.join(" ")}\n${words}`;
+        `${kind}, ${isCompany ? "programs built together: an entry imports them in a row, and none of them parts where it is built alone" : "the program built alone as its own entry point"}\n${command.join(" ")}\n${words}`;
+      // A company that parts says only that one of its members may: each is then built alone in the same way.
+      const suspectAll = () => {
+        add(`${arm}a company parts`);
+        const record: Company = { members: members!, left: members!.length, found: 0, arm: [arm, more] };
+        for (const member of members!) waiting.push({ ...member, arms: [[arm, more]], company: record });
+      };
       if (!existsSync(join(folder, "executable"))) {
         const stop = /internal compiler error.*$|Stopped while compiling.*$|^panic.*$|^AOT: .*$/m.exec(
           built.stderr + built.stdout,
         )?.[0];
         if (stop === undefined && built.end === "1") {
           add(`${arm}refused`);
+          // One member that the build refuses takes its company along.
+          if (members && !isCompany && arm === "") suspectAll();
+          parted = true;
           break;
         }
-        add(`${arm}build-stopped`);
+        if (members && !isCompany) {
+          suspectAll();
+          break;
+        }
+        parted = true;
+        if (await comesOfAnOddProgram(program, [arm, more])) break;
+        add(`${inCompany}${arm}build-stopped`);
         const words = `${built.end}: ${(stop ?? "").replace(/'[^'\n]*'|\bat \S+|\bfunction \S+/g, "")}`;
-        keepFind(`${arm}build-stopped`, words, {
+        keepFind(`${inCompany}${arm}build-stopped`, words, {
           ["program" + extension]: text,
           "report.txt": report("build-stopped", `${built.end}: ${stop ?? ""}\n`),
           "compiler.stderr": built.stderr,
         });
         continue;
       }
-      let ours = await spawn([join(folder, "executable")], 40);
+      let ours = await spawn([join(folder, "executable")], members ? 80 : 40);
       if (arm === "") asBuilt = ours;
       if (agree(ours, plain)) {
-        add(`${arm}same`);
+        add(`${inCompany}${arm}same`);
         rmSync(join(folder, "executable"), { force: true });
         continue;
       }
+      if (members && !isCompany) {
+        rmSync(join(folder, "executable"), { force: true });
+        suspectAll();
+        break;
+      }
+      parted = true;
       // A difference counts when a second pair of runs shows it again.
       const [plainAgain, oursAgain] = [
         await spawn([bun, "program" + extension], 40),
@@ -260,7 +479,8 @@ while (performance.now() < lastStart) {
       rmSync(join(folder, "executable"), { force: true });
       const kind = kindOfDifference(text, plain, plainAgain, oursAgain);
       ours = oursAgain;
-      // Where `bun build --compile` without --aot parts from `bun <file>` too, and in the same way, the bundler and the runner read something differently: a tsconfig.json in a folder, the path of the file.
+      // Where `bun build --compile` without --aot parts from `bun <file>` too, and in the same way, the bundler and the runner read something differently: a tsconfig.json in a folder, the path of
+      // a file, when an `import()` settles. That is no fault of the compiler.
       if (kind === "stdout" || kind === "exit-code") {
         await spawn(
           [bun, "build", "--compile", "./program" + extension, "--outfile", join(folder, "plain-executable")],
@@ -271,28 +491,30 @@ while (performance.now() < lastStart) {
           : undefined;
         rmSync(join(folder, "plain-executable"), { force: true });
         if (bundled && agree(bundled, ours)) {
-          add(arm + "as the executable without --aot");
+          add(inCompany + arm + "as the executable without --aot");
           continue;
         }
-        // In which order files are loaded differs between `bun <file>` and the executable without --aot, and from run to run. It counts where those two agree and `bun <file>` says the same twenty times.
-        if (others.length && /\bimport\(|\brequire\(/.test(text)) {
+        // In which order files are loaded differs between `bun <file>` and the executable without --aot, and from run to run. It counts where those two agree and `bun <file>` says the same twenty
+        // times. So does whatever only a company shows.
+        if (isCompany || (hasFiles && /\bimport\(|\brequire\(/.test(text))) {
           if (!bundled || !agree(bundled, plainAgain)) {
-            add(arm + "an order of loads on which bun <file> and the executable without --aot part");
+            add(inCompany + arm + "an order of loads on which bun <file> and the executable without --aot part");
             continue;
           }
           let holds = true;
           for (let again = 0; holds && again < 18; again++)
             holds = agree(await spawn([bun, "program" + extension], 40), plainAgain);
           if (!holds) {
-            add(arm + "an order of loads in which bun <file> wavers");
+            add(inCompany + arm + "an order of loads in which bun <file> wavers");
             continue;
           }
         }
       }
-      add(arm + kind);
+      if (kept.includes(kind) && (await comesOfAnOddProgram(program, [arm, more]))) break;
+      add(inCompany + arm + kind);
       if (!kept.includes(kind)) continue;
       const summary = firstDifference(ours, plainAgain);
-      keepFind(arm + kind, summary, {
+      keepFind(inCompany + arm + kind, summary, {
         ["program" + extension]: text,
         "report.txt": report(arm + kind, summary),
         "compiled.stdout": ours.stdout,
@@ -301,7 +523,13 @@ while (performance.now() < lastStart) {
         "bun-run.stderr": plainAgain.stderr,
       });
     }
-  if (asBuilt && Math.random() * 100 < Number(options["as-a-test"])) {
+  if (company) {
+    if (parted) company.found++;
+    // Nobody parts alone: then it takes the company.
+    if (--company.left === 0 && company.found === 0)
+      waiting.push({ ...together(company.members), isCompany: true, arms: [company.arm] });
+  }
+  if (asBuilt && !members && !program.arms && Math.random() * 100 < Number(options["as-a-test"])) {
     writeFileSync(
       join(folder, "wrapped.test.js"),
       `import { test } from "bun:test";\ntest("the program", async () => {\n  await import("./program${extension}");\n});\n`,
@@ -320,6 +548,8 @@ while (performance.now() < lastStart) {
         withoutDetails(ours.stdout.replace(/^bun test v.*\n/, "")) === withoutDetails(asBuilt.stdout)
       )
         kind = "as the executable";
+      else if ((kind === "stdout" || kind === "exit-code") && hasFiles && /\bimport\(|\brequire\(/.test(text))
+        kind = "an order of loads";
       add("test-run-" + kind);
       if (kept.includes(kind)) {
         const summary = firstDifference(ours, referenceAgain);
@@ -335,12 +565,7 @@ while (performance.now() < lastStart) {
       }
     }
   }
-  if (counts.taken % 50 === 0 || given?.length === 0) {
-    console.log(
-      `${new Date().toISOString().slice(11, 19)} ${(50 / ((performance.now() - started) / 1000)).toFixed(1)} programs a second | ${JSON.stringify(counts)}`,
-    );
-    for (const kind in counts) counts[kind] = 0;
-    started = performance.now();
-  }
+  if (counts.taken >= 50) tell();
 }
+if (counts.taken) tell();
 rmSync(folder, { recursive: true, force: true });

@@ -12,12 +12,12 @@ use super::{
 use crate::builtins::{BuiltinId, RuntimeFunction};
 use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
-    AmbiguousExport, Data, DataMember, DataNode, Entry, EvalBinding, EvalScope, ExpectedResult,
-    Field, Function, FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase, Layout,
-    LayoutKind, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest, ModuleRequestKind,
-    OpenedName, ProgramList, QuotedText, ReplaceableBuiltin, RequiredName, RuntimeFunctionEntry,
-    SCHEMA_HASH, SourcePositions, SourceStamp, StaticField, SyntheticExport, TypeSite,
-    TypeSiteKind, Variable, WebAssemblyModule,
+    AmbiguousExport, BuiltinUsedAtStart, Data, DataMember, DataNode, Entry, EvalBinding, EvalScope,
+    ExpectedResult, Field, Function, FunctionFlags, FunctionVisibility, Header, HostRead,
+    ImportPhase, Layout, LayoutKind, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest,
+    ModuleRequestKind, OpenedName, ProgramList, QuotedText, ReplaceableBuiltin, RequiredName,
+    RuntimeFunctionEntry, SCHEMA_HASH, SourcePositions, SourceStamp, StaticField, SyntheticExport,
+    TypeSite, TypeSiteKind, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{
@@ -264,6 +264,9 @@ fn create_full_program() -> Program {
     program.opened_names.push(OpenedName {
         holder: BuiltinId::ObjectPrototype,
         name,
+    });
+    program.builtins_used_at_start.push(BuiltinUsedAtStart {
+        builtin: BuiltinId::MathMax,
     });
     program
 }
@@ -652,6 +655,10 @@ fn counts_match_program() {
             program.replaceable_builtins.len(),
         ),
         (ProgramList::OpenedNames, program.opened_names.len()),
+        (
+            ProgramList::BuiltinsUsedAtStart,
+            program.builtins_used_at_start.len(),
+        ),
         (
             ProgramList::Bytes,
             program.strings.byte_len()

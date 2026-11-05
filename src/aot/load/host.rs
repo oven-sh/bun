@@ -1445,7 +1445,9 @@ impl CodeHost for LoadHost<'_> {
             platform: self.input.platform,
             replaced: &load.replaced_builtins,
             runs_tests: load.runs_tests,
-            holds_language: load.runs_tests || self.has_file_that_asks_for_what_unseen_code_finds(),
+            holds_language: load.runs_tests,
+            is_text_asked: !load.runs_tests
+                && !self.has_file_that_asks_for_what_unseen_code_finds(),
         };
         let mut answers =
             builtin_uses::finish_application_file(&input, needs_declarations, request, source);

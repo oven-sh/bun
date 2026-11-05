@@ -90,6 +90,27 @@ export default b.declarations(
     },
   }),
 
+  // JSFFICallback.cpp of JavaScriptCore: what Bun.FFI.callback() makes. bun:ffi lays each below JSCallback.prototype.
+  // createPrototype(): an object below Object.prototype with `close` and nothing else. Of the own properties of an instance, `ptr` and `threadsafe`, the table says nothing.
+  b.class("%FFICallback%", {
+    hasConstructor: false,
+    // bun:ffi gives every one another prototype.
+    isNeverPristine: true,
+    prototypeListsAllMembers: true,
+    stateHeap: "ExternalState",
+    proto: {
+      // A callback that is closed has no address any more. On another receiver it throws.
+      close: {
+        capability: "heap",
+        throws: true,
+        uses: { this: [b.definesName(["ptr"], b.strictNull)] },
+        reads: externalState,
+        writes: externalState,
+        implementation: b.generic,
+      },
+    },
+  }),
+
   webCoreClass("SubtleCrypto", b.cppClass("JSSubtleCrypto"), {
     proto: {
       ...Object.fromEntries(methodsOfSubtleCrypto.map(name => [name, b.otherwiseBy(b.generic)])),

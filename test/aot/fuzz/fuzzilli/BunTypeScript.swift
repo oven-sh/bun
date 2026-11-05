@@ -2148,8 +2148,16 @@ final class TypeScriptPlan {
     }
 
     func convert(_ expression: Expression, producing v: Variable) -> Expression {
-        guard let conversion = outputConversions[v] else { return expression }
-        return apply(conversion, to: expression)
+        let converted = outputConversions[v].map { apply($0, to: expression) } ?? expression
+        guard isUnusedLiteral(v) else { return converted }
+        // Of a literal that nothing uses, `bun run` keeps `key + ""` for a computed key, and that throws for a symbol. An argument of a call stays as it is written.
+        return Expression(type: EffectfulBracketedExpression, text: "Object(\(converted.text))", numSubexpressions: 0)
+    }
+
+    private lazy var usedVariables: Set<Variable> = Set(code.flatMap { Array($0.inputs) })
+    private func isUnusedLiteral(_ v: Variable) -> Bool {
+        guard let definition = definition(of: v), definition.op is EndObjectLiteral else { return false }
+        return !usedVariables.contains(v)
     }
 
     private func apply(_ conversion: Conversion, to expression: Expression) -> Expression {

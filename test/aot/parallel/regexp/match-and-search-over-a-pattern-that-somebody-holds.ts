@@ -98,8 +98,8 @@ const ownExec = /b/;
 ownExec.exec = function (text: string) { said.push("its own exec sees " + text); return null; };
 said.push(attempt(() => "abc".match(ownExec)), attempt(() => "abc".search(ownExec)));
 
-const ownMethods = /b/ as RegExp & Record<symbol, unknown>;
-ownMethods[Symbol.match] = (text: string) => "its own match of " + text;
+const ownMethods = /b/ as RegExp & Record<symbol, unknown>; // @ts-expect-error
+ownMethods[Symbol.match] = (text: string) => "its own match of " + text; // @ts-expect-error
 ownMethods[Symbol.search] = (text: string) => "its own search of " + text;
 said.push(attempt(() => "abc".match(ownMethods)), attempt(() => "abc".search(ownMethods)));
 

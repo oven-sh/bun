@@ -4,7 +4,7 @@ function mark(_target: unknown, _key: string) {}
 const unseen: (value: number) => number = (0, eval)("(value) => value");
 class Gauge {
   plain = note("plain field", unseen(0));
-  @mark level = note("decorated field", unseen(1));
+  @mark level = note("decorated field", unseen(1)); // @ts-expect-error
   @mark made = new.target === undefined ? "undefined" : (new.target as any).name;
   @mark seen = eval("typeof step + ' ' + typeof new.target");
   constructor(step = note("parameter", 1)) { order.push("body"); }

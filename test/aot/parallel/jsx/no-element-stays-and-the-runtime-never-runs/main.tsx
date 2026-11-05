@@ -1,11 +1,12 @@
 // Reference: bun build --compile
 // @jsxImportSource ./tiny
+// @ts-expect-error
 const unused = <a />;
-let other = <></>;
+let other = <></>; // @ts-expect-error
 <b />;
 function dead() {
   return <i />;
-}
+} // @ts-expect-error
 const view = () => <p />;
 class Unused {
   render() {

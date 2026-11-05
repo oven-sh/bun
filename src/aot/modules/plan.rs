@@ -163,6 +163,7 @@ pub(super) struct Plan {
     reaches_entries_of_cache: Option<bool>,
     library_modules_stored_in_cache: Vec<RuntimeModule>,
     asks_loader_functions: bool,
+    computed_names_ask_loader_functions: bool,
     answers_for_names_itself: bool,
     lists_names_of_statements: bool,
     runs_again: Vec<bool>,
@@ -214,6 +215,7 @@ impl Plan {
             reaches_entries_of_cache: None,
             library_modules_stored_in_cache: Vec::new(),
             asks_loader_functions: false,
+            computed_names_ask_loader_functions: false,
             answers_for_names_itself: false,
             lists_names_of_statements: false,
             runs_again: vec![false; order.numbers.len()],
@@ -974,6 +976,14 @@ impl ModuleGraph {
 
     pub fn set_asks_loader_functions(&mut self) {
         self.plan.asks_loader_functions = true;
+    }
+
+    pub fn computed_names_ask_loader_functions(&self) -> bool {
+        self.plan.computed_names_ask_loader_functions
+    }
+
+    pub fn set_computed_names_ask_loader_functions(&mut self) {
+        self.plan.computed_names_ask_loader_functions = true;
     }
 
     pub fn set_answers_for_names_itself(&mut self) {

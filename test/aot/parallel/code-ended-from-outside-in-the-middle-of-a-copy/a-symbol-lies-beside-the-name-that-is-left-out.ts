@@ -16,7 +16,7 @@ function keep<T>(value: T): T {
   return value;
 }
 const mark = Symbol("mark");
-function deed(): void {
+function deed(): void { // @ts-expect-error
   const entry: Record<string | symbol, unknown> = label<Note>({ kind: "note", text: "t" }, "s");
   entry[mark] = 1;
   const { label_id: _id, ...rest } = entry;

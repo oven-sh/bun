@@ -431,6 +431,7 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         obfuscates,
         code_generation_from_strings: embedded.code_generation_from_strings,
         admits_inspector,
+        features_of_embedded_options: embedded.features(),
         loads_code_from_disk: flags.allows_code_from_disk,
         runs_in_place: flags.is_in_place,
         looks_for_type_errors: flags.checks_types,

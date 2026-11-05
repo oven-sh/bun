@@ -340,6 +340,12 @@ static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
     return sqlValue;
 }
 
+// `--sql-preconnect` reads Bun.sql before the program runs. A program compiled ahead of time holds what stands behind it only where the program, or an option written into the executable, uses it.
+extern "C" bool Bun__canReadSqlAtStart(Zig::GlobalObject* globalObject)
+{
+    return ::Bun::DeclaredModuleLoad::canLoad(globalObject, ::Bun::InternalModuleRegistry::Field::BunSql);
+}
+
 static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

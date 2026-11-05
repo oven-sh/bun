@@ -1,5 +1,5 @@
 // One program for each member of every object that the host brings: `Bun`, `process`, the globals, the `node:` and `bun:` modules, and what hangs below them, two steps deep.
-// A program asks one question of one member and does nothing else with it: `typeof holder.member`, `"member" in holder`, or, once for each holder, its own keys.
+// A program asks one question of one member and does nothing else with it: `typeof holder.member`, `"member" in holder`, on `Bun`, `process` and the modules themselves `Object.hasOwn()` and `Reflect.has()` too, or, once for each holder, its own keys.
 // A build leaves out what a program does not reach, and a member that is only asked for is reached by nothing else: the executable has to answer as `bun <file>` does.
 //
 //   bun write-member-sweep.ts <folder>      writes <folder>/<n>-<question>-<path>.mjs; the Bun that runs this file says which members there are
@@ -74,6 +74,10 @@ for (let at = 0; at < holders.length; at++) {
   for (const key of keys) {
     write("typeof", holder, `console.log(typeof ${step(holder.path, key)});`, key);
     write("in", holder, `console.log(${JSON.stringify(key)} in ${holder.path});`, key);
+    if (holder.depth === 0) {
+      write("hasOwn", holder, `console.log(Object.hasOwn(${holder.path}, ${JSON.stringify(key)}));`, key);
+      write("has", holder, `console.log(Reflect.has(${holder.path}, ${JSON.stringify(key)}));`, key);
+    }
     if (holder.depth >= 2) continue;
     let value: unknown;
     try {

@@ -9,7 +9,7 @@ type Options = { a?: number; b?: number };
 function show(o: object): string { if (o === null || typeof o !== "object") return String(o); const parts: string[] = []; for (const key of Reflect.ownKeys(o)) { const d = Object.getOwnPropertyDescriptor(o, key)!; parts.push(String(key) + "=" + ("value" in d ? String(d.value) : "accessor") + (d.enumerable ? "" : "!e") + (d.writable === false ? "!w" : "") + (d.configurable ? "" : "!c")); } return "{" + parts.join(",") + "}" + (Object.getPrototypeOf(o) === Object.prototype ? "" : " other prototype") + (Object.isFrozen(o) ? " frozen" : ""); }
 function same(state: State): State { return { ...state }; }
 function widen(state: State, c: number): Wide { return { ...state, c }; }
-function over(state: State, a: number): State { return { ...state, a }; }
+function over(state: State, a: number): State { return { ...state, a }; } // @ts-expect-error
 function under(state: State, a: number): State { return { a, ...state }; }
 function rest(wide: Wide): { b: number; c: number } { const { a, ...others } = wide; return others; }
 function restOfTwo(wide: Wide): { c: number } { const { a, b, ...others } = wide; return others; }

@@ -2,5 +2,5 @@
 // Bun loads it in the thread before the file of the Worker runs, and there it stores a console and members of process.
 // Flags: --aot-allow-code-from-disk
 // Entry points: ./job.cjs
-// Alone: the working directory stands for the folder that it was built in
+// Alone: the file on disk is looked for from the working directory
 require(Buffer.from(process.cwd() + "/unseen.cjs").toString())("./job.cjs").then(console.log);

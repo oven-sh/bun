@@ -4,7 +4,8 @@
 // # The place behind the catch once stayed noted in the frame and the next handler block lost its CatchValue: the compiler stopped in the walk of `total`.
 // # f1 = pick, f2 = id, f3 = total
 // # RUN(COUNT): compile TurnsThatBeginAgain mechanisms=all
-// # COUNT: statistic TurnsThatBeginAgain 1
+// # Two turns begin again: the one that throws, and the one in which what `pick` answers is not a number, which the typed copy tests. Neither has done anything yet, so the other copy does the whole turn
+// # COUNT: statistic TurnsThatBeginAgain 2
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 3 of 3 of 3

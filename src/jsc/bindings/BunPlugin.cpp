@@ -5712,5 +5712,12 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObjec
         JSC::throwException(globalObject, scope, error);
         return {};
     }
+#if ENABLE(AOT)
+    if (JSC::JSValue error = Bun::errorIfBuildSawNoPlugin(globalObject)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        JSC::throwException(globalObject, scope, error);
+        return {};
+    }
+#endif
     return Bun::setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }

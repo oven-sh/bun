@@ -21,6 +21,7 @@ use crate::ir::generated::LimitId;
 use crate::ir::{DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
 
 pub(in crate::lower) use self::classes::{class_position, define_class_layout, private_key};
+pub use self::containers::NamesCreatedOnExports;
 pub(in crate::lower) use self::object_types::KnownOrders;
 pub use self::object_types::ObjectTypeKey;
 use self::object_types::{DescribedNames, ListedFields, SortedMember};

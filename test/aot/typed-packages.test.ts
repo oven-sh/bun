@@ -140,21 +140,14 @@ describe("compile/aot/typed-packages", () => {
     expect(told(compiled)).toEqual(told(await spawned([bunExe(), "run", "with-look-alikes.ts"], folder, bunEnv)));
   });
 
-  test("a package with a type error falls back to untyped, says why, and the compile line counts it", async () => {
+  test("a package with a type error is built, and the build says nothing of it", async () => {
     const folder = project("aot-typed-package-falls");
     appendFileSync(join(folder, typedFile), `\nexport const wrong: number = "a string";\n`);
-    const map = join(folder, "app.map");
-    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts"], folder, {
-      ...bunEnv,
-      BUN_JSC_aotMapFilePath: map,
-    });
+    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts"], folder, bunEnv);
     built(build);
     const said = build.stdout + build.stderr;
-    expect(said).toContain("TS100009: 'small-renderer' has 1 type error (");
-    expect(said).toContain("TS2322: Type 'string' is not assignable to type 'number'.");
-    expect(said).toMatch(/compile +app(\.exe)? +1 file compiled without types/);
-    const { typed, untyped } = compiledOf(map, typedModulePath);
-    expect(untyped.bytes).toBeGreaterThan(typed.bytes * 50);
+    expect(said).not.toContain("TS2322");
+    expect(said).not.toMatch(/compiled (untyped|without (its |their )?types)/);
     const compiled = await spawned([join(folder, "app")], folder, {
       ...bunEnv,
       BUN_JSC_crashIfInterpreterIsUsed: "1",

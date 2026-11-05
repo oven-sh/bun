@@ -19,7 +19,7 @@ structuredClone(gone.buffer, { transfer: [gone.buffer] })
 class Mine extends Int32Array {}
 const arrivals: [string, unknown][] = [
   ["Int32Array", new Int32Array(3)], ["Uint8Array", new Uint8Array(3)], ["Float64Array", new Float64Array(3)], ["Uint8ClampedArray", new Uint8ClampedArray(3)], ["BigInt64Array", new BigInt64Array(3)],
-  ["short", new Int32Array(1)], ["empty", new Int32Array(0)], ["list", [1, 2, 3]], ["holes", [, , 3]], ["short list", []], ["text", "abc"], ["object", {}], ["keyed", { 1: "one" }],
+  ["short", new Int32Array(1)], ["empty", new Int32Array(0)], ["list", [1, 2, 3]], ["holes", [, , 3]], ["short list", []], ["text", "abc"], ["object", {}], ["keyed", { 1: "one" }], // @ts-expect-error
   ["above", above], ["proxy", proxy], ["frozen", frozen], ["resizable", grown], ["detached", gone], ["subclass", new Mine(3)], ["arguments", (function () { return arguments })(1, 2, 3)],
   ["number", 5], ["null", null], ["undefined", undefined], ["function", function () {}], ["map", new Map()],
 ]

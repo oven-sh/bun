@@ -1,8 +1,7 @@
 // answers: without-library
 // # A store under a number that is no index lays a NAME on the list and takes it out of the Structure that its class made it in. Link knows of a key that it holds only numbers, never that it is an index: Scan says so where the key is written so: a whole number from 0, `x & n`, `x >>> n` from 1 on, `x % n` of such a key.
-// # Under such a key the list keeps the word that it stays as made: it is taken, and under the word of the door held against the list: no closed read of indexOf.
+// # Under such a key the list keeps the word that it stays as made: it is taken, and held against the list: no closed read of indexOf.
 // # `list[i - 1]` lays "-1" in the first turn: no word, a closed read, and no stop: what ends the word lies in a slot of its own, so the elements keep their types and nothing is found under names.
-// # OPTIONS: testing=HoldsObjectsToStayingAsMade
 // # f1 = masked, f2 = shifted, f3 = wrapped, f4 = written, f5 = counted
 // # RUN(MASKED): walk f1 mechanisms=all
 // # MASKED: CheckProof {{*}}checkedType=true

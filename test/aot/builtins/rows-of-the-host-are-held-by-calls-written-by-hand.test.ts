@@ -9,7 +9,7 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { serialize } from "bun:jsc";
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tls } from "harness";
 import { EventEmitter, getEventListeners } from "node:events";
 import { closeSync, openSync } from "node:fs";
 import { join, posix, win32 } from "node:path";
@@ -208,7 +208,269 @@ function listenedTo(): EventTarget {
   return target;
 }
 
+type NativeFunction = (...operands: unknown[]) => any;
+// bun:ffi takes callback, cfunction and closeCallback away when it is loaded, and nothing loads it in front of this line.
+const ffi: Record<string, NativeFunction> = { ...Reflect.get(Bun, "FFI") };
+const wrapperOfFFI = (name: string): NativeFunction => bindingOf(realm, `native:Bindgen:ffi.bind.ts:${name}`);
+const namesOfLibc =
+  process.platform === "darwin"
+    ? ["libSystem.B.dylib"]
+    : ["libc.so.6", `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1`, "libc.so.7", "libc.so"];
+const neverCalled = { ptr: 8, args: [], returns: "void" };
+const absolute = { abs: { args: ["i32"], returns: "i32" } };
+const spreadToCallback = (overload: DumpedOverload) =>
+  overload.callbacks.flatMap(callback => typeAt(callback.spreadArguments));
+
+function openLibc(open: NativeFunction): { symbols: Record<string, NativeFunction>; close(): void } {
+  for (const name of namesOfLibc) {
+    try {
+      const opened = open(name, absolute);
+      if (!Error.isError(opened)) return opened;
+    } catch {}
+  }
+  throw new Error("no name of the C library opens");
+}
+
+function closed(made: object): object {
+  ffi.closeCallback(made);
+  return made;
+}
+
+// The prototype of callbacks has no path from the global object. With it the judge tells a callback from any other object.
+function prototypeOfCallbacks(): object {
+  const prototype = Reflect.getPrototypeOf(closed(ffi.callback({}, () => {})))!;
+  realm.register("%FFICallback%.prototype", prototype);
+  return prototype;
+}
+
+// A function of native code that enters the callback hands it one operand of each kind.
+function handedByNativeCode(makeCallback: NativeFunction, makeFunction: NativeFunction): Seen[] {
+  const signature = { args: ["i32", "i64", "bool", "cstring", "ptr"], returns: "void" };
+  let handed: unknown[] = [];
+  const made = makeCallback(signature, (...operands: unknown[]) => void (handed = operands));
+  makeFunction({ ...signature, ptr: made.ptr }, "entersTheCallback")(1, 2n, true, Buffer.from("text\0"), null);
+  closed(made);
+  return handed.map(value => ({ value }));
+}
+
+// What generate_symbols() and generate_symbol_for_function() run of their operand: the protocol, what it is, and the operand.
+const symbolsWithCode: [string, string, (note: () => void) => object][] = [
+  [
+    "PrototypeChain",
+    "a getter below a list of types with a hole",
+    note => {
+      const args = ["i32", , "i32"];
+      Object.setPrototypeOf(args, {
+        __proto__: Array.prototype,
+        get 1() {
+          note();
+          return "i32";
+        },
+      });
+      return { made: { args, returns: "void" } };
+    },
+  ],
+  [
+    "PrototypeChain",
+    "an accessor that a signature inherits",
+    note => ({
+      made: {
+        __proto__: {
+          get returns() {
+            note();
+            return "void";
+          },
+        },
+        args: [],
+      },
+    }),
+  ],
+  [
+    "ToPrimitive",
+    "toString() of a String object among the types",
+    note => {
+      const type = new String("i32");
+      type.toString = () => (note(), "i32");
+      return { made: { args: [type], returns: "void" } };
+    },
+  ],
+  [
+    "ToPrimitive",
+    "toString() of what lies under `returns`",
+    note => ({ made: { args: [], returns: { toString: () => (note(), "void") } } }),
+  ],
+  [
+    "OwnValues",
+    "a getter under the name of a symbol",
+    note => ({
+      get made() {
+        note();
+        return { args: [], returns: "void" };
+      },
+    }),
+  ],
+  [
+    "OwnKeys",
+    "the trap of a proxy that lists the names",
+    note =>
+      new Proxy({ made: { args: [], returns: "void" } }, { ownKeys: target => (note(), Reflect.ownKeys(target)) }),
+  ],
+];
+
+const casesOfFFI: Case[] = [
+  ...(
+    [
+      ["Bun.FFI.callback", ffi.callback, ffi.cfunction],
+      [
+        "native:Bindgen:ffi.bind.ts:makeCallback",
+        (...operands) => wrapperOfFFI("makeCallback")(...operands),
+        (...operands) => wrapperOfFFI("makeFunction")(...operands),
+      ],
+    ] as [string, NativeFunction, NativeFunction][]
+  ).map(([row, makeCallback, makeFunction]): Case => ({
+    row,
+    mode: "Call",
+    place: "the operands of the function that native code calls",
+    typesIn: spreadToCallback,
+    see: () => handedByNativeCode(makeCallback, makeFunction),
+  })),
+  {
+    row: "Bun.FFI.callback",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => (
+      prototypeOfCallbacks(),
+      [
+        closed(ffi.callback({ args: ["i32"], returns: "i32" }, () => 1)),
+        ffi.callback(5, () => {}),
+        ffi.callback({ args: 5 }, () => {}),
+      ].map(value => ({ value }))
+    ),
+  },
+  {
+    row: "native:Bindgen:ffi.bind.ts:makeCallback",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => (
+      prototypeOfCallbacks(),
+      [{ value: closed(wrapperOfFFI("makeCallback")({ args: ["i32"], returns: "i32", threadsafe: true }, () => 1)) }]
+    ),
+  },
+  {
+    row: "%FFICallback%.prototype.close",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => [
+      {
+        value: Reflect.apply(
+          Reflect.get(prototypeOfCallbacks(), "close"),
+          ffi.callback({}, () => {}),
+          [],
+        ),
+      },
+    ],
+  },
+  {
+    row: "Bun.FFI.closeCallback",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () =>
+      [ffi.closeCallback(ffi.callback({}, () => {})), ffi.closeCallback(5), ffi.closeCallback()].map(value => ({
+        value,
+      })),
+  },
+  {
+    row: "Bun.FFI.cfunction",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () =>
+      [
+        ffi.cfunction(neverCalled, "neverCalled"),
+        ffi.cfunction(neverCalled),
+        ffi.cfunction(5),
+        ffi.cfunction({ args: 5 }),
+      ].map(value => ({ value })),
+  },
+  {
+    row: "native:Bindgen:ffi.bind.ts:makeFunction",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => [{ value: wrapperOfFFI("makeFunction")(neverCalled, "neverCalled") }],
+  },
+  {
+    row: "Bun.FFI.dlopen",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => {
+      const opened = openLibc(ffi.dlopen);
+      opened.close();
+      return [
+        opened,
+        ffi.dlopen(missing, absolute),
+        ffi.dlopen(namesOfLibc[0], 5),
+        ffi.dlopen(namesOfLibc[0], { abs: { args: 5 } }),
+      ].map(value => ({ value }));
+    },
+  },
+  {
+    row: "Bun.FFI.linkSymbols",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () =>
+      [ffi.linkSymbols({ neverCalled }), ffi.linkSymbols({}), ffi.linkSymbols({ neverCalled: { args: 5 } })].map(
+        value => ({ value }),
+      ),
+  },
+  {
+    row: "Bun.FFI.viewSource",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () =>
+      [
+        ffi.viewSource(absolute, false),
+        ffi.viewSource(absolute.abs, true),
+        ffi.viewSource(5),
+        ffi.viewSource({ abs: { args: 5 } }),
+      ].map(value => ({ value })),
+  },
+  ...(["Call", "Construct"] as const).map((mode): Case => ({
+    row: "Bun.FFI.CString",
+    mode,
+    place: "the result",
+    typesIn: result,
+    see: () => {
+      const text = Buffer.from("text\0");
+      const make = (...operands: unknown[]) =>
+        mode === "Call" ? ffi.CString(...operands) : Reflect.construct(ffi.CString, operands);
+      return [make(ffi.ptr(text)), make(ffi.ptr(text), 1, 2), make(0), make()].map(value => ({ value }));
+    },
+  })),
+  {
+    row: "%FFI%.prototype.symbols",
+    mode: "Get",
+    place: "the result",
+    typesIn: result,
+    see: () => {
+      const opened = openLibc(ffi.dlopen);
+      const { symbols } = opened;
+      opened.close();
+      return [symbols, opened.symbols, ffi.linkSymbols({ neverCalled }).symbols].map(value => ({ value }));
+    },
+    notBroughtOut: { Undefined: "native code hands out no library before it has laid the object there" },
+  },
+];
+
 const cases: Case[] = [
+  ...casesOfFFI,
   {
     row: "native:Bindgen:node_util_binding.bind.ts:parseEnv",
     mode: "Call",
@@ -470,6 +732,33 @@ function errorWithMessage(note: () => void): Error {
 }
 
 const codeThatRuns: CodeThatRuns[] = [
+  ...(
+    [
+      ["Bun.FFI.viewSource", (...operands) => ffi.viewSource(...operands)],
+      ["native:Bindgen:ffi.bind.ts:printSource", (...operands) => wrapperOfFFI("printSource")(...operands)],
+    ] as [string, NativeFunction][]
+  ).flatMap(([row, printSource]) =>
+    symbolsWithCode.map(([protocol, what, symbols]): CodeThatRuns => ({
+      row,
+      operand: 0,
+      protocol,
+      what,
+      provoke: note => printSource(symbols(note), false),
+    })),
+  ),
+  ...(
+    [
+      ["Bun.FFI.cfunction", 1, name => ffi.cfunction(neverCalled, name)],
+      ["native:Bindgen:ffi.bind.ts:makeFunction", 1, name => wrapperOfFFI("makeFunction")(neverCalled, name)],
+      ["Bun.FFI.dlopen", 0, name => ffi.dlopen(name, { neverCalled })],
+    ] as [string, number, NativeFunction][]
+  ).map(([row, operand, named]): CodeThatRuns => ({
+    row,
+    operand,
+    protocol: "ToPrimitive",
+    what: "toString() of a String object that is the name",
+    provoke: note => named(stringObject(note)),
+  })),
   {
     row: "%ServerWebSocket%.prototype.sendText",
     operand: 0,
@@ -664,6 +953,110 @@ function defineTests() {
     },
   );
 
+  // The compiler takes a read of `data` to hand back what the program handed in: native code makes no object there and gives no symbol.
+  test("the data of a listener, a socket and a websocket of a server: a read answers what the options held or what was stored last, and undefined before that and once a listener has stopped", async () => {
+    for (const row of ["Listener", "TCPSocket", "TLSSocket", "ServerWebSocket"].map(
+      name => `%${name}%.prototype.data`,
+    )) {
+      const reads = overloadsOf({ row, mode: "Get" } as Case);
+      expect(reads).not.toBeEmpty();
+      const answers = reads.flatMap(read =>
+        read.transfers.filter(({ to }) => to.place === "Result").map(({ from }) => from),
+      );
+      expect(answers).not.toBeEmpty();
+      expect(answers).toEqual(
+        answers.map(() => expect.objectContaining({ place: "NativeCell", holdsOnlyWhatIsStored: true })),
+      );
+    }
+    const ofListener = { tag: "of the listener" };
+    const ofClient = { tag: "of the client" };
+    const storedLater = { tag: "stored later" };
+    const accepted = Promise.withResolvers<Bun.Socket<unknown>>();
+    const handlers = { data() {}, close() {}, error() {} };
+    const acceptedBare = Promise.withResolvers<Bun.Socket<unknown>>();
+    const bare = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...handlers, open: acceptedBare.resolve } });
+    expect(bare.data).toBeUndefined();
+    const bareClient = await Bun.connect({ hostname: "127.0.0.1", port: bare.port, socket: handlers });
+    expect(bareClient.data).toBeUndefined();
+    expect((await acceptedBare.promise).data).toBeUndefined();
+    bareClient.end();
+    bare.stop(true);
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      data: ofListener,
+      socket: { ...handlers, open: accepted.resolve },
+    });
+    expect(listener.data).toBe(ofListener);
+    const client = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, data: ofClient, socket: handlers });
+    expect(client.data).toBe(ofClient);
+    expect((await accepted.promise).data).toBe(ofListener);
+    client.data = storedLater;
+    listener.data = storedLater;
+    expect([client.data, listener.data]).toEqual([storedLater, storedLater]);
+    expect(client.data).toBe(storedLater);
+    expect(listener.data).toBe(storedLater);
+    client.end();
+    listener.stop(true);
+    expect(listener.data).toBeUndefined();
+
+    const ofSecureClient = { tag: "of the client that speaks TLS" };
+    const ofSecureHalf = { tag: "of the half that speaks TLS" };
+    const secure = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: handlers });
+    const secureClient = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: secure.port,
+      tls: { rejectUnauthorized: false },
+      data: ofSecureClient,
+      socket: handlers,
+    });
+    expect(secureClient.data).toBe(ofSecureClient);
+    secureClient.data = storedLater;
+    expect(secureClient.data).toBe(storedLater);
+    secureClient.end();
+    const plainClient = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: secure.port,
+      data: ofClient,
+      socket: handlers,
+    });
+    const [rawHalf, secureHalf] = plainClient.upgradeTLS({
+      data: ofSecureHalf,
+      tls: { rejectUnauthorized: false },
+      socket: handlers,
+    });
+    expect(rawHalf.data).toBe(ofClient);
+    expect(secureHalf.data).toBe(ofSecureHalf);
+    secureHalf.end();
+    secure.stop(true);
+
+    const ofUpgrade = { tag: "of the upgrade" };
+    const opened = Promise.withResolvers<unknown[]>();
+    const openedBare = Promise.withResolvers<unknown[]>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: (request, self) =>
+        self.upgrade(request, new URL(request.url).search ? { data: ofUpgrade } : undefined)
+          ? undefined
+          : new Response("no"),
+      websocket: {
+        open(socket) {
+          const first = socket.data;
+          socket.data = storedLater;
+          (first === undefined ? openedBare : opened).resolve([first, socket.data]);
+          socket.close();
+        },
+        message() {},
+      },
+    });
+    new WebSocket(`ws://127.0.0.1:${server.port}/?with`);
+    const [first, second] = await opened.promise;
+    expect(first).toBe(ofUpgrade);
+    expect(second).toBe(storedLater);
+    new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    expect(await openedBare.promise).toEqual([undefined, storedLater]);
+  });
+
   // The compiler takes what lies there from the start for an object all of whose members the table lists: no name but those of any function.
   test("Error.prepareStackTrace: until a program stores there, a read answers the function of native code that the row names", () => {
     const held = Error.prepareStackTrace as unknown as (error: Error, sites: unknown[]) => unknown;
@@ -679,6 +1072,181 @@ function defineTests() {
     expect(described.overloads.filter(row => row.mode === "Call").map(row => row.result.type)).toEqual([
       { ...never, primitives: ["String"] },
     ]);
+  });
+
+  // The compiler takes what these four are handed in place of an error to let no object of an unknown class exist, as what is thrown.
+  test("Bun.listen | Bun.connect: close, error, connectError and handshake are handed an error, nothing, or what a handler threw", async () => {
+    for (const row of ["Bun.listen", "Bun.connect"]) expect(overloadsOf({ row, mode: "Call" } as Case)).not.toBeEmpty();
+    // Every row that takes the handlers of a socket says the same of them: those two, and the three of node:net and node:tls.
+    const everyRow = dump.entries.flatMap(entry => entry.overloads);
+    for (const handler of ["close", "error", "connectError", "handshake"]) {
+      const last = everyRow
+        .flatMap(overload => callsOfHandler(overload, `socket.${handler}`))
+        .map(call => call.arguments.at(-1));
+      expect(last.length).toBeGreaterThanOrEqual(5);
+      expect(last).toEqual(last.map(() => expect.objectContaining({ place: "NewValue", holdsWhatIsThrown: true })));
+    }
+    const thrownByHandler = { tag: "made for this test" };
+    const handed: Record<string, unknown[]> = { close: [], error: [], connectError: [], handshake: [] };
+    const closed = Promise.withResolvers<void>();
+    const failed = Promise.withResolvers<void>();
+    const shaken = Promise.withResolvers<void>();
+    const seen =
+      (name: string, settled?: { resolve(): void }) =>
+      (...operands: unknown[]) => {
+        handed[name].push(operands.at(-1));
+        settled?.resolve();
+      };
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    const refusedPort = listener.port;
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: {
+        open() {
+          throw thrownByHandler;
+        },
+        data() {},
+        error: seen("error"),
+        close: seen("close", closed),
+      },
+    });
+    await closed.promise;
+    listener.stop(true);
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: refusedPort,
+      socket: { data() {}, connectError: seen("connectError", failed) },
+    }).catch(() => {});
+    await failed.promise;
+    const secure = Bun.listen({ hostname: "localhost", port: 0, tls, socket: { data() {} } });
+    const client = await Bun.connect({
+      hostname: "localhost",
+      port: secure.port,
+      tls: { rejectUnauthorized: false },
+      socket: { data() {}, handshake: seen("handshake", shaken) },
+    });
+    await shaken.promise;
+    client.end();
+    const trusted = Promise.withResolvers<void>();
+    const trusting = await Bun.connect({
+      hostname: "localhost",
+      port: secure.port,
+      tls: { ca: tls.cert },
+      socket: { data() {}, handshake: seen("handshake", trusted) },
+    });
+    await trusted.promise;
+    trusting.end();
+    secure.stop(true);
+    // What a handler answers counts as thrown where it is an error, and so does what native code threw inside a handler.
+    const answeredByHandler = new RangeError("made for this test");
+    for (const open of [() => answeredByHandler, () => void atob("*")]) {
+      const told = Promise.withResolvers<void>();
+      const refusing = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { open, data() {}, error: seen("error", told) },
+      });
+      const asking = await Bun.connect({ hostname: "127.0.0.1", port: refusing.port, socket: { data() {} } });
+      await told.promise;
+      asking.end();
+      refusing.stop(true);
+    }
+    expect(handed.error).toEqual([thrownByHandler, answeredByHandler, expect.any(DOMException)]);
+    expect(handed.error[0]).toBe(thrownByHandler);
+    expect(handed.error[1]).toBe(answeredByHandler);
+    expect(handed.close).toEqual([undefined]);
+    expect(handed.connectError).toEqual([expect.any(Error)]);
+    expect(handed.handshake).toEqual([expect.any(Error), null]);
+    for (const error of [...handed.connectError, handed.handshake[0]])
+      expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
+  });
+
+  // The compiler takes a program that loads bun:ffi to make no object of a class that nobody names, and native code behind it to call nothing of the library.
+  test.skipIf(isWindows)(
+    "Bun.FFI: every row says what native code makes, and the judge tells it from anything else",
+    () => {
+      const rows = [
+        "callback",
+        "cfunction",
+        "closeCallback",
+        "dlopen",
+        "linkSymbols",
+        "viewSource",
+        "ptr",
+        "toArrayBuffer",
+        "toBuffer",
+        "CString",
+      ].map(name => `Bun.FFI.${name}`);
+      for (const row of [
+        ...rows,
+        "%FFI%.prototype.symbols",
+        "%FFI%.prototype.close",
+        "%FFICallback%.prototype.close",
+      ]) {
+        const all = dump.entries.filter(entry => entry.path === row).flatMap(entry => entry.overloads);
+        expect(all).not.toBeEmpty();
+        expect(
+          all
+            .filter(
+              overload => overload.isUndeclared || overload.result.type.isAnything || overload.result.type.hasAnyObject,
+            )
+            .map(overload => overload.token),
+        ).toEqual([]);
+      }
+      expect(Reflect.ownKeys(ffi).map(String).sort()).toEqual(
+        [...rows.map(row => row.slice("Bun.FFI.".length)), "read"].sort(),
+      );
+      prototypeOfCallbacks();
+      const [made] = overloadsOf({ row: "native:Bindgen:ffi.bind.ts:makeCallback", mode: "Call" } as Case).map(
+        row => row.result.type,
+      );
+      for (const value of [{}, () => {}, new Error("made for this test"), ffi.linkSymbols({ neverCalled }), null, 5])
+        expect(mismatchOf(made, { value })).toBeString();
+    },
+  );
+
+  test.skipIf(isWindows)(
+    "%FFICallback%: its prototype has `close` alone and stands below Object.prototype, and bun:ffi lays each callback below a class of its own",
+    () => {
+      const prototype = prototypeOfCallbacks();
+      expect(Reflect.ownKeys(prototype)).toEqual(["close"]);
+      expect(Reflect.getPrototypeOf(prototype)).toBe(Object.prototype);
+      const close = Reflect.get(prototype, "close");
+      for (const receiver of [undefined, {}, prototype, ffi.linkSymbols({ neverCalled })])
+        expect(() => Reflect.apply(close, receiver, [])).toThrow(TypeError);
+      const made = ffi.callback({}, () => {});
+      expect(Reflect.ownKeys(made).sort()).toEqual(["ptr", "threadsafe"]);
+      expect([typeof made.ptr, made.threadsafe]).toEqual(["number", false]);
+      Reflect.apply(close, made, []);
+      expect(made.ptr).toBeNull();
+      const { JSCallback } = require("bun:ffi");
+      const wrapped = new JSCallback(() => {}, {});
+      expect(Reflect.getPrototypeOf(wrapped)).toBe(JSCallback.prototype);
+      expect(realm.classesOf(wrapped)).toContain("FFICallback");
+      wrapped.close();
+      expect(wrapped.ptr).toBeNull();
+    },
+  );
+
+  test.skipIf(isWindows)("Bun.FFI.CString: called or constructed it answers a text, and no object", () => {
+    const text = Buffer.from("text\0");
+    const address = ffi.ptr(text);
+    expect([
+      ffi.CString(address),
+      Reflect.construct(ffi.CString, [address]),
+      Reflect.construct(ffi.CString, [0]),
+      ffi.CString(address, 1, 2),
+    ]).toEqual(["text", "text", "", "ex"]);
   });
 
   // The judge refuses: a type without any part takes in nothing.

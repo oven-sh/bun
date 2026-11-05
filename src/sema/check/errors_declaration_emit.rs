@@ -2177,7 +2177,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if results.is_empty() {
-            if self.prints_message_that_nobody_reads() {
+            // In a build the trees of a module go behind the last file that imports it.
+            if files.is_compile_build() {
                 return Rc::default();
             }
             results = self.modules_that_export(symbol);

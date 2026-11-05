@@ -117,7 +117,6 @@ fn member_is_absent_below_listed_chain() {
     );
     assert_eq!(member(BuiltinId::Math, push), MemberLookup::Absent);
     assert_eq!(member(BuiltinId::Array, push), MemberLookup::Absent);
-    assert_eq!(member(BuiltinId::Process, push), MemberLookup::Absent);
     assert_eq!(
         member(BuiltinId::ArrayPrototype, name("isArray")),
         MemberLookup::Absent
@@ -143,6 +142,10 @@ fn member_is_unknown_below_unknown_prototype() {
     assert!(has_flag(namespace, BuiltinFlags::LISTS_ALL_MEMBERS));
     assert_eq!(entry(namespace).prototype, Prototype::Unknown);
     assert_eq!(member(namespace, name("push")), MemberLookup::Unknown);
+    assert_eq!(
+        member(BuiltinId::Process, name("push")),
+        MemberLookup::Unknown
+    );
 }
 
 #[test]

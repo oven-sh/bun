@@ -10,11 +10,12 @@ use crate::ir::extend_from_boxes;
 use crate::ir::generated::FunctionRole;
 use crate::link::{KeyContext, LinkUnit};
 use crate::load::data_modules::parse_json;
+use crate::load::runtime_roots::builtins_used_at_start;
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::lower::{
     FileInputs, KnownHelpersLowered, LibraryFunctions, LoweredFile, LoweringInputs,
-    LoweringOptions, SaidTypes, lower_file, lower_file_that_throws,
+    LoweringOptions, NamesCreatedOnExports, SaidTypes, lower_file, lower_file_that_throws,
 };
 use crate::modules::{Library, LinkedProject, ModuleGraph, ModuleKind};
 use crate::report;
@@ -363,6 +364,7 @@ impl Build<'_> {
             sources: &loaded.project(ProjectId::Runtime).sources,
             graph: &bound.projects.runtime.graph,
         };
+        let used_at_start = builtins_used_at_start(self.options.aot);
         let reach_input = ReachInput {
             application: Application::Bound {
                 files: loaded.project(ProjectId::Application).loaded.files(),
@@ -371,6 +373,7 @@ impl Build<'_> {
             library: &library,
             names: loaded.builtin_names,
             platform: self.platform,
+            used_at_start: &used_at_start,
             holds_what_unseen_code_finds: loaded.holds_what_unseen_code_finds,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time
                 && !(loaded.loads_code_by_unknown_names_alone
@@ -598,6 +601,12 @@ impl Build<'_> {
                 file_inputs[file.idx()] = None;
             }
         }
+        let names_created_on_exports = NamesCreatedOnExports::collect(
+            files,
+            &bound_project.graph,
+            &file_inputs,
+            &self.parallel_runner(),
+        );
         let mut library_functions = LibraryFunctions::compute(files, &file_inputs, sources);
         library_functions.leave_out(left_out_functions);
         library_functions.leave_out_declarations(bound_project.left_out.declarations.clone());
@@ -671,6 +680,7 @@ impl Build<'_> {
             library_functions: &library_functions,
             known_helpers: &bound_project.known_helpers,
             commonjs_exports: bound_project.graph.commonjs(),
+            names_created_on_exports: &names_created_on_exports,
             files: &file_inputs,
             makes_registries,
             page_manifests: &page_manifests,

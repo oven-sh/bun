@@ -14,7 +14,7 @@ function ask(kind: any) { try { tell(asked([kind])); } catch (error) { tell("thr
 const bare = new Kind(4);
 const full = new Kind(4);
 (full as Whole).part = part;
-for (let turn = 0; turn < 3; turn++) { ask(bare); ask(full); ask(new Kind(turn)); }
+for (let turn = 0; turn < 3; turn++) { ask(bare); ask(full); ask(new Kind(turn)); } // @ts-expect-error
 try { Kind.prototype.part = part; } catch (error) { tell("the deed threw " + (error as Error).name); }
 for (let turn = 0; turn < 3; turn++) { ask(bare); ask(full); ask(new Kind(4)); }
 console.log(lines.join("\n"));

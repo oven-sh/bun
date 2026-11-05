@@ -64,6 +64,17 @@ declare function $callNoInline<This, Arguments extends unknown[], Result>(
  */
 declare function $findsDeclaredMember(object: object, name: string): boolean;
 
+/**
+ * True only where `object` was made by `Class` itself, not by an heir, no field that `Class` declares was made an accessor or defined anew under other attributes,
+ * and above the object stands the prototype of `Class`, with at most plain objects in between that hide no member of it.
+ * Then a read of a declared field runs no code of the program: read the fields in any order, as often as you like, or not at all.
+ * Stores into the fields and properties under other names leave it true. A deleted field is like one that was never stored: it is absent, and the answer stays true.
+ * It says nothing about methods: ask `$findsDeclaredMember` for each one that you count on. It says nothing about frozen objects.
+ * It holds until code of the program runs again. False says nothing: take the road that reads everything then.
+ * `Class` is the binding of a class or constructor function that is evaluated once. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $isPlainInstanceOf(object: unknown, Class: Function): boolean;
+
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
 /** Assign to this directly above a function declaration (like a decorator) to override the function's display name. */

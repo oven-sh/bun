@@ -475,11 +475,6 @@ export const families: { rows: RegExp; callee(path: string, mode: string): strin
   },
 ];
 
-/** Objects of the table whose link upwards a library module changes when it is loaded, which the compiler sees it do. */
-export const linkedByLibraryCode: Record<string, string> = {
-  "%EventEmitter%.prototype": "node:events puts it below its own EventEmitter.prototype",
-};
-
 /** Names that a library module puts on an object of the table when it is loaded, which the compiler sees it do. */
 export const addedByLibraryCode: Record<string, string[]> = {
   "%NativeZlib%.prototype": ["jsref"],

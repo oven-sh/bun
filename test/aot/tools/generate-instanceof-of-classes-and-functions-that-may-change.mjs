@@ -1,4 +1,4 @@
-// generate-instanceof-of-classes-and-functions-that-may-change.mjs <folder>: all 883; ../parallel/instanceof-of-classes-and-functions-that-may-change/ holds 8 of them: of each kind of constructor, each deed, each place and each time that answers wrongly where the guard of Symbol.hasInstance is not asked, one program that does, and the one that stopped a build. `value instanceof C`, with C a class or a constructor function that code out of sight may change, and every deed that changes the answer.
+// generate-instanceof-of-classes-and-functions-that-may-change.mjs <folder>: all 1,173; ../parallel/instanceof-of-classes-and-functions-that-may-change/ holds 18 of them: of each kind of constructor, each deed, each place and each time that answers wrongly where the guard of Symbol.hasInstance is not asked, one program that does, and the one that stopped a build; of the tests that stand outside every loop (in a function that is called out of sight, so that nobody copies it into one), five more of those and five that answer wrongly where an object that misses the shape is called no instance. `value instanceof C`, with C a class or a constructor function that code out of sight may change, and every deed that changes the answer.
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 const folder = process.argv[2];
 rmSync(folder, { recursive: true, force: true });
@@ -38,6 +38,7 @@ const deeds = {
 const places = {
   "in-a-loop": `function count(list) { let hits = 0; for (let i = 0; i < list.length; i++) if (list[i] instanceof Shelf) hits += 1 << i; return hits; }`,
   "outside-loops": `function is(value) { return value instanceof Shelf; }\nfunction count(list) { let hits = 0; for (let i = 0; i < list.length; i++) if (is(list[i])) hits += 1 << i; return hits; }`,
+  "in-a-function-called-out-of-sight": `function is(value) { return value instanceof Shelf; }
   "with-the-values-known": `function count(list) { let hits = 0; const a = new Shelf(1), b = new Crate(2); if (a instanceof Shelf) hits += 1; if (b instanceof Shelf) hits += 2; for (let i = 0; i < list.length; i++) if (list[i] instanceof Shelf) hits += 4 << i; return hits; }`,
 };
 const times = {

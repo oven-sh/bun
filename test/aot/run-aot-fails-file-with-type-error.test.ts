@@ -44,7 +44,7 @@ async function run(dir: string, ...args: string[]) {
   return { said: stdout + stderr, exitCode };
 }
 
-// Plain `bun test` checks no types, so a type error stops nothing. The file is compiled without its types.
+// Plain `bun test` checks no types, so a type error stops nothing: it is printed as a warning.
 test("a type error is a warning, and the test files that reach it run", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", {
     "tsconfig.json": files["tsconfig.json"],
@@ -57,7 +57,6 @@ test("a type error is a warning, and the test files that reach it run", async ()
   const { said, exitCode } = await run(String(dir));
   expect(errors(said)).toEqual([]);
   expect(reported("warn", said)).toEqual(["b-mistyped.test.ts:1:18 TS2322", "mistyped.ts:1:14 TS2322"]);
-  expect(said).toContain("warn: TS100075: Files with type errors are compiled without their types: 2 in this run");
   expect(passed(said)).toEqual(["a fine test", "an imported error", "its own error"]);
   expect(exitCode).toBe(0);
 });

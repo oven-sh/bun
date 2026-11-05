@@ -46,7 +46,16 @@ export function forEach(this: unknown, procedure: unknown): void {
 
 $visibility = "Public";
 export function from(this: any, items: Iterable<unknown>, mapper: any, thisArg?: unknown): unknown {
-  const result = this !== Array && $isConstructor(this) ? new this() : [];
+  if (this !== Array && $isConstructor(this)) return fromIntoWhatIsConstructed(new this(), items, mapper, thisArg);
+  // Nobody but this loop holds the list. So a push defines what the language defines there, and the length is the index.
+  const made: unknown[] = [];
+  for (const value of items)
+    $arrayPush(made, thisArg === undefined ? mapper(value, made.length) : $call(mapper, thisArg, value, made.length));
+  return made;
+}
+
+$visibility = "Private";
+function fromIntoWhatIsConstructed(result: unknown, items: Iterable<unknown>, mapper: any, thisArg: unknown): unknown {
   if (!$isObject(result)) $throwTypeError("Array.from requires that |this| constructs an object");
   let k = 0;
   for (const value of items) {
@@ -165,17 +174,17 @@ declare const $resumeModeNext: number;
 // And no program ever holds that function: so whatever has it under `next` is what openIterator() has made, and stepIterator() steps it without a call and without an object.
 declare const $stringProtoSymbolIterator: unknown;
 declare const $nextOfStepsOverText: unknown;
-// The text and the place in it lie under names that no program spells and no object of the host has: a read of them off a value that nobody knows finds nothing else.
+// The text and the place in it lie under private names of this file's own (collect-syntax-uses.ts): a read of them off a value that nobody knows finds nothing else.
 interface StepsOverText {
-  $text: string;
-  $start: number;
+  $steppedText: string;
+  $nextPosition: number;
   next: unknown;
 }
 
 // One code point: two code units where a trail surrogate stands behind a lead surrogate, else one. The mark of a closed iterator behind the last.
 function stepOverText(steps: StepsOverText): unknown {
-  const text: unknown = steps.$text;
-  const at: unknown = steps.$start;
+  const text: unknown = steps.$steppedText;
+  const at: unknown = steps.$nextPosition;
   // Both hold, by what openIterator() lays down. They are asked so that what follows is compiled for a text and a whole number: what is written of a type proves nothing.
   if (typeof text !== "string" || typeof at !== "number") return $collectionIteratorClosedMark();
   const position = at | 0;
@@ -185,11 +194,11 @@ function stepOverText(steps: StepsOverText): unknown {
   if (first >= 0xd800 && first <= 0xdbff && position + 1 < length) {
     const second = text.charCodeAt(position + 1);
     if (second >= 0xdc00 && second <= 0xdfff) {
-      steps.$start = position + 2;
+      steps.$nextPosition = position + 2;
       return text.substring(position, position + 2);
     }
   }
-  steps.$start = position + 1;
+  steps.$nextPosition = position + 1;
   return text[position];
 }
 
@@ -205,7 +214,7 @@ export function openIterator(iterable: unknown): unknown {
   const method: unknown = (iterable as any).$$iterator;
   if (!$isCallable(method)) return undefined;
   if (typeof iterable === "string" && method === $stringProtoSymbolIterator)
-    return { $text: iterable, $start: 0, next: $nextOfStepsOverText };
+    return { $steppedText: iterable, $nextPosition: 0, next: $nextOfStepsOverText };
   const iterator: unknown = $call(method, iterable);
   if (!$isObject(iterator)) $throwTypeError("Iterator result interface is not an object.");
   return iterator;

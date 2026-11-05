@@ -35,7 +35,7 @@ const programs: Record<string, Record<string, string>> = {
 // --no-builtin-modules: a build that allows code from disk would compile all of them.
 const modes: [string, string[], "executable" | "run"][] = [
   ["an executable", [], "executable"],
-  ["code from disk is allowed", ["--aot-allow-code-from-disk", "--no-builtin-modules"], "run"],
+  ["code from disk is allowed", ["--aot-allow-code-from-disk", "--no-builtin-modules"], "executable"],
   ["compiled in place", ["--compile-in-place"], "run"],
 ];
 

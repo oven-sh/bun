@@ -20,7 +20,7 @@ function bare(entry: Record<string, unknown>) {
   const { label_id: _id, late: _late, ...rest } = entry;
   return rest;
 }
-function deed(): void {
+function deed(): void { // @ts-expect-error
   const entry: Record<string, unknown> = label<Note>({ kind: "note", text: "t" }, "s");
   entry[second] = 1;
   sum += Object.keys(keep(bare(entry))).length;

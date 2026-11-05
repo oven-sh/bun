@@ -61,7 +61,6 @@ const engine = [
   "Bun.FFI.cfunction: is missing",
   "Bun.FFI.closeCallback: is missing",
   // realm-agreement.test.ts and own-properties.test.ts say why.
-  "%EventEmitter%.prototype: inherits from another object than the table says",
   "TestContext: has a C++ class with callable instances, and the table says its instances are not functions",
   "globalThis.ShadowRealm: is not in the table",
   "self: is an accessor",

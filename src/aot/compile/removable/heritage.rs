@@ -30,9 +30,6 @@ impl Removable<'_, '_> {
         if let Some(Resolved::Builtin(path)) = self.builtins.of_pure_expr(heritage) {
             return is_locked_constructor(path);
         }
-        if !self.stack.is_safe_to_recurse() {
-            return false;
-        }
         match hir[heritage].kind {
             ExprKind::Null | ExprKind::Class(_) => true,
             ExprKind::Fn(function) => {

@@ -4038,7 +4038,13 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     if (vm.hasCompiledCode() && JSC::AOT::isNeededByNothingThatRuns(getStdioWriteStream)) {
         JSValue stream = constructLightStdioWriteStream(globalObject, processObject, fd);
-        return scope.exception() ? JSValue() : stream;
+        auto* exception = scope.exception();
+        if (!exception)
+            return stream;
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
+        return jsUndefined();
     }
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
@@ -5526,9 +5532,50 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionListenForSizeOfTerminal, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* process = defaultGlobalObject(globalObject)->processObject();
+    JSValue on = process->get(globalObject, Identifier::fromString(vm, "on"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::CallData callData = JSC::getCallData(on);
+    if (callData.type == JSC::CallData::Type::None)
+        return throwVMError(globalObject, scope, createNotAFunctionError(globalObject, on));
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(jsNontrivialString(vm, "SIGWINCH"_s));
+    arguments.append(callFrame->argument(0));
+    JSC::profiledCall(globalObject, ProfilingReason::API, on, callData, process, arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunWhenProcessExits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     defaultGlobalObject(globalObject)->processObject()->setRunsWhenProcessExits(callFrame->argument(0).getObject());
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeProcessInheritFrom, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue prototype = callFrame->argument(0);
+
+    [&] {
+        JSValue processPrototype = defaultGlobalObject(globalObject)->processObject()->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!processPrototype.isObject() || processPrototype == globalObject->objectPrototype())
+            return;
+        bool inheritsAlready = JSObject::defaultHasInstance(globalObject, processPrototype, prototype);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!inheritsAlready)
+            asObject(processPrototype)->setPrototype(vm, globalObject, prototype, true);
+    }();
+
+    // Where the prototype cannot be relinked, process keeps its native chain.
+    if (scope.exception()) [[unlikely]]
+        (void)scope.tryClearException();
     return JSValue::encode(jsUndefined());
 }
 

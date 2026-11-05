@@ -1,6 +1,6 @@
 const unseen = (0, eval)("(x) => x");
 class Box { width = 1; height = 2; depth = 3; }
-function report(taken) {
+function report(taken: any) {
   let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0;
   return typeof taken;
 }

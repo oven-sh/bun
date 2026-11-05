@@ -14,7 +14,7 @@ function withFinally(limit: number, log: string[], ...values: number[]) { try { 
 function throwsOut(limit: number, ...values: number[]) { for (const value of values) { if (value > limit) throw new RangeError("over " + value); if (value < 0) return "negative"; } return "through"; }
 function holes(limit: number) { let turns = 0; for (const value of [1, , 3] as (number | undefined)[]) { turns++; if (value === undefined) return ["hole", turns]; if (value > limit) return ["over", turns]; } return ["through", turns]; }
 function closes(limit: number, log: string[]) {
-  const counted = { [Symbol.iterator]() { let n = 0; return { next: () => ({ done: n >= 3, value: n++ }), return: () => { log.push("closed at " + n); return {}; } }; } };
+  const counted = { [Symbol.iterator]() { let n = 0; return { next: () => ({ done: n >= 3, value: n++ }), return: () => { log.push("closed at " + n); return {}; } }; } }; // @ts-expect-error
   for (const value of counted) if (value > limit) return value;
   return -1;
 }

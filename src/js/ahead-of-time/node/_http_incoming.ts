@@ -204,7 +204,7 @@ function readStop(socket: $Node.HttpSocket | null | undefined) {
 }
 
 function onIncomingMessageResumeNodeHTTPResponse(this: $Node.IncomingMessage) {
-  const handle = this[kHandle];
+  const handle = this[kHandle] as $Node.NodeHTTPResponse | undefined;
   if (handle && !this.destroyed) handle.resume();
 }
 
@@ -220,6 +220,44 @@ function IncomingMessage(
 ) {
   const isFromNativeServer = socket === kHandle;
   const isUnreadFromNativeServer = isFromNativeServer && nativeHighWaterMark !== undefined;
+  if (isUnreadFromNativeServer) {
+    // The stores of below for this one case, in their order, with nothing between them: behind each choice and each call a compiler ahead of time asks anew whether the object is still as it was made.
+    const rawTrailers: string[] = [];
+    const events = preallocatedEvents();
+    const state = createUnreadByteState(nativeHighWaterMark);
+    const hasNoBody = !nativeHasBody;
+    this[abortedSymbol] = false;
+    this[eofInProgress] = false;
+    this._consuming = false;
+    this._dumped = false;
+    this.complete = false;
+    this._closed = false;
+    this[kHeaders] = null;
+    this[kReqShouldKeepAlive] = true;
+    this[kRawHeaders] = null;
+    this[kHeaderSource] = nativeHandle;
+    this[kHeadersCount] = 0;
+    this[kTrailers] = null;
+    this[kTrailersCount] = 0;
+    this.rawTrailers = rawTrailers;
+    this[kAbortController] = null;
+    this.url = nativeUrl!;
+    this.method = nativeMethod!;
+    this[kHandle] = nativeHandle;
+    this[noBodySymbol] = hasNoBody;
+    this.socket = nativeSocket;
+    this.client = nativeSocket;
+    this.upgrade = false;
+    this._events = events;
+    this._readableState = state;
+    this[kShapeMode] = true;
+    this._maxListeners ??= undefined;
+    if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
+      ("unlikely");
+      storeEmitWithRejectionCapture(this);
+    }
+    return;
+  }
   this[abortedSymbol] = false;
   this[eofInProgress] = false;
   this._consuming = false;
@@ -227,7 +265,7 @@ function IncomingMessage(
   this.complete = false;
   this._closed = false;
   this[kHeaders] = null;
-  this[kReqShouldKeepAlive] = isUnreadFromNativeServer ? true : undefined;
+  this[kReqShouldKeepAlive] = undefined;
   this[kRawHeaders] = null;
   this[kHeaderSource] = isFromNativeServer ? nativeHandle : undefined;
   this[kHeadersCount] = 0;
@@ -243,18 +281,6 @@ function IncomingMessage(
     this[noBodySymbol] = !nativeHasBody;
     this.socket = nativeSocket;
     this.client = nativeSocket;
-    if (isUnreadFromNativeServer) {
-      this.upgrade = false;
-      this._events = preallocatedEvents();
-      this._readableState = createUnreadByteState(nativeHighWaterMark);
-      this[kShapeMode] = true;
-      this._maxListeners ??= undefined;
-      if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
-        ("unlikely");
-        storeEmitWithRejectionCapture(this);
-      }
-      return;
-    }
     this.upgrade = null;
     constructReadable(this, nativeSocket ? nativeSocket.readableHighWaterMark : undefined);
     addFlags(this._readableState, kReadingMore);
@@ -356,11 +382,7 @@ function readsRawHeadersThroughAccessor(message: $Node.IncomingMessage): boolean
 // Whether a read of `message.readableEnded` reaches the accessor of Readable.prototype, which is not configurable.
 function readsReadableEndedThroughAccessor(message: $Node.IncomingMessage): boolean {
   // An heir may declare an accessor of its own, and the question answers for the class that the message is of.
-  if (
-    IS_COMPILED_AHEAD_OF_TIME &&
-    $findsDeclaredMember(message, "readableEnded") &&
-    ObjectGetPrototypeOf(message) === IncomingMessagePrototype
-  ) {
+  if (IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(message, "readableEnded")) {
     return true;
   }
   if (ObjectHasOwn(message, "readableEnded")) return false;
@@ -533,7 +555,7 @@ const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: numb
     this._consuming = true;
   }
 
-  const handle = this[kHandle];
+  const handle = this[kHandle] as $Node.NodeHTTPResponse | undefined;
   if (!handle) {
     ("unlikely");
     // We actually do almost nothing here, because the parserOnBody
@@ -585,7 +607,7 @@ const incomingMessageDestroy = function _destroy(
     this.emit("aborted");
   }
 
-  const handle = this[kHandle];
+  const handle = this[kHandle] as $Node.NodeHTTPResponse | undefined;
   if (handle) {
     // Native server path. The stream destroyer (internal/streams/destroy.ts)
     // assigns `req.socket = null` before calling destroy() to signal that the
@@ -1050,7 +1072,7 @@ function destroyUnwatched(
 
 function handleToDestroyUnwatched(req: $Node.IncomingMessage, state: $Node.ReadableState) {
   try {
-    const handle = req[kHandle];
+    const handle = req[kHandle] as $Node.NodeHTTPResponse | undefined;
     if (
       !handle ||
       !req.complete ||
@@ -1165,7 +1187,7 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
       req._read !== incomingMessageRead
     )
       return false;
-    handle = req[kHandle];
+    handle = req[kHandle] as $Node.NodeHTTPResponse | undefined;
     if (
       !handle ||
       req._consuming ||
@@ -1384,7 +1406,7 @@ function releaseParserOnNextTick(req: $Node.IncomingMessage) {
 }
 
 function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  const handle = req[kHandle];
+  const handle = req[kHandle] as $Node.NodeHTTPResponse | undefined;
   if (handle === undefined || req.push !== push || req.read !== read) {
     ("unlikely");
     return emitEOFIncomingMessageOuter(req);
@@ -1442,7 +1464,7 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
       req._destroy !== incomingMessageDestroy
     )
       return false;
-    handle = req[kHandle];
+    handle = req[kHandle] as $Node.NodeHTTPResponse | undefined;
     if (
       !handle ||
       !req.complete ||
@@ -1527,24 +1549,48 @@ function queueDump(req: $Node.IncomingMessage, state: $Node.ReadableState): void
   queueTick2(resumeUnwatched, req, state);
 }
 
+// One statement a question: where two arms meet, a compiler ahead of time forgets what it has asked of the request, and `&&` is such a place.
 function endsUnseen(req: $Node.IncomingMessage): boolean {
   try {
     const state = req._readableState;
-    return (
-      state[kState] === kFlagsUntouched &&
-      state.length === 0 &&
-      req[noBodySymbol] &&
-      !req._dumped &&
-      !req._consuming &&
-      !req[eofInProgress] &&
-      keepsItsMethods(req)
-    );
+    if (state[kState] !== kFlagsUntouched) return false;
+    if (state.length !== 0) return false;
+    if (!req[noBodySymbol]) return false;
+    if (req._dumped) return false;
+    if (req._consuming) return false;
+    if (req[eofInProgress]) return false;
+    return keepsItsMethods(req);
   } catch {
     return false;
   }
 }
 
 function keepsItsMethods(req: $Node.IncomingMessage): boolean {
+  if (!(
+    IS_COMPILED_AHEAD_OF_TIME &&
+    $findsDeclaredMember(req, "emit") &&
+    $findsDeclaredMember(req, "_dump") &&
+    $findsDeclaredMember(req, "removeAllListeners") &&
+    $findsDeclaredMember(req, "resume") &&
+    $findsDeclaredMember(req, "read") &&
+    $findsDeclaredMember(req, "push") &&
+    $findsDeclaredMember(req, "destroy") &&
+    $findsDeclaredMember(req, "listenerCount") &&
+    $findsDeclaredMember(req, "readableEnded")
+  )) {
+    ("unlikely");
+    return readsTheMethodsOfItsClass(req);
+  }
+  if (StreamPrototype.removeAllListeners !== eventEmitterRemoveAllListeners) return false;
+  // Once a stream has taken `read` or `destroy` from its options, no stream is known to have kept these two.
+  if (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "_read")) && req._read !== incomingMessageRead)
+    return false;
+  if (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "_destroy")) && req._destroy !== incomingMessageDestroy)
+    return false;
+  return hasNoListenerAndNoWritableSide(req);
+}
+
+function readsTheMethodsOfItsClass(req: $Node.IncomingMessage): boolean {
   return (
     req.emit === emit &&
     req._dump === dump &&

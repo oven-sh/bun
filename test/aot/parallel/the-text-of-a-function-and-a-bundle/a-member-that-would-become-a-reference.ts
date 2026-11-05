@@ -5,8 +5,8 @@ function shown(o: any): unknown {
   const called = (true ? o.m : 0)();
   const byKey = (true ? o["m"] : 0)();
   const behindAnd = (true && o.m)();
-  const nested = (true ? false ? 0 : o.m : 0)();
-  const removed = delete (true ? o.gone : 0);
+  const nested = (true ? false ? 0 : o.m : 0)(); // @ts-expect-error
+  const removed = delete (true ? o.gone : 0); // @ts-expect-error
   const evaluated = (true ? eval : 0)("typeof o");
   let kindOfUnbound;
   try {
@@ -22,6 +22,6 @@ const holder = {
   },
   gone: 1,
 };
-console.log(shown.toString().replace(/\s+/g, ""));
+console.log(shown.toString().replace(/\/\/ @ts-expect-error|\s+/g, ""));
 console.log(JSON.stringify(shown({ ...holder })));
 console.log(JSON.stringify((0, eval)("'use strict'; (" + shown.toString() + ")")({ ...holder })));

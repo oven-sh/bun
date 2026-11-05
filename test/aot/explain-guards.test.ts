@@ -73,6 +73,36 @@ const withParsedArgument: Files = {
   "main.ts": folders + `console.log(pathOf(JSON.parse('{ "name": "c", "inner": null }')));\n`,
 };
 
+// Three reads lean on `point` and two products on `scale`, so `area` has a guard in front of a fast version and a slow one.
+// The guard stands in a unit of its own, or in front of the copy where a caller takes the fast version in.
+const withParsedPoint: Files = {
+  "main.ts": `class Point {
+  x = 1;
+  y = 2;
+}
+
+function area(point: Point, scale: number): number {
+  const across = point.x * scale;
+  const down = point.y * scale;
+  return across * down + point.x;
+}
+
+console.log(area(new Point(), 2));
+console.log(area(JSON.parse('{ "x": 3, "y": 4 }'), 2));
+`,
+};
+
+// docs/compiler/types.mdx, "When a value doesn't match its type".
+const exampleOfTheDocs: Files = {
+  "main.ts": `function double(n: number): number {
+  return n * 2;
+}
+
+const body: any = JSON.parse('{"visits":"3"}');
+console.log(double(body.visits));
+`,
+};
+
 // JSON.stringify calls the replacer with values that the compiler does not follow, and only a Crate has both of the names
 // that are read off them.
 const withReplacer: Files = {
@@ -159,16 +189,28 @@ describe.concurrent("--explain=guards", () => {
     "a parameter that takes a parsed value has a guard that leaves",
     () =>
       slot(async () => {
-        const { guards } = await explainParsedArgument();
+        const { guards } = await explain(withParsedPoint);
         expect(guards).toContainEqual(
           expect.objectContaining({
             file: "main.ts",
-            line: lineWith(withParsedArgument, "function pathOf"),
-            function: "pathOf",
+            line: lineWith(withParsedPoint, "function area"),
+            function: "area",
             failure: "leaves",
-            type: "Folder",
+            type: "Point",
           }),
         );
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "the guard in the example of the documentation is listed",
+    () =>
+      slot(async () => {
+        const { guards } = await explain(exampleOfTheDocs);
+        expect(guards).toEqual([
+          expect.objectContaining({ file: "main.ts", line: 1, function: "double", failure: "leaves", copies: 1 }),
+        ]);
       }),
     buildTimeout,
   );

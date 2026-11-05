@@ -18,7 +18,7 @@ function keep<T>(value: T): T {
 function bare({ label_id: _id, ...rest }: Record<string, unknown>) {
   return rest;
 }
-function deed(): void {
+function deed(): void { // @ts-expect-error
   sum += Object.keys(keep(bare(label<Note>({ kind: "note", text: "t" }, "s")))).length;
 }
 

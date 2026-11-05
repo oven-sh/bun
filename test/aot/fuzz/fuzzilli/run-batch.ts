@@ -571,9 +571,10 @@ const documentedMessages = [
   "this executable was compiled assuming",
   "Maximum call stack size exceeded",
 ];
+/** Code from a string works in an executable. What the page declares of it, the executable says in these words, and only a program that runs such code may hear them. */
+const documentedMessagesOfCodeFromStrings = ["was not compiled into this executable", "Cannot load"];
+const runsCodeFromStrings = /\beval\b|\bFunction\(|node:vm/;
 const documentedNames = [
-  "eval(",
-  "Function(",
   ".caller",
   "WeakRef",
   "FinalizationRegistry",
@@ -2141,6 +2142,7 @@ for (
                   ? "false-proof"
                   : "signal"
                 : documentedMessages.some(says) ||
+                    (runsCodeFromStrings.test(texts[index]) && documentedMessagesOfCodeFromStrings.some(says)) ||
                     (!isLimit(second) && referenceAgain.stderr.includes("Maximum call stack size exceeded")) ||
                     documentedNames.some(name => texts[index].includes(name)) ||
                     texts[index].includes(saysThatPlainBunDiffers) ||

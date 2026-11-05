@@ -54,7 +54,7 @@ use crate::ir::{FunctionId, FunctionKey};
 
 pub use self::context::{FileInputs, LoweringInputs, LoweringOptions, SourceKind};
 pub use self::fragment::{Fragment, ModuleFragment};
-pub use self::layouts::ObjectTypeKey;
+pub use self::layouts::{NamesCreatedOnExports, ObjectTypeKey};
 pub use self::module::{
     LeftOutDeclarations, LibraryFunctions, collect_library_functions, lower_file_that_throws,
 };

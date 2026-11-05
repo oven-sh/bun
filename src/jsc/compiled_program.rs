@@ -131,6 +131,11 @@ pub extern "C" fn Bun__compiledProgramRunsInPlace() -> bool {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn Bun__compiledProgramNamesPlugin() -> bool {
+    compiled_program().is_some_and(|program| program.names_plugin)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn Bun__AOT__onResolveAnswersFor(
     global: &JSGlobalObject,
     name: &bun_core::String,

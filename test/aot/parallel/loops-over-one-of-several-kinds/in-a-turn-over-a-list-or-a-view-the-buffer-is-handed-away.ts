@@ -20,7 +20,7 @@ function hidden<T>(value: unknown): T {
 }
 function sum(xs: Float64Array | number[]): unknown {
   let s: any = 0;
-  for (let i = 0; i < xs.length; i++) {
+  for (let i = 0; i < xs.length; i++) { // @ts-expect-error
     if (i === 1 && !Array.isArray(xs)) xs.buffer.transfer();
     s += xs[i]!;
   }

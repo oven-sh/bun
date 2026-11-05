@@ -452,6 +452,7 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
         web_assembly_modules: records.web_assembly_modules,
         replaceable_builtins: Vec::new(),
         opened_names: Vec::new(),
+        builtins_used_at_start: Vec::new(),
     };
     steps.end("functions, program");
     Ok(Linked {

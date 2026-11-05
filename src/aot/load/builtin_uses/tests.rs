@@ -104,6 +104,7 @@ fn with_finished_file<R>(
         replaced: &[],
         runs_tests: false,
         holds_language: false,
+        is_text_asked: true,
     };
     let request = FinishedFile {
         path,

@@ -1,4 +1,4 @@
-// node:events asks for the prototype of `process` at its top level and only looks at it. That brings in nothing that `process` can do.
+// node:events lays its EventEmitter.prototype above the native prototype of `process` by a native function that is not handed `process`. That brings in nothing that `process` can do.
 // STATISTIC: FunctionsLowered <= 800
 import { EventEmitter } from "node:events";
 const emitter = new EventEmitter();

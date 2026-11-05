@@ -10,8 +10,8 @@
 // # SHARED: Call Stub CallMethodOfBuiltinClassAtSiteWithSharedPattern.StringReplace count 2
 // # SHARED-NOT: NewRegExpLiteral
 // # RUN(STICKY): bytes f4:Body mechanisms=all
+// # STICKY: Call Stub NewRegExpLiteral
 // # STICKY: Call Stub CallMethodOfBuiltinClassAtSite.StringReplace count 2
-// # STICKY: NewRegExpLiteral
 // # RUN(SPLIT): bytes f5:Body mechanisms=all
 // # SPLIT-NOT: NewRegExpLiteral
 // # SPLIT: Call Stub CallMethodOfBuiltinClassAtSiteWithSharedPattern.StringSplit count 1
@@ -26,8 +26,8 @@
 // # STUCK-NOT: Call Stub TryCallMethodOfBuiltinClass
 // # STUCK: NewRegExpLiteral
 // # RUN(KEPT): bytes f8:Body mechanisms=all
+// # KEPT: Call Stub NewRegExpLiteral
 // # KEPT: Call Stub CallMethodOfBuiltinClassAtSite.StringReplace count 2
-// # KEPT: NewRegExpLiteral
 // # RUN(COPY): bytes f9:Body mechanisms=all
 // # COPY-NOT: NewRegExpLiteral
 // # COPY: Call Stub CallMethodOfBuiltinClassAtSiteWithSharedPattern.StringReplace count 2

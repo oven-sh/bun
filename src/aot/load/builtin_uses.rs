@@ -23,6 +23,7 @@ pub(crate) struct BuiltinUseInput<'a> {
     pub replaced: &'a [u32],
     pub runs_tests: bool,
     pub holds_language: bool,
+    pub is_text_asked: bool,
 }
 
 pub(crate) fn finish_application_file(
@@ -116,6 +117,7 @@ fn resolve_builtins(
         replaced: input.replaced,
         runs_tests: input.runs_tests,
         holds_language: input.holds_language,
+        is_text_asked: input.is_text_asked,
     })
 }
 

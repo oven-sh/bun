@@ -389,13 +389,9 @@ describe.concurrent("an .aot.ts file of an installed package", () => {
   };
   const unresolved = `error: TS100151: Could not resolve: "shapes". Maybe you need to "bun install"?`;
 
-  scene("that has a type error is compiled without its types, with a warning", async root => {
+  scene("that has a type error is compiled like the others, and the build says nothing of it", async root => {
     edit(join(await installed(root), "version.aot.ts"), "version: string", "version: number");
-    expect(await compile(root)).toEqual(
-      compiled({ ...shapes(), aotFiles: 1 }, undefined, [
-        `warn: TS100009: 'shapes' has 1 type error (the first at <root>/app/node_modules/shapes/version.aot.ts:2:7), so its files with errors are compiled without their types. They still work, but run slower.`,
-      ]),
-    );
+    expect(await compile(root)).toEqual(compiled(shapes()));
   });
 
   scene("that does not parse stops the build", async root => {

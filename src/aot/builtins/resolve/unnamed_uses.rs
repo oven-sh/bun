@@ -134,6 +134,8 @@ impl Resolver<'_, '_> {
     fn collect_syntax_inside_expressions(&mut self) {
         for expr in self.evaluated_exprs() {
             self.note_texts_under_which_evaluators_hang(expr);
+            self.output.may_hand_values_to_natives = self.output.may_hand_values_to_natives
+                || !self.only_calls_builtin_with_literals(expr);
             match self.state(expr) {
                 ExprState::NotEvaluated => {}
                 ExprState::Intrinsic(
@@ -147,6 +149,31 @@ impl Resolver<'_, '_> {
                 }
                 _ => self.note_syntax_of_expression(self.input.hir[expr].kind),
             }
+        }
+    }
+
+    fn only_calls_builtin_with_literals(&self, expr: ExprId) -> bool {
+        let is_bound_to_builtin =
+            |expr: ExprId| matches!(self.state(expr), ExprState::Builtin(_) | ExprState::Held(_));
+        match self.input.hir[expr].kind {
+            _ if matches!(self.state(expr), ExprState::NotEvaluated) => true,
+            ExprKind::String(_)
+            | ExprKind::Number(_)
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Null => true,
+            ExprKind::Ident(_) | ExprKind::Dot { .. } => {
+                is_bound_to_builtin(expr)
+                    && matches!(
+                        self.classify_use(expr),
+                        MentionUse::Holder | MentionUse::Called(_) | MentionUse::Inspected
+                    )
+            }
+            ExprKind::Call(call) => {
+                is_bound_to_builtin(self.input.hir[call].callee)
+                    && matches!(self.classify_use(expr), MentionUse::Inspected)
+            }
+            _ => false,
         }
     }
 
@@ -218,7 +245,7 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn note_names_of_path(&mut self, path: &[Atom]) {
-        if self.input.holds_language {
+        if !self.input.is_text_asked {
             return;
         }
         for &name in path.iter().skip(1) {

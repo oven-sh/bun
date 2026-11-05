@@ -348,6 +348,40 @@ for (const name of ["first", "second", "third", "fourth"]) {
 `,
 };
 
+const neverRead = {
+  "package.json": `{ "name": "never-read", "type": "module" }`,
+  "things.ts": `const flag = Date.now() > 0;
+
+export const used = 1;
+
+export const neverRead = flag
+  ? "yes"
+  : "no";
+
+export class NeverUsed {
+  static picked = flag
+    ? "yes"
+    : "no";
+}
+
+export function useless(first: boolean) {
+  first
+    ? "a"
+    : "b";
+  return 1;
+}
+`,
+  "things.test.ts": `import { expect, test } from "bun:test";
+import { used, useless } from "./things";
+
+for (const name of ["first", "second", "third", "fourth"]) {
+  test(name, () => {
+    expect(used + useless(true)).toBe(2);
+  });
+}
+`,
+};
+
 async function report(flags: string[], bunfig = "", project: Record<string, string> = files) {
   using dir = tempDir("test-aot-coverage", { ...project, "bunfig.toml": bunfig });
   await using proc = spawn({
@@ -404,6 +438,13 @@ test("standard decorators and accessor fields", async () => {
   const project = standardDecorators;
   const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
   expect(plain.table).toContain("marked.ts");
+  expect(compiled).toEqual(plain);
+});
+
+test("what nothing reads runs as it does in bun test --coverage", async () => {
+  const project = neverRead;
+  const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
+  expect(plain.table).toContain("things.ts");
   expect(compiled).toEqual(plain);
 });
 

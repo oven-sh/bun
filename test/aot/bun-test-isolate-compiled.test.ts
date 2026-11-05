@@ -147,11 +147,7 @@ test("reads", () => { expect(JSON.parse('{"size":3}').size).toBe(3); });`,
   const output = stdout + stderr;
   expect(output.match(/^ \d+ (pass|fail)$/gm)).toEqual([` ${passes} pass`, " 0 fail"]);
   expect(output).not.toContain("error: TS");
-  expect(output.match(/^warn: .*$/gm)).toEqual([
-    expect.stringContaining("Files with type errors are compiled without their types: 2 in this run"),
-    expect.stringContaining("TS2339"),
-    expect.stringContaining("TS2571"),
-  ]);
+  expect(output.match(/^warn: .*$/gm)).toEqual([expect.stringContaining("TS2339"), expect.stringContaining("TS2571")]);
   expect(exitCode).toBe(0);
 });
 

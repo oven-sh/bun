@@ -160,4 +160,52 @@ console.log(last + tally);
 `);
       count++;
     }
+const loopsInTurns = {
+  "a-loop-over-a-list": `for (const each of list) sum = (sum + each.weight + x) | 0;`,
+  "a-loop-over-a-list-that-may-not-be-entered": `if (x === 2) continue; for (const each of list) sum = (sum + each.weight) | 0;`,
+  "a-list-is-opened-and-the-turn-leaves-in-front-of-its-loop": `const [first] = list; if (first.weight + x > 3) { sum = (sum + 1) | 0; continue; } for (const each of list) sum = (sum + each.weight) | 0;`,
+  "a-throw-between-the-open-and-the-loop": `try { for (const each of pickList(list, x)) sum = (sum + each.weight) | 0; } catch { sum = (sum + 100) | 0; }`,
+  "a-loop-over-the-names-of-an-object": `for (const name in item) sum = (sum + name.length + x) | 0;`,
+  "a-loop-over-names-that-may-not-be-entered": `if (x === 1) continue; for (const name in item) sum = (sum + name.length) | 0;`,
+  "a-loop-over-a-set-and-a-map": `for (const each of set) sum = (sum + each) | 0; for (const [key, value] of map) sum = (sum + key + value + x) | 0;`,
+  "a-loop-over-a-text": `for (const letter of label) sum = (sum + letter.length + x) | 0;`,
+  "two-loops-over-one-list": `for (const each of list) sum = (sum + each.weight) | 0; for (const each of list) sum = (sum + each.weight * x) | 0;`,
+  "a-pattern-takes-two": `const [first, second] = list; sum = (sum + first.weight + second.weight * x) | 0;`,
+  "a-spread-of-the-list": `const copy = [...list]; sum = (sum + copy.length + copy[0].weight + x) | 0;`,
+};
+for (const [generator, text] of Object.entries(generators))
+  for (const [loop, does] of Object.entries(loopsInTurns))
+    for (const kind of ["a-function", "an-async-function"]) {
+      const isAsync = kind === "an-async-function";
+      writeFileSync(`${out}/${generator}--${loop}--${kind}.ts`, `let tally = 0;
+class Item {
+  skip: boolean;
+  weight: number;
+  constructor(skip: boolean, weight: number) { this.skip = skip; this.weight = weight; }
+}
+const set = new Set<number>([1, 2, 3]);
+const map = new Map<number, number>([[1, 10], [2, 20]]);
+const label: string = "abc";
+function pickList(list: Item[], x: number): Item[] { if (x === 2) throw new RangeError("two"); return list; }
+${text}
+${isAsync ? "async " : ""}function drive(list: Item[], at: number, flag: boolean): ${isAsync ? "Promise<number>" : "number"} {
+  const item = list[at];
+  if (item.skip) return -1;
+  let sum = item.weight;
+  for (const x of pick(flag)) {
+    ${isAsync ? "if (x === 1) await null;" : ""}
+    ${does}
+  }
+  return sum;
+}
+const items: Item[] = [new Item(false, 2), JSON.parse('{"skip":false,"weight":3}'), new Item(false, 5)];
+let last = "";
+for (let round = 0; round < 300; round++) {
+  last = "";
+  for (const flag of [false, true]) for (let at = 0; at < 3; at++) last += ${isAsync ? "(await drive(items, at, flag))" : "drive(items, at, flag)"} + " ";
+}
+console.log(last + tally);
+`);
+      count++;
+    }
 console.log(count + " programs");

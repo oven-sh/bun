@@ -29,6 +29,8 @@ type Program = {
   testFile?: string;
   /** The files that the test file asks to be compiled in another way. The others have to be the executable's. */
   opened?: string[];
+  /** The row "All of Bun's own JavaScript that such a file could reach is compiled in": `file:position name form` of a function, and the operations that it has more in the test run. Nothing else of it may differ. */
+  moreInTestRun?: Record<string, string[]>;
   differsToday?: string;
 };
 
@@ -131,6 +133,8 @@ function rest(...all: number[]): number[] { return Array.prototype.slice.call(al
 console.log([...new Row([1, 2, 3])].join(), String(new Row([])), own({ a: 1 }, "a"), rest(1, 2, 3).join(), Object.getPrototypeOf(new Map()) === Map.prototype);
 `,
     },
+    // `Map.prototype` is read behind calls that run the program's own code.
+    moreInTestRun: { "main.ts:0  Body": ["InitializeBuiltin Closed 1"] },
   },
   "CommonJS files that require each other": {
     files: {
@@ -184,21 +188,27 @@ console.log(name("a/b", "c.ts"), name("d", "e.ts"));
   },
 };
 
-/** `position name form bytes` of each function of the program's own files. */
-function ownFunctions(mapPath: string, files: string[]): string[] {
-  const rows = readFileSync(mapPath, "latin1").split("\n");
-  const functions = rows.map(row => row.split("\t")).filter(columns => columns[0] === "F");
-  return functions
-    .flatMap(columns => {
-      const file = files.find(name => (columns[10] ?? "").endsWith("/" + name));
-      return file ? [`${file}:${columns[11]} ${columns[7]} ${columns[8]} ${columns[3]}`] : [];
+/** `position name form bytes` of each function of the program's own files. Of a function in `byOperations`: `position name form` and its operations, `name form count` each, in the place of its bytes. */
+function ownFunctions(mapPath: string, files: string[], byOperations: string[]): string[] {
+  const rows = readFileSync(mapPath, "latin1")
+    .split("\n")
+    .map(row => row.split("\t"));
+  return rows
+    .flatMap((columns, at) => {
+      const file = columns[0] === "F" && files.find(name => (columns[10] ?? "").endsWith("/" + name));
+      if (!file) return [];
+      const name = `${file}:${columns[11]} ${columns[7]} ${columns[8]}`;
+      if (!byOperations.includes(name)) return [`${name} ${columns[3]}`];
+      const words = rows[at + 1]?.[0] === "FO" ? rows[at + 1].slice(1) : [];
+      const operations = Array.from({ length: words.length / 3 }, (_, i) => words.slice(3 * i, 3 * i + 3).join(" "));
+      return operations.map(operation => `${name}: ${operation}`);
     })
     .sort();
 }
 
 // The map is written on every platform. The forms are the same there, the bytes are not worth a second look.
 describe.skipIf(isWindows)("compile/aot/a-test-run-compiles-what-an-executable-compiles", () => {
-  for (const [title, { files, testFile, opened = [], differsToday }] of Object.entries(programs)) {
+  for (const [title, { files, testFile, opened = [], moreInTestRun = {}, differsToday }] of Object.entries(programs)) {
     // `failing`: it turns red the day the two agree. Then take the reason out.
     (differsToday ? test.failing : test)(title, async () => {
       const folder = String(
@@ -221,7 +231,7 @@ describe.skipIf(isWindows)("compile/aot/a-test-run-compiles-what-an-executable-c
         const [out, err, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
         expect({ out, err, exitCode }).toEqual({ out: expect.any(String), err: expect.any(String), exitCode: 0 });
         const compared = Object.keys(files).filter(file => !opened.includes(file));
-        return ownFunctions(join(folder, map), compared);
+        return ownFunctions(join(folder, map), compared, Object.keys(moreInTestRun));
       };
       const executable = await build(
         "executable.map",
@@ -236,7 +246,12 @@ describe.skipIf(isWindows)("compile/aot/a-test-run-compiles-what-an-executable-c
       expect(executable).not.toBeEmpty();
       // A file that loads again comes from disk, so the loader of the run time has to find the others: each has a few bytes more for that.
       if (opened.length) expect(executable.filter(it => !testRun.includes(it))).toEqual([]);
-      else expect(testRun).toEqual(executable);
+      else {
+        const more = Object.entries(moreInTestRun).flatMap(([name, operations]) =>
+          operations.map(it => `${name}: ${it}`),
+        );
+        expect(testRun).toEqual([...executable, ...more].sort());
+      }
     });
   }
 });

@@ -7,13 +7,13 @@ const other = Symbol("other");
 const viewed = Symbol("viewed");
 const claimed: typeof near = other as any;
 const picked: typeof near = (JSON.parse("1") ? Symbol("picked at run time") : near) as any;
-class Named {
+class Named { // @ts-expect-error
   [near]() { return 1; }
   [far]() { return 2; }
   [bare]() { return 3; }
   [shared]() { return 4; }
-  [empty]() { return 5; }
-  [claimed]() { return 6; }
+  [empty]() { return 5; } // @ts-expect-error
+  [claimed]() { return 6; } // @ts-expect-error
   [picked]() { return 7; }
   get [viewed]() { return 8; }
   static [near]() { return 9; }

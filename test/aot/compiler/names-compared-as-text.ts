@@ -221,9 +221,9 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   {
     paths: /^src\/sema\/(import_sites\/alternatives|fold\/folder_calls)\.rs$/,
     lines:
-      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|keys|values|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
+      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
     reason:
-      "a member behind a value: whoever follows a text has the list, the text, the URL, the object literal or the global `Object` in hand where it reads the name of the member, and built-ins are frozen",
+      "a member behind a value: whoever follows a text has the list, the Set that `new Set(..)` of the free name made, the text, the URL, the object literal or the global `Object` in hand where it reads the name of the member, and built-ins are frozen",
   },
   {
     paths: /^src\/sema\/import_sites\/alternatives\.rs$/,

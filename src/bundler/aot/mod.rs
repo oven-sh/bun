@@ -69,6 +69,7 @@ pub struct AotBuild {
     pub root_folders_spelled: Vec<u8>,
     /// `Compilation::holds_source_paths`
     pub holds_source_paths: bool,
+    pub names_plugin: bool,
     /// `Compilation::names_added_to_builtins`
     pub names_added_to_builtins: Vec<(u32, Vec<u8>)>,
     /// `Resolver::find_further_package_names`

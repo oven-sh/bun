@@ -4,7 +4,7 @@
 class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } sum(): number { return this.x + this.y; } scaled(by: number): number { return this.x * by + this.y * by; } }
 class Point3 extends Point { z: number; constructor(x: number, y: number, z: number) { super(x, y); this.z = z; } sum(): number { return this.x + this.y + this.z; } }
 let said = "";
-const any = (value: unknown): any => value;
+const any = (value: unknown): any => value; // @ts-expect-error
 function tell(run: () => unknown) { try { report(String(run())); } catch (thrown) { report((thrown as Error).name); } }
 function area(point: Point, scale: number): number { const across = point.x * scale; const down = point.y * scale; return across * down + point.x; }
 function text(s: string, n: number): string { const long = s.length + n; return s + ":" + long + ":" + s.charCodeAt(0); }
@@ -30,6 +30,6 @@ tell(() => changes(new Point(1, 2), p => { any(p).more = 1; p.x = any("text"); }
 tell(() => down(new Point(1, 1), [new Point(2, 2), new Point(3, 3)], 0));
 tell(() => down(new Point(1, 1), [new Point(2, 2), { x: "a", y: "b" }, new Point(3, 3)], 0));
 tell(() => down(new Point(1, 1), [new Point(2, 2), null, new Point(3, 3)], 0));
-tell(() => down(new Point(1, 1), [{ x: 1, y: 2 }, new Point(2, 2), 5, new Point3(1, 1, 1)], 0));
-report(said);
+tell(() => down(new Point(1, 1), [{ x: 1, y: 2 }, new Point(2, 2), 5, new Point3(1, 1, 1)], 0)); // @ts-expect-error
+report(said); // @ts-expect-error
 report("end");

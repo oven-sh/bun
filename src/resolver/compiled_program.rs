@@ -95,6 +95,7 @@ pub struct CompiledProgram {
     further_package_names: Box<[CompiledFurtherPackageName]>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
     pub allows_code_from_disk: bool,
+    pub names_plugin: bool,
     /// The last folders of the root directory where the program writes a path that goes up out of them and comes back.
     root_folders_spelled: &'static [u8],
     module_lookup: OnceLock<ModuleLookup>,
@@ -376,6 +377,7 @@ impl CompiledProgram {
             assets_named_at_root: b"",
             further_package_names: Box::new([]),
             allows_code_from_disk: false,
+            names_plugin: false,
             root_folders_spelled: b"",
             module_lookup: OnceLock::new(),
             test_of_path_starts: OnceLock::new(),
@@ -415,6 +417,11 @@ impl CompiledProgram {
 
     pub fn with_code_from_disk(mut self, allows_code_from_disk: bool) -> CompiledProgram {
         self.allows_code_from_disk = allows_code_from_disk;
+        self
+    }
+
+    pub fn with_plugin_named(mut self, names_plugin: bool) -> CompiledProgram {
+        self.names_plugin = names_plugin;
         self
     }
 
@@ -710,17 +717,16 @@ impl CompiledProgram {
         self.search_image(|lookup| self.find_file_or_directory(&path, how, search, lookup))?
     }
 
-    /// The public path of the compiled module whose source is the file on disk that `specifier` names from `source_dir`. Code from disk gets the module of the executable, not a second one.
+    /// The public path of the compiled module whose source is the file on disk that `specifier` names from `source_dir`.
     pub fn resolve_module_on_disk(
         &self,
         public_root: &[u8],
-        root_on_disk: &[u8],
         source_dir: &[u8],
         specifier: &[u8],
         is_require: bool,
         search: &ExtensionSearch<'_>,
     ) -> Option<&'static [u8]> {
-        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform, relative};
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
         let base = match is_relative_specifier(specifier) {
             true => source_dir,
             false => specifier,
@@ -734,8 +740,7 @@ impl CompiledProgram {
             &mut buffer[..],
             &[specifier],
         )?;
-        let below_root = [b"./", relative(root_on_disk, file)].concat();
-        let path = join_public_path(public_root, public_root, &below_root)?;
+        let path = self.public_path_of_source(public_root, file)?;
         let how = HowNamed {
             names_directory: Resolver::import_path_names_directory(specifier),
             is_require,
@@ -1284,9 +1289,7 @@ mod tests {
         #[test]
         fn file_on_disk_names_a_compiled_file_by_its_path() {
             let program =
-                program_with_lookup(false).with_root_below_working_directory(Some(b"src"));
-            let root_on_disk = program.root_on_disk(b"/work/app").unwrap();
-            assert_eq!(root_on_disk, b"/work/app/src");
+                program_with_lookup(false).with_root_on_build_machine(Some(b"/work/app/src"));
             let extensions = [&b".ts"[..], b".js", b".cjs"].map(Box::<[u8]>::from);
             let search = ExtensionSearch {
                 extensions: &extensions,
@@ -1294,14 +1297,7 @@ mod tests {
                 rewritten_extensions: &rewrite,
             };
             let find = |source_dir: &[u8], specifier: &[u8]| {
-                program.resolve_module_on_disk(
-                    ROOT,
-                    &root_on_disk,
-                    source_dir,
-                    specifier,
-                    false,
-                    &search,
-                )
+                program.resolve_module_on_disk(ROOT, source_dir, specifier, false, &search)
             };
             assert_eq!(
                 find(b"/work/app/test/", b"../src/plugins.js"),

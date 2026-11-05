@@ -57,6 +57,7 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub graph: &'a ModuleGraph,
     pub known_helpers: &'a KnownHelpers,
     pub removable: RemovableOptions,
+    pub counts_executions: bool,
     pub any_file_is_named_at_run_time: bool,
     pub files_are_named_out_of_sight: bool,
     pub isolates_code_from_disk: bool,
@@ -110,6 +111,7 @@ enum Interest {
     LoadOfIsolatedCode,
     FileSpelled(FileId),
     FileLeftToLoader(FileId),
+    FileThatComputedNameMayAskFor(FileId),
     KnownMember(Sym),
     KnownVariable(Sym),
     Lookup(Sym),
@@ -892,7 +894,10 @@ impl<'a, 's> FileScan<'a, 's> {
         }
         let mut modifiers = hir.modifiers.iter();
         let has_decorators = modifiers.any(|it| matches!(it.kind, ModifierKind::Decorator(_)));
+        let is_counted =
+            self.input.counts_executions && self.input.sources.is_in_coverage_report(self.file);
         let removable = Removable::new(self.input.files, self.file, self.input.removable);
+        let removable = removable.filter(|_| !is_counted);
         let removable = removable.map(|it| it.with_modules(self.input.graph, self.file));
         let removable = removable.as_ref();
         self.collect_units_among_statements(hir.body, removable, has_decorators);
@@ -1819,6 +1824,15 @@ impl<'a, 's> FileScan<'a, 's> {
                         _ => None,
                     });
                     self.units.interests[region].extend(left_to_loader);
+                    if !matches!(site.kind, ImportSiteKind::ImportCall(_)) {
+                        let asked_for = candidates.iter().filter_map(|it| match it.module {
+                            ModuleRef::File(file) if !it.is_left_to_loader => {
+                                Some(Interest::FileThatComputedNameMayAskFor(file))
+                            }
+                            _ => None,
+                        });
+                        self.units.interests[region].extend(asked_for);
+                    }
                 }
                 Some(
                     SiteAnswer::Computed(Candidates::All)
@@ -2139,6 +2153,8 @@ struct Found {
     loads_isolated_code: bool,
     files_naming_ways: Vec<FileId>,
     replaced_loader_hooks: Vec<ReplacedLoaderHook>,
+    stores_loader_function: bool,
+    files_that_computed_names_may_ask_for: Vec<FileId>,
 }
 
 impl Found {
@@ -2155,6 +2171,9 @@ impl Found {
         self.files_naming_ways.append(&mut other.files_naming_ways);
         self.replaced_loader_hooks
             .append(&mut other.replaced_loader_hooks);
+        self.stores_loader_function |= other.stores_loader_function;
+        self.files_that_computed_names_may_ask_for
+            .append(&mut other.files_that_computed_names_may_ask_for);
     }
 
     fn holds_what_waits(&self) -> bool {
@@ -2163,6 +2182,8 @@ impl Found {
             || !self.loads_by_unknown_names.is_empty()
             || !self.files_spelled.is_empty()
             || !self.files_left_to_loader.is_empty()
+            || (self.stores_loader_function
+                && !self.files_that_computed_names_may_ask_for.is_empty())
     }
 }
 
@@ -2499,6 +2520,15 @@ impl<'a, 's> Walk<'a, 's> {
                     found: &mut *found,
                 };
                 loads.take_file_found(&mut reacher, file);
+            }
+            if found.stores_loader_function {
+                for file in take(&mut found.files_that_computed_names_may_ask_for) {
+                    let mut reacher = Reacher {
+                        walk: &*self,
+                        found: &mut *found,
+                    };
+                    loads.take_file_found(&mut reacher, file);
+                }
             }
         }
     }
@@ -3272,6 +3302,9 @@ impl Reacher<'_, '_, '_> {
             Interest::LoadOfIsolatedCode => self.found.loads_isolated_code = true,
             Interest::FileSpelled(spelled) => self.found.files_spelled.push((file, spelled)),
             Interest::FileLeftToLoader(found) => self.found.files_left_to_loader.push(found),
+            Interest::FileThatComputedNameMayAskFor(found) => {
+                (self.found.files_that_computed_names_may_ask_for).push(found);
+            }
             Interest::TestedBinding(defined) => {
                 self.reach_files_between(file, HandedOn::Variable(defined));
                 self.reach_tested_binding(defined);
@@ -3373,6 +3406,7 @@ impl Reacher<'_, '_, '_> {
             Interest::EntryOfModuleCache => self.keep_every_module_object(file),
             Interest::StoreOfLoaderFunction(replaced) => {
                 self.keep_every_module_object(file);
+                self.found.stores_loader_function = true;
                 if let Some((assignment, hook)) = replaced {
                     let replaced = ReplacedLoaderHook {
                         file,
@@ -3762,6 +3796,7 @@ pub(crate) struct ReachedModules {
     pub data_found_by_name: Vec<ModuleRef>,
     pub left_out_inner_modules: Vec<ModuleRef>,
     pub replaced_loader_hooks: Vec<ReplacedLoaderHook>,
+    pub stores_loader_function: bool,
     required: SharedSet<(ModuleRef, ModuleRef)>,
     left_to_calls: FxHashSet<(FileId, FileId)>,
     left_with_elements: FxHashSet<(FileId, ModuleRef)>,
@@ -3971,6 +4006,7 @@ pub(crate) fn find_left_out_code(
     reached_modules.naming_ways = in_order(found.files_naming_ways);
     reached_modules.found_by_name = in_order(loads.files_found);
     reached_modules.replaced_loader_hooks = found.replaced_loader_hooks;
+    reached_modules.stores_loader_function = found.stores_loader_function;
     reached_modules
         .replaced_loader_hooks
         .sort_unstable_by_key(|replaced| (replaced.file, replaced.assignment.0));

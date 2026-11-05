@@ -408,6 +408,7 @@ class Comparison {
     const takesRest = last?.place === "Operand" && typeof last.operand === "object" && "argumentsFrom" in last.operand;
     event.passedValues.forEach((value, index) => {
       const place = declared[index] ?? (takesRest ? last : spread);
+      if (place.place === "NewValue" && place.holdsWhatIsThrown) this.checkThrownValue(`${column}.arguments`, value);
       if (this.placeAdmits(place, value)) return;
       this.report(`${column}.arguments`, `argument ${index} is ${this.describeValue(value)} (${describeEvent(event)})`);
     });

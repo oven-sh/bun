@@ -75,7 +75,7 @@ report(getterInList());
 function getterPutInLoop(list: any): string { let log = ""; for (const item of list) { log += String(item); Object.defineProperty(list, 2, { get() { log += "g"; return "late"; }, configurable: true }); } return log; }
 report(getterPutInLoop([1, 2, 3, 4]));
 function ofArguments(a?: any, b?: any, c?: any): string { let s = ""; for (const item of arguments) s += String(item) + ","; return s; }
-report(ofArguments(1, 2));
+report(ofArguments(1, 2)); // @ts-expect-error
 report(ofArguments(1, 2, 3, 4));
 report(ofArguments());
 function ofOwnArguments(a?: any, b?: any): string { (arguments as any)[Symbol.iterator] = function* () { yield "own"; }; return join(arguments); }

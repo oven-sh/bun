@@ -66,9 +66,19 @@ export function getStdioWriteStream(
     // but the TTY is technically duplex
     // see test-fs-syncwritestream.js
     stream.readable = true;
-    process.on("SIGWINCH", () => {
-      stream._refreshSize();
-    });
+    if (IS_COMPILED_AHEAD_OF_TIME) {
+      $newCppFunction(
+        "BunProcess.cpp",
+        "jsFunctionListenForSizeOfTerminal",
+        1,
+      )(() => {
+        stream._refreshSize();
+      });
+    } else {
+      process.on("SIGWINCH", () => {
+        stream._refreshSize();
+      });
+    }
     stream._type = "tty";
   } else {
     const fs = require("node:fs");

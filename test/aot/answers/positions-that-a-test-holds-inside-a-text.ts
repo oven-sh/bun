@@ -20,7 +20,7 @@
 // # POINT: : int[-1, 1114111] @Int32{{*}}isLoopHead=true
 // # RUN(BEHIND): walk f7 mechanisms=all
 // # BEHIND-LABEL: code f7:Body
-// # BEHIND: : number @Double{{*}}isLoopHead=true
+// # BEHIND: : int[-1, 65535]|whole @Double{{*}}isLoopHead=true
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 199 of 199 of 199

@@ -26,13 +26,22 @@ pub struct AsksOfText {
     pub members_read: Vec<BuiltinName>,
     pub reads_by_unknown_key: bool,
     pub syntax: SyntaxWithHelpers,
+    pub may_hand_values_to_natives: bool,
 }
 
 impl AsksOfText {
+    fn asks_operands(&self) -> bool {
+        self.may_hand_values_to_natives
+            || self.reads_by_unknown_key
+            || !self.members_read.is_empty()
+            || !self.syntax.is_empty()
+    }
+
     pub fn add(&mut self, other: &AsksOfText) {
         self.members_read.extend_from_slice(&other.members_read);
         self.reads_by_unknown_key |= other.reads_by_unknown_key;
         self.syntax |= other.syntax;
+        self.may_hand_values_to_natives |= other.may_hand_values_to_natives;
     }
 }
 
@@ -717,6 +726,7 @@ pub struct Mentions<'a> {
     pub may_call_evaluator: bool,
     pub global_object_may_be_looked_through: bool,
     pub syntax: SyntaxWithHelpers,
+    pub may_hand_values_to_natives: bool,
     pub called: &'a [BuiltinId],
     pub is_of_program: bool,
     pub holds_language: bool,
@@ -740,7 +750,9 @@ impl RuntimeUses {
         };
         let mut collector =
             Collector::of_mentions(&mentions, platform).unwrap_or_else(|| Collector::new(platform));
-        collector.add_functions(table::FUNCTIONS_FOUND_ON_ANY_OPERAND);
+        if asks.asks_operands() {
+            collector.add_functions(table::FUNCTIONS_FOUND_ON_ANY_OPERAND);
+        }
         collector.finish()
     }
 }
@@ -757,6 +769,7 @@ impl Collector {
             may_call_evaluator,
             global_object_may_be_looked_through,
             syntax,
+            may_hand_values_to_natives,
             called,
             is_of_program,
             holds_language,
@@ -769,7 +782,8 @@ impl Collector {
             && syntax.is_empty()
             && !reads_by_unknown_key
             && !may_call_evaluator
-            && !global_object_may_be_looked_through;
+            && !global_object_may_be_looked_through
+            && !may_hand_values_to_natives;
         if names_nothing {
             return None;
         }
@@ -828,6 +842,10 @@ impl Collector {
                 },
                 reads_by_unknown_key,
                 syntax,
+                may_hand_values_to_natives: may_hand_values_to_natives
+                    || !exposed.is_empty()
+                    || collector.collected.functions.count() > 0
+                    || collector.collected.modules.count() > 0,
             };
         } else if reads_by_unknown_key {
             collector.add_language();

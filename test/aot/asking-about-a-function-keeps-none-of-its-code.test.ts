@@ -23,10 +23,8 @@ const listsAllMembers = ({ flags }: (typeof functions)[number]) => flags.include
 const namedIsUsedToday = [
   /^Buffer\./,
   /^Bun\.build$/,
-  /^Bun\.inspect\./,
   /^Bun\.plugin(\.|$)/,
   /^WebAssembly\.(compile|instantiate)Streaming$/,
-  /^process\.(binding|openStdin)$/,
 ];
 
 async function usersIn(text: string) {
@@ -78,8 +76,6 @@ test("a function that --trim can remove is a property in the table only where a 
       .map(({ path }) => path)
       .sort(),
   ).toEqual([
-    // It is made with Bun.FFI, which the first read of Bun.FFI makes.
-    "Bun.FFI.CString",
     // The first read makes them.
     "Bun.ModuleGraph",
     "Bun.SQL",

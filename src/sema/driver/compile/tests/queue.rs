@@ -408,49 +408,63 @@ fn a_search_of_every_module_that_cannot_end_stops_at_once() {
     });
 }
 
-fn modules_searched_for_a_message(main: &str, line_before: &str) -> (usize, usize) {
-    let take = match main.ends_with(".ts") {
-        true => "function take(count: number) { return count; }",
-        false => "/** @param {number} count */\nfunction take(count) { return count; }",
-    };
-    let text = format!(
-        "import {{ make }} from \"./maker\";\n{take}\n{line_before}\ntake({{ a: make() }});\n"
-    );
-    let files = [
-        ("hidden.ts", "export interface Hidden { h: number }\n"),
-        ("again.ts", "export type { Hidden } from \"./hidden\";\n"),
-        (
-            "maker.ts",
-            "import \"./again\";\nimport type { Hidden } from \"./hidden\";\n\
-             export function make(): Hidden { return { h: 1 }; }\n",
-        ),
-        (main, &text[..]),
-    ];
-    with_program(&files, &[&format!("./{main}")], 1, |program| {
-        let main = program.file(main);
+const TYPE_THAT_ITS_READER_DOES_NOT_IMPORT: [(&str, &str); 3] = [
+    ("hidden.ts", "export interface Hidden { h: number }\n"),
+    ("again.ts", "export type { Hidden } from \"./hidden\";\n"),
+    (
+        "maker.ts",
+        "import type { Hidden } from \"./hidden\";\n\
+         export function make(): Hidden { return { h: 1 }; }\n",
+    ),
+];
+
+const MESSAGE_ABOUT_THAT_TYPE: &str = "import { make } from \"./maker\";\n\
+     function take(count: number) { return count; }\ntake({ a: make() });\n";
+
+#[test]
+fn a_message_of_a_build_searches_no_module() {
+    let main = format!("import \"./other\";\n{MESSAGE_ABOUT_THAT_TYPE}");
+    let mut files = TYPE_THAT_ITS_READER_DOES_NOT_IMPORT.to_vec();
+    files.push(("other.ts", "import \"./again\";\nexport {};\n"));
+    files.push(("main.ts", &main[..]));
+    with_program(&files, &["./main.ts"], 1, |program| {
         let searched = AtomicUsize::new(0);
         let report = check_all_files(program, LOWERING_PASS, &|checker, _| {
             searched.store(checker.modules_searched_for_exports(), Ordering::Relaxed);
         });
-        let in_main = report.diagnostics.iter().filter(|it| it.file == Some(main));
-        (searched.load(Ordering::Relaxed), in_main.count())
+        assert_eq!(searched.load(Ordering::Relaxed), 0);
+        assert_eq!(codes_reported(&report, program.file("main.ts")), [2345]);
+    });
+}
+
+fn codes_reported_about_a_type_that_a_gone_module_exports_again() -> Option<Vec<u32>> {
+    let mut files = TYPE_THAT_ITS_READER_DOES_NOT_IMPORT.to_vec();
+    files.extend([
+        (
+            "main.ts",
+            "import \"./a\";\nimport \"./again\";\nimport \"./late\";\n",
+        ),
+        ("a.ts", "export const first = [1].join();\n"),
+        ("late.ts", MESSAGE_ABOUT_THAT_TYPE),
+    ]);
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let [again, late] = ["again.ts", "late.ts"].map(|path| program.file(path));
+        let files = program.files();
+        let _watch = let_trees_go_behind(files, &[again, late]);
+        {
+            let _task = ReadingTask::begin();
+            files.note_commit(again);
+        }
+        wait_until_tree_is_gone(files, again)?;
+        let report = check_and_let_trees_go(program, vec![late], LOWERING_PASS);
+        Some(codes_reported(&report, late))
     })
 }
 
 #[test]
-fn a_message_that_nobody_reads_searches_no_module() {
-    let (searched, reported) = modules_searched_for_a_message("main.ts", "");
-    assert!(searched != 0, "{searched} modules");
-    assert_eq!(reported, 1);
-    for (main, line_before) in [
-        ("main.ts", "// @ts-expect-error"),
-        ("main.ts", "// @ts-ignore"),
-        ("main.ts", "if (false)"),
-        ("main.js", ""),
-    ] {
-        let searched = modules_searched_for_a_message(main, line_before);
-        assert_eq!(searched, (0, 0), "{main} {line_before}");
-    }
+fn a_message_about_a_type_that_its_file_does_not_import_reads_no_tree_that_is_gone() {
+    let codes = ask_until_answered(codes_reported_about_a_type_that_a_gone_module_exports_again);
+    assert_eq!(codes, [2345]);
 }
 
 #[test]

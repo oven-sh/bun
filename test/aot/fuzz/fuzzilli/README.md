@@ -314,6 +314,18 @@ bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alon
 
 It counts these and doesn't keep them: a difference that the executable of `bun build --compile` without `--aot` shows too, such as a `tsconfig.json` in a subfolder or when an `import()` runs its file. An order in which files are loaded, unless `bun <file>` and that executable agree on it and `bun <file>` says the same twenty times. The layout of a function's text. What the compatibility page declares. A compiled test run that prints what the executable prints. An executable that dies is always kept.
 
+### Kin of the programs that came last
+
+Each unit of the compiler brings programs that use what it adds, and most of them are of one shape. `write-kin.ts` makes one to three small changes to such a program, of the kind a reader makes by hand to see how far a fault reaches: `var` for `let`, a fraction for a whole number, `null` out of a parser, a loop that runs backward, two operands the other way round, the whole file inside a function. `run-alone.ts --kin 100` draws kin of the stored programs under `../../parallel`, seven of ten from those that changed within two hours of the newest. It draws a folder first and then a file in it, so that a family of hundreds of files doesn't crowd out the one program that came with a unit. A second and a third change fall on the lines beside the first: faults lie where two small things meet. It drops a kin that `bun <file>` doesn't run to its end, and one that parts counts only where the stored program itself does as `bun <file>` does.
+
+### Ten programs in one executable, then each alone
+
+A build costs about the same for one small program as for ten. `--together 10` builds ten programs behind an entry that imports them in a row. Where that company does as `bun <file>` does, all ten count as the same. Where it parts, each member is built alone in the same way. Where none parts alone, members are taken out while the rest still parts, and what is left is kept as `together-<kind>` once `bun <file>` has said the same twenty times. Of nine known faults, seven showed in every such company that held a program which is wrong alone, one in few and one in none, and one showed in three times as many companies as programs. So this is a second net beside the first, not in its place.
+
+### Words that may only change cost
+
+`--shuffles-costs 50` builds every second program once more under one of the words of `--aot-testing` that may change what the code costs and nothing else: guesses fail unasked, expected types are ignored or shuffled, so are the frequencies of blocks and the choices by cost, Link is given more. The seed is drawn and stands in the report. An answer that changes there is a miscompilation.
+
 ### Scenes of one deed
 
 A generator of random operations seldom puts together what people write every day. `write-single-deeds.ts` holds tables of such deeds, a few lines to a scene: something that can be walked goes into something that walks it, a view is read beside its length in a loop, a closure of a function that runs once is lent or kept, a list typed as a class holds an object that no constructor made. `write-hidden-effects.ts` has a lookup, a conversion or a protocol run code that writes what a neighbor in the same expression reads. `write-typed-places.ts` gives a place of a declared type what the type doesn't allow.
@@ -329,6 +341,23 @@ A scene writes only what its deed names. A helper that nothing calls is still a 
 ```sh
 bun test/aot/fuzz/fuzzilli/write-member-sweep.ts /tmp/members
 bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds --programs /tmp/members
+```
+
+### Lines that are written out in full
+
+`write-line-sweeps.ts` writes programs of one or two lines, one question each, in four families. `texts`: the name of a member or a global spelled as a value, as a literal, a piece of a template, a join, a sum, a comparison, the key of a Map. `species`: a static method called off a class that came by `[Symbol.species]`, by a pattern or by `.constructor`. `walks`: something that can be walked goes into something that walks it. `methods`: a method of a built-in prototype called by its name, by a computed name, off the prototype, through `Reflect.apply()`. The first three have each found a known fault again on a build that has it. `methods` hasn't yet.
+
+```sh
+bun test/aot/fuzz/fuzzilli/write-line-sweeps.ts /tmp/lines species
+bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds --programs /tmp/lines/species
+```
+
+### Does a build grow with the program or with its square?
+
+`run-growth.ts` builds a shape at a size and at four times that size, on one thread, and holds the two costs against each other: instructions where `perf` is there, which are the same from run to run, and processor time elsewhere. What a build of an empty program costs is taken off both. A shape is so many things of one kind, such as records of as many layouts in one list, and as many uses that may each meet all of them, such as a function that reads as many names off its parameter. It keeps a shape whose larger build costs more than six times the smaller one. With `--against <table>` it also keeps a shape whose larger build costs more than 1.25 times what the table of an earlier build says, and `--writes <table>` writes such a table. A table of the least that each shape ever cost makes that a ratchet.
+
+```sh
+bun test/aot/fuzz/fuzzilli/run-growth.ts --bun build/release/bun --work /tmp/growth/work --finds /tmp/growth/finds
 ```
 
 ## Try one program without Fuzzilli

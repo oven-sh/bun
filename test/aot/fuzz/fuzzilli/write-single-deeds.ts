@@ -570,6 +570,8 @@ function builtInsGivenOtherKinds({ pick, typed, cast, n }: Draw): string[] {
 function namesThroughWith({ pick, n }: Draw): string[] {
   const shelf = pick([
     "{ item: 0, get [Symbol.unscopables]() { asked++; delete shelf.item; return null; } }",
+    "{ item: 0, get [Symbol.unscopables]() { asked++; delete shelf.item; return null; } }",
+    "{ item: 0, get [Symbol.unscopables]() { asked++; delete shelf.item; return null; } }",
     "{ item: 0, get [Symbol.unscopables]() { asked++; return { item: asked > 1 }; } }",
     "{ item: 0, [Symbol.unscopables]: { item: true } }",
     "{ get item() { asked++; return asked; } }",
@@ -580,9 +582,11 @@ function namesThroughWith({ pick, n }: Draw): string[] {
     "{ other: 1 }",
     "{ item: 0 }",
   ]);
-  const use = pick([
+  const uses = [
     '(function () { "use strict"; got = item; })();',
     '(function () { "use strict"; got = item; })();',
+    '(function () { "use strict"; got = item; })();',
+    '(() => { "use strict"; got = item; })();',
     "got = item;",
     "item = 4; got = item;",
     "got = typeof item;",
@@ -595,7 +599,11 @@ function namesThroughWith({ pick, n }: Draw): string[] {
     "for (let turn = 0; turn < 3; turn++) got += item;",
     "got = item + item;",
     "function read() { return item; } got = read();",
-  ]);
+  ];
+  // Sloppy code that reads a name which the object has just lost gets undefined by the language and a ReferenceError from `bun <file>`: there the reader is strict.
+  const use = pick(
+    /delete shelf\.item; return null/.test(shelf) ? uses.filter(each => each.includes("use strict")) : uses,
+  );
   return [
     "// stays a script",
     "var asked = 0;",
@@ -687,6 +695,8 @@ function graphsOfModules({ pick, chance, n }: Draw): string[] {
   const count = pick([3, 4, 5, 6, 9]);
   const files = Array.from({ length: count }, (_, at) => ({ name: `m${n}_${at}`, isScript: at > 0 && chance(30) }));
   const path = (at: number) => `./${files[at].name}.${files[at].isScript ? "cjs" : "mjs"}`;
+  // While a require() of an ES module runs, `bun <file>` alone loads what that module's import() names. No order is judged there, so a CommonJS file requires CommonJS files.
+  const required = (to: number) => (files[to].isScript ? `require("${path(to)}");` : `import("${path(to)}");`);
   const body = (at: number) => {
     const lines = [`console.log("begins ${at}");`];
     for (let edges = pick([0, 1, 1, 2, 2, 3]); edges > 0; edges--) {
@@ -695,7 +705,7 @@ function graphsOfModules({ pick, chance, n }: Draw): string[] {
       if (to === at || to === 0) continue;
       lines.push(
         files[at].isScript
-          ? pick([`require("${path(to)}");`, `require("${path(to)}");`, `globalThis.late${n} = import("${path(to)}");`, `import("${path(to)}").then(() => console.log("came ${at} ${to}"));`, `queueMicrotask(() => console.log("job ${at}"));`])
+          ? pick([required(to), required(to), `globalThis.late${n} = import("${path(to)}");`, `import("${path(to)}").then(() => console.log("came ${at} ${to}"));`, `queueMicrotask(() => console.log("job ${at}"));`])
           : pick([`import "${path(to)}";`, `import "${path(to)}";`, `import "${path(to)}";`, `import * as all${to}_${edges} from "${path(to)}"; console.log(typeof all${to}_${edges});`, `await import("${path(to)}");`, `import("${path(to)}").then(() => console.log("came ${at} ${to}"));`, `export * from "${path(to)}";`]), // prettier-ignore
       );
     }
@@ -860,7 +870,861 @@ function kindsOfFilesBehindComputedTests({ pick, cast, n }: Draw): string[] {
   ];
 }
 
+/** An iterator written by hand: a literal whose fields `next` and `return` hold functions. Beside the loop that walks it stands other code that calls or reads both names. */
+function iteratorsWrittenByHand({ pick, chance, typed, cast, n }: Draw): string[] {
+  const any = typed("any");
+  const step = `log.push("n" + i); return i < n ? { done: false, value: i++ } : { done: true, value: undefined };`;
+  const stop = `log.push("r" + i); return ${pick(["{}", "{}", "{ done: true }", "{ done: true, value: undefined }", "{ value: i }", "this"])};`;
+  const literal = pick([
+    `{ next() { ${step} }, return() { ${stop} } }`,
+    `{ next() { ${step} }, return() { ${stop} } }`,
+    `{ next: function () { ${step} }, return: function () { ${stop} } }`,
+    `{ next: () => { ${step} }, return: () => { ${stop} } }`,
+    `{ return() { ${stop} }, next() { ${step} } }`,
+    `{ next() { ${step} } }`,
+    `{ next() { ${step} }, return() { ${stop} }, throw() { ${stop} } }`,
+  ]);
+  const isAsync = chance(50);
+  const turn = isAsync
+    ? `sum += await (v === bad ? Promise.reject(new RangeError("turn")) : v);`
+    : `if (v === bad) throw new RangeError("turn"); sum += v;`;
+  const beside = pick([
+    [`printValue("beside ${n}", [...Iterator.concat([1], [2, 3])].join());`],
+    [`printValue("beside ${n}", [...Iterator.concat([1], [2, 3])].join());`],
+    [
+      `function drive(it${any}) { let seen = 0; for (;;) { const step = it.next; const stop = it.return; const got = step.call(it); if (got.done) return seen; if (++seen > 1) { stop?.call(it); return seen; } } }`,
+      `printValue("beside ${n}", drive(JSON.parse("[4,5,6]").values()), drive(new Set([1]).values()));`,
+    ],
+    [
+      `function drive(it${any}) { let seen = 0; for (;;) { const step = it.next; const stop = it.return; const got = step.call(it); if (got.done) return seen; if (++seen > 1) { stop?.call(it); return seen; } } }`,
+      `printValue("beside ${n}", drive((globalThis${cast("any")})[["A", "rray"].join("")].of(1, 2, 3).values()));`,
+    ],
+    [
+      `function drive(it${any}) { let out = ""; for (;;) { const step = it.next; const stop = it.return; const r = step.call(it); if (r.done) break; out += r.value; if (out.length > 3) { stop.call(it); break; } } return out; }`,
+      `const strange = new Function("let i = 0; return { next() { return i < 6 ? { done: false, value: i++ } : { done: true, value: undefined }; }, return() { return {}; } };");`,
+      `printValue("beside ${n}", drive(strange()), drive(strange()));`,
+    ],
+    [
+      `function drive(it${any}) { let out = ""; for (;;) { const step = it.next; const stop = it.return; const r = step.call(it); if (r.done) break; out += r.value; if (out.length > 3) { stop.call(it); break; } } return out; }`,
+      `const strange = new Function("let i = 0; return { next() { return i < 6 ? { done: false, value: i++ } : { done: true, value: undefined }; }, return() { return {}; } };");`,
+      `printValue("beside ${n}", drive(strange()), drive(strange()));`,
+    ],
+    [`printValue("beside ${n}", Iterator.from({ next() { return { done: true, value: 0 }; } }).toArray().length);`],
+    [`const [one, two] = new Row${n}(3, []);`, `printValue("beside ${n}", one, two);`],
+    [`printValue("beside ${n}", Array.from(new Row${n}(2, [])).join(), Math.max(...new Row${n}(2, [])));`],
+    [`function* wrap(row${any}) { yield* row; }`, `printValue("beside ${n}", [...wrap(new Row${n}(2, []))].join());`],
+  ]);
+  return [
+    `class Row${n} { n${any}; log${any}; constructor(n${any}, log${any}) { this.n = n; this.log = log; } [Symbol.iterator]()${any} { let i = 0; const n = this.n, log = this.log; return ${literal}; } }`,
+    `${isAsync ? "async " : ""}function pump(row${any}, bad${any}) { let sum = 0; for (const v of row) { ${turn} if (sum > 2) break; } return sum; }`,
+    `${isAsync ? "async " : ""}function tell(bad${any}) { const log${typed("string[]")} = []; let out; try { out = String(${isAsync ? "await " : ""}pump(new Row${n}(5, log), bad)); } catch (error) { out = (error${cast("any")}).name; } return out + log.join(""); }`,
+    `let latest = "";`,
+    `for (let t = 0; t < ${pick([1, 3, 300])}; t++) latest = ${isAsync ? "await " : ""}tell(t & 1 ? 1 : -1);`,
+    `printValue("by hand ${n}", ${isAsync ? "await " : ""}tell(-1), ${isAsync ? "await " : ""}tell(1), latest);`,
+    ...beside,
+  ];
+}
+
+/** JavaScript that stays a script. From a module object to the function that loads files, by a road that names neither. */
+function roadsToTheLoader({ pick, n }: Draw): string[] {
+  const holder = pick(["require.main", "require.main", "module"]);
+  const road = pick([
+    `Object.values(holder).find(each => typeof each === "function")`,
+    `Object.values(Object.getPrototypeOf(holder)).find(each => typeof each === "function" && each.length === 1)`,
+    `holder[nameOf(0)]`,
+    `holder[nameOf(0)]`,
+    `Object.entries(Object.getPrototypeOf(holder)).find(([name]) => name.startsWith("req"))[1]`,
+    `Reflect.get(holder, nameOf(0))`,
+    `(({ require: taken }) => taken)(holder)`,
+    `holder.constructor.prototype[nameOf(0)]`,
+    `holder.constructor[nameOf(1)]`,
+    `holder.constructor.createRequire(__filename)`,
+    `Object.getOwnPropertyDescriptor(Object.getPrototypeOf(holder), nameOf(0)).value`,
+    `holder.require`,
+    `holder.require.bind(holder)`,
+  ]);
+  return [
+    "// stays a script",
+    `function nameOf(at) { ${work} return [["re", "quire"], ["_lo", "ad"]][at + work - 1].join(""); }`,
+    `const holder = ${holder};`,
+    `const load = ${road};`,
+    `printValue("loader ${n}", typeof load === "function" ? typeof load.call(holder, "node:path").join : typeof load);`,
+  ];
+}
+
+/** A function that calls itself a few thousand times, and in each call lends literals of several sizes, makes closures or holds many locals. `bun <file>` gets to the bottom. */
+function deepVisitors({ pick, typed, cast, n }: Draw): string[] {
+  const fields = (count: number) => Array.from({ length: count }, (_, at) => `f${at}: depth`).join(", ");
+  const sizes = pick([
+    [4, 8, 12, 16, 20, 24, 28, 32],
+    [4, 8, 12, 16, 20, 24, 28, 32],
+    [32, 32, 32, 32],
+    [4, 32],
+    [1, 2, 3, 4, 5, 6, 7, 8],
+    [16],
+  ]);
+  const arm = pick([
+    (count: number) => `if (lies({ ${fields(count)} }, depth)) found++;`,
+    (count: number) => `if (lies({ ${fields(count)} }, depth)) found++;`,
+    (count: number) => `if (lies([${Array(count).fill("depth").join(", ")}], depth)) found++;`,
+    (count: number) => `{ const bag = { ${fields(count)} }; if (lies(bag, depth) || lies(bag, depth + 1)) found++; }`,
+    (count: number) => `if (lies(() => ({ ${fields(count)} }), depth)) found++;`,
+  ]);
+  const sample = arm(1);
+  const looked = sample.includes("() =>") ? "bag().f0" : sample.includes("lies([") ? "bag[0]" : "bag.f0";
+  return [
+    `function lies(bag${typed("any")}, value${typed("number")})${typed("boolean")} { ${work} return ${looked} + work > value; }`,
+    `function visit(depth${typed("number")}, kind${typed("number")})${typed("number")} {`,
+    `  if (depth === 0) return 0;`,
+    `  let found = 0;`,
+    `  switch (kind) {`,
+    ...sizes.map((count, at) => `    case ${at}: ${arm(count)} break;`),
+    `  }`,
+    `  const below = visit(depth - 1, (kind + 1) % ${sizes.length});`,
+    `  return found + below;`,
+    `}`,
+    ...[3000, 6000, 9000].map(
+      depth =>
+        `try { printValue("deep ${n}", ${depth}, visit(${depth}, 0)); } catch (error) { printValue("deep ${n}", ${depth}, (error${cast("Error")}).name); }`,
+    ),
+  ];
+}
+
+/** A class of the program extends a class of the library and answers for a member that the library itself reads. The object is made by hand, and then the library works on it. */
+function heirsOfLibraryClasses({ pick, typed, cast, n }: Draw): string[] {
+  const any = typed("any");
+  // A loop that never ends must not hold the program: it runs beside a timer.
+  const walked = `mine.push("chunk"); const got${typed("string[]")} = []; const loop = (async () => { for await (const chunk of mine) got.push(String(chunk)); })().catch(error => got.push("failed " + (error.code ?? error.message))); await Promise.race([loop, new Promise(resolve => setTimeout(resolve, 200))]); said = got.join("|") || "nothing";`;
+  const families: [string, string, string, string[], string[]][] = [
+    [
+      `import http from "node:http";\nimport net from "node:net";`,
+      "http.IncomingMessage",
+      "new Mine(new net.Socket())",
+      [
+        "get destroyed() { return true; }",
+        "get destroyed() { return true; }",
+        "get readable() { return false; }",
+        "get readableEnded() { return true; }",
+        "get readableLength() { return 0; }",
+        "read() { return null; }",
+        "get errored() { return null; }",
+      ],
+      [
+        walked,
+        walked,
+        `mine.push("chunk"); said = String(mine.read());`,
+        `said = [mine.destroyed, mine.readable, mine.complete].join();`,
+      ],
+    ],
+    [
+      `import { Readable } from "node:stream";`,
+      "Readable",
+      "new Mine({ read() {} })",
+      [
+        "get destroyed() { return true; }",
+        "get destroyed() { return true; }",
+        "get readable() { return false; }",
+        "get readableEnded() { return true; }",
+        "get readableFlowing() { return false; }",
+        "get readableLength() { return 0; }",
+        "push(chunk" + any + ') { return super.push(chunk === null ? null : chunk + "!"); }',
+      ],
+      [
+        walked,
+        walked,
+        `mine.push("chunk"); said = String(mine.read());`,
+        `mine.push("a"); mine.push(null); said = (await mine.toArray()).join();`,
+      ],
+    ],
+    [
+      `import { EventEmitter } from "node:events";`,
+      "EventEmitter",
+      "new Mine()",
+      [
+        "listenerCount() { return 7; }",
+        "listeners()" + any + " { return []; }",
+        "emit(name" + any + ", ...rest" + typed("any[]") + ') { return super.emit(name, "mine", ...rest); }',
+        "on(name" + any + ", listener" + any + ') { return super.on(name + "!", listener); }',
+        "get _events() { return {}; } set _events(value) {}",
+      ],
+      [
+        `let heard = ""; mine.on("a", (...all${typed("any[]")}) => { heard += all.join(); }); said = [mine.emit("a", 1), mine.emit("a!", 2), heard, mine.listenerCount("a")].join("|");`,
+        `mine.once("a", () => {}); said = [mine.eventNames().join(), mine.listenerCount("a")].join("|");`,
+      ],
+    ],
+    [
+      ``,
+      "Map",
+      "new Mine([[1, 2]])",
+      [
+        "get size() { return 9; }",
+        "set(key" + any + ", value" + any + ") { return super.set(key, value + 1); }",
+        "get(key" + any + ")" + any + " { return 5; }",
+        "has() { return false; }",
+        "[Symbol.iterator]()" + any + " { return [[7, 8]][Symbol.iterator](); }",
+        "entries()" + any + " { return [[7, 8]].values(); }",
+      ],
+      [
+        `said = [mine.size, mine.get(1), [...mine].join(), new Map(mine).size, JSON.stringify(Object.fromEntries(mine)), structuredClone(mine).size].join("|");`,
+        `said = [Map.groupBy([1], () => 1).size, mine.has(1), Array.from(mine.keys()).join()].join("|");`,
+      ],
+    ],
+    [
+      ``,
+      "Array",
+      "Mine.from([1, 2, 3])",
+      [
+        "get length() { return 1; } set length(value) {}",
+        "static get [Symbol.species]() { return Array; }",
+        "push(...all" + typed("any[]") + ") { return super.push(...all, 0); }",
+        "[Symbol.iterator]()" + any + " { return [9].values(); }",
+        "at()" + any + " { return 7; }",
+        "get [Symbol.isConcatSpreadable]() { return false; }",
+      ],
+      [
+        `said = [mine.length, [...mine].join(), mine.map((each${any}) => each).constructor.name, [0].concat(mine).length, JSON.stringify(mine), mine.at(0)].join("|");`,
+        `mine.push(4); said = [mine.join(), Array.isArray(mine), mine.slice(1).constructor.name].join("|");`,
+      ],
+    ],
+    [
+      ``,
+      "Promise",
+      "Mine.resolve(1)",
+      [
+        "then(done" + any + ", failed" + any + ")" + any + " { heard++; return super.then(done, failed); }",
+        "static get [Symbol.species]() { return Promise; }",
+        "get constructor()" + any + " { heard++; return Promise; }",
+      ],
+      [
+        `const got = await mine; said = [got, heard].join("|");`,
+        `said = [await Promise.all([mine]), await Promise.resolve(mine), heard, mine.finally(() => {}).constructor.name].join("|");`,
+        `said = [await (async () => mine)(), heard].join("|");`,
+      ],
+    ],
+  ];
+  const [head, parent, made, members, uses] = families[pick([0, 0, 0, 1, 1, 2, 3, 4, 5])];
+  const use = pick(uses);
+  const isOneSite = pick([true, false]);
+  const worker = (name: string) =>
+    `async function ${name}(mine${any}) { let said${any}; try { ${use} } catch (error) { said = (error${cast("any")})?.constructor?.name; } return said; }`;
+  return [
+    ...head.split("\n").filter(Boolean),
+    `let heard = 0;`,
+    `class Mine extends ${parent}${parent === "Map" || parent === "Array" || parent === "Promise" ? (typed("") ? "<any" + (parent === "Map" ? ", any" : "") + ">" : "") : ""} { ${pick(members)} }`,
+    // The library works on an object of its own class as well, in the same function or in a second one of the same text: what it learns there must not be believed of the heir.
+    ...(isOneSite ? [worker("work")] : [worker("work"), worker("workOnHeir")]),
+    `printValue("heir ${n}", String(await work(${made.replace("Mine", parent)})), String(await ${isOneSite ? "work" : "workOnHeir"}(${made})));`,
+  ];
+}
+
+/** A direct eval in a function that runs many times: in one turn its text declares, writes, reads or deletes a name that the function, a closure of it or the file also knows. */
+function namesThatEvalTouches({ pick, chance, typed, cast, n }: Draw): string[] {
+  const any = typed("any");
+  const outer = pick(["var made = 0;", "var made = 0;", "let made = 0;", "const made = 0;", ""]);
+  const own = pick(["", "", "", "let local = turn;", "var made = turn;", "let made = turn;"]);
+  const text = pick([
+    "var made = 12",
+    "var made = 12",
+    "var made = 12",
+    "function made() { return 12; }",
+    "let made = 12",
+    "made = 12",
+    "made++",
+    "var made",
+    "delete made",
+    "var made = 12; delete made",
+    "typeof made",
+    "var arguments = 12",
+    "turn = 12",
+    "(() => { made = 12; })()",
+    "var made = () => turn",
+    '"use strict"; var made = 12',
+  ]);
+  const when = pick(["turn === 100", "turn === 100", "turn === 0", "turn === 199", "turn % 50 === 49", "true"]);
+  const how = pick([
+    "eval(text)",
+    "eval(text)",
+    "eval(text)",
+    "(0, eval)(text)",
+    "eval?.(text)",
+    "[eval][0](text)",
+    "globalThis.eval(text)",
+    "new Function(text)()",
+  ]);
+  const look = pick([
+    'typeof made === "undefined" ? "none" : String(made)',
+    'typeof made === "undefined" ? "none" : String(made)',
+    "typeof made",
+    '(() => typeof made === "undefined" ? "none" : String(made))()',
+    "String(turn)",
+    'typeof made === "function" ? String(made()) : typeof made',
+  ]);
+  const isStrict = chance(15);
+  return [
+    ...(outer ? [outer.replace("made =", `made${any} =`)] : []),
+    `function run${n}(turn${any}, text${typed("string")})${typed("string")} {`,
+    ...(isStrict ? [`  "use strict";`] : []),
+    ...(own ? [`  ${own.replace(/^(let|var) (\w+) =/, `$1 $2${any} =`)}`] : []),
+    `  const before = ${look};`,
+    `  if (${when}) ${how};`,
+    `  return before + ">" + (${look});`,
+    `}`,
+    `const seen${typed("Record<string, number>")} = {};`,
+    `for (let turn = 0; turn < 200; turn++) {`,
+    `  let said${typed("string")};`,
+    `  try { said = run${n}(turn > 2 && turn < 197 && turn !== 100 && turn !== 101 ? 50 + (turn % 50 === 49 ? 49 : 0) && turn : turn, ${JSON.stringify(text)}).replace(/\\d{2,}/g, digits => (digits === "12" ? digits : "N")); } catch (error) { said = (error${cast("any")}).constructor.name; }`,
+    `  seen[said] = (seen[said] ?? 0) + 1;`,
+    `}`,
+    `printValue("eval ${n}", JSON.stringify(seen), ${outer ? "String(made)" : "typeof (globalThis" + cast("any") + ").made"});`,
+  ];
+}
+
+/** A text is put together from numbers, templates and other parts with `+`: which `+` adds and which joins hangs on what stands to its left. */
+function textsPutTogether({ pick, chance, typed, isTypeScript, n }: Draw): string[] {
+  const part = () =>
+    pick([
+      "`${row.id}`",
+      "`${row.id}`",
+      "`${row.id}`",
+      "row.cents",
+      "row.cents",
+      "row.cents",
+      "row.id",
+      "String(row.id)",
+      "row.id.toString()",
+      '""',
+      '"$"',
+      "true",
+      "null",
+      "undefined",
+      "thing",
+      "`${row.id}${row.cents}`",
+      "`#${row.id}`",
+      "(row.cents / 4)",
+      "-0",
+    ]);
+  const sum = pick([
+    () => `${part()} + ${part()}`,
+    () => `${part()} + ${part()}`,
+    () => `${part()} + ${part()} + ${part()}`,
+    () => `${part()} + (${part()} + ${part()})`,
+    () => `(${part()} + ${part()}) + ${part()}`,
+    () => `${part()} + ${part()} + ${part()} + ${part()}`,
+  ])();
+  const any = isTypeScript ? " as any" : "";
+  const said = sum.replace(/\b(true|null|undefined|thing)\b/g, `($1${any})`);
+  const body = pick([
+    `let text = ""; for (const row of rows) text += ${said} + ";"; return text;`,
+    `let text = ""; for (const row of rows) text += ${said} + ";"; return text;`,
+    `let text = ""; for (const row of rows) text = text + (${said}) + ";"; return text;`,
+    `let text = ""; for (let at = 0; at < rows.length; at++) { const row = rows[at]; text += ${said} + ";"; } return text;`,
+    `return rows.map(row => ${said}).join(";");`,
+    `const row = rows[1]; return String(${said});`,
+    `const parts${typed("unknown[]")} = []; for (const row of rows) parts.push(${said}); return parts.map(each => typeof each + each).join(";");`,
+  ]);
+  return [
+    ...(isTypeScript ? [`interface Row${n} { id: number; cents: number }`] : []),
+    ...(said.includes("thing") ? [`const thing = { valueOf() { return 7; } };`] : []),
+    `function lines(rows${typed(`Row${n}[]`)})${typed("string")} { ${chance(30) ? work : ""} ${body} }`,
+    `const plain${typed(`Row${n}[]`)} = [];`,
+    `for (const digits of ["1", "2", "30"]) plain.push({ id: JSON.parse(digits), cents: JSON.parse(digits + "0") });`,
+    `printValue("joined ${n}", lines(plain));`,
+  ];
+}
+
+/** A text grows in a loop of a function that then waits or yields. What was read off it in the loop is used behind the wait. */
+function textsKeptAcrossWaits({ pick, typed, n }: Draw): string[] {
+  const kept = pick([
+    "same(text)",
+    "same(text)",
+    "String(text)",
+    "text.toString()",
+    "text",
+    "(() => text)()",
+    'text.length + ""',
+    "text.slice(0)",
+    "`${text}`",
+  ]);
+  const keeps = pick([
+    `kept = ${kept};`,
+    `kept = ${kept};`,
+    `list.push(${kept}); kept = list[list.length - 1];`,
+    `if (at & 1) kept = ${kept};`,
+  ]);
+  const grows = pick([
+    `text += at + ",";`,
+    `text += at + ",";`,
+    `text = text + at + ",";`,
+    "text += `${at},`;",
+    `text += String(at); text += ",";`,
+  ]);
+  const loop = pick([
+    `do { ${grows} ${keeps} at = (at + 1) | 0; } while (at < turns);`,
+    `do { ${grows} ${keeps} at = (at + 1) | 0; } while (at < turns);`,
+    `while (at < turns) { ${grows} ${keeps} at = (at + 1) | 0; }`,
+    `for (; at < turns; at++) { ${grows} ${keeps} }`,
+  ]);
+  const [head, wait, call] = pick<[string, string, string]>([
+    ["async function", "await null;", 'await gather(JSON.parse("40"))'],
+    ["async function", "await null;", 'await gather(JSON.parse("40"))'],
+    [
+      "async function",
+      "await null; await new Promise(resolve => setTimeout(resolve, 1));",
+      'await gather(JSON.parse("40"))',
+    ],
+    ["function*", "yield 1;", '[...gather(JSON.parse("40"))].join(), (it => (it.next(), it.next().value))(gather(3))'],
+    [
+      "async function*",
+      "yield 1; await null;",
+      '(await (async it => (await it.next(), (await it.next()).value))(gather(JSON.parse("40"))))',
+    ],
+  ]);
+  return [
+    `function same(value${typed("string")})${typed("string")} { return value; }`,
+    `${head} gather(limit${typed("number")})${typed("any")} {`,
+    `  const turns = limit | 0;`,
+    `  const list${typed("string[]")} = [];`,
+    `  let text = "", kept = "", at = 0;`,
+    `  ${loop}`,
+    `  ${wait}`,
+    ...(pick([true, false]) ? [`  Bun.gc(true);`] : []),
+    `  return kept.length + ":" + text.length + ":" + kept.slice(-4);`,
+    `}`,
+    `printValue("waited ${n}", ${call});`,
+  ];
+}
+
+/** Two loops, one in the other, read and store variables that live outside the function: what the inner loop leaves in one of them the next turn of the outer loop finds. */
+function outerVariablesInNestedLoops({ pick, chance, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const keyword = pick(["let", "let", "let", "var"]);
+  const mark = pick(["JSON.parse('\"x\"')", "JSON.parse('\"x\"')", "undefined", "null", "{}", "2.5", "7", "-1"]);
+  const entry = pick(["latest = r;", "latest = r;", "latest = mark;", "latest = r * 2;", "", "if (r & 1) latest = r;"]);
+  const test = pick([
+    "if (latest === mark) same = c;",
+    "if (latest === mark) same = c;",
+    "if (latest !== mark) same = c;",
+    "if (latest == mark) same++;",
+    "same += typeof latest === typeof mark ? 1 : 0;",
+  ]);
+  const store = pick([
+    "latest = c < 3 ? c : mark;",
+    "latest = c < 3 ? c : mark;",
+    "latest = c;",
+    "if (c > 2) latest = mark;",
+    "latest = c & 1 ? mark : c;",
+    "[latest] = [c < 3 ? c : mark];",
+  ]);
+  const outer = pick([
+    "for (let r = 0; r < rows; r++)",
+    "for (let r = 0; r < rows; r++)",
+    "for (const r of Array.from({ length: rows }, (_, at) => at))",
+    "for (let r = rows - 1; r >= 0; r--)",
+  ]);
+  const lines = [
+    `${keyword} ticks = 0;`,
+    `${keyword} latest${any} = 0;`,
+    `function run${n}(rows${typed("number")}, cols${typed("number")}, mark${any})${typed("number")} {`,
+    `  let same = -1;`,
+    `  ${outer} {`,
+    `    ticks++;`,
+    ...(entry ? [`    ${entry}`] : []),
+    `    for (let c = 0; c < cols; c++) {`,
+    `      ${test}`,
+    `      ${store}`,
+    `    }`,
+    `  }`,
+    `  return same;`,
+    `}`,
+    `printValue("nested ${n}", run${n}(JSON.parse("6"), JSON.parse("8"), ${mark}), ticks, String(latest));`,
+  ];
+  return chance(25)
+    ? [`function scene${n}()${typed("void")} {`, ...lines.map(line => "  " + line), `}`, `scene${n}();`]
+    : lines;
+}
+
+/** A constructor function comes to share its prototype with a class, or a class with another, while instances of all of them are made in turns. */
+function prototypesThatAreShared({ pick, typed, cast, n }: Draw): string[] {
+  const any = typed("any");
+  const fields = pick([8, 8, 2, 1, 12]);
+  const share = pick([
+    `const shared = First.prototype; Plain.prototype = shared;`,
+    `const shared = First.prototype; Plain.prototype = shared;`,
+    `Plain.prototype = unseen(First.prototype);`,
+    `Object.defineProperty(Plain, "prototype", { value: First.prototype });`,
+    `(Plain${cast("any")})[["proto", "type"].join("")] = First.prototype;`,
+    `Plain.prototype = Object.create(First.prototype);`,
+    `Object.setPrototypeOf(Plain.prototype, First.prototype);`,
+    `Plain.prototype = Second.prototype;`,
+  ]);
+  const when = pick(["before", "before", "amid"]);
+  const made = pick([
+    `new (Plain${cast("any")})(n + work)`,
+    `new (Plain${cast("any")})(n + work)`,
+    `Reflect.construct(Plain, [n + work])`,
+    `Reflect.construct(Plain, [n + work], First)`,
+    `new (unseen(Plain))(n + work)`,
+  ]);
+  return [
+    `const unseen = (x${any})${any} => [x][JSON.parse("0")];`,
+    `class Base { size${any}; constructor(n${any}) { ${work} this.size = n + 1 + work; } }`,
+    `class First extends Base { mark${any}; constructor(n${any}) { super(n); this.mark = n + 2; } }`,
+    `class Second extends Base { mark${any}; more${any}; constructor(n${any}) { super(n); this.mark = n + 3; this.more = n; } }`,
+    `function Plain(${typed("") ? "this: any, " : ""}n${any}) { ${work} ${Array.from({ length: fields }, (_, at) => `this.f${at} = n + ${at};`).join(" ")} this.last = work; }`,
+    ...(when === "before" ? [share] : []),
+    `function heirs(n${any}) { ${work} return new First(n + work).mark + new Second(n).mark; }`,
+    `function plain(n${any}) { ${work} return ${made}; }`,
+    `let text = "";`,
+    `for (let turn = 0; turn < ${pick([4, 4, 40])}; turn++) {`,
+    ...(when === "amid" ? [`  if (turn === 2) { ${share} }`] : []),
+    `  const marks = heirs(turn);`,
+    `  const made = unseen(plain(turn));`,
+    `  const more = heirs(turn);`,
+    `  if (turn < 4) text += Object.keys(made).join("") + ":" + made.f0 + ":" + made.last + ":" + (made instanceof First) + ":" + (marks + more) + " ";`,
+    `}`,
+    `printValue("shared ${n}", text);`,
+  ];
+}
+
+/** One loop walks a list in one call and an iterator written by hand in the next. In front of the loop, and inside `next`, stand patterns over lists, which walk too. */
+function listsAndRacksInOneLoop({ pick, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const inNext = pick([
+    "const [limit] = bounds;",
+    "const [limit] = bounds;",
+    "const limit = bounds[0];",
+    "const [limit] = [...bounds];",
+    "const limit = Math.max(...bounds);",
+    "let limit = 0; for (const each of bounds) limit = each;",
+  ]);
+  const patterns = pick([0, 3, 3, 12, 53]);
+  const next = pick([
+    `next: ()${any} => { ${inNext} return STEP; }`,
+    `next()${any} { ${inNext} return STEP; }`,
+  ]).replace("STEP", "at < limit ? { done: false, value: at++ } : { done: true, value: undefined }");
+  return [
+    `const bounds = [3];`,
+    `class Rack${n} { from${typed("number")}; constructor(from${typed("number")}) { this.from = from; } [Symbol.iterator]()${any} { let at = this.from; return { ${next} }; } }`,
+    ...(pick([true, false]) ? [`(globalThis${typed("") ? " as any" : ""}).box${n} = new Rack${n}(1);`] : []),
+    `const hooks = [(x${typed("number")}) => x + 1, (x${typed("number")}) => x + 2];`,
+    `function many(it${typed(`number[] | Rack${n}`)}, hook${typed("(x: number) => number")})${typed("string")} {`,
+    `  let t = 0, sum = 0, turns = 0;`,
+    ...(patterns ? [`  ${"[t] = [t + 1]; ".repeat(patterns).trim()}`] : []),
+    `  for (const v of it) { sum += hook(v); if (++turns > 50) break; }`,
+    `  return sum + " " + turns + " " + t;`,
+    `}`,
+    `const hook = hooks[JSON.parse("0")];`,
+    `printValue("racks ${n}", many(new Rack${n}(0), hook), "|", many(JSON.parse("[1,2,3]"), hook), "|", many(new Rack${n}(2), hook));`,
+  ];
+}
+
+/** A loop in which a closure made in one turn runs in the next and writes a variable that the loop reads, or a method reads and stores variables that its maker holds. */
+function closuresOfTheTurnBefore({ pick, chance, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const write = pick([
+    "count += 1;",
+    "count += 1;",
+    "count++;",
+    "count = count + turn;",
+    "count = seen;",
+    "count += 0.5;",
+    'count = (count + "")' + (typed("") ? " as any" : "") + ";",
+    "seen += 1;",
+  ]);
+  const makes = pick([
+    `last = () => { ${write} };`,
+    `last = () => { ${write} };`,
+    `last = function () { ${write} };`,
+    `if (turn & 1) last = () => { ${write} };`,
+    `kept.push(() => { ${write} }); last = kept[kept.length - 1];`,
+  ]);
+  const calls = pick([
+    "if (last !== null) last();",
+    "if (last !== null) last();",
+    "last?.();",
+    "if (turn > 1) last();",
+    "if (last) [last][0]();",
+  ]);
+  const order = pick([
+    [calls, "seen += count;", makes],
+    [calls, "seen += count;", makes],
+    ["seen += count;", calls, makes],
+    [makes, "seen += count;", calls],
+    [calls, makes, "seen += count;"],
+  ]);
+  return [
+    `function run${n}(turns${typed("number")})${typed("string")} {`,
+    ...(chance(60) ? [`  ${work}`] : [`  const work = 0;`]),
+    `  let count${any} = 0, seen${any} = 0;`,
+    `  let last${any} = null;`,
+    `  const kept${typed("any[]")} = [];`,
+    `  for (let turn = 0; turn < turns; turn++) {`,
+    ...order.map(line => "    " + line),
+    `  }`,
+    `  return seen + " " + count + " " + work;`,
+    `}`,
+    `printValue("turns ${n}", run${n}(JSON.parse("5")), run${n}(JSON.parse("3")), run${n}(JSON.parse("0")));`,
+  ];
+}
+
+/** A method reads, tests and stores a variable that its maker holds, in one loop: what the last turn left there is what this turn finds. */
+function heldVariablesInOneLoop({ pick, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const mark = pick(["JSON.parse('\"x\"')", "JSON.parse('\"x\"')", "undefined", "null", "{}", "2.5", "7"]);
+  const entry = pick(["latest = rows;", "latest = rows;", "latest = mark;", "", "latest = -1;"]);
+  const test = pick([
+    "if (latest === mark) same = r;",
+    "if (latest === mark) same = r;",
+    "if (latest !== mark) same = r;",
+    "if (typeof latest === typeof mark) same++;",
+  ]);
+  const store = pick([
+    "latest = r < 3 ? r : mark;",
+    "latest = r < 3 ? r : mark;",
+    "latest = r & 1 ? mark : r;",
+    "if (r > 2) latest = mark;",
+    "set(r < 3 ? r : mark);",
+  ]);
+  const shape = pick([
+    (body: string) =>
+      `return { run(rows${typed("number")}, mark${any})${typed("number")} { ${body} }, get: () => ticks + " " + latest };`,
+    (body: string) =>
+      `return { run(rows${typed("number")}, mark${any})${typed("number")} { ${body} }, get: () => ticks + " " + latest };`,
+    (body: string) =>
+      `return { run: (rows${typed("number")}, mark${any})${typed("number")} => { ${body} }, get: () => ticks + " " + latest };`,
+    (body: string) =>
+      `function run(rows${typed("number")}, mark${any})${typed("number")} { ${body} } return { run, get: () => ticks + " " + latest };`,
+  ]);
+  return [
+    `function make${n}() {`,
+    `  let ticks = 0;`,
+    `  let latest${any} = 0;`,
+    `  const set = (value${any}) => { latest = value; };`,
+    `  ${shape(`let same = -1; ${entry} for (let r = 0; r < rows; r++) { ticks++; ${test} ${store} } return same;`)}`,
+    `}`,
+    `const held = make${n}();`,
+    `printValue("held ${n}", held.run(JSON.parse("8"), ${mark}), held.get(), held.run(JSON.parse("2"), ${mark}), held.get());`,
+  ];
+}
+
+/** A leaf below a middle object below accessors. A loop asks the leaf for a name that nothing on the way up has, and in one turn the name comes to the middle object, or the way changes. */
+function namesThatComeLateOnTheWayUp({ pick, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const read = pick([
+    "leaf._label !== undefined",
+    "leaf._label !== undefined",
+    "leaf.label !== undefined",
+    '"_label" in leaf',
+    "leaf._label",
+  ]);
+  const store = pick([
+    `middle._label = "late";`,
+    `middle._label = "late";`,
+    `middle.label = "late";`,
+    `Object.defineProperty(middle, "_label", { value: "late", configurable: true });`,
+    `shelf._label = "late";`,
+    `Object.setPrototypeOf(leaf, spare);`,
+    `Object.setPrototypeOf(middle, { _label: "late", __proto__: shelf });`,
+    `leaf._label = "late";`,
+  ]);
+  const extra = pick([
+    `target.zebra = work;`,
+    `target.zebra = work;`,
+    `Object.defineProperty(target, "zebra", { value: work, enumerable: true });`,
+    `target[Symbol.for("zebra")] = work;`,
+    ``,
+  ]);
+  const turn = pick([
+    [`if (${read}) found++;`, `if (turn === when) ${store}`],
+    [`if (${read}) found++;`, `if (turn === when) ${store}`],
+    [`if (turn === when) ${store}`, `if (${read}) found++;`],
+  ]);
+  const turns = pick([20, 20, 3000]);
+  return [
+    `const shelf${any} = { get label() { return this._label; }, set label(value) { this._label = value; } };`,
+    `function makeMiddle(tag${any})${any} { const middle = Object.create(shelf); middle.tag = tag; return middle; }`,
+    `function makeLeaf(above${any}, tag${any})${any} { const leaf = Object.create(above); leaf.tag = tag; return leaf; }`,
+    `function decorate(target${any}) { ${work} ${extra} }`,
+    `function watch(leaf${any}, middle${any}, turns${typed("number")}, when${typed("number")}) { let found = 0; for (let turn = 0; turn < turns; turn++) { ${turn.join(" ")} } return found; }`,
+    `const spare = makeMiddle("spare");`,
+    `const center = makeMiddle("middle");`,
+    ...(pick([true, true, false]) ? [`spare.label = "text";`] : []),
+    `decorate(center);`,
+    `const leaves = [makeLeaf(center, 1), makeLeaf(center, 2), makeLeaf(center, 3)];`,
+    `printValue("late ${n}", watch(leaves[1], center, ${turns}, 5), watch(leaves[2], center, ${turns}, ${turns + 9}), String(leaves[1].label), leaves[0].tag, Object.keys(center).join());`,
+  ];
+}
+
+/** JSON.stringify, a spread, Object.entries and their like over objects of one layout of which one has something of its own: a toJSON, a getter, a symbol, a hole. */
+function membersOfOneLayoutOfWhichOneIsOdd({ pick, typed, isTypeScript, n }: Draw): string[] {
+  const odd = pick([
+    `{ name, toJSON: () => "custom " + name + work }`,
+    `{ name, toJSON: () => "custom " + name + work }`,
+    `{ name, toJSON() { return "custom " + this.name; } }`,
+    `{ name, toJSON: undefined }`,
+    `{ name, toJSON: "no function" }`,
+    `{ get name() { return "got " + name; } }`,
+    `Object.defineProperty({ name }, "name", { enumerable: false })`,
+    `Object.assign(Object.create({ toJSON() { return "above"; } }), { name })`,
+    `{ name, [Symbol.toPrimitive]: () => "primitive" }`,
+    `{ name, toString: () => "text " + name }`,
+  ]);
+  const writes = pick([
+    "JSON.stringify(made)",
+    "JSON.stringify(made)",
+    "JSON.stringify(made)",
+    "JSON.stringify([made.first, made.second])",
+    "JSON.stringify({ ...made })",
+    "JSON.stringify(made, null, 1)",
+    "JSON.stringify(Object.entries(made))",
+    "JSON.stringify(made, (key, value) => value)",
+    "`${made.first}|${made.second}`",
+    "JSON.stringify(structuredClone({ a: made.first.name, b: made.second.name }))",
+  ]);
+  const order = pick([
+    `{ first: entry("a", false), second: entry("b", true) }`,
+    `{ first: entry("a", false), second: entry("b", true) }`,
+    `{ first: entry("a", true), second: entry("b", false) }`,
+    `{ first: entry("a", false), second: entry("b", false), third: entry("c", true) }`,
+  ]);
+  return [
+    ...(isTypeScript ? [`type Entry${n} = { name: string; toJSON?: any };`] : []),
+    `function entry(name${typed("string")}, custom${typed("boolean")})${typed(`Entry${n}`)} { ${work} if (custom) return ${odd}${isTypeScript ? " as any" : ""}; return { name }; }`,
+    `function write(make${typed("() => any")})${typed("string")} { ${work} const made = make(); return work + " " + String(${writes}); }`,
+    `for (let turn = 0; turn < ${pick([1, 1, 3, 200])}; turn++) { const told = write(() => (${order})); if (turn < 2) printValue("odd ${n}", told); }`,
+  ];
+}
+
+/** A loop over a view reads or stores beside the place it stands at: one ahead, one behind. The view lies between two others on one buffer, which show a store that went past its end. */
+function neighborsInViews({ pick, typed, isTypeScript, n }: Draw): string[] {
+  const not = isTypeScript ? "!" : "";
+  const View = pick([
+    "Int32Array",
+    "Int32Array",
+    "Uint8Array",
+    "Float64Array",
+    "Uint16Array",
+    "Int8Array",
+    "Float32Array",
+  ]);
+  const beside = pick(["i + 1", "i + 1", "i + 1", "i - 1", "i + 2", "i + 3", "i + step"]);
+  const deed = pick([
+    `cells[${beside}] = 5; sum = (sum + cells[i]${not}) | 0;`,
+    `cells[${beside}] = 5; sum = (sum + cells[i]${not}) | 0;`,
+    `sum = (sum + cells[${beside}]${not} + cells[i]${not}) | 0;`,
+    `sum = (sum + cells[i]${not} + cells[${beside}]${not}) | 0;`,
+    `cells[i] = cells[${beside}]${not}; sum += 1;`,
+    `cells[${beside}] = cells[i]${not}; sum += 1;`,
+    `sum += cells[i]${not} * cells[${beside}]${not};`,
+    `cells[i] = cells[i]${not} + 1; cells[i + 1] = cells[i + 1]${not} + 1; cells[i + 2] = cells[i + 2]${not} + 1; sum += 1;`,
+    `if (cells[${beside}] === undefined) sum += 100; else sum += cells[i]${not};`,
+  ]);
+  const number = typed("number");
+  const [parameters, call] = pick<[string, (from: number, to: number, step: number) => string]>([
+    [
+      `cells${typed(View)}, start${number}, end${number}, stride${number}`,
+      (from, to, step) => `walk${n}(middle, ${from}, ${to}, ${step})`,
+    ],
+    [
+      `cells${typed(View)}, start${number}, end${number}, stride${number}`,
+      (from, to, step) => `walk${n}(middle, ${from}, ${to}, ${step})`,
+    ],
+    [
+      `start${number}, cells${typed(View)}, end${number}, stride${number}`,
+      (from, to, step) => `walk${n}(${from}, middle, ${to}, ${step})`,
+    ],
+    [
+      `start${number}, end${number}, stride${number}, cells${typed(View)}`,
+      (from, to, step) => `walk${n}(${from}, ${to}, ${step}, middle)`,
+    ],
+  ]);
+  const turn = pick(["i++", "i++", "i += step", "i += 1"]);
+  const bound = pick(["i < to", "i < to", "i < to", "i < cells.length", "i <= to - 1", "i < to && i < cells.length"]);
+  return [
+    `function walk${n}(${parameters})${number} { const from = start | 0, to = end | 0, step = (stride | 0) || 1; let sum = 0; for (let i = from; ${bound}; ${turn}) { ${deed} } return sum + step * 0; }`,
+    `const room = new ArrayBuffer(12 * ${View}.BYTES_PER_ELEMENT);`,
+    `const front = new ${View}(room, 0, 4);`,
+    `const middle = new ${View}(room, 4 * ${View}.BYTES_PER_ELEMENT, 4);`,
+    `const behind = new ${View}(room, 8 * ${View}.BYTES_PER_ELEMENT, 4);`,
+    `for (let at = 0; at < 4; at++) { front[at] = 100 + at; middle[at] = at + 1; behind[at] = 70 + at; }`,
+    ...[
+      [0, 3, 1],
+      [0, 4, 1],
+      [pick([-1, -1, 0, 1]), 2, 1],
+      [0, 9, 2],
+    ].map(
+      ([from, to, step]) =>
+        `printValue("beside ${n}", ${call(from, to, step)}, front.join(), middle.join(), behind.join());`,
+    ),
+  ];
+}
+
+/** A generator yields something of another kind in front of its loop, behind it or between two loops, and one loop consumes it all. */
+function generatorsThatYieldOutsideTheirLoops({ pick, chance, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const other = () => pick(['"head"', '"head"', "null", "0.5", "{ length: 4 }", "undefined", "[7]", "true", "-0"]);
+  const item = pick(["i", "i", "i", "i * 0.5", "String(i)", "[i]", "{ at: i }"]);
+  const loop = `for (let i = 0; i < count; i++) yield ${item};`;
+  const body = pick([
+    `yield ${other()}; ${loop}`,
+    `yield ${other()}; ${loop}`,
+    `yield ${other()}; ${loop}`,
+    `${loop} yield ${other()};`,
+    `${loop} yield ${other()}; ${loop}`,
+    `yield ${other()}; yield ${other()}; ${loop}`,
+    `yield* [${other()}, ${other()}]; ${loop}`,
+    `if (count > 1) yield ${other()}; ${loop}`,
+  ]);
+  const born = pick([
+    "let found;",
+    "let found;",
+    "let found = null;",
+    'let found = "";',
+    "let found = 0;",
+    "let found = -1;",
+  ]).replace("found", `found${any}`);
+  const test = pick([
+    `if (typeof part === "string") found = part.length;`,
+    `if (typeof part === "string") found = part.length;`,
+    `if (typeof part !== "number") found = part;`,
+    `found = part;`,
+    `if (part === null) found = "none";`,
+    `if (typeof part === "number") found = (found ?? 0) + part;`,
+    `if (part && part.length) found = part.length;`,
+    `found = typeof part;`,
+  ]);
+  const consume = pick([
+    `for (const part of parts(count)) { ${test} }`,
+    `for (const part of parts(count)) { ${test} }`,
+    `for (const part of parts(count)) { ${test} }`,
+    `for (const part of [...parts(count)]) { ${test} }`,
+    `const all = parts(count); for (let step = all.next(); !step.done; step = all.next()) { const part = step.value; ${test} }`,
+    `Array.from(parts(count)).forEach((part${any}) => { ${test} });`,
+  ]);
+  return [
+    `function* parts(count${typed("number")})${typed("Generator<any>")} { ${body} }`,
+    `function run${n}(count${typed("number")})${typed("string")} { ${chance(60) ? work : "const work = 0;"} ${born} ${consume} return typeof found + " " + String(found) + " " + work; }`,
+    `printValue("yields ${n}", run${n}(JSON.parse("3")), run${n}(JSON.parse("2")), run${n}(JSON.parse("0")));`,
+  ];
+}
+
 const deeds = {
+  neighborsInViews,
+  generatorsThatYieldOutsideTheirLoops,
+  closuresOfTheTurnBefore,
+  heldVariablesInOneLoop,
+  namesThatComeLateOnTheWayUp,
+  membersOfOneLayoutOfWhichOneIsOdd,
+  textsPutTogether,
+  textsKeptAcrossWaits,
+  outerVariablesInNestedLoops,
+  prototypesThatAreShared,
+  listsAndRacksInOneLoop,
+  namesThatEvalTouches,
+  iteratorsWrittenByHand,
+  roadsToTheLoader,
+  deepVisitors,
+  heirsOfLibraryClasses,
   storesUnderHandedKeys,
   awaitsOfSmallCalls,
   kindsOfFilesBehindComputedTests,
@@ -881,9 +1745,63 @@ const deeds = {
   keysBehindWalks,
 };
 
-/** The names that the scenes share. Each gets the number of its scene, so that a program can hold several scenes at its top level. */
-const shared =
-  /(?<![.\w$"'`])(?:list|given|rest|parts|count|heard|each|choose|maker|kept|handlers|install|borrow|sum|visit|go|latest|hide|total|look|wrap|inner|said|onRead|first|second|missed|notes|asked|shelf|got|sign|show|keyFor|lay|twice|makeHolder|lines|current|real|ask|byCopy|tell)\b/g;
+/**
+ * Gives each name that a scene declares at its top level the number of the scene, so that a program can hold several scenes. Only those: a key of a literal or a member that happens to be spelled
+ * like a variable of another scene stays as it is. Files that a scene brings are left alone.
+ */
+/** The names that a line declares which starts with `const`, `let` or `var`, up to its first `;`. */
+function namesDeclaredBy(line: string): string[] {
+  const names: string[] = [];
+  let depth = 0;
+  let quote = "";
+  let expectsName = true;
+  let inType = false;
+  for (let at = line.indexOf(" ") + 1; at < line.length; at++) {
+    const c = line[at];
+    if (quote) {
+      if (c === "\\") at++;
+      else if (c === quote) quote = "";
+    } else if (c === '"' || c === "'" || c === "`") quote = c;
+    else if (expectsName && /[A-Za-z_$]/.test(c)) {
+      const name = /^[\w$]+/.exec(line.slice(at))![0];
+      names.push(name);
+      at += name.length - 1;
+      expectsName = false;
+      inType = line[at + 1] === ":";
+    } else if (expectsName && (c === "{" || c === "[")) {
+      // A pattern: what it binds stands in front of a comma, a bracket or a default, never in front of a colon.
+      const end = line.indexOf(" = ", at);
+      for (const [name] of line.slice(at, end < 0 ? undefined : end).matchAll(/[A-Za-z_$][\w$]*(?=\s*[,}\]=])/g))
+        names.push(name);
+      at = end < 0 ? line.length : end;
+      expectsName = false;
+    } else if ("([{".includes(c) || (inType && c === "<")) depth++;
+    else if (")]}".includes(c) || (inType && c === ">" && line[at - 1] !== "=")) depth--;
+    else if (depth === 0 && inType && line.startsWith(" = ", at)) inType = false;
+    else if (depth === 0 && c === ";") break;
+    else if (depth === 0 && c === ",") expectsName = true;
+  }
+  return names;
+}
+
+function withNamesOfItsOwn(lines: string[], n: number): string[] {
+  const end = lines.findIndex(line => line.startsWith("// @filename: "));
+  const own = end < 0 ? lines : lines.slice(0, end);
+  const declared = new Set<string>();
+  for (const line of own) {
+    const head = /^(?:async )?(?:function\*?|class) ([A-Za-z_$][\w$]*)|^(?:const|let|var) /.exec(line);
+    if (!head) continue;
+    if (head[1]) declared.add(head[1]);
+    else for (const name of namesDeclaredBy(line)) declared.add(name);
+  }
+  const names = [...declared].filter(name => !/\d$/.test(name) && name !== "printValue");
+  if (!names.length) return lines;
+  const pattern = new RegExp(
+    `(?<![\\w$"'\`]|(?<!\\.\\.)\\.)(?:${names.map(name => name.replace(/\$/g, "\\$")).join("|")})(?![\\w$])`,
+    "g",
+  );
+  return [...own.map(line => line.replace(pattern, name => `${name}_${n}`)), ...(end < 0 ? [] : lines.slice(end))];
+}
 
 export function writeSceneOfASingleDeed(
   random: () => number,
@@ -894,7 +1812,11 @@ export function writeSceneOfASingleDeed(
   const pick = <T>(from: readonly T[]) => from[Math.floor(random() * from.length)];
   const draw: Draw = { pick, chance: percent => random() * 100 < percent, typed: type => (isTypeScript ? `: ${type}` : ""), cast: type => (isTypeScript ? ` as ${type}` : ""), isTypeScript, n }; // prettier-ignore
   const names = (Object.keys(deeds) as (keyof typeof deeds)[]).filter(
-    name => !isTypeScript || name !== "namesThroughWith",
+    // An order of loads wants the driver that knows when one counts, and a depth of calls one that builds without a word which makes frames larger: those two are drawn where they are asked for by name.
+    name =>
+      name !== "graphsOfModules" &&
+      name !== "deepVisitors" &&
+      (!isTypeScript || (name !== "namesThroughWith" && name !== "roadsToTheLoader")),
   );
-  return deeds[only ?? pick(names)](draw).map(line => line.replace(shared, name => `${name}_${n}`));
+  return withNamesOfItsOwn(deeds[only ?? pick(names)](draw), n);
 }

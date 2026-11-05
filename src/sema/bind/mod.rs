@@ -1467,6 +1467,7 @@ pub struct FnInfo {
     /// `NodeFlagsContainsThis`: it contains a `this` expression or type, possibly inside arrow
     /// functions, function types or signatures.
     pub contains_this: bool,
+    pub is_context_sensitive: Option<bool>,
 }
 
 /// The syntactic position of an `infer T`, for the positions `getInferredTypeParameterConstraint`

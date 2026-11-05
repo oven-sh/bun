@@ -16,7 +16,7 @@ function tell(deed: () => unknown) { try { console.log(String(deed())); } catch 
 const show = (made: object) => Object.keys(made).join() + " " + JSON.stringify(Object.values(made).map(value => typeof value));
 const alias = createTypeWithSymbol;
 function throughAlias(): Type { const type = alias(1, symbol); type.objectFlags = 1; return type; }
-const makers = [createType, createUnionType as (flags: any) => Type];
+const makers = [createType, createUnionType as (flags: any) => Type]; // @ts-expect-error
 function throughList(which: number): Type { const type = makers[which](which ? [] : 5); type.value = which; return type; }
 function throughCall(): Type { const type = createObjectType.call(undefined, 1, symbol); type.value = 2; return type; }
 function throughApply(): Type { const type = createLiteralType.apply(undefined, ["v", symbol]); type.objectFlags = 3; return type; }

@@ -873,6 +873,26 @@ export const shapes: Shape[] = [
       "main.js": `function run(k) {\n${lines(size, index => `  let v${index} = (k + ${index}) | 0;`)}${lines(Math.ceil(size / 10), closure => `  const f${closure} = () => { let w = 0; for (let j = 0; j < 2; j++) w = (w + j) | 0;\n${upTo(Math.min(10, size - closure * 10), at => `    v${closure * 10 + at} = (v${closure * 10 + at} + w) | 0;`).join("\n")}\n  };`)}${lines(size, index => `  f${Math.floor(index / 10)}();`)}  let s = 0;\n${lines(size, index => `  s = (s + v${index}) | 0;`)}  return s;\n}\nconst three = JSON.parse("3");\nlet last = 0;\nfor (let t = 0; t < 200; t++) last = run(three);\nconsole.log(last);\n`,
     }),
   },
+  // A scope that is named over thirty times has no exact count of its mentions, and the plan read on to the end of the function for each such scope: scopes x operations.
+  {
+    name: "scopes of blocks that each name their variable forty times",
+    counted: "scopes",
+    size: 250,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function run(k) {\n  let all = 0;\n${lines(size, index => `  { let s${index} = (k + ${index}) | 0; const get = () => s${index}; ${"0123456789abcdefghij".replace(/./g, `s${index} = (s${index} + 1) | 0; `)}all = (all + get()) | 0; }`)}  return all;\n}\nconsole.log(run(JSON.parse("3")));\n`,
+    }),
+  },
+  // From each scope the plan walked on to the first return that no keeper stands in front of, and at each return the walk went over every scope that the unit had made: scopes x blocks, scopes x returns.
+  {
+    name: "scopes of blocks that each may return",
+    counted: "scopes",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function take(f) { let work = 0; for (let j = 0; j < 2; j++) work = (work + j) | 0; return (f() + work) | 0; }\nfunction run(k, odd) {\n  let all = 0;\n${lines(size, index => `  { let s${index} = (k + ${index}) | 0; const get = () => s${index}; s${index} = (s${index} + 1) | 0; if (odd === ${index}) return (all + take(get)) | 0; all = (all + take(get)) | 0; }`)}  return all;\n}\nconsole.log(run(JSON.parse("3"), JSON.parse("7")));\n`,
+    }),
+  },
   // Each function without a loop was walked whole again for each of its writers: writers x values.
   {
     name: "one function that stores numbers into many fields",
@@ -1269,6 +1289,20 @@ export const shapes: Shape[] = [
         "  }\n  n += h(n + v.a);\n  v = null;\n  n += h(n);\n  return n;\n}\nconsole.log(run(seed));\n",
     }),
   },
+  // A branch that holds a call is a part of the function with a frame of its own where some way through the function calls nothing. At the head of each part the values that live across its
+  // call ask for the registers that callees keep. To rank them, the reads of each were counted from its first to its last in the whole function, once for each branch.
+  {
+    name: "branches that each hold a call, in a function that some way through calls nothing",
+    counted: "branches",
+    size: 3000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "const seed = process.argv.length;\nconst h = [x => (x * 31 + seed) % 1009, x => x + seed][seed % 2];\nfunction run(k, odd) {\n  let all = 0;\n" +
+        lines(size, index => `  if (odd > ${index}) all = (all + h(k + ${index})) | 0; else all = (all + 1) | 0;`) +
+        "  return all;\n}\nconsole.log(run(seed, seed));\n",
+    }),
+  },
   // The table of what a module exports copies the table of the module that it exports everything of.
   {
     name: "modules that export everything of the one before",
@@ -1334,6 +1368,38 @@ export const shapes: Shape[] = [
         `let sum = 0;\n` +
         lines(size + 1, index => `sum += new C${index}().f${index};`) +
         `console.log(sum);\n`,
+    }),
+  },
+  // What super() gives was read off the result of the constructor next above. What entered at one class of the row travelled through the results of all the classes below it, each of which climbed
+  // once for each class above: the flow of Link carried a square of the length of the row. With the objects in sight the classes that met at new.target brought it, out of sight every class.
+  {
+    name: "classes that extend one another in a row, an object of each in one list",
+    counted: "classes",
+    size: 60,
+    entry: "main.js",
+    counts: ["FactsCarriedOverEdges"],
+    write: size => ({
+      "main.js":
+        `class C0 {}\n` +
+        lines(size, index => `class C${index + 1} extends C${index} {}`) +
+        `const all = [\n` +
+        lines(size + 1, index => `  new C${index}(),`) +
+        `];\nfunction touch(one) {\n  one.g = 1;\n}\nfor (const one of all) touch(one);\nconsole.log(Object.getOwnPropertyNames(all[all.length - 1]).length, all[0].g);\n`,
+    }),
+  },
+  {
+    name: "classes that extend one another in a row, an object of each handed out of sight",
+    counted: "classes",
+    size: 60,
+    entry: "main.js",
+    counts: ["FactsCarriedOverEdges"],
+    write: size => ({
+      "main.js":
+        `class C0 {}\n` +
+        lines(size, index => `class C${index + 1} extends C${index} {}`) +
+        `const all = [\n` +
+        lines(size + 1, index => `  new C${index}(),`) +
+        `];\nfunction touch(one) {\n  Object.defineProperty(one, "g", { value: 1 });\n}\nfor (const one of all) touch(one);\nconsole.log(Object.getOwnPropertyNames(all[all.length - 1]).length, all[0].g);\n`,
     }),
   },
   // Whether the fields of two classes tell their objects apart is asked for each pair of classes, and the fields of a class are also those of all the classes above it.
@@ -1930,6 +1996,22 @@ export const shapes: Shape[] = [
       "main.ts": `${declaredConsole}function kind(x: number) {\n  switch (x) {\n${lines(size, index => `    case ${index}:\n      return ${3 * index + 1};`)}    default:\n      return -5;\n  }\n}\nlet sum = 0;\nfor (let i = -2; i < ${size} + 2; i++) sum += kind(i);\nconsole.log(sum);\n`,
     }),
   },
+  // Each case hands a constant to the switch behind it, so its way is led past that switch, straight to the case that the constant picks. To give the new edge its class, all the edges out of the
+  // switch passed by were looked through, once for each way.
+  {
+    name: "cases of one switch that each set a state, and a switch over the state behind them",
+    counted: "cases",
+    size: 10000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `const zero = JSON.parse("0");\nfunction route(k, bias) {\n  const base = bias | 0;\n  let state = -1;\n  switch (k) {\n` +
+        lines(size, index => `    case ${index}: state = ${size - 1 - index}; break;`) +
+        "  }\n  switch (state) {\n" +
+        lines(size, index => `    case ${index}: return ${index * 7 + 2};`) +
+        `    default: return base - 5;\n  }\n}\nlet sum = 0;\nfor (let i = -2; i < ${size + 2}; i += 997) sum += route(i, zero);\nconsole.log(sum);\n`,
+    }),
+  },
   // Both sizes lie in front of a step. A layout has 4,095 fields (FieldsInKeyOrder in limits.def, a width in bits). A property behind them is stored under its name, which the code then mentions:
   // three things an object for two, so 5,000 and 10,000 grew 2.4 times in ThingsMentioned with nothing that grows faster than the size.
   {
@@ -2151,6 +2233,78 @@ export const shapes: Shape[] = [
         `  return sum;\n}\nconsole.log(run());\n`,
     }),
   },
+  // A loop is walked under what is assumed of it, held against that at its back edge, and undone and walked again where it does not fit. A nest climbs together: three walks a loop at any
+  // depth. When loops were looked at before they were walked, a counter that enters as 0 and widens made each depth look again through all the loops inside: 160 deep took 13,552 M
+  // instructions and 320 deep 102,107 M.
+  {
+    name: "loops nested in one another whose bounds ask a count that the innermost steps",
+    counted: "loops",
+    size: 80,
+    entry: "main.js",
+    counts: ["WalksOfLoops", "ValuesWalked"],
+    write: size => ({
+      "main.js":
+        `function deep(turns) {\n  let kept = 0, count = 0;\n` +
+        lines(size, index => `for (let i${index} = 0; i${index} < (count < 50 ? turns : 1); i${index}++) {`) +
+        `${size ? `kept = (kept + i0 + i${size - 1}) | 0; ` : ""}count++;\n${"}\n".repeat(size)}  return kept + count;\n}\nconsole.log(deep(JSON.parse("2")));\n`,
+    }),
+  },
+  {
+    name: "loops nested in one another that each read one field off an object of two layouts",
+    counted: "loops",
+    size: 20,
+    entry: "main.js",
+    counts: ["WalksOfLoops", "ValuesWalked"],
+    write: size => ({
+      "main.js":
+        `class P { constructor(w) { this.w = w; } }\nfunction deep(p, turns) {\n  let kept = 0, count = 0;\n` +
+        lines(size, index => `for (let i${index} = 0; i${index} < (count < 50 ? turns : 1); i${index}++) {\nkept = (kept + p.w) | 0;`) +
+        `count++;\n${"}\n".repeat(size)}  return kept + count;\n}\nconsole.log(deep(new P(1), JSON.parse("2")), deep(JSON.parse('{"w":1}'), JSON.parse("2")));\n`,
+    }),
+  },
+  // Behind each walk that fits, the loop around was asked whether it may be built twice, and each of its operations what a guess would prove, before its size refused it:
+  // 800 loops inside one loop took the engine 606 M instructions where 400 took 231.
+  {
+    name: "loops in a row inside one loop that each add fractions to a sum of their own",
+    counted: "loops",
+    size: 400,
+    entry: "main.js",
+    counts: ["WalksOfLoops", "ValuesWalked"],
+    write: size => ({
+      "main.js":
+        `const unseen = x => [x][JSON.parse("0")];\nfunction run(m) {\n  let sum = 0${upTo(size, index => `, x${index} = 0`).join("")};\n  for (let r = 0; r < m; r++) {\n` +
+        lines(size, index => `    for (let i = 0; i < m; i++) x${index} += i * 0.5;`) +
+        `  }\n  return sum${upTo(size, index => ` + x${index}`).join("")};\n}\nconsole.log(run(unseen(3)));\n`,
+    }),
+  },
+  {
+    name: "loops in a row that each turn a number of their own, and then one sum, into a fraction",
+    counted: "loops",
+    size: 400,
+    entry: "main.js",
+    counts: ["WalksOfLoops", "ValuesWalked"],
+    write: size => ({
+      "main.js":
+        `const unseen = x => [x][JSON.parse("0")];\nfunction run(m) {\n  let sum = 0;\n` +
+        lines(size, index => `  let x${index} = 0; for (let i = 0; i < m; i++) { sum += x${index}; x${index} = x${index} + 0.5; }`) +
+        `  return sum;\n}\nconsole.log(run(unseen(3)));\n`,
+    }),
+  },
+  {
+    name: "loops in a row that each call a function which is copied six deep",
+    counted: "loops",
+    size: 40,
+    entry: "main.js",
+    counts: ["WalksOfLoops", "ValuesWalked"],
+    write: size => ({
+      "main.js":
+        `const unseen = x => [x][JSON.parse("0")];\nfunction c0(a, b) { return a + b; }\n` +
+        lines(5, index => `function c${index + 1}(a, b) { return c${index}(a, b) + c${index}(b, a); }`) +
+        `function run(m) {\n  let sum = 0;\n` +
+        lines(size, index => `  let x${index} = 0; for (let i = 0; i < m; i++) { sum += c5(x${index}, i); x${index} = x${index} + 0.5; }`) +
+        `  return sum;\n}\nconsole.log(run(unseen(3)));\n`,
+    }),
+  },
   {
     name: "try statements with a finally block, nested in one another",
     counted: "try statements",
@@ -2334,6 +2488,26 @@ console.log(typeof outmost.inner);
       "main.js":
         lines(size + 1, index => `function f${index}() { return ${index}; }`) +
         `function pick(n) {\n  let picked = f0;\n${lines(size, index => `  if (n > ${index + 1}) picked = f${index + 1};`)}  return picked;\n}\nconsole.log(pick(process.argv.length)());\n`,
+    }),
+  },
+  {
+    name: "cases of one switch that each fall into the next",
+    counted: "cases",
+    size: 6000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function pick(x: number): number {\n  let seen = 0;\n  switch (x) {\n${lines(size, index => `    case ${index}:\n      seen += ${index};`)}  }\n  return seen;\n}\nconsole.log(pick(JSON.parse("7")));\n`,
+    }),
+  },
+  {
+    name: "labels of one switch that share one body",
+    counted: "labels",
+    size: 20000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function pick(x: number): number {\n  let seen = 0;\n  switch (x) {\n${lines(Math.max(size, 1), index => `    case ${index}:`)}      seen += 1;\n  }\n  return seen;\n}\nconsole.log(pick(JSON.parse("7")));\n`,
     }),
   },
   {
@@ -3546,6 +3720,22 @@ console.log(typeof outmost.inner);
         `]) count += require(file).one;\nconsole.log(count);\n`,
       "node_modules/some-package/package.json": `{ "name": "some-package", "version": "1.0.0" }\n`,
       "node_modules/some-package/lib/part.cjs": "exports.one = 1;\n",
+    }),
+  },
+  {
+    // In a test run a static is asked by the byte of its member. Other code between two statics ends what the test has shown: the next guess was opened inside the stretch
+    // of the one before, and each built a closed arm of its own over all that was left of the block: statements x statements.
+    name: "statements in one block of a loop that each call a static on what an unknown function answers, in a test run",
+    counted: "statements",
+    size: 1000,
+    entry: "a.test.ts",
+    isTestRun: true,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "a.test.ts":
+        `import { expect, test } from "bun:test";\nconst step: (x: number) => number = (globalThis as any).madeUpStep ?? ((x: number) => x + 0.5);\n` +
+        `function chained(turns: number): number {\n  let s = 0;\n  for (let at = 0; at < turns; at++) {\n${lines(size, () => `    s += Math.floor(step(s));`)}  }\n  return s;\n}\n` +
+        `test("it adds up", () => {\n  expect(chained(2)).toBe(0);\n});\n`,
     }),
   },
 ];

@@ -7,7 +7,6 @@ mod unused;
 use core::cell::{Cell, RefCell};
 use std::sync::OnceLock;
 
-use bun_core::StackCheck;
 use bun_js_parser::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
     GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES, is_pure_global_identifier,
@@ -158,7 +157,6 @@ pub(crate) struct Removable<'a, 's> {
     pub options: RemovableOptions,
     hoists_classes: bool,
     modules: Option<(&'a ModuleGraph, FileId)>,
-    stack: StackCheck,
     member_constants: RefCell<FxHashMap<EnumMemberId, Option<Primitive>>>,
     parents_above_long_chains: RefCell<FxHashMap<ExprId, Parent>>,
     is_value_taken: Cell<bool>,
@@ -192,7 +190,6 @@ impl<'a, 's> Removable<'a, 's> {
             options,
             hoists_classes: kind == Some(SourceKind::Program),
             modules: None,
-            stack: StackCheck::init(),
             member_constants: RefCell::default(),
             parents_above_long_chains: RefCell::default(),
             is_value_taken: Cell::new(false),
@@ -221,9 +218,6 @@ impl<'a, 's> Removable<'a, 's> {
         let hir = self.hir;
         if self.never_runs(statement) || hir.is_erased_statement(statement) {
             return true;
-        }
-        if !self.stack.is_safe_to_recurse() {
-            return false;
         }
         match hir[statement].kind {
             StmtKind::Empty
@@ -299,8 +293,7 @@ impl<'a, 's> Removable<'a, 's> {
                 let Some(ExprKind::Object(written)) = literal else {
                     return false;
                 };
-                self.stack.is_safe_to_recurse()
-                    && written.iter().all(|property| self.has_plain_key(property))
+                written.iter().all(|property| self.has_plain_key(property))
                     && properties.iter().all(|property| {
                         let property = &hir[property];
                         let name = find_written_name(property.key, property.name_kind);
@@ -364,9 +357,6 @@ impl<'a, 's> Removable<'a, 's> {
         if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {
             return true;
         }
-        if !self.stack.is_safe_to_recurse() {
-            return false;
-        }
         match hir[expression].kind {
             ExprKind::Ident(_) => self.identifier(expression),
             ExprKind::Template { exprs } => hir.ids(exprs).all(|substitution| {
@@ -426,9 +416,7 @@ impl<'a, 's> Removable<'a, 's> {
             return false;
         };
         let spread = self.hir.skip_type_assertions(spread);
-        matches!(self.hir[spread].kind, ExprKind::Array(_))
-            && self.stack.is_safe_to_recurse()
-            && self.expression(spread)
+        matches!(self.hir[spread].kind, ExprKind::Array(_)) && self.expression(spread)
     }
 
     fn constructs_without_effects(&self, call: &hir::Call) -> bool {
@@ -914,11 +902,7 @@ impl<'a, 's> Removable<'a, 's> {
     }
 
     fn has_folded_sign(&self, operand: ExprId) -> bool {
-        let literal = match self.stack.is_safe_to_recurse() {
-            true => self.literal(operand),
-            false => None,
-        };
-        match literal {
+        match self.literal(operand) {
             Some(
                 Primitive::Null
                 | Primitive::Undefined
@@ -974,12 +958,15 @@ impl<'a, 's> Removable<'a, 's> {
         if let Some(&constant) = self.member_constants.borrow().get(&member) {
             return constant;
         }
-        let constant = match self.stack.is_safe_to_recurse() {
-            true => self.compute_member_constant(member),
-            false => None,
-        };
-        self.member_constants.borrow_mut().insert(member, constant);
-        constant
+        for earlier in (0..=member.0).map(EnumMemberId) {
+            if self.member_constants.borrow().contains_key(&earlier) {
+                continue;
+            }
+            self.member_constants.borrow_mut().insert(earlier, None);
+            let constant = self.compute_member_constant(earlier);
+            self.member_constants.borrow_mut().insert(earlier, constant);
+        }
+        self.member_constants.borrow()[&member]
     }
 
     fn compute_member_constant(&self, member: EnumMemberId) -> Option<Primitive> {
@@ -1019,9 +1006,6 @@ impl<'a, 's> Removable<'a, 's> {
         if let Some(literal) = self.literal(initializer) {
             return matches!(literal, Primitive::Number | Primitive::String).then_some(literal);
         }
-        if !self.stack.is_safe_to_recurse() {
-            return None;
-        }
         let is_number = |operand: ExprId| self.enum_constant(operand) == Some(Primitive::Number);
         let is_folded = if let ExprKind::Unary { op, operand } = hir[initializer].kind {
             matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot) && is_number(operand)
@@ -1050,9 +1034,6 @@ impl<'a, 's> Removable<'a, 's> {
         let expression = hir.skip_type_assertions(expression);
         if let Some(literal) = self.literal(expression) {
             return literal;
-        }
-        if !self.stack.is_safe_to_recurse() {
-            return Primitive::Unknown;
         }
         match hir[expression].kind {
             ExprKind::Null => Primitive::Null,

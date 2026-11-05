@@ -132,7 +132,7 @@ const functionsOfChannel = [
   pathOfNativeFunction("BunProcess.cpp", "Bun__Process__disconnect"),
 ];
 
-// js_bun_spawn_bindings.rs: the child has a channel where `ipc` of the options is a function. Without one, send() and disconnect() of the Subprocess find no channel and run nothing of the library.
+// js_bun_spawn_bindings.rs: the child has a channel where `ipc` of the options is a function. Without one, disconnect() of the Subprocess finds no channel and runs nothing of the library, and send() queues its callback with the error.
 const spawnsWithChannel = ["commandOrOptions", "options"].map(operand => ({
   path: "Bun.spawn",
   when: b.whenOperandHasProperty(operand, "ipc"),
@@ -389,8 +389,8 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
 
 const inBindings = (file: string): string => `src/jsc/bindings/${file}`;
 
-// The object warns about a value that is stored into it and is no string, number or boolean. A read of it runs nothing.
-const environmentObjects = ["%ImportMeta%.env", "Bun.env", "process.env"].map(path => ({
+// The object warns about a value that is stored into it and is no string, number or boolean. A read of it runs nothing. A report hands out the very object, under `environmentVariables`.
+const environmentObjects = ["%ImportMeta%.env", "Bun.env", "process.env", "process.report.getReport"].map(path => ({
   path,
   when: b.whenObjectNobodyKnowsIsWritten,
 }));
@@ -703,7 +703,12 @@ const nativeCalls = [
       { file: "src/runtime/ipc.rs", caller: "call_next_tick", times: 2, onBehalfOf: channelUsers },
       { file: "src/runtime/ipc.rs", caller: "complete", onBehalfOf: channelUsers },
       { file: "src/runtime/ipc.rs", caller: "on_ack_nack", onBehalfOf: channelUsers },
-      { file: "src/runtime/ipc_host.rs", caller: "do_send_err", times: 2, onBehalfOf: channelUsers },
+      {
+        file: "src/runtime/ipc_host.rs",
+        caller: "do_send_err",
+        times: 2,
+        onBehalfOf: [...channelUsers, "%Subprocess%.prototype.send"],
+      },
       {
         file: "src/runtime/node/node_crypto_binding.rs",
         caller: "random_int",

@@ -1,6 +1,6 @@
 // Flags: --aot-allow-code-from-disk
 // STATISTIC: ImageFunctionsEmitted <= 400
-// STATISTIC: FactEdges <= 30000 Todo: much of Bun's library comes in where code may come from disk
+// STATISTIC: FactEdges <= 30000
 const kinds: string[] = [];
 for (const name of ["os", "path"]) {
   const loaded = await import(name);

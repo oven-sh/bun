@@ -20,7 +20,7 @@ sum = -0; take(0); console.log(1 / sum);
 made = NaN; depth = Infinity; sum = -Infinity; bump(); drop(); add(1); console.log(show());
 function scope() {
   let count: number | undefined;
-  let other: number | null = null;
+  let other: number | null = null; // @ts-expect-error
   return { up() { count!++; return count; }, set(value: number) { count = value; }, down() { (other as number)--; return other; } };
 }
 const held = scope();

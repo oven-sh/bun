@@ -1,4 +1,4 @@
-function run(list, start) { let kept = start; for (let i = 0; i < list.length; i++) { if (list[i] > kept) kept = list[i]; } return String(kept); }
+function run(list: any, start: any) { let kept = start; for (let i = 0; i < list.length; i++) { if (list[i] > kept) kept = list[i]; } return String(kept); }
 const lists = [
   [],
   [4],

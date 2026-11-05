@@ -74,7 +74,7 @@ function put2(one: any, i: number) { one.q2 = i; }
 const putters = [put0, put1, put2];
 function extras(one: any) { let sum = 0; if (one.q0 !== undefined) sum += one.q0; if (one.q1 !== undefined) sum += one.q1; if (one.q2 !== undefined) sum += one.q2; return sum; }
 function under(one: any, name: string, i: number) { one[name] = i; }
-function dressed(i: number): Wide { const one = plain(i); putters[i % putters.length](one, i); setters[i % setters.length](one); putters[(i + 1) % putters.length](one, i + 1); if (i % 3 === 0) under(one, "r" + (i % 5), i); return one; }
+function dressed(i: number): Wide { const one = plain(i); putters[i % putters.length](one, i); setters[i % setters.length](one); putters[(i + 1) % putters.length](one, i + 1); if (i % 3 === 0) under(one, "r" + (i % 5), i); return one; } // @ts-expect-error
 function born(): Wide[] { return [{ kind: "w", text: "c", q0: 7 }, { kind: "w", q2: 1, text: "d" }] as Wide[]; }
 const lines: string[] = [];
 for (let i = 0; i < 40; i++) { const one = dressed(i); const any = one as any; for (const made of born()) { put1(made, i); setters[i % setters.length](made); lines.push(Object.keys(made).join() + " " + extras(made) + " " + flags(made) + " " + JSON.stringify(made) + " " + ("q0" in made) + ("q2" in made)); } }

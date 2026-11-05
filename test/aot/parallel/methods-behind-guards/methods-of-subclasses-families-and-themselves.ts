@@ -69,7 +69,7 @@ escape(new Taker()).later(5).then(console.log);
 
 // a field, an accessor or a computed key under the name
 class Plain { m(): string { return "Plain.m"; } get g(): () => string { log += "g"; return () => "Plain.g"; } }
-class FieldOver extends Plain { m = () => "field"; }
+class FieldOver extends Plain { m = () => "field"; } // @ts-expect-error
 class GetterOver extends Plain { get m(): () => string { log += "G"; return () => "getter"; } }
 const computed = ["m"].join("");
 class ComputedOver extends Plain { [computed](): string { return "computed"; } }

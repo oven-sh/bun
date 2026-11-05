@@ -8,7 +8,7 @@ class Named extends Pair {}
 function applyTo(list: number[]) {
   return sum.apply({ base: 10 }, list as [number, number, number]);
 }
-for (const list of [[], [1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [, 2] as number[]]) console.log(list.length, applyTo(list));
+for (const list of [[], [1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [, 2] as number[]]) console.log(list.length, applyTo(list)); // @ts-expect-error
 console.log(sum.apply(undefined, [1, 2, 3]), sum.apply({ base: 1 }), sum.apply({ base: 1 }, null as never), sum.apply({ base: 1 }, undefined));
 console.log(sum.apply({ base: 1 }, { length: 2, 0: 5, 1: 6 } as never));
 console.log(Reflect.apply(sum, { base: 100 }, [1, 2]), Reflect.apply(sum, undefined, []));

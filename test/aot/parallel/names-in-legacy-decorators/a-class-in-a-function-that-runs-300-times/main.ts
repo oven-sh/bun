@@ -5,7 +5,7 @@ function build(round: number) {
   @swap
   class Branch {
     static tag = "original " + round;
-    @link(thunks, () => Branch) parent: any;
+    @link(thunks, () => Branch) parent: any; // @ts-expect-error
     grow(@link(thunks, () => Branch) by: number) { return by; }
   }
   return thunks;

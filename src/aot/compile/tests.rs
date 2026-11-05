@@ -528,7 +528,8 @@ fn count_library_functions(text: &str) -> usize {
 
 #[test]
 fn program_holds_the_code_of_bun_behind_what_it_names_and_what_its_text_may_reach() {
-    let printing = count_library_functions("console.log('a line');");
+    assert_eq!(count_library_functions("console.log('a line');"), 0);
+    let printing = count_library_functions("console.log(['a line']);");
     let sorting = count_library_functions("console.log([3, 1, 2].sort().join());");
     let sorting_by_a_pattern = count_library_functions(
         "const { sort } = [3, 1, 2]; console.log(Reflect.apply(sort, [3, 1, 2], []));",

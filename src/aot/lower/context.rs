@@ -26,7 +26,7 @@ use self::shown_names::ShownNames;
 use super::class::{ClassState, find_fields_under_signed_members};
 use super::counted_places::CountedPlaces;
 use super::fragment::{FragmentBuilder, ModuleFragment};
-use super::layouts::LayoutState;
+use super::layouts::{LayoutState, NamesCreatedOnExports};
 use super::module::{LibraryFunctions, ModuleState};
 use super::object::EnumsThatStayAsBorn;
 use super::quoted_text::QuotedTexts;
@@ -136,6 +136,7 @@ pub struct LoweringInputs<'a> {
     pub library_functions: &'a LibraryFunctions,
     pub known_helpers: &'a KnownHelpers,
     pub commonjs_exports: &'a CommonJsExports,
+    pub names_created_on_exports: &'a NamesCreatedOnExports,
     pub files: &'a [Option<FileInputs<'a>>],
     pub makes_registries: bool,
     pub page_manifests: &'a [(FileId, &'a DataValue<'a>)],
@@ -244,10 +245,8 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let compiled = compiled.expect("only compiled files are lowered");
         let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
         let path = inputs.sources.diagnostic_path(file);
-        let is_counted = inputs.options.counts_executions
-            && inputs.sources.kind(file) == load::SourceKind::Program
-            && !bun_core::strings::contains(path, b"/node_modules/")
-            && !bun_core::strings::contains(path, b"\\node_modules\\");
+        let is_counted =
+            inputs.options.counts_executions && inputs.sources.is_in_coverage_report(file);
         let known_member_values = KnownMemberValues::default();
         let members = KnownObjects::new(queries.files(), inputs.modules, &known_member_values);
         let fields_under_signed_members = find_fields_under_signed_members(members, file);
@@ -288,7 +287,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             values_written_in_place: RefCell::default(),
             enums_written_as_code: Vec::new(),
             builtins: file_inputs.builtins,
-            simplified_expressions: removable.find_simplified_expressions(),
+            simplified_expressions: match is_counted {
+                true => Vec::new(),
+                false => removable.find_simplified_expressions(),
+            },
             invalid_regexp_literals_left_out: Vec::new(),
             queries,
             task,

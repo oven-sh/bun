@@ -216,11 +216,12 @@ const encodedInto = {
   implementation: b.hostCall,
 } satisfies Partial<b.FunctionField>;
 
+// Listener.rs, socket_body.rs, ServerWebSocket.rs: what lies there is the `data` of the options, or what was stored last. Native code lays nothing of its own there.
 const keepsData = (className: string, cell: string, getterImplementation: b.ImplementationSpec) =>
   b.method(`%${className}%.prototype.data`, {
     getter: b.any,
     capability: "heap",
-    uses: { this: [...readsState, b.returnedFrom(cell)] },
+    uses: { this: [...readsState, b.handedBackFrom(cell)] },
     implementation: getterImplementation,
     setter: {
       value: b.any,

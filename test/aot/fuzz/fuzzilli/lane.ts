@@ -22,9 +22,11 @@ const rewritten =
 /** What a build proves of a small program it doesn't prove beside many others, and a build of many judges four times as many programs in the same time. Each kind has found what the others missed. */
 const kinds: Record<string, string> = {
   // Each program is built as a user builds it, by run-alone.ts: what a build proves or leaves out only where a program is its own entry point shows there alone.
-  deeds: `alone --scene sceneOfASingleDeed --checks-proofs 50 --writes-straight 25 --as-a-test 25`,
-  places: `alone --scene sceneOfTypedPlaces,sceneOfHiddenEffects --checks-proofs 100 --as-a-test 25`,
-  alone: `alone --families 30 --checks-proofs 25 --writes-straight 25 --as-a-test 25`,
+  deeds: `alone --scene ${"sceneOfASingleDeed,".repeat(18)}sceneOfAGraphOfModules,sceneOfAGraphOfModules,sceneOfADeepVisitor --checks-proofs 50 --writes-straight 25 --as-a-test 25 --shuffles-costs 50`,
+  places: `alone --scene sceneOfTypedPlaces,sceneOfHiddenEffects --checks-proofs 100 --as-a-test 25 --shuffles-costs 50`,
+  alone: `alone --families 30 --checks-proofs 25 --writes-straight 25 --as-a-test 25 --shuffles-costs 50`,
+  kin: `alone --kin 100 --together 10 --checks-proofs 25 --shuffles-costs 25`,
+  crowds: `alone --scene sceneOfASingleDeed,sceneOfASingleDeed,sceneOfASingleDeed,sceneOfTypedPlaces,sceneOfHiddenEffects --together 10 --checks-proofs 25 --writes-straight 10 --shuffles-costs 50`,
   few: `${drawn} --count 1 --together 50 --few-to-a-build 100 --families 25 --slow 10 --ignores-type-errors 100 --compares-errors --options-of-the-project 30 --writes-straight 50`,
   many: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 50 --collects 100 --writes-straight 50`,
   packages: `${drawn} ${rewritten} --count 4,12,40 --splits 100 --collects 100`,

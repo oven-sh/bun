@@ -306,6 +306,8 @@ function settleDispatchAtClose(res: $Node.ServerResponse) {
     if (exchange === undefined || exchange.awaitsClose !== true) return;
   } else {
     if (exchange.awaitsClose !== true) return;
+    // The library's own does nothing. What a program has laid in its place is called, as on the full road.
+    if (res[kCloseCallback] !== onClose && res[kCloseCallback]) res[kCloseCallback]!();
     res[kCloseCallback] = undefined;
   }
   exchange.awaitsClose = false;
@@ -3037,8 +3039,8 @@ function willBeChunked(response: $Node.ServerResponse) {
 function hasInvalidTrailer(response: $Node.ServerResponse, exchange: Exchange | undefined) {
   if (
     exchange !== undefined &&
-    !response._trailer &&
-    (exchange.headerBits & (HeaderBits.trailer | HeaderBits.spilled)) === 0
+    (exchange.headerBits & (HeaderBits.trailer | HeaderBits.spilled)) === 0 &&
+    !response._trailer
   ) {
     return false;
   }
@@ -3146,17 +3148,25 @@ function _writeHead(
       for (let i = 0; i < length; i++) {
         k = keys[i];
         if (k) {
-          // A getter of the head's object may replace setHeader(), so it is asked for at each header, in front of the read of the value, where the call reads it.
+          // A getter of the head's object may do anything. setHeader() is asked for at each header in front of the read of the value, where the call reads it, and asks the rest behind the value.
           if (
             IS_COMPILED_AHEAD_OF_TIME &&
             exchange !== undefined &&
-            !response._header &&
             ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(response, "setHeader")) ||
-              response.setHeader === responseSetHeader) &&
-            outgoingSetHeaderIsOurs()
-          )
-            storeHeader(exchange!, k, obj[k]);
-          else response.setHeader(k, obj[k]);
+              response.setHeader === responseSetHeader)
+          ) {
+            const value = obj[k];
+            // What setHeader() asks, behind the value and in its order. Where it would only store, the header is stored.
+            if (
+              exchange.response === response &&
+              !isHTTPServerHeaderStateSentOrAssigned(response[headerStateSymbol]) &&
+              outgoingSetHeaderIsOurs() &&
+              !response._header
+            ) {
+              if (exchange.shape.count === 0) storeOnMessageAsFirstHeaderDoes(response);
+              storeHeader(exchange, k, value);
+            } else responseSetHeader.$call(response, k, value);
+          } else response.setHeader(k, obj[k]);
         }
       }
     }
@@ -3187,6 +3197,7 @@ const enum ExchangeFlags {
   ended_before_its_tick = 1 << 12,
   // In the place of ExchangeFlags.ended_clean once assignSocket() has come behind end(): the response finishes by the ticks of the full road.
   ended_in_steps = 1 << 13,
+  bars_a_further_chunk = holds_chunk | has_pending_callbacks | waits_its_turn,
 }
 const enum RequestKind {
   unseen = 0,
@@ -4260,8 +4271,7 @@ function isHTTPServerHeaderStateSentOrAssigned(state: NodeHTTPHeaderState) {
 // by also checking the header state, then defer to the OutgoingMessage
 // implementations.
 function headerStateOf(res: $Node.ServerResponse): NodeHTTPHeaderState {
-  const exchange = res.$exchange;
-  return exchange !== undefined && exchange.response === res ? exchange.headerState : res[headerStateSymbol];
+  return res[headerStateSymbol];
 }
 
 function throwIfServerHeadersSent(self: $Node.ServerResponse, action: string) {
@@ -4283,29 +4293,27 @@ function readsOutgoingSetHeader(): boolean {
 const responseSetHeader = function setHeader(this: $Node.ServerResponse, name: string, value: $Node.HttpHeaderValue) {
   const exchange = this.$exchange;
   const isItself = exchange !== undefined && exchange.response === this;
-  if (
-    isItself
-      ? exchange.headerState !== NodeHTTPHeaderState.none
-      : isHTTPServerHeaderStateSentOrAssigned(this[headerStateSymbol])
-  ) {
+  if (isHTTPServerHeaderStateSentOrAssigned(this[headerStateSymbol])) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
   if (!IS_COMPILED_AHEAD_OF_TIME || !isItself || !outgoingSetHeaderIsOurs()) {
     return OutgoingMessagePrototype.setHeader.$call(this, name, value);
   }
   if (this._header !== null && this._header) throw $ERR_HTTP_HEADERS_SENT("set");
-  if (exchange.shape.count === 0) {
-    // The first header of a message stores on the message. One that is frozen refuses that, where any other message stores it.
-    const lenient = this[kLenientValidation];
-    try {
-      this[kLenientValidation] = lenient;
-    } catch {
-      this._isLenientHeaderValidation();
-    }
-  }
+  if (exchange.shape.count === 0) storeOnMessageAsFirstHeaderDoes(this);
   storeHeader(exchange, name, value);
   return this;
 };
+
+// The first header of a message stores on the message. One that is frozen refuses that, where any other message stores it.
+function storeOnMessageAsFirstHeaderDoes(response: $Node.ServerResponse): void {
+  const lenient = response[kLenientValidation];
+  try {
+    response[kLenientValidation] = lenient;
+  } catch {
+    response._isLenientHeaderValidation();
+  }
+}
 ServerResponse.prototype.setHeader = responseSetHeader;
 
 ServerResponse.prototype.appendHeader = function appendHeader(
@@ -4469,7 +4477,7 @@ Object.defineProperty(ServerResponse.prototype, "headersSent", {
   get(this: $Node.ServerResponse) {
     const exchange = this.$exchange;
     if (exchange !== undefined && exchange.response === this) {
-      const state = exchange.headerState;
+      const state = this[headerStateSymbol];
       return state === NodeHTTPHeaderState.sent || state === NodeHTTPHeaderState.assigned;
     }
     return this[headerStateSymbol] === NodeHTTPHeaderState.sent || headerStateOf(this) === NodeHTTPHeaderState.assigned;
@@ -4815,6 +4823,7 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     requestState == null ||
     req._readableState !== requestState ||
     req._events == null ||
+    !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(res, ServerResponse)) ||
     res._closed ||
     !ticksAreUnseen() ||
     !emitsUnseen(res) ||
@@ -5273,7 +5282,13 @@ function endAfterNativeThrow(
 ): $Node.ServerResponse {
   const code = (error as { code?: string } | null | undefined)?.code;
   if (code === "ERR_STREAM_ALREADY_FINISHED") {
-    if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) {
+    // A connection that code of the program shut amid the call was open where the full road asks the handle. One that the peer shut still counts as open here.
+    if (
+      (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0 &&
+      exchange?.connection?.$isOpen !== false &&
+      !res.finished &&
+      !res.destroyed
+    ) {
       return endWithoutSocket(res, exchange, true);
     }
   } else if (
@@ -5334,9 +5349,17 @@ ServerResponse.prototype.end = function (
   }
 
   const exchange = this.$exchange;
-  let flags = exchange !== undefined && exchange.response === this ? exchange.flags : ExchangeFlags.waits_its_turn;
+  // The short road is for a response as its class made it: no field of it has become an accessor, so what is read off it below runs no code of the program.
+  let flags =
+    exchange !== undefined &&
+    exchange.response === this &&
+    IS_COMPILED_AHEAD_OF_TIME &&
+    $isPlainInstanceOf(this, ServerResponse)
+      ? exchange.flags
+      : ExchangeFlags.waits_its_turn;
   if ((flags & ExchangeFlags.waits_its_turn) !== 0 || this.finished || this.destroyed) {
     ("unlikely");
+    sendWhatIsHeld(this);
     return endInFull(this, exchange, chunk, encoding, callback);
   }
 
@@ -5348,22 +5371,22 @@ ServerResponse.prototype.end = function (
   // The look may have sent what was held.
   flags = exchange.flags;
 
-  let headerState = exchange.headerState;
+  let headerState = this[headerStateSymbol];
   let held: HeldChunk | null = null;
   if ((flags & ExchangeFlags.holds_chunk) !== 0) {
     // Where the length must be kept to, native code may throw between the head and the chunk.
-    if (chunk || this.strictContentLength) {
-      sendHeldChunk(this, exchange);
-      flags = exchange.flags;
-    } else {
-      const holder = exchange.connection!;
-      held = holder.$heldChunk!;
-      chunk = held.chunk;
-      encoding = undefined;
-      holder.$heldChunk = null;
-      headerState = NodeHTTPHeaderState.assigned;
-      flags &= ~ExchangeFlags.holds_chunk;
-      exchange.flags = flags;
+    const sendsAtOnce = chunk || this.strictContentLength;
+    // That read may have been an accessor of the program's that sent what was held.
+    flags = exchange.flags;
+    if ((flags & ExchangeFlags.holds_chunk) !== 0) {
+      if (sendsAtOnce) {
+        sendHeldChunk(this, exchange);
+        flags = exchange.flags;
+      } else {
+        // It stays in its place until native code is called: whoever writes before that sends it first.
+        held = exchange.connection!.$heldChunk!;
+        headerState = NodeHTTPHeaderState.assigned;
+      }
     }
   } else if (headerState === NodeHTTPHeaderState.none) {
     updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
@@ -5382,68 +5405,102 @@ ServerResponse.prototype.end = function (
     ("unlikely");
     sendTrailers(this, trailer);
   }
-  // What was read off the response since may have been an accessor of the program's that sent the head.
-  if (held === null) headerState = exchange.headerState;
+  // What was read off the response since may have been an accessor of the program's that sent the head, or wrote a chunk that is held now.
+  if (held === null) {
+    headerState = this[headerStateSymbol];
+    flags = exchange.flags;
+    if ((flags & ExchangeFlags.holds_chunk) !== 0) {
+      ("unlikely");
+      sendHeldChunk(this, exchange);
+      flags = exchange.flags;
+    }
+  }
 
   if (headerState === NodeHTTPHeaderState.none) {
     callWriteHeadIfObservable(this, headerState, true);
     flags = exchange.flags;
   }
 
+  // Here the full road asks the handle. Neither finished nor destroyed at the entry: a writeHead() of the program's own, or an accessor, has done it since.
   const socket = exchange.connection;
-  if (socket === null || !socket.$isOpen) {
+  if (socket === null || !socket.$isOpen || this.finished || this.destroyed) {
     ("unlikely");
     if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) {
       return endWithoutSocket(this, exchange, true);
     }
   }
   let draining = false;
-  if (headerState !== NodeHTTPHeaderState.sent) {
-    const renderedHeaders = (held !== null ? headOf(held) : renderNativeHeaders(this, exchange, true)) as string[];
-    const hasSnapshot = (flags & ExchangeFlags.has_snapshot) !== 0;
-    const statusCode = hasSnapshot ? exchange.statusCode : this.statusCode;
-    const statusMessage = hasSnapshot
-      ? exchange.statusMessage || undefined
-      : this.statusMessage === undefined
-        ? undefined
-        : this.statusMessage;
-    const strict = this.strictContentLength ? contentLengthToKeepTo(this, headerState, true) : undefined;
-    const autoHeaders = renderedAutoHeaders;
-    const keepAliveSecs = renderedKeepAliveSecs;
-    let contentLength: number;
-    try {
-      contentLength =
-        handle.writeWholeResponse(
-          statusCode,
-          statusMessage,
-          renderedHeaders,
-          chunk,
-          encoding,
-          strict,
-          autoHeaders,
-          keepAliveSecs,
-        ) ??
-        handle.writeHeadAndEnd(
-          statusCode,
-          statusMessage,
-          renderedHeaders,
-          chunk,
-          encoding,
-          strict,
-          autoHeaders,
-          keepAliveSecs,
-        );
-    } catch (error) {
-      return endAfterNativeThrow(this, exchange, handle, error);
+  native: {
+    whole: {
+      if (headerState === NodeHTTPHeaderState.sent) break whole;
+      const renderedHeaders = (held !== null ? headOf(held) : renderNativeHeaders(this, exchange, true)) as string[];
+      // The value of a header may be an object of the program's whose toString() took another head.
+      const hasSnapshot = (exchange.flags & ExchangeFlags.has_snapshot) !== 0;
+      const statusCode = hasSnapshot ? exchange.statusCode : this.statusCode;
+      const statusMessage = hasSnapshot
+        ? exchange.statusMessage || undefined
+        : this.statusMessage === undefined
+          ? undefined
+          : this.statusMessage;
+      const strict = this.strictContentLength ? contentLengthToKeepTo(this, headerState, true) : undefined;
+      const autoHeaders = renderedAutoHeaders;
+      const keepAliveSecs = renderedKeepAliveSecs;
+      // The last look. A writeHead() of the program's own, or an accessor among the names read since, may have written.
+      flags = exchange.flags;
+      if (held !== null) {
+        if ((flags & ExchangeFlags.holds_chunk) === 0) {
+          // What was held went out in front of what that code wrote, and the head with it.
+          ("unlikely");
+          held = null;
+          headerState = NodeHTTPHeaderState.sent;
+          break whole;
+        }
+        chunk = held.chunk;
+        encoding = undefined;
+        exchange.connection!.$heldChunk = null;
+        flags &= ~ExchangeFlags.holds_chunk;
+        exchange.flags = flags;
+      } else if ((flags & ExchangeFlags.holds_chunk) !== 0) {
+        // Native code gets the head and that chunk, and refuses the second head as on the full road.
+        ("unlikely");
+        sendHeldChunk(this, exchange);
+        flags = exchange.flags;
+      }
+      let contentLength: number;
+      try {
+        contentLength =
+          handle.writeWholeResponse(
+            statusCode,
+            statusMessage,
+            renderedHeaders,
+            chunk,
+            encoding,
+            strict,
+            autoHeaders,
+            keepAliveSecs,
+          ) ??
+          handle.writeHeadAndEnd(
+            statusCode,
+            statusMessage,
+            renderedHeaders,
+            chunk,
+            encoding,
+            strict,
+            autoHeaders,
+            keepAliveSecs,
+          );
+      } catch (error) {
+        return endAfterNativeThrow(this, exchange, handle, error);
+      }
+      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+      if (contentLength < 0) {
+        ("unlikely");
+        draining = true;
+        contentLength = -contentLength - 1;
+      }
+      if (held === null) this._contentLength = contentLength;
+      break native;
     }
-    exchange.headerState = this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-    if (contentLength < 0) {
-      ("unlikely");
-      draining = true;
-      contentLength = -contentLength - 1;
-    }
-    if (held === null) this._contentLength = contentLength;
-  } else {
     const handleFlags = handle.flags;
     if (!!(handleFlags & NodeHTTPResponseFlags.closed_or_completed)) {
       ("unlikely");
@@ -5460,7 +5517,7 @@ ServerResponse.prototype.end = function (
   this.finished = true;
 
   if (!draining && (flags & ExchangeFlags.has_pending_callbacks) === 0 && ticksAreUnseen()) {
-    // Where the guards answer, the names are not read, and a response with an accessor of its own fails them: no code of the program runs from here to the tick.
+    // Where the guards answer, the two names are not read.
     const guardsAnswer =
       IS_COMPILED_AHEAD_OF_TIME &&
       $findsDeclaredMember(this, "_callPendingCallbacks") &&
@@ -5475,7 +5532,7 @@ ServerResponse.prototype.end = function (
       ("unlikely");
       return finishInSteps(this, exchange, handle, draining, callback);
     }
-    if (!guardsAnswer && !ticksAreUnseen()) {
+    if (!ticksAreUnseen()) {
       // What was read has put a process.nextTick of the program's own in place. The full road has queued one tick in front of those reads and queues the other behind them.
       ("unlikely");
       enqueueTick1(markResponseEndedNT, this);
@@ -5595,7 +5652,7 @@ function writeHeadAndFirstChunk(
       renderedAutoHeaders,
       renderedKeepAliveSecs,
     );
-    exchange.headerState = res[headerStateSymbol] = NodeHTTPHeaderState.sent;
+    res[headerStateSymbol] = NodeHTTPHeaderState.sent;
     result = handle.write(chunk, encoding, onWritable, strict);
   });
   return result;
@@ -5607,152 +5664,240 @@ ServerResponse.prototype.write = function (
   encoding?: string | null | $Node.HttpWriteCallback,
   callback?: $Node.HttpWriteCallback | null,
 ) {
-  if (typeof chunk !== "string" && $isCallable(chunk)) {
-    callback = chunk;
-    chunk = undefined;
-    encoding = undefined;
-  } else if ($isCallable(encoding)) {
-    callback = encoding;
-    encoding = undefined;
-  } else if (!$isCallable(callback)) {
-    callback = undefined;
-  }
-
   const exchange = this.$exchange;
-  let flags = exchange !== undefined && exchange.response === this ? exchange.flags : ExchangeFlags.waits_its_turn;
-  if ((flags & ExchangeFlags.waits_its_turn) !== 0 || this.finished || this.destroyed) {
-    ("unlikely");
-    return writeInFull(this, exchange, chunk, encoding, callback);
-  }
-
-  // Whatever is read off the response may be an accessor of the program's that sends the head, so the state of the head is read anew wherever it is asked for.
-  const headerState = exchange.headerState;
-  if (headerState === NodeHTTPHeaderState.none) callWriteHeadIfObservable(this, headerState);
-
-  const handle = this[kHandle] as $Node.NodeHTTPResponse | undefined;
-  if (!handle) {
-    ("unlikely");
-    return OutgoingMessagePrototype.write.$call(this, chunk!, encoding, callback);
-  }
-  // The look may have sent what was held.
-  flags = exchange.flags;
-
-  if (exchange.headerState === NodeHTTPHeaderState.none) {
-    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
-  }
-  let hasChunk = typeof chunk === "string" ? chunk.length !== 0 : !!chunk;
-  if (hasChunk && !this._hasBody) {
-    ("unlikely");
-    if (this[kRejectNonStandardBodyWrites]) {
-      throw $ERR_HTTP_BODY_NOT_ALLOWED();
-    } else {
-      chunk = undefined;
-      hasChunk = false;
-    }
-  }
-
-  if (
-    typeof chunk === "string" &&
-    callback === undefined &&
-    encoding == null &&
-    exchange.headerState !== NodeHTTPHeaderState.sent &&
-    (exchange.headerBits & HeaderBits.content_length) !== 0 &&
-    exchange.oddMask === 0 &&
-    !this.strictContentLength &&
-    // Native code refuses some status messages, and this call is the one to throw. writeHead() has looked at its own.
-    (this.statusMessage === undefined || (flags & ExchangeFlags.has_snapshot) !== 0) &&
-    this.getHeader === outgoingGetHeader &&
-    reachesWritableHighWaterMark(this) &&
-    ticksAreUnseen() &&
-    callsPendingCallbacksUnseen(this)
-  ) {
-    const socket = exchange.connection;
+  const isItself =
+    exchange !== undefined &&
+    exchange.response === this &&
+    IS_COMPILED_AHEAD_OF_TIME &&
+    $isPlainInstanceOf(this, ServerResponse);
+  let connection: $Node.HttpServerSocket | null;
+  let hasChunk: boolean;
+  head: {
+    // A further chunk over a connection: the head is out, nothing is held, nobody waits, and the response is as its class made it: what is read off it here is read unseen.
     if (
-      socket !== null &&
-      socket.$isOpen &&
-      this[kSocket] === socket &&
-      chunk.length * 3 < socket.$ownWritableState.highWaterMark &&
-      // The names asked for since may have been accessors of the program's that sent the head.
-      exchange.headerState !== NodeHTTPHeaderState.sent
+      isItself &&
+      encoding === undefined &&
+      callback === undefined &&
+      (exchange.flags & ExchangeFlags.bars_a_further_chunk) === 0 &&
+      this[headerStateSymbol] === NodeHTTPHeaderState.sent &&
+      $findsDeclaredMember(this, "_callPendingCallbacks")
     ) {
-      flags = exchange.flags;
-      const renderedHeaders = renderNativeHeaders(this, exchange, true);
-      socket.$heldChunk = new HeldChunk(exchange, chunk, renderedHeaders, renderedAutoHeaders, renderedKeepAliveSecs);
-      this[kBytesBuffered] = exchange.bytesBuffered += Buffer.byteLength(chunk);
-      this[kAccountingFlushScheduled] = true;
-      exchange.headerState = this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      // The head counts as sent, so what is assigned to statusCode or statusMessage from here on has no effect on the wire.
-      if ((flags & ExchangeFlags.has_snapshot) === 0) {
-        exchange.statusCode = this.statusCode;
-        exchange.statusMessage = "";
+      const socket = exchange.connection;
+      const onWritable = exchange.onWritable;
+      const handle = this[kHandle] as $Node.NodeHTTPResponse | undefined;
+      if (
+        socket !== null &&
+        onWritable !== null &&
+        typeof handle === "object" &&
+        handle !== null &&
+        ((typeof chunk === "string" && chunk.length !== 0) || (typeof chunk === "object" && chunk !== null)) &&
+        !this.finished &&
+        !this.destroyed &&
+        this._hasBody === true &&
+        !this.strictContentLength
+      ) {
+        let result: number;
+        try {
+          result = handle.write(chunk, undefined, onWritable, undefined);
+        } catch (error) {
+          if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0 && !this.finished && !this.destroyed) {
+            return false;
+          }
+          throw error;
+        }
+        if (result <= 0) {
+          ("unlikely");
+          if (result < 0) return false;
+          if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0 && !this.finished && !this.destroyed) {
+            return false;
+          }
+        }
+        connection = socket;
+        hasChunk = true;
+        break head;
       }
-      const held = flags | ExchangeFlags.holds_chunk | ExchangeFlags.has_snapshot;
-      if ((flags & ExchangeFlags.tick_queued) !== 0) exchange.flags = held;
-      else if (ticksAreUnseen()) {
-        queueExchangeTick(exchange, held);
-        // Nothing was queued: the process exits.
-        if (exchange.queuedTick === ring.write) sendHeldChunk(this, exchange);
+    }
+
+    if (typeof chunk !== "string" && $isCallable(chunk)) {
+      callback = chunk;
+      chunk = undefined;
+      encoding = undefined;
+    } else if ($isCallable(encoding)) {
+      callback = encoding;
+      encoding = undefined;
+    } else if (!$isCallable(callback)) {
+      callback = undefined;
+    }
+
+    let flags = isItself ? exchange.flags : ExchangeFlags.waits_its_turn;
+    if ((flags & ExchangeFlags.waits_its_turn) !== 0 || this.finished || this.destroyed) {
+      ("unlikely");
+      sendWhatIsHeld(this);
+      return writeInFull(this, exchange, chunk, encoding, callback);
+    }
+
+    // Whatever is read off the response may be an accessor of the program's that sends the head, so the state of the head is read anew wherever it is asked for.
+    const headerState = this[headerStateSymbol];
+    if (headerState === NodeHTTPHeaderState.none) callWriteHeadIfObservable(this, headerState);
+
+    const handle = this[kHandle] as $Node.NodeHTTPResponse | undefined;
+    if (!handle) {
+      ("unlikely");
+      return OutgoingMessagePrototype.write.$call(this, chunk!, encoding, callback);
+    }
+    // The look may have sent what was held.
+    flags = exchange.flags;
+
+    if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
+      updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
+    }
+    hasChunk = typeof chunk === "string" ? chunk.length !== 0 : !!chunk;
+    if (hasChunk && !this._hasBody) {
+      ("unlikely");
+      if (this[kRejectNonStandardBodyWrites]) {
+        throw $ERR_HTTP_BODY_NOT_ALLOWED();
       } else {
-        // What was asked since has put a process.nextTick of the program's own in place: it gets the tick of the full road.
-        ("unlikely");
-        exchange.flags = held;
-        sendHeldChunk(this, exchange);
-        scheduleWriteAccountingFlush(this);
+        chunk = undefined;
+        hasChunk = false;
       }
-      return true;
     }
-  }
-  if ((exchange.flags & ExchangeFlags.holds_chunk) !== 0) sendHeldChunk(this, exchange);
 
-  const connection = exchange.connection;
-  // Behind the head, the native response of a connection drops what comes after the close and refuses what comes after the end by itself, so it is asked only where it has done one of the two.
-  const asksHandleAfterwards = exchange.headerState === NodeHTTPHeaderState.sent && connection !== null;
-  if (!asksHandleAfterwards && (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) {
-    return false;
-  }
+    if (
+      typeof chunk === "string" &&
+      callback === undefined &&
+      encoding == null &&
+      this[headerStateSymbol] !== NodeHTTPHeaderState.sent &&
+      (exchange.headerBits & HeaderBits.content_length) !== 0 &&
+      exchange.oddMask === 0 &&
+      !this.strictContentLength &&
+      // Native code refuses some status messages, and this call is the one to throw. writeHead() has looked at its own.
+      (this.statusMessage === undefined || (flags & ExchangeFlags.has_snapshot) !== 0) &&
+      this.getHeader === outgoingGetHeader &&
+      reachesWritableHighWaterMark(this) &&
+      ticksAreUnseen() &&
+      callsPendingCallbacksUnseen(this)
+    ) {
+      const socket = exchange.connection;
+      if (
+        socket !== null &&
+        socket.$isOpen &&
+        this[kSocket] === socket &&
+        chunk.length * 3 < socket.$ownWritableState.highWaterMark &&
+        // The names asked for since may have been accessors of the program's that sent the head.
+        this[headerStateSymbol] !== NodeHTTPHeaderState.sent
+      ) {
+        const renderedHeaders = renderNativeHeaders(this, exchange, true);
+        flags = exchange.flags;
+        if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+          // An accessor among the names that the head is made of has sent the head, or written a chunk that is held. Native code refuses the second head, as on the full road.
+          ("unlikely");
+          sendWhatIsHeld(this);
+          handle.writeHead(
+            statusCodeToSend(this),
+            statusMessageToSend(this),
+            renderedHeaders as string[],
+            renderedAutoHeaders,
+            renderedKeepAliveSecs,
+          );
+        }
+        socket.$heldChunk = new HeldChunk(exchange, chunk, renderedHeaders, renderedAutoHeaders, renderedKeepAliveSecs);
+        this[kBytesBuffered] = exchange.bytesBuffered += Buffer.byteLength(chunk);
+        this[kAccountingFlushScheduled] = true;
+        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+        // The head counts as sent, so what is assigned to statusCode or statusMessage from here on has no effect on the wire.
+        if ((flags & ExchangeFlags.has_snapshot) === 0) {
+          exchange.statusCode = this.statusCode;
+          exchange.statusMessage = "";
+        }
+        const held = flags | ExchangeFlags.holds_chunk | ExchangeFlags.has_snapshot;
+        if ((flags & ExchangeFlags.tick_queued) !== 0) exchange.flags = held;
+        else if (ticksAreUnseen()) {
+          queueExchangeTick(exchange, held);
+          // Nothing was queued: the process exits.
+          if (exchange.queuedTick === ring.write) sendHeldChunk(this, exchange);
+        } else {
+          // What was asked since has put a process.nextTick of the program's own in place: it gets the tick of the full road.
+          ("unlikely");
+          exchange.flags = held;
+          sendHeldChunk(this, exchange);
+          scheduleWriteAccountingFlush(this);
+        }
+        return true;
+      }
+    }
+    if ((exchange.flags & ExchangeFlags.holds_chunk) !== 0) sendHeldChunk(this, exchange);
 
-  let strict: number | undefined;
-  if (this.strictContentLength) {
-    ("unlikely");
-    strict = contentLengthToKeepTo(this, headerState, false);
-  }
-  const hasBody = this._hasBody;
-  let onWritable: (() => void) | undefined;
-  if (hasBody) {
-    const bound = exchange.onWritable;
-    onWritable = bound !== null ? bound : (exchange.onWritable = allowWritesToContinue.bind(this));
-  }
+    connection = exchange.connection;
+    // Behind the head, the native response of a connection drops what comes after the close and refuses what comes after the end by itself, so it is asked only where it has done one of the two.
+    const asksHandleAfterwards =
+      this[headerStateSymbol] === NodeHTTPHeaderState.sent &&
+      connection !== null &&
+      connection.$isOpen &&
+      !this.finished &&
+      !this.destroyed;
+    if (!asksHandleAfterwards && (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) {
+      return false;
+    }
 
-  let result: number;
-  if (exchange.headerState !== NodeHTTPHeaderState.sent) {
-    result = writeHeadAndFirstChunk(this, exchange, handle, chunk, encoding, onWritable, strict);
-  } else if (asksHandleAfterwards) {
-    try {
+    let strict: number | undefined;
+    if (this.strictContentLength) {
+      ("unlikely");
+      strict = contentLengthToKeepTo(this, headerState, false);
+    }
+    const hasBody = this._hasBody;
+    let onWritable: (() => void) | undefined;
+    if (hasBody) {
+      const bound = exchange.onWritable;
+      onWritable = bound !== null ? bound : (exchange.onWritable = allowWritesToContinue.bind(this));
+    }
+
+    let result: number;
+    if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+      result = writeHeadAndFirstChunk(this, exchange, handle, chunk, encoding, onWritable, strict);
+    } else if (asksHandleAfterwards) {
+      try {
+        result = handle.write(chunk, encoding, onWritable, strict);
+      } catch (error) {
+        // Neither finished nor destroyed at the entry: where it is now, an accessor of the program's has ended or destroyed it amid this call, behind the place where the full road asks the handle.
+        if (
+          (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0 &&
+          connection!.$isOpen &&
+          !this.finished &&
+          !this.destroyed
+        ) {
+          return false;
+        }
+        throw error;
+      }
+      if (
+        result === 0 &&
+        (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0 &&
+        connection!.$isOpen &&
+        !this.finished &&
+        !this.destroyed
+      ) {
+        return false;
+      }
+    } else {
       result = handle.write(chunk, encoding, onWritable, strict);
-    } catch (error) {
-      if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) return false;
-      throw error;
     }
-    if (result === 0 && (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) return false;
-  } else {
-    result = handle.write(chunk, encoding, onWritable, strict);
-  }
 
-  if (result < 0 && hasBody) {
-    ("unlikely");
-    if (callback) addPendingCallback(this, callback);
-    return false;
-  }
+    if (result < 0 && hasBody) {
+      ("unlikely");
+      if (callback) addPendingCallback(this, callback);
+      return false;
+    }
 
-  // The guards are asked and the name is not read: it is read once, by the call.
-  if (
-    (exchange.flags & ExchangeFlags.has_pending_callbacks) !== 0 ||
-    !(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(this, "_callPendingCallbacks"))
-  ) {
-    ("unlikely");
-    this._callPendingCallbacks();
+    // The guards are asked and the name is not read: it is read once, by the call.
+    if (
+      (exchange.flags & ExchangeFlags.has_pending_callbacks) !== 0 ||
+      !(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(this, "_callPendingCallbacks"))
+    ) {
+      ("unlikely");
+      this._callPendingCallbacks();
+    }
+    if (callback && !hasSentForCallback(this, handle, hasBody, callback)) return false;
   }
-  if (callback && !hasSentForCallback(this, handle, hasBody, callback)) return false;
 
   let written = 0;
   if (hasChunk) {
@@ -5776,7 +5921,16 @@ ServerResponse.prototype.write = function (
 
   const buffered = exchange.bytesBuffered;
   if (buffered === 0) return true;
-  if (connection !== null && this[kSocket] === connection && reachesWritableHighWaterMark(this)) {
+  if (
+    connection !== null &&
+    this[kSocket] === connection &&
+    ((IS_COMPILED_AHEAD_OF_TIME &&
+      $findsDeclaredMember(this, "writableHighWaterMark") &&
+      $findsDeclaredMember(this, "socket") &&
+      ObjectGetPrototypeOf(connection) === serverSocketPrototype &&
+      $findsDeclaredMember(connection, "writableHighWaterMark")) ||
+      reachesWritableHighWaterMark(this))
+  ) {
     return buffered < (connection.$ownWritableState.highWaterMark ?? this[kHighWaterMark] ?? 64 * 1024);
   }
   return buffered < this.writableHighWaterMark;
@@ -6022,13 +6176,14 @@ const OriginalWriteHeadFn = (ServerResponse.prototype.writeHead = function (
   if (
     exchange === undefined ||
     exchange.response !== this ||
+    !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(this, ServerResponse)) ||
     !((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(this, "hasHeader")) || this.hasHeader === outgoingHasHeader) ||
     !reachesHeadersSent(this)
   ) {
     ("unlikely");
     return writeHeadInFull.$call(this, statusCode, statusMessage, headers);
   }
-  if (exchange.headerState !== NodeHTTPHeaderState.none) throw $ERR_HTTP_HEADERS_SENT("writeHead");
+  if (isHTTPServerHeaderStateSentOrAssigned(this[headerStateSymbol])) throw $ERR_HTTP_HEADERS_SENT("writeHead");
   _writeHead(statusCode, statusMessage, headers, this, exchange);
 
   // Node.js renders the header block immediately in writeHead(), so mutating
@@ -6052,7 +6207,7 @@ const OriginalWriteHeadFn = (ServerResponse.prototype.writeHead = function (
     exchange.isFrozenChunked = this[kFramingFrozenChunked] = true;
   }
 
-  exchange.headerState = this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+  this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
 
   // Standalone responses (no native handle, e.g. new ServerResponse(req) +
   // assignSocket(writable)) write through the OutgoingMessage machinery, so
@@ -6392,7 +6547,6 @@ function storeRarely(receiver: object, key: symbol, value: unknown): void {
 function followResponse(exchange: Exchange | undefined): void {
   if (exchange === undefined) return;
   const response = exchange.response;
-  exchange.headerState = response[headerStateSymbol] | 0;
   exchange.mustClose = !!response[kMustCloseConnection];
   exchange.isFrozenChunked = !!response[kFramingFrozenChunked];
   exchange.isImplicitFromEnd = !!response[kImplicitHeaderFromEnd];
@@ -6415,7 +6569,6 @@ function storeMustClose(res: $Node.ServerResponse, exchange: Exchange | undefine
 
 function storeHeaderState(res: $Node.ServerResponse, exchange: Exchange | undefined, state: NodeHTTPHeaderState): void {
   res[headerStateSymbol] = state;
-  if (exchange !== undefined) exchange.headerState = exchange.response[headerStateSymbol] | 0;
 }
 
 function writeHeadToHandle(

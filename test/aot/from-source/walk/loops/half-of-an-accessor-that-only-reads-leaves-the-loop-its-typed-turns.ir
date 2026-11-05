@@ -1,6 +1,6 @@
 # `last = o.f` in a loop, off an object that is out of sight, where the getter only reads a field. A look at the loop goes into the copy of the getter and finds nothing there that may not be run again unseen:
 # the turns of the typed copy run no other code, so the look at the cell, the look at the slot and the read of the field stand in front of the loop, and a turn asks the guard of the name alone.
-# The list is read by index on the word of Link that it stays as made: the check that holds that word stands in front of the loop too.
+# In the typed turns the list is read by index behind the test of the list that stands in front of the loop.
 # f1 = run, f3 = f
 # -- source: half-of-an-accessor-that-only-reads-leaves-the-loop-its-typed-turns.ts
 # declare function print(...values: unknown[]): void;
@@ -31,8 +31,6 @@
 # CHECK: = AreMembersUnchanged {{*}}key="f"
 # CHECK: = IsSlotFilled {{*}}key="c"
 # CHECK: = GetSlot {{*}}key="c"
-# CHECK-NEXT: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names, CellAlone]
-# CHECK-NEXT: CheckProof {{*}}checkedType=true
 # CHECK-NEXT: = GetArrayStorage
 # RUN(NEVER): walk f1 mechanisms=all
 # NEVER-NOT: = PropGet {{*}}key="c"

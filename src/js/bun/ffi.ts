@@ -180,8 +180,6 @@ const native = {
   },
 };
 
-const ccFn: (options: object) => $Node.FFILibrary | Error = $bindgen("ffi.bind.ts", "cc");
-
 function normalizePath(path: string | URL | Bun.BunFile | undefined) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {
     // import.meta.url returns a file: URL
@@ -232,6 +230,7 @@ function cc(options) {
   }
   options.source = path;
 
+  const ccFn: (options: object) => $Node.FFILibrary | Error = $bindgen("ffi.bind.ts", "cc");
   const result = ccFn(options);
   if (Error.isError(result)) throw result;
 

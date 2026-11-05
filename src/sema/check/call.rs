@@ -240,6 +240,10 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         /// Results aren't cached for fewer nested functions than this.
         const MANY: u64 = 8;
+        let info = self.bound(file).fns.get(f.idx());
+        if let Some(known) = info.and_then(|info| info.is_context_sensitive) {
+            return known;
+        }
         // Every enclosing function asks this about each function nested in it, each time down to
         // the innermost one, so the answer for a deep nest is cached. It only depends on the syntax
         // tree. A function that only returns another function has that function's answer, unless

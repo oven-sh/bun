@@ -1,7 +1,7 @@
 // `bun build --compile --aot --external left-out`: the name is left to the host, and a plugin that is laid at run time answers for it with the path of a file of the image.
 // The build had read one name of that file and left the rest out: the importer got an empty object, in silence, or an export that is missing.
 // A program that names the plugin and leaves a name to the host may name any of its files: each is whole, and each case is held against `bun main.mjs` in the same folder.
-// Where the build does not see who lays the plugin the file is refused aloud, as it is to a call.
+// Where the build does not see who lays the plugin, Bun.plugin() itself refuses aloud.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -430,14 +430,12 @@ describe("the program names the plugin: the file is whole", () => {
   });
 });
 
-describe("the build does not see who lays the plugin: the file is refused aloud", () => {
+describe("the build does not see who lays the plugin: the plugin is refused aloud", () => {
   test.each(Object.keys(refused))("%s", async name => {
     const { plain, compiled } = await answersOf(refused[name]);
     expect(plain.stdout).not.toContain("asked|");
-    expect(compiled.stdout.trim().split("\n")).toEqual([
-      plain.stdout.split("\n")[0],
-      "asked|Error:Cannot load '..': this executable can't load a module from a",
-    ]);
-    expect(compiled.exitCode).toBe(0);
+    expect(compiled.stdout.trim().split("\n")).toEqual([plain.stdout.split("\n")[0]]);
+    expect(compiled.stderr).toContain("Cannot use Bun.plugin: no file that was compiled names it");
+    expect(compiled.exitCode).toBe(1);
   });
 });

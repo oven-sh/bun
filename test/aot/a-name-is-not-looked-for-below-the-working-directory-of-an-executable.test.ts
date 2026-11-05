@@ -4,10 +4,6 @@ import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// A name that is not found from its importer is looked for once more from the root of the executable, which is how an entry point is found
-// by its path. The resolver went on from there to the folder on disk that stands for the root: the working directory. So a package below
-// the working directory answered for an importer that lies elsewhere, and a file that the "exports" of the importer's own package hide was
-// found as a file. It shows where the root lies above the importer (`--root`): below the importer's own folder the executable says "hidden".
 test("a name that its importer cannot reach is not found below the working directory", async () => {
   const hides = {
     "package.json": JSON.stringify({ name: "hides", version: "1.0.0", exports: { ".": "./a.js", "./hidden": null } }),

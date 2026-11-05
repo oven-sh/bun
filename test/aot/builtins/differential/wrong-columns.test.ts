@@ -289,6 +289,26 @@ const cases: Case[] = [
     column: "callbacks[0].arguments",
   },
   {
+    title: "that an argument of a callback is more than what a call throws",
+    double: (called: Function) => void called(new Map()),
+    declared: { ...callsOnce, callbacks: [callback(first, { arguments: [newValue(anything)] })] },
+    wrong: {
+      ...callsOnce,
+      callbacks: [callback(first, { arguments: [{ ...newValue(anything), holdsWhatIsThrown: true }] })],
+    },
+    column: "callbacks[0].arguments",
+  },
+  {
+    title: "nothing, where an argument of a callback is an error in place of a throw",
+    double: (called: Function) => void called(new RangeError("made up")),
+    declared: {
+      ...callsOnce,
+      callbacks: [callback(first, { arguments: [{ ...newValue(anything), holdsWhatIsThrown: true }] })],
+    },
+    wrong: callsOnce,
+    column: "",
+  },
+  {
     title: "this of a callback",
     double: (called: Function) => void Reflect.apply(called, shared, [1]),
     declared: {

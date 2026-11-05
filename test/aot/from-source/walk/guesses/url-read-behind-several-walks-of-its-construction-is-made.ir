@@ -1,6 +1,7 @@
 # a URL is never made only where one walk of its construction stands in front of every read. Where the construction is walked several times and a read stands behind them all, one name stands for what each walk has built:
 # no text answers for it, so every walk makes the object as written
-# f1: a loop that is built twice (its counter enters as a box of anything), read in the block by which the loop is left. f2: two turns written out. f3: a block that the ways of a closed arm walk apart from the others
+# f2: two turns written out. f3: a block that the ways of a closed arm walk apart from the others
+# f1: every turn of a typed build of this loop would leave it, so the builds are undone and the loop is built once: the one walk that is kept stands in front of the read, and the URL is never made where its text is plain
 # f4 and f5: the URL is still never made: in f4 each copy of the loop reads its own, in f5 the one construction stands in front of both copies
 # each function is handed to code that nobody has seen
 # f1 = leftByReturn, f2 = twoTurns, f3 = walkedApart, f4 = readInside, f5 = madeInFront
@@ -16,15 +17,14 @@
 # RUN: walk f1 mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
-# CHECK-COUNT-2: isLoopHead=true
-# CHECK: = CallBuiltin {{*}}overload=URLPrototypeSearch/
+# CHECK: isLoopHead=true
+# CHECK-NOT: isLoopHead=true
 # RUN(LEFT): walk f1 mechanisms=all
 # REQUIRES(LEFT): entries-of-bun
-# LEFT-COUNT-2: overload=URL/
+# LEFT-COUNT-1: overload=URL/
 # RUN(LEFTMADE): walk f1 mechanisms=all
 # REQUIRES(LEFTMADE): entries-of-bun
-# LEFTMADE-NOT: CompilerHelpersScanPlainURL
-# LEFTMADE-NOT: undefined|URL
+# LEFTMADE: CompilerHelpersScanPlainURL
 # RUN(TURNS): walk f2 mechanisms=all
 # REQUIRES(TURNS): entries-of-bun
 # TURNS-COUNT-2: overload=URL/

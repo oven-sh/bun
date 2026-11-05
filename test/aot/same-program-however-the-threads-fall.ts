@@ -162,6 +162,25 @@ export function sameProgram(part: number) {
         expect({ threads, ...(await build(String(dir), "main.js", threads)) }).toEqual({ threads, ...first });
     });
 
+  // The engine enters itself once for each loop inside another, and tries loops no deeper than a number says. It once went by what was left of
+  // the stack, and the thread that starts a build had an eighth of what the threads that help it have.
+  if (part === 1)
+    test.skipIf(wanted === "quick")("loops nested very deeply build the same whichever thread takes them", async () => {
+      const nests = Array.from({ length: 4 }, (_, nest) => nest);
+      using dir = tempDir("aot-threads-fall-nests", {
+        "main.js":
+          `let left = 0, sum = 0;\nfunction more() { return left-- > 0; }\n` +
+          nests
+            .map(nest => `function nest${nest}(box) {\n${"while (more()) ".repeat(2000)}sum += box.weight;\nreturn sum;\n}\n`)
+            .join("") +
+          `console.log(${nests.map(nest => `(left = 2000, nest${nest}({ weight: ${nest + 1} }))`).join(", ")});\n`,
+      });
+      const first = await build(String(dir), "main.js", 1);
+      expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+      for (const threads of [2, 16, 16])
+        expect({ threads, ...(await build(String(dir), "main.js", threads)) }).toEqual({ threads, ...first });
+    });
+
   // `take(make())` does not fit, so the type checker writes an error message. To name `Hidden`, which maker.js does not import, it looks
   // through the exports of every module of the program, and in a page `module.exports = exports.default` leads back to itself. What such
   // a page knows about `exports.default` depends on who asks first. In the order of the program that is first.js, however long it takes.

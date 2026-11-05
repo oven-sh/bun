@@ -180,19 +180,13 @@ fn write_product(
             is_base_url: alias.is_base_url,
         })
         .collect();
-    let names_no_folder = |way: &Vec<u8>| {
-        let mut parts = way.split(|&byte| bun_paths::is_sep_native(byte));
-        parts.all(|name| name.is_empty() || name == b"..")
-    };
-    let root_below_working_directory = match options.runs_in_place {
-        true => None,
-        false => find_root_below_working_directory(&build.root_directory)
-            .filter(|way| options.loads_code_from_disk || names_no_folder(way)),
+    let knows_places = options.loads_code_from_disk && !options.runs_in_place;
+    let root_below_working_directory = match knows_places {
+        true => find_root_below_working_directory(&build.root_directory),
+        false => None,
     };
     let root_from_executable = match &request.product {
-        CompileProduct::Executable { outfile }
-            if options.loads_code_from_disk && !options.runs_in_place =>
-        {
+        CompileProduct::Executable { outfile } if knows_places => {
             find_root_from_executable(&build.root_directory, outfile)
         }
         _ => None,
@@ -225,6 +219,7 @@ fn write_product(
                 false => &build.root_folders_spelled,
             },
             allows_code_from_disk: options.loads_code_from_disk,
+            names_plugin: build.names_plugin,
             preserves_source_paths: options.runs_in_place,
             symbols,
         }),

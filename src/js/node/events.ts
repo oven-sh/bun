@@ -1381,18 +1381,24 @@ Object.assign(EventEmitter, {
 // Node: `Object.getPrototypeOf(process) instanceof EventEmitter` holds.
 // Link the native process prototype under this module's EventEmitter; the
 // native methods stay earlier in the chain and keep winning lookups.
-try {
-  const processPrototype = Object.getPrototypeOf(process);
-  if (
-    processPrototype !== null &&
-    processPrototype !== Object.prototype &&
-    !(processPrototype instanceof EventEmitter)
-  ) {
-    Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
+// Compiled ahead of time, a native function does the same three steps: the compiler gives up on `process`, and keeps all that it can do,
+// where a statement asks what stands above it. A test that has replaced a built-in could tell the two apart.
+if (IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS) {
+  $newCppFunction("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom", 1)(EventEmitterPrototype);
+} else {
+  try {
+    const processPrototype = Object.getPrototypeOf(process);
+    if (
+      processPrototype !== null &&
+      processPrototype !== Object.prototype &&
+      !(processPrototype instanceof EventEmitter)
+    ) {
+      Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
+    }
+  } catch {
+    // If the prototype is not relinkable, process simply keeps its native
+    // chain; everything else about this module still works.
   }
-} catch {
-  // If the prototype is not relinkable, process simply keeps its native
-  // chain; everything else about this module still works.
 }
 
 export default EventEmitter as $Node.EventEmitterConstructor;

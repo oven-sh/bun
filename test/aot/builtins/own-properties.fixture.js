@@ -66,6 +66,12 @@ async function findPrototypeOfServerWebSockets() {
   return prototype;
 }
 
+function prototypeOfCallbacksOfFFI() {
+  const made = Bun.FFI.callback({ args: [], returns: "void" }, () => {});
+  Bun.FFI.closeCallback(made);
+  return getPrototypeOf(made);
+}
+
 const hiddenObjects = new Map([
   ["%ArrayIterator%.prototype", getPrototypeOf([][Symbol.iterator]())],
   ["%AsyncFunction%.prototype", getPrototypeOf(async function () {})],
@@ -74,6 +80,8 @@ const hiddenObjects = new Map([
   ["%AsyncIterator%.prototype", getPrototypeOf(asyncGeneratorPrototype)],
   ["%BunRequest%.prototype", await findPrototypeOfRoutedRequests()],
   ["%EventEmitter%.prototype", getPrototypeOf(process)],
+  // In front of bun:ffi, which takes `callback` away when it is loaded.
+  ["%FFICallback%.prototype", prototypeOfCallbacksOfFFI()],
   // The function pointer is never called.
   ["%FFI%.prototype", getPrototypeOf(require("bun:ffi").linkSymbols({ never: { ptr: 8, args: [], returns: "void" } }))],
   ["%Generator%.prototype", getPrototypeOf(function* () {}).prototype],

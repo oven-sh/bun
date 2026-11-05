@@ -57,10 +57,12 @@ impl Resolver<'_, '_> {
         member: BuiltinId,
     ) -> Option<SymbolId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
-        let ExprKind::Binary { left, right, .. } = hir[hir.skip_type_assertions(test)].kind else {
+        let ExprKind::Binary { op, left, right } = hir[hir.skip_type_assertions(test)].kind else {
             return None;
         };
-        [left, right].into_iter().find_map(|operand| {
+        let right_always_runs = !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish);
+        let operands = [Some(left), right_always_runs.then_some(right)];
+        operands.into_iter().flatten().find_map(|operand| {
             let ExprKind::Assign {
                 op: None,
                 target,

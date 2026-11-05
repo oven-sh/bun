@@ -1,10 +1,8 @@
 # What a reader sees otherwise than under `bun test` where a mock is laid over a module that has run. See harness/mock-laid-over.ts.
-packed beside preloads that mock | project.vi.doMock.factory.test | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | counter: SILENT | 1 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | table.n: SILENT | 2 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after | counter: SILENT | 1 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after | table.n: SILENT | 2 | at 3 4
-packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | import() | counter: SILENT | 1 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | import() | table.n: SILENT | 2 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | require() | counter: SILENT | 1 | at 3 4
@@ -17,12 +15,10 @@ packed beside preloads that mock | project.vi.mock.spy.hoisted | import() | coun
 packed beside preloads that mock | project.vi.mock.spy.hoisted | import() | table.n: SILENT | 2 | at 3 4
 packed beside preloads that mock | project.vi.mock.spy.hoisted | require() | counter: SILENT | 1 | at 3 4
 packed beside preloads that mock | project.vi.mock.spy.hoisted | require() | table.n: SILENT | 2 | at 3 4
-packed | project.vi.doMock.factory.test | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
 packed | project.vi.mock.factory.hoisted | after namespace | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.factory.hoisted | after namespace | table.n: SILENT | 2 | at 3 4
 packed | project.vi.mock.factory.hoisted | after | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.factory.hoisted | after | table.n: SILENT | 2 | at 3 4
-packed | project.vi.mock.factory.hoisted | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
 packed | project.vi.mock.factory.hoisted | import() | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.factory.hoisted | import() | table.n: SILENT | 2 | at 3 4
 packed | project.vi.mock.factory.hoisted | require() | counter: SILENT | 1 | at 3 4
@@ -35,13 +31,10 @@ packed | project.vi.mock.spy.hoisted | import() | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.spy.hoisted | import() | table.n: SILENT | 2 | at 3 4
 packed | project.vi.mock.spy.hoisted | require() | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.spy.hoisted | require() | table.n: SILENT | 2 | at 3 4
-project.vi.doMock.factory.test.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
-project.vi.doMock.factory.test.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
 project.vi.mock.factory.hoisted.isolate | after namespace | counter: SILENT | 1 | at 3 4
 project.vi.mock.factory.hoisted.isolate | after namespace | table.n: SILENT | 2 | at 3 4
 project.vi.mock.factory.hoisted.isolate | after | counter: SILENT | 1 | at 3 4
 project.vi.mock.factory.hoisted.isolate | after | table.n: SILENT | 2 | at 3 4
-project.vi.mock.factory.hoisted.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
 project.vi.mock.factory.hoisted.isolate | import() | counter: SILENT | 1 | at 3 4
 project.vi.mock.factory.hoisted.isolate | import() | table.n: SILENT | 2 | at 3 4
 project.vi.mock.factory.hoisted.isolate | require() | counter: SILENT | 1 | at 3 4
@@ -50,7 +43,6 @@ project.vi.mock.factory.hoisted.one-realm | after namespace | counter: SILENT | 
 project.vi.mock.factory.hoisted.one-realm | after namespace | table.n: SILENT | 2 | at 3 4
 project.vi.mock.factory.hoisted.one-realm | after | counter: SILENT | 1 | at 3 4
 project.vi.mock.factory.hoisted.one-realm | after | table.n: SILENT | 2 | at 3 4
-project.vi.mock.factory.hoisted.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
 project.vi.mock.factory.hoisted.one-realm | import() | counter: SILENT | 1 | at 3 4
 project.vi.mock.factory.hoisted.one-realm | import() | table.n: SILENT | 2 | at 3 4
 project.vi.mock.factory.hoisted.one-realm | require() | counter: SILENT | 1 | at 3 4
@@ -123,11 +115,3 @@ project.vi.mock.spy.hoisted.one-realm | import() | counter: SILENT | 1 | at 3 4
 project.vi.mock.spy.hoisted.one-realm | import() | table.n: SILENT | 2 | at 3 4
 project.vi.mock.spy.hoisted.one-realm | require() | counter: SILENT | 1 | at 3 4
 project.vi.mock.spy.hoisted.one-realm | require() | table.n: SILENT | 2 | at 3 4
-typed-package.vi.doMock.factory.test.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
-typed-package.vi.doMock.factory.test.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
-typed-package.vi.mock.factory.hoisted.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
-typed-package.vi.mock.factory.hoisted.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
-untyped-package.vi.doMock.factory.test.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
-untyped-package.vi.doMock.factory.test.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
-untyped-package.vi.mock.factory.hoisted.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
-untyped-package.vi.mock.factory.hoisted.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4

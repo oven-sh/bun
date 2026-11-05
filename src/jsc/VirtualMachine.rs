@@ -5541,9 +5541,15 @@ impl VirtualMachine {
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
-        let mut source_to_use: &[u8] = if !is_special_source {
+        let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
-                bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
+                match bun_resolver::fs::PathName::init(source).dir_with_trailing_slash() {
+                    // `createRequire("/")` looks from "/noop.js" (NodeModuleModule.cpp), whose folder is "/". An executable took "./" for its own root.
+                    b"./" if self.finds_entry_points_by_path && source == b"/noop.js" => {
+                        &source[..1]
+                    }
+                    folder => folder,
+                }
             } else {
                 source
             }
@@ -5555,15 +5561,6 @@ impl VirtualMachine {
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-        // A relative name means a file beside its importer. From the root it would find another file of that name.
-        let is_beside_importer = bun_paths::is_absolute(source_to_use)
-            && [&b"./"[..], b"../", b".\\", b"..\\"]
-                .iter()
-                .any(|start| normalized_specifier.starts_with(start));
-        let mut may_retry_from_root =
-            self.finds_entry_points_by_path && !is_special_source && !is_beside_importer;
-        let mut source_before_root: Option<&[u8]> = None;
-        let mut has_read_folders_again = false;
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -5576,41 +5573,13 @@ impl VirtualMachine {
                 import_kind,
                 global_cache,
             ) {
-                ResultUnion::Success(r)
-                    if source_before_root.is_none_or(|asked| {
-                        bun_resolver::standalone_module_graph::lies_in_root_of_executable(
-                            asked,
-                            source_to_use,
-                        )
-                    }) || r
-                        .flags
-                        .contains(bun_resolver::ResultFlags::IS_STANDALONE_MODULE)
-                        || r.path_const().is_some_and(|path| {
-                            bun_options_types::standalone_path::is_bun_standalone_file_path(
-                                path.text,
-                            ) || crate::compiled_program::find_entry_point_by_source_path(path.text)
-                                .is_some()
-                        }) =>
-                {
-                    break r;
-                }
+                ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
-                ResultUnion::Success(_) | ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                    if core::mem::take(&mut may_retry_from_root)
-                        && let Some(root) = self
-                            .standalone_module_graph
-                            .map(|graph| graph.base_public_path_with_default_suffix())
-                            .filter(|root| !source_to_use.starts_with(root))
-                    {
-                        source_before_root = Some(source_to_use);
-                        source_to_use = root;
-                        retry_on_not_found = !has_read_folders_again;
-                        continue;
-                    }
+                ResultUnion::Pending(_) | ResultUnion::NotFound => {
                     if !retry_on_not_found {
                         if let Some(chai) = self.resolve_chai_next_to_vitest(
                             normalized_specifier,
-                            source_before_root.unwrap_or(source_to_use),
+                            source_to_use,
                             import_kind,
                         ) {
                             break chai;
@@ -5618,15 +5587,6 @@ impl VirtualMachine {
                         return Err(crate::CrateError::ModuleNotFound);
                     }
                     retry_on_not_found = false;
-                    has_read_folders_again = true;
-                    // A file that was written since the folder of the importer was read is looked for from there again, and then from the root.
-                    if let Some(asked) = source_before_root
-                        .take()
-                        .filter(|asked| bun_paths::is_absolute(asked))
-                    {
-                        source_to_use = asked;
-                        may_retry_from_root = true;
-                    }
 
                     // SAFETY: thread-local heap allocation; sole `&mut` on the JS
                     // thread for the duration of the bust below.

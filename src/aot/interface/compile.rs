@@ -22,6 +22,7 @@ pub struct Compilation {
     pub starts_workers_from_unseen_code: bool,
     pub names_of_worker_files: Vec<EntryPointPaths>,
     pub names_followed: Vec<FollowedName>,
+    pub names_plugin: bool,
     pub root_folders_spelled: Vec<u8>,
     pub holds_source_paths: bool,
     pub program_files: Vec<EntryPointPaths>,

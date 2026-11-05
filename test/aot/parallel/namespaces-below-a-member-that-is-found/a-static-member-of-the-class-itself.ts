@@ -1,4 +1,4 @@
-class Shape {
+class Shape { // @ts-expect-error
   static Tools: any = { own: true };
 }
 // @ts-ignore

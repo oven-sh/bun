@@ -178,9 +178,6 @@ impl Removable<'_, '_> {
         if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {
             return true;
         }
-        if !self.stack.is_safe_to_recurse() {
-            return false;
-        }
         match hir[expression].kind {
             ExprKind::Missing
             | ExprKind::This
@@ -334,9 +331,6 @@ impl Removable<'_, '_> {
         let expression = hir.skip_type_assertions(expression);
         if self.literal(expression).is_some() {
             return true;
-        }
-        if !self.stack.is_safe_to_recurse() {
-            return false;
         }
         match hir[expression].kind {
             ExprKind::Unary { .. } => true,

@@ -8,7 +8,7 @@ function all(items: Iterable<number>) { return [...items].length; }
 function* counts(upTo: number) { for (let at = 1; at <= upTo; at++) yield at; }
 let total = 0;
 let kept: unknown[] = [];
-for (let round = 0; round < 40; round++) {
+for (let round = 0; round < 40; round++) { // @ts-expect-error
   total += two(new Counts(3)) + all(new Counts(5)) + two(counts(4)) + all(counts(6));
   kept = [];
   Bun.gc(true);

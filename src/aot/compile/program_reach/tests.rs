@@ -359,6 +359,7 @@ fn assert_same_on_any_number_of_threads(
             graph: &graph,
             known_helpers: bind_input.known_helpers,
             removable: RemovableOptions::default(),
+            counts_executions: false,
             any_file_is_named_at_run_time: false,
             files_are_named_out_of_sight: false,
             isolates_code_from_disk: false,

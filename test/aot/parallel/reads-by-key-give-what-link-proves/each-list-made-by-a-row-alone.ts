@@ -11,7 +11,7 @@ const base: N[] = []; base.push({ v: 1 }, { v: 2 }, { v: 3 });
 { const l = base.slice(1); { const got: string[] = []; for (let i = 0; i < hidden<number>("4"); i++) got.push(say(l[i])); out.push(got.join()); } }
 { const l = base.concat(["more" as any]); { const got: string[] = []; for (let i = 0; i < hidden<number>("4"); i++) got.push(say(l[i])); out.push(got.join()); } }
 { const l = Array.from(base, n => n.v + 0.5); { const got: string[] = []; for (let i = 0; i < hidden<number>("4"); i++) got.push(say(l[i])); out.push(got.join()); } }
-{ const l = [...base, 9 as any]; { const got: string[] = []; for (let i = 0; i < hidden<number>("4"); i++) got.push(say(l[i])); out.push(got.join()); } }
+{ const l = [...base, 9 as any]; { const got: string[] = []; for (let i = 0; i < hidden<number>("4"); i++) got.push(say(l[i])); out.push(got.join()); } } // @ts-expect-error
 { const l = Array.of(1, "two"); { const got: string[] = []; for (let i = 0; i < hidden<number>("4"); i++) got.push(say(l[i])); out.push(got.join()); } }
 { const l = base.flatMap(n => [n, n.v]); { const got: string[] = []; for (let i = 0; i < hidden<number>("4"); i++) got.push(say(l[i])); out.push(got.join()); } }
 { const l = Object.keys(base); { const got: string[] = []; for (let i = 0; i < hidden<number>("4"); i++) got.push(say(l[i])); out.push(got.join()); } }

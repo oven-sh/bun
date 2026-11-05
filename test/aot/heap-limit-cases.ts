@@ -2354,7 +2354,7 @@ console.log(caught, made > 0, places > 0, small.length, taken.length);
         );
 
     inPart(test.skipIf(!isLinux || isASAN))(
-      "the threads that a collection starts are up before the program goes on",
+      "a collection starts no thread where the address space is limited",
       async () => {
         // A typed array takes its bytes alone, an ArrayBuffer a small block as well.
         using folder = tempDir("aot-heap-limit", {
@@ -2365,13 +2365,15 @@ console.log("alive");
 `,
         });
         await build(String(folder));
-        // Each program starts 64 threads, so 20 run at once.
+        // A thread that starts where nothing is left finds no memory for its first blocks. Under some limit the program has taken the last piece just as its first collection begins:
+        // which limit that is hangs on what the start of the process maps, so a row of them is tried.
+        const limits = [...Array.from({ length: 16 }, (_, step) => 557056 + step * 16384), 1048576, 4194304, 4194304, 4194304, 4194304];
         const runs: Awaited<ReturnType<typeof run>>[] = [];
-        for (let batch = 0; batch < 5; batch++) {
+        for (const limit of limits) {
           runs.push(
             ...(await Promise.all(
               Array.from({ length: 20 }, () =>
-                run(["sh", "-c", "ulimit -c 0 && ulimit -v 4194304 && exec ./program"], String(folder), {
+                run(["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`], String(folder), {
                   BUN_JSC_numberOfGCMarkers: "64",
                 }),
               ),

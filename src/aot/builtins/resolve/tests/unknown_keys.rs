@@ -1,6 +1,16 @@
 use super::*;
 use crate::builtins::{AsksOfText, RuntimeUses};
 
+fn uses_of_text_that_only_may_hand_values_to_natives() -> RuntimeUses {
+    RuntimeUses {
+        asks: AsksOfText {
+            may_hand_values_to_natives: true,
+            ..AsksOfText::default()
+        },
+        ..RuntimeUses::default()
+    }
+}
+
 const SPELL_WHAT_NO_BINDING_STANDS_FOR: &[(&str, BuiltinId)] = &[
     ("f.sort();", BuiltinId::ArrayPrototypeSort),
     ("f?.sort();", BuiltinId::ArrayPrototypeSort),
@@ -184,19 +194,107 @@ fn a_text_that_a_program_spells_and_under_which_an_evaluator_hangs_is_a_name_rea
     }
     for source in ["f('flatMap');", "f('then');", "({ constructor: 1 });"] {
         with_case(PROGRAM, source, |case| {
-            assert_eq!(*case.resolved.uses(), RuntimeUses::default(), "{source}");
+            let expected = uses_of_text_that_only_may_hand_values_to_natives();
+            assert_eq!(*case.resolved.uses(), expected, "{source}");
         });
     }
 }
 
 #[test]
+fn a_text_that_is_not_asked_names_the_entries_that_it_names_when_it_is_asked() {
+    const NOT_ASKED: Setup = Setup {
+        is_text_asked: false,
+        ..PROGRAM
+    };
+    for source in [
+        "[1].flatMap(f); Promise.all([]);",
+        "Array.from(f); g.then(h); for (const a of b) {}",
+        "process.nextTick(f); g[h];",
+    ] {
+        let asked = with_case(PROGRAM, source, |case| case.resolved.uses().clone());
+        let not_asked = with_case(NOT_ASKED, source, |case| case.resolved.uses().clone());
+        assert_eq!(asked.functions, not_asked.functions, "{source}");
+        assert_eq!(asked.modules, not_asked.modules, "{source}");
+        assert_eq!(asked.exports_read, not_asked.exports_read, "{source}");
+        let AsksOfText {
+            members_read,
+            reads_by_unknown_key,
+            syntax,
+            may_hand_values_to_natives: _,
+        } = not_asked.asks;
+        assert!(
+            members_read.is_empty() && !reads_by_unknown_key && syntax.is_empty(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn a_key_that_is_a_number_asks_nothing() {
-    for setup in [PROGRAM, RUNTIME] {
-        for source in ASK_NOTHING {
-            with_case(setup, source, |case| {
-                assert_eq!(*case.resolved.uses(), RuntimeUses::default(), "{source}");
-            });
-        }
+    for source in ASK_NOTHING {
+        with_case(PROGRAM, source, |case| {
+            let expected = uses_of_text_that_only_may_hand_values_to_natives();
+            assert_eq!(*case.resolved.uses(), expected, "{source}");
+        });
+        with_case(RUNTIME, source, |case| {
+            assert_eq!(*case.resolved.uses(), RuntimeUses::default(), "{source}");
+        });
+    }
+}
+
+const ONLY_CALL_BUILT_INS_WITH_WRITTEN_PRIMITIVES: &[&str] = &[
+    "",
+    "console.log(1);",
+    "console.log('a', 2, true, false, null);",
+    "console.log('a'); console.table('b');",
+    "console['log'](1);",
+    "if (console.log('a')) console.log('b');",
+    "while (false) console.log('a');",
+    "let a = 1; const b = 'b';",
+    "class A {}",
+    "throw 'a';",
+];
+
+const MAY_HAND_A_VALUE_TO_A_NATIVE: &[&str] = &[
+    "console.log(a);",
+    "const a = 'a'; console.log(a);",
+    "function h(console) { console.log(1); }",
+    "console.log([1]);",
+    "console.log({ a: 1 });",
+    "console.log(() => {});",
+    "console.log(1 + 2);",
+    "console.log(-1);",
+    "console.log(`a${1}`);",
+    "console.log(1 as number);",
+    "console.log(String(1));",
+    "console.log(process.title);",
+    "console.log(console.log);",
+    "console.log(Math);",
+    "console.log(...a);",
+    "const log = console.log; log(1);",
+    "const a = console.log(1);",
+    "new Map();",
+    "f(1);",
+    "a.b(1);",
+    "'a'.at(0);",
+    "console.log`a`;",
+    "console.log(this);",
+    "console.log(undefined);",
+];
+
+#[test]
+fn a_text_that_only_calls_built_ins_with_written_primitives_asks_nothing_of_any_operand() {
+    for source in ONLY_CALL_BUILT_INS_WITH_WRITTEN_PRIMITIVES {
+        with_case(PROGRAM, source, |case| {
+            assert_eq!(*case.resolved.uses(), RuntimeUses::default(), "{source}");
+        });
+    }
+    for source in MAY_HAND_A_VALUE_TO_A_NATIVE {
+        with_case(PROGRAM, source, |case| {
+            let uses = case.resolved.uses();
+            let is_loud = uses.asks.may_hand_values_to_natives || uses.lets_in_what_nobody_names;
+            assert!(is_loud, "{source}");
+        });
     }
 }
 
@@ -217,8 +315,11 @@ fn a_key_that_nobody_knows_lets_in_what_nobody_names_and_in_the_library_asks_for
 }
 
 #[test]
-fn what_any_operand_may_be_asked_for_is_held_whatever_the_texts_ask() {
-    let held = RuntimeUses::of_asks(&AsksOfText::default(), Platforms::LINUX);
+fn what_any_operand_may_be_asked_for_is_held_where_a_value_may_reach_native_code() {
+    let of_quiet_texts = RuntimeUses::of_asks(&AsksOfText::default(), Platforms::LINUX);
+    assert_eq!(of_quiet_texts, RuntimeUses::default());
+    let asks = uses_of_text_that_only_may_hand_values_to_natives().asks;
+    let held = RuntimeUses::of_asks(&asks, Platforms::LINUX);
     for member in [
         BuiltinId::ArrayIteratorPrototypeNext,
         BuiltinId::GeneratorPrototypeNext,

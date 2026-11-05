@@ -16,7 +16,7 @@ function keep<T>(value: T): T {
   return value;
 }
 const at: number = JSON.parse("3");
-function deed(): void {
+function deed(): void { // @ts-expect-error
   const entry: Record<string | number, unknown> = label<Note>({ kind: "note", text: "t" }, "s");
   entry[at] = 1;
   entry[at + 1] = 2;

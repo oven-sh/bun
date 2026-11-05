@@ -3,7 +3,9 @@ use bun_aot_interface::Opaque;
 use bun_ast::Log;
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::atom::Interner;
+use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
+use bun_sema::program::Files;
 use bun_sema::session::Arena;
 use bun_trim::UsedFeatures;
 
@@ -13,6 +15,7 @@ use crate::diagnostics::log_diagnostic;
 use crate::engine::{self, EngineModuleId, EngineResult, RejectedOptionWord};
 use crate::load::data_modules::parse_json;
 use crate::load::source_provider::SourceProvider;
+use crate::modules::UnlinkedFiles;
 use crate::options::Options;
 use crate::report::{self, ReportEntry, ReportInput, ReportMessage};
 use crate::statistics::{
@@ -30,6 +33,7 @@ fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
         starts_workers_from_unseen_code,
         names_of_worker_files: compilation.started_workers.names,
         names_followed: compilation.started_workers.names_followed,
+        names_plugin: compilation.started_workers.names_plugin,
         root_folders_spelled: compilation.started_workers.root_folders_spelled,
         holds_source_paths: compilation.holds_source_paths,
         program_files: compilation.started_workers.program_files,
@@ -158,5 +162,9 @@ interface::define_linked_functions! {
 
     fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool {
         crate::load::asked_by_test_runner::imports_vitest(path, text)
+    }
+
+    fn bun_aot_name_values_of_unlinked_files<'a>(files: &'a Files<'_>) -> Box<dyn NamedValues + 'a> {
+        Box::new(UnlinkedFiles::new(files))
     }
 }

@@ -66,7 +66,7 @@ for (let turn = 0; turn < 4; turn++) {
   out.push([written(spread(stripped)), written(spreadAndMore(stripped)), written(spread(bare)), keysOf(spread(stripped) as Point)].join(" "));
   out.push(String(sumOf([whole, stripped, bare, whole])));
   // The name comes back behind the others.
-  out.push([written(storeA(stripped, 7)), keysOf(stripped), readA(stripped), written(whole)].join(" "));
+  out.push([written(storeA(stripped, 7)), keysOf(stripped), readA(stripped), written(whole)].join(" ")); // @ts-expect-error
   out.push([written(without(stripped)), written(without(without(whole))), written(withoutTwo(without(whole)))].join(" "));
   out.push(String(Object.getPrototypeOf(bare) === Object.prototype) + " " + Object.isExtensible(bare) + " " + (bare !== (whole as unknown)));
 }

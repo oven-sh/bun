@@ -83,17 +83,18 @@ export const socket = b.nativeCell(socketsCell);
 export const newSocket = b.union(b.instance("TCPSocket"), b.instance("TLSSocket")).fresh;
 const receivedChunk = b.union(b.instance("Buffer"), b.instance("Uint8Array").exactly, b.instance("ArrayBuffer")).fresh;
 
+// socket_body.rs: the error is one that native code makes of a number of the system or of TLS, what another handler has thrown (call_error_handler), or nothing.
 const socketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> = {
   open: [socket],
   data: [socket, receivedChunk],
-  close: [socket, b.any],
+  close: [socket, b.thrown],
   // A TLS socket passes a negative error number after a send has failed for good.
   drain: [socket, b.union(b.f64, b.undefined)],
-  error: [socket, b.any],
+  error: [socket, b.thrown],
   end: [socket],
   timeout: [socket],
-  connectError: [socket, b.any],
-  handshake: [socket, b.bool, b.any],
+  connectError: [socket, b.thrown],
+  handshake: [socket, b.bool, b.thrown],
   session: [socket, b.instance("Buffer").fresh],
   keylog: [socket, b.instance("Buffer").fresh],
   alpnCallback: [socket, b.union(b.string, b.undefined), b.instance("Buffer").fresh],

@@ -1,6 +1,6 @@
 use bun_sema::program::FileId;
 
-use crate::compile::testing::lower_program_with_limits;
+use crate::compile::testing::{lower_program_with_limits, with_lowering_inputs};
 use crate::ir::generated::{FieldForm, LayoutKind};
 use crate::ir::{Id, LayoutKey, Opcode};
 use crate::lower::{Fragment, LoweredFile, UnitTables};
@@ -271,6 +271,32 @@ fn whoever_requires_a_module_names_its_layout() {
     });
     assert!(is_named);
     assert!(!is_defined, "only its own file defines the layout");
+}
+
+#[test]
+fn names_of_every_module_are_listed_before_any_file_is_lowered() {
+    let files = [
+        (
+            "main.cjs",
+            "module.exports = Object.keys(require(\"./names.cjs\"));",
+        ),
+        (
+            "names.cjs",
+            "exports.b = 1; Object.defineProperty(exports, \"a\", { value: 2 });",
+        ),
+    ];
+    with_lowering_inputs(&files, |loaded, inputs, main| {
+        let created = inputs.names_created_on_exports;
+        assert!(created.of(main).is_empty());
+        let mut others = loaded.compiled_files().iter().filter(|&&file| file != main);
+        let names = others.next().expect("the program has a second module");
+        let listed: Vec<(&[u8], FieldForm)> = created
+            .of(*names)
+            .iter()
+            .map(|it| (loaded.atoms.bytes(it.name), it.form))
+            .collect();
+        assert_eq!(listed, [(&b"b"[..], PLAIN), (&b"a"[..], FIXED)]);
+    });
 }
 
 #[test]

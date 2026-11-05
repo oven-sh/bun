@@ -1500,6 +1500,12 @@ impl Run<'_> {
             if !ctx.runtime_options.sql_preconnect {
                 break 'do_postgres_preconnect;
             }
+            unsafe extern "C" {
+                safe fn Bun__canReadSqlAtStart(global: &JSGlobalObject) -> bool;
+            }
+            if !Bun__canReadSqlAtStart(global) {
+                crate::cli::startup_options::exit_for_sql_preconnect_without_sql();
+            }
             let preconnect = || -> bun_jsc::JsResult<()> {
                 let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
                     return Ok(());

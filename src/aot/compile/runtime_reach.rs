@@ -27,6 +27,7 @@ use crate::builtins::{
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
 use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
+use crate::load::runtime_roots::uses_of_what_start_reads;
 use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
 use crate::lower::collect_library_functions;
 use crate::modules::{Candidates, ModuleGraph, ModuleRef, SiteAnswer};
@@ -141,6 +142,7 @@ pub(crate) struct ReachInput<'a, 's> {
     pub library: &'a dyn Library<'s>,
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
+    pub used_at_start: &'a [BuiltinId],
     pub holds_what_unseen_code_finds: bool,
     pub can_load_code_at_run_time: bool,
 }
@@ -1262,6 +1264,11 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn reach_what_application_asks(&mut self, application: &Files<'_>, graph: &ModuleGraph) {
+        let input = self.input;
+        self.reach_uses(&uses_of_what_start_reads(
+            input.used_at_start,
+            input.platform,
+        ));
         let files = application.compiled_files().iter();
         let mut asks = AsksOfText::default();
         for &file in files.filter(|&&file| !asks_nothing_of_library(application, graph, file)) {
@@ -1481,6 +1488,7 @@ impl<'a, 's> Walk<'a, 's> {
                 replaced: &[],
                 runs_tests: false,
                 holds_language,
+                is_text_asked: !holds_language,
             };
             let facts = facts[text.file.idx()]
                 .as_ref()

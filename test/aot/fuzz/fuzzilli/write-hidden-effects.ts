@@ -7,7 +7,19 @@ export function writeSceneOfHiddenEffects(random: () => number, n: number): stri
   const chance = (percent: number) => random() * 100 < percent;
 
   // What is read beside the operation, and written by the hidden code.
-  const kindOfVariable = pick(["var", "var", "let", "let", "field", "element", "static", "captured", "captured"]);
+  const kindOfVariable = pick([
+    "var",
+    "var",
+    "var",
+    "var",
+    "let",
+    "let",
+    "field",
+    "element",
+    "static",
+    "captured",
+    "captured",
+  ]);
   const type = chance(80) ? "number" : "any";
   const [declared, R] = {
     var: [`var tally${n}: ${type} = 0;`, `tally${n}`],
@@ -57,6 +69,12 @@ export function writeSceneOfHiddenEffects(random: () => number, n: number): stri
     `figure.area(${R})`,
     `figure.area(${R})`,
     `figure.area(${R})`,
+    `figure.area(${R})`,
+    `figure.area(${R})`,
+    `figure.area(${R})`,
+    `figure.area(${R})`,
+    `figure["area"](${R})`,
+    `figure.area(${R}, ${R})`,
     `figure.area(${R}, ${R})`,
     `figure.area(${R}) + ${R}`,
     `${R} + figure.area(${R})`,
@@ -90,7 +108,7 @@ export function writeSceneOfHiddenEffects(random: () => number, n: number): stri
   ]);
   // Only what the expression names: a writer that nothing reaches is still a writer in sight.
   lines.push(...helpers.filter(line => form.includes(/^(?:const|class|function) (\w+)/.exec(line)![1])));
-  const work = chance(60)
+  const work = chance(75)
     ? ["  let work = 0;", "  for (let i = 0; i < 2; i++) work = (work + i) | 0;"]
     : ["  const work = 0;"];
   const turns = pick([3, 6, 6, 300]);

@@ -3723,6 +3723,86 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
+    fn is_context_sensitive_expression(&self, mut e: ExprId) -> bool {
+        let hir = self.f;
+        loop {
+            match hir[e].kind {
+                ExprKind::Fn(function) => {
+                    return !matches!(hir[function].kind, FnKind::Getter | FnKind::Setter)
+                        && self.b.fns[function.idx()].is_context_sensitive == Some(true);
+                }
+                ExprKind::Yield { value, .. } => {
+                    if value.is_none() {
+                        return false;
+                    }
+                    e = value;
+                }
+                ExprKind::Object(props) => {
+                    return props.iter().any(|p| {
+                        matches!(hir[p].kind, PropKind::Init | PropKind::Method)
+                            && hir[p].value.is_some()
+                            && self.is_context_sensitive_expression(hir[p].value)
+                    });
+                }
+                ExprKind::Array(items) => {
+                    return hir
+                        .ids(items)
+                        .any(|item| self.is_context_sensitive_expression(item));
+                }
+                ExprKind::Cond { branches, .. } => {
+                    let Branches { yes, no } = hir.branches(branches);
+                    if self.is_context_sensitive_expression(yes) {
+                        return true;
+                    }
+                    e = no;
+                }
+                ExprKind::Binary {
+                    op: BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } => {
+                    if self.is_context_sensitive_expression(right) {
+                        return true;
+                    }
+                    e = left;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    fn is_context_sensitive_function(
+        &self,
+        f: &Func,
+        returns: IdList<StmtId>,
+        yields: IdList<ExprId>,
+    ) -> bool {
+        let hir = self.f;
+        if f.type_params.is_empty() {
+            let lacks_a_type = f.this_param.is_some() && f.this_ty(hir).is_none()
+                || f.params.iter().any(|p| hir[p].ty.is_none());
+            if lacks_a_type || f.kind != FnKind::Arrow && f.this_param.is_none() && self.seen_this {
+                return true;
+            }
+            let returns_one = f.ret.is_none()
+                && match f.body {
+                    FnBody::None => false,
+                    FnBody::Expr(body) => self.is_context_sensitive_expression(body),
+                    FnBody::Block(_) => self.b.ids[returns.range()].iter().any(|&s| {
+                        matches!(hir[StmtId(s)].kind, StmtKind::Return(value)
+                            if value.is_some() && self.is_context_sensitive_expression(value))
+                    }),
+                };
+            if returns_one {
+                return true;
+            }
+        }
+        f.flags.contains(Flags::GENERATOR)
+            && self.b.ids[yields.range()]
+                .iter()
+                .any(|&y| self.is_context_sensitive_expression(ExprId(y)))
+    }
+
     fn func(&mut self, id: FnId, owner: FnOwner) {
         let f = &self.f[id];
         self.b.fns[id.idx()].owner = owner;
@@ -3973,6 +4053,11 @@ impl<'f, 's> Binder<'f, 's> {
             end,
             exit,
             contains_this: self.seen_this,
+            is_context_sensitive: Some(self.is_context_sensitive_function(
+                f,
+                IdList::new(rs, rl),
+                IdList::new(ys, yl),
+            )),
         };
         // `ContainerFlagsPropagatesThisKeyword`. An index signature isn't a control flow container
         // at all.

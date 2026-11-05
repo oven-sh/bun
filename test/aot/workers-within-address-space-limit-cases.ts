@@ -447,7 +447,7 @@ if (Bun.isMainThread) {
       } catch (error) {
         if (!(error instanceof TypeError)) throw error;
       }
-    });
+    }); // @ts-expect-error
     heldUp.worker.postMessage("block");
     await heldUp.isHeldUp;
     await Bun.sleep(200);

@@ -1,22 +1,19 @@
 use std::num::NonZeroUsize;
 
+use bun_aot::builtins::name_values_of_unlinked_files;
 use bun_aot::statistics::{LimitId, LimitValues};
 use bun_core::strings;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::{JSGlobalObject, JsError, JsResult};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
-use bun_sema::atom::{Atom, Interner};
-use bun_sema::bind::{
-    Bound, LinkedBinding, LoadedValue, ReferentContext, StaticReferent, SymbolId, static_referent,
-};
+use bun_sema::atom::Interner;
 use bun_sema::check::aot::{
-    BuiltinClassIndex, BuiltinTypePath, BuiltinTypeSymbols, Denotation, FileOrigin, NamedValue,
-    NamedValues, QueryInputs, write_queries,
+    BuiltinClassIndex, BuiltinTypePath, BuiltinTypeSymbols, Denotation, FileOrigin, QueryInputs,
+    write_queries,
 };
 use bun_sema::fold::FoldInputs;
-use bun_sema::hir::{ExprId, File};
-use bun_sema::program::{FileId, Files, ReadingNoTrees};
+use bun_sema::program::{Files, ReadingNoTrees};
 use bun_sema::resolve::{AOT_CONDITION, CodeOptions, Host};
 use bun_sema::session::Session;
 use bun_sema_driver::host::from_native;
@@ -56,61 +53,6 @@ const TYPE_PATHS: [BuiltinTypePath<'static>; 11] = [
     global_type_path(6, 0, &["Request"], Denotation::Exact),
     global_type_path(7, 0, &["Intl", "DateTimeFormat"], Denotation::Exact),
 ];
-
-/// The files alone. The links between modules and the table of built-ins belong to the compiler, so
-/// an import or a global names nothing here and no call loads a module.
-struct UnlinkedFiles<'a, 's> {
-    files: &'a Files<'s>,
-}
-
-impl<'s> ReferentContext<'s> for UnlinkedFiles<'_, 's> {
-    type Builtin = ();
-    type Module = ();
-
-    fn hir(&self, file: FileId) -> &File<'s> {
-        self.files.hir(file)
-    }
-
-    fn bound(&self, file: FileId) -> &Bound<'s> {
-        self.files.bound(file)
-    }
-
-    fn builtin_of_expression(&self, _: FileId, _: ExprId) -> Option<()> {
-        None
-    }
-
-    fn builtin_member(&self, _: (), _: Atom) -> Option<()> {
-        None
-    }
-
-    fn linked_binding(&self, _: FileId, _: SymbolId) -> LinkedBinding<(), ()> {
-        LinkedBinding::Unknown
-    }
-
-    fn module_export(&self, _: (), _: Atom) -> LinkedBinding<(), ()> {
-        LinkedBinding::Unknown
-    }
-
-    fn loaded_value(&self, _: FileId, _: ExprId) -> Option<LoadedValue<()>> {
-        None
-    }
-
-    fn is_dead_store(&self, file: FileId, target: ExprId) -> bool {
-        self.files.analysis(file).decisions.is_dead_expr(target)
-    }
-}
-
-impl NamedValues for UnlinkedFiles<'_, '_> {
-    fn find_named_value(&self, file: FileId, expression: ExprId) -> Option<NamedValue> {
-        match static_referent(self, file, expression).referent {
-            StaticReferent::Class(class) => Some(NamedValue::Class(class)),
-            StaticReferent::Function(function) => Some(NamedValue::Function(function)),
-            StaticReferent::Builtin(())
-            | StaticReferent::Namespace(_)
-            | StaticReferent::Unknown(_) => None,
-        }
-    }
-}
 
 fn write_diagnostic(reported: &BuildDiagnostic, files: &Files<'_>, root: &[u8], out: &mut Vec<u8>) {
     let diagnostic = &reported.diagnostic;
@@ -189,12 +131,12 @@ pub(crate) fn describe_checker_queries(
     let files_to_lower = files.compiled_files();
     let roles = decide_roles(&loaded, &host, &request, files_to_lower);
     let builtin_types = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, Box::new(|| &[]));
-    let named_values = UnlinkedFiles { files };
+    let named_values = name_values_of_unlinked_files(files);
     let inputs = QueryInputs {
         roles: &roles.roles,
         checked_elsewhere: &[],
         builtin_types: &builtin_types,
-        named_values: &named_values,
+        named_values: &*named_values,
         max_inference_nodes: limits.get(LimitId::MaxInferenceNodes),
         limits: limits.for_queries(),
     };

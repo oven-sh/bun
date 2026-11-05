@@ -79,6 +79,7 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         replaced: &[],
         runs_tests: false,
         holds_language: false,
+        is_text_asked: true,
     });
     then(&LibrarySource {
         hir: &hir,

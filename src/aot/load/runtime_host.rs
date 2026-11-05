@@ -213,6 +213,7 @@ impl CodeHost for RuntimeHost<'_> {
             replaced: self.replaced_builtins,
             runs_tests: false,
             holds_language: self.reach.is_none(),
+            is_text_asked: self.reach.is_some(),
         };
         let source = parsed_source_mut(payload);
         let answers =

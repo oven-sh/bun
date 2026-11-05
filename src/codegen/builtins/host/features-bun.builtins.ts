@@ -199,7 +199,7 @@ export default b.declarations(
       "printSource",
     ),
   ),
-  extendAll(["Ffi"], "bun:ffi", "%FFI%"),
+  extendAll(["Ffi"], "bun:ffi", "%FFI%", "%FFICallback%"),
 
   extendAll(["Plugin", ...runtimeTranspilerFeatures], "Bun.plugin"),
 

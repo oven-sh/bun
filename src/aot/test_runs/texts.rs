@@ -605,6 +605,7 @@ impl<'t> Look<'t> {
             replaced: &[],
             runs_tests: true,
             holds_language: true,
+            is_text_asked: false,
         });
         let tree = Tree {
             hir: &hir,

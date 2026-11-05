@@ -23,7 +23,7 @@ function from(pattern: RegExp, at: number, text: string) {
 }
 for (const at of [0, 1, 4, 5, 100, -1, 1.5, NaN]) console.log(at, from(/b/g, at, "abcab"), from(/b/y, at, "abcab"), from(/b/, at, "abcab"));
 const frozen = Object.freeze(/x/g);
-try {
+try { // @ts-expect-error
   frozen.lastIndex = 2;
   console.log("stored", frozen.lastIndex);
 } catch (error) {

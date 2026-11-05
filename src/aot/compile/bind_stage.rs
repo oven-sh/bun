@@ -274,10 +274,12 @@ impl Build<'_> {
             beside: &beside,
         });
         if project == ProjectId::Application
-            && self.options.load.runs_tests
             && crate::load::contents::load_names::mentions_plugin(view.files())
         {
-            graph.set_lists_names_of_statements();
+            self.started_workers.names_plugin = true;
+            if self.options.load.runs_tests {
+                graph.set_lists_names_of_statements();
+            }
         }
         if project == ProjectId::Application && contents.stores_loader_functions {
             graph.set_asks_loader_functions();
@@ -329,6 +331,7 @@ impl Build<'_> {
                     graph: &graph,
                     known_helpers: &known_helpers,
                     removable: self.options.removable,
+                    counts_executions: self.options.aot.counts_executions,
                     any_file_is_named_at_run_time: files_are_named_out_of_sight
                         || (!self.stays_in_compiled_files && self.options.load.runs_tests),
                     files_are_named_out_of_sight,
@@ -366,6 +369,9 @@ impl Build<'_> {
                     }
                 }
                 finish_modules(&mut graph, &reached);
+                if reached.stores_loader_function {
+                    graph.set_computed_names_ask_loader_functions();
+                }
                 steps.end_with(|| format!("{project_name}: finish modules"));
                 if !self.options.load.runs_tests {
                     for &replaced in &reached.replaced_loader_hooks {

@@ -16,7 +16,9 @@ use crate::load::fold_inputs::{
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
-use crate::load::runtime_roots::{FurtherLibraryCode, RuntimeRoots, collect_runtime_roots};
+use crate::load::runtime_roots::{
+    FurtherLibraryCode, RuntimeRoots, builtins_used_at_start, collect_runtime_roots,
+};
 use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
@@ -468,7 +470,9 @@ impl<'a> Build<'a> {
         let serves_unseen_code = options.can_load_code_at_run_time();
         #[cfg(test)]
         let serves_unseen_code = serves_unseen_code || self.keeps_library_code_without_names;
+        let used_at_start = builtins_used_at_start(options.aot);
         let further = FurtherLibraryCode {
+            used_at_start: &used_at_start,
             serves_unseen_code,
             loads_code_from_disk: options.aot.loads_code_from_disk,
             runs_tests: options.load.runs_tests,

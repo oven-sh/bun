@@ -1300,6 +1300,35 @@ const viewAtPointer = (returns: b.TableType) =>
     implementation: b.generic,
   }) satisfies b.FunctionField;
 
+// ffi_body.rs generate_symbol_for_function(): of a signature `args` is read as an own property and must be a list of type numbers or texts; `threadsafe`, `returns` and
+// `ptr` are read through the prototype chain, and so is a hole of `args`. A String object in `args` and whatever lies under `returns` are converted to a text; `ptr` never is.
+// generate_symbols(): an object with a signature under each of its own names. Nothing is retained, and no error message formats a value.
+const signatureFields = b.named("args", "threadsafe", "returns", "ptr");
+const signature = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", signatureFields)];
+const signaturesByName = [b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", signatureFields)];
+// One that refuses its operands answers the error in place of throwing it: a new Error or TypeError. What code of an operand throws, it throws.
+const readingSignatures = (made: b.TableType) =>
+  ({
+    returns: b.union(made, b.instance("Error")),
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    reads: externalState,
+    writes: externalState,
+    implementation: b.generic,
+  }) satisfies Partial<b.FunctionField>;
+// JSFFICString.cpp: called or constructed it answers a text and no object: the bytes at the address, up to a zero or `byteLength` of them. Without an address the text is empty.
+const textAtPointer = {
+  args: { ptr: b.any.optional, byteOffset: b.any.optional, byteLength: b.any.optional },
+  returns: b.string,
+  capability: "heap",
+  throws: true,
+  uses: { ptr: b.inspected, byteOffset: b.inspected, byteLength: b.inspected },
+  reads: rawMemoryHeaps,
+  constructable: true,
+  implementation: b.generic,
+} satisfies b.FunctionField;
+
 // constructDNSObject in BunObject.cpp puts them on Bun.dns. Each answers a promise of the records.
 const queriesOfDNS = [
   "lookupService",
@@ -1613,12 +1642,57 @@ export default b.declarations(
   }),
   // bun:ffi calls its own throwing wrappers (ffi.bind.ts) instead of these six, and deletes callback, closeCallback and cfunction when it loads. cfunction, dlopen and linkSymbols load native code.
   b.namespace("Bun.FFI", {
-    ...Object.fromEntries(
-      ["callback", "cfunction", "closeCallback", "dlopen", "linkSymbols", "viewSource"].map(name => [
-        name,
-        b.otherwiseBy(b.generic),
-      ]),
-    ),
+    // Native code calls the function with primitives only and converts its result to the declared return type.
+    callback: {
+      ...readingSignatures(b.instance("FFICallback")),
+      args: { options: b.any.optional, callback: b.any.optional },
+      uses: {
+        options: signature,
+        callback: [
+          b.retained,
+          b.called({
+            afterwards: "TouchesOnlyWhatRowNames",
+            times: "PerEvent",
+            this: b.undefined,
+            args: [],
+            spreadArgs: b.union(b.f64, b.bigint, b.bool, b.string, b.strictNull),
+            result: "Escapes",
+          }),
+        ],
+      },
+    },
+    // JSFFIFunction.cpp of JavaScriptCore: a function that enters the machine code at `ptr`.
+    cfunction: {
+      ...readingSignatures(b.callable),
+      args: { options: b.any.optional, name: b.any.optional },
+      uses: { options: signature, name: converted },
+    },
+    // A callback that is closed has no address any more. Anything else is left as it is.
+    closeCallback: {
+      args: { callback: b.any.optional },
+      capability: "heap",
+      uses: { callback: [...handedOver, b.definesName(["ptr"], b.strictNull)] },
+      reads: externalState,
+      writes: externalState,
+      implementation: b.generic,
+    },
+    // Without a `name` it throws.
+    dlopen: {
+      ...readingSignatures(b.instance("FFI")),
+      args: { name: b.string.loose.nullable, symbols: b.any.optional },
+      uses: { name: converted, symbols: signaturesByName },
+    },
+    linkSymbols: {
+      ...readingSignatures(b.instance("FFI")),
+      args: { symbols: b.any.optional },
+      uses: { symbols: signaturesByName },
+    },
+    // The text of the C wrapper of each signature, or one line of text for a callback.
+    viewSource: {
+      ...readingSignatures(b.union(b.string, b.instance("Array").holding({ element: b.string }))),
+      args: { symbols: b.any.optional, isCallback: b.bool.loose.optional },
+      uses: { symbols: signaturesByName },
+    },
     // Returns a TypeError for a bad argument. Once the pointer exists, native code, `read.*` and views created from the pointer can read and write the bytes.
     ptr: {
       args: { view: b.any.optional, byteOffset: b.any.optional },
@@ -1636,8 +1710,7 @@ export default b.declarations(
     },
     toArrayBuffer: viewAtPointer(b.instance("ArrayBuffer").fresh),
     toBuffer: viewAtPointer(b.instance("Buffer").fresh),
-    // `new CString(..)` answers with a string, which no row of a function says.
-    CString: b.property(b.any),
+    CString: textAtPointer,
   }),
   b.namespace(
     "Bun.FFI.read",
@@ -1649,6 +1722,18 @@ export default b.declarations(
     ),
   ),
   b.inherits("Bun.FFI.read", "Object.prototype"),
+  b.constructionOfFunction("Bun.FFI.CString", textAtPointer),
+  // ffi_body.rs dlopen(), link_symbols(), cc(): an object below Object.prototype that native code has made for the library, with a function under each name of the symbols. The accessor has no setter.
+  // An empty field reads as undefined.
+  b.method("%FFI%.prototype.symbols", {
+    getter: b.union(b.instance("Object"), b.undefined),
+    capability: "heap",
+    throws: true,
+    uses: { this: [b.readsContents(), b.writesContents(), b.reachableValuesStoredIn(b.result)] },
+    reads: externalState,
+    writes: externalState,
+    implementation: { how: "CachedGetter", cppClass: "Bun::Bindgen::Generated::JSFFI", member: "m_symbolsValue" },
+  }),
   b.namespace("Bun.dns", {
     ...Object.fromEntries(["ADDRCONFIG", "ALL", "V4MAPPED"].map(name => [name, b.property(b.f64)])),
     ...Object.fromEntries(queriesOfDNS.map(name => [name, answering(promiseOf(b.plainData))])),

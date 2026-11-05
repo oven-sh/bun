@@ -1,0 +1,24 @@
+# -- source: a-position-that-comes-round-and-lies-outside-the-text-begins-the-turn-again.ts
+# declare function sink(value: unknown): void;
+# function createScanner(text: string) {
+#   let pos = 0; const end = text.length;
+#   function scan(): number { let seen = 0; while (pos < end) { const ch = text.codePointAt(pos)!; if (ch >= 65 && ch <= 90) seen++; pos += ch >= 0x10000 ? 2 : 1; } return seen; }
+#   function all(): number { let sum = 0; for (let round = 0; round < 3; round++) { pos = round; sum += scan(); } return sum; }
+#   return { all, getPos: () => pos };
+# }
+# const scanner = createScanner("aB cD  eF".repeat(3));
+# sink(scanner.all() + scanner.getPos());
+# -- end of source
+# `pos` comes round the typed copy. Nothing proves it below the length of the text, and outside the text `codePointAt` gives undefined: where the two arms met, `ch` was undefined or an integer, boxed, and each
+# relation took it as a number. The turn has done nothing yet, so the arm outside begins it again in the other copy, and `ch` is an integer.
+# f2 = scan
+# OPTIONS: check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK-NOT: undefined|int
+# CHECK: GetStringCodeUnit
+# CHECK-NOT: undefined|int
+# CHECK: GreaterEq {{*}}form=Integers
+# CHECK-NOT: undefined|int
+# CHECK: PutEnvironmentField {{*}}field=1

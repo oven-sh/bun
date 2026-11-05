@@ -210,6 +210,7 @@ impl<'a> ReachWhileLoading<'a> {
             library: &library,
             names: input.names,
             platform: input.platform,
+            used_at_start: &[],
             holds_what_unseen_code_finds: false,
             can_load_code_at_run_time: false,
         };

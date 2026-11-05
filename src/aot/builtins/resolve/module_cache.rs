@@ -2,6 +2,7 @@ use super::SourceDialect;
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
 use super::resolver::Resolver;
+use super::written_members::holder_of;
 use crate::builtins::table::{self, BuiltinId};
 use bun_sema::atom::Atom;
 use bun_sema::bind::Parent;
@@ -62,6 +63,19 @@ impl Resolver<'_, '_> {
             self.output.tables_of_loaders_written.push(table);
         }
         self.output.loses_sight_of_module_cache |= may_be_written;
+    }
+
+    pub(super) fn note_holder_of_loader_functions_out_of_sight(
+        &mut self,
+        holder: ExprId,
+        id: BuiltinId,
+    ) {
+        let mut members = table::members(holder_of(id)).iter();
+        if self.input.dialect == SourceDialect::Program
+            && members.any(|&it| is_function_that_loader_calls(it) || is_table_of_loaders(it))
+        {
+            self.output.tables_of_loaders_written.push(holder);
+        }
     }
 
     fn find_key_that_call_deletes(&self, table: ExprId) -> Option<ExprId> {

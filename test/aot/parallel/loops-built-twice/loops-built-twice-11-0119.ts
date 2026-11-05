@@ -1,7 +1,7 @@
 function run(s: string, list: any, n: number) {
   let h: any = 0, g: any = 0, k: any = 1;
   for (let i1_47_1 = 0; i1_47_1 < s.length; i1_47_1++) {
-    g = (g * 33 ^ s.length) >>> 0;
+    g = (g * 33 ^ s.length) >>> 0; // @ts-expect-error
     k = k / 2 + s.codePointAt(i1_47_1);
     for (let i2_52_2 = 0; i2_52_2 < n; i2_52_2++) {
       k = -k + list[i1_47_1];

@@ -2,7 +2,7 @@
 // # a loop calls a method of what is declared a Map. For an instance of a class below Map the look "as its class made it" fails at every turn: the closed call behind it asks a site of its own, and is not looked up anew
 // # f3 = sweep
 // # RUN(SWEPT): bytes f3:Body mechanisms=all-Inlining
-// # SWEPT: CallMethodOfOneBuiltinClassAtSite.MapClear
+// # SWEPT: CallMethodOfBuiltinClassAtSite.MapClear
 // # LIBRARY: own
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

@@ -1,7 +1,7 @@
 // An object stands below another (assign onto created), where a getter and a setter stands under `slot`: add to (typed).
 class V { from: any; gone: any; constructor(i: number) { this.from = "here" + i; this.gone = i; } }
 class Plain { own = 1; }
-let kept: any[] = [];
+let kept: any[] = []; // @ts-expect-error
 function makeAbove(): any { return { get slot(this: any) { return this.hidden; }, set slot(v: any) { this.hidden = v; if (v && typeof v === "object") v.from = 42; } }; }
 function below(above: any): any { return Object.assign(Object.create(above), { own: 1 }); }
 function lengthOf(p: V) { return typeof p.from === "string" ? p.from.length : -1; }

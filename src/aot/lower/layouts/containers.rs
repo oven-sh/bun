@@ -12,7 +12,7 @@ use bun_sema::hir::{
     TextRange, is_moved_to_file_start,
 };
 use bun_sema::import_sites::JsxImport;
-use bun_sema::program::{FileId, Sym};
+use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::SharedSort;
 use rustc_hash::FxHashSet;
 
@@ -21,10 +21,74 @@ use super::object_types::can_be_field;
 use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Field, FieldForm, Layout, LayoutKind, LimitId, PositionFlags};
-use crate::ir::{DeclaredType, LayoutId, LayoutKey};
+use crate::ir::{DeclaredType, InParallel, LayoutId, LayoutKey, for_each_mut};
 use crate::lower::scope::{BindingRef, ScopeSlot};
-use crate::lower::{CheckerTypeId, FileLowering, module};
-use crate::modules::{DescribedPart, ModuleKind, ModuleRef, Shape, WrittenDescriptor};
+use crate::lower::{CheckerTypeId, FileInputs, FileLowering, module};
+use crate::modules::{DescribedPart, ModuleGraph, ModuleKind, ModuleRef, Shape, WrittenDescriptor};
+
+#[derive(Copy, Clone)]
+struct CreatedName {
+    name: Atom,
+    form: FieldForm,
+}
+
+pub struct NamesCreatedOnExports {
+    modules: Vec<(FileId, u32)>,
+    names: Vec<CreatedName>,
+}
+
+impl NamesCreatedOnExports {
+    pub fn collect(
+        files: &Files<'_>,
+        modules: &ModuleGraph,
+        inputs: &[Option<FileInputs<'_>>],
+        in_parallel: InParallel<'_>,
+    ) -> NamesCreatedOnExports {
+        let file_ids = (0..inputs.len() as u32).map(FileId);
+        let candidates = file_ids.filter(|&file| may_have_exports_layout(files, modules, file));
+        let mut found: Vec<(FileId, Vec<CreatedName>)> =
+            candidates.map(|file| (file, Vec::new())).collect();
+        for_each_mut(&mut found, in_parallel, &|(module, names)| {
+            if let Some(text) = ModuleText::of_module(files, inputs, *module) {
+                *names = list_created_names(&text);
+            }
+        });
+        found.retain(|(_, names)| !names.is_empty());
+        let name_count: usize = found.iter().map(|(_, names)| names.len()).sum();
+        let mut created = NamesCreatedOnExports {
+            modules: Vec::with_capacity(found.len()),
+            names: Vec::with_capacity(name_count),
+        };
+        for (module, names) in found {
+            created.modules.push((module, created.names.len() as u32));
+            created.names.extend(names);
+        }
+        created
+    }
+
+    fn of(&self, module: FileId) -> &[CreatedName] {
+        let Ok(at) = self.modules.binary_search_by_key(&module, |entry| entry.0) else {
+            return &[];
+        };
+        let start = self.modules[at].1 as usize;
+        let following = self.modules.get(at + 1);
+        let end = following.map_or(self.names.len(), |entry| entry.1 as usize);
+        &self.names[start..end]
+    }
+}
+
+fn may_have_exports_layout(files: &Files<'_>, modules: &ModuleGraph, module: FileId) -> bool {
+    if !modules.has_record(module)
+        || modules.kind(module) != ModuleKind::CommonJs
+        || modules.is_library(module)
+    {
+        return false;
+    }
+    match modules.shape(ModuleRef::File(module)) {
+        Shape::Value | Shape::AsToday => !files.bound(module).file_uses_arguments(),
+        Shape::EsModule | Shape::Names => false,
+    }
+}
 
 impl FileLowering<'_, '_, '_, '_> {
     fn find_container_position(&self, symbol: Sym) -> u32 {
@@ -51,22 +115,11 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn module_exports_layout(&mut self, module: FileId) -> Option<LayoutId> {
-        let modules = self.inputs.modules;
-        if !modules.has_record(module)
-            || modules.kind(module) != ModuleKind::CommonJs
-            || modules.is_library(module)
-        {
+        let files = self.queries.files();
+        if !may_have_exports_layout(files, self.inputs.modules, module) {
             return None;
         }
-        match modules.shape(ModuleRef::File(module)) {
-            Shape::Value | Shape::AsToday => {}
-            Shape::EsModule | Shape::Names => return None,
-        }
-        let bound = self.queries.files().bound(module);
-        if bound.file_uses_arguments() {
-            return None;
-        }
-        let file_symbol = bound.file_symbol.some()?;
+        let file_symbol = files.bound(module).file_symbol.some()?;
         let symbol = self.queries.canonical_symbol(module, file_symbol);
         if symbol.file != module || symbol.id != file_symbol {
             return None;
@@ -120,44 +173,21 @@ impl FileLowering<'_, '_, '_, '_> {
         {
             return true;
         }
-        let replaces_first = self.ask_module_text(self.file, replaces_exports_first);
-        !replaces_first.unwrap_or(false)
-    }
-
-    fn ask_module_text<R>(
-        &self,
-        module: FileId,
-        ask: impl FnOnce(&ModuleText<'_, '_>) -> R,
-    ) -> Option<R> {
-        let files = self.queries.files();
-        let (compiled, inputs) = (files.compiled(module)?, self.inputs.files[module.idx()]?);
-        Some(ask(&ModuleText {
-            hir: files.hir(module),
-            bound: files.bound(module),
-            decisions: &compiled.analysis.decisions,
-            builtins: inputs.builtins,
-            is_this_exports: !compiled.analysis.has_esm_syntax,
-        }))
+        !replaces_exports_first(&ModuleText {
+            hir: self.hir,
+            bound: self.bound,
+            decisions: self.decisions(),
+            builtins: self.builtins,
+            is_this_exports: !self.compiled.analysis.has_esm_syntax,
+        })
     }
 
     fn compute_exports_fields(&mut self, module: FileId) -> OwnFields {
-        let Some(creations) = self.ask_module_text(module, collect_creations) else {
-            return OwnFields::default().finish();
-        };
-        let mut creations = creations.unwrap_or_default();
-        creations.shared_sort_by_key(|it| (it.is_deferred, it.end, Reverse(it.start)));
-
+        let created = self.inputs.names_created_on_exports;
         let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
-        let mut created_names = FxHashSet::default();
         let mut fields = OwnFields::default();
-        for creation in creations {
-            if !created_names.insert(creation.name) {
-                continue;
-            }
-            let Some(form) = creation.form else {
-                continue;
-            };
-            let key = self.atom_key(creation.name);
+        for &CreatedName { name, form } in created.of(module) {
+            let key = self.atom_key(name);
             if !can_be_field(self, key) {
                 continue;
             }
@@ -247,6 +277,23 @@ struct ModuleText<'x, 's> {
     decisions: &'x Decisions<'s>,
     builtins: &'x ResolvedBuiltins,
     is_this_exports: bool,
+}
+
+impl<'x, 's> ModuleText<'x, 's> {
+    fn of_module(
+        files: &'x Files<'s>,
+        inputs: &[Option<FileInputs<'x>>],
+        module: FileId,
+    ) -> Option<ModuleText<'x, 's>> {
+        let (compiled, inputs) = (files.compiled(module)?, inputs[module.idx()]?);
+        Some(ModuleText {
+            hir: files.hir(module),
+            bound: files.bound(module),
+            decisions: &compiled.analysis.decisions,
+            builtins: inputs.builtins,
+            is_this_exports: !compiled.analysis.has_esm_syntax,
+        })
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -504,6 +551,21 @@ fn collect_creations(text: &ModuleText<'_, '_>) -> Option<Vec<Creation>> {
         creations.push(create_creation(text, name, form, node));
     }
     Some(creations)
+}
+
+fn list_created_names(text: &ModuleText<'_, '_>) -> Vec<CreatedName> {
+    let mut creations = collect_creations(text).unwrap_or_default();
+    creations.shared_sort_by_key(|it| (it.is_deferred, it.end, Reverse(it.start)));
+    let mut created_names = FxHashSet::default();
+    creations.retain(|it| created_names.insert(it.name));
+    let of_known_form = creations.iter().filter_map(|it| {
+        let form = it.form?;
+        Some(CreatedName {
+            name: it.name,
+            form,
+        })
+    });
+    of_known_form.collect()
 }
 
 struct Replacement {

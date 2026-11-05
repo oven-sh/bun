@@ -493,6 +493,7 @@ const lookedUpByNativeCode = [
   "execArgv",
   "nextTick",
   "noDeprecation",
+  "on",
   "reallyExit",
   "stderr",
   "stdin",
@@ -751,6 +752,8 @@ export default b.declarations(
     queuesTick.map(overload => ("returns" in overload ? overload : { ...overload, returns: b.instance("Object") })),
   ),
   b.inherits("process", "%EventEmitter%.prototype"),
+  // Object.prototype, until node:events is evaluated: jsFunctionMakeProcessInheritFrom lays its EventEmitter.prototype there.
+  b.inheritsFromUnknown("%EventEmitter%.prototype"),
   b.inherits("process.report", "Object.prototype"),
   changedByNativeCode.flatMap(name => b.extend(`process.${name}`, { mutability: "ChangesOnItsOwn" })),
   computedOnce.flatMap(name => b.extend(`process.${name}`, { mutability: "ConstantUnlessWritten" })),

@@ -290,6 +290,28 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // It calls what it finds as process.on, with "SIGWINCH" and the function. The method of native code tells the listeners for "newListener" and keeps the function, which from then on is listed as any listener is and called as any: on the object that a listener was last added through.
+  b.static(cpp("BunProcess.cpp", "jsFunctionListenForSizeOfTerminal"), {
+    args: { listener: b.any },
+    returns: b.undefined,
+    capability: "js",
+    throws: true,
+    usesFeature: ["ProcessListeners"],
+    uses: {
+      listener: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "PerEvent",
+          this: b.nativeMemory,
+          args: [],
+          spreadArgs: b.nativeMemory,
+          result: "Ignored",
+        }),
+      ],
+    },
+    implementation: b.hostCall,
+  }),
   // It keeps the function. The process object calls it when the process or the worker starts to exit: inside process.exit() and process.reallyExit(), and when nothing is left to do.
   b.static(cpp("BunProcess.cpp", "jsFunctionRunWhenProcessExits"), {
     // It refuses nothing: what is no object is as good as nothing.
@@ -309,6 +331,16 @@ export default b.declarations(
       ],
     },
     writes: externalState,
+    implementation: b.hostCall,
+  }),
+  // It asks what stands above `process`. Unless that is Object.prototype, or has the operand above it already, the operand goes above it: from then on whoever climbs from `process` or
+  // from a native emitter comes by the operand. `process` is the object of the realm, whatever the global of that name holds. Code runs only where a program has laid a proxy above `process`.
+  b.static(cpp("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom"), {
+    // It refuses nothing: what is no object goes nowhere.
+    args: { prototype: b.any.optional },
+    returns: b.undefined,
+    capability: "js",
+    uses: { prototype: [b.retained] },
     implementation: b.hostCall,
   }),
   b.static(cpp("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"), {

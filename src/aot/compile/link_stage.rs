@@ -4,7 +4,8 @@ use super::{BoundBuild, Build, FrontEndOutput, LoadedBuild};
 use crate::builtins::{BuiltinId, table};
 use crate::emit::FunctionsWithoutCode;
 use crate::ir::generated::{
-    ModuleFlags, ModuleKind, NameClass, OpenedName, ReplaceableBuiltin, SourceStamp,
+    BuiltinUsedAtStart, ModuleFlags, ModuleKind, NameClass, OpenedName, ReplaceableBuiltin,
+    SourceStamp,
 };
 use crate::ir::parallel::map_each;
 use crate::ir::{Id, ModuleId, StringId};
@@ -12,6 +13,7 @@ use crate::link::{
     self, LinkInput, LinkProject, LinkUnit, Linked, LinkedFunctions, ProgramModule,
     run_steps_beside,
 };
+use crate::load::runtime_roots::builtins_used_at_start;
 use crate::load::{ProgramFile, ProjectId};
 use crate::module_keys::{path_without_form, stamp_of_file};
 use crate::modules::Shape;
@@ -178,6 +180,10 @@ impl Build<'_> {
                                 );
                             }
                         }
+                        let used_at_start = builtins_used_at_start(self.options.aot).into_iter();
+                        program.builtins_used_at_start = used_at_start
+                            .map(|builtin| BuiltinUsedAtStart { builtin })
+                            .collect();
                         let atoms = &application.loaded.files().atoms;
                         for &(holder, name) in &loaded.contents.names_added_to_builtins {
                             let name = program.strings.intern(atoms.bytes(name));

@@ -745,7 +745,7 @@ struct Walk {
     /// `marks_of_walk` when the walk began, if it's for a name of an automatic type or, while the
     /// checker reads types alone, for a plain chain. While they stay the same, what it has found is
     /// final.
-    marks: Option<((u64, u64), (u64, u64, u64), (u64, u64))>,
+    marks: Option<((u64, u64), (u64, u64, u64), (u64, u64), (u64, u32))>,
     /// What the walk has found isn't final, or depends on where its reference is, other than
     /// through `initial_of`.
     is_unshareable: bool,
@@ -8170,6 +8170,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let Some(&cached) = self.flow_type_cache.get(&(file, e)) {
             // The entry was computed from an incomplete loop type.
+            self.flow_memo.reads_of_types_in_loops += 1;
             self.taint_from(depth);
             return cached;
         }
@@ -9254,15 +9255,24 @@ impl<'p, 's> Checker<'p, 's> {
         walk.marks == Some(self.marks_of_walk())
             && !self.relation_too_complex
             && self.reliability == 0
+            && self.inline_level == 0
+            && self.flow_memo.type_predicates_in_progress.is_empty()
+            && self.flow_analysis_disabled.is_empty()
     }
 
-    fn marks_of_walk(&self) -> ((u64, u64), (u64, u64, u64), (u64, u64)) {
+    fn marks_of_walk(&self) -> ((u64, u64), (u64, u64, u64), (u64, u64), (u64, u32)) {
         let memo = &self.flow_memo;
         let reads = (
             memo.reads_of_types_in_loops,
             memo.chains_asked_where_they_stand,
         );
-        (self.non_cacheable_mark(), self.interruptions(), reads)
+        let stand_ins = (self.taints, self.any_signature_reads);
+        (
+            self.non_cacheable_mark(),
+            self.interruptions(),
+            reads,
+            stand_ins,
+        )
     }
 
     /// FOR SPEED. `at..end` are antecedents of one label, as indices of `Bound::flow_edges`. Returns
@@ -9995,7 +10005,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypePredicateFromBody`: `x => x.kind === "a"` is a type guard without declaring one.
     pub(super) fn inferred_predicate(&mut self, file: FileId, func: FnId) -> Option<Predicate> {
-        let (body, before) = self.returned_expression_of_type_guard(file, func)?;
+        let written = &self.hir(file)[func];
+        if written.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || written.params.is_empty() {
+            return None;
+        }
         if let Some(cached_predicate) = self
             .p
             .type_predicates_from_body
@@ -10003,6 +10016,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return cached_predicate;
         }
+        let (body, before) = self.returned_expression_of_type_guard(file, func)?;
         // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`. A condition
         // evaluated below may call this function.
         if (self.flow_memo.type_predicates_in_progress).contains(&(file, func)) {
@@ -10024,11 +10038,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// True if every later `inferred_predicate` call for `func` returns the same result without
     /// computing anything.
     pub(super) fn is_inferred_predicate_settled(&self, file: FileId, func: FnId) -> bool {
-        self.returned_expression_of_type_guard(file, func).is_none()
-            || (self.p.type_predicates_from_body)
-                .get(&self.task, &(file, func))
-                .is_some()
-                && !(self.flow_memo.type_predicates_in_progress).contains(&(file, func))
+        let written = &self.hir(file)[func];
+        if written.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || written.params.is_empty() {
+            return true;
+        }
+        let is_stored = (self.p.type_predicates_from_body)
+            .get(&self.task, &(file, func))
+            .is_some();
+        match is_stored {
+            true => !(self.flow_memo.type_predicates_in_progress).contains(&(file, func)),
+            false => self.returned_expression_of_type_guard(file, func).is_none(),
+        }
     }
 
     /// Runs the syntax checks at the start of `getTypePredicateFromBody`. Returns the only

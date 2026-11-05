@@ -1173,6 +1173,17 @@ impl FileLowering<'_, '_, '_, '_> {
         is_listed || added.contains(&(BuiltinId::ObjectPrototype, name))
     }
 
+    fn collect_names_copied_from_literal(&mut self, source: ExprId, members: &mut Members) {
+        if let Ok(ty) = self.queries.expression_type(source)
+            && matches!(
+                self.queries.object_origin(ty),
+                ObjectOrigin::ObjectLiteral { .. }
+            )
+        {
+            self.collect_names_listed_by(ty, members);
+        }
+    }
+
     fn collect_literal_members(&mut self, literal: ExprId) -> Members {
         let hir = self.hir;
         let mut members = Members::new();
@@ -1184,7 +1195,11 @@ impl FileLowering<'_, '_, '_, '_> {
             let kind = match hir[property].kind {
                 PropKind::Init | PropKind::Shorthand => ObjectMemberKind::Field,
                 PropKind::Method => ObjectMemberKind::Method,
-                PropKind::Spread | PropKind::Getter | PropKind::Setter => continue,
+                PropKind::Spread => {
+                    self.collect_names_copied_from_literal(hir[property].value, &mut members);
+                    continue;
+                }
+                PropKind::Getter | PropKind::Setter => continue,
             };
             match hir.runtime_property_key(property) {
                 PropKey::Name(name) => members.push((self.name_key(name), kind)),
@@ -1292,6 +1307,29 @@ impl FileLowering<'_, '_, '_, '_> {
         (members.len() > number_written).then(|| self.untyped_layout(&members))
     }
 
+    fn find_layout_of_copied_names(&mut self, literal: ExprId) -> Option<LayoutId> {
+        let hir = self.hir;
+        let ExprKind::Object(properties) = hir[literal].kind else {
+            return None;
+        };
+        let mut copied = Members::new();
+        for property in properties.iter() {
+            if hir[property].kind == PropKind::Spread {
+                self.collect_names_copied_from_literal(hir[property].value, &mut copied);
+            }
+        }
+        if copied.is_empty() {
+            return None;
+        }
+        let ty = self.queries.expression_type(literal).ok()?;
+        let listed = self.queries.listed_members(ty);
+        if listed.is_ok_and(|listed| !listed.is_empty()) {
+            return None;
+        }
+        let members = self.collect_literal_members(literal);
+        Some(self.untyped_layout_made_at(&members, Some(literal)))
+    }
+
     pub(in crate::lower) fn literal_layout(&mut self, literal: ExprId) -> LayoutId {
         if let Some(&layout) = self.layouts.literals.get(&literal) {
             return layout;
@@ -1301,6 +1339,7 @@ impl FileLowering<'_, '_, '_, '_> {
             .find_contextual_layout(literal)
             .or_else(|| self.find_layout_of_assigned_names(literal))
             .or_else(|| self.find_layout_of_enclosing_list(literal))
+            .or_else(|| self.find_layout_of_copied_names(literal))
             .or_else(|| self.find_checked_layout(literal));
         let layout = checked.unwrap_or_else(|| {
             let members = self.collect_literal_members(literal);

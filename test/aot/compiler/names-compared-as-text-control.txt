@@ -325,6 +325,8 @@ finds src/sema/import_sites/call_sites.rs ==
     return name == known::eval;
 allows src/sema/import_sites/alternatives.rs a method of a list that is in hand
     return matches!(self.inputs.atoms.bytes(name), b"forEach" | b"map");
+allows src/sema/import_sites/alternatives.rs a method of a Set that is in hand
+    return object == mention && atoms.bytes(name) == b"add";
 allows src/sema/fold/folder_calls.rs a method of a list as it is written
     return self.atoms.bytes(name) != b"join";
 finds src/sema/fold/folder_calls.rs ==

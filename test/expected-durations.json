@@ -240,7 +240,15 @@
     "default": 21400,
     "asan": 85600
   },
+  "aot/a-path-made-from-the-working-directory-names-the-file-on-disk.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-path-that-is-missing-at-the-build-is-loaded-below-the-file-that-wrote-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-plugin-that-no-compiled-file-names-is-refused-aloud.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -277,6 +285,10 @@
     "asan": 39600
   },
   "aot/a-require-made-for-a-folder-above-the-entry-point.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-require-made-for-the-root-of-the-file-system.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -408,17 +420,21 @@
     "default": 6000,
     "asan": 24000
   },
+  "aot/an-empty-slot-in-test-runs.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/an-entry-of-require-cache-shows-what-its-file-exports-whoever-reads-it-elsewhere.test.ts": {
     "default": 7900,
     "asan": 31600
   },
+  "aot/an-entry-of-require-cache-that-the-build-saw-nobody-read-is-refused.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/an-entry-of-the-cache-of-require-shows-its-children-and-its-parent.test.ts": {
     "default": 8000,
     "asan": 32000
-  },
-  "aot/an-entry-point-is-found-by-an-absolute-path-made-at-run-time.test.ts": {
-    "default": 20400,
-    "asan": 81600
   },
   "aot/an-error-in-a-function-that-is-one-long-line-quotes-what-bun-run-quotes.test.ts": {
     "default": 19000,
@@ -427,6 +443,10 @@
   "aot/an-error-thrown-by-a-function-of-an-earlier-test-file-is-caught-in-this-one.test.ts": {
     "default": 8000,
     "asan": 32000
+  },
+  "aot/an-error-while-a-standard-stream-is-made.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/an-es-module-that-import-alone-loads-is-shown-by-no-module-object.test.ts": {
     "default": 20300,
@@ -451,6 +471,10 @@
   "aot/an-object-that-only-leads-to-a-loader-hands-on-no-module.test.ts": {
     "default": 14200,
     "asan": 56800
+  },
+  "aot/an-option-of-the-run-that-reads-what-the-executable-lacks-is-refused-at-the-start.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/an-unhandled-rejection-in-a-file-that-a-test-imports-by-a-call.test.ts": {
     "default": 12700,
@@ -539,10 +563,6 @@
   "aot/closed-test-run.test.ts": {
     "default": 10100,
     "asan": 40400
-  },
-  "aot/code-from-disk-plugins.test.ts": {
-    "default": 27100,
-    "asan": 108400
   },
   "aot/compiled-file-written-anew.test.ts": {
     "default": 11500,
@@ -887,6 +907,10 @@
   "aot/members-under-index-keys-are-defined-behind-the-names.test.ts": {
     "default": 5000,
     "asan": 20000
+  },
+  "aot/methods-of-instances-of-classes-below-map-and-set.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/missing-export-note.test.ts": {
     "default": 4000,
@@ -1552,6 +1576,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-listener-for-the-size-of-a-terminal.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-module-object-of-a-file-that-turns-to-the-host-takes-its-exports-along.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1640,6 +1668,10 @@
     "default": 3700,
     "asan": 14800
   },
+  "aot/what-a-folder-on-disk-does-not-hold-is-not-looked-for-in-the-executable.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/what-a-program-takes-grows-with-its-data.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1647,6 +1679,10 @@
   "aot/what-a-test-file-requires-at-its-top-stands-in-require-cache-as-in-plain.test.ts": {
     "default": 1000,
     "asan": 4000
+  },
+  "aot/what-an-operator-gives-may-be-a-bigint-that-the-environment-warns-about.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/what-await-answers-for-an-import-of-the-library-is-in-sight.test.ts": {
     "default": 2200,

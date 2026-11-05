@@ -225,6 +225,13 @@ impl Sources {
         &self.entries[file.idx()].diagnostic_path
     }
 
+    pub fn is_in_coverage_report(&self, file: FileId) -> bool {
+        let path = self.diagnostic_path(file);
+        self.kind(file) == SourceKind::Program
+            && !bun_core::strings::contains(path, b"/node_modules/")
+            && !bun_core::strings::contains(path, b"\\node_modules\\")
+    }
+
     fn find_source_path(&self, file: FileId) -> Option<Vec<u8>> {
         let entry = &self.entries[file.idx()];
         if is_name_of_text(&entry.diagnostic_path) {

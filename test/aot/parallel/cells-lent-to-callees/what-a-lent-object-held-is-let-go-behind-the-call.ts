@@ -23,7 +23,7 @@ function phases(n: number): string {
   s += look({ id: 6, data: make(n), a: u, b: u, c: u, d: u, e: u, f: u, g: u, h: u, i: u, j: u });
   s += look({ id: 7, data: make(n), a: u, b: u, c: u, d: u, e: u, f: u, g: u, h: u, i: u, j: u, k: u, l: u });
   s += look({ id: 8, data: make(n), a: u, b: u, c: u, d: u, e: u, f: u, g: u, h: u, i: u, j: u, k: u, l: u, m: u, n: u });
-  const size = Bun.gc(true);
+  const size = Bun.gc(true); // @ts-expect-error
   return s + " " + (size > 4 * n);
 }
 

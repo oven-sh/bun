@@ -150,6 +150,9 @@ export function computedLoads(part: number) {
     "main.cjs": `
     const it = require("./src/loads.cjs").load(process.cwd() + "/native/" + ["adds", "node"].join("."));
     console.log("SAID the addon:", typeof it === "string" ? it : it.add(40, 2));`,
+    "from-its-folder.cjs": `
+    const it = require("./src/loads.cjs").load(__dirname + "/native/" + ["adds", "node"].join("."));
+    console.log("SAID the addon:", typeof it === "string" ? it : it.add(40, 2));`,
     "test/product.test.cjs": `require("bun:test").test("the product", () => void require("../main.cjs"));`,
   };
 
@@ -177,8 +180,9 @@ export function computedLoads(part: number) {
 
       const build = async (name: string, ...given: string[]) => {
         const file = join(String(directory), name);
+        const entry = given.length ? "./from-its-folder.cjs" : "./main.cjs";
         const built = await run(
-          [bunExe(), "build", "--compile", "--aot", "./main.cjs", ...given, "--outfile", file],
+          [bunExe(), "build", "--compile", "--aot", entry, ...given, "--outfile", file],
           String(directory),
         );
         expect(built).toMatchObject({ exitCode: 0 });

@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# class Own { [Symbol.iterator]() { let i = 0; return { next: () => (i < 9 ? { done: false, value: i++ } : { done: true, value: undefined }) }; } }
+# const own = new Own();
+# function inLoop(): number { let sum = 0; for (let i = 0; i < 8; i++) { const [a, b] = own; sum += a + b; } return sum; }
+# function once(): number { const [a, b] = own; return a + b; }
+# sink(new Own(), inLoop, once);
+# -- end of source
+# f1 = inLoop, f2 = once
+# Another object of the class is handed out, so of `own` nothing is proven; it is expected to be of the class's layout, which is no list. In the loop the steps of the pattern are written out where it is opened:
+# next is called twice and what it answers is read; the one stub that walks the protocol in the run time and calls the closures from there is not called.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: key="next"
+# CHECK: = Call
+# CHECK: key="done"
+# CHECK: key="value"
+# CHECK: = Call
+# CHECK: key="done"
+# CHECK: key="value"
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: DestructureIterable
+# Outside a loop the one stub stays: no bytes for time there.
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE: = DestructureIterable

@@ -119,6 +119,7 @@ pub(crate) struct StartedWorkers {
     pub names: Vec<EntryPointPaths>,
     pub named_at: Vec<(Vec<u8>, u32)>,
     pub names_followed: Vec<FollowedName>,
+    pub names_plugin: bool,
 }
 
 pub struct BuildFailed {

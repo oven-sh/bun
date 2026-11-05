@@ -221,6 +221,7 @@ pub(super) struct ResolverOutput {
     pub(super) may_call_evaluator: bool,
     pub(super) global_object_may_be_looked_through: bool,
     pub(super) syntax: SyntaxWithHelpers,
+    pub(super) may_hand_values_to_natives: bool,
 }
 
 pub(super) struct Resolver<'a, 's> {
@@ -320,7 +321,7 @@ pub(super) fn run(
     resolver.collect_module_object_mentions();
     resolver.visit_implicit_references();
     resolver.visit_import_sites();
-    if !input.holds_language {
+    if input.is_text_asked {
         resolver.collect_what_is_reached_without_a_name();
     }
     resolver.finish()
@@ -746,6 +747,7 @@ impl<'a, 's> Resolver<'a, 's> {
             may_call_evaluator: output.may_call_evaluator,
             global_object_may_be_looked_through: output.global_object_may_be_looked_through,
             syntax: output.syntax,
+            may_hand_values_to_natives: output.may_hand_values_to_natives,
             called: &output.called,
             is_of_program: input.dialect == SourceDialect::Program,
             holds_language: input.holds_language,

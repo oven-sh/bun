@@ -11,6 +11,7 @@ import { describe, testOneByOne as test } from "./supported";
 // REFUSE=<call>:<n> makes the n-th such call fail, REFUSE=<call>:<n>+ that one and every later one. Mappings count on the threads that the process starts: those do the compiling.
 // Starting a thread is the call pthread_create/<start routine>/<stack size>, so threads that do the same work count together.
 // THREADS=<file> lists that call for each thread that starts, and again with the name that the thread gives itself.
+// STACK=<bytes>: a thread that is to start with a larger stack gets this much.
 const shim = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -102,6 +103,13 @@ int pthread_create(pthread_t *handle, const pthread_attr_t *attributes, void *(*
   if (attributes) pthread_attr_getstacksize(attributes, &stack_size);
   snprintf(thread.call, sizeof thread.call, "pthread_create/%zx/%zu", (size_t) ((char *) start - (char *) code.dli_fbase), stack_size);
   if (is_refused(thread.call)) return EAGAIN;
+  pthread_attr_t smaller;
+  const char *stack = getenv("STACK");
+  if (stack && attributes && stack_size > (size_t) atol(stack)) {
+    smaller = *attributes;
+    pthread_attr_setstacksize(&smaller, (size_t) atol(stack));
+    attributes = &smaller;
+  }
   if (!getenv("THREADS")) return create(handle, attributes, start, argument);
   struct thread *listed = malloc(sizeof thread);
   *listed = thread;
@@ -131,6 +139,7 @@ void quick_exit(int code) {
 `;
 
 const outOfMemory = "error: Out of memory while compiling";
+const outOfStack = "error: Out of stack while compiling";
 const noCompilerThread = "error: Failed to start a compiler thread";
 const noPoolThread =
   "error: Failed to start a thread of the thread pool: Resource temporarily unavailable (os error 11)";
@@ -289,6 +298,27 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
   test("a mapping that stays does not end the build", async () => {
     expect(distinct(await buildWithEachCallRefused([{ call: "munmap", count: 6 }]))).toEqual(["it runs\n"]);
   }, 300_000);
+
+  test("a thread that runs out of stack ends the build with an error", async () => {
+    // The engine follows loops inside one another 1,024 deep, which takes 5 MB of the 64 MB that each of its threads has.
+    await Bun.write(
+      join(cwd, "nest.js"),
+      `let left = 0;\nfunction more() { return left-- > 0; }\nfunction f() {\n  let sum = 0;\n  ${"while (more()) ".repeat(1200)}sum += 1;\n  return sum;\n}\nconsole.log(f());\n`,
+    );
+    const executable = join(cwd, "nest");
+    expect(await run([...buildOf("nest.js"), executable], shimEnv)).toEqual({
+      stdout: expect.any(String),
+      errors: [],
+      exitCode: 0,
+      signal: null,
+    });
+    expect(await run([...buildOf("nest.js"), executable], { ...shimEnv, STACK: String(4 << 20) })).toEqual({
+      stdout: expect.any(String),
+      errors: [outOfStack],
+      exitCode: 1,
+      signal: null,
+    });
+  }, 120_000);
 
   // These threads and no others.
   async function expectEndsOfBuildsRefusedThread(program: string) {

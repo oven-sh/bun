@@ -1,5 +1,5 @@
-// In a test run a member of a built-in that only a store which the build could not follow may have replaced is believed to be what the engine made, behind a test at run time: the test whether the
-// receiver is as its class made it also reads one byte of the class, which the store sets. Each case really replaces the member, by way of values that the build knows nothing of, at another moment:
+// In a test run a member of a built-in that only a store which the build could not follow may have replaced is believed to be what the engine made, behind tests at run time: whether the
+// receiver itself is as its class made it, one byte of the member, which the store sets, and one byte of each holder that lies below the member, which a name laid there sets. Each case really replaces the member, by way of values that the build knows nothing of, at another moment:
 // what the code under test sees is what it sees under `bun test`.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";

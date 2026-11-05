@@ -35,13 +35,14 @@ for (let turn = 0; turn < 4; turn++) {
     const back = unlabeled(labeled) as Entry;
     out.push(show(labeled) + " | " + show(back) + " | " + describe(back) + " | " + (back !== entry));
     // Two names beside the fields, one of them left out. A symbol beside them stays.
-    (labeled as Record<string, unknown>)["late" + (turn & 1)] = turn;
+    // @ts-expect-error
+    (labeled as Record<string, unknown>)["late" + (turn & 1)] = turn; // @ts-expect-error
     (labeled as Record<symbol, unknown>)[mark] = turn;
     const again = unlabeled(labeled);
     out.push(show(again) + " | " + describe(again as Entry));
     // The copy takes the name anew, behind all the others, and the entry keeps its own.
     (again as Record<string, unknown>).label_id = "anew";
-    out.push(show(again) + " | " + show(labeled));
+    out.push(show(again) + " | " + show(labeled)); // @ts-expect-error
     out.push(show(unlabeled(Object.freeze(label({ ...entry }, "frozen")))) + " " + Object.isFrozen(unlabeled(Object.freeze({ ...entry }))));
   }
 }

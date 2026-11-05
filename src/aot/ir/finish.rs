@@ -444,30 +444,41 @@ impl FinishScratch {
             return false;
         }
 
+        let end_of = |targets: &[PendingTarget], place: u32| {
+            let block = targets[place as usize].block;
+            match find_last_passed_by(is_passed_by, blocks, targets, block) {
+                Some(last) => first_target_of(&blocks[last.index()], targets).block,
+                None => block,
+            }
+        };
+        let edges_that_end_at = incoming;
+        edges_that_end_at.resize(blocks.len(), 0);
         let mut is_any_moved = false;
         for id in order.iter() {
             let own = terminator_of(&blocks[id.index()]).targets.clone();
+            if !(own.clone()).any(|place| is_passed_by[targets[place as usize].block.index()]) {
+                continue;
+            }
+            for place in own.clone() {
+                edges_that_end_at[end_of(targets, place).index()] += 1;
+            }
             for place in own.clone() {
                 let passed = targets[place as usize].block;
                 let Some(last) = find_last_passed_by(is_passed_by, blocks, targets, passed) else {
                     continue;
                 };
                 let moved = first_target_of(&blocks[last.index()], targets).clone();
-                let mut others = own.clone().filter(|&other| other != place);
-                let leads_there_too = others.any(|other| {
-                    let other = targets[other as usize].block;
-                    let last = find_last_passed_by(is_passed_by, blocks, targets, other);
-                    let last = last.map(|last| &blocks[last.index()]);
-                    let end = last.map(|last| first_target_of(last, targets).block);
-                    end.unwrap_or(other) == moved.block
-                });
-                if leads_there_too {
+                if edges_that_end_at[moved.block.index()] > 1 {
                     continue;
                 }
                 targets[place as usize] = moved;
                 is_any_moved = true;
             }
+            for place in own {
+                edges_that_end_at[end_of(targets, place).index()] = 0;
+            }
         }
+        edges_that_end_at.clear();
         is_any_moved
     }
 

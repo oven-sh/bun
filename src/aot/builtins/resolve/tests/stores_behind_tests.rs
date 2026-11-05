@@ -37,6 +37,9 @@ const NOT_BEHIND_ONE: &[&str] = &[
     "if (!Array.prototype.includes) Array.prototype.at = f;",
     r#"if (typeof Array.prototype.at === "function") Array.prototype.at = f;"#,
     r#""includes" in Array.prototype || (Array.prototype.at = f);"#,
+    "(_c && (_a = Array.prototype.at)) || _a !== void 0 ? 0 : (Array.prototype.at = f);",
+    "(_c || (_a = Array.prototype.at)) && _a !== void 0 ? 0 : (Array.prototype.at = f);",
+    "(_c ?? (_a = Array.prototype.at)) || _a !== void 0 ? 0 : (Array.prototype.at = f);",
 ];
 
 fn member_of(holder: BuiltinId, name: &str) -> BuiltinId {

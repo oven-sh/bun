@@ -4,6 +4,7 @@ import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
 import type {
   ModelBuiltin,
+  ModelCallback,
   ModelCalledFunction,
   ModelHostCall,
   ModelHostObject,
@@ -12,6 +13,8 @@ import type {
   ModelModuleLoad,
   ModelName,
   ModelOverload,
+  ModelPlace,
+  ModelPropertyAction,
   ModelType,
   TableModel,
 } from "../../../src/codegen/builtins/model.ts";
@@ -32,8 +35,12 @@ function nameOf(text: string): ModelName {
 const stringType = { primitives: ["String"], integers: null, stringLiterals: [], parts: [] } as unknown as ModelType;
 const neverType = { primitives: [], integers: null, stringLiterals: [], parts: [] } as unknown as ModelType;
 const none: ModelHostValue = { place: "None" };
-const newString: ModelHostValue = { place: "NewValue", type: stringType };
-const inCell = (cell: string): ModelHostValue => ({ place: "NativeCell", cell: nameOf(cell) });
+const newString: ModelHostValue = { place: "NewValue", type: stringType, holdsWhatIsThrown: false };
+const inCell = (cell: string, holdsOnlyWhatIsStored = false): ModelHostValue => ({
+  place: "NativeCell",
+  cell: nameOf(cell),
+  holdsOnlyWhatIsStored,
+});
 
 const callWith = (columns: Partial<ModelHostCall>): ModelHostCall => ({
   times: "Once",
@@ -329,9 +336,56 @@ test("further arguments follow a list, and every value that is passed has a type
   expect(problemsOf({ builtins: [user({ arguments: null, otherArguments: newString })] })).toEqual([
     `${row}: otherArgs follows a list of arguments, and the call has none`,
   ]);
-  expect(problemsOf({ builtins: [user({ arguments: [{ place: "NewValue", type: neverType }] })] })).toEqual([
-    `${row}: native code passes a value that has no type`,
+  expect(
+    problemsOf({ builtins: [user({ arguments: [{ place: "NewValue", type: neverType, holdsWhatIsThrown: false }] })] }),
+  ).toEqual([`${row}: native code passes a value that has no type`]);
+  expect(problemsOf({ builtins: [user({ arguments: [{ ...newString, holdsWhatIsThrown: true }] })] })).toEqual([
+    `${row}: what is thrown is said of an argument of a callback or of a handler of an overload alone`,
   ]);
+});
+
+test("a cell that hands back what the program handed in is filled by rows, out of their operands alone", () => {
+  const withFlow = (flow: Partial<ModelOverload["flow"]>) =>
+    ({ ...overloadTaking(1), flow: { ...overloadTaking(1).flow, ...flow } }) as ModelOverload;
+  const firstOperand: ModelPlace = { place: "Operand", operand: { operand: "Argument", index: 0 } };
+  const cell = inCell("Holder.data");
+  const reads = withFlow({ transfers: [{ from: inCell("Holder.data", true), to: { place: "Result" } }] });
+  const stores = withFlow({ transfers: [{ from: firstOperand, to: cell }] });
+  const holder = (...overloads: ModelOverload[]) => [entry("Holder.prototype.data", "Accessor", {}, overloads)];
+  const refusal = (filler: string) => [
+    `the native cell Holder.data is said to hold only what rows store there out of their operands, and ${filler}`,
+  ];
+
+  expect(problemsOf({ builtins: holder(reads, stores) })).toEqual([]);
+  expect(problemsOf({ builtins: holder(reads) })).toEqual(refusal("no row stores anything there"));
+  expect(
+    problemsOf({ builtins: holder(reads, stores, withFlow({ transfers: [{ from: newString, to: cell }] })) }),
+  ).toEqual(refusal("a row stores NewValue there"));
+  expect(
+    problemsOf({ builtins: holder(reads, stores, withFlow({ callbacks: [{ resultTo: cell } as ModelCallback] })) }),
+  ).toEqual(refusal("a row stores there what a callback answers"));
+  expect(
+    problemsOf({
+      builtins: holder(
+        reads,
+        stores,
+        withFlow({ propertyActions: [{ action: "ReadsByKey", value: cell } as ModelPropertyAction] }),
+      ),
+    }),
+  ).toEqual(refusal("a row reads or stores a property through it"));
+  expect(problemsOf({ builtins: holder(reads, stores), hostObjects: [hostObject("Holder.data")] })).toEqual(
+    refusal("a host object lies there"),
+  );
+  expect(
+    problemsOf({
+      builtins: [
+        ...holder(reads, stores),
+        entry("process.stdout", "DataProperty", {
+          calledFunctions: [calling([called({ result: [kept("Holder.data")] })])],
+        }),
+      ],
+    }),
+  ).toEqual(refusal("what a function answers that the host calls is kept there"));
 });
 
 test("the records of start-up are checked as those of an entry are", () => {

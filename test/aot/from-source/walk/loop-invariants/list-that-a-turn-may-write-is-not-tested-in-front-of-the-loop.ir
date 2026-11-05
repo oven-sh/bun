@@ -20,9 +20,14 @@
 # RUN(GROWS): walk f1 mechanisms=all
 # GROWS-NOT: = HasArrayStorage
 # GROWS-NOT: = GetArrayStorage
+# three of them are tested all the same: the arm that stores behind the end, stores through the other name or converts stands in the other copy alone. Where the typed copy comes to it the turn begins again there, with nothing of it done.
+# So nothing in the typed copy writes a list or runs other code, and the list is as the row in front has found it
 # RUN(BEHIND): walk f2 mechanisms=all
-# BEHIND-NOT: = HasArrayStorage
-# BEHIND-NOT: = GetArrayStorage
+# BEHIND: = HasArrayStorage
+# BEHIND: = PutArrayElement
+# BEHIND: = GetArrayStorage
+# BEHIND: isLoopHead=true
+# BEHIND-NOT: = Put
 # RUN(LENGTH): walk f3 mechanisms=all
 # LENGTH-NOT: = HasArrayStorage
 # LENGTH-NOT: = GetArrayStorage
@@ -36,8 +41,11 @@
 # HOLE-NOT: = HasArrayStorage
 # HOLE-NOT: = GetArrayStorage
 # RUN(OTHER): walk f7 mechanisms=all
-# OTHER-NOT: = HasArrayStorage
-# OTHER-NOT: = GetArrayStorage
+# OTHER: = HasArrayStorage
+# OTHER: = PutArrayElement
+# OTHER: = GetArrayStorage
+# OTHER: isLoopHead=true
+# OTHER-NOT: = Put
 # RUN(CALLEE): walk f8 mechanisms=all
 # CALLEE-NOT: = HasArrayStorage
 # CALLEE-NOT: = GetArrayStorage
@@ -45,8 +53,11 @@
 # GETTER-NOT: = HasArrayStorage
 # GETTER-NOT: = GetArrayStorage
 # RUN(CONVERTS): walk f10 mechanisms=all
-# CONVERTS-NOT: = HasArrayStorage
-# CONVERTS-NOT: = GetArrayStorage
+# CONVERTS: = HasArrayStorage
+# CONVERTS: = Mul
+# CONVERTS: = GetArrayStorage
+# CONVERTS: isLoopHead=true
+# CONVERTS-NOT: = Mul
 # RUN(ASSIGNED): walk f11 mechanisms=all
 # ASSIGNED-NOT: = HasArrayStorage
 # ASSIGNED-NOT: = GetArrayStorage

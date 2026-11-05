@@ -1,5 +1,5 @@
 // Made by test/aot/tools/generate-calls-through-the-method-table-while-classes-are-defined.py.
-const said: string[] = [];
+const said: string[] = []; // @ts-expect-error
 const unseen = (0, eval);
 const one: number = +process.argv[2] || 1;
 class Shape {

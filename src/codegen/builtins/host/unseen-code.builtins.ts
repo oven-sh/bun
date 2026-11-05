@@ -155,6 +155,7 @@ const prototypesWithoutConstructor = [
   "%ExpectStringContaining%.prototype",
   "%ExpectStringMatching%.prototype",
   "%FFI%.prototype",
+  "%FFICallback%.prototype",
   "%FSWatcher%.prototype",
   "%FileInternalReadableStreamSource%.prototype",
   "%HTMLBundle%.prototype",

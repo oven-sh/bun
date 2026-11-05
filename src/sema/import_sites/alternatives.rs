@@ -104,6 +104,7 @@ enum Held {
     Primitive(Constant),
     List(Vec<Vec<Held>>),
     ListOf(Vec<Held>),
+    SetOf(Vec<Held>),
     Object(ExprId),
     Function(FnId),
     Process,
@@ -125,7 +126,10 @@ enum Held {
 
 impl Held {
     fn can_be_changed(&self) -> bool {
-        matches!(self, Held::List(_) | Held::ListOf(_) | Held::Object(_))
+        matches!(
+            self,
+            Held::List(_) | Held::ListOf(_) | Held::SetOf(_) | Held::Object(_)
+        )
     }
 }
 
@@ -636,7 +640,10 @@ impl Follower<'_, '_, '_> {
                 self.values_of_member(e, chain)
             }
             ExprKind::Call(call) => self.values_of_call(e, hir[call]),
-            ExprKind::New(call) => self.values_of_new_url(hir[call]),
+            ExprKind::New(call) => match self.is_construction_of_set(hir[call]) {
+                true => self.values_of_new_set(hir[call]),
+                false => self.values_of_new_url(hir[call]),
+            },
             ExprKind::Array(items) => self.values_of_list(items),
             ExprKind::Object(_) => Some(vec![Held::Object(e)]),
             ExprKind::Fn(function) => Some(vec![Held::Function(function)]),
@@ -886,16 +893,45 @@ impl Follower<'_, '_, '_> {
     fn values_of_list(&mut self, items: IdList<ExprId>) -> Option<Values> {
         let hir = self.inputs.hir;
         let mut places = Vec::with_capacity(items.len());
+        let mut holds_spread = false;
         for item in hir.ids(items) {
             places.push(match expr_kind(hir, item)? {
                 ExprKind::Missing => vec![Held::Primitive(Constant::Undefined)],
-                ExprKind::Spread(_) => return None,
+                ExprKind::Spread(spread) => {
+                    holds_spread = true;
+                    self.values_of_elements(spread)?
+                }
                 _ => self
                     .values_apart_from_itself(item)
                     .unwrap_or_else(some_text),
             });
         }
-        Some(vec![Held::List(places)])
+        if !holds_spread {
+            return Some(vec![Held::List(places)]);
+        }
+        let mut held = Values::new();
+        for value in places.into_iter().flatten() {
+            add(&mut held, value);
+        }
+        Some(vec![Held::ListOf(held)])
+    }
+
+    fn is_construction_of_set(&self, call: Call) -> bool {
+        let &ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
+        let callee = hir.skip_type_assertions(call.callee);
+        is_free_name(hir, bound, callee, &[atoms.intern(b"Set")])
+    }
+
+    fn values_of_new_set(&mut self, call: Call) -> Option<Values> {
+        let mut arguments = self.inputs.hir.ids(call.args);
+        let held = match (arguments.next(), arguments.next()) {
+            (None, _) => Values::new(),
+            (Some(list), None) => self.values_of_elements(list)?,
+            _ => return None,
+        };
+        Some(vec![Held::SetOf(held)])
     }
 
     fn mentions_of(&self, symbol: SymbolId) -> Vec<ExprId> {
@@ -1063,7 +1099,8 @@ impl Follower<'_, '_, '_> {
             }
             self.pay_for(values.len() - before)?;
         }
-        self.add_pushed_values(symbol, pattern, values)
+        let values = self.add_pushed_values(symbol, pattern, values)?;
+        self.add_values_added_to_set(symbol, values)
     }
 
     fn values_of_declaration(&mut self, symbol: SymbolId, pattern: PatId) -> Option<Values> {
@@ -1109,7 +1146,7 @@ impl Follower<'_, '_, '_> {
         for value in self.values_of(list)? {
             let held = match value {
                 Held::List(places) => places.into_iter().flatten().collect(),
-                Held::ListOf(held) => held,
+                Held::ListOf(held) | Held::SetOf(held) => held,
                 _ => return None,
             };
             for value in held {
@@ -1325,6 +1362,64 @@ impl Follower<'_, '_, '_> {
         (object == mention && call.chain == Chain::No && is_statement).then_some((pushing, call))
     }
 
+    fn find_add(&self, mention: ExprId) -> Option<Call> {
+        let &ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
+        let Parent::Expr(member) = bound.parent_of_expr(mention) else {
+            return None;
+        };
+        let (object, MemberKey::Name(name)) = hir.member_key(member)? else {
+            return None;
+        };
+        let (adding, call) = self.find_call_of_member(member)?;
+        let is_statement = matches!(bound.parent_of_expr(adding), Parent::Stmt(statement)
+            if matches!(hir[statement].kind, StmtKind::Expr(_)));
+        (object == mention
+            && atoms.bytes(name) == b"add"
+            && call.chain == Chain::No
+            && is_statement)
+            .then_some(call)
+    }
+
+    fn is_initialized_with_set(&self, symbol: SymbolId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        bound.is_stable_binding(symbol)
+            && matches!(bound.binding_initializer(hir, symbol), BindingInitializer::Expression(written)
+                if matches!(expr_kind(hir, hir.skip_type_assertions(written)), Some(ExprKind::New(call))
+                    if self.is_construction_of_set(hir[call])))
+    }
+
+    fn add_values_added_to_set(&mut self, symbol: SymbolId, values: Values) -> Option<Values> {
+        if !self.is_initialized_with_set(symbol) {
+            return Some(values);
+        }
+        let [Held::SetOf(mut held)] = <[Held; 1]>::try_from(values).ok()? else {
+            return None;
+        };
+        let hir = self.inputs.hir;
+        for mention in self.mentions_of(symbol) {
+            let Some(call) = self.find_add(mention) else {
+                continue;
+            };
+            let added = match hir.ids(call.args).next() {
+                Some(added)
+                    if matches!(expr_kind(hir, added), Some(ExprKind::Spread(_)) | None) =>
+                {
+                    return None;
+                }
+                Some(added) => self
+                    .values_apart_from_itself(added)
+                    .unwrap_or_else(some_text),
+                None => vec![Held::Primitive(Constant::Undefined)],
+            };
+            for value in added {
+                add(&mut held, value);
+            }
+        }
+        Some(vec![Held::SetOf(held)])
+    }
+
     fn is_initialized_with_list(&self, symbol: SymbolId) -> bool {
         let &ScanInputs { hir, bound, .. } = self.inputs;
         bound.is_stable_binding(symbol)
@@ -1385,6 +1480,7 @@ impl Follower<'_, '_, '_> {
             && mentions.into_iter().all(|mention| {
                 bound.is_store_target(mention)
                     || self.find_push(mention).is_some() && self.is_initialized_with_list(symbol)
+                    || self.find_add(mention).is_some() && self.is_initialized_with_set(symbol)
                     || self.keeps_as_written(mention)
             })
     }
@@ -1456,6 +1552,17 @@ impl Follower<'_, '_, '_> {
                 _ => true,
             },
             ExprKind::Cond { test, .. } => test == e || self.keeps_as_written(above),
+            ExprKind::Spread(_) => {
+                let is_in_list = matches!(bound.parent_of_expr(above), Parent::Expr(list)
+                    if matches!(hir[list].kind, ExprKind::Array(_)));
+                let elements = self.values_of_elements(e);
+                is_in_list && elements.is_some_and(|it| !it.iter().any(Held::can_be_changed))
+            }
+            ExprKind::New(call) if self.is_construction_of_set(hir[call]) => {
+                let elements = self.values_of_elements(e);
+                hir[call].callee != e
+                    && elements.is_some_and(|it| !it.iter().any(Held::can_be_changed))
+            }
             ExprKind::Call(call) if self.find_listing_of_object(hir[call]).is_some() => {
                 let listed = self.values_of_elements(above);
                 listed.is_some_and(|it| !it.iter().any(Held::can_be_changed))
@@ -1476,7 +1583,7 @@ impl Follower<'_, '_, '_> {
         let asks = name == known::join
             || matches!(
                 self.inputs.atoms.bytes(name),
-                b"includes" | b"indexOf" | b"lastIndexOf"
+                b"includes" | b"indexOf" | b"lastIndexOf" | b"has"
             );
         let hands_elements_on = match self.find_call_of_member(member) {
             Some((_, call)) => self.find_walk_of_list(call).is_some(),
@@ -1661,6 +1768,10 @@ impl Follower<'_, '_, '_> {
                 Held::Object(literal) => self.read_property(*literal, keys)?,
                 Held::List(places) => read_place(places, keys)?,
                 Held::ListOf(held) => read_place(std::slice::from_ref(held), None)?,
+                Held::SetOf(_) => match keys? {
+                    [key] if key == b"size" => vec![Held::Other],
+                    _ => return None,
+                },
                 Held::Os => {
                     let names = keys?.iter().map(|key| self.inputs.atoms.intern(key));
                     names.map(Held::FunctionOfOs).collect()

@@ -86,7 +86,7 @@ function movedHere(): string { const list: any = [1, 2]; Object.setPrototypeOf(l
 report(movedHere());
 function restWithOwn(...args: any[]): string { (args as any)[Symbol.iterator] = function* () { yield "rest"; }; return count(...args); }
 report(restWithOwn(1, 2));
-function ofArguments(a?: any, b?: any): string { return count(...arguments) + show([...arguments]); }
+function ofArguments(a?: any, b?: any): string { return count(...arguments) + show([...arguments]); } // @ts-expect-error
 report(ofArguments(1, 2, 3));
 function throughProxy(): string { let seen = ""; const proxy = new Proxy([1, 2], { get(target: any, key: any, receiver: any) { seen += (typeof key === "symbol" ? "@" : String(key)) + ";"; return Reflect.get(target, key, receiver); } }); return show([...proxy]) + seen; }
 report(throughProxy());

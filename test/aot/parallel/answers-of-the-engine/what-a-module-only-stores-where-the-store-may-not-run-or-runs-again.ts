@@ -39,7 +39,7 @@ const both = { b: 1 };
 const crossed = /x/gi;
 const ignored = /i/;
 report(tell(readSkipped));
-report(tell(readTaken));
+report(tell(readTaken)); // @ts-expect-error
 report(readTaken() === taken);
 report(tell(readBehind));
 report(seen[0] === seen[1]);

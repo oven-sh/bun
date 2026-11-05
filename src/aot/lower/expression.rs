@@ -655,6 +655,9 @@ impl FileLowering<'_, '_, '_, '_> {
         expression: ExprId,
         names_below_top_level: bool,
     ) -> bool {
+        if self.counts_executions() {
+            return false;
+        }
         let hir = self.hir;
         let top_scope = self.bound.top_scope(hir, bun_sema::bind::CodeUnit::File);
         let decisions = self.decisions();

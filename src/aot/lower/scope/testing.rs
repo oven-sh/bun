@@ -91,6 +91,7 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             replaced: &[],
             runs_tests: false,
             holds_language: false,
+            is_text_asked: true,
         });
         test(&ScopeInput {
             file,

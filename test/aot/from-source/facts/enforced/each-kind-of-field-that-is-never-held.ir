@@ -1,5 +1,6 @@
-# beside what is expected, these are never held, whatever is written of them: a type without a required member (a bag of options: every object is of it) . the fields of a layout that is filled under computed keys, whose stores ask the type
-# again at each hit . an accessor, whose slot holds its functions. `strict` beside them is the control: it is written, and held.
+# beside what is expected, these are never held, whatever is written of them: a type without a required member (a bag of options: every object is of it) . an accessor, whose slot holds its functions.
+# `strict` beside them is the control: it is written, and held. So is `total`, though Link sees a store under a computed key come to its layout: that mark takes back what rests on what was SEEN stored, never what is written:
+# the same store comes to the same objects through a receiver that Link has lost, and the run time's own store holds the slot. Else the more Link saw, the fewer slots were held.
 # f1 = fill
 # -- source: each-kind-of-field-that-is-never-held.ts
 # declare function sink(...values: unknown[]): void;
@@ -14,9 +15,9 @@
 # -- end of source
 # RUN: facts enforced mechanisms=all
 # CHECK: field {{*}} "strict" source=written type=boolean markers spares-test
+# CHECK: field {{*}} "total" source=written type=undefined|null|string
 # RUN(NEVER): facts enforced mechanisms=all
 # NEVER-NOT: "bag"
-# NEVER-NOT: "total"
 # NEVER-NOT: "size"
 # NEVER-NOT: differs-from-table
 # RUN(LINK): link held layouts mechanisms=all

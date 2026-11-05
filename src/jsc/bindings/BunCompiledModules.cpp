@@ -6,6 +6,7 @@
 #include "BunAOTCompile.h"
 #include "BunClientData.h"
 #include "BunCompiledEntryPoint.h"
+#include "BunProcess.h"
 #include "CodeGenerationFromStrings.h"
 #include "ErrorCode.h"
 #include "ImportMetaObject.h"
@@ -163,6 +164,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
 extern "C" bool Bun__compiledProgramRunsInPlace();
+extern "C" bool Bun__compiledProgramNamesPlugin();
 extern "C" JSC::AOT::AnswerForName Bun__AOT__onResolveAnswersFor(JSC::JSGlobalObject*, const BunString* name, const BunString* importer, BunString* foundWithoutPlugins);
 extern "C" BunString Bun__AOT__findWithoutPlugins(JSC::JSGlobalObject*, const BunString* name, const BunString* importer);
 extern "C" bool Bun__compiledProgramHoldsFileAsItIs(const BunString*);
@@ -679,6 +681,56 @@ JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject* globalObject, cons
     return AOT::requireModule(globalObject, *module);
 }
 
+JSC_DECLARE_HOST_FUNCTION(jsLoaderJS);
+JSC_DECLARE_HOST_FUNCTION(jsLoaderTS);
+JSC_DECLARE_HOST_FUNCTION(jsLoaderJSON);
+
+// NodeModuleModule.rs find_longest_registered_extension(): the first extension of the name, from the left, under which a function is stored. One of the default loaders is no function of the program.
+static JSValue loaderOfProgramForFile(Zig::GlobalObject* globalObject, const String& path)
+{
+    auto& vm = getVM(globalObject);
+    JSObject* extensions = globalObject->lazyRequireExtensionsObject();
+    StringView name = StringView(path).substring(path.reverseFind(PLATFORM_SEP) + 1);
+    for (size_t dot = name.find('.', 1); dot != notFound; dot = name.find('.', dot + 1)) {
+        JSValue stored = extensions->getDirect(vm, Identifier::fromString(vm, name.substring(dot).toString()));
+        CallData callData = stored ? getCallData(stored) : CallData();
+        if (callData.type == CallData::Type::None)
+            continue;
+        if (callData.type == CallData::Type::JS)
+            return stored;
+        auto* function = callData.native.function.untaggedPtr();
+        return function == &jsLoaderJS || function == &jsLoaderTS || function == &jsLoaderJSON || function == &Process_functionDlopen ? JSValue() : stored;
+    }
+    return {};
+}
+
+// While a loader of the program runs: the object that require() has made, and the file that it has made it for.
+struct RequireHandedToLoaderOfProgram {
+    JSCommonJSModule* target { nullptr };
+    const String* path { nullptr };
+    uint32_t module { 0 };
+};
+static constinit thread_local RequireHandedToLoaderOfProgram s_requireHandedToLoaderOfProgram;
+
+static void requireCompiledModuleInto(Zig::GlobalObject*, JSCommonJSModule* target, AOT::ModuleID, JSString* key);
+
+bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path)
+{
+    RequireHandedToLoaderOfProgram handed = s_requireHandedToLoaderOfProgram;
+    if (!handed.target || handed.target != target || *handed.path != path)
+        return false;
+    if (target->m_overriddenCompile) {
+        AOT::throwTextRefusedToCompileOfProgram(globalObject, AOT::ModuleID(handed.module));
+        return false;
+    }
+    SetForScope nothingIsHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram {});
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    requireCompiledModuleInto(globalObject, target, AOT::ModuleID(handed.module), jsString(getVM(globalObject), path));
+    RETURN_IF_EXCEPTION(scope, false);
+    target->hasEvaluated = true;
+    return true;
+}
+
 bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool hasImportAttributes)
 {
     auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes, AOT::LoadByName::Require);
@@ -688,23 +740,19 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
         return false;
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSCommonJSModule* requirer = target->m_parent.get();
-    // `target` is the object that require() under a computed name has made to load the file into.
-    auto referrer = requirer ? compiledModuleOf(requirer) : std::nullopt;
-    // The engine says whose child the file is.
-    if (referrer)
-        target->compiledModule = module->index();
-    if (requirer && !referrer)
-        AOT::willRequireModuleFromOutsideImage(globalObject, *module, requirer);
-    JSString* key = jsString(vm, path);
-    if (reloadsFilesFromDisk()) {
-        if (AOT::isESModule(*module))
-            AOT::didMakeModuleObjectForRequire(globalObject, *module, target);
-        else
-            globalObject->requireMap()->remove(globalObject, key);
+    // In a test run willStoreLoaderOfExtension() has taken the files of the kind out of the program.
+    if (JSValue loader = reloadsFilesFromDisk() ? JSValue() : loaderOfProgramForFile(globalObject, path)) {
+        SetForScope isHanded(s_requireHandedToLoaderOfProgram, RequireHandedToLoaderOfProgram { target, &path, module->index() });
+        MarkedArgumentBuffer arguments;
+        arguments.append(target);
+        arguments.append(jsString(vm, path));
+        JSC::profiledCall(globalObject, ProfilingReason::API, loader, getCallData(loader), target, arguments);
         RETURN_IF_EXCEPTION(scope, false);
+        // The object stays in the cache, as in `bun run`: the loader is called once for a file.
+        return true;
     }
-    requireInto(globalObject, target, *module, referrer);
+    JSString* key = jsString(vm, path);
+    requireCompiledModuleInto(globalObject, target, *module, key);
     RETURN_IF_EXCEPTION(scope, false);
     // A module of the executable is in no cache. The next require() of the name asks the engine again, which answers what the module exports then.
     JSValue held = globalObject->requireMap()->get(globalObject, key);
@@ -714,6 +762,27 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
         RETURN_IF_EXCEPTION(scope, false);
     }
     return true;
+}
+
+static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module, JSString* key)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSCommonJSModule* requirer = target->m_parent.get();
+    // `target` is the object that require() under a computed name has made to load the file into.
+    auto referrer = requirer ? compiledModuleOf(requirer) : std::nullopt;
+    // The engine says whose child the file is.
+    if (referrer)
+        target->compiledModule = module.index();
+    if (requirer && !referrer)
+        AOT::willRequireModuleFromOutsideImage(globalObject, module, requirer);
+    if (reloadsFilesFromDisk()) {
+        if (AOT::isESModule(module))
+            AOT::didMakeModuleObjectForRequire(globalObject, module, target);
+        else
+            globalObject->requireMap()->remove(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    RELEASE_AND_RETURN(scope, requireInto(globalObject, target, module, referrer));
 }
 
 JSObject* loaderOfCompiledESModule(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes)
@@ -747,14 +816,19 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     // The run time has sent the call here for such a file: it would only send it here again.
     if (!module || AOT::leavesModuleToHost(globalObject, *module))
         return false;
+    // `bun run` reads the file and leaves the object as it is: JSCommonJSModule::evaluate() runs nothing into an object that has been evaluated or is being evaluated.
+    if (target->hasEvaluated)
+        return true;
     BunString pathString = Bun::toString(path);
     auto loader = Bun__getDefaultLoader(globalObject, &pathString, nullptr);
     bool isTypeScriptFile = loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX;
     if (isTypeScriptFile != isTypeScriptLoader)
         return false;
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    requireInto(globalObject, target, *module);
+    // `bun run` runs the text once more, into `target`. The image has the file once, so what has run cannot run beside itself.
+    JSValue exports = AOT::runFileForDefaultLoader(globalObject, *module);
     RETURN_IF_EXCEPTION(scope, false);
+    target->setExportsObject(exports);
     target->hasEvaluated = true;
     return true;
 }
@@ -926,9 +1000,13 @@ void willSetRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key
 void willStoreLoaderOfExtension(Zig::GlobalObject* globalObject, StringView extension)
 {
     // How a test has a file of its own kind loaded, or looks at what the files of a kind hold. Elsewhere imports are bound for good: the loader is stored,
-    // and only a file that is read from disk as the program runs is handed to it, as in an executable of `bun build --compile`.
-    if (hasCompiledModules() && reloadsFilesFromDisk())
+    // and only a file that is asked for under a name made as the program runs is handed to it, as in an executable of `bun build --compile`.
+    if (!hasCompiledModules())
+        return;
+    if (reloadsFilesFromDisk())
         AOT::willStoreLoaderOfExtension(globalObject, extension);
+    else
+        AOT::willChangeRequireOverride(globalObject, AOT::RequireOverride::LoaderOfExtension, true);
 }
 
 static JSCommonJSModule* boundModuleOf(JSValue require)
@@ -1021,10 +1099,8 @@ static void createModuleObject(JSGlobalObject* realm, JSString* path, AOT::Modul
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue exportsAsData = jsUndefined();
     // putDirectCustomAccessor() is for a name that the object does not have yet.
-    if (traits.contains(AOT::ModuleObjectTrait::HasExportsVariable))
+    if (!traits.contains(AOT::ModuleObjectTrait::IsNoCommonJSFile))
         exportsAsData = JSValue();
-    else if (!traits.contains(AOT::ModuleObjectTrait::IsNoCommonJSFile))
-        exportsAsData = constructEmptyObject(globalObject);
     JSCommonJSModule* module = JSCommonJSModule::create(globalObject, path, exportsAsData, !traits.contains(AOT::ModuleObjectTrait::IsESModule), JSValue());
     RETURN_IF_EXCEPTION(scope, void());
     module->compiledModule = compiled.index();
@@ -1560,7 +1636,7 @@ JSValue parentSeenBy(Zig::GlobalObject* globalObject, JSString* id, JSValue pare
     bool isCodeThatExecutableLoadsFromDisk = !compiledModulesRunInPlaceOfFiles() && isReadAsCode(globalObject, required);
     if (!isCodeThatExecutableLoadsFromDisk && AOT::mayHandOutModuleObject(requirer->globalObject(), *compiled))
         return parent;
-    RELEASE_AND_RETURN(scope, JSCommonJSModule::create(globalObject, pathOfRequirer, constructEmptyObject(globalObject), true, jsUndefined()));
+    RELEASE_AND_RETURN(scope, JSCommonJSModule::create(globalObject, pathOfRequirer, JSValue(), false, jsUndefined()));
 }
 
 static JSObject* createCodeNotCompiledError(JSGlobalObject* globalObject, const String& message)
@@ -1577,6 +1653,14 @@ JSValue errorIfUnseenCodeIsRefused(JSGlobalObject* globalObject, ASCIILiteral bu
     if (!image || image->admitsUnknownJavaScript()) [[likely]]
         return {};
     return createCodeNotCompiledError(globalObject, makeString("Cannot use "_s, builtin, ": this executable only runs code that was compiled into it."_s));
+}
+
+JSValue errorIfBuildSawNoPlugin(JSGlobalObject* globalObject)
+{
+    bool isCompiledAsIfNoPluginCame = hasCompiledModules() && !Bun__compiledProgramNamesPlugin() && (isBunTest || !(Bun__compiledProgramRunsInPlace() || Bun__AOT__allowsCodeFromDisk()));
+    if (!isCompiledAsIfNoPluginCame) [[likely]]
+        return {};
+    return createCodeNotCompiledError(globalObject, "Cannot use Bun.plugin: no file that was compiled names it, so the program's imports were linked as if no plugin could answer for them. Write Bun.plugin(...) or import { plugin } from \"bun\" in a file that the build compiles."_s);
 }
 
 bool isDebuggerAdmitted()
@@ -1777,11 +1861,13 @@ bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&,
 JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const String&, bool) { return nullptr; }
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return {}; }
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
+bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject*, JSCommonJSModule*, const String&) { return false; }
 bool compiledModulesRunInPlaceOfFiles() { return false; }
 bool compiledProgramRunsInSeveralRealmsAtOnce() { return false; }
 std::optional<EncodedJSValue> takeAnswerKeptForLoader(JSGlobalObject*, const BunString*, const BunString*, const BunString*, bool&) { return std::nullopt; }
 void keepAnswerForLoader(JSGlobalObject*, const BunString*, const BunString*, const BunString*, JSValue, bool) {}
 bool holdsAnswersForLoader() { return false; }
+JSValue errorIfBuildSawNoPlugin(JSGlobalObject*) { return {}; }
 void forgetAnswersKeptForLoader(JSGlobalObject*) {}
 String fileOfCallerThatWasNotCompiled(VM&, CallFrame*) { return {}; }
 String firstCompiledModuleMatching(JSGlobalObject*, RegExp*) { return {}; }

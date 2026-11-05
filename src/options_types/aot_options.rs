@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use bun_core::CodeGenerationFromStrings;
 
-use crate::trim::TrimRequest;
+use crate::trim::{Feature, TrimRequest};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum HeapSize {
@@ -70,6 +70,8 @@ pub struct AotOptions {
     pub code_generation_from_strings: CodeGenerationFromStrings,
     pub omits_foreign_calls: bool,
     pub admits_inspector: bool,
+    /// What the options that are written into the executable need (`--compile-exec-argv=--sql-preconnect`). The start reads `Bun.sql` for that one by itself, whatever the program says.
+    pub features_of_embedded_options: Vec<Feature>,
     /// `--aot-allow-code-from-disk`: a path that is known only at run time may name a file with code that the build has not seen. Bun interprets it.
     pub loads_code_from_disk: bool,
     /// `--aot-testing=IsolatedCodeFromDisk`, with `loads_code_from_disk`: such a file finds no file of the program. What it names lies on disk.
@@ -144,6 +146,7 @@ impl Default for AotOptions {
             code_generation_from_strings: CodeGenerationFromStrings::Allowed,
             omits_foreign_calls: false,
             admits_inspector: false,
+            features_of_embedded_options: Vec::new(),
             loads_code_from_disk: false,
             isolates_code_from_disk: false,
             only_tests_load_code_from_disk: false,
@@ -202,6 +205,7 @@ mod tests {
             code_generation_from_strings,
             omits_foreign_calls,
             admits_inspector,
+            features_of_embedded_options,
             loads_code_from_disk,
             isolates_code_from_disk,
             only_tests_load_code_from_disk,
@@ -249,6 +253,7 @@ mod tests {
         );
         assert!(!omits_foreign_calls);
         assert!(!admits_inspector);
+        assert!(features_of_embedded_options.is_empty());
         assert!(!loads_code_from_disk);
         assert!(!isolates_code_from_disk);
         assert!(!only_tests_load_code_from_disk);

@@ -1,7 +1,6 @@
 // answers: with-library
 // # -1, 4294967295 and 1.5 are written out, and none is an index: each lays a NAME on the list. Link classed such a name with the elements, as it must for a view, and the site kept "stays as its class has made it".
-// # Only a written index keeps that word now. The program runs under the word of the door, which stops where the word is false.
-// # OPTIONS: testing=HoldsObjectsToStayingAsMade
+// # Only a written index keeps that word now. The word is held against the object wherever it is taken: the program would stop where it were false.
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 7 of 7 of 7

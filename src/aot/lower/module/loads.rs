@@ -2041,6 +2041,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         load: ComputedLoad,
         referrer: ModuleId,
+        name: (ExprId, KnownOfName),
+        specifier: ValueId,
+        candidates: Candidates<'_>,
+    ) -> ValueId {
+        let modules = self.file.inputs.modules;
+        if matches!(load, ComputedLoad::Import)
+            || !modules.computed_names_ask_loader_functions()
+            || !modules.is_code_of_program(self.current_module())
+        {
+            return self.emit_load_of_what_build_found(load, referrer, name, specifier, candidates);
+        }
+        let are_stored = self.builder.are_loader_functions_stored();
+        self.emit_one_of(
+            are_stored,
+            &mut |this| this.emit_load_by_name(load, referrer, specifier, name.1),
+            &mut |this| {
+                this.emit_load_of_what_build_found(load, referrer, name, specifier, candidates)
+            },
+        )
+    }
+
+    fn emit_load_of_what_build_found(
+        &mut self,
+        load: ComputedLoad,
+        referrer: ModuleId,
         (node, known_of_name): (ExprId, KnownOfName),
         specifier: ValueId,
         candidates: Candidates<'_>,

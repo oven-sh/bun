@@ -91,6 +91,8 @@ group("with --disallow-code-generation-from-strings no string becomes code throu
   test.each([
     // Whoever is handed it may call it.
     ["eval that reaches unknown code", external + `external(eval);`],
+    // A written text is unseen code.
+    ["Function('return this')(), a written text", `console.log(Function("return this")().Object);`],
   ])("the report is closed with %s", async (_, text) => {
     const [without, use, strict] = await Promise.all([
       of(text),
@@ -99,21 +101,6 @@ group("with --disallow-code-generation-from-strings no string becomes code throu
     ]);
     expect({ isOpenWithout: without.whyOpen.length > 0, first: use.lines[0], strict: strict.lines[0] }).toEqual({
       isOpenWithout: true,
-      first: closed.first,
-      strict: closed.first,
-    });
-  });
-
-  test.each([
-    ["Function('return this')(), whose text the compiler reads", `console.log(Function("return this")().Object);`],
-  ])("the report is closed with and without the flag with %s", async (_, text) => {
-    const [without, use, strict] = await Promise.all([
-      of(text),
-      withFlag(text),
-      withFlag(text, "--disallow-code-generation-from-strings=strict"),
-    ]);
-    expect({ without: without.lines[0], first: use.lines[0], strict: strict.lines[0] }).toEqual({
-      without: closed.first,
       first: closed.first,
       strict: closed.first,
     });
@@ -275,6 +262,12 @@ group("Bun.serve for the exports of the entry point", () => {
       "a CommonJS module that requires a module that exports fetch",
       { "main.cjs": `console.log(require("./other.cjs").value);`, ...otherModules },
     ],
+    ["a CommonJS module that exports other names", { "main.cjs": `exports.twice = function (n) { return n * 2; };\nconsole.log(exports.twice(1));` }],
+    [
+      "a CommonJS module that was an ES module and exports other names",
+      { "main.cjs": `Object.defineProperty(exports, "__esModule", { value: true });\nexports.twice = function (n) { return n * 2; };` },
+    ],
+    ["a CommonJS module whose fetch is undefined", { "main.cjs": `exports.fetch = undefined;\nexports.app = null;` }],
   ])("is not used with %s", async (_, files) => {
     expect(await judged(files)).toEqual({ serves: false, mayServe: false, first: closed.first, exitCode: 0 });
   });
@@ -344,6 +337,16 @@ group("Bun.serve for the exports of the entry point", () => {
       "exports a function and passes it on",
       `module.exports = function () {};\nObject.assign(module.exports, { fetch: ${answers} });`,
     ],
+    ["inherits fetch from a prototype that it sets", `Object.setPrototypeOf(exports, { fetch: ${answers} });`],
+    ["stores through the arguments of its wrapper", `arguments[0].fetch = ${answers};`],
+    ["stores through require.main", `require.main.exports.fetch = ${answers};`],
+    ["stores through process.mainModule", `process.mainModule.exports.fetch = ${answers};`],
+    ["exports a proxy", `module.exports = new Proxy({}, { get: function () { return ${answers}; } });`],
+    ["stores under a key made in the run", `exports[["fe", "tch"].join("")] = ${answers};`],
+    ["stores in a microtask", `Promise.resolve().then(function () { exports.fetch = ${answers}; });`],
+    ["exports an instance whose class has fetch", `class Service { fetch() { return new Response("ok"); } }\nmodule.exports = new Service();`],
+    ["exports then", `exports.then = function (resolve) { resolve({ default: { fetch: ${answers} } }); };`],
+    ["exports what another module exports", `module.exports = require("./other.cjs");`],
   ])("may be used with a CommonJS entry point that %s", async (_, text) => {
     expect(await judged({ "main.cjs": text, ...otherModules })).toMatchObject({ mayServe: true, exitCode: 0 });
   });

@@ -247,6 +247,7 @@ impl FileScan<'_, '_> {
             | Interest::LoadOfIsolatedCode
             | Interest::FileSpelled(_)
             | Interest::FileLeftToLoader(_)
+            | Interest::FileThatComputedNameMayAskFor(_)
             | Interest::KnownMember(_)
             | Interest::KnownVariable(_)
             | Interest::Lookup(_)
@@ -307,6 +308,7 @@ impl FileScan<'_, '_> {
             | Interest::LoadOfIsolatedCode
             | Interest::FileSpelled(_)
             | Interest::FileLeftToLoader(_)
+            | Interest::FileThatComputedNameMayAskFor(_)
             | Interest::StoreOfLoaderFunction(_) => false,
         }
     }

@@ -41,9 +41,9 @@ report(holes().length + "," + (1 in holes()) + "," + show(holes()));
 function keyed() { return { 2: "two", b: 1, 1: "one", a: 2, "-1": 3, "01": 4 }; }
 report(Object.keys(keyed()).join() + show(keyed()));
 function proto() { return { __proto__: null, a: 1 } as any; }
-report(Object.getPrototypeOf(proto()) === null && proto().a === 1);
+report(Object.getPrototypeOf(proto()) === null && proto().a === 1); // @ts-expect-error
 function quoted() { return { "__proto__": 1, ["__proto__"]: 2 } as any; }
-report(Object.keys(quoted()).join() + String(Object.getPrototypeOf(quoted()) === Object.prototype));
+report(Object.keys(quoted()).join() + String(Object.getPrototypeOf(quoted()) === Object.prototype)); // @ts-expect-error
 function repeated() { return { a: 1, b: 2, a: 3 } as any; }
 report(show(repeated()));
 function many() { return { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: 17, r: 18 }; }

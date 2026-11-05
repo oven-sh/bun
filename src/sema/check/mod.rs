@@ -901,9 +901,6 @@ impl<'s> Program<'s> {
             mapped_constraints_in_progress: Vec::new(),
             mapped_props_reentered_through_members: Vec::new(),
             serialization_level: 0,
-            message_site: None,
-            place_does_not_decide_at: None,
-            places_nobody_reads: Default::default(),
             flow_type_cache: Default::default(),
             flow_type_cache_depth: usize::MAX,
             flow_invocation_count: 0,
@@ -2455,9 +2452,6 @@ pub struct Checker<'p, 's> {
     /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
     /// resolutions are made eagerly.
     serialization_level: u32,
-    message_site: Option<(FileId, u32, usize)>,
-    place_does_not_decide_at: Option<usize>,
-    places_nobody_reads: errors::PlacesNobodyReads,
     instantiation_depth: u32,
     /// `instantiationCount`: the instantiations computed since the last statement, type node or expression check began.
     instantiation_count: u32,

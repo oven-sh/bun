@@ -2,7 +2,7 @@
 let calls = 0;
 function next() { return ++calls; }
 function inLoop() { const seen: unknown[] = []; for (let round = 0; round < 3; round++) { enum Turn { Now = next(), Fixed = 5 } seen.push(Turn.Now, Turn[Turn.Now], Turn.Fixed); } return seen; }
-function underCase(x: number) { switch (x) { case 1: { enum One { A = 1 } return One[1]; } default: { enum Other { B = next() } return Object.keys(Other).length; } } }
+function underCase(x: number) { switch (x) { case 1: { enum One { A = 1 } return One[1]; } default: { enum Other { B = next() } return Object.keys(Other).length; } } } // @ts-expect-error
 function aroundErrors() { const seen: unknown[] = []; try { enum Tried { T = next() } seen.push(typeof Tried.T); throw 1; } catch { enum Caught { C = "c" } seen.push(Caught.C); } finally { enum Last { L = next(), M } seen.push(Last.M - Last.L, Last[Last.M]); } return seen; }
 function* stepwise() { enum Step { A = 1, B = next() } yield Step[1]; yield typeof Step.B; }
 async function later() { enum Wait { W = next() } return typeof (await Wait.W); }

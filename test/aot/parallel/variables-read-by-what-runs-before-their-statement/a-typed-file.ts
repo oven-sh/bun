@@ -1,5 +1,5 @@
 let first: string;
-try {
+try { // @ts-expect-error
   first = new Gauge().state();
 } catch (error) {
   first = (error as Error).name;

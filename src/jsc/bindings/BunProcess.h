@@ -155,8 +155,14 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStandardOutputStream);
 
+// process.on("SIGWINCH", its argument): whatever the program has put under `on` is what is called.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionListenForSizeOfTerminal);
+
 // Its argument runs when the process or the worker starts to exit, in front of the 'exit' listeners and where none run. No program can list it.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRunWhenProcessExits);
+
+// node:events hands it EventEmitter.prototype, which goes above the native prototype of process.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeProcessInheritFrom);
 
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);

@@ -174,6 +174,7 @@ pub struct ResolveInput<'a, 's> {
     pub replaced: &'a [u32],
     pub runs_tests: bool,
     pub holds_language: bool,
+    pub is_text_asked: bool,
 }
 
 #[derive(Copy, Clone, Default)]

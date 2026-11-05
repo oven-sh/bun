@@ -1,7 +1,9 @@
 use bun_ast::Log;
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::atom::Interner;
+use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
+use bun_sema::program::Files;
 use bun_sema::session::Arena;
 use bun_trim::UsedFeatures;
 
@@ -62,4 +64,5 @@ linked_functions! {
     pub fn bun_aot_lists_laid_anew_between_test_files() -> Vec<u32>;
     pub fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool;
     pub fn bun_aot_find_importer_outside_run(root: &[u8], file: &[u8], is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Option<Vec<u8>>;
+    pub fn bun_aot_name_values_of_unlinked_files<'a>(files: &'a Files<'_>) -> Box<dyn NamedValues + 'a>;
 }

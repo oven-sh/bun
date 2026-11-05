@@ -70,6 +70,7 @@ struct Setup {
     platform: Platforms,
     replaced: &'static [u32],
     runs_tests: bool,
+    is_text_asked: bool,
 }
 
 const PROGRAM: Setup = Setup {
@@ -81,6 +82,7 @@ const PROGRAM: Setup = Setup {
     platform: Platforms::LINUX,
     replaced: &[],
     runs_tests: false,
+    is_text_asked: true,
 };
 const SCRIPT: Setup = Setup {
     path: "/project/a.cjs",
@@ -271,6 +273,7 @@ fn with_parts<R>(
         replaced: setup.replaced,
         runs_tests: setup.runs_tests,
         holds_language: false,
+        is_text_asked: setup.is_text_asked,
     };
     let range_of = |part: &&str| {
         let start = source.find(part).expect("the part stands in the source") as u32;

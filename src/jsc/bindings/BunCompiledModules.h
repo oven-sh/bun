@@ -56,6 +56,8 @@ inline const WTF::String& askerOfImport(const WTF::String& importer) { return im
 // The loader answers an import from what it holds and asks nobody, and it holds the entry point. Throws where the importer is refused the file under the key.
 void willResolveImport(Zig::GlobalObject*, const WTF::String& key, JSC::JSValue importer);
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool isTypeScriptLoader);
+// require() has handed the object that it made for a compiled file to the program's loader of the extension, and that loader goes on to a default one.
+bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path);
 // True where the compiled modules have the paths of their source files, for which `bun run` asks the plugins of the run time. An executable is a bundle: no plugin is asked for a module in it.
 bool compiledModulesRunInPlaceOfFiles();
 bool compiledProgramRunsInSeveralRealmsAtOnce();
@@ -99,6 +101,7 @@ inline void willRequire(JSC::JSGlobalObject* globalObject, JSC::JSValue specifie
 }
 // For a built-in that runs machine code or script the compiler did not see, or hands out objects it took for unreachable.
 JSC::JSValue errorIfUnseenCodeIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);
+JSC::JSValue errorIfBuildSawNoPlugin(JSC::JSGlobalObject*);
 std::optional<JSC::EncodedJSValue> takeAnswerKeptForLoader(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, bool& engineAsks);
 void keepAnswerForLoader(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, JSC::JSValue answerOrWhatWasThrown, bool isThrown);
 bool holdsAnswersForLoader();

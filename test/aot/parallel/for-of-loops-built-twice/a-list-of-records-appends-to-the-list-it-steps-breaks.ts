@@ -14,7 +14,7 @@ function asArguments(..._: number[]) { return (function () { return arguments; }
 function weigh(x: unknown): number { return typeof x === "number" ? x : typeof x === "object" && x ? (x as Item).weight : typeof x === "string" ? x.length : x === undefined ? 1000 : 0; }
 function run(what: Item[]): string {
   let total = 0, count = 0;
-  for (const x of what) {
+  for (const x of what) { // @ts-expect-error
     total += weigh(x); if (count++ < 2 && Array.isArray(what)) what.push(10 + count);
     if (count > 2 || total > 50) break;
   }

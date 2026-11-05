@@ -233,6 +233,38 @@ words!(i32, {
     0
 });
 
+/// Several numbers that stand side by side, with one look at the bounds.
+pub(crate) trait Numbers {
+    fn several<const COUNT: usize>(&self, i: i32) -> [i32; COUNT];
+    fn put_several<const COUNT: usize>(&mut self, i: i32, numbers: [i32; COUNT]);
+}
+
+impl Numbers for Vec<i32> {
+    #[inline(always)]
+    fn several<const COUNT: usize>(&self, i: i32) -> [i32; COUNT] {
+        match self
+            .get(i as u32 as usize..)
+            .and_then(|s| s.first_chunk::<COUNT>())
+        {
+            Some(numbers) => *numbers,
+            None => {
+                lose();
+                [0; COUNT]
+            }
+        }
+    }
+    #[inline(always)]
+    fn put_several<const COUNT: usize>(&mut self, i: i32, numbers: [i32; COUNT]) {
+        match self
+            .get_mut(i as u32 as usize..)
+            .and_then(|s| s.first_chunk_mut::<COUNT>())
+        {
+            Some(slots) => *slots = numbers,
+            None => lose(),
+        }
+    }
+}
+
 /// Reads and writes of more than one byte, in little-endian order.
 pub(crate) trait Bytes {
     fn i32_at(&self, p: i32) -> i32;

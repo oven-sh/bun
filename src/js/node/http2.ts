@@ -1926,6 +1926,14 @@ type Settings = {
 };
 
 type HeadersObject = { [name: string | symbol]: any };
+// A client request that waits for the connect or for a free stream slot.
+type PendingClientRequest = {
+  req: ClientHttp2Stream;
+  headers: HeadersObject;
+  wireHeaders: HeadersObject | any[];
+  sensitiveNames: Record<string, boolean>;
+  options: any;
+};
 interface ClientRequestOptions {
   endStream?: boolean;
   exclusive?: boolean;
@@ -5221,13 +5229,8 @@ class ClientHttp2Session extends Http2Session {
   // submitted and whose stream has not closed yet, plus the queue of requests waiting for a slot
   // (node returns a pending stream with no id and submits it once a slot frees).
   #activeRequestCount: number = 0;
-  #pendingRequests: Array<{
-    req: ClientHttp2Stream;
-    headers: HeadersObject;
-    wireHeaders: HeadersObject | any[];
-    sensitiveNames: Record<string, boolean>;
-    options: any;
-  }> | null = null;
+  #flushingPendingRequests: boolean = false;
+  #pendingRequests: PendingClientRequest[] | null = null;
 
   static #Handlers = {
     binaryType: "buffer",
@@ -6583,7 +6586,17 @@ class ClientHttp2Session extends Http2Session {
   // are available, in the order they were made.
   #flushPendingRequests() {
     const queue = this.#pendingRequests;
-    if (queue === null || queue.length === 0) return;
+    // A release that the native submit dispatches synchronously lands here from inside the loop.
+    if (queue === null || queue.length === 0 || this.#flushingPendingRequests) return;
+    this.#flushingPendingRequests = true;
+    try {
+      this.#submitPendingRequests(queue);
+    } finally {
+      this.#flushingPendingRequests = false;
+    }
+  }
+
+  #submitPendingRequests(queue: PendingClientRequest[]) {
     while (queue.length > 0) {
       const parser = this.#parser;
       if (this.destroyed || !parser) {

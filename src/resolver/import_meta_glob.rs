@@ -109,6 +109,7 @@ impl Resolver<'_> {
             conditions: &self.opts.conditions.import,
             debug_logs: None,
             stack_check: bun_core::StackCheck::init(),
+            validate_package_config: self.validate_package_config,
         }
         .resolve_imports(&specifier, &package_json.imports.as_ref()?.root);
         matches!(

@@ -3529,6 +3529,12 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "--tab-width=64",
       "export const rate = {\n  a() {\n    return {\n      [user.id]: user,\n    };\n  },\n};\n",
     ],
+    // Some trees have a node around an optional chain, so that its last member is no direct child of the assignment.
+    ["a.ts", "--print-width=8", "aaaa!?.cccc = vvvv;\n"],
+    ["a.ts", "--print-width=8", "aaaa()?.cccc = vvvv;\n"],
+    ["a.tsx", "--print-width=8", "aaaa!?.cccc! = vvvv;\n"],
+    ["a.js.flow", "--print-width=8", "aaaa?.cccc[0] = vvvv;\n"],
+    ["a.ts", "--print-width=8", "aaaa()?.cccc! = vvvv;\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

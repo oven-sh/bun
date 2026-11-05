@@ -1,5 +1,5 @@
 status: 0
-script: 709dfd51e5057eae
+script: 6d8cb46e28bffd4e
 ---
 recv | finalized by its maker while that waited: True | then the call returned b'x'
 recv_into | finalized by its maker while that waited: True | then the call returned 2
@@ -11,7 +11,7 @@ os.readv | finalized by its maker while that waited: True | then the call return
 FileIO.read | finalized by its maker while that waited: True | then the call returned b'x'
 select | finalized by its maker while that waited: True | then the call returned True
 poll | finalized by its maker while that waited: True | then the call returned True
-sleep | finalized by its maker while that waited: True | then the call returned None
+sleep | finalized by its maker while that waited: True | and the call goes on: True
 os.write | collections meanwhile: 5 | signals to get it out: 0 | afterwards finalized by its maker: True
 os.writev | collections meanwhile: 5 | signals to get it out: 0 | afterwards finalized by its maker: True
 FileIO.write | collections meanwhile: 5 | signals to get it out: 0 | afterwards finalized by its maker: True

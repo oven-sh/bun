@@ -35,15 +35,15 @@ def a_collection_has_come(n=[0]):
     return churn(lambda: (mine, "MainThread") in said)
 
 
-def in_a_thread(name, target):
+def in_a_thread(name, target, daemon=False):
     result = []
-    thread = threading.Thread(target=lambda: result.append(target()), name=name)
+    thread = threading.Thread(target=lambda: result.append(target()), name=name, daemon=daemon)
     thread.start()
     return thread, result
 
 
 # ---- Calls that wait and have nothing to lose
-def waits(name, begin, block, end):
+def waits(name, begin, block, end=None):
     state = begin()
     is_about_to_block = threading.Event()
 
@@ -52,9 +52,12 @@ def waits(name, begin, block, end):
         is_about_to_block.set()
         return block(state)
 
-    thread, result = in_a_thread(name, target)
+    thread, result = in_a_thread(name, target, daemon=not end)
     is_about_to_block.wait()
     came = churn(lambda: (name, name) in said)
+    if not end:
+        print(name, "| finalized by its maker while that waited:", came, "| and the call goes on:", thread.is_alive(), flush=True)
+        return
     end(state)
     thread.join()
     print(name, "| finalized by its maker while that waited:", came, "| then the call returned", result[0], flush=True)
@@ -79,7 +82,7 @@ waits("os.readv", os.pipe, lambda p: os.readv(p[0], [bytearray(10)]), lambda p: 
 waits("FileIO.read", os.pipe, lambda p: open(p[0], "rb", buffering=0, closefd=False).read(10), lambda p: os.write(p[1], b"x"))
 waits("select", os.pipe, lambda p: select.select([p[0]], [], [], 120)[0] == [p[0]], lambda p: os.write(p[1], b"x"))
 waits("poll", os.pipe, lambda p: (lambda q: (q.register(p[0], select.POLLIN), q.poll(120000))[1])(select.poll()) == [(p[0], select.POLLIN)], lambda p: os.write(p[1], b"x"))
-waits("sleep", lambda: None, lambda _: time.sleep(0.5), lambda _: None)
+waits("sleep", lambda: None, lambda _: time.sleep(1000))   # Nothing ends it: the program leaves it behind.
 
 # ---- Calls that may have done a part
 SIZE = 6 * 1024 * 1024

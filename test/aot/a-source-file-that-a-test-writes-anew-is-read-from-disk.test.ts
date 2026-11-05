@@ -117,24 +117,41 @@ const ways: [string[], string][] = [
   [["--isolate"], "TestRunLayers:2,TestRunPartFiles:1"],
 ];
 
-const runs = new Map<string, Promise<{ plain: Said; compiled: Said & { comparedWithDisk: number } }>>();
+/** Plain `bun test` and then `bun test --aot` in a copy of a project. */
+async function runBoth({ cases, files }: Project, flags: string[], words: string) {
+  using dir = tempDir("a-source-file-written-anew", files);
+  const folder = String(dir);
+  const plain = await runTests(folder, flags, {}, cases);
+  // The plain run has left the new texts.
+  for (const name of cases) writeFileSync(join(folder, `${name}-state.js`), first);
+  // The word changes nothing: with it a run that has no other word says how it is built.
+  const environment = { BUN_DEBUG_TEST_AOT_WORDS: words || "TestRunSaysItsForm", ...countsPath(folder) };
+  const compiled = await runTests(folder, ["--aot", ...flags], environment, cases);
+  const compared = comparedWithDisk(folder).reduce((sum, count) => sum + count, 0);
+  return { plain, compiled: { ...compiled, comparedWithDisk: compared } };
+}
+
+type Run = { hasEnded: boolean; said: ReturnType<typeof runBoth> };
+const runs = new Map<string, Run>();
+const keyOf = ({ cases }: Project, flags: string[], words: string) => JSON.stringify([cases, flags, words]);
+/** A project runs once in each way, however many tests ask. The first test that asks waits for the build. */
+const ran = (project: Project, flags: string[], words: string) =>
+  runs.getOrInsertComputed(keyOf(project, flags, words), () => {
+    const run: Run = {
+      hasEnded: false,
+      said: runBoth(project, flags, words).finally(() => void (run.hasEnded = true)),
+    };
+    return run;
+  }).said;
 /**
- * Plain `bun test` and then `bun test --aot` in a copy of a project: once for each way, however many tests ask. The first test that
- * asks waits for the build.
+ * The same for the test of a case. Such a test runs behind the tests of the runs. A run that has not ended by then hangs: its own
+ * test has waited for it to its limit, and no other test waits for it again.
  */
-const ran = ({ cases, files }: Project, flags: string[], words: string) =>
-  runs.getOrInsertComputed(JSON.stringify([cases, flags, words]), async () => {
-    using dir = tempDir("a-source-file-written-anew", files);
-    const folder = String(dir);
-    const plain = await runTests(folder, flags, {}, cases);
-    // The plain run has left the new texts.
-    for (const name of cases) writeFileSync(join(folder, `${name}-state.js`), first);
-    // The word changes nothing: with it a run that has no other word says how it is built.
-    const environment = { BUN_DEBUG_TEST_AOT_WORDS: words || "TestRunSaysItsForm", ...countsPath(folder) };
-    const compiled = await runTests(folder, ["--aot", ...flags], environment, cases);
-    const compared = comparedWithDisk(folder).reduce((sum, count) => sum + count, 0);
-    return { plain, compiled: { ...compiled, comparedWithDisk: compared } };
-  });
+function ended(project: Project, flags: string[], words: string) {
+  if (runs.get(keyOf(project, flags, words))?.hasEnded === false)
+    throw new Error("the run has not ended: its own test has waited for it to its limit");
+  return ran(project, flags, words);
+}
 
 /**
  * What no case answers for: the counts of the run and its exit code. The compiled run also says how it is built, and has compared
@@ -244,7 +261,7 @@ test.concurrent.each([
 );
 
 test.each(ways)("a later test file imports the new text: %j %s", async (flags, words) => {
-  const { plain, compiled } = await ran(passing, flags, words);
+  const { plain, compiled } = await ended(passing, flags, words);
   expect(plain.cases.get("direct")).toEqual({
     printed: ["direct a 1", "direct b 100 110 110 bump,count,extra"],
     reported: ["direct-a.test.js:", "(pass) a", "direct-b.test.js:", "(pass) b"],
@@ -253,7 +270,7 @@ test.each(ways)("a later test file imports the new text: %j %s", async (flags, w
 });
 
 test.each(ways)("through a module that has not run yet: %j %s", async (flags, words) => {
-  const { plain, compiled } = await ran(passing, flags, words);
+  const { plain, compiled } = await ended(passing, flags, words);
   expect(plain.cases.get("through")).toEqual({
     printed: ["through a 1", "through b 100,110,110"],
     reported: ["through-a.test.js:", "(pass) a", "through-b.test.js:", "(pass) b"],
@@ -262,7 +279,7 @@ test.each(ways)("through a module that has not run yet: %j %s", async (flags, wo
 });
 
 test.each(ways)("a name that the new text lacks fails the later test file: %j %s", async (flags, words) => {
-  const { plain, compiled } = await ran(failing, flags, words);
+  const { plain, compiled } = await ended(failing, flags, words);
   expect(plain.cases.get("lacks")).toEqual({
     printed: ["lacks a 1"],
     reported: [

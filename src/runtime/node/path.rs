@@ -879,7 +879,9 @@ by_form_of_operands!(relative, relative_other, relative_latin1, relative_utf8, <
 
 #[cfg(unix)]
 unsafe extern "C" {
-    safe fn Process__getDefaultCwd(global: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue;
+    safe fn Process__getCachedDefaultCwd(
+        global: &crate::jsc::JSGlobalObject,
+    ) -> crate::jsc::JSValue;
 }
 
 /// `None` unless the paths that count are 8-bit strings and [`SHORT`] together.
@@ -915,12 +917,19 @@ fn resolve_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
             return Ok(resolve_joined_posix(heap, joined.characters()));
         }
     }
-    // `process.cwd()` itself is kept as a string.
+    // SAFETY: these queries only read native state, without running JavaScript.
+    let global = unsafe { heap.global() };
+    // Return a warm native cwd before building UTF-8 argument views.
     if matches!(joined.characters(), b"" | b"." | b"./") {
+        #[cfg(unix)]
+        {
+            let cwd = Process__getCachedDefaultCwd(global);
+            return Ok(JsLocal::new(heap, cwd).as_string());
+        }
+        #[cfg(not(unix))]
         return Ok(None);
     }
-    // SAFETY: this query only reads native state, without running JavaScript.
-    if Process__isCwdObservable(unsafe { heap.global() }) {
+    if Process__isCwdObservable(global) {
         return Ok(None);
     }
     #[cfg(not(windows))]
@@ -982,15 +991,8 @@ fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     if !WINDOWS
         && (parts.is_empty() || (parts.len() == 1 && (parts[0] == b"." || parts[0] == b"./")))
     {
-        if Process__isCwdObservable(global) {
-            return Ok(None);
-        }
-        // `process.cwd()`, which throws when `getcwd` fails (for example, a deleted working directory).
-        let cwd = crate::jsc::call_zero_is_throw(global, || Process__getDefaultCwd(global))?;
-        let Some(cwd) = JsLocal::new(heap, cwd).as_string() else {
-            unreachable!("process.cwd() is a string");
-        };
-        return Ok(Some(R::from_text(cwd)));
+        let cwd = Process__getCachedDefaultCwd(global);
+        return Ok(JsLocal::new(heap, cwd).as_string().map(R::from_text));
     }
 
     let buf_len = resolve_buf_len(WINDOWS, &parts);

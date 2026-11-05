@@ -1,6 +1,7 @@
 //! From the text to the document: which parser reads the file, and the stages in their order.
 
 use crate::lang::lang;
+use crate::lexer::{C_END, C_START, C_STRIDE};
 use crate::parse::core::{TYPED_FLOW, TYPED_TS};
 use crate::{Quick, R, Stop, Words, why};
 
@@ -81,6 +82,8 @@ impl Quick {
         self.reset_comments();
         self.reset_key_cache();
         self.reset_embed();
+        self.print_member.known = 0;
+        self.print_ternary.known = 0;
         self.lang.lang = language;
         self.lang.depth = 0;
         self.lang.guest_column = 0;
@@ -130,15 +133,47 @@ impl Quick {
         self.parse_program()
     }
 
+    /// Where a comment belongs is asked of what stands next to it, comments aside: each comment of a row looks past the whole row.
+    /// So the time grows with the square of the length of a row, and a very long one is left to the long way.
+    fn has_long_row_of_comments(&self) -> bool {
+        const LONG: i32 = 512;
+        if self.lexer.c_count - self.lexer.c_base <= LONG {
+            return false;
+        }
+        let mut row = 0;
+        let mut i = self.lexer.c_base + 1;
+        while i < self.lexer.c_count {
+            let from = self.lexer.c.at((i - 1) * C_STRIDE + C_END);
+            let to = self.lexer.c.at(i * C_STRIDE + C_START);
+            // (Who looks past a row skips blanks of one kind or another, some also `,` and `;`. Whatever any of them could skip counts here.)
+            let is_passed = |&c: &u8| c <= b' ' || c >= 0x80 || c == b',' || c == b';';
+            row = if self.t.sub(from, to).iter().all(is_passed) {
+                row + 1
+            } else {
+                0
+            };
+            if row >= LONG {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
     pub(crate) fn format_js(&mut self) -> R<()> {
         let mode = self.mode_of_run();
         self.set_js_mode(mode);
         let root = self.parse_once()?;
+        self.nothing_lost()?;
         self.stage(0);
+        if self.has_long_row_of_comments() {
+            return Err(self.stop(why::RARE));
+        }
         self.attach_comments(root)?;
         if self.comments.trailing_count == 0 {
             self.set_suffix_possible(false);
         }
+        self.nothing_lost()?;
         self.stage(1);
         self.print(root)
     }

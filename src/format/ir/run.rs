@@ -83,6 +83,11 @@ impl Scratch {
     pub(crate) fn marks(&self) -> [Option<u32>; 2] {
         self.printer.marks
     }
+
+    /// What the last document that [`write_with`] has returned is a range of.
+    pub(crate) fn storage(&self) -> &super::formatter::Storage {
+        &self.formatter.storage
+    }
 }
 
 /// Prints the document `root`, as returned by [`write_with`], and appends the text to `out`.

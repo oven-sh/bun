@@ -5,6 +5,23 @@ use crate::doc::LABEL_MEMBER_CHAIN;
 use crate::print::statics::{DOT, LBRACKET, QUESTION_DOT, RBRACKET};
 use crate::{Quick, R, Words};
 
+/// What print_member_expression() has found out about the member expression whose object it is printing. The next one down the row
+/// asks the same questions of the nodes above it, and need not climb past this one.
+pub(crate) struct PrintMember {
+    pub(crate) known: i32,
+    known_first_non_member: i32,
+    known_is_callee_of_new: bool,
+}
+impl PrintMember {
+    pub(crate) fn new() -> Self {
+        Self {
+            known: 0,
+            known_first_non_member: 0,
+            known_is_callee_of_new: false,
+        }
+    }
+}
+
 impl Quick {
     pub(crate) fn print_member_lookup(&mut self, n: i32) -> R<()> {
         let head = self.n.at(n);
@@ -47,6 +64,9 @@ impl Quick {
             if ancestor == 0 {
                 return false;
             }
+            if ancestor == self.print_member.known && self.n.at(ancestor + 4) == child {
+                return self.print_member.known_is_callee_of_new;
+            }
             let ak = self.n.at(ancestor) & 0xff;
             if !((ak == k::MemberExpression || ak == k::NonNullExpression)
                 && self.n.at(ancestor + 4) == child)
@@ -60,15 +80,27 @@ impl Quick {
 
     pub(crate) fn print_member_expression(&mut self, n: i32) -> R<()> {
         let object = self.n.at(n + 4);
-        self.print(object)?;
-        let object_label = self.doc.label;
         let mut parent = self.n.at(n + 3);
         let mut first_non_member = parent;
         while (self.n.at(first_non_member) & 0xff) == k::MemberExpression
             || (self.n.at(first_non_member) & 0xff) == k::NonNullExpression
         {
+            if first_non_member == self.print_member.known {
+                first_non_member = self.print_member.known_first_non_member;
+                break;
+            }
             first_non_member = self.n.at(first_non_member + 3);
         }
+        let is_callee_of_new = self.should_inline_new_expression_callee(n);
+        self.print_member.known = n;
+        self.print_member.known_first_non_member = first_non_member;
+        self.print_member.known_is_callee_of_new = is_callee_of_new;
+        self.print(object)?;
+        // (for what is in the brackets)
+        self.print_member.known = n;
+        self.print_member.known_first_non_member = first_non_member;
+        self.print_member.known_is_callee_of_new = is_callee_of_new;
+        let object_label = self.doc.label;
         let fk = self.n.at(first_non_member) & 0xff;
         while (self.n.at(parent) & 0xff) == k::NonNullExpression {
             parent = self.n.at(parent + 3);
@@ -88,7 +120,7 @@ impl Quick {
                 && (((self.n.at(stripped_object) & 0xff) == k::CallExpression
                     && self.n.at(self.n.at(stripped_object + 5)) > 0)
                     || object_label == LABEL_MEMBER_CHAIN))
-            || self.should_inline_new_expression_callee(n);
+            || is_callee_of_new;
         self.line_suffix_boundary();
         if should_inline {
             self.print_member_lookup(n)?;

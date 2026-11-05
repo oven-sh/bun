@@ -15,6 +15,8 @@
 use crate::{Quick, Stop, Words, why, zeros};
 
 pub(crate) struct Text {
+    /// Somebody has written more than reserve_gen() was asked for: bytes are lost, and the file is refused.
+    pub(crate) overflowed: bool,
     pub(crate) t_cap: i32,
     pub(crate) src_start: i32,
     pub(crate) src_end: i32,
@@ -24,6 +26,7 @@ pub(crate) struct Text {
 impl Text {
     pub(crate) fn new() -> Self {
         Self {
+            overflowed: false,
             t_cap: 131072,
             src_start: 32768,
             src_end: 32768,
@@ -76,6 +79,7 @@ impl Quick {
         self.text.src_end = end;
         self.t.fill_range(0, end, end + PAD);
         self.text.gen_pos = end + PAD;
+        self.text.overflowed = false;
         self.text.ws_pos = 0;
     }
 }
@@ -105,6 +109,9 @@ impl Quick {
     /// After this, `bytes` bytes can be written at gen_pos. It may replace T: read T again.
     pub(crate) fn reserve_gen(&mut self, bytes: i32) {
         if self.text.gen_pos + bytes + PAD + 8 > self.text.t_cap {
+            if self.text.gen_pos > self.text.t_cap {
+                self.text.overflowed = true;
+            }
             self.grow_text(self.text.gen_pos + bytes + PAD + 8, self.text.gen_pos);
         }
     }

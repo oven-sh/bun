@@ -11,6 +11,8 @@
 //!   texts `self.t` (text.rs), the tree `self.n` (arena.rs) and the document `self.d` (doc.rs).
 //! - A position, a node, a list, a text and a command are numbers (`i32`): offsets into these buffers. 0 and -1 stand for "none".
 //! - Arrays are read with `at()` and written with `put()` ([`Words`]), which have an answer for every index. Nothing can panic.
+//!   A write that falls beyond the end of its buffer, and a read beyond the end of a buffer of numbers, is a mistake of whoever was to
+//!   make room: it is noted, and the file is refused.
 //! - A function that can stop the work returns [`R`]; why it stopped is `Quick::why`. `REDO` means: a short cut was taken on a wrong
 //!   guess, and the file is formatted again without short cuts.
 //! - Whoever calls itself, directly or not, asks `self.stack()?` first.
@@ -27,6 +29,7 @@ mod comments;
 mod doc;
 mod es5_id_table;
 mod fast;
+mod guest;
 mod holes;
 mod id_table;
 mod js;
@@ -74,6 +77,7 @@ mod parse {
     pub(crate) mod typescript;
 }
 
+pub use guest::{Answer, Detached, GroupId, Guest, Guests, Open, Sink};
 pub use root::{Dialect, EndOfLine, Language, Options, QuoteProps, Refused, TrailingComma, format};
 use std::cell::Cell;
 
@@ -92,9 +96,32 @@ pub(crate) mod why {
     pub(crate) const RARE: i32 = 7;
     /// There is code in another language in the file.
     pub(crate) const GUEST: i32 = 8;
+    /// Something was written or read beyond the end of a buffer.
+    pub(crate) const LOST: i32 = 9;
 }
 
-/// Reads and writes that have an answer for every index: a read beyond the end gives 0, a write there does nothing.
+thread_local! {
+    /// Something was written beyond the end of a buffer, or read beyond the end of a buffer of numbers, since forget_losses().
+    static LOST: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The writers trust that somebody has made room. Where that is not so, what they write is lost, and nothing of this run can be trusted.
+#[cold]
+#[inline(never)]
+fn lose() {
+    LOST.set(true);
+}
+
+pub(crate) fn has_lost_something() -> bool {
+    LOST.get()
+}
+
+pub(crate) fn forget_losses() {
+    LOST.set(false);
+}
+
+/// Reads and writes that have an answer for every index: a read beyond the end gives 0, a write there does nothing but to note that it is lost.
+/// In a table (a slice) and in a buffer of bytes a read beyond the end is part of the plan: zeros stand around every text.
 pub(crate) trait Words {
     type Item;
     fn at(&self, i: i32) -> i32;
@@ -110,7 +137,7 @@ fn clamp(i: i32, len: usize) -> usize {
 }
 
 macro_rules! words {
-    ($t:ty) => {
+    ($t:ty, $beyond:expr) => {
         impl Words for [$t] {
             type Item = $t;
             #[inline(always)]
@@ -122,11 +149,16 @@ macro_rules! words {
             }
             #[inline(always)]
             fn put(&mut self, i: i32, v: i32) {
-                if let Some(slot) = self.get_mut(i as u32 as usize) {
-                    *slot = v as $t;
+                match self.get_mut(i as u32 as usize) {
+                    Some(slot) => *slot = v as $t,
+                    None => lose(),
                 }
             }
+            /// `end`: i32::MAX for "to the end".
             fn fill_range(&mut self, v: i32, start: i32, end: i32) {
+                if start < 0 || (end != i32::MAX && end as i64 > self.len() as i64) {
+                    lose();
+                }
                 let (start, end) = (clamp(start, self.len()), clamp(end, self.len()));
                 if let Some(range) = self.get_mut(start..end) {
                     range.fill(v as $t);
@@ -134,6 +166,13 @@ macro_rules! words {
             }
             fn move_within(&mut self, to: i32, start: i32, end: i32) {
                 let len = self.len();
+                if to < 0
+                    || start < 0
+                    || end as i64 > len as i64
+                    || (start < end && (to as i64 + (end - start) as i64) > len as i64)
+                {
+                    lose();
+                }
                 let (to, start, end) = (clamp(to, len), clamp(start, len), clamp(end, len));
                 if start < end {
                     let count = (end - start).min(len - to);
@@ -141,6 +180,9 @@ macro_rules! words {
                 }
             }
             fn set_all(&mut self, from: &[$t], at: i32) {
+                if at < 0 || at as usize + from.len() > self.len() {
+                    lose();
+                }
                 let at = clamp(at, self.len());
                 if let Some(target) = self.get_mut(at..) {
                     let count = target.len().min(from.len());
@@ -159,7 +201,10 @@ macro_rules! words {
             type Item = $t;
             #[inline(always)]
             fn at(&self, i: i32) -> i32 {
-                self.as_slice().at(i)
+                match self.get(i as u32 as usize) {
+                    Some(&v) => v as i32,
+                    None => $beyond,
+                }
             }
             #[inline(always)]
             fn put(&mut self, i: i32, v: i32) {
@@ -180,9 +225,15 @@ macro_rules! words {
         }
     };
 }
-words!(u8);
-words!(u16);
-words!(i32);
+words!(u8, 0);
+words!(u16, {
+    lose();
+    0
+});
+words!(i32, {
+    lose();
+    0
+});
 
 /// Reads and writes of more than one byte, in little-endian order.
 pub(crate) trait Bytes {
@@ -218,20 +269,22 @@ impl Bytes for [u8] {
     }
     #[inline(always)]
     fn put_u16(&mut self, p: i32, v: i32) {
-        if let Some(b) = self
+        match self
             .get_mut(p as u32 as usize..)
             .and_then(|s| s.first_chunk_mut::<2>())
         {
-            *b = (v as u16).to_le_bytes();
+            Some(b) => *b = (v as u16).to_le_bytes(),
+            None => lose(),
         }
     }
     #[inline(always)]
     fn put_u64(&mut self, p: i32, v: u64) {
-        if let Some(b) = self
+        match self
             .get_mut(p as u32 as usize..)
             .and_then(|s| s.first_chunk_mut::<8>())
         {
-            *b = v.to_le_bytes();
+            Some(b) => *b = v.to_le_bytes(),
+            None => lose(),
         }
     }
     fn index_of(&self, byte: i32, from: i32) -> i32 {
@@ -328,6 +381,7 @@ pub struct Quick {
     pub(crate) holes: holes::Holes,
     pub(crate) doc: doc::Doc,
     pub(crate) lang: lang::Lang,
+    pub(crate) guest: guest::State,
     pub(crate) options: options::Options,
     pub(crate) printer: printer::Printer,
     pub(crate) mode: mode::Mode,
@@ -340,6 +394,8 @@ pub struct Quick {
     pub(crate) print_embed: print::embed::PrintEmbed,
     pub(crate) print_jest_each: print::jest_each::PrintJestEach,
     pub(crate) print_binaryish: print::binaryish::PrintBinaryish,
+    pub(crate) print_member: print::member::PrintMember,
+    pub(crate) print_ternary: print::ternary::PrintTernary,
     pub(crate) print_object: print::object::PrintObject,
     pub(crate) print_types: print::types::PrintTypes,
     pub(crate) print_call: print::call::PrintCall,
@@ -381,6 +437,7 @@ impl Quick {
             holes: holes::Holes::new(),
             doc: doc::Doc::new(),
             lang: lang::Lang::new(),
+            guest: guest::State::new(),
             options: options::Options::new(),
             printer: printer::Printer::new(),
             mode: mode::Mode::new(),
@@ -393,6 +450,8 @@ impl Quick {
             print_embed: print::embed::PrintEmbed::new(),
             print_jest_each: print::jest_each::PrintJestEach::new(),
             print_binaryish: print::binaryish::PrintBinaryish::new(),
+            print_member: print::member::PrintMember::new(),
+            print_ternary: print::ternary::PrintTernary::new(),
             print_object: print::object::PrintObject::new(),
             print_types: print::types::PrintTypes::new(),
             print_call: print::call::PrintCall::new(),
@@ -406,6 +465,15 @@ impl Quick {
     pub(crate) fn stop(&self, why: i32) -> Stop {
         self.why.set(why);
         Stop
+    }
+
+    /// Nothing of what a stage has left behind is read if part of it is lost.
+    pub(crate) fn nothing_lost(&self) -> R<()> {
+        if has_lost_something() {
+            Err(self.stop(why::LOST))
+        } else {
+            Ok(())
+        }
     }
 
     /// Whoever calls itself, directly or not, asks first whether there is room for that.

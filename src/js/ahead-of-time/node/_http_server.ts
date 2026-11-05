@@ -49,11 +49,17 @@ function onResponseSocketDrain(this: any) {
 
 function freezeBufferedResponseHeaders(res: any, fromEnd: boolean) {
   if (res[headerStateSymbol] !== NodeHTTPHeaderState.none) return;
-  if (fromEnd) res[kImplicitHeaderFromEnd] = true;
+  if (fromEnd) {
+    storeRarely(res, kImplicitHeaderFromEnd, true);
+    followResponse(res.$exchange);
+  }
   try {
     res._implicitHeader();
   } finally {
-    if (fromEnd) res[kImplicitHeaderFromEnd] = false;
+    if (fromEnd) {
+      storeRarely(res, kImplicitHeaderFromEnd, false);
+      followResponse(res.$exchange);
+    }
   }
 }
 

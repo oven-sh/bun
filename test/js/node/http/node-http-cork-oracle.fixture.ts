@@ -107,6 +107,11 @@ export async function responseCorkOracle(mode: string) {
     await immediate();
   };
   async function handle(res) {
+    if (mode === "implicit-end") {
+      res.cork();
+      res.end("AB");
+      return;
+    }
     if (mode === "informational-pressure") {
       res.setHeader("content-length", 2);
       const written = Promise.withResolvers<void>();
@@ -471,6 +476,11 @@ export async function responseCorkOracle(mode: string) {
     if (mode === "reassigned-informational") await reassigned.promise;
     await closed;
     if (mode === "headers-frozen") assert.match(Buffer.concat(chunks).toString(), /x-proof: before\r\n/i);
+    if (mode === "implicit-end") {
+      const headers = Buffer.concat(chunks).toString().split("\r\n\r\n", 1)[0];
+      assert.match(headers, /content-length: 2/i);
+      assert.doesNotMatch(headers, /transfer-encoding/i);
+    }
     if (mode === "strict-no-body" || mode === "bodyless-write") {
       const bytes = Buffer.concat(chunks).toString();
       assert.match(bytes, /^HTTP\/1.1 204 /);

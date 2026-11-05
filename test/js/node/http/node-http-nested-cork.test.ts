@@ -15,6 +15,7 @@ const corkModes = [
   "cross-chunked",
   "socket-cork",
   "end-corked",
+  "implicit-end",
   "high-water",
   "next-tick",
   "timer",

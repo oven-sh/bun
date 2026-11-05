@@ -16,6 +16,7 @@ use crate::lexer::{
     CF_BLOCK, CF_CLAIMED, CF_INDENTABLE, CF_PLAIN,
 };
 use crate::parse::core::TYPED_FLOW;
+use crate::print::jsx::KIND_AND_SUB;
 use crate::{Quick, R, Words, rare, why, zeros};
 
 pub(crate) struct Comments {
@@ -290,6 +291,11 @@ impl Quick {
             && !((form == OWN_LINE || form == OWN_BLOCK)
                 && i == c.gap_last
                 && c.h_following != 0
+                // (`if (a) break`, the end of the line: where that ends is not the same for all)
+                && !((c.h_following_kind == k::IfStatement
+                    || (self.n.at(c.h_following) & KIND_AND_SUB)
+                        == (k::Ready | (k::IfStatement << SUB_SHIFT)))
+                    && !matches!(self.t.at(self.n.at(c.h_following + 2) - 1), 59 | 125))
                 // (what could go on the line before gets a `;` in front where there are no semicolons)
                 && (self.options.semi || is_part_of_word(behind) || behind == 123)
                 // (the long way drops the `;` of a `declare export` of Flow where there are no semicolons)
@@ -386,6 +392,10 @@ impl Quick {
             }
             // before the parentheses of a function, or parentheses that go
             k::ObjectProperty => behind != 40,
+            // before an object or an array that would stand on the line of the operator
+            k::LogicalExpression => {
+                !matches!(c.h_following_kind, k::ObjectExpression | k::ArrayExpression)
+            }
             // before the `...` of a rest parameter
             k::FunctionType => behind != 46,
             // between the name and the parameters

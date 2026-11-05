@@ -4745,6 +4745,8 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ],
     // White space beyond ASCII in the text of an element.
     ["a.jsx", "", "<fbt><fbt:param>\u00a0\n    </fbt:param><fbt:param></fbt:param></fbt>\n"],
+    // A comment before an object that is the right side of a logical expression.
+    ["a.js", "--print-width=30", "ErrorLike=SerializedProps&&\n  // short\n  {causeunknown}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

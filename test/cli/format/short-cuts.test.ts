@@ -2984,6 +2984,9 @@ describe("JavaScript and TypeScript in a host", () => {
     "// c\n<a />;",
     "<a />;\nb;",
     '"use strict";\n<a />;',
+    // An element, a line break and text, where neither fits: one line break between them.
+    "x = <a>\n  <code>b</code>\n  c d\n</a>;",
+    'x = <a>the a.\n  <code>a</code>\n    a{" "}\na it\'s\n  </a>;',
     // What is one thing in a file and another in a host.
     "// @flow\nconst a: number = 1;",
     "/* @flow */\ntype A = {| a: 1 |};",

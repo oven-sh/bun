@@ -1477,7 +1477,7 @@ unsafe fn parse_worker_exec_argv_flags(
         let words: Vec<&[u8]> = words.iter().map(|word| word.as_bytes()).collect();
         crate::cli::startup_options::warn_of_ignored_options(&words);
     }
-    for (index, &arg) in exec_argv.iter().enumerate() {
+    for &arg in exec_argv {
         if arg.is_null() {
             continue;
         }
@@ -1498,7 +1498,7 @@ unsafe fn parse_worker_exec_argv_flags(
             bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
             Some([] | [b'=', ..])
         ) {
-            flags.invalid.get_or_insert(index);
+            flags.invalid.get_or_insert(owned);
         }
     }
     Some(flags)

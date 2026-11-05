@@ -834,7 +834,6 @@ impl Quick {
         let quasis = self.n.at(n + 4);
         let count = self.n.at(quasis);
         let counter = 0;
-        self.guest.template_at = self.n.at(n + 1);
         let base = self.print_expressions(n)?;
         // the suffix of the placeholders: _<counter>_IN_JS
         self.reserve_gen(32);
@@ -902,6 +901,7 @@ impl Quick {
         if has_linebreak && self.options.short_cuts {
             self.set_guest_column(GUEST_BETWEEN_LINES);
         }
+        self.guest.template_at = self.n.at(n + 1);
         let ok = self.embed(language, start, end)?;
         self.end_holes();
         self.print_embed.ex_top = base;

@@ -36,6 +36,8 @@ pub enum Reason {
     InMarkdown,
     /// A comment may say that something stays as it is written.
     IgnoreComment,
+    /// The text isn't UTF-8.
+    NotUtf8,
     SyntaxError,
     /// Something rare that is left to the long way.
     Rare,
@@ -49,11 +51,12 @@ pub enum Reason {
 }
 
 impl Reason {
-    pub const ALL: [Reason; 11] = [
+    pub const ALL: [Reason; 12] = [
         Reason::Options,
         Reason::Language,
         Reason::InMarkdown,
         Reason::IgnoreComment,
+        Reason::NotUtf8,
         Reason::SyntaxError,
         Reason::Rare,
         Reason::Guest,
@@ -289,6 +292,10 @@ pub fn format(
     if strings::contains(code.text, b"prettier-ignore") {
         return Err(scratch.refuse(Reason::IgnoreComment, code.text));
     }
+    // How wide half a character is, and whether it can be in a name, is for the long way to say.
+    if !strings::is_valid_utf8(code.text) {
+        return Err(scratch.refuse(Reason::NotUtf8, code.text));
+    }
     let quick = scratch.quick.get_or_insert_with(|| {
         let mut quick = Box::<quick::Quick>::default();
         quick.lend_guests(Some(Box::<QuickGuests>::default()));
@@ -300,7 +307,11 @@ pub fn format(
     {
         guests.start_file(options, code.path);
     }
-    let dialect = quick::Dialect::of_name(language, code.path);
+    let mut dialect = quick::Dialect::of_name(language, code.path);
+    // In a declaration file, too, `await` is a name outside of async functions.
+    dialect.common_js |= [&b".d.ts"[..], b".d.mts"]
+        .iter()
+        .any(|end| ends_with_ignore_ascii_case(code.path, end));
     if quick::format(code.text, dialect, &quick_options, quick, out).is_err() {
         let reason = match quick.why() {
             1 => Reason::SyntaxError,

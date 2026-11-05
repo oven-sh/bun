@@ -157,9 +157,10 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// The embedded module `specifier` names when imported from `source_dir`: an absolute embedded path (in either
     /// path syntax), or a `./` / `../` specifier joined onto `source_dir`, looked up as spelled and then -- since every
     /// entry point is embedded under a `.js` name -- under the `.js` name for a source extension or no extension
-    /// (`./w.ts` -> `/$bunfs/root/w.js`). An absolute path that names no file as spelled is looked up once more
-    /// without its empty parts, `.` and `..`. Returns the graph's own name for the module, which is what the module
-    /// loader keys on; `None` for anything else (bare specifiers, other absolute paths, misses).
+    /// (`./w.ts` -> `/$bunfs/root/w.js`). Without a compiled program, an absolute path that names no file as spelled
+    /// is looked up once more without its empty parts, `.` and `..`. Returns the graph's own name for the module,
+    /// which is what the module loader keys on; `None` for anything else (bare specifiers, other absolute paths,
+    /// misses).
     fn resolve(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
         let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
         let is_embedded_path =
@@ -189,8 +190,12 @@ pub trait StandaloneModuleGraph: Send + Sync {
         if let Some(name) = find_file_or_entry_point(self, &mut buf[..], path_len) {
             return Some(name);
         }
-        // The join has folded a relative specifier. One that names a directory names no file.
-        if !is_embedded_path || Resolver::import_path_names_directory(specifier) {
+        // The join has folded a relative specifier, and `resolve_module` folds for a compiled program, which asks here
+        // once for each module that is no file of the graph. A specifier that names a directory names no file.
+        if !is_embedded_path
+            || self.compiled_program().is_some()
+            || Resolver::import_path_names_directory(specifier)
+        {
             return None;
         }
         let FoldedPath::Shorter(folded) = fold_embedded_path(specifier, &mut buf[..], |_| false)
@@ -549,6 +554,14 @@ mod tests {
                 String::from_utf8_lossy(specifier)
             );
         }
+        // A compiled program folds the path in `resolve_module`.
+        let compiled = graph_with_compiled_program();
+        let specifier = b"/$bunfs/root/./worker.js";
+        assert_eq!(compiled.resolve(ROOT, specifier), None);
+        assert_eq!(
+            resolve_module(&compiled, specifier),
+            Some(COMPILED_MODULES[0])
+        );
     }
 
     fn fold(path: &str, files: &[&str]) -> String {

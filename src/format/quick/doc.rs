@@ -15,7 +15,7 @@
 
 use crate::text::much_larger;
 use crate::width_table::{WIDE, WIDE_WITH_VS16, ZERO};
-use crate::{Numbers, Quick, Words, zeros};
+use crate::{Bytes, Numbers, Quick, Words, zeros};
 
 static INITIAL_FILTER_BYTES: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -522,6 +522,21 @@ impl Quick {
         let mut p = start;
         let mut previous_was_emoji = false;
         while p < end {
+            // eight bytes of printable ASCII at a time
+            while p + 8 <= end {
+                let v = self.t.u64_at(p);
+                let below_blank = v.wrapping_sub(0x2020_2020_2020_2020);
+                let delete = v.wrapping_add(0x0101_0101_0101_0101);
+                if ((v | below_blank | delete) & 0x8080_8080_8080_8080) != 0 {
+                    break;
+                }
+                p += 8;
+                width += 8;
+                previous_was_emoji = false;
+            }
+            if p >= end {
+                break;
+            }
             let c = self.t.at(p);
             if c < 0x80 {
                 p += 1;

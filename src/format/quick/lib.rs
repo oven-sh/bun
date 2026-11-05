@@ -269,8 +269,10 @@ impl Numbers for Vec<i32> {
 pub(crate) trait Bytes {
     fn i32_at(&self, p: i32) -> i32;
     fn u64_at(&self, p: i32) -> u64;
+    fn u128_at(&self, p: i32) -> u128;
     fn put_u16(&mut self, p: i32, v: i32);
     fn put_u64(&mut self, p: i32, v: u64);
+    fn put_u128(&mut self, p: i32, v: u128);
     fn index_of(&self, byte: i32, from: i32) -> i32;
     /// The last place at or before `from`.
     fn last_index_of(&self, byte: i32, from: i32) -> i32;
@@ -295,6 +297,26 @@ impl Bytes for [u8] {
         {
             Some(b) => u64::from_le_bytes(*b),
             None => 0,
+        }
+    }
+    #[inline(always)]
+    fn u128_at(&self, p: i32) -> u128 {
+        match self
+            .get(p as u32 as usize..)
+            .and_then(|s| s.first_chunk::<16>())
+        {
+            Some(b) => u128::from_le_bytes(*b),
+            None => 0,
+        }
+    }
+    #[inline(always)]
+    fn put_u128(&mut self, p: i32, v: u128) {
+        match self
+            .get_mut(p as u32 as usize..)
+            .and_then(|s| s.first_chunk_mut::<16>())
+        {
+            Some(b) => *b = v.to_le_bytes(),
+            None => lose(),
         }
     }
     #[inline(always)]
@@ -349,6 +371,14 @@ impl Bytes for Vec<u8> {
     #[inline(always)]
     fn u64_at(&self, p: i32) -> u64 {
         self.as_slice().u64_at(p)
+    }
+    #[inline(always)]
+    fn u128_at(&self, p: i32) -> u128 {
+        self.as_slice().u128_at(p)
+    }
+    #[inline(always)]
+    fn put_u128(&mut self, p: i32, v: u128) {
+        self.as_mut_slice().put_u128(p, v)
     }
     #[inline(always)]
     fn put_u16(&mut self, p: i32, v: i32) {

@@ -9,8 +9,9 @@
 //! way.
 
 use super::super::Parser as Syntax;
+use super::layout::Page;
 use super::{
-    BLANK, DASH, DIGIT, INDENTATION, LOWER, PLAIN, UNDERSCORE, UPPER, byte, class,
+    BLANK, DASH, DIGIT, INDENTATION, LOWER, PLAIN, Shape, UNDERSCORE, UPPER, byte, class,
     is_asked_for_by_name, may_end_with_white_space, skip, skip_long,
 };
 
@@ -165,7 +166,7 @@ fn end_of_line_comment(css: &[u8], from: usize) -> usize {
 
 /// A number that's printed as it's written, from the digit at `p`. Returns its end.
 pub(super) fn number(css: &[u8], p: usize) -> Option<usize> {
-    let p = skip(css, p, DIGIT);
+    let p = skip_long(css, p, DIGIT);
     match byte(css, p) {
         b'.' => fraction(css, p),
         _ => unit(css, p),
@@ -174,7 +175,7 @@ pub(super) fn number(css: &[u8], p: usize) -> Option<usize> {
 
 /// The rest of a number, from its `.` on.
 fn fraction(css: &[u8], dot: usize) -> Option<usize> {
-    let end = skip(css, dot + 1, DIGIT);
+    let end = skip_long(css, dot + 1, DIGIT);
     if end == dot + 1 || css[end - 1] == b'0' {
         return None;
     }
@@ -186,7 +187,7 @@ fn unit(css: &[u8], start: usize) -> Option<usize> {
     if byte(css, start) == b'%' {
         return Some(start + 1);
     }
-    let end = skip(css, start, LOWER);
+    let end = skip_long(css, start, LOWER);
     // `Q`, `Hz` and `kHz` have capitals.
     let is_as_printed = end == start || !(css[end - 1] == b'z' || &css[start..end] == b"q");
     is_as_printed.then_some(end)
@@ -266,6 +267,12 @@ fn is_special_call(name: &[u8], syntax: Syntax) -> bool {
             && name[name.len() - 6..].eq_ignore_ascii_case(b"extend"))
 }
 
+/// True for the words that are printed in lower case.
+fn is_keyword_in_any_case(name: &[u8]) -> bool {
+    const KEYWORDS: [&[u8]; 5] = [b"initial", b"inherit", b"unset", b"revert", b"revert-layer"];
+    KEYWORDS.iter().any(|it| name.eq_ignore_ascii_case(it))
+}
+
 /// `url(..)` without quotes, from the `(`. Returns where the `)` is. All three tokenizers and the parser of values
 /// take what's in it for one text.
 fn end_of_unquoted_url(css: &[u8], paren: usize, is_inside: bool) -> Option<usize> {
@@ -305,13 +312,19 @@ fn end_of_less_variable(css: &[u8], at: usize) -> Option<usize> {
 
 /// What `read_simple_value` has found.
 struct Simple {
-    /// Where the `;` is, or the blank before a `!` or a `{`.
+    /// Where the `;` is, the blank before a `!` or a `{`, or a `,` outside of all parentheses at the end of the line.
     end: usize,
     /// No line can break in it.
     is_word: bool,
     /// It's one call and nothing else.
     is_call: bool,
     has_top_commas: bool,
+    /// Where the first item of the list at the top ends.
+    first_item_end: usize,
+    /// Each item of the list at the top is one node, and `Layout::is_several_nodes` can tell, except for the first.
+    has_items_of_one_node: bool,
+    /// It has `12px/1.5`.
+    has_tight_slash: bool,
 }
 
 /// Reads a value on one line that's written as it's printed on one line: names, numbers, colors, variables, strings,
@@ -327,9 +340,12 @@ fn read_simple_value(
 ) -> Option<Simple> {
     let mut p = start;
     let mut depth = 0;
-    let (mut is_word, mut has_top_commas, mut has_tight_slash) = (true, false, false);
-    // The number of terms outside of all parentheses.
-    let mut top_terms = 0;
+    let (mut is_word, mut has_tight_slash) = (true, false);
+    // The number of terms and of commas outside of all parentheses.
+    let (mut top_terms, mut top_commas) = (0, 0);
+    // An item of the list at the top, other than the first, starts with a sign. Or a term is `@@name`.
+    let mut has_unclear_item = false;
+    let mut first_item_end = 0;
     let mut follows_blank = false;
     loop {
         // ───────────── a term
@@ -338,7 +354,7 @@ fn read_simple_value(
         let first = p + sign;
         let mut is_lonely_string = false;
         match byte(css, first) {
-            b'a'..=b'z' | b'_' if starts_with_url(css, first) => {
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' if starts_with_url(css, first) => {
                 let paren = first + 3;
                 if sign > 0 || owner == Owner::AtRule || css.get(first..paren + 1) != Some(b"url(")
                 {
@@ -362,11 +378,18 @@ fn read_simple_value(
                 }
                 p += 1;
             }
-            b'a'..=b'z' | b'_' => {
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let term = p;
                 let mut is_variable = false;
                 p = skip_long(css, first, NAME);
-                while sign == 0 && byte(css, p) == b'.' {
+                let has_upper = class(byte(css, p)) & UPPER != 0;
+                if has_upper {
+                    if sign > 0 {
+                        return None;
+                    }
+                    p = skip_long(css, p, ANY_NAME);
+                }
+                while sign == 0 && !has_upper && byte(css, p) == b'.' {
                     // `module.name`, `module.$name`
                     p += 1;
                     if byte(css, p) == b'$' {
@@ -388,7 +411,18 @@ fn read_simple_value(
                         follows_blank = false;
                         continue;
                     }
+                } else if has_upper && is_keyword_in_any_case(&css[term..p]) {
+                    return None;
                 }
+            }
+            // `--name`
+            b'-' if sign > 0 => {
+                let name = first + 1;
+                if class(byte(css, name)) & (LOWER | UNDERSCORE) == 0 || starts_with_url(css, name)
+                {
+                    return None;
+                }
+                p = skip_long(css, name, NAME);
             }
             b'0'..=b'9' => {
                 p = number(css, first)?;
@@ -403,14 +437,23 @@ fn read_simple_value(
                 }
             }
             _ if sign > 0 => return None,
+            b'+' if depth > 0
+                && byte(css, p.wrapping_sub(1)) == b'('
+                && byte(css, p + 1).is_ascii_digit() =>
+            {
+                p = number(css, p + 1)?;
+            }
             b'#' => {
-                p = skip(css, p + 1, LOWER | DIGIT);
+                p = skip_long(css, p + 1, LOWER | DIGIT);
                 if p == first + 1 {
                     return None;
                 }
             }
             b'$' => p = end_of_variable(css, p + 1)?,
-            b'@' if syntax == Syntax::Less => p = end_of_less_variable(css, p)?,
+            b'@' if syntax == Syntax::Less => {
+                has_unclear_item |= byte(css, p + 1) == b'@';
+                p = end_of_less_variable(css, p)?;
+            }
             it @ (b'"' | b'\'') => {
                 let string = read_string(css, p)?;
                 let keeps_quotes =
@@ -432,11 +475,18 @@ fn read_simple_value(
                     continue;
                 }
                 b',' if byte(css, p + 1) == b' ' => {
-                    has_top_commas |= depth == 0;
+                    if depth == 0 {
+                        if top_commas == 0 {
+                            first_item_end = p;
+                        }
+                        top_commas += 1;
+                        has_unclear_item |= byte(css, p + 2) == b'-';
+                    }
                     (p, is_word, follows_blank) = (p + 2, false, false);
                     break;
                 }
                 b';' if depth == 0 => {}
+                b',' if depth == 0 && byte(css, p + 1) == b'\n' => {}
                 b' ' if depth == 0 && matches!(byte(css, p + 1), b'!' | b'{') => {}
                 b' ' if !is_lonely_string => {
                     let is_operator = matches!(byte(css, p + 1), b'+' | b'-' | b'*' | b'/')
@@ -447,14 +497,17 @@ fn read_simple_value(
                 }
                 _ => return None,
             }
-            if has_tight_slash && has_top_commas {
+            if has_tight_slash && top_commas > 0 {
                 return None;
             }
             return Some(Simple {
                 end: p,
                 is_word,
                 is_call: top_terms == 1 && css[p - 1] == b')',
-                has_top_commas,
+                has_top_commas: top_commas > 0,
+                first_item_end: if top_commas > 0 { first_item_end } else { p },
+                has_items_of_one_node: top_terms == top_commas + 1 && !has_unclear_item,
+                has_tight_slash,
             });
         }
     }
@@ -470,17 +523,106 @@ pub(super) fn end_of_simple_value(
     Some(read_simple_value(css, start, syntax, quote, Owner::AtRule)?.end)
 }
 
-/// A statement on one line, from `start` on, that's written as it's printed if it fits: a declaration, or a variable or
-/// the call of a mixin of Less, with a simple value. Returns where it ends, and whether it's printed like that even if
-/// it doesn't fit. `is_in_declaration`: one of the blocks around it is that of a declaration. This is no more than a
-/// shorter way to what `Parser::read_declaration` and the like find.
+/// What follows the value of a declaration, which ends at `end`: its length, through the `;`. `is_variable`: it's a
+/// `$variable`.
+fn tail_len(css: &[u8], end: usize, is_variable: bool) -> Option<usize> {
+    let rest = css.get(end..)?;
+    if rest.first() == Some(&b';') {
+        Some(1)
+    } else if rest.starts_with(b" !important;") {
+        Some(12)
+    } else if rest.starts_with(b" !default;") && is_variable {
+        Some(10)
+    } else if rest.starts_with(b" !global;") && is_variable {
+        Some(9)
+    } else {
+        None
+    }
+}
+
+/// See `Parser::read_value`.
+fn ends_with_important(css: &[u8], start: usize, end: usize) -> bool {
+    end - start >= 9 && css[end - 9..end].eq_ignore_ascii_case(b"important")
+}
+
+/// The value of a declaration `level` blocks deep, whose name starts at `start` and whose colon is at the end of its
+/// line, if it's a list of simple values that's written as `Layout::write_list` writes it: an item on each line if one
+/// of them is several nodes, else as many on each line as fit, where they don't fit behind the colon. Returns where the
+/// declaration ends.
+fn end_of_standing_list(
+    css: &[u8],
+    (start, colon): (usize, usize),
+    syntax: Syntax,
+    quote: u8,
+    page: Page,
+    level: usize,
+) -> Option<usize> {
+    if css[start..colon].starts_with(b"grid") {
+        return None;
+    }
+    let indentation = page.indentation_len(level + 1);
+    let room = page.width.checked_sub((level + 1) * page.tab_width)?;
+    // An item is several nodes. The list is written like one with such an item, and like one without.
+    let (mut has_several, mut is_on_lines, mut is_filled) = (false, true, true);
+    // How long the value is on one line, and how long the line before this one is.
+    let (mut flat_len, mut previous_len) = (0, 0);
+    let mut line_break = colon + 1;
+    loop {
+        let line = line_break + 1 + indentation;
+        if !page.is_line_break(css.get(line_break..line)?, level + 1) {
+            return None;
+        }
+        let is_first = line_break == colon + 1;
+        let simple = read_simple_value(css, line, syntax, quote, Owner::Declaration)?;
+        // A sign is a node of its own in most places.
+        if simple.has_tight_slash
+            || (simple.has_items_of_one_node && css[line] == b'-' && !is_first)
+        {
+            return None;
+        }
+        let is_last = css[simple.end] != b',';
+        let tail = match is_last {
+            true => tail_len(css, simple.end, css[start] == b'$')?,
+            false => 1,
+        };
+        let len = simple.end - line;
+        let comma = usize::from(!is_last);
+        let first_item_len =
+            simple.first_item_end - line + usize::from(!is_last || simple.has_top_commas);
+        has_several |= !simple.has_items_of_one_node;
+        is_on_lines &= !simple.has_top_commas && len + tail <= room;
+        // A `fill` doesn't look at what follows it.
+        is_filled &= simple.has_items_of_one_node
+            && len + comma <= room
+            && (is_first || previous_len + 1 + first_item_len > room);
+        flat_len += usize::from(!is_first) + len + comma;
+        previous_len = len + comma;
+        if is_last {
+            let is_list = !is_first || simple.has_top_commas;
+            let fits = level * page.tab_width + (colon + 2 - start) + flat_len + tail <= page.width;
+            let is_as_printed = match has_several {
+                true => is_on_lines,
+                false => is_filled && !fits,
+            };
+            let is_taken = is_list && is_as_printed && !ends_with_important(css, line, simple.end);
+            return is_taken.then_some(simple.end + tail);
+        }
+        line_break = simple.end + 1;
+    }
+}
+
+/// A statement from `start` on that's written as it's printed: a declaration, or a variable or the call of a mixin of
+/// Less, with a simple value. Returns where it ends, and its shape. `is_in_declaration`: one of the blocks around it is
+/// that of a declaration. `lists`: the page and the number of blocks around it, or `None` where `layout.rs` isn't asked.
+/// This is no more than a shorter way to what `Parser::read_declaration` and the like find.
 pub(super) fn end_of_simple_statement(
     css: &[u8],
     start: usize,
     syntax: Syntax,
     quote: u8,
     is_in_declaration: bool,
-) -> Option<(usize, bool)> {
+    lists: Option<(Page, usize)>,
+) -> Option<(usize, Shape)> {
     let first = byte(css, start);
     if first == b'@' {
         if is_in_declaration {
@@ -497,7 +639,7 @@ pub(super) fn end_of_simple_statement(
         let simple = read_simple_value(css, colon + 2, syntax, quote, Owner::AtRule)?;
         // A list can have an item on each line.
         let is_taken = css[simple.end] == b';' && !simple.has_top_commas;
-        return is_taken.then_some((simple.end + 1, false));
+        return is_taken.then_some((simple.end + 1, Shape::Line));
     }
     if first == b'.' {
         // `.name;`, `.name(words);`
@@ -511,10 +653,10 @@ pub(super) fn end_of_simple_statement(
         let end = skip_long(css, name, NAME);
         return match byte(css, end) {
             _ if is_asked_for_by_name(&css[start + 1..end]) => None,
-            b';' => Some((end + 1, true)),
+            b';' => Some((end + 1, Shape::Word)),
             b'(' => {
                 let simple = read_simple_value(css, start + 1, syntax, quote, Owner::AtRule)?;
-                (simple.is_call && css[simple.end] == b';').then_some((simple.end + 1, true))
+                (simple.is_call && css[simple.end] == b';').then_some((simple.end + 1, Shape::Word))
             }
             _ => None,
         };
@@ -534,34 +676,40 @@ pub(super) fn end_of_simple_statement(
     if colon == name
         || (first != b'$' && class(css[name]) & LOWER == 0)
         || starts_with_url(css, name)
-        || css.get(colon..colon + 2) != Some(b": ")
+        || byte(css, colon) != b':'
         || &css[start..colon] == b"composes"
     {
         return None;
     }
+    match byte(css, colon + 1) {
+        b' ' => {}
+        b'\n' if owner == Owner::Declaration => {
+            let (page, level) = lists?;
+            let end = end_of_standing_list(css, (start, colon), syntax, quote, page, level)?;
+            return Some((end, Shape::Lines));
+        }
+        _ => return None,
+    }
     let value = colon + 2;
     let simple = read_simple_value(css, value, syntax, quote, owner)?;
-    let rest = &css[simple.end..];
-    let end = simple.end
-        + if rest[0] == b';' {
-            1
-        } else if rest.starts_with(b" !important;") {
-            12
-        } else if rest.starts_with(b" !default;") && first == b'$' {
-            10
-        } else if rest.starts_with(b" !global;") && first == b'$' {
-            9
-        } else {
-            return None;
-        };
-    // A list can have an item on each line. And see `Parser::read_value`.
+    let tail = tail_len(css, simple.end, first == b'$')?;
+    // A list with an item of several nodes has an item on each line.
     if simple.has_top_commas
-        || (simple.end - value >= 9
-            && css[simple.end - 9..simple.end].eq_ignore_ascii_case(b"important"))
+        && owner == Owner::Declaration
+        && (!simple.has_items_of_one_node
+            || lists.is_none()
+            || css[start..colon].starts_with(b"grid"))
     {
         return None;
     }
-    Some((end, simple.is_word && rest[0] == b';'))
+    if ends_with_important(css, value, simple.end) {
+        return None;
+    }
+    let shape = match simple.is_word && tail == 1 {
+        true => Shape::Word,
+        false => Shape::Line,
+    };
+    Some((simple.end + tail, shape))
 }
 
 impl Scanner<'_> {
@@ -935,10 +1083,7 @@ impl Scanner<'_> {
                         (p, place) = (p + 1, Place::Open);
                         continue;
                     } else if has_upper {
-                        const KEYWORDS: [&[u8]; 5] =
-                            [b"initial", b"inherit", b"unset", b"revert", b"revert-layer"];
-                        let name = &css[term..p];
-                        if KEYWORDS.iter().any(|it| name.eq_ignore_ascii_case(it)) {
+                        if is_keyword_in_any_case(&css[term..p]) {
                             return None;
                         }
                         is_key = segments == 1;
@@ -1121,6 +1266,13 @@ impl Scanner<'_> {
                     // `@use "a" as *;`
                     self.values.ends_with_star = true;
                     p += 1;
+                }
+                b'+' if place == Place::Open
+                    && byte(css, p.wrapping_sub(1)) == b'('
+                    && byte(css, p + 1).is_ascii_digit() =>
+                {
+                    // Right behind the `(`, it's the sign of the number.
+                    p = number(css, p + 1)?;
                 }
                 b'+' | b'/' | b'*' if place == Place::Next => {
                     if class(byte(css, p + 1)) & BLANK == 0 || (c == b'*' && css[p + 1] != b' ') {

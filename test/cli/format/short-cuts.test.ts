@@ -679,6 +679,8 @@ describe.skipIf(!hasFlag)("style sheets", () => {
   const cases: Record<string, string> = {
     "custom-property-with-brace.css": "--a:e{",
     "custom-property-with-brace.less": "--@{b}@{a}:w{",
+    "custom-property-with-blank-and-brace.css": "--a:b {",
+    "custom-property-with-blank-and-brace.scss": "c {\n  --a:b(d) e {\n  }\n}\n",
     "grid.css":
       "a {\n  grid-template-columns: min-content auto min-content min-content auto auto min-content;\n  grid: a b;\n}\n",
     "sign-and-interpolation.scss": "e{y: -#{a},n}\n$A: -#{a},o;\nf{y: -a,n}\n",
@@ -783,6 +785,51 @@ describe.skipIf(!hasFlag)("style sheets", () => {
       "  x: some-long-name another-long-name yet-another-long-name one-more-long-name and-another-one;\n  .y  {\n  }\n  // z \n}\n",
     "standing.less":
       "@a: b;\n@C: @a 1px;\n\n// d\n.e {\n  .f;\n  .g();\n  .h(@a, 1px);\n  i: @a;\n  &-j .@{k}-l {\n    m: n;\n  }\n}\n",
+    "standing-values.css":
+      "a {\n  b: var(--c);\n  d: var(--e, var(--f)) --g;\n  h: translateY(0) currentColor optimizeLegibility;\n  i: Inherit;\n" +
+      "  j: INITIAL k;\n  l: URL(m);\n  n: Url;\n  o: -Foo;\n  p: --q(r);\n  s: ---t;\n  u: --url;\n  v: --1;\n  w: --X;\n" +
+      "  x: l(+10%) f(+1 2) f(a, +1) f(+.5) f(+1.50) f( +1) f(+ 1) f(+a);\n  y: +1;\n  --z: A, b c, -d;\n}\n",
+    "standing-values.scss":
+      "a {\n  b: var(--c) $D fooBar($e);\n  @include fooBar(--f, Bar);\n  @if $g == Bar {\n    h: l(+10%);\n  }\n  $I: Unset;\n}\n",
+    "standing-values.less": "@a: var(--b) Bar;\n.c {\n  .d(--e, Bar);\n  f: @G l(+10%) fooBar(@a);\n  g: Revert;\n}\n",
+    "standing-lists.css":
+      "a {\n  b: c, d, e;\n  b: c, -d;\n  b: -c, d;\n  b: c d, e f;\n  b:\n    c d,\n    e f;\n  b:\n    c d,\n    e;\n  b:\n    c,\n    d;\n" +
+      "  b:\n    c d, e f;\n  b:\n    c d,\n    -e;\n  b:\n    -c,\n    d e;\n  b:\n    c d;\n  b:\n    c;\n  b:\n    c d,\n\n    e f;\n" +
+      "  b:\n   c d,\n    e f;\n  b:\n    c d,\n    e f !important;\n  b:\n    c d,\n    e f; /* g */\n  b:\n    1px/2 c,\n    d e;\n" +
+      "  b:\n    c d,\n    e important;\n  grid-template-columns: c, d;\n  grid-template-columns:\n    c d,\n    e f;\n" +
+      "  composes:\n    c d,\n    e f;\n  --b:\n    c d,\n    e f;\n" +
+      "  b:\n    some-long-name, another-long-name, yet-another-long-name, one-more-long-name,\n    and-another-one;\n" +
+      "  b:\n    some-long-name, another-long-name, yet-another-long-name,\n    one-more-long-name, and-another-one;\n" +
+      "  b:\n    some-long-name, another-long-name, yet-another-long-name, one-more-long-nam;\n" +
+      "  b:\n    some-long-name, another-long-name, yet-another-long-name, one-more-long-na;\n" +
+      "  b:\n    some-long-name, another-long-name, yet-another-long-name, one-more-long-name,\n    -and-another-one;\n" +
+      "  b:\n    some-long-name another-long-name yet-another-long-name one-more-long-name aa,\n    c;\n" +
+      "  b:\n    some-long-name another-long-name yet-another-long-name one-more-long-name a,\n    c;\n}\n",
+    "standing-lists.scss":
+      "$a:\n  b c,\n  d e !default;\n@if $f {\n  g:\n    b c,\n    d e;\n  g: b, c;\n}\nh {\n  font: {\n    family:\n      b c,\n      d e;\n  }\n}\n",
+    "standing-lists.less":
+      "@a:\n  b c,\n  d e;\n@f: b, c;\ng {\n  h:\n    @@i,\n    j;\n  h: @@i, j;\n  h:\n    @a b,\n    c;\n}\n",
+    "standing-lists.html": "<style>\n  a {\n    b: c, d;\n    b:\n      c d,\n      e f;\n  }\n</style>\n",
+    "standing-selectors.css":
+      "a[b=\"c\"]::before {\n}\na[b='c'] {\n}\n.d:not(.e):not([f]) > * {\n}\n* + [g] {\n}\n:is(.h, .i) .j:nth-child(2n + 1) {\n}\n#Kl .mN {\n}\n" +
+      "@media (min-width: 1px) {\n  #Kl {\n  }\n  .o:not(.p) {\n  }\n}\n@keyframes q {\n  from {\n  }\n  12.5%,\n  50% {\n  }\n  TO {\n  }\n}\n" +
+      ".some-long-selector\n  .another-long-selector\n  > .yet-another-long-selector\n  ~ .one-more-long-selector:hover {\n}\n" +
+      ".some-long-selector\n  .another-long-selector {\n}\n.some-long-selector .another-long-selector\n  > .yet-another-long-selector\n  ~ .one-more-long-selector:hover {\n}\n" +
+      ".some-long-selector\n  .another-long-selector\n  > .yet-another-long-selector\n  ~ .one-more-long-selector:hover,\n.r {\n}\n" +
+      ".some-long-selector:not(.another-long-selector):not(.yet-another-long-selector):not(.s)\n  .one-more-long-selector {\n}\n" +
+      ".some-long-selector\n   .another-long-selector\n  > .yet-another-long-selector\n  ~ .one-more-long-selector:hover {\n}\n",
+    "standing-comments.scss":
+      "/* a\n   b */\n\n/**\n * c\n */\nd {\n  /*\n    e\n  */\n  f: g; /* h */\n  i: j; // k\n  l: m n; /* o */ /* p */\n  q: r; /* s\n  t */\n" +
+      "  u: v; /* prettier-ignore */\n  w:   x;\n  y: z; // prettier-ignore\n  a:   b;\n  /*\n  prettier-ignore */\n  c:   d;\n  e: f;  /* g */\n  h: i;/* j */\n" +
+      "  k: some-long-name another-long-name yet-another-long-name one-more-long; /* l */\n" +
+      "  k: some-long-name another-long-name yet-another-long-name one-more-long; /* lm */\n" +
+      "  some-long-name-another-long-name-yet-another-long-name: one-more-long-name; /* and-another-one */\n  @include m; // n\n}\n",
+    "standing-comments.less":
+      ".a {\n  b: c; // d\n  .e; // f\n  .g(); /* h */\n  @i: j; // k\n  /* l\n  m */\n  n: o; // 'p'\n  q: r; // (s\n}\n",
+    "standing-comments.md": "```css\n/* a\n   b */\nc {\n  d: e; /* f */\n}\n```\n",
+    "standing-at-rules.css":
+      '@import "a.css";\n@import "b.css" screen;\n@import \'c.css\';\n@import url(d.css);\n@import "e", "f";\n@IMPORT "g";\n' +
+      "@keyframes h {\n}\n@-webkit-keyframes I-j {\n}\n@keyframes url {\n}\n@keyframes k  {\n}\n@keyframes 'l' {\n}\n",
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",

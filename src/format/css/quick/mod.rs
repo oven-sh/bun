@@ -559,11 +559,11 @@ impl<'a> Parser<'a> {
                         || self.read_rule(at)
                         || self.read_less_mixin_call(at)
                 }
-                (b'.' | b'#' | b'&' | b':', _) => {
+                (b'.' | b'#' | b'&' | b':' | b'*' | b'[', _)
+                | (b'A'..=b'Z' | b'_' | b'0'..=b'9' | b'%', _) => {
                     self.read_standing_lines(at) || self.read_rule(at)
                 }
-                (b'*' | b'[' | b'>' | b'+' | b'~', _)
-                | (b'A'..=b'Z' | b'_' | b'0'..=b'9' | b'%', _) => self.read_rule(at),
+                (b'>' | b'+' | b'~', _) => self.read_rule(at),
                 _ => false,
             };
             if !is_taken {
@@ -1010,11 +1010,15 @@ impl<'a> Parser<'a> {
             .blocks
             .last()
             .is_some_and(|it| it.is_in_declaration);
-        if self.quick.around() == Around::Other {
+        let around = self.quick.around();
+        if around == Around::Other {
             return false;
         }
+        let is_in_at_rule = around != Around::None;
         // Comments are printed from the original text.
         let takes_comments = std::ptr::eq(css, self.original);
+        let takes_long_comments = self.quick.takes_long_comments;
+        let lays_out_values = self.quick.lays_out_values;
         // A comment on the line of the statement before it is printed there.
         let is_on_its_line = self.nodes[self.current as usize].last_child == 0
             || (self.quick.gap.is_plain && self.quick.gap.lines > 0);
@@ -1034,7 +1038,7 @@ impl<'a> Parser<'a> {
             let end = match byte(css, at) {
                 b'}' if !heads.is_empty() => at + 1,
                 b'/' if takes_comments && (at > start || is_on_its_line) => {
-                    match end_of_standing_comment(css, at, syntax) {
+                    match end_of_standing_comment(css, at, syntax, takes_long_comments) {
                         Some(end) => end,
                         None => break,
                     }
@@ -1053,18 +1057,44 @@ impl<'a> Parser<'a> {
                     }
                 }
                 _ => {
-                    match value::end_of_simple_statement(css, at, syntax, quote, is_in_declaration)
-                    {
-                        Some((end, is_word)) if is_word || end - at <= room => end,
+                    let lists = lays_out_values.then_some((page, level));
+                    match value::end_of_simple_statement(
+                        css,
+                        at,
+                        syntax,
+                        quote,
+                        is_in_declaration,
+                        lists,
+                    ) {
+                        Some((end, shape)) if shape != Shape::Line || end - at <= room => {
+                            if css.get(end..end + 2) != Some(b" /") {
+                                end
+                            } else if let Some(end) =
+                                end_of_standing_comment(css, end + 1, syntax, false)
+                                && takes_comments
+                                && (shape == Shape::Word
+                                    || (shape == Shape::Line && end - at <= room))
+                            {
+                                // A comment behind a statement stays there, and the line is measured with it.
+                                end
+                            } else {
+                                break;
+                            }
+                        }
                         Some(_) => break,
                         None => {
-                            match selector::end_of_simple_selectors(css, at, syntax, page, level) {
-                                Some((end, shape)) => {
-                                    head = Some((end, shape, None));
-                                    end + 2
-                                }
-                                None => break,
+                            let Some(selectors) = selector::end_of_standing_selectors(
+                                css, at, syntax, quote, page, level,
+                            ) else {
+                                break;
+                            };
+                            if selectors.has_upper
+                                && (is_in_at_rule || heads.iter().any(|it| it.at_rule.is_some()))
+                            {
+                                break;
                             }
+                            head = Some((selectors.end, selectors.shape, None));
+                            selectors.end + 2
                         }
                     }
                 }
@@ -1699,6 +1729,21 @@ fn read_simple_at_rule(css: &[u8], start: usize, syntax: Syntax, quote: u8) -> O
                 has_block: true,
             });
         }
+        name if name.ends_with(b"keyframes") && byte(css, name_end) == b' ' => {
+            let is_name = class(byte(css, params)) & (LOWER | UPPER | UNDERSCORE | DASH) != 0
+                && !value::starts_with_url(css, params);
+            let params_end = skip_long(css, params, LOWER | UPPER | DIGIT | DASH | UNDERSCORE);
+            return (is_name && css[params_end..].starts_with(b" {")).then_some(AtRule {
+                start,
+                name_end,
+                params: (params, params_end),
+                end: params_end + 2,
+                has_block: true,
+            });
+        }
+        b"import" if matches!(css.get(name_end..name_end + 2), Some(b" \"" | b" '")) => {
+            (false, true)
+        }
         _ if syntax != Syntax::Scss || byte(css, name_end) != b' ' => return None,
         b"if" | b"for" | b"each" | b"while" => (true, false),
         b"use" | b"return" => (false, true),
@@ -1755,14 +1800,20 @@ fn may_end_with_white_space(text: &[u8]) -> bool {
     matches!(text.last(), Some(b'\t'..=b'\r' | b' ' | 0x80..))
 }
 
-/// A comment on one line, from `start` on, that's printed as it's written. Returns its end.
-fn end_of_standing_comment(css: &[u8], start: usize, syntax: Syntax) -> Option<usize> {
+/// A comment from `start` on that's printed as it's written. Returns its end. `takes_lines`: it can have line breaks.
+fn end_of_standing_comment(
+    css: &[u8],
+    start: usize,
+    syntax: Syntax,
+    takes_lines: bool,
+) -> Option<usize> {
     let rest = css.get(start + 2..)?;
     // (Nothing here looks further than the comment goes: there can be any number of them on a line.)
     let (content, delimiter_len) = match byte(css, start + 1) {
         b'*' => {
             let content = &rest[..strings::index_of(rest, b"*/")?];
-            if strings::contains_any(content, b"\n\r\x0C") {
+            let others: &[u8] = if takes_lines { b"\r\x0C" } else { b"\n\r\x0C" };
+            if strings::contains_any(content, others) {
                 return None;
             }
             (content, 2)

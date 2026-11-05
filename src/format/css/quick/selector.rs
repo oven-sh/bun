@@ -105,31 +105,112 @@ fn end_of_simple_compound(css: &[u8], start: usize, syntax: Syntax) -> Option<us
     }
 }
 
-/// The selectors of a rule from `start` on, `level` blocks deep, with ` {` after them, written as they're printed, each
-/// on a line that it fits on, where all of the compound selectors are of the most common kind. Returns their end and
-/// their shape. This is no more than a shorter way to what `read` finds.
-pub(super) fn end_of_simple_selectors(
+/// What `end_of_standing_selectors` has found.
+pub(super) struct Standing {
+    pub(super) end: usize,
+    pub(super) shape: Shape,
+    /// A name has a capital in it. See `read`.
+    pub(super) has_upper: bool,
+}
+
+/// The selectors of a rule from `start` on, `level` blocks deep, with ` {` after them, written as they're printed: each
+/// on a line that it fits on, or else with a line for each of its compound selectors. This is no more than a shorter way
+/// to what `read` finds.
+pub(super) fn end_of_standing_selectors(
     css: &[u8],
     start: usize,
     syntax: Syntax,
+    quote: u8,
     page: Page,
     level: usize,
-) -> Option<(usize, Shape)> {
+) -> Option<Standing> {
     let room = page.width.saturating_sub(level * page.tab_width);
     let mut shape = Shape::Line;
+    let mut has_upper = false;
     let (mut selector, mut p) = (start, start);
+    // Of the selector that's being read: the number of compound selectors and of line breaks, and where the line starts.
+    let (mut compounds, mut breaks, mut line) = (0, 0, start);
+    // See `break_selector`. `tail` is the width of what follows the line.
+    let is_line_of_broken = |line: usize, end: usize, tail: usize, breaks: usize| {
+        let column = (level + usize::from(breaks > 0)) * page.tab_width;
+        !css[line..end].contains(&b'(') || column + (end - line) + tail <= page.width
+    };
+    let is_broken = |selector: usize, end: usize, tail: usize, compounds: usize, breaks: usize| {
+        let flat_len = end - selector - breaks * page.indentation_len(level + 1);
+        compounds == breaks + 1 && flat_len + tail > room
+    };
     loop {
-        p = end_of_simple_compound(css, p, syntax)?;
+        compounds += 1;
+        p = match end_of_simple_compound(css, p, syntax) {
+            Some(end) => end,
+            None => {
+                // See `Parser::read_rule`.
+                if css.get(p..p + 2) == Some(b"--") {
+                    return None;
+                }
+                let mut scanner = Scanner {
+                    css,
+                    syntax,
+                    quote,
+                    has_upper: false,
+                    has_other_quotes: false,
+                };
+                let end = match byte(css, p) {
+                    b'0'..=b'9' => scanner.percentage(p)?,
+                    _ => scanner.any_compound(p)?,
+                };
+                if scanner.has_other_quotes {
+                    return None;
+                }
+                has_upper |= scanner.has_upper;
+                end
+            }
+        };
         match (byte(css, p), byte(css, p + 1)) {
-            (b' ', b'{') => return (p + 2 - selector <= room).then_some((p, shape)),
+            (b' ', b'{') => {
+                let is_as_printed = match breaks {
+                    0 => p + 2 - selector <= room,
+                    _ => {
+                        is_broken(selector, p, 2, compounds, breaks)
+                            && is_line_of_broken(line, p, 2, breaks)
+                    }
+                };
+                return is_as_printed.then_some(Standing {
+                    end: p,
+                    shape,
+                    has_upper,
+                });
+            }
             (b' ', b'>' | b'+' | b'~') if byte(css, p + 2) == b' ' => p += 3,
             (b' ', _) => p += 1,
-            (b',', b'\n') if p + 1 - selector <= room => {
+            (b',', b'\n') => {
+                let is_as_printed = match breaks {
+                    0 => p + 1 - selector <= room,
+                    _ => {
+                        is_broken(selector, p, 1, compounds, breaks)
+                            && is_line_of_broken(line, p, 1, breaks)
+                    }
+                };
                 let next = p + 2 + page.indentation_len(level);
-                if !page.is_line_break(css.get(p + 1..next)?, level) {
+                if !is_as_printed || !page.is_line_break(css.get(p + 1..next)?, level) {
                     return None;
                 }
                 (selector, p, shape) = (next, next, Shape::Lines);
+                (compounds, breaks, line) = (0, 0, next);
+            }
+            (b'\n', _) => {
+                let next = p + 1 + page.indentation_len(level + 1);
+                if !page.is_line_break(css.get(p..next)?, level + 1)
+                    || !is_line_of_broken(line, p, 0, breaks)
+                {
+                    return None;
+                }
+                (p, line, shape) = (next, next, Shape::Lines);
+                breaks += 1;
+                // A combinator is on the line of what follows it.
+                if matches!(byte(css, p), b'>' | b'+' | b'~') && byte(css, p + 1) == b' ' {
+                    p += 2;
+                }
             }
             _ => return None,
         }
@@ -246,9 +327,14 @@ impl Scanner<'_> {
     /// A compound selector, with all that's between the parentheses of its pseudo-classes, which has to be written as
     /// it's printed. Returns its end.
     fn compound(&mut self, start: usize) -> Option<usize> {
-        if let Some(end) = end_of_simple_compound(self.css, start, self.syntax) {
-            return Some(end);
+        match end_of_simple_compound(self.css, start, self.syntax) {
+            Some(end) => Some(end),
+            None => self.any_compound(start),
         }
+    }
+
+    /// `compound` for one that isn't of the most common kind.
+    fn any_compound(&mut self, start: usize) -> Option<usize> {
         let css = self.css;
         let mut p = start;
         // The number of open parentheses, and whether a compound selector has to start here.

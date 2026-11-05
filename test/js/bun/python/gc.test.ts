@@ -1,5 +1,5 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 
 // These builds take seconds to start Python.
 if (isDebug || isASAN) setDefaultTimeout(60_000);
@@ -140,6 +140,48 @@ print(churn(), sorted(log))
   expect(stdout).toBe("None ['callback', 'del']\n");
   expect(exitCode).toBe(0);
 });
+
+// The kernel counts the wakes that the event loop has not looked at yet, and shows the number.
+test
+  .skipIf(!isLinux)
+  .concurrent("a collection wakes the event loop once, not for each weak reference callback", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+import gc, os, weakref
+
+def wakes():
+    total = 0
+    for fd in os.listdir("/proc/self/fd"):
+        try:
+            if os.readlink("/proc/self/fd/" + fd) != "anon_inode:[eventfd]":
+                continue
+            with open("/proc/self/fdinfo/" + fd) as f:
+                for line in f:
+                    if line.startswith("eventfd-count:"):
+                        total += int(line.split()[1], 16)
+        except OSError:
+            pass
+    return total
+
+class C: pass
+called = 0
+def callback(reference):
+    global called
+    called += 1
+
+objects = [C() for _ in range(5000)]
+references = [weakref.ref(o, callback) for o in objects]
+before = wakes()
+del objects
+gc.collect()
+print(called, wakes() - before)
+`);
+    expect(stderr).toBe("");
+    const [called, wakes] = stdout.trim().split(" ").map(Number);
+    expect(called).toBe(5000);
+    expect(wakes).toBeGreaterThan(0);
+    expect(wakes).toBeLessThan(10);
+    expect(exitCode).toBe(0);
+  });
 
 test.concurrent("an object is finalized before what it refers to", async () => {
   const { stdout, stderr, exitCode } = await run(`

@@ -6573,7 +6573,8 @@ impl Quick {
                 q = self.spaced(q);
                 continue;
             }
-            if c < 32 || c >= 127 || c == 62 || c == 125 {
+            // (a backslash: see parse_jsx_element())
+            if c < 32 || c >= 127 || c == 62 || c == 125 || c == 92 {
                 return Ok(self.no(refusal::JsxText));
             }
             q += 1;

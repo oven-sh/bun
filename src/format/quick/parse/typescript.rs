@@ -1280,7 +1280,8 @@ impl Quick {
                 self.expect(tk::Comma)?;
             }
         }
-        if self.parse_typescript.odd_parameters != odd {
+        // (`[]`: where it breaks there are two line breaks in a row, and a comment in it has no node)
+        if self.parse_typescript.odd_parameters != odd || self.arena.ls_pos == list_mark {
             return Err(self.text_refuse());
         }
         self.next()?;

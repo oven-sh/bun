@@ -461,10 +461,16 @@ impl Quick {
     }
 
     /// The current token is `await` or `yield`. TypeScript's parser takes it for the operator wherever a word, a number or a string follows on its line.
+    /// (Behind a block comment anything may follow.)
     fn is_operator_for_type_script(&self) -> bool {
-        let c = self.t.at(self.blanks(self.lexer.tok_end));
+        let p = self.blanks(self.lexer.tok_end);
+        let c = self.t.at(p);
         self.parse.typed == TYPED_TS
-            && ((CT.at(c) & C_ID_PART) != 0 || c == 34 || c == 39 || c == 92)
+            && ((CT.at(c) & C_ID_PART) != 0
+                || c == 34
+                || c == 39
+                || c == 92
+                || (c == 47 && self.t.at(p + 1) == 42))
     }
 
     /// A name that is bound or read.
@@ -1408,9 +1414,18 @@ impl Quick {
         let asks = self.parse.typed != TYPED_TS;
         let is_field = asks && is_class_member && kind == k::ClassProperty;
         let mut outer_scope = 0;
+        let outer_function = (
+            self.parse.in_function,
+            self.parse.in_async,
+            self.parse.in_generator,
+        );
         if is_field {
             outer_scope = self.parse.place.scope;
             self.parse.place.scope = SCOPE_FIELD;
+            // as in parse_class_property_value()
+            self.parse.in_function = 1;
+            self.parse.in_async = 0;
+            self.parse.in_generator = 0;
         }
         let is_loop = asks
             && (kind == k::ForStatement
@@ -1572,6 +1587,11 @@ impl Quick {
         }
         if is_field {
             self.parse.place.scope = outer_scope;
+            (
+                self.parse.in_function,
+                self.parse.in_async,
+                self.parse.in_generator,
+            ) = outer_function;
         }
         if is_loop {
             self.parse.place.jumps -= A_LOOP;
@@ -2445,6 +2465,31 @@ impl Quick {
         ));
     }
 
+    /// Does `n` end with something in parentheses that stands where an arrow function could?
+    fn ends_with_parentheses(&self, mut n: i32) -> bool {
+        loop {
+            let head = self.n.at(n);
+            if (head & F_PAREN) != 0 {
+                return true;
+            }
+            n = match head & 0xff {
+                k::ArrowFunctionExpression | k::AssignmentExpression => self.n.at(n + 5),
+                k::ConditionalExpression => self.n.at(n + 6),
+                k::YieldExpression => self.n.at(n + 4),
+                // `async (a)`
+                k::CallExpression => {
+                    let callee = self.n.at(n + 4);
+                    return self.text_is(self.n.at(callee + 1), self.n.at(callee + 2), b"async");
+                }
+                k::SequenceExpression => {
+                    let list = self.n.at(n + 4);
+                    self.n.at(list + self.n.at(list))
+                }
+                _ => return false,
+            };
+        }
+    }
+
     pub(crate) fn parse_switch(&mut self, start: i32) -> R<i32> {
         self.next()?;
         let discriminant = self.parse_paren_expression()?;
@@ -2462,7 +2507,7 @@ impl Quick {
                 test = self.parse_expression()?;
                 // `case (a): { if (b) {} }`: TypeScript's parser, and the long way in JavaScript too, tries `(a): {..` as the head of an
                 // arrow function, and takes it for one if a `{` or a `=>` follows what it has read as the return type.
-                if (self.n.at(test) & F_PAREN) != 0 {
+                if self.t.at(self.lexer.prev_end - 1) == 41 && self.ends_with_parentheses(test) {
                     return Err(self.rare(rare::OTHER));
                 }
             } else {
@@ -3193,6 +3238,8 @@ impl Quick {
             return Err(self.unexpected());
         }
         let outer = self.parse.place;
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = 0;
         self.parse.place.is_derived = self.parse.next_class_is_derived;
         self.parse.next_class_is_derived = false;
         self.parse.place.constructor_at = 0;
@@ -3291,6 +3338,7 @@ impl Quick {
         self.parse.place.constructor_at = outer.constructor_at;
         self.parse.place.private_base = outer.private_base;
         self.parse.place.private_top = outer.private_top;
+        self.parse.no_in = saved_no_in;
         let members = self.list_finish(mark);
         self.parse.list_depth -= 1;
         self.set_pos(end);
@@ -4044,6 +4092,13 @@ impl Quick {
             self.next()?;
             let right_start = self.lexer.tok_start;
             if op == tk::Pipeline {
+                return Err(self.text_refuse());
+            }
+            // `await() ** a`: to TypeScript whatever starts with the word is an operand of the operator
+            if op == tk::Pow
+                && self.parse.typed == TYPED_TS
+                && self.text_is(left_start, left_start + 5, b"await")
+            {
                 return Err(self.text_refuse());
             }
             if op == tk::In && self.parse_typescript.in_head_of_for {
@@ -7080,6 +7135,20 @@ impl Quick {
         let mut closing: i32 = 0;
         let mut children: i32 = 0;
         if !self_closing {
+            // Flow: `<a>` may be the type parameters of a function, so the long way reads a token of JavaScript behind it, and does not
+            // get over a backslash in that.
+            if self.parse.typed == TYPED_FLOW && where_ != JSX_CHILD {
+                let mut p = self.lexer.pos;
+                while matches!(self.t.at(p), 32 | 9 | 10) {
+                    p += 1;
+                }
+                while (CT.at(self.t.at(p)) & C_ID_PART) != 0 {
+                    p += 1;
+                }
+                if self.t.at(p) == 92 {
+                    return Err(self.text_refuse());
+                }
+            }
             let mark = self.arena.ls_pos;
             // the last child but for text is `{}`, with or without a comment in it, which can be "prettier-ignore"
             let mut after_empty = false;

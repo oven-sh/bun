@@ -4492,6 +4492,20 @@ describe("TypeScript that the long way rejects", () => {
     });
   }
   expectRejected("a.ts", [
+    // a test of a case that ends with parentheses where an arrow function could stand
+    "switch($){case()=>(a):{if(b){c}}}",
+    "switch($){case a=(b):{if(b){c}}}",
+    "switch($){case a?b:(c):{if(b){c}}}",
+    "switch($){case a,(b):{if(b){c}}}",
+    "switch($){case async(b):{if(b){c}}}",
+    "function*f(){switch($){case yield(b):{if(b){c}}}}",
+    // `in` behind the value of a field, in the head of a for
+    "for(e=class{e=n\nin};;){}",
+    // a word behind yield and a block comment
+    "a=yield/**/as s",
+    "a=yield/**/satisfies s",
+    // what starts with the name await on the left of `**`
+    "await.a**x",
     // `case (a): {`, which TypeScript tries as the head of an arrow function
     "switch($){case(a):{if(b){c}}}",
     "switch($){case(a):{switch(b){case 1:}}}",
@@ -5793,6 +5807,11 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js", "--print-width=29 --trailing-comma=es5", "a(()=>()=>//\n()=>()=>()=>()=>()=>()=>()=>//\n()=>({}))\n"],
     // A cast of JSDoc is no simple argument.
     ["a.js", "--print-width=196", "o().c().d(/**@type*/(d))\n"],
+    // `in` behind the value of a field is an operator, also in the head of a for.
+    ["a.js", "", "for(e=class{e=n\nin\na};;){}\n"],
+    ["a.ts", "", "for(e=class{e=n\nin\na};;){}\n"],
+    // A comment in an index signature without a parameter.
+    ["a.ts", "--print-width=131", "`${class<a>{a():c\n[/**/]}}`\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {
@@ -5861,6 +5880,18 @@ describe("JavaScript and Flow that the long way rejects", () => {
     });
   }
   expectRejected("a.js", "a.js", [
+    // a test of a case that ends with parentheses where an arrow function could stand
+    "switch($){case()=>(a):{if(b){c}}}",
+    "switch($){case a=(b):{if(b){c}}}",
+    "switch($){case a?b:(c):{if(b){c}}}",
+    "switch($){case a,(b):{if(b){c}}}",
+    "switch($){case async(b):{if(b){c}}}",
+    "function*f(){switch($){case yield(b):{if(b){c}}}}",
+    // `in` behind the value of a field, in the head of a for
+    "for(e=class{e=n\nin};;){}",
+    // await in the value of a field, in an object on several lines
+    'class a{\na={\n"":await a}}',
+    "class h{e(){}\na={\ne:await a}}",
     // `case (a): {`, which TypeScript tries as the head of an arrow function
     "switch($){case(a):{if(b){c}}}",
     "switch($){case(a):{switch(b){case 1:}}}",
@@ -6027,6 +6058,12 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "function f() {\n  break\u00a0;\n}\n",
   ]);
   expectRejected("a.js.flow", "a.js.flow", [
+    // a backslash in the word behind what may be the type parameters of a function
+    "x=<div>\\</div>",
+    "f(<div>a\\</div>)",
+    "a=(\n<div>\\</div>\n)",
+    "<div b={<c>\\</c>}/>",
+    "function A(){\nreturn (\n<div>\\<b/></div>\n);\n}",
     // type parameters of an arrow function: with a variance, with a word of the language for a name
     "a=<+a>()=>b",
     "a=async<-a>()=>b",
@@ -6177,6 +6214,8 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "component A(@a b) {}\n",
   ]);
   expectRejected("a.mjs", "a.mjs", [
+    // await in the value of a field, in an object on several lines
+    'class a{\na={\n"":await a}}',
     // default
     "export default a;\nexport default b;\n",
   ]);

@@ -12,6 +12,7 @@
 //! - a comment that nobody reads
 //! - words
 //! - words and elements with nothing but words in them that share lines, between two line breaks that are forced
+//! - plain text in a `<pre>` or a `<textarea>`
 //! - a `<script>` and a `<style>`, whose code is left for its formatter
 //! - the blocks of a Vue file
 //!
@@ -792,7 +793,6 @@ impl Runs {
         // All blocks have been read.
         let is_whole = (self.assumes_typescript).is_none_or(|it| it == self.has_typescript_script)
             && ready.name_end == 0
-            && !ready.has_broken_void_tag
             && text.get(ready.span.end as usize..)?.trim_ascii().is_empty();
         is_whole.then_some((ready.printed, ready.is_printed_as_written))
     }
@@ -1503,6 +1503,16 @@ impl<'a> Scanner<'_, 'a> {
             if definition.content_type == ContentType::RawText {
                 return self.element_with_code(start, (name, to), width, open_end, None);
             }
+            if let Some(end) = self.preformatted_lines(element, width, open_end, room) {
+                self.put_whole_tag(start, to, has_attributes && width + 1 > room);
+                // The parser drops a line break that starts the text, and one is printed in front of the text.
+                if self.at(open_end) != b'\n' {
+                    self.out.push(b'\n');
+                }
+                self.out.source(open_end, end);
+                self.ends_in_text = true;
+                return Item::Ends(end);
+            }
             // Plain words in it, all on one line with the tags.
             let len = match name {
                 // The lexer looks for nothing but references and the end tag in these.
@@ -1585,6 +1595,36 @@ impl<'a> Scanner<'_, 'a> {
         self.siblings = Siblings::new(level + 1, inner, (first, self.out.len()), 0);
         self.siblings.are_in_no_groups = breaks_its_content(name, display);
         Item::Open(first)
+    }
+
+    /// If nothing but plain text is in the `<pre>` or `<textarea>` whose start tag ends at `open_end` and is `width`
+    /// columns wide without `>`, and the text is printed below the start tag, as it is written, returns where the
+    /// element ends. `room` is how many columns there are for the element.
+    fn preformatted_lines(
+        &self,
+        element: Element<'a>,
+        width: usize,
+        open_end: usize,
+        room: usize,
+    ) -> Option<usize> {
+        let name = element.name;
+        if !matches!(name, b"pre" | b"textarea") {
+            return None;
+        }
+        let close = self.marks.tags.next(open_end);
+        let end = (self.end_tag(close, name, element.key))
+            .filter(|end| *end == close + name.len() + 3 && self.ends_line(*end))?;
+        let text = self.text.get(open_end..close)?;
+        let text = text.strip_prefix(b"\n").unwrap_or(text);
+        let is_plain = |byte: &u8| match byte {
+            b'&' | b'\\' => false,
+            // In a `<pre>` the lexer looks for `{{ }}`.
+            b'{' => name == b"textarea" && self.has_plain_braces(),
+            byte => matches!(byte, b'\n' | b' '..=b'~'),
+        };
+        let is_on_lines = bun_core::strings::contains_char(text, b'\n')
+            || width + 1 + text.len() + name.len() + 3 > room;
+        (is_on_lines && text.iter().all(is_plain) && !text.trim_ascii().is_empty()).then_some(end)
     }
 
     /// Where the end tag of the element `name` is, whose content is raw text from `from` on. `None` if it is not written

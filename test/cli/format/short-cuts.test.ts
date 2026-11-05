@@ -2485,6 +2485,48 @@ describe.skipIf(!hasFlag)("HTML", () => {
     // A run behind a text that goes the long way.
     "a &bogus; b\n<div>\n  <p>c</p>\n  <p>d</p>\n  <i>e</i\n  ><u>f</u>\n  <p>g</p>\n</div>\n<p>h</p>\n",
     "{{ a }}\n<x-y>\n  <div>\n    <p>c</p>\n    <i>e</i\n    ><u>f</u>\n    <p>g</p>\n  </div>\n  <p>h</p>\n</x-y>\n",
+    // `/>` on a line of its own in a text that is one run.
+    `<img ${attributes}>\n<p>a</p>\n`,
+    `<p>a</p>\n<img ${attributes} />\n`,
+    `<p>a</p>\n<img ${attributes} />`,
+    `a\n<img\n  ${attributes.replaceAll(" ", "\n  ")}\n/>\nb\n`,
+    // Lines in an element in which white space counts.
+    ...["pre", "textarea", "listing", "plaintext", "title", "xmp"].flatMap(name =>
+      [
+        "\na\nb\n",
+        "\na\nb",
+        "a\nb\n",
+        "a\nb",
+        "\n\na\n",
+        "\n  a\n    b\n  ",
+        "\na  \n  \n\nb\n",
+        "\n",
+        "\n\n",
+        "\n  \n",
+        " \na",
+        "\na",
+        `\n${full} ${full}`,
+        full,
+        `${full} tempor`,
+        ` ${full} `,
+        "\na &amp; b\n",
+        "\na & b\n",
+        "\na \\ b\n",
+        "\na { b } {{ c }}\n",
+        "\na <b>c</b>\n",
+        "\na < b\n",
+        "\na\tb\n",
+        "\né 日本\n",
+        "\na\x0cb\x7f\n",
+        "\na</ pre>\n",
+      ].flatMap(text => [
+        `<div>\n  <${name}>${text}</${name}>\n  <p>c</p>\n</div>\n`,
+        `<div>\n  <${name} ${attributes}>${text}</${name}>\n</div>\n`,
+        `<${name} class="a">${text}</${name}>\n`,
+        `<div>\n  <${name}>${text}</${name}> c\n  <${name}>${text}</${name}\n  >\n  <${name}>${text}</${name} >\n</div>\n`,
+        `<span>\n  <${name}>${text}</${name}>\n</span>\n`,
+      ]),
+    ),
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

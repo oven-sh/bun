@@ -38,6 +38,11 @@ def waits(name, begin, block, end):
     thread = threading.Thread(target=target)
     thread.start()
     box = [A(name)]
+    # To make the object leaves its address on the stack, where the frames of the call that blocks come to lie, and those do not write
+    # all of their room. A function that may wait begins on a stack that has been wiped. os.open() is not among them, so one that is
+    # goes before it. (Seen in a build without optimization: two words in the frame of os.open(), and the object lived until they were
+    # overwritten by hand.)
+    fcntl.flock(scratch, fcntl.LOCK_EX)
     is_about_to_block.append(True)
     result = block(state)
     thread.join()
@@ -49,6 +54,7 @@ directory = tempfile.TemporaryDirectory()
 path = os.path.join(directory.name, "lock")
 fifo = os.path.join(directory.name, "fifo")
 os.mkfifo(fifo)
+scratch = open(os.path.join(directory.name, "scratch"), "w")
 
 
 def lock():

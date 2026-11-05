@@ -100,8 +100,10 @@ pub(crate) mod why {
     pub(crate) const LOST: i32 = 9;
 }
 
-/// What is left to the long way: `Quick::failed_at` has the number, for those who count.
+/// What is left to the long way: `Quick::which_rare` has the number, for those who count.
 pub(crate) mod rare {
+    /// None of the following.
+    pub(crate) const OTHER: i32 = 0;
     /// An object type in the return type decides how the only parameter is laid out.
     pub(crate) const RETURN_TYPE: i32 = 1;
     /// White space other than blanks, tabs and line breaks between tokens or in a comment, a control character anywhere,
@@ -248,12 +250,46 @@ words!(i32, {
     0
 });
 
+/// Several numbers that stand side by side, with one look at the bounds.
+pub(crate) trait Numbers {
+    fn several<const COUNT: usize>(&self, i: i32) -> [i32; COUNT];
+    fn put_several<const COUNT: usize>(&mut self, i: i32, numbers: [i32; COUNT]);
+}
+
+impl Numbers for Vec<i32> {
+    #[inline(always)]
+    fn several<const COUNT: usize>(&self, i: i32) -> [i32; COUNT] {
+        match self
+            .get(i as u32 as usize..)
+            .and_then(|s| s.first_chunk::<COUNT>())
+        {
+            Some(numbers) => *numbers,
+            None => {
+                lose();
+                [0; COUNT]
+            }
+        }
+    }
+    #[inline(always)]
+    fn put_several<const COUNT: usize>(&mut self, i: i32, numbers: [i32; COUNT]) {
+        match self
+            .get_mut(i as u32 as usize..)
+            .and_then(|s| s.first_chunk_mut::<COUNT>())
+        {
+            Some(slots) => *slots = numbers,
+            None => lose(),
+        }
+    }
+}
+
 /// Reads and writes of more than one byte, in little-endian order.
 pub(crate) trait Bytes {
     fn i32_at(&self, p: i32) -> i32;
     fn u64_at(&self, p: i32) -> u64;
+    fn u128_at(&self, p: i32) -> u128;
     fn put_u16(&mut self, p: i32, v: i32);
     fn put_u64(&mut self, p: i32, v: u64);
+    fn put_u128(&mut self, p: i32, v: u128);
     fn index_of(&self, byte: i32, from: i32) -> i32;
     /// The last place at or before `from`.
     fn last_index_of(&self, byte: i32, from: i32) -> i32;
@@ -278,6 +314,26 @@ impl Bytes for [u8] {
         {
             Some(b) => u64::from_le_bytes(*b),
             None => 0,
+        }
+    }
+    #[inline(always)]
+    fn u128_at(&self, p: i32) -> u128 {
+        match self
+            .get(p as u32 as usize..)
+            .and_then(|s| s.first_chunk::<16>())
+        {
+            Some(b) => u128::from_le_bytes(*b),
+            None => 0,
+        }
+    }
+    #[inline(always)]
+    fn put_u128(&mut self, p: i32, v: u128) {
+        match self
+            .get_mut(p as u32 as usize..)
+            .and_then(|s| s.first_chunk_mut::<16>())
+        {
+            Some(b) => *b = v.to_le_bytes(),
+            None => lose(),
         }
     }
     #[inline(always)]
@@ -334,6 +390,14 @@ impl Bytes for Vec<u8> {
         self.as_slice().u64_at(p)
     }
     #[inline(always)]
+    fn u128_at(&self, p: i32) -> u128 {
+        self.as_slice().u128_at(p)
+    }
+    #[inline(always)]
+    fn put_u128(&mut self, p: i32, v: u128) {
+        self.as_mut_slice().put_u128(p, v)
+    }
+    #[inline(always)]
     fn put_u16(&mut self, p: i32, v: i32) {
         self.as_mut_slice().put_u16(p, v)
     }
@@ -347,6 +411,42 @@ impl Bytes for Vec<u8> {
     fn last_index_of(&self, byte: i32, from: i32) -> i32 {
         self.as_slice().last_index_of(byte, from)
     }
+}
+
+const ONES: u64 = 0x0101_0101_0101_0101;
+const TOP_BITS: u64 = 0x8080_8080_8080_8080;
+
+/// Eight bytes at a time: the top bit of the first byte of `v` that is `byte` is set, none below it; what is set above it says nothing.
+#[inline(always)]
+pub(crate) fn where_byte_is(v: u64, byte: u8) -> u64 {
+    let x = v ^ ONES.wrapping_mul(byte as u64);
+    x.wrapping_sub(ONES) & !x & TOP_BITS
+}
+
+/// The same for the first byte that is not printable ASCII: below a blank, 127, or beyond.
+#[inline(always)]
+pub(crate) fn where_not_printable(v: u64) -> u64 {
+    (v | v.wrapping_sub(ONES.wrapping_mul(32)) | v.wrapping_add(ONES)) & TOP_BITS
+}
+
+/// The same for the first byte that is no letter of ASCII, no digit, no `_` and no `$`.
+/// (x + (0x80 - low)) & !(x + (0x7f - high)) has the top bit set for low <= x <= high, for x below 0x80, without carries.
+#[inline(always)]
+pub(crate) fn where_name_ends(v: u64) -> u64 {
+    let x = v & !TOP_BITS;
+    let lower = x | ONES.wrapping_mul(0x20);
+    let is_part = (lower.wrapping_add(ONES.wrapping_mul(0x1f))
+        & !lower.wrapping_add(ONES.wrapping_mul(0x05)))
+        | (x.wrapping_add(ONES.wrapping_mul(0x50)) & !x.wrapping_add(ONES.wrapping_mul(0x46)))
+        | !(x ^ ONES.wrapping_mul(b'_' as u64)).wrapping_add(ONES.wrapping_mul(0x7f))
+        | !(x ^ ONES.wrapping_mul(b'$' as u64)).wrapping_add(ONES.wrapping_mul(0x7f));
+    !(is_part & !v) & TOP_BITS
+}
+
+/// How many bytes stand before the first one that is marked.
+#[inline(always)]
+pub(crate) fn bytes_before(marks: u64) -> i32 {
+    (marks.trailing_zeros() >> 3) as i32
 }
 
 pub(crate) fn zeros<T: Default + Clone>(length: i32) -> Vec<T> {
@@ -375,6 +475,8 @@ pub struct Quick {
     pub(crate) d: Vec<i32>,
     /// Why the work stopped.
     pub(crate) why: Cell<i32>,
+    /// One of [`rare`].
+    pub(crate) which_rare: Cell<i32>,
     stack_check: bun_core::StackCheck,
     pub(crate) dialect: Dialect,
     had_bom: bool,
@@ -432,6 +534,7 @@ impl Quick {
             n: zeros(1 << 16),
             d: zeros(1 << 16),
             why: Cell::new(why::NONE),
+            which_rare: Cell::new(rare::OTHER),
             stack_check: bun_core::StackCheck::default(),
             dialect: Dialect::of_name(Language::JavaScript, b""),
             had_bom: false,
@@ -483,8 +586,22 @@ impl Quick {
     /// `which` is one of [`rare`].
     #[cold]
     pub(crate) fn rare(&self, which: i32) -> Stop {
-        self.failed_at.set(which);
+        self.which_rare.set(which);
+        self.failed_at
+            .set(self.lexer.tok_start - self.text.src_start);
         self.stop(why::RARE)
+    }
+
+    /// Where the letters of ASCII, digits, `_` and `$` from `p` on end.
+    #[inline(always)]
+    pub(crate) fn name_end(&self, mut p: i32) -> i32 {
+        loop {
+            let ends = where_name_ends(self.t.u64_at(p));
+            if ends != 0 {
+                return p + bytes_before(ends);
+            }
+            p += 8;
+        }
     }
 
     /// Nothing of what a stage has left behind is read if part of it is lost.

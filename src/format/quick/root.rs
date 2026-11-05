@@ -92,6 +92,10 @@ pub struct Dialect {
     pub jsx: Option<bool>,
     /// A .cjs or .cts file: `await` is a name outside of async functions.
     pub common_js: bool,
+    /// A .mjs or .mts file: `await` is no name anywhere.
+    pub module_only: bool,
+    /// A .d.ts, .d.mts or .d.cts file.
+    pub declaration_file: bool,
     /// The name of the file ends in ".ts": `<T,>() => 1` needs no comma.
     pub name_ends_in_ts: bool,
     /// The name of the file ends in ".js.flow": JavaScript is read as Flow.
@@ -122,6 +126,8 @@ impl Dialect {
                 None
             },
             common_js: ends_with_one_of(&[b".cjs", b".cts"]),
+            module_only: ends_with_one_of(&[b".mjs", b".mts"]),
+            declaration_file: ends_with_one_of(&[b".d.ts", b".d.mts", b".d.cts"]),
             name_ends_in_ts: name.ends_with(b".ts"),
             name_ends_in_js_flow: name.ends_with(b".js.flow"),
         }
@@ -273,6 +279,7 @@ impl Quick {
     fn format_buffer(&mut self, text: &[u8], dialect: Dialect, options: &Options) -> R<()> {
         let mut length = text.len() as i32;
         self.why.set(why::NONE);
+        self.which_rare.set(rare::OTHER);
         crate::forget_losses();
         self.stack_check = bun_core::StackCheck::init();
         self.set_options(options, dialect);
@@ -367,9 +374,13 @@ impl Quick {
     }
 
     /// Where the syntax error is, from the start of the text (without the byte order mark, and with "\n" at the ends of the lines).
-    /// For something rare: which of them.
     pub fn failed_at(&self) -> i32 {
         self.failed_at.get()
+    }
+
+    /// Which rare thing the last file was refused for, for those who count; 0 if it has no number.
+    pub fn which_rare(&self) -> i32 {
+        self.which_rare.get()
     }
 
     /// How many files were formatted twice.

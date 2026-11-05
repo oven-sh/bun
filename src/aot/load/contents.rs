@@ -38,26 +38,15 @@ use crate::test_runs::{
 #[derive(Default)]
 pub(crate) struct FileContents {
     pub names: NamedLoads,
-    /// In the order of the text.
     pub worker_starts: Vec<WorkerStart>,
-    /// Each `data:` URL that a `new Worker(..)` is given, and each that the file writes as a value and that names a type of code: it may come to a constructor through
-    /// a variable, a parameter, a list, a property. Nothing is followed. With repeats.
     pub urls_with_code: Vec<Atom>,
-    /// What the Blob holds of each `URL.createObjectURL(new Blob([..], { type }))` that a `new Worker(..)` is given, with the type that is written, and the text of each
-    /// `new Worker(text, { eval: true })`. With repeats.
     pub texts_behind_object_urls: Vec<(Atom, Option<Atom>)>,
-    /// By binding: the global `Worker`, or `Worker` of node:worker_threads, is named in code that is not dead.
     pub names_worker_constructor: bool,
-    /// The constructor goes somewhere as a value, so nobody sees what it is called with.
     pub hands_worker_constructor_on: bool,
-    /// A `new Worker(..)` whose first argument the load has not read as the name of a file: it holds the code itself (`data:`, `blob:`), or nobody knows its value.
     pub starts_worker_out_of_sight: bool,
 }
 
-/// The members of built-in objects that this build has folded by: it has left a lookup out, because no file of the run spells a store to the member.
-/// Written by whoever folds, read once, where the program is linked. The engine keeps each locked, so a store that no file spells throws and names the member.
 pub struct FixedBuiltins {
-    /// By `BuiltinId::to_wire()`.
     is_fixed: Box<[AtomicBool]>,
 }
 
@@ -75,7 +64,6 @@ impl FixedBuiltins {
         self.is_fixed[member.to_wire() as usize].store(true, Ordering::Relaxed);
     }
 
-    /// Ascending.
     pub fn list(&self) -> Vec<BuiltinId> {
         let is_fixed =
             |member: &BuiltinId| self.is_fixed[member.to_wire() as usize].load(Ordering::Relaxed);
@@ -86,30 +74,19 @@ impl FixedBuiltins {
 
 pub(crate) struct ProgramContents {
     pub found_entry_points: Vec<FoundEntryPoint>,
-    /// `LoadOptions::replaced_builtins` and, in a test run, `ResolvedBuiltins::replaced_members` of every compiled file. With each come the object that it holds
-    /// and all that the table lists below it. Of `ResolvedBuiltins::opened_holders` come the members, each in the same way. Ascending, each once.
     pub replaced_builtins: Arc<[u32]>,
     pub fixed_builtins: FixedBuiltins,
-    /// `ResolvedBuiltins::names_added` of every compiled file. Ascending by holder, then by the bytes of the name.
     pub names_added_to_builtins: Vec<(BuiltinId, Atom)>,
-    /// In some file: a live `ImportSiteKind::MockModule` site one of whose values is no `Constant`, or `ResolvedBuiltins::hands_mock_on()`.
     pub mocks_any_module: bool,
-    /// In a test run, in some file: a store to `Module._resolveFilename` or `Module.prototype.require`. From then on `bun test` asks the program what a `require` answers.
     pub stores_loader_functions: bool,
-    /// By binding, in some file: `!keys_taken_out_of_module_cache().is_empty()` (a delete or a store), `loses_sight_of_module_cache()`, or `resets_modules()`.
-    /// In a test run: `LoadsOfRun::is_every_file`, the word for "nobody can say which". `RunContents::loads` lists the files where somebody can.
     pub any_module_loads_again: bool,
     pub loads_by_unknown_name: bool,
     pub loads_by_unknown_path: bool,
-    /// `import path from "./addon.node" with { type: "file" }`: the executable holds the file, the program has its path there, and whoever loads that path gets a native addon.
     pub embeds_addon_as_file: bool,
     pub names_worker_constructor: bool,
     pub hands_worker_constructor_on: bool,
-    /// `FileContents::starts_worker_out_of_sight` of some compiled file. True, like every other bit, where a file has no payload.
     pub starts_worker_out_of_sight: bool,
-    /// In an executable: `RunContents::default()`.
     pub run: RunContents,
-    /// `ContentsInput::any_file_may_become_main_module`
     pub any_file_may_become_main_module: bool,
 }
 
@@ -117,7 +94,6 @@ pub(crate) struct ContentsInput<'a, 's> {
     pub files: &'a Files<'s>,
     pub options: &'a Options<'a>,
     pub found_entry_points: Vec<FoundEntryPoint>,
-    /// `CodeHost::may_any_file_become_main_module` of the host that has loaded the files: none of them is folded with whether it is the main module.
     pub any_file_may_become_main_module: bool,
     pub in_parallel: InParallel<'a>,
 }
@@ -127,11 +103,9 @@ const FILES_LOOKED_AT_IN_A_RUN: usize = 64;
 struct LookInput<'a, 's> {
     files: &'a Files<'s>,
     is_test_run: bool,
-    /// By `FileId::idx()`. Empty: no test run.
     whose: &'a [WhoseFile],
 }
 
-/// `mock.module(name, factory)` in code that runs, where the build does not know every text that `name` may be.
 fn mocks_module_that_it_does_not_spell(files: &Files<'_>, file: FileId) -> bool {
     let analysis = files.analysis(file);
     let is_spelled = |name: &ImportSpecifier| matches!(name, ImportSpecifier::Constant(_));
@@ -139,13 +113,11 @@ fn mocks_module_that_it_does_not_spell(files: &Files<'_>, file: FileId) -> bool 
         let ImportSiteKind::MockModule(call) = site.kind else {
             return false;
         };
-        // A file that is folded again may keep the sites of the folding before.
         !analysis.decisions.is_dead_expr(call)
             && !(analysis.alternatives_of(&site.specifier).iter()).all(is_spelled)
     })
 }
 
-// Of consecutive files.
 #[derive(Default)]
 struct FoundInFiles {
     replaced_members: Vec<BuiltinId>,
@@ -162,7 +134,6 @@ struct FoundInFiles {
 }
 
 impl FoundInFiles {
-    // Nobody has read the file, so it may do anything. `freeze_sources` stops the build at it.
     fn note_file_without_payload(&mut self) {
         *self = FoundInFiles {
             replaced_members: take(&mut self.replaced_members),
@@ -186,8 +157,6 @@ impl FoundInFiles {
         };
         let (builtins, contents) = (&source.builtins, &source.contents);
         self.names_added.extend_from_slice(builtins.names_added());
-        // An executable refuses a write that replaces a member of a built-in object, so there nothing may be opened for one. It reads none of its files from disk.
-        // A file of a test run that the executable holds too meets what it meets there.
         if input.is_test_run && input.whose[file.idx()] != WhoseFile::OfProduct {
             (self.replaced_members).extend_from_slice(builtins.replaced_members());
             (self.opened_holders).extend_from_slice(builtins.opened_holders());
@@ -201,7 +170,6 @@ impl FoundInFiles {
         let stores_loader_functions = builtins.stores_loader_functions();
         let mocks_any_module =
             builtins.hands_mock_on() || mocks_module_that_it_does_not_spell(files, file);
-        // `test_run_loads` says which files of a test run load again.
         let any_module_loads_again = !input.is_test_run
             && (!builtins.keys_taken_out_of_module_cache().is_empty()
                 || builtins.loses_sight_of_module_cache()
@@ -243,7 +211,6 @@ impl FoundInFiles {
     }
 }
 
-// The entry that lists the members of what the place holds. Every name of the global object stands for the one entry.
 fn object_held_at(place: BuiltinId) -> BuiltinId {
     match table::has_flag(place, BuiltinFlags::IS_GLOBAL_OBJECT) {
         true => BuiltinId::GlobalThis,
@@ -251,7 +218,6 @@ fn object_held_at(place: BuiltinId) -> BuiltinId {
     }
 }
 
-/// Of the global object only what is tested where it is used anyway, fetch and the timers: Map and Array are too much to give up for one computed store.
 fn comes_with_holder(holder: BuiltinId, member: BuiltinId) -> bool {
     let entry = table::entry(member);
     let is_cheap = entry.mutability == Mutability::ConstantUnlessWritten;
@@ -260,22 +226,17 @@ fn comes_with_holder(holder: BuiltinId, member: BuiltinId) -> bool {
         && (is_cheap || holder != BuiltinId::GlobalThis)
 }
 
-/// `Map.prototype`: the engine unlocks it in no run, so a write on `Map` leaves what lies below it as it is.
 fn is_locked_prototype(member: BuiltinId) -> bool {
     let entry = table::entry(member);
     entry.kind == BuiltinKind::Prototype && entry.mutability == Mutability::AlwaysLocked
 }
 
-/// What changes on its own below an object that is not locked is a constant for nobody, listed or not.
-/// A member that is constant unless written stays, whatever holds it: native code of the test runner writes it where no store is seen,
-/// and the engine takes a member for a constant, and locks it when the program starts, unless the list has it.
 fn may_be_taken_for_constant(place: BuiltinId) -> bool {
     let is_locked = |id: BuiltinId| table::entry(id).mutability == Mutability::AlwaysLocked;
     let entry = table::entry(place);
     entry.mutability != Mutability::ChangesOnItsOwn || entry.holder.is_some_and(is_locked)
 }
 
-/// Indexed by table id, so the result does not depend on insertion order.
 struct ReplacedPlaces {
     is_listed: Vec<bool>,
     pending: Vec<BuiltinId>,
@@ -295,7 +256,6 @@ impl ReplacedPlaces {
         }
     }
 
-    /// Any member of `holder` may be written, and `holder` stays the object that it is.
     fn add_members_of(&mut self, holder: BuiltinId) {
         let object = object_held_at(holder);
         for &member in table::members(object) {
@@ -305,8 +265,6 @@ impl ReplacedPlaces {
         }
     }
 
-    /// `ResolvedBuiltins::unlock` asks for the id of a path alone, which is that of the object. `Resolver::path_of_member` would have taken the least
-    /// of all the places on the way: behind `globalThis.Date = Fake`, `Date.prototype.getTime` is no function of the table either.
     fn add_members_transitively(&mut self) {
         while let Some(place) = self.pending.pop() {
             let object = object_held_at(place);
@@ -322,7 +280,6 @@ impl ReplacedPlaces {
         }
     }
 
-    /// `given`: strictly ascending. What the runner says that it replaces stays as it is said.
     fn finish(self, given: &[u32]) -> Arc<[u32]> {
         let places = (0..BuiltinId::COUNT).filter_map(BuiltinId::from_wire);
         places
@@ -357,7 +314,6 @@ fn list_replaced_builtins(
     places.finish(given)
 }
 
-/// The loader of the host goes by the name of the file, whatever the import has asked for.
 fn embeds_addon_as_file(files: &Files<'_>) -> bool {
     files.compiled_files().iter().any(|&file| {
         let asked_for = files
@@ -368,7 +324,6 @@ fn embeds_addon_as_file(files: &Files<'_>) -> bool {
     })
 }
 
-// The number of an atom follows the order in which threads met its text, so names are ordered by their bytes.
 fn sort_names_added(names: &mut Vec<(BuiltinId, Atom)>, files: &Files<'_>) {
     let atoms = &files.atoms;
     names.shared_sort_unstable_by(|left, right| {
@@ -378,8 +333,6 @@ fn sort_names_added(names: &mut Vec<(BuiltinId, Atom)>, files: &Files<'_>) {
     names.dedup();
 }
 
-/// Once, when the application is loaded and before Bun's own modules are. In a test run it ends with `ResolvedBuiltins::unlock` on every file,
-/// with an empty list too. In an executable no file is unlocked.
 pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramContents {
     let ContentsInput {
         files,
@@ -446,7 +399,6 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         replaced_builtins,
         fixed_builtins,
         names_added_to_builtins: all.names_added,
-        // What the program's function answers stands in the place of the module, as a mock does.
         mocks_any_module: all.mocks_any_module
             || run.mocks_any_module
             || all.stores_loader_functions,

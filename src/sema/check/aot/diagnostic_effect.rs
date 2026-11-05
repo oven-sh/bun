@@ -6,7 +6,6 @@ use crate::messages::Category;
 pub enum FileOrigin {
     NoFile,
     ProgramSource,
-    /// Of a program that is compiled to run its tests: `bun test` checks no types, so a type error stops nothing.
     TestedSource,
     ProgramJavaScript,
     DependencySource,

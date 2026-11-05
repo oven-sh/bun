@@ -4,8 +4,8 @@ use super::storage::RuntimeDeclarationsIn;
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
-    StoreKind, SymbolStore, has_mapped_arguments, stability,
+    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName, PrivateNameId,
+    RuntimeBindings, RuntimeBindingsIn, StoreKind, SymbolStore, has_mapped_arguments, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{
@@ -20,7 +20,6 @@ pub(super) fn find_entry<K: Ord + Copy, V>(list: &[(K, V)], key: K) -> Option<&V
     Some(&list[index].1)
 }
 
-/// `RuntimeReferencesIn::ident_binding_runs`
 pub(super) const IDENTS_IN_RUN: usize = 16;
 
 #[inline]
@@ -33,10 +32,8 @@ fn symbol_at(column: &[SymbolId], index: usize) -> SymbolId {
     column.get(index).copied().unwrap_or(SymbolId::NONE)
 }
 
-/// Whether code at `pos`, whose chain of scopes enters the scope of `function` from a scope of kind `from`, stands among the parameters.
 pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos: u32) -> bool {
     match hir[function].body {
-        // A function whose body is an expression has one scope for its parameters and its body.
         FnBody::Expr(body) => pos < hir[body].pos,
         FnBody::Block(_) | FnBody::None => matches!(from, ScopeKind::Param(_)),
     }
@@ -73,14 +70,16 @@ impl<S: Storage> BoundIn<S> {
         scope.copied().unwrap_or(ScopeId::NONE)
     }
 
+    pub fn own_binding_of_decorated_class(&self, inner: SymbolId) -> Option<SymbolId> {
+        let own_bindings = &self.runtime.declarations.own_bindings_of_decorated_classes;
+        find_symbol(own_bindings, inner)
+    }
+
     pub fn function_flags(&self, function: FnId) -> FunctionFlags {
         let flags = self.runtime.function_flags.get(function.idx());
         flags.copied().unwrap_or_default()
     }
 
-    /// A parameter of a sloppy function that names `arguments` is one variable with the element of that object. Nobody can tell the two apart where nothing is stored to the parameter and the function only reads members and elements of the object: a read that misses ends at `Object.prototype`, which holds no accessor of the program's.
-    /// Nor where the function reads members by name alone, `arguments.length`, whatever is stored to the parameter: nobody ever looks at an element.
-    /// `names_lie_on_object_prototype`: a test run lays some there, or nobody knows yet whether it does. One of them may be an accessor, which gets the object as `this`: a read that may miss hands the object on.
     pub fn is_mapped_argument(
         &self,
         hir: &File,
@@ -111,7 +110,6 @@ impl<S: Storage> BoundIn<S> {
         }
         let stores = &references.stores[..];
         let first_store = stores.partition_point(|store| store.symbol < symbol);
-        // A function that the body declares under the name is stored into the parameter at entry, and a `var` of the name stores what it is given.
         let mut declared = self.runtime.declarations.declared_symbols.iter();
         let mut own_declarations = self.symbol(symbol).decls.iter();
         declared
@@ -122,7 +120,6 @@ impl<S: Storage> BoundIn<S> {
             || (stores.get(first_store)).is_some_and(|store| store.symbol == symbol)
     }
 
-    /// Unless each of its parameters is a plain name, a function keeps what text evaluated in its body declares in an environment of its own, inside the environment of its parameters and `arguments`. With expressions among the parameters the variables of the body's own code are kept there too; without, they are the parameters of their names.
     pub fn is_outside_body_variables(&self, binding: Binding) -> bool {
         let function = match binding {
             Binding::Symbol(symbol) if self.binding_kind(symbol) == BindingKind::Parameter => {
@@ -165,7 +162,6 @@ impl<S: Storage> BoundIn<S> {
             return self.scopes[scope.idx()].parent;
         };
         let around_class = self.scopes[self.class_scope[class.idx()].idx()].parent;
-        // The name of a class expression has a scope of its own.
         match self.class_owner[class.idx()] {
             ClassOwner::Expr(_) if hir[class].name.is_some() => {
                 self.scopes[around_class.idx()].parent
@@ -174,7 +170,6 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
-    /// TypeScript without `useDefineForClassFields` moves the value of an instance field into the constructor that the class declares.
     pub fn constructor_of_field_value(&self, hir: &File, scope: ScopeId) -> Option<FnId> {
         let ScopeKind::FieldInitializer(field) = self.scopes[scope.idx()].kind else {
             return None;
@@ -215,7 +210,6 @@ impl<S: Storage> BoundIn<S> {
             .unwrap_or_else(|| self.file_binding(self.pat_symbol[pattern.idx()]))
     }
 
-    /// `var v` beside `export var v` in a file declares the exported binding again, and so does `namespace K` beside `export class K`.
     pub fn file_binding(&self, declared: SymbolId) -> SymbolId {
         if declared.is_none() {
             return declared;
@@ -297,7 +291,15 @@ impl RuntimeBindings<'_> {
         &self.references.implicit_references
     }
 
-    /// Whether something names the symbol and does not spell it. Who asks only the identifier expressions of a file misses these.
+    pub fn binding_of_defined_path(&self, path: ExprId) -> Binding {
+        let mut references = self.implicit_references().iter();
+        let found = references.find(|it| {
+            it.kind == ImplicitReferenceKind::DefinedPath
+                && matches!(it.node, NodeData::Expr(at) if at == path)
+        });
+        found.map_or(Binding::Free, |it| it.binding)
+    }
+
     pub fn is_named_implicitly(&self, symbol: SymbolId) -> bool {
         let mut references = self.implicit_references().iter();
         references.any(|reference| reference.binding == Binding::Symbol(symbol))
@@ -374,7 +376,6 @@ impl Bound<'_> {
         binding.map_or(Binding::Free, |&binding| self.binding_under_goal(binding))
     }
 
-    /// False for `export default Name` where `Name` is only a type: the statement has no code, and it gives the file no export.
     pub fn exports_value(&self, statement: StmtId) -> bool {
         let declared = &self.runtime.declarations.declared_symbols;
         find_symbol(declared, Decl::ExportExpr(statement)) != Some(SymbolId::NONE)
@@ -384,9 +385,6 @@ impl Bound<'_> {
         !has_bit(&self.runtime.declarations.valueless_symbols, symbol.idx())
     }
 
-    /// The member whose value a read of the name of `member` may be taken for: the last one that a declaration of the enum makes under the name.
-    /// `declare enum` makes nothing, though an enum of its name beside it makes the object. Where a later declaration of the enum writes the name again, it stores over the entry:
-    /// `bun run` has that value in place of every read, though no name reaches the later member.
     pub fn last_made_enum_member(&self, member: EnumMemberId) -> Option<EnumMemberId> {
         let symbol = self.declared_symbol(Decl::EnumMember(member));
         let is_made = |written: Decl| self.has_runtime_value(self.declared_symbol(written));
@@ -398,7 +396,6 @@ impl Bound<'_> {
         last.or_else(|| self.has_runtime_value(symbol).then_some(member))
     }
 
-    /// The variable that a declaration under `export` shows to other files. `export declare class K {}` shows none, though `namespace K {}` beside it makes one.
     pub fn exported_variable(&self, declaration: Decl) -> Option<SymbolId> {
         let local = self.declared_symbol(declaration).some()?;
         let is_shown = !has_bit(&self.runtime.declarations.bound_without_export, local.idx());
@@ -420,17 +417,23 @@ impl Bound<'_> {
             | BindingKind::SimpleCatchParameter => InitialState::Initialized,
             BindingKind::Parameter => {
                 let scope = self.scopes.get(self.symbol_scope(symbol).idx());
-                let has_dead_zone = scope.is_none_or(|scope| {
-                    let ScopeKind::Fn(function) = scope.kind else {
-                        return true;
-                    };
-                    let flags = self.function_flags(function);
-                    flags.contains(FunctionFlags::HAS_PARAMETER_EXPRESSIONS)
+                let has_dead_zone = scope.is_none_or(|scope| match scope.kind {
+                    ScopeKind::Fn(function) => {
+                        let flags = self.function_flags(function);
+                        flags.contains(FunctionFlags::HAS_PARAMETER_EXPRESSIONS)
+                    }
+                    ScopeKind::Module(_) | ScopeKind::Enum(_) => false,
+                    _ => true,
                 });
                 match has_dead_zone {
                     true => InitialState::Uninitialized,
                     false => InitialState::Initialized,
                 }
+            }
+            BindingKind::ClassInnerName
+                if self.own_binding_of_decorated_class(symbol).is_some() =>
+            {
+                InitialState::Undefined
             }
             _ => InitialState::Uninitialized,
         }
@@ -456,7 +459,6 @@ impl Bound<'_> {
         }
     }
 
-    /// The first scope that a dynamic lookup of `ident`, whose binding is declared in `declaring_scope`, does not search.
     pub fn dynamic_lookup_end(&self, ident: ExprId, declaring_scope: ScopeId) -> ScopeId {
         let behind_variables = &self.runtime.references.idents_behind_eval_variables;
         match has_bit(behind_variables, ident.idx()) {
@@ -473,7 +475,6 @@ impl Bound<'_> {
         find_entry(&self.runtime.field_initializer_scopes, member).copied()
     }
 
-    /// `C.size = value` stands behind the class in what `bun run` prints: the function around the class evaluates the value of the static field.
     pub fn is_field_assigned_behind_class(&self, member: MemberId) -> bool {
         self.field_initializer_scope(member).is_some_and(|scope| {
             let around = self.scopes[scope.idx()].parent;
@@ -511,8 +512,6 @@ impl Bound<'_> {
         self.runtime.import_meta_may_be_modified
     }
 
-    /// The file writes `import.meta`, or a `require`, a `module` or a `__filename` that is the file's own. Without one of them no expression in it
-    /// is the file's `require`, one made for the file, or `import.meta.require`.
     pub fn may_name_own_require(&self) -> bool {
         self.runtime.may_name_own_require
     }
@@ -565,7 +564,6 @@ impl Bound<'_> {
         stability::find_binding_initializer(hir, self, symbol)
     }
 
-    /// `None` if several declarations initialize the binding, or none does.
     pub fn initializing_declaration(&self, symbol: SymbolId) -> Option<Decl> {
         let recorded = self.runtime.stability.initializers.get(symbol.idx());
         recorded.copied().flatten()
@@ -599,6 +597,11 @@ impl Bound<'_> {
         find_symbol(symbols, class).unwrap_or(SymbolId::NONE)
     }
 
+    pub fn container_parameter(&self, scope: ScopeId) -> SymbolId {
+        let parameters = &self.runtime.declarations.container_parameters;
+        find_symbol(parameters, scope).unwrap_or(SymbolId::NONE)
+    }
+
     pub fn jump_target(&self, jump: StmtId) -> Option<StmtId> {
         find_entry(&self.runtime.references.jump_targets, jump).copied()
     }
@@ -615,7 +618,6 @@ impl Bound<'_> {
         }
     }
 
-    /// The imports whose names mean another symbol where the program runs, each with that symbol: `Declarations::takes_name_of_imports`.
     pub fn names_taken_from_imports(&self) -> &[(SymbolId, SymbolId)] {
         match self.runtime.is_computed() {
             true => &self.runtime.declarations.names_taken_from_imports,

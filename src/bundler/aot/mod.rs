@@ -69,8 +69,6 @@ pub struct AotBuild {
     pub root_folders_spelled: Vec<u8>,
     /// `Compilation::holds_source_paths`
     pub holds_source_paths: bool,
-    /// `Compilation::imports_file_with_query`
-    pub imports_file_with_query: bool,
     /// `Compilation::names_added_to_builtins`
     pub names_added_to_builtins: Vec<(u32, Vec<u8>)>,
     /// `Resolver::find_further_package_names`
@@ -234,6 +232,17 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         }
         Ok(_) | Err(_) => Vec::new(),
     };
+    let mut further_package_names = further_package_names;
+    if let Ok(compilation) = &result {
+        let followed = compilation.names_followed.iter();
+        further_package_names.extend(followed.map(|name| FurtherPackageName {
+            path: name.folder_and_name_as_written.clone(),
+            required: name.public_path_for_require.clone(),
+            imported: name.public_path_for_import.clone(),
+            hides_other_paths: false,
+        }));
+        further_package_names.sort_by(|a, b| a.path.cmp(&b.path));
+    }
     bundle.deinit_without_freeing_arena();
     bun_sema_driver::wake_idle_region_threads();
     drop(bundle);

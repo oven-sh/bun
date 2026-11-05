@@ -1,5 +1,9 @@
 use bun_builtin_sources::Manifest;
 use bun_core::strings;
+use bun_js_parser::defines_table::{
+    GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
+    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES, is_pure_global_identifier,
+};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::fold::{
     Constant, Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions,
@@ -12,18 +16,58 @@ use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
 use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
 
-/// A longer text is put together at run time.
 pub(crate) const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
-/// A text that is only the pattern of a `RegExp` may be as long as a pattern that the build still compiles: `RegExpPatternLengthWithCode`.
 const MAX_FOLDED_PATTERN_BYTES: usize = 1 << 20;
 
-// What the build tells Bun's own sources about the program. They are read after the program.
 #[derive(Copy, Clone)]
 pub(crate) struct ProgramFacts {
     pub can_load_code_at_run_time: bool,
     pub can_load_addons_at_run_time: bool,
     pub can_be_cluster_worker: bool,
     pub can_replace_builtins: bool,
+}
+
+fn is_read_left_out_where_unused(path: &[&[u8]]) -> bool {
+    match path {
+        [name] => is_pure_global_identifier(name),
+        _ => GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES
+            .iter()
+            .chain(GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING)
+            .any(|listed| *listed == path),
+    }
+}
+
+const HOT_RELOADING_CALLS: [&[u8]; 8] = [
+    b"accept",
+    b"decline",
+    b"dispose",
+    b"prune",
+    b"invalidate",
+    b"on",
+    b"off",
+    b"send",
+];
+
+fn path_below_hot<'s>(name: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> DefinePath<'s> {
+    DefinePath {
+        root: DefineRoot::ImportMeta,
+        members: arena.alloc_slice_copy(&[atoms.intern(b"hot"), atoms.intern(name)]),
+    }
+}
+
+fn defines_without_hot_reloading<'s>(arena: &'s Arena, atoms: &Interner<'s>) -> Vec<Define<'s>> {
+    let mut defines: Vec<Define<'s>> = HOT_RELOADING_CALLS
+        .iter()
+        .map(|name| Define {
+            path: path_below_hot(name, arena, atoms),
+            value: DefineValue::Constant(Constant::Undefined),
+        })
+        .collect();
+    defines.push(Define {
+        path: path_below_hot(b"data", arena, atoms),
+        value: DefineValue::Data(arena.alloc(DataValue::Object(&[]))),
+    });
+    defines
 }
 
 pub(crate) fn create_application_fold_inputs<'s>(
@@ -33,13 +77,21 @@ pub(crate) fn create_application_fold_inputs<'s>(
     platform: Platforms,
     runs_in_place: bool,
 ) -> FoldInputs<'s> {
-    // A test replaces locked built-ins and poses as another runtime. What it replaces is known when the last file is loaded, and each file is folded as it is loaded.
     let held_in_every_run = match runs_in_place {
         true => Vec::new(),
         false => collect_defines_held_in_every_run(platform, arena, atoms),
     };
+    let mut defines = defines_without_hot_reloading(arena, atoms);
+    let mut replaced_by_bun_run: Vec<DefinePath<'s>> = defines.iter().map(|it| it.path).collect();
+    defines.extend_from_slice(provided.defines);
+    replaced_by_bun_run.extend_from_slice(provided.user_defined);
+    let mut dropped_calls = provided.dropped_calls.to_vec();
+    dropped_calls.extend(HOT_RELOADING_CALLS.map(|name| path_below_hot(name, arena, atoms)));
     let options = FoldOptions {
-        defines: after_constant_globals(provided.defines, held_in_every_run, arena),
+        defines: after_constant_globals(&defines, held_in_every_run, arena),
+        user_defined: arena.alloc_slice_copy(&replaced_by_bun_run),
+        dropped_calls: arena.alloc_slice_copy(&dropped_calls),
+        is_read_left_out_where_unused: Some(is_read_left_out_where_unused),
         max_string_bytes: MAX_FOLDED_STRING_BYTES,
         max_pattern_bytes: MAX_FOLDED_PATTERN_BYTES,
         ..*provided
@@ -77,7 +129,6 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
         define_fact(b"CAN_REPLACE_BUILT_INS", facts.can_replace_builtins),
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
     ]);
-    // In a test run too: what a test replaces reaches these sources through `CAN_REPLACE_BUILT_INS`.
     let held_in_every_run = collect_defines_held_in_every_run(platform, arena, atoms);
     let options = FoldOptions {
         defines: after_constant_globals(&defines, held_in_every_run, arena),
@@ -99,7 +150,6 @@ fn collect_defines_held_in_every_run<'s>(
     held_in_every_run
 }
 
-/// `bun run` replaces these three names where nothing declares them.
 fn after_constant_globals<'s>(
     defines: &[Define<'s>],
     mut held_in_every_run: Vec<Define<'s>>,
@@ -117,7 +167,6 @@ fn after_constant_globals<'s>(
         },
         value: DefineValue::Constant(value),
     });
-    // A define replaces what is written, so it says nothing about the object of the run, and neither does this list from there on.
     held_in_every_run.retain(|held| {
         defines
             .iter()
@@ -136,7 +185,6 @@ fn is_at_or_under(path: DefinePath<'_>, holder: DefinePath<'_>) -> bool {
     path.root == holder.root && path.members.starts_with(holder.members)
 }
 
-// `bun build --compile` defines `process.versions.bun` as the text that the run has there.
 fn is_same_constant(define: &Define<'_>, held: &Define<'_>) -> bool {
     define.path == held.path
         && matches!(
@@ -181,7 +229,7 @@ fn define_value<'s>(value: &'s DataValue<'s>) -> Option<DefineValue<'s>> {
         DataValue::Number(number) => Constant::Number(number),
         DataValue::String(text) => Constant::String(text),
         DataValue::Array(_) | DataValue::Object(_) => return Some(DefineValue::Data(value)),
-        DataValue::Undefined | DataValue::BigInt(_) => return None,
+        DataValue::Undefined | DataValue::BigInt(_) | DataValue::Temporal { .. } => return None,
     };
     Some(DefineValue::Constant(constant))
 }
@@ -581,7 +629,6 @@ mod tests {
         }
     }
 
-    // Who calls it, and when, the text of one file does not say.
     #[test]
     fn variable_is_read_in_what_runs_when_somebody_calls_it() {
         for source in [
@@ -589,11 +636,8 @@ mod tests {
             "var isBun = typeof Bun === 'object'; const load = () => isBun || import('./other'); load();",
             "var isBun = typeof Bun === 'object'; class Loader { load() { return isBun || import('./other'); } } new Loader().load();",
             "function outer() { return load(); } var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } outer();",
-            // The class is evaluated at the start of the file.
             "new Loader().load(); var isBun = typeof Bun === 'object'; class Loader { load() { return isBun || import('./other'); } }",
-            // A file that imports this one in a cycle constructs it.
             "var isBun = typeof Bun === 'object'; export class Loader { other = isBun || import('./other'); }",
-            // The hook asks for this file and calls what it exports.
             "globalThis.hook(); var isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
         ] {
             assert_eq!(count_import_sites(source), 1, "{source}");
@@ -826,6 +870,36 @@ mod tests {
                     "{runs_in_place} {source}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn hot_reloading_is_off() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let defined_by_user = FoldOptions {
+            defines: arena.alloc_slice_copy(&[Define {
+                path: path_below_hot(b"data", arena, &atoms),
+                value: DefineValue::Constant(Constant::Boolean(false)),
+            }]),
+            ..FoldOptions::default()
+        };
+        for (provided, sites_below_data) in [(FoldOptions::default(), 1), (defined_by_user, 0)] {
+            let platform = Platforms::LINUX;
+            let fold = create_application_fold_inputs(&provided, arena, &atoms, platform, false);
+            let count_import_sites =
+                |source| analyze(source, &fold, arena, &atoms).import_sites.len();
+            for name in HOT_RELOADING_CALLS {
+                let name = str::from_utf8(name).unwrap();
+                for source in [
+                    format!("import.meta.hot.{name}(import('./other'));"),
+                    format!("if (import.meta.hot.{name}) import('./other');"),
+                ] {
+                    assert_eq!(count_import_sites(source.leak()), 0, "{name}");
+                }
+            }
+            let source = "if (import.meta.hot.data) import('./other');";
+            assert_eq!(count_import_sites(source), sites_below_data);
         }
     }
 

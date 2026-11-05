@@ -87,14 +87,12 @@ const UNKNOWN_LOADS_OF_SCRIPTS: &[&str] = &[
     "f(require('node:module'));",
 ];
 
-// A Worker has a global of its own and starts with an entry point of the build, which begins a program of its own.
 const WORKERS: &[&str] = &[
     "new Worker(name);",
     "new Worker('./worker.ts');",
     "f(Worker);",
 ];
 
-// Machine code is native code like Bun's own. It brings no module that the compiler has not seen.
 const MACHINE_CODE_LOADS: &[&str] = &[
     "process.dlopen(target, name);",
     "f(process.dlopen);",

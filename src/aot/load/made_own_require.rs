@@ -1,6 +1,3 @@
-//! `require = createRequire(__filename)`, the head of the CommonJS loader that NAPI-RS writes for an addon. What it makes resolves as the `require` of the file does, so the
-//! file keeps its own: the call stays where it is written, and nothing is stored. Every `require("@scope/addon-linux-x64-gnu")` below is then a call that the build reads.
-
 #[cfg(test)]
 mod tests_of_reads;
 
@@ -23,7 +20,6 @@ fn find_only_argument(hir: &File<'_>, e: ExprId) -> Option<(ExprId, ExprId)> {
     })
 }
 
-// Whatever of the two `require` holds by then, it answers with the built-in module.
 fn requires_node_module(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     find_only_argument(hir, e).is_some_and(|(callee, name)| {
         matches!(hir[callee].kind, ExprKind::Ident(_))
@@ -60,7 +56,6 @@ fn makes_require_of_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bo
     })
 }
 
-/// The statement and the call, where the statement is nothing but the store.
 fn find_store(hir: &File<'_>, bound: &Bound<'_>, target: ExprId) -> Option<(StmtId, ExprId)> {
     let Parent::Expr(assignment) = bound.parent_of_expr(target) else {
         return None;
@@ -81,7 +76,6 @@ fn find_store(hir: &File<'_>, bound: &Bound<'_>, target: ExprId) -> Option<(Stmt
         .then_some((statement, value))
 }
 
-/// `require("a")`, `require.resolve("a")`, `require.main`: what the two functions answer alike. Whoever gets hold of the function, or of its `resolve`, can tell them apart.
 fn is_asked_what_both_answer(hir: &File<'_>, bound: &Bound<'_>, function: ExprId) -> bool {
     let user_of = |e: ExprId| match bound.parent_of_expr(e) {
         Parent::Expr(user) => Some((user, hir[user].kind)),
@@ -91,7 +85,6 @@ fn is_asked_what_both_answer(hir: &File<'_>, bound: &Bound<'_>, function: ExprId
         |e: ExprId| matches!(user_of(e), Some((_, ExprKind::Call(call))) if hir[call].callee == e);
     match user_of(function) {
         Some((_, ExprKind::Call(_))) => is_called(function),
-        // `find_store` has looked at it.
         Some((_, ExprKind::Assign { target, .. })) => target == function,
         Some((member, ExprKind::Dot { obj, name, .. })) if obj == function => {
             let is_read = bound.get_assignment_target(hir, member).is_none()
@@ -109,18 +102,15 @@ pub(crate) fn keep_own_require(request: &mut TransformRequest<'_, '_>) -> TreeCh
         .map(|&(target, _)| target)
         .filter(|&target| bound.binding(target) == OWN_REQUIRE)
         .peekable();
-    // `__filename` names the file for as long as nothing has stored to it.
     if stores.peek().is_none() || may_be_modified(hir, bound, CommonJsVariable::Filename) {
         return TreeChange::Unchanged;
     }
-    // One store of anything else, and `require` is whatever the program makes of it.
     let Some(found) = stores
         .map(|target| find_store(hir, bound, target))
         .collect::<Option<Vec<_>>>()
     else {
         return TreeChange::Unchanged;
     };
-    // `arguments[1]` is the function too.
     let mut names = bound.ident_bindings().iter();
     if bound.file_uses_arguments()
         || names.any(|&(name, binding)| {

@@ -10,7 +10,6 @@ pub enum GaveUp {
     ErrorType,
     FlowAnalysisDisabled,
     UnreachedNode,
-    /// The question needs more stack than a question gets, or it was asked behind one that did, before `Queries::note_idle`.
     OutOfStack,
 }
 
@@ -33,7 +32,6 @@ impl GaveUp {
     }
 }
 
-/// A count that ends a walk of the queries. Whoever asks the queries sets each, and reads how often it ended one.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 #[repr(u8)]
 pub enum QueryLimit {
@@ -82,13 +80,9 @@ pub struct QueryStatistics {
     pub limit_hits: [u32; QueryLimit::COUNT],
     pub gave_up: [u32; GaveUp::COUNT],
     pub members_gave_up: [u32; GaveUp::COUNT],
-    /// See `Checker::closed_cycle_count`.
     pub closed_cycles: u32,
-    /// See `Checker::union_members_compared`.
     pub union_members_compared: u64,
-    /// How often the type of a parameter, a variable, a result or an expression was inferred.
     pub types_inferred: u64,
-    /// How often the uses of a parameter, a variable, `this` or an expression were walked.
     pub usages_walked: u64,
 }
 
@@ -187,14 +181,19 @@ pub enum MemberName {
     Private(Atom),
 }
 
-/// The call `Symbol(description)` that makes the symbol of a `const`, or the call `Symbol.for(text)` that finds it.
+impl MemberName {
+    pub(super) fn atom(self) -> Atom {
+        let (MemberName::String(name) | MemberName::Symbol(name) | MemberName::Private(name)) =
+            self;
+        name
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SymbolCreation {
     pub file: FileId,
-    /// Which of the calls of the file it is.
     pub call_number: u32,
     pub description: Option<Atom>,
-    /// `Symbol.for(text)`: the one symbol that is registered under the text, whoever asks for it and wherever.
     pub is_registered: bool,
 }
 
@@ -217,7 +216,6 @@ pub struct ObjectMember {
     pub is_readonly: bool,
 }
 
-/// An `ObjectMember` for whoever does not ask what was written.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CheckedMember {
     pub name: MemberName,
@@ -227,18 +225,14 @@ pub struct CheckedMember {
     pub is_readonly: bool,
 }
 
-/// A member that a type and a base of it have under one name, with different types.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct MemberTypedOtherwise {
     pub kind_in_base: ObjectMemberKind,
     pub checked: TypeId,
     pub in_base: TypeId,
-    /// One of `MethodsAbove`.
     pub is_method_above: bool,
 }
 
-/// The methods of a class and the classes above it that `Queries::members_typed_otherwise` has listed for the sake of
-/// what follows them. Once all of them have been followed, it leaves them out for the other classes below that class.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct MethodsAbove {
     pub(super) class: Sym,
@@ -320,11 +314,9 @@ impl ClassDeclaration {
     }
 }
 
-/// What a class or a constructor function inherits from.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ClassParent {
     Declared(ClassDeclaration),
-    /// A class or a function of Bun's own modules, where the program is another one. Its file is one of theirs.
     Library(ClassDeclaration),
 }
 
@@ -350,7 +342,6 @@ pub struct ClassMember {
 pub struct ClassShape<'c> {
     pub declaration: ClassDeclaration,
     pub members: &'c [ClassMember],
-    /// The names that stores put into the prototype object, also where `members` lists the name as a field of the instances.
     pub names_stored_in_prototype: &'c [MemberName],
     pub has_computed_instance_name: bool,
     pub has_computed_static_name: bool,

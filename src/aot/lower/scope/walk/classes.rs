@@ -50,6 +50,7 @@ impl Walker<'_, '_> {
         self.enter_scope(bound.symbol_scope(inner_name), context);
         self.enter_scope(scope, context);
         for binding in bindings_of(&self.metadata_uses, class) {
+            self.note_binding_is_looked_at(binding);
             self.record_binding_use(context, binding, false);
         }
         let in_constructor =
@@ -95,6 +96,9 @@ impl Walker<'_, '_> {
         self.push_task(slot_initialization(scope, ClassSlot::ClassObject), context);
         self.push_members(class, &function_of_field, &slots, context);
         self.push_initialization(inner_name, context);
+        if let Some(own) = bound.own_binding_of_decorated_class(inner_name) {
+            self.push_initialization(own, context);
+        }
         for &slot in &slots {
             match slot {
                 ClassSlot::PrivateMethod(member) => {
@@ -193,7 +197,6 @@ impl Walker<'_, '_> {
         self.push_expressions([initializer], context);
     }
 
-    // The value is evaluated where the class stands: in the loops and under the branches around it, and its `this` is the one there.
     fn push_field_assigned_behind_class(&mut self, member: MemberId, around_class: Context) {
         let scope = self.bound.field_initializer_scope(member);
         let scope = scope.expect("a field that is assigned has a value");

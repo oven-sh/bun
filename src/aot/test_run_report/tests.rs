@@ -1,10 +1,7 @@
-//! Each line against what the tests under test/aot look for in it. A regular expression stands here as its test writes it, under the name of the file it came from.
-
 use super::*;
 
 type Captures = Vec<Option<(usize, usize)>>;
 
-/// As much of the regular expressions of JavaScript as those tests use, over bytes.
 enum Piece {
     Byte(u8),
     AnyByte,
@@ -53,7 +50,6 @@ impl Parser<'_> {
         byte
     }
 
-    /// Up to the `)` that ends them, or to the end of the pattern.
     fn alternatives(&mut self) -> Vec<Vec<Piece>> {
         let mut alternatives = vec![Vec::new()];
         while self.at < self.pattern.len() && self.pattern[self.at] != b')' {
@@ -142,7 +138,6 @@ struct Run<'p> {
     piece: &'p Piece,
     at_least: usize,
     at_most: usize,
-    /// What stands behind the repeated piece.
     rest: &'p [Piece],
 }
 
@@ -151,7 +146,6 @@ struct Matcher<'a> {
 }
 
 impl Matcher<'_> {
-    /// Whether `pieces` match from `at` on, and `then` takes the place where they end.
     fn matches(
         &self,
         pieces: &[Piece],
@@ -201,7 +195,6 @@ impl Matcher<'_> {
         }
     }
 
-    /// As often as it can first. `count`: how often the piece has matched in front of `at`.
     fn repeats(
         &self,
         run: &Run<'_>,
@@ -223,7 +216,6 @@ impl Matcher<'_> {
     }
 }
 
-/// The first match in `line`: all of it, then what each group took.
 fn find(pattern: &str, line: &str) -> Option<Vec<String>> {
     let mut parser = Parser {
         pattern: pattern.as_bytes(),
@@ -301,7 +293,6 @@ fn scan() {
         scan,
         "AOT test run | scan of 5 files and 2 beside them | 3 ms | sites: built-ins 1 | names added 4 | exports 6 | modules 7 | handed on 8 | mocks any module false | hands on any module false | spies on objects from somewhere false"
     );
-    // harness/fixed-runs.ts, over the whole log: the order counts.
     let pattern = r"\d+ can run code that no build has seen|mocks any module \w+ .*$";
     let found = [&texts, &scan].map(|line| find(pattern, line).expect("each has one")[0].clone());
     assert_eq!(
@@ -311,16 +302,13 @@ fn scan() {
             "mocks any module false | hands on any module false | spies on objects from somewhere false",
         ]
     );
-    // a-file-of-the-run-that-a-helper-imports-back-is-handed-on-once.test.ts
     assert_eq!(
         groups(r"^AOT test run \| scan of (\d+) files", &scan),
         ["5"]
     );
-    // helpers-that-a-test-file-reaches-by-other-ways.test.ts, a-mock-in-a-file-that-a-preload-imports.test.ts
     assert!(scan.starts_with("AOT test run | scan of "));
     assert_eq!(groups(r" \| exports (\d+) \| ", &scan), ["6"]);
     assert_eq!(groups(r" \| modules (\d+) \| ", &scan), ["7"]);
-    // a-commonjs-test-file-that-takes-names-out-of-bun-test.test.ts, spies-through-helpers.test.ts
     assert!(scan.contains("| mocks any module false |"));
     assert!(scan.ends_with("spies on objects from somewhere false"));
 }
@@ -351,16 +339,13 @@ fn what_tests_replace() {
         line,
         "AOT test run | variables that tests may replace 3 in 12 files | modules that may be mocked 1 | a spy under any name true | names that spies on objects from somewhere spell 2 | such a spy may reach any module false"
     );
-    // harness/runner-object.ts, spies-in-written-code.test.ts
     assert_eq!(
         groups(r"variables that tests may replace (\d+) in", &line),
         ["3"]
     );
     assert!(line.contains("a spy under any name true"));
-    // texts-nothing-can-run.test.ts
     let pattern = r"variables that tests may replace (\d+) in (\d+) files";
     assert_eq!(groups(pattern, &line), ["3", "12"]);
-    // a-package-that-asks-whether-jest-is-there-opens-no-export.test.ts
     assert_eq!(
         groups(r"\| a spy under any name (true|false) \|", &line),
         ["true"]
@@ -371,7 +356,6 @@ fn what_tests_replace() {
 fn files_that_may_run_again() {
     let line = line_of_files_that_may_run_again(0);
     assert_eq!(line, "AOT modules | CommonJS files that may run again 0");
-    // awaited-import.test.ts, fuzz/grids/files-that-run-again.ts
     assert_eq!(
         groups(r"CommonJS files that may run again (\d+)", &line),
         ["0"]
@@ -380,7 +364,6 @@ fn files_that_may_run_again() {
 
 #[test]
 fn load_goes_on() {
-    // a-test-run-that-starts-workers-loads-its-files-once.test.ts
     assert_eq!(
         groups(r"^AOT load goes on \| (.*)$", &line_of_load_that_goes_on(3)),
         ["with 3 more files that Workers start from"]
@@ -393,14 +376,12 @@ fn load_goes_on() {
 
 #[test]
 fn entries_may_answer() {
-    // a-test-stores-an-entry-in-require-cache-under-a-key-that-it-puts-together.test.ts
     let pattern = r"^AOT test run \| an entry in require\.cache may answer require\(\) of (\d+) modules of the library";
     assert_eq!(groups(pattern, &line_of_entries_that_may_answer(1)), ["1"]);
 }
 
 #[test]
 fn why_every_file() {
-    // require-cache-in-test-runs-4.test.ts
     let pattern = r"^AOT test run \| every file may load again: (?:.*[\\/])?(.*)$";
     let line = line_of_why_every_file(b"/project/helper.js", "loads a file under a query");
     assert_eq!(
@@ -427,14 +408,12 @@ fn what_file_replaces() {
             table::text_of(members[1])
         )
     );
-    // a-polyfill-behind-a-test-for-its-member-costs-no-second-build.test.ts
     assert!(line.starts_with("AOT test run | ") && line.contains(" replaces: "));
     assert_eq!(groups(r"node_modules[\\/]([^\\/]+)[\\/]", &line), ["or"]);
 }
 
 #[test]
 fn file_changed_on_disk() {
-    // a-call-that-fails-on-a-folder-changes-nothing-below-it.test.ts splits at this text and takes what stands behind it for the path.
     let head = "the run writes, moves or removes a file of its own, which is compared with the disk before it loads: ";
     let line = line_of_file_changed_on_disk(b"/project/c0/lib/one.js");
     assert_eq!(
@@ -456,16 +435,13 @@ fn file_leaves_open() {
         line_of(FileLeavesOpen::HandsOnUnspelledModule),
         "AOT test run | /p/node_modules/asks/index.js hands on a module that it does not spell"
     );
-    // a-package-that-asks-whether-jest-is-there-opens-no-export.test.ts
     assert!(
         line_of(FileLeavesOpen::LetsSpyOnGo)
             .contains("asks/index.js lets spyOn go where nobody sees what it is called with")
     );
-    // helpers-that-a-test-file-reaches-by-other-ways.test.ts
     let marks = "spies on an object from somewhere under a name that it does not spell";
     let with_texts = line_of(FileLeavesOpen::SpiesUnderNamesFromOutside { texts_passed: 2 });
     assert!(with_texts.contains(marks) && with_texts.ends_with(": 2 texts are passed to it"));
-    // a-hint-in-a-string-that-is-no-javascript-opens-no-export.test.ts
     let holds_text = line_of(FileLeavesOpen::HoldsTextThatSpies {
         loads_by_unknown_path: true,
     });
@@ -483,7 +459,6 @@ fn package_takes_from_test_runner() {
         line,
         "AOT test run | a package takes from the test runner: /p/node_modules/asks/index.js | mocks a module that it does not spell true | spies under a name that it does not spell false"
     );
-    // a-package-that-asks-whether-jest-is-there-opens-no-export.test.ts
     let pattern = r"asks\/index\.js \| mocks a module that it does not spell true";
     assert!(find(pattern, &line).is_some());
     let spies_alone = line_of_package_that_takes_from_test_runner(path, false, true);
@@ -497,7 +472,6 @@ fn code_that_build_does_not_see() {
         line,
         "AOT flow | code that the build does not see | loads code by name 0 | loads compiled files by name 1 | evaluates text 2 | imports uncompiled code 3 | runs unseen code 4 | an option admits code 5"
     );
-    // closed-test-run.test.ts
     let pattern = r"loads code by name (\d+) \| loads compiled files by name (\d+)";
     assert_eq!(groups(pattern, &line), ["0", "1"]);
 }

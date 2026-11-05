@@ -5,11 +5,9 @@ use super::find_function_that_initializes;
 
 pub(in crate::lower) struct CalledByName {
     pub(in crate::lower) function: FnId,
-    /// The name, where an expression fills it with the function: only a call that runs behind that enters the function.
     pub(in crate::lower) initialized: Option<SymbolId>,
 }
 
-/// A function declares the name as a function, and the name never means anything else: the function. Nobody has its function object but by reading the name.
 pub(in crate::lower) fn find_declaration_made_at_first_read(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -35,15 +33,11 @@ pub(in crate::lower) fn find_declaration_made_at_first_read(
     (!is_stored_where_it_stands).then_some(function)
 }
 
-/// `f(..)`, where a function declares `f` as a function and the name never means anything else.
-/// The call enters the function itself. Whoever calls hands over what the function captures (`compute_captures` makes it a supplier), and nobody reads the binding:
-/// a function that is only called so has no closure, and its name no place in the scope.
 pub(in crate::lower) fn find_declaration_called_by_name(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     expression: ExprId,
 ) -> Option<CalledByName> {
-    // `new f(..)` and a tagged template read the name.
     let ExprKind::Call(call) = hir[expression].kind else {
         return None;
     };
@@ -60,7 +54,6 @@ pub(in crate::lower) fn find_declaration_called_by_name(
     };
     let is_found_by_name = bound.is_visible_to_eval(symbol)
         || bound.dynamic_lookup_scope(NodeData::Expr(callee)).is_some();
-    // What a namespace exports is a property of its object.
     let is_member = bound.symbol(symbol).parent.is_some();
     if is_found_by_name || is_member || !bound.is_stable_binding(symbol) {
         return None;
@@ -76,12 +69,10 @@ pub(in crate::lower) fn find_declaration_called_by_name(
             initialized: Some(symbol),
         });
     };
-    // What a file declares is a variable of its module, and the function captures nothing.
     let CodeUnit::Function(_) = bound.code_unit(bound.symbol_scope(symbol)) else {
         return None;
     };
     let declared = hir[function];
-    // A sloppy function takes the global object for a `this` that nobody hands over.
     if declared.kind != FnKind::Decl || !declared.is_strict || matches!(declared.body, FnBody::None)
     {
         return None;

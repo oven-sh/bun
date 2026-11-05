@@ -300,8 +300,38 @@ describe.concurrent("compile/aot/assets loaded by plugins", () => {
   for (const name of Object.keys(cases).filter(isAlone))
     // TODO: --aot refuses every macro at build time (TS100053: Macros are disabled).
     (callsMacro(name) ? test.todo : test)(name, () => slot(() => expectSameExecutable(cases[name])), 600_000);
-  const rest = Object.keys(cases).filter(name => !isAlone(name));
+  // The build has decided what a file is before a plugin is asked for it: docs/compiler/compatibility.mdx, "Not supported".
+  const refused: Record<string, string[]> = {
+    "many assets, and a plugin module that imports a virtual asset": [`"wrapped.tmpl" with the loader "ts"`],
+    "a plugin that returns code for a file import: each callback runs once": [
+      `"late.bin" with the loader "ts"`,
+      `"note.tmpl" with the loader "js"`,
+    ],
+    "a plugin that returns the text loader for a file import": [`"words.bin" with the loader "text"`],
+    "defer() resolves after assets are loaded": [`"seen.tmpl" with the loader "js"`],
+  };
+  const rest = Object.keys(cases).filter(name => !isAlone(name) && !refused[name]);
   test("the other answers", () => slot(() => expectSameExecutable(together(rest.map(name => cases[name])))), 600_000);
+  test.each(Object.keys(refused))("TS100050: %s", name =>
+    slot(async () => {
+      using dir = tempDir("aot-plugin-assets", {
+        "build.ts": build(byName),
+        "helpers.ts": helpers,
+        "tsconfig.json": tsconfig,
+        ...cases[name].files,
+      });
+      const { built } = await buildIn(String(dir), "0");
+      const said = [
+        ...built.stdout.matchAll(
+          /TS100050: --aot does not support a plugin that loads "[^"]*?([^"\\/]+" with the loader "\w+") when the build treats the file as an asset\. Pass --loader /g,
+        ),
+      ];
+      expect({ said: said.map(match => `"${match[1]}`).sort(), exitCode: built.exitCode }).toEqual({
+        said: refused[name],
+        exitCode: 1,
+      });
+    }),
+  );
 
   test(
     "a plugin that throws for an asset fails the build",

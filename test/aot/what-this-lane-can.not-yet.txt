@@ -20,7 +20,6 @@ builtins/ways.test.ts
 cell-cage-messages.test.ts
 cli/carrier-identity.test.ts
 cli/option-words.test.ts
-code-addresses-have-names.test.ts
 code-from-disk.test.ts
 compiled-code-mapping.test.ts
 compiler/budgets.test.ts
@@ -99,7 +98,7 @@ trim-keeps-methods-called-on-other-receivers.test.ts
 trim-removed-class-error-is-caught.test.ts
 trimmed-against-whole/tool.test.ts
 ways-to-start-an-executable.test.ts
+what-a-program-takes-grows-with-its-data.test.ts
 what-minified-syntax-leaves-out-of-executables.test.ts
-where-names-lie-in-executables.test.ts
 without-executable-memory.test.ts
 worker-of-text-in-a-trimmed-executable.test.ts

@@ -1,5 +1,3 @@
-//! When the bodies of the modules run, as far as the text of the program says it.
-
 #[cfg(test)]
 mod tests;
 
@@ -7,6 +5,9 @@ use super::exports::{ExportTables, Resolution};
 use super::interop::{ImportPhase, ModuleKind, RequireResult};
 use super::module_set::ModuleSet;
 use super::requests::{FileScan, ScannedSite, Scans};
+use super::spelled_files::{
+    TextThatSpellsFile, find_texts_that_spell_files, is_every_file_found_by_name,
+};
 use super::wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 use super::{BindInput, ModuleRef};
 use crate::ir::for_each_mut;
@@ -29,11 +30,8 @@ use std::cell::{OnceCell, RefCell};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) enum SitePosition {
-    /// Every run of the body passes it: it is in no function, branch, loop or `try`, behind no `return` and no `await`.
     InOrder,
-    /// The body runs it where it is written, or not at all.
     Sometimes,
-    /// It runs when a function does, or a handler outlives what it throws.
     Late,
 }
 
@@ -43,16 +41,13 @@ pub(super) enum SiteKey {
     ImportEquals(ImportEqualsId),
 }
 
-/// `require(K)`, `module.require(K)`, `import.meta.require(K)`, `import a = require(K)`, a call of what `createRequire` made for the file itself, `require_x()` and `init_x()` of a bundle.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct PlannedSite {
     pub key: SiteKey,
     pub referrer: ModuleRef,
     pub target: ModuleRef,
     pub position: SitePosition,
-    /// The callee is the loader's function by binding, so that what comes out is the module. The lowering tests at most whether a `var` is filled yet: a call of one that is not throws.
     pub is_proven: bool,
-    /// `false`: the run time's loader takes the site, as it always did.
     pub evaluates: bool,
     pub start: u32,
 }
@@ -60,13 +55,10 @@ pub(super) struct PlannedSite {
 #[derive(Default)]
 struct FileSites {
     sites: Vec<PlannedSite>,
-    /// What `import(K)` and a computed specifier name, with the module that they are written in.
     other_loads: Vec<(ModuleRef, ModuleRef)>,
-    /// Of those, what a computed specifier of `require` names.
     required_candidates: Vec<(ModuleRef, ModuleRef)>,
 }
 
-/// A number for each file and, behind the files, for each inner module.
 pub(super) struct ModuleNumbers {
     file_count: usize,
     inner_modules: Vec<(FileId, FnId)>,
@@ -100,7 +92,6 @@ impl ModuleNumbers {
     }
 }
 
-/// By file, in the order of the text.
 pub(super) struct PlannedSites {
     by_file: Vec<Vec<PlannedSite>>,
     candidates_by_file: Vec<Vec<(ModuleRef, ModuleRef)>>,
@@ -111,12 +102,10 @@ impl PlannedSites {
         &self.by_file[file.idx()]
     }
 
-    /// The modules that a computed specifier of `require` in the file can name and that the site evaluates itself, each with the module that the site is written in.
     pub(super) fn candidates_of(&self, file: FileId) -> &[(ModuleRef, ModuleRef)] {
         &self.candidates_by_file[file.idx()]
     }
 
-    /// An ES module answers `require` with its namespace object unless it exports the name "module.exports", which the export tables know.
     pub(super) fn settle(&mut self, files: &Files<'_>, modules: &ModuleSet, tables: &ExportTables) {
         let name = files.atoms.lookup(b"module.exports");
         let lacks_name = |module: ModuleRef, name: Atom| {
@@ -130,10 +119,11 @@ impl PlannedSites {
             match interop.kind {
                 ModuleKind::SourceText => {
                     interop.require_result == RequireResult::Namespace
+                        && !modules.looks_for_forms_first(target)
                         && !tables.has_dynamic_names(target)
                         && name.is_none_or(|name| lacks_name(target, name))
                 }
-                ModuleKind::CommonJs => true,
+                ModuleKind::CommonJs => !modules.looks_for_forms_first(target),
                 _ => false,
             }
         };
@@ -159,22 +149,18 @@ impl EvaluationOrder {
         number.is_some_and(|number| set[number])
     }
 
-    /// Somebody may look at the module while its body runs.
     pub(super) fn half(&self, module: ModuleRef) -> bool {
         self.has(&self.parts.is_half, module)
     }
 
-    /// An ES module that asks for the module may be linked while the body of the module runs.
     pub(super) fn half_at_link(&self, module: ModuleRef) -> bool {
         self.has(&self.is_half_at_link, module)
     }
 
-    /// An ES module that something other than an import starts: an entry point, or what `import()` or `require` names.
     pub(super) fn is_prefix_root(&self, file: FileId) -> bool {
         self.parts.prefix_roots.binary_search(&file).is_ok()
     }
 
-    /// A file of the program that is code, or an inner module of one.
     pub(super) fn is_code_of_program(&self, module: ModuleRef) -> bool {
         self.has(&self.parts.is_code_of_program, module)
     }
@@ -184,7 +170,6 @@ impl EvaluationOrder {
     }
 
     fn can_evaluate(&self, modules: &ModuleSet, referrer: ModuleRef, target: ModuleRef) -> bool {
-        // Whoever requires an ES module while its body runs gets an object without keys, which is no view of its variables.
         let is_seen_whole = match modules.interop(target).kind {
             ModuleKind::SourceText => !self.has(&self.is_on_cycle, target),
             _ => true,
@@ -201,22 +186,17 @@ pub(super) struct OrderParts {
     pub numbers: ModuleNumbers,
     pub is_code_of_program: Vec<bool>,
     pub is_half: Vec<bool>,
-    /// The strongly connected component of each module in the graph of all requests.
     pub component_of: Vec<u32>,
-    /// A synchronous load whose time the build does not know may start the module: `require` in a function, or a load by an unknown name.
     pub is_required_at_any_time: Vec<bool>,
     pub is_loaded_by_loader: Vec<bool>,
     pub is_required_during_load: Vec<bool>,
     pub may_be_imported_while_it_runs: Vec<bool>,
-    /// By file: a data file whose values `bun run` makes when it loads the file.
     pub makes_values_at_load: Vec<bool>,
-    /// By file: `Files::is_es_module_to_imports`.
     pub is_es_module_to_imports: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
-    /// Of those, what a `require` may name. Its loader reads all that is imported below them.
     pub required_prefix_roots: Vec<FileId>,
-    /// The files of the program that the host may ask for first.
     pub first_requests_of_host: Vec<FileId>,
+    pub texts_that_spell_files: Option<Vec<TextThatSpellsFile>>,
 }
 
 #[cfg(test)]
@@ -236,6 +216,7 @@ impl OrderParts {
             prefix_roots: Vec::new(),
             required_prefix_roots: Vec::new(),
             first_requests_of_host: Vec::new(),
+            texts_that_spell_files: None,
         }
     }
 }
@@ -249,7 +230,6 @@ pub(super) struct FileText<'a, 's> {
     decisions: &'a Decisions<'s>,
     inner_modules: &'a [InnerModule],
     has_top_level_await: bool,
-    /// For the body of the file and of each inner module: where the first `return` or `using` stands.
     first_turns: OnceCell<Vec<(CodeUnit, u32)>>,
     may_replace_require: OnceCell<bool>,
     called_only_where_written: RefCell<FxHashMap<FnId, bool>>,
@@ -347,12 +327,10 @@ impl<'a, 's> FileText<'a, 's> {
         })
     }
 
-    /// `require_x()`: the inner module that the call evaluates, and whose exports it answers.
     pub(super) fn find_inner_commonjs_module_of_call(&self, call: ExprId) -> Option<ModuleRef> {
         self.as_commonjs_module(self.wrapped.of_call(self.files, self.file, call)?)
     }
 
-    /// Every such call in code that is not dead.
     pub(super) fn calls_of_inner_commonjs_modules(
         &self,
     ) -> impl Iterator<Item = (ExprId, ModuleRef)> + '_ {
@@ -371,7 +349,6 @@ impl<'a, 's> FileText<'a, 's> {
                 value,
                 ..
             } => !is_choice(op) || operand != value,
-            // In a pattern `target = value` is a default, which is evaluated only where nothing comes for the target.
             ExprKind::Assign {
                 op: None, value, ..
             } => operand != value || self.bound.get_assignment_target(hir, parent).is_none(),
@@ -410,7 +387,6 @@ impl<'a, 's> FileText<'a, 's> {
                 .or_insert_with(|| self.bound.is_called_only_where_written(hir, function))
     }
 
-    // The body that runs the node, and how. `None`: a function runs it, a handler is around it, or the text does not say.
     fn find_body(&self, start: Node) -> Option<(CodeUnit, SitePosition)> {
         let (hir, bound) = (self.hir, self.bound);
         let mut position = SitePosition::InOrder;
@@ -501,7 +477,6 @@ impl<'a, 's> FileText<'a, 's> {
         }
     }
 
-    /// Whoever replaces the `require` that the loader gives the file decides what a call through it answers.
     pub(super) fn may_replace_require(&self) -> bool {
         *self.may_replace_require.get_or_init(|| {
             let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
@@ -525,7 +500,6 @@ impl<'a, 's> FileText<'a, 's> {
             && self.bound.binding(expression) == Binding::CommonJs(variable)
     }
 
-    // The forms that the lowering turns into the operation without a test of the callee against the loader's function.
     fn is_proven_call(&self, site: ImportSiteKind, call: ExprId, kind: ModuleKind) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let ExprKind::Call(id) = hir[call].kind else {
@@ -549,7 +523,6 @@ impl<'a, 's> FileText<'a, 's> {
                 !self.may_replace_require()
             }
             ImportSiteKind::Require(_) => match hir.member_key(callee) {
-                // `require.call(..)` and `require.apply(..)` are tested.
                 Some(_) => false,
                 None => find_own_require(hir, bound, None, callee) == Some(OwnRequire::Made),
             },
@@ -566,7 +539,6 @@ fn plan_file_sites(
 ) -> FileSites {
     let mut planned = FileSites::default();
     let sites = files.analysis(file).import_sites;
-    // A CommonJS file asks for what its JSX imports as `require` does: at the head of its body, and again at each element.
     let is_required_for_jsx = |site: ImportSiteKind| {
         let is_jsx_site = matches!(
             site,
@@ -631,7 +603,6 @@ fn plan_file_sites(
             key,
             referrer,
             target,
-            // A test of the callee is a branch around the site.
             position: match is_proven {
                 true => position,
                 false => position.max(SitePosition::Sometimes),
@@ -669,7 +640,6 @@ fn loading_call(site: ImportSiteKind) -> Option<ExprId> {
     }
 }
 
-// Every request, of whichever kind, and by target the modules that import it.
 fn collect_edges(
     scans: &Scans,
     modules: &ModuleSet,
@@ -758,11 +728,6 @@ struct LoadsSeenByProgram {
     may_be_imported_while_it_runs: Vec<bool>,
 }
 
-// `bun run` loads a graph in steps, and an imported CommonJS file runs in one of them. What such a file reaches runs while the graph is loaded, in the file or in a job that it queues.
-// A `require` of an ES module there asks the run time. Where the ES module leads back to the file that requires it, the loader of the run time loads every graph that comes to that cycle:
-// whatever imports or requires, directly or not, a module of the cycle. What no such way leads from is loaded as if the cycle were not in the executable.
-// An `import()` that leads back starts a second load of the file while the first one runs it. That changes no order, so the loader is not needed for it.
-// An ES module on such a way back imports its CommonJS file while the file runs, and so does an `import()` that names the file. If the file then throws, nobody gets the error and a later `require` of the file is answered with the names of that import: it asks the run time too.
 fn find_loads_seen_by_program(
     scans: &Scans,
     modules: &ModuleSet,
@@ -796,6 +761,14 @@ fn find_loads_seen_by_program(
     let imports: Vec<(FileId, FileId)> = imports
         .map(|(importer, known)| (importer, known.0))
         .collect();
+    for (file, file_sites) in planned {
+        let mut loads = file_sites.other_loads.iter();
+        if scans.of(*file).interop.kind == ModuleKind::CommonJs
+            && loads.any(|load| load.1 == ModuleRef::File(*file))
+        {
+            seen.may_be_imported_while_it_runs[file.idx()] = true;
+        }
+    }
     if imports.is_empty() {
         return seen;
     }
@@ -832,7 +805,6 @@ fn find_loads_seen_by_program(
                     components_imported_back.push(component_of[referrer]);
                     continue;
                 }
-                // `import("./file.cjs")` in the file itself, or in a file that it requires.
                 let required: &FxHashSet<_> =
                     required.get_or_insert_with(|| file_sites.required_candidates.iter().collect());
                 if !required.contains(load) {
@@ -910,7 +882,6 @@ fn find_loads_seen_by_program(
     seen
 }
 
-/// The files with a statement that `leave_imports_of_test_files_to_loader` has left to the loader because statements of other types ask for the same file of data.
 fn find_importers_that_ask_for_several_types(modules: &ModuleSet) -> Vec<u32> {
     let typed = || {
         let statements = modules.left_to_loader.iter();
@@ -940,7 +911,6 @@ fn find_prefix_roots(
         let required = file_sites.sites.iter().map(|site| site.target);
         required.chain(file_sites.other_loads.iter().map(|load| load.1))
     });
-    // The loader of the run time asks for the file that such a statement names, as for the file that an import() names.
     let left_to_loader = modules.left_to_loader.iter();
     let left_to_loader = left_to_loader.map(|statement| ModuleRef::File(statement.1));
     let mut roots: Vec<FileId> = entry_points
@@ -974,7 +944,6 @@ pub(super) fn compute_order(
     });
     let (edges, importers) = collect_edges(scans, modules, &numbers, &planned);
     let is_code_of_program = find_program_code(input, scans, modules, &numbers);
-    // The run time's own algorithm waits for promises, asks the host for code that was not compiled, and finds out what a deferred import has to evaluate.
     let needs_loader_itself = |&&file: &&FileId| {
         let scan = scans.of(file);
         let mut requests = scan.requests.iter();
@@ -995,18 +964,27 @@ pub(super) fn compute_order(
     let other_loads = other_loads.map(|load| load.1);
     let required_candidates = planned.iter().flat_map(|it| &it.1.required_candidates);
     let required_candidates = required_candidates.map(|load| load.1);
-    // The host, or a name that the build does not know, loads an entry point at any time.
     let entry_points = input.sources.entry_points().iter();
     let loaded_by_name = entry_points
         .filter(|entry| !matches!(entry.kind, EntryPointKind::Main | EntryPointKind::Library));
-    let loaded_by_name = loaded_by_name.map(|entry| ModuleRef::File(entry.file));
+    let texts_that_spell_files = find_texts_that_spell_files(input, modules);
+    let spelled = texts_that_spell_files.iter().flatten();
+    let loaded_by_name = loaded_by_name.map(|entry| entry.file);
+    let loaded_by_name = loaded_by_name.chain(spelled.map(|text| text.spelled));
+    let is_every_file_found = !input.runs_tests && is_every_file_found_by_name(input, modules);
+    let found = modules
+        .compiled_files
+        .iter()
+        .filter(|_| is_every_file_found);
+    let found = found.filter(|file| is_code_of_program[file.idx()]);
+    let loaded_by_name = loaded_by_name.chain(found.copied());
+    let loaded_by_name = loaded_by_name.map(ModuleRef::File);
     let late_targets = other_loads.chain(loaded_by_name.clone());
     let number_of = |target: ModuleRef| Some(numbers.number_of(target)? as u32);
     let required_at_any_time = required_late.clone().chain(required_candidates);
     let required_at_any_time = required_at_any_time.chain(loaded_by_name);
     let is_required_at_any_time =
         find_reached(&edges, required_at_any_time.filter_map(number_of).collect());
-    // All but `require`, which asks for no link.
     let linked_late: Vec<u32> = late_targets.filter_map(number_of).collect();
     let late_targets = linked_late.iter().copied();
     let late_targets = late_targets.chain(required_late.filter_map(number_of));
@@ -1016,7 +994,6 @@ pub(super) fn compute_order(
     let is_half: Vec<bool> = is_half
         .map(|(&on_cycle, &exposed)| on_cycle || exposed)
         .collect();
-    // The load that starts the program links its modules one behind the other. Unless it waits, no body runs at a link but one that has asked for the module that is linked.
     let waits = needs_loader.contains(&true);
     let mut is_half_at_link: Vec<bool> = importers
         .iter()
@@ -1037,7 +1014,6 @@ pub(super) fn compute_order(
         &is_code_of_program,
         &planned,
     );
-    // The loader comes to the statements of a graph level by level, and the first that asks for a file of data says what the file is to the others.
     let ask_for_several_types = find_importers_that_ask_for_several_types(modules);
     if !ask_for_several_types.is_empty() {
         let comes_to_them = find_reached(&importers, ask_for_several_types);
@@ -1059,8 +1035,6 @@ pub(super) fn compute_order(
         let named = file_sites.sites.iter().map(|site| site.target);
         named.chain(file_sites.required_candidates.iter().map(|load| load.1))
     });
-    // The runner of a test run starts the entry points that the build was given: one for each file that they name, whichever comes first. What they only
-    // import, no `require` names. Those that the load has found, and those of an executable, are there to be found by name, by a `require` too.
     let mut is_found_by_load = vec![false; file_count];
     let written_and_found = files.entry_points().iter();
     for &file in written_and_found.skip(input.written_entry_point_count) {
@@ -1097,6 +1071,7 @@ pub(super) fn compute_order(
             .filter(|entry| entry.kind != EntryPointKind::Library)
             .map(|entry| entry.file)
             .collect(),
+        texts_that_spell_files,
     };
     let order = EvaluationOrder {
         parts,

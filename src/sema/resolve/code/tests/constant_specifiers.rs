@@ -160,7 +160,6 @@ fn path_into_package_left_outside() {
         }
         let inside = "./node_modules/inside/index.js";
         assert!(!leads_outside("/p/main.ts", inside));
-        // The package of the importer is the program.
         assert!(!leads_outside("/p/main.ts", "./a.ts"));
         let index = "/p/node_modules/outside/index.js";
         assert!(!leads_outside(index, "./inner.js"));
@@ -470,7 +469,6 @@ fn symlinks_resolve_to_real_paths() {
     assert_eq!(import(&host, "./a.ts"), "/p/a.ts");
 }
 
-// Where letter case does not count, the real path of `Foo.ts` is `foo.ts`, and `bun run` runs the module as `Foo.ts`.
 #[test]
 #[cfg_attr(miri, ignore)]
 fn path_from_resolver_of_host_is_kept() {

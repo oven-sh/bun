@@ -113,7 +113,7 @@ const projects: Record<string, Record<string, string>> = {
       });`,
     "fine.test.js": `${head}\ntest("fine", () => { console.log("the other file runs"); });`,
   },
-  "files that fail where a test loads them, and data that the compiler cannot hold": {
+  "files that fail where a test loads them, and data that is made when its file runs": {
     "helpers/good.js": `export const good = 1;`,
     "broken/declared-twice.js": `export const a = 1;\nexport const a = 2;`,
     "broken/let-twice.js": `let a = 1;\nlet a = 2;\nexport default a;`,
@@ -124,10 +124,12 @@ const projects: Record<string, Record<string, string>> = {
     "broken/comma.json": `{ "a": 1, }x`,
     "broken/value.json": `{ "a": }`,
     "data/dated.toml": `when = 2020-01-01T00:00:00Z\n`,
+    // What Bun's transpiler refuses is a BuildMessage in plain Bun and a SyntaxError in a compiled run: docs/compiler/compatibility.mdx, "Dynamic imports".
     "fails.test.js": `${head}
       const names = ["declared-twice.js", "let-twice.js", "label-twice.js", "with.js", "break.cjs", "regexp.js", "comma.json", "value.json"];
+      const nameOf = error => (error.name === "BuildMessage" ? "SyntaxError" : error.name);
       test("written out", async () => {
-        const said = (name, load) => load().then(() => console.log(name, "loaded"), error => console.log(name, error.name));
+        const said = (name, load) => load().then(() => console.log(name, "loaded"), error => console.log(name, nameOf(error)));
         await said("declared-twice.js", () => import("./broken/declared-twice.js"));
         await said("let-twice.js", () => import("./broken/let-twice.js"));
         await said("label-twice.js", () => import("./broken/label-twice.js"));
@@ -139,11 +141,11 @@ const projects: Record<string, Record<string, string>> = {
       });
       test("required", () => {
         for (const load of [() => require("./broken/let-twice.js"), () => require("./broken/break.cjs"), () => require("./broken/regexp.js"), () => require("./broken/value.json")]) {
-          try { load(); console.log("required: loaded"); } catch (error) { console.log("required:", error.name); }
+          try { load(); console.log("required: loaded"); } catch (error) { console.log("required:", nameOf(error)); }
         }
       });
       test("by a name made at run time", async () => {
-        for (const name of names) await import("./broken/" + name).then(() => console.log("made", name, "loaded"), error => console.log("made", name, error.name));
+        for (const name of names) await import("./broken/" + name).then(() => console.log("made", name, "loaded"), error => console.log("made", name, nameOf(error)));
       });
       test("a date in TOML", async () => { console.log(JSON.stringify((await import("./data/dated.toml")).default), JSON.stringify(require("./data/dated.toml"))); });`,
     "statement.test.js": `${head}\nimport { a } from "./broken/declared-twice.js";\ntest("never runs", () => { console.log("never", a); });`,
@@ -308,6 +310,29 @@ const projects: Record<string, Record<string, string>> = {
         plugin.clearAll();
       });`,
     "helpers/file.js": `export default "the real file";`,
+    "helpers/os-user.js": `import os from "node:os"; export const seen = () => typeof os;`,
+    "helpers/leaf.js": `export default "the real leaf";`,
+    "helpers/counter.js": `let count = 0; export const bump = () => ++count;`,
+    "helpers/top.js": `import { seen } from "./middle.js"; export const told = () => "top " + seen();`,
+    "helpers/middle.js": `import leaf from "./leaf.js"; import { bump } from "./counter.js"; import { told } from "./top.js"; export const seen = () => "middle " + leaf + " " + bump() + " " + typeof told;`,
+    "helpers/early.js": `import leaf from "./leaf.js"; export const seen = () => "early " + leaf;`,
+    "helpers/late.js": `import leaf from "./leaf.js"; export const seen = () => "late " + leaf;`,
+    "helpers/again.js": `export * from "./leaf.js"; export { default as leaf } from "./leaf.js";`,
+    "above.test.js": `${head}
+      import { plugin } from "bun";
+      import { bump } from "./helpers/counter.js";
+      test("what imports such a file leaves with it and shares what has run, and what has run stays as it was linked", async () => {
+        const early = await import("./helpers/early.js");
+        bump();
+        plugin({ name: "above", setup(build) {
+          build.onResolve({ filter: /leaf\\.js$/ }, args => ({ path: args.path, namespace: "swapped" }));
+          build.onLoad({ filter: /.*/, namespace: "swapped" }, args => ({ exports: { default: "the plugin's " + args.path }, loader: "object" }));
+        } });
+        console.log("above", (await import("./helpers/top.js")).told(), bump(), early.seen(), (await import("./helpers/early.js")) === early);
+        console.log("handed on", (await import("./helpers/again.js")).leaf, require("./helpers/again.js").leaf);
+        plugin.clearAll();
+        console.log("cleared", (await import("./helpers/late.js")).seen());
+      });`,
     "resolve.test.js": `${head}
       import { plugin } from "bun";
       test("a filter takes the name of a package, the path of a file and a name of the library", async () => {
@@ -316,7 +341,7 @@ const projects: Record<string, Record<string, string>> = {
           build.onResolve({ filter: /^os$/, namespace: "node" }, args => ({ path: args.path, namespace: "swapped" }));
           build.onLoad({ filter: /.*/, namespace: "swapped" }, args => ({ exports: { default: "the plugin's " + args.path, kind: "virtual" }, loader: "object" }));
         } });
-        console.log("resolve", (await import("dep")).default, require("dep").kind, (await import("./helpers/file.js")).default, (await import("node:os")).default, require("node:os").default);
+        console.log("resolve", (await import("dep")).default, require("dep").kind, (await import("./helpers/file.js")).default, (await import("node:os")).default, require("node:os").default, (await import("./helpers/user.js")).seen(), (await import("./helpers/os-user.js")).seen(), (await import("user-of-dep")).told());
         plugin.clearAll();
       });`,
     "constant.test.js": `${head}
@@ -324,7 +349,7 @@ const projects: Record<string, Record<string, string>> = {
       const name = "dep";
       test("the name of the module stands behind a constant", async () => {
         plugin({ name: "constant", setup(build) { build.module(name, () => ({ exports: { default: "the plugin's dep", kind: "virtual" }, loader: "object" })); } });
-        console.log("constant", (await import("dep")).default, require("dep").kind);
+        console.log("constant", (await import("dep")).default, require("dep").kind, (await import("./helpers/user.js")).seen());
         plugin.clearAll();
       });`,
     "sub.test.js": `${head}
@@ -846,7 +871,7 @@ const wrongAsOneProgram = [
   "a test file that takes itself out of require.cache",
   "a shared file that throws while it loads",
   "a file that is no program",
-  "files that fail where a test loads them, and data that the compiler cannot hold",
+  "files that fail where a test loads them, and data that is made when its file runs",
   "a file that fails when it is linked to a compiled file",
   "modules that a plugin answers for",
   "names that only the onResolve of a plugin answers for",

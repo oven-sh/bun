@@ -29,7 +29,6 @@ fn is_int32(number: f64) -> bool {
     number == f64::from(number as i32) && (number != 0.0 || number.is_sign_positive())
 }
 
-// A function has no layout and is no number. Mapping its type declares its function type, so whoever only asks about a type looks here first.
 pub(super) fn find_function_shape<'c>(
     file: &mut FileLowering<'_, 'c, '_, '_>,
     ty: CheckerTypeId,
@@ -43,7 +42,6 @@ pub(super) fn find_function_shape<'c>(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// `None`: the code that runs is in the program, so the engine sees what it returns.
     pub(super) fn classify_call_result(&self, declaration: Option<FunctionRef>) -> IllTypedCause {
         let Some(declaration) = declaration else {
             return IllTypedCause::UnprovenCallee;
@@ -88,12 +86,10 @@ impl FileLowering<'_, '_, '_, '_> {
         matches!(self.hir[expression].kind, ExprKind::NonNull(_))
     }
 
-    /// The numbers in the checker's type of the expression.
     fn find_numbers(&mut self, expression: ExprId) -> Numbers {
         let Ok(ty) = self.queries.expression_type(expression) else {
             return Numbers::Any;
         };
-        // Every member that checked code reads is asked about, the callee of `counter.bump()` too.
         if let Some(shape) = find_function_shape(self, ty) {
             return match shape.trust.is_trusted() {
                 true => Numbers::None,
@@ -116,11 +112,8 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // What lies in a position whose numbers are all `int32`s was judged where it entered, and the members of a numeric enum and whole literals are taken for `int32`s.
-    // So what is only read out of such positions breaks no promise, whatever the engine finds to arrive there, and neither does a value with no number in its type. A cast proves nothing: its operand is asked.
     pub(in crate::lower) fn breaks_no_int32_promise(&mut self, source: ExprId) -> bool {
         let hir = self.hir;
-        // `let at = 0; take(at === 0 ? a.x : make().point.x)`: the test is decided and the other arm is never lowered: it hands nothing on, and nobody can say what its numbers are.
         let decisions = self.decisions();
         let mut pending: SmallVec<[ExprId; 4]> = smallvec![source];
         while let Some(flowing) = pending.pop() {
@@ -181,7 +174,6 @@ impl FileLowering<'_, '_, '_, '_> {
         true
     }
 
-    /// The position out of which a read takes an `int32`: what the checker has for the expression. `None`: it has other numbers, or none, or only some of the `int32`s: a member of an enum, a literal.
     pub(in crate::lower) fn position_of_int32_read(
         &mut self,
         read: ExprId,
@@ -196,7 +188,6 @@ impl FileLowering<'_, '_, '_, '_> {
             .then(|| DeclaredType::new(mapped, None, PositionFlags::default()))
     }
 
-    /// What `--explain` prints. It claims nothing: the engine tests the value whatever the cause is, `None` too.
     pub(super) fn find_cause(
         &self,
         position: DeclaredType,
@@ -206,14 +197,12 @@ impl FileLowering<'_, '_, '_, '_> {
         if position.is_expected() {
             return IllTypedCause::None;
         }
-        // `x!` takes the programmer's word for what the checker could not show.
         if source.is_some_and(|source| self.is_non_null_assertion(source)) {
             return IllTypedCause::Assertion;
         }
         match construct {
             Construct::Flow => IllTypedCause::None,
             Construct::Assertion => IllTypedCause::Assertion,
-            // The result of a generic function comes out of a type parameter.
             Construct::CallResult {
                 is_instantiated: true,
                 ..

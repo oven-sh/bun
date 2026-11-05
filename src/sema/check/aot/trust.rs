@@ -77,7 +77,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (is_single && has_code && !is_ambient).then_some(class)
     }
 
-    /// One name may be assigned to at thousands of places, which are all declarations of it, and each of them asks.
     pub(super) fn member_trust(&mut self, declarations: &List<'p, (FileId, Decl)>) -> Trust {
         let permanent = match declarations {
             List::Permanent(permanent) if permanent.len() > 4 => Some(permanent.as_ptr() as usize),

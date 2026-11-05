@@ -5,7 +5,6 @@ use bun_sema::hir::{ExprId, ExprKind, File, PropKey, PropKind};
 #[cfg(test)]
 mod tests;
 
-/// What ToPropertyDescriptor reads from an object literal. A flag is `None` where the literal does not name it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct WrittenDescriptor {
     pub(crate) part: DescribedPart,
@@ -26,8 +25,6 @@ pub(crate) enum DescribedPart {
 }
 
 impl WrittenDescriptor {
-    /// `None`: the text does not say what the built-in reads, or the built-in throws.
-    /// Otherwise nothing in the literal but `value`, `get` and `set` is more than a constant, and each of the three is written once at most.
     pub(crate) fn read(
         hir: &File<'_>,
         decisions: &Decisions<'_>,

@@ -1,3 +1,5 @@
+// Flags: --minify-syntax
+// `bun run` minifies syntax, and a message quotes what the same build prints without --aot.
 // A TypeError quotes the read or the call that failed as the function spells it, where the executable holds the text of the function: it does for a function that
 // is handed on as a value, which these are by being exported.
 const thrown = (run: () => unknown): string => {

@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { built, slot, spawned } from "../harness/commands";
 import { buildFlags } from "../harness/flags";
@@ -252,7 +253,7 @@ console.log(new Function("a", "b", "return a " + (process.argv.length > 90 ? "-"
         expect(["readFolder", "readsItsOwnPath", "isResolved"].filter(held)).toHaveLength(3);
         // The map is where the names are.
         expect(readMap(executable).sources.map(source => basename(source))).toEqual(
-          expect.arrayContaining(["unreadPlain.ts", "unreadLazy.ts"]),
+          expect.arrayContaining(["unreadWhole.ts", "unreadLazy.ts"]),
         );
         expect(unread.filter(name => readFileSync(join(folder, executableName("plain"))).includes(name))).toEqual(
           unread,
@@ -339,6 +340,44 @@ outermostCaller(process.argv.length);
           { name: "outermostCaller", file: "app.ts", line: 3, column: 28 },
           { name: "", file: "app.ts", line: 6, column: 1 },
         ]);
+      }),
+    buildLimit,
+  );
+
+  test.skipIf(isWindows)(
+    "a file edited while the build runs ends the build: the map would show code that the executable does not run",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-obfuscate-edited", program);
+        const folder = String(dir);
+        const pipe = join(folder, "pipe");
+        expect(Bun.spawnSync(["mkfifo", pipe]).exitCode).toBe(0);
+        // The front end is through with the files when it writes the program, and it waits there until somebody reads.
+        const opened = open(pipe, "r");
+        const build = spawned(
+          [bunExe(), "compile", "app.ts", "--outfile", "app", buildFlags.obfuscate, "--aot-out=pipe"],
+          folder,
+          env,
+        );
+        const waitsAtThePipe = await Promise.race([opened.then(() => true), build.then(() => false)]);
+        if (!waitsAtThePipe) closeSync(openSync(pipe, "r+"));
+        const written = await opened;
+        try {
+          expect(waitsAtThePipe).toBe(true);
+          const edited = program["concealed-module.ts"].replace("too deep", "too high");
+          expect(edited.length).toBe(program["concealed-module.ts"].length);
+          writeFileSync(join(folder, "concealed-module.ts"), edited);
+          await written.readFile();
+        } finally {
+          await written.close();
+        }
+        const { stderr, exitCode } = await build;
+        expect({ stderr, exitCode }).toEqual({
+          stderr:
+            "error: concealed-module.ts changed while the build was running, so a source map would show code that the executable doesn't run\nnote: run the build again\n",
+          exitCode: 1,
+        });
+        expect(existsSync(join(folder, "app.map"))).toBe(false);
       }),
     buildLimit,
   );

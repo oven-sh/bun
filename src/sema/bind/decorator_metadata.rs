@@ -171,7 +171,9 @@ pub fn find_metadata_reference(
 ) -> Option<ImplicitReference> {
     let found = references.binary_search_by_key(&Some(reference), |entry| match entry.kind {
         ImplicitReferenceKind::DecoratorMetadata(recorded) => Some(recorded),
-        ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::JsxFragment => None,
+        ImplicitReferenceKind::JsxFactory
+        | ImplicitReferenceKind::JsxFragment
+        | ImplicitReferenceKind::DefinedPath => None,
     });
     found.ok().map(|index| references[index])
 }
@@ -181,7 +183,6 @@ pub fn is_legacy_decorated_member(hir: &File<'_>, member: MemberId) -> bool {
         && (has_decorators(hir, hir[member].modifiers) || has_parameter_decorator(hir, member))
 }
 
-/// With `experimentalDecorators`, Bun's transpiler takes the value of such a field out of the body of a class declaration and assigns it.
 pub fn is_field_moved_by_legacy_decorators(hir: &File<'_>, member: MemberId) -> bool {
     let node = hir[member];
     node.kind == MemberKind::Property

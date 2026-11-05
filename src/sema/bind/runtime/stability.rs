@@ -113,7 +113,6 @@ impl StabilityPass<'_, '_> {
     }
 
     fn add_container(&mut self, symbol: SymbolId, decl: Decl) {
-        // `namespace K` beside `export class K` binds the exported symbol, which does not list it.
         let listed = &self.bound.symbols[symbol.idx()].decls;
         if let Some(recorded) = self.initializers.get_mut(symbol.idx()) {
             *recorded = match *recorded {
@@ -212,6 +211,9 @@ impl StabilityPass<'_, '_> {
             let inner_symbols = &bound.runtime.declarations.inner_class_symbols;
             if let Some(inner) = find_symbol(inner_symbols, id) {
                 self.add(inner, Decl::Class(id));
+                if let Some(own) = bound.own_binding_of_decorated_class(inner) {
+                    self.add(own, Decl::Class(id));
+                }
             }
         }
     }
@@ -233,6 +235,11 @@ impl StabilityPass<'_, '_> {
                 && let Some(symbol) = bound.declared_binding_symbol(decl)
             {
                 self.add_container(symbol, decl);
+            }
+        }
+        for &(_, parameter) in bound.runtime.declarations.container_parameters.iter() {
+            if let Some(&decl) = bound.symbols[parameter.idx()].decls.first() {
+                self.add(parameter, decl);
             }
         }
     }
@@ -281,7 +288,6 @@ impl StabilityPass<'_, '_> {
         if !kind.is_immutable() && has_bit(eval_visible_symbols, symbol.idx()) {
             return BindingStability::VisibleToEval;
         }
-        // What the files of a test run lay on `Object.prototype` is known once all of them are bound.
         if kind == BindingKind::Parameter && bound.is_mapped_argument(self.hir, symbol, true) {
             return BindingStability::MappedArgument;
         }

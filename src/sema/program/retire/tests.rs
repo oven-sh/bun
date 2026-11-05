@@ -6,13 +6,8 @@ use crate::program::code_test_host::{StatementsHost, TestBuild, load_files};
 use crate::program::few_in;
 use crate::session::Session;
 
-/// Running tasks and awaited commits are counted for the whole process.
 static ONE_TEST_AT_A_TIME: Guarded<()> = Guarded::new(());
 
-// Each file here has an import, which makes it a module. Every file can see what a script declares, so a script's trees
-// are never freed. The first file of a program keeps its trees too, and here that is `a.ts` or `b.ts`.
-// No code loads `far.ts`, so a build would not list it for `let_trees_go_behind`, and neither does any test.
-// Trees are freed only while a listed file is still uncommitted, so `rest.ts` is committed last or never.
 const SOURCES: &[(&str, &str)] = &[
     (
         "/main.ts",
@@ -42,7 +37,6 @@ struct Program<'a, 's> {
     files: &'a Files<'s>,
 }
 
-// The list of watched cells belongs to the whole process, so a test removes its own cells even when it fails.
 impl Drop for Program<'_, '_> {
     fn drop(&mut self) {
         self.files.watch_no_more();
@@ -83,8 +77,6 @@ fn with_program(test: impl FnOnce(&Program<'_, '_>)) {
     with_export_stars_in(&[], test);
 }
 
-// The host parses no `export`. An `import "./x"` refers to `x.ts` as `export * from "./x"` does, and this is what the
-// binder leaves for that statement.
 fn note_export_star(files: &mut Files<'_>, path: &str) {
     let file = files.by_path.get(path.as_bytes()).expect("it is loaded");
     let arena = files.arena;
@@ -125,7 +117,6 @@ fn trees_go_while_a_file_is_left_to_lower_and_none_behind_the_last() {
     });
 }
 
-// `late.ts` imports only `mid.ts`, but a type that it finds there leads its task into `far.ts`.
 #[test]
 fn a_tree_stays_until_every_file_that_can_reach_it_is_committed() {
     with_program(|program| {
@@ -223,7 +214,6 @@ fn what_stays_of_a_file_is_read_when_its_trees_are_gone() {
     });
 }
 
-// `second.ts` shows that trees went. No task runs when the statements are read.
 fn assert_first_is_kept_behind_all_commits(program: &Program<'_, '_>) {
     program.commit_in_a_task(&["/rest.ts"]);
     assert_eq!(program.states_of(["/first.ts", "/second.ts"]), [KEPT, GONE]);
@@ -240,7 +230,6 @@ fn a_tree_kept_before_the_watch_stays_behind_all_commits() {
     });
 }
 
-// The task has yet to commit `main.ts`, which refers to `first.ts`.
 #[test]
 fn a_tree_kept_by_a_task_that_can_reach_it_stays_behind_all_commits() {
     with_program(|program| {
@@ -255,7 +244,6 @@ fn a_tree_kept_by_a_task_that_can_reach_it_stays_behind_all_commits() {
     });
 }
 
-// The watch ends when `first.ts` is committed and `main.ts`, which refers to it, is not.
 #[test]
 fn a_watch_that_ends_between_two_commits_awaits_no_commit() {
     with_program(|program| {

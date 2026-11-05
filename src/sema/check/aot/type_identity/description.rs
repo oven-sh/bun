@@ -195,7 +195,6 @@ pub(super) fn describe_untyped_members<'a>(
     describe_listed_untyped_members(members.collect())
 }
 
-// It stands once, whatever lists the members.
 fn describe_listed_untyped_members(mut sorted: Vec<(&[u8], ObjectMemberKind)>) -> [u64; 2] {
     sorted.sort_by(|left, right| left.0.cmp(right.0));
     sorted.dedup_by(|later, earlier| {

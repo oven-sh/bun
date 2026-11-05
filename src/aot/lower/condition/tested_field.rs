@@ -16,7 +16,6 @@ pub(in crate::lower) struct TestedField {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // Call right after lowering `expression`: reading the holder can rebind it to a converted value.
     pub(in crate::lower) fn find_tested_field(
         &mut self,
         expression: ExprId,
@@ -43,8 +42,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.read_local(field.holder) == field.holder_value
     }
 
-    // `read` is what the edge behind the test of the field hands over. The operation claims no type: it gives the holder a value of its own behind the test.
-    // The store to the holder can split the current block, so continue in `builder.current_block()`.
     pub(in crate::lower) fn narrow_holder(
         &mut self,
         field: TestedField,
@@ -82,7 +79,6 @@ impl FileLowering<'_, '_, '_, '_> {
         )
     }
 
-    // `holder.key` and `(holder = value).key`.
     fn find_holder_identifier(&self, object: ExprId) -> Option<ExprId> {
         let inner = self.skip_type_syntax(object);
         match self.hir[inner].kind {
@@ -97,7 +93,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The engine sorts the holders by what each finds under the key, so what is tested must be what a read of the key off the holder found when the program ran.
     fn is_runtime_property_read(&mut self, expression: ExprId, access: ExprId) -> bool {
         let mut layer = Some(expression);
         while let Some(current) = layer {

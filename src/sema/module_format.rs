@@ -43,7 +43,6 @@ pub(crate) enum EsmSyntax {
     ExportOrTopLevelAwait,
 }
 
-/// The format of a text for each type that may be declared for it.
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub struct FormatByDeclaredType {
     unknown: ModuleFormat,

@@ -77,7 +77,6 @@ pub(super) fn compute_sharing(
         let run_uses = run.iter().map(|&(binding, user)| (user, binding));
         sharing.captured_uses.extend(run_uses);
     }
-    // An export that nothing in the file uses is a variable all the same.
     let used_count = sharing.variables.len();
     for &symbol in &exported {
         let binding = BindingRef::Symbol(symbol);
@@ -91,6 +90,8 @@ pub(super) fn compute_sharing(
     sharing
         .captured
         .sort_unstable_by_key(|captured| captured.binding);
+    sharing.registries = registries.iter().map(|entry| entry.1).collect();
+    sharing.registries.sort_unstable();
     hold_in_every_closure(context, registries, &mut sharing.captured_uses);
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
     sharing.captured_uses.sort_unstable();
@@ -99,7 +100,6 @@ pub(super) fn compute_sharing(
     sharing
 }
 
-// Under `bun run` a closure holds the scopes around it whole, so a FinalizationRegistry that one closure names lives, and calls back, as long as any closure of its scope.
 fn hold_in_every_closure(
     context: &Context<'_, '_>,
     mut held: Vec<(ScopeId, BindingRef)>,
@@ -120,7 +120,6 @@ fn hold_in_every_closure(
         }
         let mut around = scope.parent.some();
         while let Some(outer) = around {
-            // The body of an inner module is called and never created, so nothing below it captures a name of the file.
             let owner = context.scope_functions[outer.idx()];
             let body_of = |function: WalkedFunctionId| context.module_bodies[function.index()];
             if owner.is_some_and(|owner| body_of(owner) == body_of(function)) {
@@ -157,7 +156,6 @@ fn describe_captured_binding(
     }
 }
 
-// Every store stands in the function that owns the name. A closure that is made behind the last of them, and behind every loop around one, finds the value that the name keeps.
 fn find_time_of_last_store(
     context: &Context<'_, '_>,
     binding: BindingRef,
@@ -170,7 +168,6 @@ fn find_time_of_last_store(
         }
         BindingRef::Slot(..) => return None,
     };
-    // Whoever reads the name first stores the function object, in whatever function he stands and whenever he runs.
     if find_by_key(&context.walk.made_at_first_read, symbol).is_some() {
         return None;
     }
@@ -182,7 +179,6 @@ fn find_time_of_last_store(
     if time == 0 || time == u32::MAX {
         return None;
     }
-    // A `var` without an initializer holds `undefined` from the start. Any other name without an initialization that the walk has seen may be in its dead zone.
     let is_initialized = context.walk.symbol_initializations[symbol.idx()].is_some()
         || bound.initial_state(symbol) == InitialState::Undefined;
     if !is_initialized {
@@ -204,7 +200,6 @@ fn find_time_of_last_store(
     is_stable.then_some(time)
 }
 
-// Nothing else binds `this` of the derived constructor, and whatever stands behind the call in the constructor runs behind it.
 fn find_time_of_only_super_call(context: &Context<'_, '_>, scope: ScopeId) -> Option<u32> {
     let bindings = &context.walk.this_bindings;
     let times = &context.walk.slot_initializations;
@@ -216,7 +211,6 @@ fn find_time_of_only_super_call(context: &Context<'_, '_>, scope: ScopeId) -> Op
     }
 }
 
-// A closure would copy what the name holds, because the name is never stored again and is initialized before the closure is made.
 fn drop_users_behind_initialization(
     context: &Context<'_, '_>,
     owner: WalkedFunctionId,
@@ -285,7 +279,6 @@ fn find_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option<V
     create_variable_key(context, binding)
 }
 
-// The body of a module is called and never created, so it captures nothing.
 fn find_variable_key_between_bodies(
     context: &Context<'_, '_>,
     binding: BindingRef,
@@ -374,7 +367,6 @@ fn collect_exported_symbols(context: &Context<'_, '_>, forms: &[BindingForm]) ->
         _ => None,
     });
     let mut symbols: Vec<SymbolId> = own_variables.collect();
-    // `__export(exports, { n: () => n })`: whoever requires the module reads the binding `n` itself.
     let callbacks = input.modules.inner_modules(input.file).iter();
     let mut body_scopes: SmallVec<[ScopeId; 4]> = callbacks
         .map(|callback| input.bound.fns[callback.idx()].scope)

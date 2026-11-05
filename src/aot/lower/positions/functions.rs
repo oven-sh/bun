@@ -39,7 +39,6 @@ pub(super) fn compute_function_positions(
         returned: untyped,
         yielded: untyped,
     };
-    // The inferred result is the type of the expressions that are returned. Nobody declared it: the engine follows what they bring.
     if shape.result.written.written().is_none() {
         return positions;
     }
@@ -80,7 +79,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 let is_tested = is_written_here && self.is_receiver_tested(member.func);
                 self.create_receiver_position(instance, is_tested)
             }
-            // A parent can return any object, and `new.target` can select another class, so what is constructed is tested too.
             Some(_) | None => self.create_receiver_position(instance, true),
         }
     }
@@ -98,7 +96,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 continue;
             };
             let position = self.create_position(entry.types);
-            // An argument that is left out arrives as `undefined`, before the default value takes its place.
             positions.push(match entry.is_optional {
                 true => self.add_undefined(position),
                 false => position,
@@ -120,7 +117,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.is_checked() || placement.is_some_and(|placement| placement.is_shared)
     }
 
-    // Whoever holds a method can call it on anything, so the entry tests `this` like a parameter.
     fn create_receiver_position(&self, receiver: TypeId, is_tested: bool) -> DeclaredType {
         if !is_tested {
             return expect_type(receiver);
@@ -142,7 +138,6 @@ impl FileLowering<'_, '_, '_, '_> {
         PositionTypes { written, checked }
     }
 
-    // `return promise` in an async function returns what the promise is fulfilled with.
     fn create_awaited_position(&mut self, types: PositionTypes) -> DeclaredType {
         let written = match types.written {
             WrittenType::Written(ty) => match self.queries.awaited_type(ty) {
@@ -169,7 +164,6 @@ fn compute_this_position(
 ) -> DeclaredType {
     let func = file.hir[source.function];
     if func.this_param.is_some() {
-        // `new` and the constructors below bring what the function makes, not everything that fits the written type.
         if file.queries.is_prototype_object_used(source)
             && let Some(layout) = file.constructor_function_layout(source)
         {
@@ -186,7 +180,6 @@ fn compute_this_position(
         };
         return file.class_this_type(class, Some(member));
     }
-    // A function that only hands `this` on says nothing of what it is called on.
     if let Some(layout) = file.constructor_function_layout(source)
         && file
             .queries
@@ -196,7 +189,6 @@ fn compute_this_position(
         let is_tested = file.is_receiver_tested(source.function);
         return file.create_receiver_position(instance, is_tested);
     }
-    // Nobody wrote it.
     DeclaredType::untyped()
 }
 
@@ -207,7 +199,6 @@ fn is_static_member(member: &Member) -> bool {
 fn has_known_receiver(member: &Member) -> bool {
     match member.kind {
         MemberKind::Property | MemberKind::StaticBlock => true,
-        // `static constructor() {}` is a static method.
         MemberKind::Constructor => !member.flags.contains(Flags::STATIC),
         _ => false,
     }

@@ -87,7 +87,6 @@ impl Resolver<'_, '_> {
             if has_direct_eval || uses_arguments {
                 self.expose_commonjs_variable(variable);
             }
-            // The body of such a file is entered with all five values. What a store to `exports` is shows once `module.exports` is resolved.
             self.exposes_own_module_object |= is_stored && variable != CommonJsVariable::Exports;
         }
         for &(_, variable) in input.bound.runtime.redeclared_commonjs_variables() {
@@ -128,7 +127,6 @@ impl Resolver<'_, '_> {
             && bound.parent_of_stmt(statement) == Parent::File
     }
 
-    // Any other store to `exports` can only be said of a function that has the five names as parameters.
     pub(super) fn classify_stores_to_exports(&mut self) {
         for target in core::mem::take(&mut self.stores_to_exports) {
             match self.is_stored_with_module_exports(target) {
@@ -169,7 +167,6 @@ impl Resolver<'_, '_> {
             })
     }
 
-    // The text that it evaluates may store to any of the three.
     fn has_direct_eval_in_es_module(&self) -> bool {
         let input = self.input;
         let mut evals = input.bound.runtime.eval_scopes().iter();

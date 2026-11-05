@@ -92,7 +92,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Some(FunctionRef { file, function })
     }
 
-    // No type is asked for.
     fn find_function_named_by(&mut self, callee: ExprId) -> Option<FunctionRef> {
         let ExprKind::Ident(name) = self.hir()[callee].kind else {
             return None;
@@ -113,7 +112,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let only = only?;
         let hir = files.hir(only.file);
         let has_body = !matches!(hir[only.function].body, FnBody::None);
-        // A `@type` tag gives the function the signature of the type that it names.
         let has_signature_of_a_type = hir.jsdoc_type(JsDocTypeOwner::Fn(only.function)).is_some();
         (has_body && !has_signature_of_a_type).then_some(only)
     }
@@ -213,7 +211,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// The file of the function that the parameters of the signature are written in.
     pub(super) fn find_file_of_signature(&self, signature: SigId) -> Option<FileId> {
         match *self.c.types().sig(signature) {
             SigData::Decl { file, .. } | SigData::Construct { file, .. } => Some(file),

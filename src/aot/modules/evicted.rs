@@ -1,10 +1,3 @@
-//! Which files of a program may run a second time.
-//!
-//! `delete require.cache[path]` makes the next `require()` or `import()` of the file load it again, and so does a store to the entry. Load says which files a test run
-//! takes out (`test_run_loads`), and `test_run_evictions` who leaves with them. Where nobody can say which, one place counts for every module.
-//! Without it a CommonJS file still runs again where its last run threw, because `require()` takes such a file out of the cache. That takes somebody who asks for it behind
-//! the throw: whoever caught it, or what the host still calls where nobody did: a listener for uncaught exceptions, a hook for the exit, and behind such a listener every callback.
-
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -31,9 +24,7 @@ use core::ops::Range;
 #[derive(Default)]
 pub(super) struct EvictedModules {
     is_every_module: bool,
-    /// `LoadsOfRun::is_any_file_taken_out`. Without it `modules` lists the files that leave though `is_every_module` holds.
     is_any_module_taken_out: bool,
-    /// `find_files_that_leave`
     modules: Vec<ModuleRef>,
     is_table_reached: bool,
     library_modules_stored_in_cache: Vec<RuntimeModule>,
@@ -44,17 +35,14 @@ impl EvictedModules {
         self.is_every_module || is_among(&self.modules, module)
     }
 
-    /// The module has run and leaves the table of loaded modules, so it may be loaded once more.
     pub(super) fn leaves(&self, module: ModuleRef) -> bool {
         self.is_any_module_taken_out || is_among(&self.modules, module)
     }
 
-    /// Those that are listed, where that is not all of them. Each is a `ModuleRef::File`, ascending.
     pub(super) fn modules(&self) -> &[ModuleRef] {
         &self.modules
     }
 
-    /// `require.cache["fs"] = { exports: fake }`: nobody knows what `require` answers for the module.
     pub(super) fn is_stored_in_cache(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::Runtime(module) if self.library_modules_stored_in_cache.contains(&module))
     }
@@ -67,7 +55,6 @@ impl EvictedModules {
         self.is_every_module
     }
 
-    /// A file gets at the entries of `require.cache`: it may store other `exports` in the entry that the run time made for a file.
     pub(super) fn is_table_reached(&self) -> bool {
         self.is_table_reached
     }
@@ -80,14 +67,12 @@ pub(super) fn find_evicted_modules(input: &BindInput<'_, '_>, scans: &Scans) -> 
     let mut library_modules_stored_in_cache: Vec<RuntimeModule> = files_of_program
         .flat_map(|&file| find_library_modules_stored_in_cache(input.files, file))
         .collect();
-    // `require.cache` lists the files of the program in a test run alone.
     if !input.runs_tests {
         return EvictedModules {
             library_modules_stored_in_cache,
             ..EvictedModules::default()
         };
     }
-    // Under a key that no file spells whole. The list is the application's.
     if input.runner_starts_entry_points {
         let unspelled = &input.run.loads.library_modules_that_entries_may_answer;
         library_modules_stored_in_cache.extend_from_slice(unspelled);
@@ -108,7 +93,6 @@ pub(super) fn find_evicted_modules(input: &BindInput<'_, '_>, scans: &Scans) -> 
     }
 }
 
-/// Ascending. A file that is not listed keeps the error of a run that threw, so its body runs once whatever the program does.
 pub(super) fn find_files_that_run_again(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -138,7 +122,6 @@ pub(super) fn find_files_that_run_again(
         return files.filter(may_load_again).map(ModuleRef::File).collect();
     }
     let loads = collect_loads(input, scans, modules);
-    // The runner of a test run starts the entry points that the build was given. At one that the load has found a Worker starts, or a name finds it.
     let mut is_found_by_load = vec![false; input.files.modules.len()];
     let written_and_found = input.files.entry_points().iter();
     for &file in written_and_found.skip(input.written_entry_point_count) {
@@ -156,9 +139,7 @@ pub(super) fn find_files_that_run_again(
             | EntryPointKind::ImportedModule
             | EntryPointKind::Library => false,
         };
-        // A host that starts an entry point once more has outlived what the first run threw.
         let is_started = is_started && !input.entry_points_run_again;
-        // Any other entry point is there to be found by name, by a thread in which nothing has run.
         if !is_started {
             possible_loads.push(PossibleLoad {
                 earliest_time: 0,
@@ -166,8 +147,6 @@ pub(super) fn find_files_that_run_again(
                 may_be_caught: input.entry_points_run_again,
             });
         }
-        // The runner goes on behind a test file that fails to load, so what a test file asks for may have thrown under another one, in whatever order they run.
-        // What the first alone asks for is asked for once. A Worker that starts at a test file asks for no more than the file does.
         if is_started && !started.is_empty() {
             let loads = loads.of(entry_point.file).iter();
             possible_loads.extend(loads.map(|load| PossibleLoad {
@@ -187,7 +166,6 @@ pub(super) fn find_files_that_run_again(
         &settled_times,
         possible_loads,
     );
-    // A file that leaves runs again anyway, and is not counted.
     let mut after_throw_alone = 0;
     let run_again: Vec<ModuleRef> = files
         .filter(|file| {
@@ -204,29 +182,20 @@ pub(super) fn find_files_that_run_again(
 
 const NEVER: u32 = u32::MAX;
 
-/// When a site that loads a file runs, and whether somebody may catch what the file throws.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum LoadTiming {
-    /// Every run of the body reaches it, with no handler around it: a throw ends the startup.
     Unconditional,
-    /// The body may skip it: it is in a branch or a loop, or comes after `&&` or a `return`. Or it is an import statement whose file runs at one of two times.
     Conditional,
-    /// In the body, inside a `try` or as a promise that somebody may hold.
     Guarded,
-    /// When a function is called, or when a deferred namespace is first touched. A handler may surround that.
     Deferred,
 }
 
 #[derive(Copy, Clone)]
 struct Load {
-    /// `None`: any file.
     target: Option<FileId>,
     timing: LoadTiming,
-    /// An import statement, which loads ahead of the body of its file.
     is_hoisted: bool,
-    /// `import()` that nobody awaits at once: its job asks for the file when the body that called it has gone on, or has thrown.
     is_asked_by_job: bool,
-    /// `BodyText::place_of`
     position: u32,
 }
 
@@ -234,16 +203,12 @@ struct Load {
 struct FileLoads {
     first: u32,
     end: u32,
-    /// The place of the first statement of the body that does more than load a file and keep the result. Until then the file has called none of its functions and
-    /// has handed none to anybody. Computed for a file with a deferred load alone.
     first_effect_position: u32,
 }
 
 struct Loads {
     all: Vec<Load>,
-    /// The part of `all` that belongs to each file, in the order in which the file reaches the loads.
     by_file: Vec<FileLoads>,
-    /// The body of an ES module that waits for such a file runs after the bodies of files that are imported later.
     some_body_awaits: bool,
 }
 
@@ -335,7 +300,6 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
             let load_of = |target: Option<FileId>| Load {
                 target,
                 timing: match target {
-                    // It runs in its turn among the ES modules, or while its importer is linked where `require` has read the graph.
                     Some(target)
                         if is_linked_with_importer && files.is_es_module_to_imports(target) =>
                     {
@@ -386,12 +350,9 @@ struct BodyText<'a, 's> {
     bound: &'a Bound<'s>,
     decisions: &'a Decisions<'s>,
     file_text: FileText<'a, 's>,
-    /// `find_moved_statements`
     moved_statements: Vec<(u32, u32)>,
 }
 
-/// `load::hoisted_mocks` moves `vi.mock()` and `vi.hoisted()` of a test file in front of its imports, so a position in the text no longer says what runs first.
-/// Of each statement of such a body, ascending: where it starts in the text, and where it would start if the text were written in the order of the body. Empty: the body runs as written.
 fn find_moved_statements(hir: &hir::File<'_>) -> Vec<(u32, u32)> {
     let starts = hir.ids(hir.body).map(|statement| hir[statement].start);
     if starts.is_sorted() {
@@ -412,7 +373,6 @@ fn find_moved_statements(hir: &hir::File<'_>) -> Vec<(u32, u32)> {
 }
 
 impl BodyText<'_, '_> {
-    /// A position in the body, such that what runs first has the lesser one.
     fn place_of(&self, position: u32) -> u32 {
         let behind = self
             .moved_statements
@@ -477,7 +437,6 @@ impl BodyText<'_, '_> {
                             StmtKind::Try { finalizer, .. } if finalizer == statement => {
                                 LoadTiming::Unconditional
                             }
-                            // `finally { continue; }` drops what the handler throws.
                             StmtKind::Try {
                                 handler, finalizer, ..
                             } if handler == statement && finalizer.is_some() => LoadTiming::Guarded,
@@ -500,7 +459,6 @@ impl BodyText<'_, '_> {
         }
     }
 
-    /// `(() => require("./a.cjs"))()`: what the function throws goes on to whatever surrounds the call.
     fn find_function_called_in_place(&self, function: FnId) -> Option<ExprId> {
         match self.bound.fns[function.idx()].owner {
             FnOwner::Expr(written) if self.file_text.is_called_where_written(function) => {
@@ -510,7 +468,6 @@ impl BodyText<'_, '_> {
         }
     }
 
-    /// `await import("./a.ts")`: nobody but the `await` holds the promise, so what the file throws goes on from there as it does from an import statement.
     fn is_awaited_at_once(&self, call: ExprId) -> bool {
         let mut inner = call;
         while let Parent::Expr(outer) = self.bound.parent_of_expr(inner) {
@@ -526,7 +483,6 @@ impl BodyText<'_, '_> {
         false
     }
 
-    /// `if (done) return;` in the body of a CommonJS file. The file may skip what comes after it.
     fn find_first_return_of_body(&self) -> u32 {
         let (hir, bound) = (self.hir, self.bound);
         let mut first = u32::MAX;
@@ -544,7 +500,6 @@ impl BodyText<'_, '_> {
         first
     }
 
-    /// `FileLoads::first_effect_position`. `loading_calls` ascend.
     fn find_first_effect_of_body(&self, loading_calls: &[ExprId]) -> u32 {
         let hir = self.hir;
         let has_effect = |&statement: &StmtId| match hir[statement].kind {
@@ -571,7 +526,6 @@ impl BodyText<'_, '_> {
         })
     }
 
-    /// `require("a")`, `require("a").b`, `require("a")("name")`
     fn only_loads(&self, loading_calls: &[ExprId], value: ExprId) -> bool {
         let hir = self.hir;
         let is_constant = |argument: ExprId| {
@@ -599,7 +553,6 @@ impl BodyText<'_, '_> {
         }
     }
 
-    /// `{ a, b: [c] }`: it evaluates nothing that the file has written.
     fn only_destructures(&self, pattern: PatId) -> bool {
         let hir = self.hir;
         let mut to_visit = vec![pattern];
@@ -643,22 +596,18 @@ fn always_evaluates_operand(hir: &hir::File<'_>, statement: StmtId, operand: Exp
     }
 }
 
-/// A load that is no step of the startup. It may run at `earliest_time` or at any time after it.
 #[derive(Copy, Clone)]
 struct PossibleLoad {
     earliest_time: u32,
-    /// `None`: any file.
     target: Option<FileId>,
     may_be_caught: bool,
 }
 
 struct StartingFile {
     file: FileId,
-    /// The part of `StartupWalk::files_run_at_link` that has yet to start. It starts ahead of the loads of the file.
     files_run_at_link: Range<u32>,
     next_load: usize,
     has_started_body: bool,
-    /// The earliest time at which something may call a function of the file.
     functions_callable_from: u32,
 }
 
@@ -672,19 +621,12 @@ struct StartupWalk<'a> {
     depth_of_starting_file: Vec<u32>,
     stack: Vec<StartingFile>,
     files_run_at_link: Vec<FileId>,
-    /// How many of them the files of `stack` have yet to start.
     files_yet_to_run_at_link: u32,
-    /// The ES modules of the graph that `collect_files_run_at_link` searches.
     importers: Vec<FileId>,
-    /// By file: the number of the last graph whose search met it.
     last_graph_of_file: Vec<u32>,
     graph_count: u32,
 }
 
-/// Follows the unconditional loads down from the entry points that the host starts, in the order in which they run, and answers by file the time from which no load runs it again.
-/// For a CommonJS file that `require()` runs that is the end of its body: had the file thrown, the startup would have ended there and a load that cannot run before that time would
-/// never have come to be. A file that has only started by then may have thrown. Whatever the loader of ES modules runs is settled when it starts: the loader keeps what it throws.
-/// Every other load is added to `possible_loads`.
 fn walk_startup(
     loads: &Loads,
     started: &[FileId],
@@ -713,14 +655,10 @@ fn walk_startup(
     walk.settled_times
 }
 
-/// Who runs a file that starts.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum StartedBy {
-    /// The loader of ES modules, which begins a graph at the file: it is an ES module, and something other than an import statement of an ES module loads it.
     LoaderAsRootOfGraph,
-    /// The loader of ES modules, at any other file: a CommonJS entry point, or whatever stands under an import statement of an ES module.
     Loader,
-    /// `require()`: a CommonJS file that is no entry point and stands under no import statement of an ES module.
     Require,
 }
 
@@ -746,12 +684,9 @@ impl StartupWalk<'_> {
         });
     }
 
-    /// The CommonJS files that import statements reach from `root` through ES modules and that have not started. They run while the graph is loaded, ahead of the body of
-    /// every ES module in it, and what a module imports comes after everything that was asked for before.
     fn collect_files_run_at_link(&mut self, root: FileId) -> Range<u32> {
         let loads = self.loads;
         let first = self.files_run_at_link.len() as u32;
-        // All that an ES module which has finished leads to has started, unless it leads back to a graph that is still being loaded.
         let is_outer_graph_being_loaded = self.files_yet_to_run_at_link != 0;
         self.graph_count += 1;
         let graph = self.graph_count;
@@ -800,8 +735,6 @@ impl StartupWalk<'_> {
             return;
         }
         let loads = self.loads;
-        // A file has loaded one that is still starting. The functions that an ES module declares exist ahead of its body, so from that time on the loaded module can be
-        // called, and through it every ES module that starts below it.
         let (mut cycle_depth, mut cycle_time) = (NEVER, NEVER);
         let started_by = match (self.is_commonjs)(entry_point) {
             true => StartedBy::Loader,
@@ -846,7 +779,6 @@ impl StartupWalk<'_> {
                 let deferred = deferred.filter(|load| load.timing == LoadTiming::Deferred);
                 self.possible_loads
                     .extend(deferred.map(|load| PossibleLoad {
-                        // What `import defer` names is linked with its importer, and the CommonJS files below it run then.
                         earliest_time: match load.is_hoisted {
                             true => 0,
                             false => earliest_time,
@@ -865,7 +797,6 @@ impl StartupWalk<'_> {
             if load.timing == LoadTiming::Deferred {
                 continue;
             }
-            // Nothing else of the startup runs while an entry point waits.
             let is_in_order = load.timing == LoadTiming::Unconditional
                 && (load.is_hoisted
                     || depth == 0
@@ -905,17 +836,13 @@ impl StartupWalk<'_> {
     }
 }
 
-/// By file: a load that somebody may catch, or a load below such a load, may run before the file is settled. It is the first to run the file, and what the file throws then ends
-/// nothing: the next load runs it again. Or it comes behind a throw that has ended the startup, and is that next load.
 fn find_files_that_may_be_loaded_behind_throw(
     loads: &Loads,
     all_files: &[FileId],
     settled_times: &[u32],
     mut possible_loads: Vec<PossibleLoad>,
 ) -> Vec<bool> {
-    // What a file leads to at one time it leads to at every earlier time, so the first visit of a file finds all that a later one would.
     possible_loads.sort_by_key(|load| load.earliest_time);
-    // Whether the loads of the file were followed, first where nobody catches and then where somebody may.
     let mut is_followed = vec![[false; 2]; settled_times.len()];
     let mut is_any_file_followed = [false; 2];
     let mut to_follow: Vec<(Option<FileId>, bool)> = Vec::new();

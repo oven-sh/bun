@@ -5,11 +5,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_sema::atom::Atom;
-use bun_sema::bind::Parent;
+use bun_sema::bind::{
+    Binding, BindingKind, BindingStability, Bound, CodeUnit, Decl, Parent, SymbolId,
+};
 use bun_sema::check::aot::{
     ListedMember, MemberLookup, MemberName, ObjectMemberKind, ObjectOrigin, ShapeKind, TypeIdentity,
 };
-use bun_sema::hir::{ExprId, ExprKind, PropKey, PropKind};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PatKind, PropKey, PropKind};
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -23,7 +25,7 @@ use crate::ir::generated::{
     Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
 use crate::ir::{
-    DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, WellKnownSymbol,
+    DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, TypeId, WellKnownSymbol,
     classify_name,
 };
 use crate::lower::{CheckerTypeId, FileLowering, SourceKind};
@@ -37,7 +39,6 @@ type Members = SmallVec<[Member; 8]>;
 type KeyDescription = SmallVec<[u8; 24]>;
 pub(super) type SortedMember = (FieldName, ListedMember);
 
-// What a file says of the fields of a type is the same in every file that is checked, and the same in every file that is not.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum ObjectTypeKey {
     Type {
@@ -45,7 +46,6 @@ pub enum ObjectTypeKey {
         identity: TypeIdentity,
         is_checked: bool,
     },
-    /// What `define_names_of_type` says.
     Names {
         flags: TypeIdentity,
         has_place: bool,
@@ -55,12 +55,9 @@ pub enum ObjectTypeKey {
 struct FieldsOfType {
     fields: Vec<Field>,
     declared_order: Vec<u32>,
-    /// The checker tells every file of the task the same about the members.
     is_kept: bool,
 }
 
-/// The names of a type in their order, where each of them is a text: no table of a file is asked for such an order, so it is the same in every file of the task.
-/// By the type, with the address of the list of members that was put in order: the checker keeps its lists as long as the task lasts, and another answer is another list.
 #[derive(Default)]
 pub(in crate::lower) struct KnownOrders(FxHashMap<CheckerTypeId, (usize, Arc<[SortedMember]>)>);
 
@@ -76,7 +73,6 @@ impl KnownOrders {
     }
 }
 
-// A file names few of the names of the types it meets, so a name goes into the file's tables where a definition says it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) enum FieldName {
     Text(Atom),
@@ -87,7 +83,7 @@ struct ListedField {
     name: FieldName,
     flags: Cell<FieldFlags>,
     members: RefCell<SmallVec<[(CheckerTypeId, ListedMember); 1]>>,
-    // What the first of these members declare, and how many they are.
+    said: RefCell<SmallVec<[Option<DeclaredType>; 1]>>,
     declared: Cell<(Option<DeclaredType>, usize)>,
 }
 
@@ -95,6 +91,9 @@ struct ListedField {
 pub(super) struct ListedFields {
     fields: Vec<ListedField>,
     is_known: bool,
+    places_of_types: RefCell<FxHashMap<CheckerTypeId, u32>>,
+    number_looked_at: Cell<usize>,
+    keys: RefCell<SmallVec<[PropertyKeyId; 8]>>,
 }
 
 impl ListedFields {
@@ -114,6 +113,38 @@ impl ListedFields {
                 .position(|field| field.name == FieldName::Key(key)),
         };
         found.map(|found| found as u32)
+    }
+
+    pub(super) fn keys(&self) -> core::cell::Ref<'_, SmallVec<[PropertyKeyId; 8]>> {
+        self.keys.borrow()
+    }
+
+    pub(super) fn count_types(&self) -> usize {
+        (self.fields.first()).map_or(0, |field| field.members.borrow().len())
+    }
+
+    pub(super) fn for_each_type_said(&self, first: usize, mut visit: impl FnMut(TypeId)) {
+        for field in &self.fields {
+            let mut last = None;
+            for said in field.said.borrow().iter().skip(first).flatten() {
+                if last.replace(said.ty) != Some(said.ty) {
+                    visit(said.ty);
+                }
+            }
+        }
+    }
+
+    fn find_place_of_type(&self, ty: CheckerTypeId) -> Option<usize> {
+        const FEW: usize = 8;
+        let members = self.fields.first()?.members.borrow();
+        if members.len() <= FEW {
+            return members.iter().position(|&(of, _)| of == ty);
+        }
+        let mut places = self.places_of_types.borrow_mut();
+        for (place, &(of, _)) in members.iter().enumerate().skip(places.len()) {
+            places.insert(of, place as u32);
+        }
+        places.get(&ty).map(|&place| place as usize)
     }
 
     fn add_type(&self, ty: CheckerTypeId, members: &[SortedMember]) {
@@ -222,7 +253,6 @@ impl FileLowering<'_, '_, '_, '_> {
         )
     }
 
-    // Every member of such a type is a type that nothing has made yet, with the same layout, and looking at its members makes the next ones.
     fn grows_without_end(&mut self, ty: CheckerTypeId) -> bool {
         let holder = match self.layouts.holder_in_progress {
             Some(holder) if holder != ty => holder,
@@ -257,7 +287,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // In the one order that every type with these names gives: field `i` of one is field `i` of the other.
     fn sort_listed_fields(
         &mut self,
         ty: CheckerTypeId,
@@ -329,6 +358,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 name,
                 flags: Cell::new(listed_member_flags(member)),
                 members: RefCell::new(smallvec![(ty, member)]),
+                said: RefCell::default(),
                 declared: Cell::new((None, 0)),
             });
             listed.fields = fields.collect();
@@ -355,7 +385,6 @@ impl FileLowering<'_, '_, '_, '_> {
         listed
     }
 
-    // The type of an expression: it says which names the object has, and nobody has declared what they hold.
     fn is_type_of_literal(&mut self, ty: CheckerTypeId) -> bool {
         matches!(
             self.queries.object_origin(ty),
@@ -363,42 +392,224 @@ impl FileLowering<'_, '_, '_, '_> {
         )
     }
 
-    // The checker's type of `a?: number` is `number`.
     pub(super) fn listed_field_position(
         &mut self,
         layout: LayoutId,
         listed: &ListedFields,
         field: u32,
     ) -> DeclaredType {
-        let field = &listed.fields[field as usize];
-        let (mut united, number_united) = field.declared.get();
-        let members: SmallVec<[(CheckerTypeId, ListedMember); 4]> =
-            SmallVec::from_slice(&field.members.borrow()[number_united..]);
-        for &(ty, member) in &members {
-            // Looking at the members is what finds out.
-            if self.layouts.is_growing(layout) {
-                return DeclaredType::untyped();
-            }
-            if self.is_type_of_literal(ty) {
-                continue;
-            }
-            let outer = self.layouts.holder_in_progress.replace(ty);
-            let types = self.queries.listed_member_types(ty, member);
-            let mut declared = self.create_member_position(types);
-            self.layouts.holder_in_progress = outer;
-            if member.is_optional {
-                declared = self.add_undefined(declared);
-            }
-            united = Some(match united {
-                Some(united) => self.unite_positions(united, declared),
-                None => declared,
-            });
-        }
-        if self.layouts.is_growing(layout) {
+        let (united, number_united) = listed.fields[field as usize].declared.get();
+        if !self.make_positions_of_members(layout, listed, field) {
             return DeclaredType::untyped();
         }
-        field.declared.set((united, number_united + members.len()));
+        let field = &listed.fields[field as usize];
+        if number_united == field.said.borrow().len() {
+            return united.unwrap_or_else(DeclaredType::untyped);
+        }
+        let mut said: SmallVec<[DeclaredType; 4]> = united.into_iter().collect();
+        let number_said = {
+            let by_each_member = field.said.borrow();
+            said.extend(by_each_member[number_united..].iter().copied().flatten());
+            by_each_member.len()
+        };
+        let united = self.unite_all_positions(&said);
+        field.declared.set((united, number_said));
         united.unwrap_or_else(DeclaredType::untyped)
+    }
+
+    fn make_positions_of_members(
+        &mut self,
+        layout: LayoutId,
+        listed: &ListedFields,
+        field: u32,
+    ) -> bool {
+        let field = &listed.fields[field as usize];
+        let number_seen = field.said.borrow().len();
+        let members: SmallVec<[(CheckerTypeId, ListedMember); 4]> =
+            SmallVec::from_slice(&field.members.borrow()[number_seen..]);
+        let mut made: SmallVec<[Option<DeclaredType>; 4]> = SmallVec::new();
+        for &(ty, member) in &members {
+            if self.layouts.is_growing(layout) {
+                return false;
+            }
+            if self.is_type_of_literal(ty) {
+                made.push(None);
+                continue;
+            }
+            made.push(Some(self.position_declared_by_member(ty, member)));
+        }
+        if self.layouts.is_growing(layout) {
+            return false;
+        }
+        let mut said = field.said.borrow_mut();
+        said.truncate(number_seen);
+        said.extend(made);
+        if said.len() < listed.number_looked_at.get() {
+            listed.number_looked_at.set(said.len());
+        }
+        true
+    }
+
+    pub(super) fn list_fields_without_unions(
+        &mut self,
+        layout: LayoutId,
+    ) -> Option<Rc<ListedFields>> {
+        let listed = self.find_fields_without_types(layout)?;
+        loop {
+            let number_of_types = self.layouts.source_types(layout).len();
+            let number_listed = listed.count_types();
+            if listed.number_looked_at.get() < number_listed {
+                let is_looked_at = (0..listed.fields.len() as u32)
+                    .all(|index| self.make_positions_of_members(layout, &listed, index));
+                if is_looked_at {
+                    listed.number_looked_at.set(number_listed);
+                }
+            }
+            if self.layouts.source_types(layout).len() == number_of_types {
+                break;
+            }
+        }
+        if listed.keys.borrow().len() < listed.fields.len() {
+            let names = listed.fields.iter().map(|field| field.name);
+            *listed.keys.borrow_mut() = names.map(|name| self.find_key(name)).collect();
+        }
+        Some(listed)
+    }
+
+    pub(in crate::lower) fn make_positions_of_fields(&mut self, layout: LayoutId) {
+        if self.list_fields_without_unions(layout).is_none() {
+            super::own_fields(self, layout);
+        }
+    }
+
+    fn field_position_under_written_type(
+        &mut self,
+        layout: LayoutId,
+        field: u32,
+        ty: CheckerTypeId,
+    ) -> Option<DeclaredType> {
+        let LayoutKey::ObjectType { .. } = self.fragment.layout_key(layout) else {
+            return None;
+        };
+        let listed = self.list_fields(layout);
+        if !self.make_positions_of_members(layout, &listed, field) {
+            return None;
+        }
+        let place = listed.find_place_of_type(ty)?;
+        let said = listed.fields[field as usize].said.borrow();
+        said.get(place).copied().flatten()
+    }
+
+    fn position_declared_by_member(
+        &mut self,
+        ty: CheckerTypeId,
+        member: ListedMember,
+    ) -> DeclaredType {
+        let outer = self.layouts.holder_in_progress.replace(ty);
+        let types = self.queries.listed_member_types(ty, member);
+        let declared = self.create_member_position(types);
+        self.layouts.holder_in_progress = outer;
+        match member.is_optional {
+            true => self.add_undefined(declared),
+            false => declared,
+        }
+    }
+
+    pub(in crate::lower) fn position_of_member(
+        &mut self,
+        layout: LayoutId,
+        field: u32,
+        value: Option<ExprId>,
+    ) -> DeclaredType {
+        let Some(Parent::Prop(property)) = value.map(|value| self.bound.parent_of_expr(value))
+        else {
+            return self.field_position(layout, field);
+        };
+        let literal = self.bound.prop_owner[property.idx()];
+        let written_types = &self.layouts.written_types_of_literals;
+        let written = written_types.get(&literal).copied();
+        let under_written_type = written
+            .filter(|&(of_literal, _)| of_literal == layout)
+            .and_then(|(_, ty)| self.field_position_under_written_type(layout, field, ty));
+        if let Some(position) = under_written_type {
+            return position;
+        }
+        let united = self.field_position(layout, field);
+        if !crate::lower::positions::has_int32_promise(self)
+            || self.layouts.literals.get(&literal) != Some(&layout)
+            || self.layouts.is_growing(layout)
+        {
+            return united;
+        }
+        match self.queries.contextual_type(literal) {
+            Ok(Some(context)) => {
+                let LayoutKey::ObjectType { .. } = self.fragment.layout_key(layout) else {
+                    return united;
+                };
+                let listed = self.list_fields(layout);
+                let member = listed.find_place_of_type(context).and_then(|place| {
+                    let field = listed.fields.get(field as usize)?;
+                    field.members.borrow().get(place).copied()
+                });
+                match member {
+                    Some((ty, member)) => self.position_declared_by_member(ty, member),
+                    None => united,
+                }
+            }
+            Ok(None) if self.is_reached_through_members_alone(literal) => DeclaredType::untyped(),
+            _ => united,
+        }
+    }
+
+    fn is_reached_through_members_alone(&mut self, literal: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let (ExprKind::Object(properties), Parent::VarInit(declaration)) =
+            (hir[literal].kind, bound.parent_of_expr(literal))
+        else {
+            return false;
+        };
+        let name = hir[declaration].pat;
+        let Some(variable) = bound.declared_symbol(Decl::Var(name)).some() else {
+            return false;
+        };
+        matches!(hir[name].kind, PatKind::Ident(_))
+            && properties.iter().all(|property| {
+                matches!(
+                    hir[property].kind,
+                    PropKind::Init | PropKind::Shorthand | PropKind::Method
+                )
+            })
+            && matches!(
+                bound.binding_kind(variable),
+                BindingKind::Const | BindingKind::Let
+            )
+            && bound.binding_stability(variable) == BindingStability::Stable
+            && !bound.is_visible_to_eval(variable)
+            && matches!(
+                bound.code_unit(bound.symbol_scope(variable)),
+                CodeUnit::Function(_)
+            )
+            && !self.variables_that_leave_whole().contains(&variable)
+    }
+
+    fn variables_that_leave_whole(&mut self) -> Rc<FxHashSet<SymbolId>> {
+        if let Some(found) = &self.layouts.variables_that_leave_whole {
+            return Rc::clone(found);
+        }
+        let (hir, bound) = (self.hir, self.bound);
+        let mut found = FxHashSet::default();
+        for (mention, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
+            if matches!(node.kind, ExprKind::Ident(_))
+                && bound.is_evaluated_ident(mention)
+                && let Binding::Symbol(variable) = bound.binding(mention)
+                && !reaches_member_alone(hir, bound, mention)
+            {
+                found.insert(variable);
+            }
+        }
+        let found = Rc::new(found);
+        self.layouts.variables_that_leave_whole = Some(Rc::clone(&found));
+        found
     }
 
     pub(super) fn compute_object_type_fields(&mut self, layout: LayoutId) -> OwnFields {
@@ -406,7 +617,6 @@ impl FileLowering<'_, '_, '_, '_> {
         if !listed.is_known {
             return OwnFields::default();
         }
-        // The type of a field may be the first mention of another type with this very layout (`interface Even { other: Odd }`), which then adds to the fields that have been looked at.
         loop {
             let number_of_types = self.layouts.source_types(layout).len();
             for index in 0..listed.fields.len() as u32 {
@@ -431,7 +641,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn find_object_type_key(&mut self, ty: CheckerTypeId) -> Option<ObjectTypeKey> {
-        // The identity of a computed type leaves out what nobody has written: the type of a method of a literal, of a rest copy.
         let origin = match self.queries.object_origin(ty) {
             ObjectOrigin::Computed => return None,
             origin @ (ObjectOrigin::Symbol(_)
@@ -479,7 +688,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.queries.files().is_compiled(home) && !self.inputs.is_left_out(home)
     }
 
-    /// Which names the type has, which of them it requires and which are methods. What they hold is left to the files that say it.
     pub(super) fn define_names_of_type(&mut self, layout: LayoutId, ty: CheckerTypeId) {
         let Ok(members) = self.queries.listed_members(ty) else {
             return;
@@ -490,7 +698,6 @@ impl FileLowering<'_, '_, '_, '_> {
             flags: describe_flags(listed.iter().map(|field| listed_member_flags(field.1))),
             has_place: place.is_some(),
         };
-        // Which of two types the file has met first hangs on what its thread has lowered before, so the one that is declared first speaks for both.
         let said = self.layouts.named_types.get(&(layout, key)).copied();
         if said.is_some_and(|(_, place_of_speaker)| place_of_speaker <= place) {
             return;
@@ -518,14 +725,12 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(super) fn define_object_type_layout(&mut self, layout: LayoutId, types: &[CheckerTypeId]) {
-        // A layout with a home has one type, and the link takes what the home says.
         let has_home = self.fragment.layout_key(layout).home_file().is_some();
         for &ty in types {
             if !has_home && self.is_type_of_literal(ty) {
                 self.define_names_of_type(layout, ty);
                 continue;
             }
-            // The link takes what the first file says of a type and drops what every later file says of it.
             if !has_home && self.is_said_by_an_earlier_file(ty) {
                 continue;
             }
@@ -583,7 +788,6 @@ impl FileLowering<'_, '_, '_, '_> {
         mut definition: Layout,
         key: Option<ObjectTypeKey>,
     ) {
-        // Whether the file had found out by now hangs on what else it has looked at.
         if self.layouts.is_growing(layout) {
             for field in &mut definition.fields {
                 field.declared = DeclaredType::untyped();
@@ -647,7 +851,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.untyped_layout_made_at(members, None)
     }
 
-    /// `site`: the one expression that makes the objects of the layout. Without one every literal of the file that lists the same names shares it.
     fn untyped_layout_made_at(&mut self, members: &[Member], site: Option<ExprId>) -> LayoutId {
         let mut sorted = Vec::with_capacity(members.len());
         for (source_index, &(key, kind)) in members.iter().enumerate() {
@@ -684,7 +887,6 @@ impl FileLowering<'_, '_, '_, '_> {
             let first_dropped = source_indexes[limit as usize];
             sorted.retain(|member| member.source_index < first_dropped);
         }
-        // No key is described by a text that begins so.
         let site = site.map(|site| [b"\xffmade at ".as_slice(), &site.0.to_le_bytes()].concat());
         let descriptions = sorted
             .iter()
@@ -723,7 +925,6 @@ impl FileLowering<'_, '_, '_, '_> {
         layout
     }
 
-    /// The layout of a literal that is born with other names than it is written with.
     pub(in crate::lower) fn layout_of_names(
         &mut self,
         literal: ExprId,
@@ -737,7 +938,6 @@ impl FileLowering<'_, '_, '_, '_> {
         layout
     }
 
-    /// The type of a field is one for all objects of a layout, so what one expression makes out of its own operands has a layout that no other expression shares.
     pub(in crate::lower) fn layout_of_names_made_at(
         &mut self,
         site: ExprId,
@@ -756,8 +956,6 @@ impl FileLowering<'_, '_, '_, '_> {
         can_be_field(self, key)
     }
 
-    /// An assignment under such a name to an object right below `Object.prototype` is no definition: `__proto__` has a setter there, the others are refused
-    /// once the program has frozen it, and what the program adds may be an accessor or read-only.
     pub(in crate::lower) fn is_name_on_object_prototype(&self, name: Atom) -> bool {
         let is_listed = self.inputs.builtin_names.get(name).is_some_and(|name| {
             !matches!(
@@ -790,7 +988,6 @@ impl FileLowering<'_, '_, '_, '_> {
         members
     }
 
-    // `{ size: 4, a: 1 }` under `{ size: number; [key: string]: number }`: that type has no field for `a`, and the literal's own type has one.
     fn writes_name_under_index_signature(&mut self, literal: ExprId, ty: CheckerTypeId) -> bool {
         let signatures = self.queries.index_signatures(ty);
         if !signatures.is_ok_and(|signatures| !signatures.is_empty()) {
@@ -819,10 +1016,20 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.writes_name_under_index_signature(literal, ty) {
             return None;
         }
-        self.object_type_layout(ty)
+        let layout = self.object_type_layout(ty)?;
+        let is_written = matches!(
+            self.queries.object_origin(ty),
+            ObjectOrigin::Symbol(_)
+                | ObjectOrigin::TypeLiteral { .. }
+                | ObjectOrigin::MappedType { .. }
+        );
+        if is_written && self.is_checked() {
+            let written = &mut self.layouts.written_types_of_literals;
+            written.insert(literal, (layout, ty));
+        }
+        Some(layout)
     }
 
-    // The names that the type lists, and those of each member where it is one of several types. What lists none adds none.
     fn collect_names_listed_by(&mut self, ty: CheckerTypeId, members: &mut Members) {
         let mut pending: SmallVec<[CheckerTypeId; 4]> = smallvec![ty];
         while let Some(ty) = pending.pop() {
@@ -848,8 +1055,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // `Object.assign({}, defaults, wide ? { width: 100 } : { depth: 2 })`: the literal is born to take what the sources have. The checker writes the whole as `{} & A & (B | C)`, which is no object type,
-    // so the names come from the type of each source by itself, in the order in which the call stores them. A list claims nothing: it says where a name lies if the object gets it.
     fn find_layout_of_assigned_names(&mut self, literal: ExprId) -> Option<LayoutId> {
         let hir = self.hir;
         let Parent::Expr(parent) = self.bound.parent_of_expr(literal) else {
@@ -900,7 +1105,6 @@ impl FileLowering<'_, '_, '_, '_> {
         layout
     }
 
-    // The file does not name the layout by that.
     fn number_object_type(
         &mut self,
         ty: CheckerTypeId,
@@ -908,7 +1112,6 @@ impl FileLowering<'_, '_, '_, '_> {
     ) -> Option<LayoutId> {
         let members = self.queries.listed_members(ty).ok()?;
         let (identity, is_empty) = self.describe_names(ty, members);
-        // The names of an object that is born without a known name, `{}` or `{ a: 1, ...anything }`, are those that are stored later, which differ from one place of birth to the next.
         let origin = match (self.queries.object_origin(ty), literal) {
             _ if !is_empty => ObjectOrigin::Computed,
             (_, Some(expression)) => ObjectOrigin::ObjectLiteral {
@@ -924,7 +1127,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }))
     }
 
-    // Without a literal the answer is the same in every file.
     fn number_object_type_once_in_task(&mut self, ty: CheckerTypeId) -> Option<LayoutId> {
         if let Some(known) = self.find_number_of_object_type(ty) {
             return known;
@@ -960,7 +1162,6 @@ impl FileLowering<'_, '_, '_, '_> {
         {
             listed.add_type(ty, &self.sort_listed_fields(ty, members));
         }
-        // What passes for an interface passes for what the interface extends.
         if let ObjectOrigin::Symbol(interface) = self.queries.object_origin(ty) {
             let bases = self.queries.declared_base_types(interface);
             for base in bases.unwrap_or_default() {
@@ -971,7 +1172,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             }
         }
-        // `IncomingMessage` of a declaration file: what has that type is made by the function of Bun's own module of that name.
         if self.source == SourceKind::Program {
             for declaration in self.queries.library_declarations_of_type(ty) {
                 let key = LayoutKey::Library(declaration);
@@ -1017,22 +1217,26 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // Nothing tests a store into an expected position, so a field is proven only where every type that has it proves it.
-    fn unite_positions(&mut self, left: DeclaredType, right: DeclaredType) -> DeclaredType {
-        if left == right {
-            return left;
+    fn unite_all_positions(&mut self, said: &[DeclaredType]) -> Option<DeclaredType> {
+        let (&first, others) = said.split_first()?;
+        if others.iter().all(|&other| other == first) {
+            return Some(first);
         }
-        let in_either = left.flags | right.flags;
-        let mut flags = PositionFlags(left.flags.0 & right.flags.0);
-        if in_either.contains(PositionFlags::IS_EXPECTED) {
+        let mut flags = first.flags;
+        let mut in_any = first.flags;
+        for other in others {
+            flags = PositionFlags(flags.0 & other.flags.0);
+            in_any |= other.flags;
+        }
+        if in_any.contains(PositionFlags::IS_EXPECTED) {
             flags |= PositionFlags::IS_EXPECTED;
         }
-        let ty = self.fragment.types.union(left.ty, right.ty);
-        DeclaredType {
-            ty,
-            site: left.site.or(right.site),
+        let types = said.iter().map(|said| said.ty);
+        Some(DeclaredType {
+            ty: self.fragment.types.union_all(types),
+            site: said.iter().find_map(|said| said.site),
             flags,
-        }
+        })
     }
 
     fn find_layout_of_enclosing_list(&mut self, literal: ExprId) -> Option<LayoutId> {
@@ -1072,6 +1276,43 @@ impl FileLowering<'_, '_, '_, '_> {
             return Some(layout);
         }
         self.declare_object_type(ty, Some(literal))
+    }
+}
+
+fn reaches_member_alone(hir: &File<'_>, bound: &Bound<'_>, mention: ExprId) -> bool {
+    match bound.parent_of_expr(mention) {
+        Parent::Expr(user) => match hir[user].kind {
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
+                obj == mention && !is_called(hir, bound, user)
+            }
+            ExprKind::Binary {
+                op: BinOp::In,
+                right,
+                ..
+            } => right == mention,
+            _ => false,
+        },
+        Parent::VarInit(declaration) => match hir[hir[declaration].pat].kind {
+            PatKind::Object(members) => members.iter().all(|member| !hir[member].is_rest),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn is_called(hir: &File<'_>, bound: &Bound<'_>, mut callee: ExprId) -> bool {
+    loop {
+        let Parent::Expr(user) = bound.parent_of_expr(callee) else {
+            return false;
+        };
+        if hir.type_assertion_operand(user).is_none() {
+            return match hir[user].kind {
+                ExprKind::Call(call) => hir[call].callee == callee,
+                ExprKind::TaggedTemplate(_) => true,
+                _ => false,
+            };
+        }
+        callee = user;
     }
 }
 

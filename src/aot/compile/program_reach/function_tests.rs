@@ -3,7 +3,6 @@ use crate::compile::testing::{default_settings, with_bind_input};
 use crate::ir::run_serially;
 use crate::modules::bind_modules;
 
-// The lines of `main.ts` on which the parameters of a function begin that is left out, in order.
 fn find_lines_left_out(main: &str) -> Vec<String> {
     with_bind_input(&[("main.ts", main)], &default_settings(), |bind_input| {
         let graph = bind_modules(bind_input).graph;
@@ -178,7 +177,6 @@ fn class_that_is_only_compared_with_keeps_no_constructor() {
     assert_eq!(left_out, ["constructor() { console.log(1); }"]);
 }
 
-// `Symbol.hasInstance` runs with the class as `this`.
 #[test]
 fn class_that_may_test_instances_itself_is_handed_to_the_test() {
     let compared = |class: &str, before: &str| {
@@ -277,7 +275,6 @@ fn variable_that_a_function_in_a_function_names_stays_with_the_outer_function() 
     });
 }
 
-// The names of the files that are left out, in order.
 fn find_files_left_out(files: &[(&str, &str)]) -> Vec<String> {
     with_bind_input(files, &default_settings(), |bind_input| {
         let graph = bind_modules(bind_input).graph;
@@ -306,7 +303,6 @@ fn find_files_left_out(files: &[(&str, &str)]) -> Vec<String> {
     })
 }
 
-// `import()` in `never` is what brings the two files into the program.
 #[test]
 fn text_spells_a_file_for_a_load_by_an_unknown_name_where_it_is_reached() {
     let files = [

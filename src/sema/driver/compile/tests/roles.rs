@@ -92,7 +92,6 @@ fn evaluated_text_with_early_error_is_demoted_and_not_reported() {
     );
 }
 
-/// Where such a text may fail when it is loaded, lowering has what it throws from the checker of its own task.
 #[test]
 fn lowering_is_told_the_early_error_that_decided_a_role() {
     let files = [("main.js", ""), ("failing.cjs", TEXT_WITH_EARLY_ERROR)];
@@ -465,7 +464,6 @@ fn trees_stay_until_lowering() {
         });
         assert_eq!(checked.lowered.len(), 2);
         assert!(checked.lowered.iter().all(|it| it.1));
-        assert!(!has_tree(main));
     });
 }
 

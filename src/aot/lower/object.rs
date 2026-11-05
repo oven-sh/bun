@@ -12,10 +12,7 @@ use crate::ir::{LayoutId, PropertyKeyId, ValueId};
 pub(crate) struct ObjectBuilder {
     layout: LayoutId,
     state: ObjectState,
-    // `FinishObject` closes a `NewObject`: a dictionary and a copy have none to close.
     is_finished: bool,
-    /// Members under index keys whose values are computed. Every list of keys names the indexes first and in their own order, and nothing can reach the
-    /// object before the literal is complete, so nobody can tell that they are defined behind the names: which then stand side by side in the allocation.
     waiting_elements: SmallVec<[WaitingElement; 2]>,
 }
 
@@ -35,7 +32,6 @@ struct InitialFields {
     fields: SmallVec<[u32; 8]>,
     values: SmallVec<[ValueId; 8]>,
     present: SmallVec<[u64; 2]>,
-    /// Nothing can reach the object before the literal is complete, so its prototype is set right after the allocation.
     prototype: Option<ValueId>,
 }
 
@@ -58,7 +54,6 @@ impl InitialFields {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // Each object of a record of data has a layout, so a literal of constants that holds a dictionary is built by operations.
     pub(crate) fn begin_object(&mut self, layout: LayoutId) -> ObjectBuilder {
         ObjectBuilder {
             layout,
@@ -68,7 +63,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // The layout has no field, so every member is defined by name.
     pub(crate) fn begin_dictionary(&mut self) -> ObjectBuilder {
         let head = self.builder.new_dictionary();
         ObjectBuilder {
@@ -79,7 +73,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // The copy makes the object, with the layout of the source where that is a record. Every later member is defined by name.
     pub(crate) fn begin_copy(&mut self, source: ValueId) -> ObjectBuilder {
         let head = self.builder.copy_object(source, &[], &[], false);
         ObjectBuilder {

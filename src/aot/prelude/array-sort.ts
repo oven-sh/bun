@@ -509,29 +509,6 @@ export function sortByReversedDifference<T>(array: T[], comparator: unknown): T[
   return $call<T[]>(sort, array, comparator);
 }
 
-// Holds neither a hole nor undefined, and its values can be stored where they lie.
-function canSortWhereItLies<T>(array: T[], count: number): boolean {
-  if (!isContiguousArray(array)) return false;
-  const first = $getContiguousIndex<T | undefined>(array, 0);
-  if (first === undefined) return false;
-  for (let index = 1; index < count; index = (index + 1) | 0) {
-    if ($getContiguousIndex<T | undefined>(array, index) === undefined) return false;
-  }
-  return $tryPutIndex(array, 0, first);
-}
-
-// The compiler calls this in the place of sort() where it sees that nobody can see the comparator run, as in `(a, b) => a.rank - b.rank`: no copy of the list is needed for it to look at.
-// A list shorter than findValueRun()'s extendRunCutoff is one run: the comparator is never called deeper than where its first call would have overflowed the stack, before anything has moved.
-$visibility = "Private";
-export function sortWhereNobodySeesTheComparator<T>(array: T[], comparator: unknown): T[] {
-  const extendRunCutoff = 8;
-  const count = array.length | 0;
-  if (count < 2) return array;
-  if (count >= extendRunCutoff || !canSortWhereItLies<T>(array, count)) return $call<T[]>(sort, array, comparator);
-  findValueRun<T>(array, 0, count, comparator);
-  return array;
-}
-
 // Storage of another kind need not be as long as the list, as behind `a[300_000_000] = 1`, and the list may be longer than storage in one piece can be.
 // The copy grows with what is found, and a result that is longer than the copy is made as the program's own `new Array(length)` is. Array itself is not named here:
 // whoever sorts would hold all that stands behind that name.

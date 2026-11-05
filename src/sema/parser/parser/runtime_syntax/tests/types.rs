@@ -12,7 +12,6 @@ fn expect_class(class: DiagnosticClass, cases: &[(u32, &str)]) {
     }
 }
 
-/// TypeScript's parser reads over each of these and its checker reports it. `bun run` reports a syntax error.
 #[test]
 fn mistake_in_a_type_that_bun_run_rejects_is_an_early_error() {
     expect_class(

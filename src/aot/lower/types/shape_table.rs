@@ -29,7 +29,6 @@ impl FileLowering<'_, '_, '_, '_> {
             ShapeKind::Anything(_) | ShapeKind::TypeVariable { constraint: None } => {
                 Mapped::UNKNOWN
             }
-            // Whatever a call puts in the place of `T extends Shape` is a Shape.
             ShapeKind::TypeVariable {
                 constraint: Some(constraint),
             } => self.map_child(children, EdgeKind::Transparent, constraint),
@@ -122,7 +121,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Mapped::checked(self.fragment.types.intern(ty))
     }
 
-    // No test looks at the contents of a container, so what is only expected of them leaves the class checked.
     fn intern_class(&mut self, class: BuiltinClass, contents: &[Mapped]) -> Mapped {
         let contents: SmallVec<[TypeId; 2]> = contents.iter().map(|mapped| mapped.ty).collect();
         self.intern_checked(Type::class(class, &contents))
@@ -151,7 +149,6 @@ impl FileLowering<'_, '_, '_, '_> {
             mapped_members.push(self.map_child(children, EdgeKind::Transparent, member));
             enum_member_count += usize::from(self.is_numeric_enum_member(member));
         }
-        // TypeScript lets every number into a type that lists members of a numeric enum, and `a | b` of two flags is no member.
         if enum_member_count > 1 {
             mapped_members.push(Mapped::checked(TypeTable::INT32));
         }
@@ -205,7 +202,6 @@ impl FileLowering<'_, '_, '_, '_> {
             true => Mapped::checked(TypeTable::FUNCTION),
             false => self.intern_class(builtin_class, &contents),
         };
-        // A view is also the type of objects that are no instances of the class.
         let denoted = match class.denotation {
             Denotation::Exact => whole,
             Denotation::View => Mapped::expected(whole.ty),
@@ -235,7 +231,6 @@ impl FileLowering<'_, '_, '_, '_> {
         widened
     }
 
-    // A layout tells objects apart by their fields. Every object is of a type that requires none, so its layout is only expected.
     fn requires_field(&mut self, ty: CheckerTypeId) -> bool {
         let Ok(members) = self.queries.member_presence(ty) else {
             return true;
@@ -290,7 +285,6 @@ impl FileLowering<'_, '_, '_, '_> {
         widened
     }
 
-    // What the position of the type holds, and not how the type is spelled: a literal, a member of an enum, an enum, an alias of any of them.
     fn holds_no_number_outside_int32(&mut self, ty: CheckerTypeId) -> bool {
         let mapped = self.map_type_at(ty).ty;
         let mapped = self.fragment.types.get(mapped);
@@ -302,7 +296,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-// `undefined` and `null` are members of every type that holds a reference.
 fn holds_reference(ty: &Type) -> bool {
     let raw_primitives = Primitives::NUMBER | Primitives::BOOLEAN | Primitives::NULLISH;
     let raw_part = Type {
@@ -326,7 +319,6 @@ pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
     };
     match shape.kind {
         ShapeKind::Int32 { .. } => true,
-        // `int32 | number` holds every number and `int32 | 0.5` one that is no int32: there is nothing to prove.
         ShapeKind::Union(members) => {
             members.iter().any(|&member| lists_int32(file, member))
                 && file.holds_no_number_outside_int32(ty)
@@ -335,7 +327,6 @@ pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
     }
 }
 
-// TypeScript's `0` is also the type of `-0`. Whoever writes the type means the integer: a `-0` that arrives is treated as any value outside the type of its position.
 fn number_literal_type(value: f64) -> Type {
     let integer = value as i64;
     let is_tracked = integer as f64 == value

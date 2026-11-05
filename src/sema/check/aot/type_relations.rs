@@ -44,7 +44,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         has_one_symbol.then_some(first)
     }
 
-    /// Where the type of a function with these signatures is declared.
     pub fn declaration_of_signatures(&self, signatures: &[SigId]) -> Option<FunctionRef> {
         match signatures {
             &[signature] => self.signature_declaration(signature),
@@ -52,8 +51,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Whether both are types of functions that no two declarations tell apart: what a method is in its class and in a
-    /// class that inherits it, where `this` is another type.
     pub(super) fn are_functions_of_one_declaration(&mut self, one: TypeId, other: TypeId) -> bool {
         let (Ok(one), Ok(other)) = (self.type_shape(one), self.type_shape(other)) else {
             return false;

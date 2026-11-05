@@ -13,7 +13,7 @@ function callsIn(counts, ...besides) {
   return sum;
 }
 // These make the text that is printed, list the names for it and keep it in a set; a cell where the allocator has none at hand is the work of the run time.
-const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTConcatThree", "operationAOTLiteralStringToString", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTStringConstant", "operationAOTToString", "operationAOTValueAdd", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow"];
+const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTConcatThree", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTStringConstant", "operationAOTToString", "operationAOTValueAdd", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow"];
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } };
 const thrownBy = f => { try { f(); return "nothing"; } catch (error) { return error.constructor.name; } };

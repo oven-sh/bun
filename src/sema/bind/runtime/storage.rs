@@ -18,7 +18,7 @@ enum ImplicitReferenceOrder {
 
 fn implicit_reference_order(reference: &ImplicitReference) -> ImplicitReferenceOrder {
     let is_fragment = match reference.kind {
-        ImplicitReferenceKind::JsxFactory => false,
+        ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::DefinedPath => false,
         ImplicitReferenceKind::JsxFragment => true,
         ImplicitReferenceKind::DecoratorMetadata(recorded) => {
             return ImplicitReferenceOrder::DecoratorMetadata(recorded);
@@ -138,6 +138,8 @@ define_tables! {
         maps {
             declared_symbols: S::Few<(Decl, SymbolId)>,
             inner_class_symbols: S::Few<(ClassId, SymbolId)>,
+            own_bindings_of_decorated_classes: S::Few<(SymbolId, SymbolId)>,
+            container_parameters: S::Few<(ScopeId, SymbolId)>,
             names_taken_from_imports: S::Few<(SymbolId, SymbolId)>,
             own_scopes: S::List<(StmtId, ScopeId)>,
         }
@@ -180,7 +182,6 @@ define_tables! {
             implicit_references: S::Few<ImplicitReference> = implicit_reference_order,
         }
         lists {
-            // For each run of `IDENTS_IN_RUN` expression ids, how many entries of `ident_bindings` lie in front of it. One more at the end.
             ident_binding_runs: S::List<u32>,
             evaluated_idents: S::List<u64>,
             eval_visible_symbols: S::List<u64>,

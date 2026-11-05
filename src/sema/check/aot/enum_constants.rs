@@ -39,7 +39,6 @@ enum EnumReach {
     ConstEnums,
 }
 
-/// The last name of a path such as `Outer.Inner.A`.
 #[derive(Copy, Clone)]
 struct PathMember {
     holder: Sym,
@@ -47,8 +46,6 @@ struct PathMember {
     is_path_declared_here: bool,
 }
 
-/// What one part of a namespace exports is in scope in its other parts too, where no declaration
-/// of it stands around the name.
 pub(crate) fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: ExprId) -> bool {
     let mut around = hir.parent(hir.node(name));
     while around.is_some() {
@@ -61,8 +58,6 @@ pub(crate) fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], nam
     false
 }
 
-/// The object and the name of one link of a path that Bun's transpiler follows: `["name"]` is
-/// `.name` where the name is ASCII, and a link of an optional chain ends the path.
 pub fn find_link_followed_by_transpiler<'a>(
     hir: &hir::File<'_>,
     link: ExprId,
@@ -78,8 +73,6 @@ pub fn find_link_followed_by_transpiler<'a>(
     is_followed.then_some((object, name))
 }
 
-/// Bun's transpiler visits the enums of a list of statements ahead of the list's other statements,
-/// and knows a member's value from that visit on.
 pub fn is_member_visited_before(hir: &hir::File<'_>, member: EnumMemberId, access: ExprId) -> bool {
     let count_ancestors = |mut node: Node| {
         let mut count = 0usize;
@@ -112,8 +105,6 @@ pub fn is_member_visited_before(hir: &hir::File<'_>, member: EnumMemberId, acces
     }
 }
 
-/// Follows a path the way Bun's transpiler does: the first name is what it is bound to as a
-/// value, `["name"]` is `.name`, and parentheses and type assertions do not count.
 fn follow_member_path(
     files: &Files<'_>,
     file: FileId,
@@ -136,7 +127,6 @@ fn follow_member_path(
     follow_names_below(files, file, first, root, &names)
 }
 
-/// `names`: what stands behind `first`, the last name first.
 fn follow_names_below(
     files: &Files<'_>,
     file: FileId,
@@ -170,8 +160,6 @@ fn follow_names_below(
     Some(end)
 }
 
-/// Bun's transpiler keeps one list of members for all that a scope declares under one name, so
-/// an enum without `export` beside `export namespace` of its name is found through either.
 fn find_member_listed_under_name(files: &Files<'_>, holder: Sym, name: Atom) -> Option<Sym> {
     if let Some(exported) = files.namespace_member(holder, name) {
         return Some(exported);
@@ -239,8 +227,6 @@ fn has_compiled_value(
         })
 }
 
-/// The member of an enum of the file that Bun's transpiler finds at the end of a path such as `Outer.Inner.A`, where it has gone
-/// through the enum by then.
 pub fn find_member_followed_by_transpiler(
     files: &Files<'_>,
     file: FileId,
@@ -318,7 +304,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 }
 
 impl Checker<'_, '_> {
-    /// A file that is read for its types alone has no code, so nothing in it waits for a run time.
     pub(in crate::check) fn is_left_to_run_time(&self, file: FileId, entity: ExprId) -> bool {
         self.is_compiled_file(file) && !self.names_one_declaration(file, entity)
     }

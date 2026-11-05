@@ -79,7 +79,6 @@ fn start_with_parentheses(file: &FileBuilder, e: ExprId) -> u32 {
     }
 }
 
-/// The `e` of `<T>e`.
 fn operand_of_leading_cast(file: &FileBuilder, text: &[u8], cast: &Expr) -> Option<ExprId> {
     let (ExprKind::As { expr: operand, .. } | ExprKind::AsConst(operand)) = cast.kind else {
         return None;
@@ -89,8 +88,6 @@ fn operand_of_leading_cast(file: &FileBuilder, text: &[u8], cast: &Expr) -> Opti
     is_leading.then_some(operand)
 }
 
-/// `bun run` looks for the mark where it starts to parse an expression, and it drops casts and parentheses as it parses. What stands behind `<T>` goes on
-/// the expression that the cast starts: a mark in front of the cast is the operand's, and a mark between the two is nobody's.
 pub(super) fn mark_pure_calls(file: &mut FileBuilder, text: &[u8]) {
     let starts = annotated_token_starts(&file.comments, text);
     if starts.is_empty() {

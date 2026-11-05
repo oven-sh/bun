@@ -42,7 +42,6 @@ pub(crate) struct LibraryTree<'a, 's> {
 pub(crate) enum SiteTarget {
     Module(ModuleRef),
     OneOf(Vec<ModuleRef>),
-    /// The run time refuses a module that no code names.
     AnyModule,
     Nothing,
 }
@@ -103,7 +102,6 @@ impl<'s> LoadedLibrary<'_, 's> {
     }
 }
 
-/// Who asks for Bun's own code.
 #[derive(Copy, Clone)]
 pub(crate) enum Application<'a, 's> {
     Bound {
@@ -120,7 +118,6 @@ pub(crate) struct ReachInput<'a, 's> {
     pub can_load_code_at_run_time: bool,
 }
 
-/// The part of Bun's own code that the program can run, found the way a bundler finds it: by bindings, never by what a value is.
 pub(crate) struct ReachedRuntimeCode {
     is_file_reached: Vec<bool>,
     pub left_out_functions: FxHashSet<FunctionRef>,
@@ -132,7 +129,6 @@ impl ReachedRuntimeCode {
     }
 }
 
-// A function, or the methods, the accessors and the constructor of a class.
 struct Unit {
     functions: SmallVec<[FnId; 1]>,
     id: Option<RuntimeFunction>,
@@ -166,7 +162,6 @@ enum HolderUse {
     Other,
 }
 
-// The regions of a file: the code at its top level, then its units in the order they are written in.
 struct FileUnits {
     is_library: bool,
     units: Vec<Unit>,
@@ -207,11 +202,9 @@ struct FileScan<'a, 's> {
     classes: FxHashMap<SymbolId, SymbolClass>,
     export_object: Option<ExportObject>,
     exported_functions: Vec<(Atom, u32)>,
-    // `{ a, b: c }`: the names under which the object that is exported holds what a binding of the file holds.
     names_of_exported_bindings: FxHashMap<ExprId, Atom>,
 }
 
-// `export default { .. }`, or `const exports = { .. }; export default exports;`
 #[derive(Copy, Clone)]
 struct ExportObject {
     literal: ExprId,
@@ -252,7 +245,6 @@ impl<'a, 's> FileScan<'a, 's> {
         });
     }
 
-    // What runs when the class is defined stays with the code around it: the class it extends, a computed key, a static field or block.
     fn add_class_unit(&mut self, class: ClassId) {
         let hir = self.hir;
         let unit = self.units.len() as u32;
@@ -373,7 +365,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // Whether the expression calls nothing and reads no member but `.prototype` of a name.
     fn is_evaluated_without_calls(
         &self,
         expression: ExprId,
@@ -416,7 +407,6 @@ impl<'a, 's> FileScan<'a, 's> {
     fn find_called_builtin(&self, callee: ExprId) -> Option<BuiltinId> {
         let source = self.source?;
         match source.builtins.of_expr(callee)? {
-            // `$toClass`: a function of the run time that Bun's own code finds under a private name.
             Resolved::Intrinsic(Intrinsic::PrivateGlobal) => {
                 let ExprKind::Ident(spelling) = self.hir[callee].kind else {
                     return None;
@@ -424,7 +414,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 let name = self.input.names.get_private(spelling)?;
                 table::own_member(BuiltinId::PrivateGlobals, name)
             }
-            // `Object.$defineProperty`: the member of a built-in that Bun's own code finds under a private name.
             Resolved::Intrinsic(Intrinsic::PrivateName) => {
                 let (holder, MemberKey::Name(spelling)) = self.hir.member_key(callee)? else {
                     return None;
@@ -481,7 +470,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `F.prototype.name = function () {}`, `F.name = value`, `Object.defineProperty(F.prototype, ..)`, `$toClass(F, "F", Base)` at the top level of a module give `F` its methods.
     fn add_statements_that_set_up_units(&mut self) {
         let hir = self.hir;
         for statement in hir.ids(hir.body) {
@@ -689,7 +677,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // The first operand of a built-in that lists its keys or defines a property of it.
     fn is_only_looked_at(&self, call: CallId, operand: ExprId) -> bool {
         let hir = self.hir;
         let callee = hir.skip_type_assertions(hir[call].callee);
@@ -708,7 +695,6 @@ impl<'a, 's> FileScan<'a, 's> {
             )
     }
 
-    // `setName(f, "f")`, where `setName` is a function of the file that only defines a property of what it is handed, and `if (f)`: nothing enters the function.
     fn is_function_only_looked_at(&self, reference: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let call = match bound.parent_of_expr(reference) {
@@ -766,7 +752,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // A name that is bound once to the object, or to a property of it, is followed where it is referred to.
     fn add_initialized_names(
         &mut self,
         declaration: VarDeclId,
@@ -826,7 +811,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `export { a, b as c }`: what `require` returns holds each binding under the name it is exported by.
     fn add_named_exports(&mut self, named_exports: &mut Vec<(Atom, Interest)>) {
         let (hir, bound) = (self.hir, self.bound);
         for statement in hir.ids(hir.body) {
@@ -854,7 +838,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // What the literal holds under any other name that is written in it is made by code at the top level.
     fn add_names_made_by_evaluation(&self, named_exports: &mut Vec<(Atom, Interest)>) {
         let hir = self.hir;
         let Some(ExprKind::Object(properties)) = self.export_object.map(|it| hir[it.literal].kind)
@@ -971,13 +954,10 @@ struct RegionText {
     targets: Vec<(ImportSiteKind, Option<RuntimeModule>)>,
 }
 
-// Nothing of a file that is left out is lowered, so nothing that it names runs. One that lies on a cycle with a file that runs keeps its place.
 fn never_runs(graph: &ModuleGraph, file: FileId) -> bool {
     graph.is_left_out(ModuleRef::File(file)) && !graph.is_placeholder(file)
 }
 
-// What a file that is left out imports is asked of its importers, and a name of a module of Bun's that it hands on is read by whoever imports the name.
-// So it asks nothing only where it imports nothing but files, each of which speaks for itself.
 fn asks_nothing_of_library(application: &Files<'_>, graph: &ModuleGraph, file: FileId) -> bool {
     never_runs(graph, file)
         && application.compiled(file).is_some_and(|compiled| {
@@ -986,7 +966,6 @@ fn asks_nothing_of_library(application: &Files<'_>, graph: &ModuleGraph, file: F
         })
 }
 
-// A load under a name that is put together at run time finds every module that the program holds, whole. One whose every name the build has read finds the modules of those names.
 pub(super) fn loads_modules_by_computed_names(
     application: &Files<'_>,
     graph: &ModuleGraph,
@@ -1002,6 +981,9 @@ pub(super) fn loads_modules_by_computed_names(
                     graph.find_site_answer(file, site.kind),
                     Some(SiteAnswer::Computed(candidates))
                         if !candidates.hold_every_name(analysis, &site.specifier)
+                            && (graph)
+                                .find_why_name_is_path_alone(application, file, site.specifier_node)
+                                .is_none()
                 )
             })
     })
@@ -1061,7 +1043,6 @@ impl<'a, 's> Walk<'a, 's> {
             .expect("the file was scanned")
     }
 
-    // Native code reads what it likes from a module that it loads.
     fn reach_uses(&mut self, uses: &RuntimeUses) {
         for &module in &uses.modules {
             self.evaluate(ModuleRef::Runtime(module));
@@ -1077,7 +1058,6 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else. So does `export { a, b } from "node:x"`.
     fn reach_named_imports(
         &mut self,
         application: &Files<'_>,
@@ -1137,13 +1117,16 @@ impl<'a, 's> Walk<'a, 's> {
         self.reads_imports_by_name = !loads_modules_by_computed_names(files, graph);
         self.reach_uses(&RuntimeUses::of_every_program(self.input.platform));
         self.reach_what_application_asks(files, graph);
+        if self.input.can_load_code_at_run_time
+            && let Some(threads) = table::module_by_specifier(b"node:worker_threads")
+        {
+            self.evaluate(ModuleRef::Runtime(threads));
+        }
         for &file in self.input.library.code_files() {
             if self.input.library.kind(file) != SourceKind::RuntimeFunctions {
                 continue;
             }
             let mut units = self.units_of(file).units.iter();
-            // Only other library functions name the functions of a file without numbers, by names that are theirs alone.
-            // A function with a number that the table does not have is one that its rows exclude: it never runs in a compiled program.
             if !units.any(|unit| unit.id.is_some()) {
                 self.reach_units(file, |_| true);
             }
@@ -1203,11 +1186,9 @@ impl<'a, 's> Walk<'a, 's> {
         }
         self.pending.push((file, region));
         let is_first_of_file = !replace(&mut self.is_file_reached[file.idx()], true);
-        // `require(name)` finds every public module in the executable, also one that only Bun's own modules import.
         if region == TOP_LEVEL && !self.reads_imports_by_name && self.is_public_module(file) {
             self.reach_every_export(ModuleRef::File(file));
         }
-        // Code that the build does not see finds the modules of the image under their names, and may use all that they hold.
         if is_first_of_file && self.input.can_load_code_at_run_time {
             self.reach_units(file, |_| true);
         }
@@ -1228,7 +1209,6 @@ impl<'a, 's> Walk<'a, 's> {
             self.reach_region(file, TOP_LEVEL);
             return;
         }
-        // A library function without a number of its own is there for the others of its file.
         if is_first_of_file {
             self.reach_units(file, |unit| unit.id.is_none());
         }
@@ -1250,7 +1230,6 @@ impl<'a, 's> Walk<'a, 's> {
         self.reach_region(file, TOP_LEVEL);
     }
 
-    // Called as a member of the object that the module exports, a function finds every other member in `this`.
     fn reads_this(&self, file: FileId, function: FnId) -> bool {
         let LibraryTree { hir, bound, .. } = self.input.library.tree(file);
         hir.runtime_function_kind(function) != FnKind::Arrow
@@ -1328,7 +1307,6 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // What a region asks for is read off its text alone, and a region that is reached stays reached.
     fn visit_pending_regions(&mut self, in_parallel: InParallel<'_>) {
         let pending = take(&mut self.pending).into_iter();
         let texts = pending.filter_map(|(file, region)| self.enter_region(file, region));

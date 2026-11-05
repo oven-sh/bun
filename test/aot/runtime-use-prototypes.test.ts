@@ -116,21 +116,11 @@ describe.concurrent("a class of the host of which the program makes no instance"
     expect(await retainsTest(unknown + names.map(name => `console.log(value.${name});`).join("\n"))).toBe(false);
   });
 
-  test("nor is a call of a method of that name, with text evaluated at run time beside it", async () => {
-    expect(
-      await retainsTest(
-        unknown +
-          `console.log(value.map((x: any) => x), value.pick("a"), value.not, value.resolves, value.rejects, new Function(process.argv[3])());`,
-      ),
-    ).toBe(false);
-  });
-
-  test("nor does text evaluated at run time keep bun:test, or what bun:test uses", async () => {
+  // Text that the build cannot read may import any built-in module by its name. In an executable without --aot `new Function("return import('bun:test')")()` answers with the module, and its expect() works.
+  test("text evaluated at run time keeps bun:test, which it may import by its name, and what bun:test uses", async () => {
     const { lines } = await of(`console.log(new Function(process.argv[3])());`);
-    const kept = ["Test", "RuntimeTranspiler", "DeepEquals", "Events", "AbortSignal"].filter(name =>
-      retainsFeature(lines, name),
-    );
-    expect(kept).toEqual([]);
+    const used = ["Test", "RuntimeTranspiler", "DeepEquals", "Events", "AbortSignal"];
+    expect(used.filter(name => retainsFeature(lines, name))).toEqual(used);
   });
 
   test("a program that calls expectTypeOf() keeps bun:test", async () => {

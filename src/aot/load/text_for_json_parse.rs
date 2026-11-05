@@ -1,8 +1,3 @@
-//! `bun test` hands the text of a JSON file to `JSON.parse`. The bundler's parser, which reads the file for the build, takes more than that: 0x10, 1_000, single quotes, `\v`,
-//! a form feed between two tokens, whatever follows the first value.
-
-/// Whether `JSON.parse` takes the text: the grammar of ECMA-404. What it says of a text that it refuses is for the run to find out: the loader of `bun test` is asked there.
-/// `JSON.parse` has no limit of depth, so what is open is kept in a list.
 pub(crate) fn is_taken_by_json_parse(text: &[u8]) -> bool {
     let mut reader = Reader { text, at: 0 };
     let mut open = Vec::new();
@@ -36,7 +31,6 @@ pub(crate) fn is_taken_by_json_parse(text: &[u8]) -> bool {
         if !is_read {
             return false;
         }
-        // Behind a value: the ends of what it closes, then a comma, or the end of the text.
         loop {
             reader.skip_blanks();
             let Some(&end) = open.last() else {
@@ -97,7 +91,6 @@ impl Reader<'_> {
         self.take_if(|it| it == byte)
     }
 
-    /// `"key" :`
     fn read_key(&mut self) -> bool {
         self.skip_blanks_and_take(b'"')
             && self.read_rest_of_string()
@@ -125,7 +118,6 @@ impl Reader<'_> {
         }
     }
 
-    /// `(0 | [1-9][0-9]*) ('.' [0-9]+)? ([eE] [+-]? [0-9]+)?`, behind its first digit.
     fn read_rest_of_number(&mut self, first: u8) -> bool {
         if first != b'0' {
             self.take_digits();

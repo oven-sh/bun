@@ -61,7 +61,6 @@ impl LibraryFunctions {
         }
     }
 
-    /// Nothing that the program can run names these functions at the top of their files.
     pub fn leave_out(&mut self, functions: FxHashSet<FunctionRef>) {
         self.left_out_functions = functions;
     }
@@ -70,7 +69,6 @@ impl LibraryFunctions {
         self.left_out_functions.contains(&function)
     }
 
-    /// Nothing that the program can run names what these declare at the top of their files, and nobody can tell whether they were evaluated.
     pub fn leave_out_declarations(&mut self, declarations: LeftOutDeclarations) {
         self.left_out_declarations = declarations;
     }
@@ -120,7 +118,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-/// `asked`: the file that is asked for the name, and the name there.
 pub(crate) fn emit_import_binding_asked(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: ImportBinding,

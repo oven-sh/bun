@@ -76,7 +76,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .iterator_close(iterator, kind, completion, &held);
     }
 
-    // Only a step of an async iterator suspends the function.
     fn get_values_held_by_step(&mut self, kind: IteratorKind) -> SmallVec<[ValueId; 4]> {
         match kind {
             IteratorKind::Async => self.get_held_values(),

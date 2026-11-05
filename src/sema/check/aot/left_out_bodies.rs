@@ -57,7 +57,6 @@ impl LeftOutBodies {
 pub(in crate::check) struct LeftOutOfCheck<'p> {
     bodies: Option<&'p LeftOutBodies>,
     ranges: Vec<(u32, u32)>,
-    /// Ascending.
     files_of_loader: &'p [FileId],
 }
 
@@ -72,7 +71,6 @@ impl<'p> Checker<'p, '_> {
 }
 
 impl Checker<'_, '_> {
-    /// Only a computed name finds the file, so no bundle holds it: what a bundler alone refuses throws there when it runs.
     pub(in crate::check) fn is_left_to_loader(&self, file: FileId) -> bool {
         self.left_out.files_of_loader.binary_search(&file).is_ok()
     }

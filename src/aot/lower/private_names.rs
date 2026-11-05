@@ -32,7 +32,6 @@ pub(in crate::lower) struct StoredValue {
     class: ClassId,
     member: MemberId,
     holder: PrivateHolder,
-    /// The name, where the program writes an access to it: `o.#x`.
     written: Option<Atom>,
 }
 
@@ -76,7 +75,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         split.taken_value
     }
 
-    // A new collection is a new private name, and the fields have room for the entries of one.
     fn continue_if_recorded(&mut self, access: PrivateStateAccess, otherwise: BlockId) {
         let collection = self.continue_if_type(access.collection, TypeTable::OBJECT, otherwise);
         let recorded = self.get_private_state_slot(access.state, PrivateStatePart::Collection);
@@ -95,7 +93,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call::emit_call(self, method, Some(access.collection), &arguments);
     }
 
-    // `new WeakMap()` that is stored in a variable of private state.
     pub(in crate::lower) fn record_state_creation(
         &mut self,
         creation: ExprId,

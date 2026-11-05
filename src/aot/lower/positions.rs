@@ -31,10 +31,8 @@ struct NamedVariable {
 #[derive(Default)]
 pub(in crate::lower) struct PositionState {
     annotations: FxHashMap<TypeNodeId, DeclaredType>,
-    /// By `SymbolId`.
     named_variables: Vec<Option<NamedVariable>>,
     variables: FxHashMap<Sym, DeclaredType>,
-    /// Each `const zero = 0` whose position is in `variables`.
     constant_zeros: FxHashSet<Sym>,
     functions: FxHashMap<FnId, Rc<FunctionPositions>>,
     listed_nullish: FxHashMap<CheckerTypeId, Primitives>,
@@ -54,7 +52,6 @@ struct PositionSource {
 impl FileLowering<'_, '_, '_, '_> {
     fn map_source(&mut self, ty: CheckerTypeId, is_annotation: bool) -> PositionSource {
         let mut mapped = self.map_type_at(ty);
-        // `x as never` silences the checker and says nothing about `x`.
         if mapped.ty == TypeTable::NEVER {
             mapped = Mapped::UNKNOWN;
         }
@@ -66,7 +63,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The answer is read only where the position holds `null` or `undefined`.
     fn find_listed_nullish_at(&mut self, ty: CheckerTypeId, mapped: TypeId) -> Primitives {
         let says_which = self.is_checked() && self.queries.files().options.strict_null_checks;
         let held = self.fragment.types.get(mapped).primitives;
@@ -81,7 +77,6 @@ impl FileLowering<'_, '_, '_, '_> {
         listed
     }
 
-    // Both, where the type cannot tell: the position then omits neither.
     fn find_listed_nullish(&mut self, ty: CheckerTypeId, depth: u32) -> Primitives {
         if depth > MAX_DEPTH_OF_LISTED_MEMBERS {
             return Primitives::NULLISH;
@@ -98,7 +93,6 @@ impl FileLowering<'_, '_, '_, '_> {
             ShapeKind::Anything(_)
             | ShapeKind::TypeVariable { constraint: None }
             | ShapeKind::Never => Primitives::NULLISH,
-            // Whatever stands in the place of `T extends Node` fits Node, so it lists no more than the bound does.
             ShapeKind::TypeVariable {
                 constraint: Some(constraint),
             } => self.find_listed_nullish(constraint, depth + 1),
@@ -114,7 +108,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The type of a position that holds a reference lists `undefined` and `null` whatever the program has written, because nothing keeps them out.
     fn find_omitted_nullish(&self, source: PositionSource) -> PositionFlags {
         let held = self.fragment.types.get(source.mapped.ty).primitives;
         let omitted = (held & Primitives::NULLISH).without(source.listed_nullish);
@@ -135,14 +128,12 @@ impl FileLowering<'_, '_, '_, '_> {
             return checked;
         };
         let mut source = self.map_source(written, true);
-        // What an annotation takes from declarations that nobody checked is left out of its written form.
         if source.mapped.ty == TypeTable::ANYTHING {
             return checked.map(|checked| PositionSource {
                 mapped: Mapped::expected(checked.mapped.ty),
                 ..checked
             });
         }
-        // `x?: number` is written `number`.
         if let Some(checked) = checked {
             let types = &mut self.fragment.types;
             let listed = types.get(checked.mapped.ty).primitives & Primitives::NULLISH;
@@ -155,7 +146,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(source)
     }
 
-    // Only a written `int32` asks the build for the proof.
     fn find_promise(&mut self, source: PositionSource) -> PositionFlags {
         let is_tested = self.is_checked()
             && source.mapped.is_checked
@@ -163,7 +153,6 @@ impl FileLowering<'_, '_, '_, '_> {
         if !is_tested || !source.is_annotation || !types::lists_int32(self, source.ty) {
             return PositionFlags::default();
         }
-        // In a dependency a missing proof does not stop the build: only that package's author could supply it.
         match self.is_in_dependency() {
             true => PositionFlags::IS_INT32_PROMISE | PositionFlags::IS_DECLARED_BY_DEPENDENCY,
             false => PositionFlags::IS_INT32_PROMISE,
@@ -187,14 +176,12 @@ impl FileLowering<'_, '_, '_, '_> {
         self.finish_position(source, flags)
     }
 
-    // Whoever declares a position of a type says what the fields of the type hold.
     pub(crate) fn create_position(&mut self, types: PositionTypes) -> DeclaredType {
         let position = self.build_position_of_types(types);
         self.note_layouts_of_objects(position.ty);
         position
     }
 
-    // Without an annotation the checker has the type of the expressions that flow in. Nobody declared it: the engine follows what is stored there.
     pub(crate) fn create_written_position(&mut self, types: PositionTypes) -> DeclaredType {
         match types.written.written() {
             Some(_) => self.create_position(types),
@@ -206,7 +193,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.build_position_of_types(types)
     }
 
-    // `a?: number` is written `number`, and holds `undefined` where it is left out.
     pub(crate) fn add_undefined(&mut self, position: DeclaredType) -> DeclaredType {
         let ty = self.fragment.types.union(position.ty, TypeTable::UNDEFINED);
         let flags = position.flags.without(PositionFlags::OMITS_UNDEFINED);
@@ -252,7 +238,6 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => self.queries.canonical_symbol(self.file, symbol),
         };
         let position = self.variable_position(variable);
-        // A mock that is laid over the module stores what its factory gives into the variable.
         let is_replaceable = self.inputs.modules.is_replaceable(variable);
         let positions = &mut self.types.positions;
         let named = NamedVariable {
@@ -273,7 +258,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.named_variable(symbol).position
     }
 
-    /// Whether the name stands for a `const zero = 0`, of this file or imported.
     pub(in crate::lower) fn is_constant_zero(&mut self, symbol: SymbolId) -> bool {
         self.named_variable(symbol).is_constant_zero
     }

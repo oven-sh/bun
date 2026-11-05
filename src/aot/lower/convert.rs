@@ -57,7 +57,6 @@ impl ConvertedValues {
 pub(in crate::lower) struct ConversionState {
     written_expressions: FxHashMap<ExprId, Option<CheckerTypeId>>,
     converted_values: ConvertedValues,
-    /// How many levels of parts were followed below a source and a target.
     followed_parts: FxHashMap<(CheckerTypeId, CheckerTypeId), u8>,
     recorded_flows: flows::RecordedFlows,
 }
@@ -66,8 +65,6 @@ pub(crate) fn establishes_type(position: DeclaredType) -> bool {
     !position.is_expected()
 }
 
-// A type goes out where the program declares one: at a parameter, a result, a field, a variable with an annotation and a cast, and at a call of code that is not in the program.
-// The engine types every other expression by flow, so nobody asks the checker what flows into a position: `source` serves the proof of an `int32` alone.
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_convert(
         &mut self,
@@ -82,7 +79,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         converted
     }
 
-    // The build proves a promise of an `int32` at each request for it.
     fn is_converted(&mut self, value: ValueId, position: DeclaredType) -> bool {
         let function = self.function;
         let values = &mut self.file.types.conversions.converted_values;
@@ -92,7 +88,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             })
     }
 
-    // What an assertion claims for a value can lie outside the type of the variable that holds it.
     pub(in crate::lower) fn is_converted_within(
         &mut self,
         value: ValueId,
@@ -118,7 +113,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         source: Option<ExprId>,
         construct: Construct,
     ) -> ValueId {
-        // What is read out of a position enters none. Whoever builds the program cannot change what a dependency asserts.
         let flags = position.flags;
         let is_promise = flags.contains(PositionFlags::IS_INT32_PROMISE);
         let owes_proof = match construct {
@@ -148,7 +142,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_convert(value, position, cause)
     }
 
-    // The conversion of a declaration or a literal is at the value. That of an assignment is at the assignment.
     pub(crate) fn convert_initializer(
         &mut self,
         value: ValueId,
@@ -173,7 +166,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(written) = self.file.queries.written_type(ty).written() {
             self.file.record_flow_into_written_type(expr, written);
         }
-        // A cast begins where its operand does, and so does the flow that takes it: `{ lane: n as int32 }`. Each owes a proof of its own and has an error of its own, so the cast stands at its type.
         let at = self.position();
         if position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
             self.set_position(self.file.hir[ty].pos);
@@ -183,9 +175,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         converted
     }
 
-    // `for (let i: int32 = 0; i < point[key]; i++)`, `return Math.max(point.x, point.y)`: what is read out of a position whose numbers are all `int32`s was judged where it entered (breaks_no_int32_promise()).
-    // Where the read itself flows into a promise the conversion there says so. AS AN OPERAND IT ENTERS NO POSITION, and the proof of what is made of it had only what the engine finds by itself: nothing of a read under one of two names,
-    // `number` of a field whose layout a type with the same names and other numbers shares. So the type goes out behind the read: it serves the proof of an `int32`, as `source` does. The old front end laid the checker's type behind every expression.
     pub(in crate::lower) fn state_int32_of_read(
         &mut self,
         read: ExprId,

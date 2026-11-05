@@ -41,13 +41,13 @@ impl CodeImportKind {
     }
 }
 
-/// How an import is written. A host tells its plugins, and says which directory each form looks from.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum CodeImportForm {
     Static,
     Dynamic,
     ResolveOnly,
     Macro,
+    WrittenByHost,
 }
 
 impl CodeImportForm {
@@ -98,7 +98,6 @@ pub enum CodeFailure {
 }
 
 impl CodeFailure {
-    /// A `package.json` turns the name away: "exports" of the package, or "imports" of the importer's.
     pub fn is_refusal_of_package_json(self) -> bool {
         match self {
             CodeFailure::PackagePathNotExported
@@ -157,7 +156,6 @@ pub enum ComputedCandidate<'h> {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ComputedSpelling<'h> {
     pub text: &'h [u8],
-    /// An index into the candidates.
     pub candidate: u32,
 }
 
@@ -165,7 +163,6 @@ pub struct ComputedSpelling<'h> {
 pub enum ComputedResolution<'h> {
     Candidates {
         candidates: &'h [ComputedCandidate<'h>],
-        /// Ascending by text, each text once. A candidate the host names has no spelling.
         spellings: &'h [ComputedSpelling<'h>],
     },
     All {
@@ -185,7 +182,6 @@ pub(super) struct CodeState<'h> {
     options: &'h CodeOptions,
     resolutions: Memo<&'h [u8], CodeResolution<'h>>,
     manifests: Memo<&'h [u8], Option<&'h CodeManifest<'h>>>,
-    /// For the file that "module" names in a package, the file that `require` of the package finds.
     required_files: bun_threading::Guarded<FxHashMap<&'h [u8], &'h [u8]>>,
     configs: ConfigCaches<'h>,
 }
@@ -222,14 +218,12 @@ impl<'h> Resolver<'h> {
             .expect("the code question needs `Resolver::for_compile`")
     }
 
-    /// `Some` if an import of a package found `path` where `require` finds another file.
     #[cfg(test)]
     fn file_required_in_place_of(&self, path: &[u8]) -> Option<&'h [u8]> {
         let required_files = self.code_state().required_files.lock();
         required_files.get(path).copied()
     }
 
-    /// Each file that an import of a package found where `require` finds another file, with that other file. In no order.
     pub fn files_required_in_place_of_others(&self) -> Vec<(&'h [u8], &'h [u8])> {
         let required_files = self.code_state().required_files.lock();
         let entries = required_files.iter();

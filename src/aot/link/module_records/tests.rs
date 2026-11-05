@@ -38,7 +38,6 @@ fn link_program_without_bun_modules(files: &[(&str, &str)]) -> Program {
     program_with_functions(linked.expect("the program links"))
 }
 
-// The first file is the test file that the runner starts.
 fn link_test_run(files: &[(&str, &str)]) -> Program {
     with_loaded_test_run(files, &default_settings(), |build, loaded| {
         let bound = build.bind_modules(loaded);
@@ -344,7 +343,6 @@ fn import_call_of_replaced_namespace_resolves_the_object() {
         let program = link_program(&[("main.js", main.as_str())]);
         print_functions_of(&program, module_named(&program, "main.js"))
     };
-    // `bun build` writes `Bun` where its transpiler reads the name. Without `--minify-syntax` a constant keeps its name.
     for (head, specifier) in [("", "'bun'"), ("", "'b' + 'un'")] {
         let replaced = print(head, specifier);
         assert!(!replaced.contains(" = ImportModule "), "{head}{specifier}");
@@ -492,7 +490,6 @@ fn a_load_that_leads_to_a_module_that_throws_follows_the_way_there_alone() {
     assert_eq!(imports_of("above.js"), [named("broken.js")]);
     assert_eq!(imports_of("graph.test.js"), [named("above.js")]);
     assert!(record_named(&program, "above.js").required_names.is_empty());
-    // The verifier of the engine asks that a module lead to what it names.
     let only_named = |path_suffix| targets_of(&program, path_suffix, ModuleRequestKind::Require);
     assert_eq!(only_named("broken.js"), [named("below.js")]);
     assert_eq!(only_named("above.js"), [named("sibling.js")]);
@@ -523,7 +520,6 @@ fn top_level_await_is_flagged() {
     assert!(!has_await("plain.js"));
 }
 
-// Each file is imported for nothing.
 fn files_left_out(package: &[(&str, &str)]) -> Vec<String> {
     let main = "import 's';\nimport 's/lib/b.js';\nimport 's/lib/c.cjs';\nimport 's/esm/d.js';\nimport './local.js';\n";
     let mut files = vec![
@@ -567,7 +563,6 @@ fn side_effects_field_decides_which_unused_files_are_left_out() {
             r#", "sideEffects": ["./lib/b.js"]"#,
             &["s/a.js", "lib/c.cjs", "esm/d.js"],
         ),
-        // A list that names no file of the program speaks for every file.
         (r#", "sideEffects": ["./other.js"]"#, every_file),
         (r#", "sideEffects": ["./lib/*", "./a.js"]"#, &["esm/d.js"]),
     ];

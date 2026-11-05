@@ -19,6 +19,7 @@ pub(super) fn build<'s>(
         file: javascript_module_file(),
         atoms,
         host_values: Vec::new(),
+        has_written_temporal: false,
     };
     let statements = builder.statements(module);
     builder.finish(&statements, arena)
@@ -94,6 +95,7 @@ struct Builder<'a, 's> {
     file: FileBuilder,
     atoms: &'a Interner<'s>,
     host_values: Vec<(ExprId, HostValue<'s>)>,
+    has_written_temporal: bool,
 }
 
 impl<'s> Builder<'_, 's> {
@@ -128,7 +130,6 @@ impl<'s> Builder<'_, 's> {
                 self.file.add_flags(path, ExprFlags::RESOLVED_AT_RUNTIME);
                 vec![self.export_default(path)]
             }
-            // `import { db } from "./data.sqlite" with { type: "sqlite" }`: one object under two names.
             DataModule::Database { path, place } => {
                 let names = self.local_names(&[], 2);
                 let (database_name, marker_name) = (names[0], names[1]);
@@ -162,8 +163,11 @@ impl<'s> Builder<'_, 's> {
     }
 
     fn host_value(&mut self, value: &'s DataValue<'s>) -> ExprId {
+        self.has_written_temporal = false;
         let root = self.value(value);
-        self.host_values.push((root, HostValue::Data(value)));
+        if !self.has_written_temporal {
+            self.host_values.push((root, HostValue::Data(value)));
+        }
         root
     }
 
@@ -259,6 +263,14 @@ impl<'s> Builder<'_, 's> {
             DataValue::Number(number) => ExprKind::Number(self.file.number(number)),
             DataValue::String(text) => ExprKind::String(text),
             DataValue::BigInt(digits) => ExprKind::BigInt(digits),
+            DataValue::Temporal { class, text } => {
+                self.has_written_temporal = true;
+                let temporal = self.expr(ExprKind::Ident(self.atoms.intern(b"Temporal")));
+                let class = self.member(temporal, class);
+                let from = self.member(class, self.atoms.intern(b"from"));
+                let text = self.expr(ExprKind::String(text));
+                ExprKind::Call(self.call(from, &[text]))
+            }
             DataValue::Array(elements) => {
                 frames.push(Frame::new(Composite::Array(elements), child_ids.len()));
                 return;
@@ -344,7 +356,6 @@ impl<'s> Builder<'_, 's> {
                 self.expr(ExprKind::Call(call))
             }
             DatabasePlace::Disk => path,
-            // As the loader looks for a file that the executable does not hold. It throws where there is none.
             DatabasePlace::WorkingDirectory => {
                 let process = self.expr(ExprKind::Ident(known::process));
                 let cwd = self.member(process, self.atoms.intern(b"cwd"));

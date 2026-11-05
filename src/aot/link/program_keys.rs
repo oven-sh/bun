@@ -24,14 +24,11 @@ pub type ProgramLayoutKey = InProject<LayoutKey>;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ProgramModule {
     File(ProgramFile),
-    /// The callback of `__commonJS(cb)` or `__esm(fn)` in a bundle.
     Inner {
         file: ProgramFile,
         callback: FnId,
     },
-    /// What ES modules request in place of a CommonJS file.
     Face(ProgramFile),
-    /// Throws for a name that the ES graph below a file imports and no CommonJS file of it stores.
     Check(ProgramFile),
     Runtime(RuntimeModule),
     External {
@@ -46,7 +43,6 @@ impl ProgramModule {
         order_in_file(self).map(|(file, _, _)| file)
     }
 
-    /// As the graph of its project names a module that has its text in a file.
     pub fn in_own_project(self) -> Option<(ProjectId, ModuleRef)> {
         Some(match self {
             ProgramModule::File(file) => (file.project, ModuleRef::File(file.file)),
@@ -63,7 +59,6 @@ impl ProgramModule {
         })
     }
 
-    /// The body of a record that a file has beside its own. The fragment of the file names the body of its own record.
     pub fn body_key(self) -> Option<ProgramFunctionKey> {
         let (file, key) = match self {
             ProgramModule::Inner { file, callback } => {
@@ -85,7 +80,6 @@ impl ProgramModule {
         })
     }
 
-    /// What holds `module.exports` where the exports of the module are one value.
     pub fn exports_variable_key(self) -> Option<ProgramVariableKey> {
         let (file, key) = match self {
             ProgramModule::File(file) => (file, VariableKey::ModuleExports(file.file)),
@@ -108,16 +102,8 @@ impl ProgramModule {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ProgramVariableKey {
     Declared(InProject<VariableKey>),
-    SyntheticExport {
-        module: ProgramModule,
-        name: Atom,
-    },
-    /// What ES importers hold of a name of the CommonJS file `module`.
-    Copy {
-        module: ProgramModule,
-        name: Atom,
-    },
-    /// `VariableKey::MockOfRuntimeModule`
+    SyntheticExport { module: ProgramModule, name: Atom },
+    Copy { module: ProgramModule, name: Atom },
     MockOfRuntimeModule(RuntimeModule),
 }
 
@@ -208,7 +194,6 @@ impl KeyContext<'_> {
     }
 }
 
-// The records of a file stand together: its own, its inner modules, its face, its check.
 fn order_in_file(module: ProgramModule) -> Option<(ProgramFile, u8, u32)> {
     match module {
         ProgramModule::File(file) => Some((file, 0, 0)),
@@ -263,7 +248,6 @@ fn order_of_variant(key: ProgramVariableKey) -> u8 {
     }
 }
 
-/// Total, and equal only for equal keys. A name goes by its bytes: the number of an `Atom` differs from run to run.
 pub(super) fn compare_program_variable_keys(
     a: ProgramVariableKey,
     b: ProgramVariableKey,

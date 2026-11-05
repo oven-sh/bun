@@ -14,8 +14,6 @@ const THREAD_COUNT: NonZeroUsize = NonZeroUsize::new(7).unwrap();
 const TEXT: &[u8] = b"text";
 const REFUSAL: &[u8] = b"the engine knows no such word";
 
-// A test program links no engine. In a test build `engine.rs` calls the two fakes where Bun calls the engine's functions with the same parameters.
-
 pub(super) fn fake_initialize_options(options: &mut CompileOptions) {
     *options = CompileOptions {
         size: size_of::<CompileOptions>() as u32,
@@ -23,7 +21,6 @@ pub(super) fn fake_initialize_options(options: &mut CompileOptions) {
     };
 }
 
-/// Knows only `check=Validate`. Like the engine, it leaves the record unchanged when it refuses a word, writes as much of the sentence as fits, and returns the sentence's whole length.
 /// SAFETY: `options` is valid for reads and writes, `word` for reads, and `message` for writes of `capacity` bytes.
 pub(super) unsafe fn fake_apply_option_word(
     options: *mut CompileOptions,

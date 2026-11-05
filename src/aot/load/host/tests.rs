@@ -161,7 +161,6 @@ impl SourceProvider for ScriptedProvider {
     ) -> Result<DataModule<'s>, DataFailure> {
         self.record_call("parse_data", file.path);
         match file.loader {
-            // As the bundler answers.
             Loader::Html => Ok(DataModule::Page),
             _ => WithoutServices.parse_data(file, arena, atoms, log),
         }
@@ -236,7 +235,6 @@ impl<'s> Fixture<'_, 's> {
         take_messages(self.messages)
     }
 
-    /// Asserts that exactly one message was reported, with this code, and returns its text.
     fn take_refusal(&self, code: Code) -> Vec<u8> {
         let mut messages = self.take_messages();
         let texts: Vec<&BStr> = messages.iter().map(BStr::new).collect();
@@ -260,7 +258,6 @@ impl<'s> Fixture<'_, 's> {
         payload_of(&parsed).parse_failure.clone()
     }
 
-    /// As the load does with the assets that it has found.
     fn finish_asset_reads(&self, paths: &[&[u8]]) {
         assert!(self.host.start_background_reads(paths));
         for path in paths {
@@ -692,7 +689,6 @@ fn empty_module_stands_in_place_of_text_that_is_no_program_where_code_runs_in_pl
             assert_eq!(payload_of(&parsed).kind, SourceKind::Program);
         }
         assert_eq!(failure_of(b"/project/program.so"), None);
-        // The name says that it is TypeScript: the build reports what is wrong with it.
         assert_eq!(failure_of(b"/project/wrong.ts"), None);
         let wrong = parse_as_required(fixture, b"/project/wrong.ts");
         assert!(!wrong.hir.diagnostics.is_empty());
@@ -709,7 +705,6 @@ fn executable_carries_text_that_only_its_name_calls_a_program() {
             (source.kind, source.loader),
             (SourceKind::Data, Loader::File)
         );
-        // The loader of `bun run` answers the call, and fails there.
         let required = parse_as_required(fixture, b"/project/library.so");
         let source = payload_of(&required);
         let said = source.parse_failure.as_deref();
@@ -1217,7 +1212,6 @@ fn body_of_deferred_bundled_commonjs_is_parsed() {
         let texts = host.finish_deferred_reads();
         let text = Cow::Borrowed(BUNDLED_COMMONJS_TEXT.as_bytes());
         assert_eq!(texts, [(DEFERRED_BUNDLE.to_vec(), text)]);
-        // The load parses the text that it is handed here, and never asks `read_code` for it.
         let bundled = fixture.parse_text(DEFERRED_BUNDLE, BY_NAME, &texts[0].1);
         assert_eq!(bundled.hir.fns.len(), 0);
         assert!(fixture.take_messages().is_empty());
@@ -1329,7 +1323,6 @@ fn test_file_that_is_no_program_fails_where_it_is_loaded() {
         let said = source.parse_failure.as_deref();
         assert_eq!(said, Some(&b"';' expected. (1:6)"[..]));
     });
-    // An executable has nobody to catch it: the build reports what is wrong with the file.
     with_host(&files, |fixture| {
         let parsed = fixture.parse(MAIN, BY_NAME);
         assert!(!parsed.hir.diagnostics.is_empty());
@@ -1368,12 +1361,10 @@ fn json_that_json_parse_refuses_fails_where_a_test_run_loads_it() {
             let said = fixture.parse_failure_of(&path_of(name));
             assert_eq!(said.as_deref(), refused, "{name}");
         }
-        // Its name makes it jsonc: what its parser says of it stands.
         let said = fixture.parse_failure_of(&path_of("tsconfig.json"));
         assert_ne!(said.as_deref(), refused);
         assert_eq!(fixture.parse_failure_of(&path_of("strict.json")), None);
     });
-    // The plain executable holds what the bundler's parser has read, so that parser is asked alone.
     with_host(&files, |fixture| {
         for (name, _) in files {
             let said = fixture.parse_failure_of(&path_of(name));
@@ -1382,7 +1373,6 @@ fn json_that_json_parse_refuses_fails_where_a_test_run_loads_it() {
     });
 }
 
-// The statements of the first file in their order, how many names in it the build has made, and how many `import()` it holds.
 fn describe_file_of_test_run(name: &str, text: &str) -> String {
     let files = [
         (name, text),

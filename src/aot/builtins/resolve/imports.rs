@@ -116,7 +116,6 @@ impl Resolver<'_, '_> {
             ExportLookup::Unlisted | ExportLookup::HeldByNamespace => return None,
         };
         if found == object {
-            // The `default` of a module of native code is the object itself, until a mock exports another.
             let is_replaced = self.input.replaced.binary_search(&(object as u32)).is_ok();
             return Some(BuiltinPath {
                 id: object,
@@ -157,7 +156,6 @@ impl Resolver<'_, '_> {
         self.aliases.insert(symbol, AliasSource::Known(value));
         match value.kind {
             HolderKind::ModuleNamespace => self.mention(value.path.id),
-            // `finish` mentions the path of every symbol it publishes.
             HolderKind::Object => {}
         }
         if self.is_exported(symbol)
@@ -191,13 +189,16 @@ impl Resolver<'_, '_> {
             });
             return ExprState::Builtin(runner.with_side_effects());
         }
+        if self.is_call_of_bun_jest(expr) {
+            let runner = imported_namespace_value(RuntimeModule::BunTest);
+            return ExprState::Held(runner.with_side_effects());
+        }
         if input.dialect == SourceDialect::Runtime {
             return self.compute_native_call_state(expr);
         }
         ExprState::Unresolved
     }
 
-    // `const { spyOn } = await import("bun:test")`: what `await` answers is what `import * as all from "bun:test"` names, and what is done with it is in sight.
     pub(super) fn compute_state_of_awaited_import(&self, promise: ExprId) -> ExprState {
         let call = self.input.hir.skip_type_assertions(promise);
         let module = self
@@ -212,7 +213,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// The promise goes nowhere but into the `await` around the call: `compute_state_of_awaited_import`.
     pub(super) fn is_import_awaited_at_once(&self, call: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut promise = call;
@@ -223,6 +223,17 @@ impl Resolver<'_, '_> {
             promise = parent;
         }
         false
+    }
+
+    fn is_call_of_bun_jest(&self, expr: ExprId) -> bool {
+        let hir = self.input.hir;
+        let ExprKind::Call(call) = hir[expr].kind else {
+            return false;
+        };
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        mentioned_id(self.state(callee)).is_some_and(|callee| {
+            table::canonical_id(callee) == table::canonical_id(BuiltinId::BunJest)
+        })
     }
 
     fn find_runner_that_stub_answers(&self, expr: ExprId) -> Option<BuiltinId> {

@@ -3,7 +3,6 @@ use super::tables::LinkTables;
 use crate::ir::parallel::map_each;
 use crate::ir::{Id, InParallel, PropertyKey, PropertyKeyId, PropertyKeyTable};
 
-/// `Some(None)`: the key names no such record. `None`: it names one that the program lacks.
 fn find_program_id<I: Id>(id: Option<I>, program_ids: &[Option<I>]) -> Option<Option<I>> {
     match id {
         Some(id) => program_ids[id.index()].map(Some),
@@ -11,7 +10,6 @@ fn find_program_id<I: Id>(id: Option<I>, program_ids: &[Option<I>]) -> Option<Op
     }
 }
 
-/// The key in the ids of the program. `None`: the program cannot hold it.
 fn remap_key(key: &PropertyKey, ids: &TableIds) -> Option<PropertyKey> {
     let PropertyKey {
         kind,
@@ -31,27 +29,21 @@ fn remap_key(key: &PropertyKey, ids: &TableIds) -> Option<PropertyKey> {
     })
 }
 
-/// Sorts the keys and drops repeats. The keys must hold ids of the program: an order among the numbers of one set of tables must not
-/// reach the program.
 fn sort_distinct_keys(keys: &mut Vec<PropertyKey>) {
-    // Where the keys are a row of ascending runs, this sort merges the runs.
     keys.sort();
     keys.dedup();
 }
 
-// How the sort is cut into tasks. No answer depends on these.
 const PART_COUNT: usize = if cfg!(test) { 8 } else { 64 };
 const SAMPLES_PER_PART: usize = 8;
 const MIN_PART_LENGTH: usize = if cfg!(test) { 16 } else { 1 << 12 };
 const _: () = assert!(MIN_PART_LENGTH >= SAMPLES_PER_PART);
 
-/// Ascending, no two alike. One more part than splitters.
 fn choose_splitters(runs: &[Vec<PropertyKey>]) -> Vec<PropertyKey> {
     let count: usize = runs.iter().map(Vec::len).sum();
     if count < PART_COUNT * MIN_PART_LENGTH {
         return Vec::new();
     }
-    // Every `stride`-th key of the runs laid end to end. Sampling each run by itself would take only the lowest key of a short run.
     let stride = count / (PART_COUNT * SAMPLES_PER_PART);
     let samples = runs.iter().flatten().step_by(stride);
     let mut samples: Vec<PropertyKey> = samples.copied().collect();
@@ -60,11 +52,9 @@ fn choose_splitters(runs: &[Vec<PropertyKey>]) -> Vec<PropertyKey> {
     splitters.skip(1).collect()
 }
 
-/// The keys of the runs, ascending, each once. Each run is ascending.
 fn unite_runs(runs: &[Vec<PropertyKey>], in_parallel: InParallel<'_>) -> Vec<PropertyKey> {
     let splitters = choose_splitters(runs);
     let parts: Vec<usize> = (0..=splitters.len()).collect();
-    // Keys that are alike fall into one part, and every key of a part is below every key of the next.
     let parts = map_each(parts, in_parallel, &|part: usize| {
         let from = part.checked_sub(1).map(|previous| &splitters[previous]);
         let to = splitters.get(part);
@@ -83,7 +73,6 @@ fn unite_runs(runs: &[Vec<PropertyKey>], in_parallel: InParallel<'_>) -> Vec<Pro
     parts.concat()
 }
 
-/// `lists`: what is read of the keys of each set of tables.
 fn merge_key_lists(
     lists: &[&[PropertyKey]],
     ids: &[TableIds],
@@ -101,7 +90,6 @@ fn merge_key_lists(
     let program_keys = unite_runs(&runs, in_parallel);
     drop(runs);
 
-    // The id of a key is its rank among the keys of the program.
     let program_ids: Vec<Vec<Option<PropertyKeyId>>> =
         map_each(all_tables, in_parallel, &|tables: usize| {
             let find_id = |key: &PropertyKey| {
@@ -117,11 +105,6 @@ fn merge_key_lists(
     )
 }
 
-/// The property keys of all tables in one table, ascending. The table is a set of keys in the ids of the program, laid out in a total order,
-/// so it depends neither on which files share tables nor on the order of the tables.
-/// The second result holds one list per set of tables: the program's id of each key, by the key's number in those tables.
-/// `None`: the key names a record that the program lacks.
-/// `ids` leads to the strings, the layouts and the modules of the program.
 pub(super) fn merge_property_keys(
     tables: &[LinkTables],
     ids: &[TableIds],
@@ -162,7 +145,6 @@ mod tests {
         PropertyKey::from_created_symbol(module(creator), call_number, None)
     }
 
-    // String `n` of the tables is string `strings[n]` of the program, and so on.
     fn ids_of(strings: &[usize], layouts: &[usize], modules: &[usize]) -> TableIds {
         TableIds {
             strings: strings.iter().map(|&index| Some(string(index))).collect(),
@@ -172,7 +154,6 @@ mod tests {
         }
     }
 
-    // A set of tables holds one text key for each of its strings, in their order. An entry lists the strings as `ids_of` takes them.
     fn merge_text_keys(
         strings_of_tables: &[Vec<usize>],
         in_parallel: InParallel<'_>,
@@ -262,7 +243,6 @@ mod tests {
         assert_eq!(program_ids, [[None, None, None, None, id(0), id(1)]]);
     }
 
-    // Enough keys for many parts.
     #[test]
     fn program_does_not_depend_on_how_the_keys_are_spread_over_tables() {
         let mut strings_of_tables: [Vec<usize>; 3] = [
@@ -274,7 +254,6 @@ mod tests {
         let expected: Vec<PropertyKey> = (0..2000).map(text_key).collect();
         assert_eq!(table.as_slice(), expected);
         for (strings, program_ids) in strings_of_tables.iter().zip(&program_ids) {
-            // A text key stands where its text stands among the strings.
             let ranks = strings.iter().map(|&text| id(text));
             assert!(program_ids.iter().copied().eq(ranks));
         }

@@ -47,7 +47,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 name: None,
                 ..self.create_untyped_variable(known::default)
             },
-            // Nobody reads it but the body, behind the call that has stored it.
             VariableKey::EnvironmentMadeAhead(_) => {
                 let scope = module::file_scope(self);
                 let layout = environments::environment_layout(self, scope);
@@ -91,7 +90,6 @@ impl FileLowering<'_, '_, '_, '_> {
         id
     }
 
-    // It holds `undefined` until the body of the module stores into it.
     fn create_untyped_variable(&mut self, name: Atom) -> Variable {
         Variable {
             name: Some(self.intern_atom(name)),
@@ -102,8 +100,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// The variable of an exported hoisted function that captures. It is not born with the function: the body, or what runs ahead of the body, makes the closure and stores it,
-    /// and a file of a ring whose body runs in front of that finds nothing.
     pub(super) fn is_export_that_code_fills(&self, symbol: SymbolId) -> bool {
         let placement = self.scopes.placement(BindingRef::Symbol(symbol));
         let (file, id) = (self.file, symbol);

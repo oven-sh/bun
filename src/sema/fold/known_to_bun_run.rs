@@ -2,6 +2,7 @@ use super::Constant;
 use super::evaluate::Value;
 use super::folder::{Effects, Folder};
 use super::inputs::DefineValue;
+use super::known_sets::is_prototype_of_patterns_locked;
 use crate::atom::{Atom, known};
 use crate::bind::{CommonJsVariable, Parent};
 use crate::hir::{BinOp, ExprId, ExprKind, MemberKey, UnOp};
@@ -12,7 +13,6 @@ fn is_logical(op: BinOp) -> bool {
     matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
 }
 
-/// `should_fold_typescript_constant_expressions` in `visit_binary`. Two literals are compared for equality everywhere.
 fn is_computed_only_among_constants(op: BinOp) -> bool {
     match op {
         BinOp::Add
@@ -51,11 +51,6 @@ pub(super) struct ExcludedOperand {
     pub(super) is_excluded_under_minify_syntax: bool,
 }
 
-/// A build folds what `bun run` leaves alone: the defines that `bun build` adds by itself, what every executable has, variables that are stored once.
-/// What an executable computes goes by what `bun build` folds with the same `--define` and `--minify-syntax`, so each folded expression remembers who can fold it.
-/// Under `--minify-syntax` that is what `bun run` folds, which the names here say. Without it `bun build` folds less: `computes_with_constants`.
-/// `bun run` itself has the flag whatever the build was told. Which words an error has goes by what it printed, and whether a file is CommonJS by what it removed:
-/// `folded_under_minify_syntax`, `Decisions::as_folded_under_minify_syntax`. A bundle made without the flag takes a file for CommonJS whose only `require()` a constant switches off.
 impl<'s> Folder<'_, 's> {
     pub(super) fn mark_folded_by_build_alone(&mut self, e: ExprId) {
         self.folded_by_build_alone.insert(e.idx());
@@ -78,7 +73,6 @@ impl<'s> Folder<'_, 's> {
         holds
     }
 
-    /// For what `mark_folded_by_build_alone` has marked by a rule that asks for the flag.
     pub(super) fn mark_folded_under_minify_syntax_if(
         &mut self,
         e: ExprId,
@@ -89,9 +83,14 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// For what `has_operand_folded_by_build_alone` has marked.
+    pub(super) fn mark_folded_under_minify_syntax_alone(&mut self, e: ExprId) {
+        if !self.inputs.minifies_syntax {
+            self.mark_folded_by_build_alone(e);
+            self.folded_under_minify_syntax.insert(e.idx());
+        }
+    }
+
     pub(super) fn note_fold_under_minify_syntax(&mut self, e: ExprId, value: Value) {
-        // A left addend has no value of its own, and the sum asks who folds it.
         let is_addition = matches!(self.hir[e].kind, ExprKind::Binary { op: BinOp::Add, .. });
         let is_asked_about =
             is_addition || matches!(value, Value::Known(_)) || self.conditions.contains_key(&e);
@@ -111,8 +110,6 @@ impl<'s> Folder<'_, 's> {
                 && self.conditions_told_under_minify_syntax.contains(e.idx()))
     }
 
-    /// An executable is held to `bun build --compile` with the same options. Under `--minify-syntax` its transpiler computes with constants everywhere, as
-    /// `bun run` does. Without it, in the initializer of a member of an enum, in the operands of `import()`, `require()` and `require.resolve()`, and behind an `import()`.
     pub(super) fn computes_with_constants(&self, e: ExprId) -> bool {
         self.minifies_syntax() || self.find_places_always_computed().contains(e.idx())
     }
@@ -121,7 +118,6 @@ impl<'s> Folder<'_, 's> {
         self.places_always_computed.get_or_init(|| {
             let count = self.hir.exprs.len();
             let mut places = PositionSet::new(count);
-            // A parent comes behind its parts.
             for index in (0..count).rev() {
                 let e = ExprId(index as u32);
                 let is_computed = match self.bound.parent_of_expr(e) {
@@ -140,11 +136,8 @@ impl<'s> Folder<'_, 's> {
         })
     }
 
-    /// `e_import` switches `should_fold_typescript_constant_expressions` on and leaves it on. `e_call` puts it back behind its arguments to what it was in front of them,
-    /// and an enum behind its members. The transpiler is through with the expressions in the order of their numbers: that of the text, a parent behind its parts.
     fn add_places_behind_imports(&self, places: &mut PositionSet) {
         let (hir, bound) = (self.hir, self.bound);
-        // The first `import()` of those that have switched it on.
         let mut switched_on_by: Option<usize> = None;
         for (index, expr) in hir.exprs.iter().enumerate() {
             let parent = || bound.parent_of_expr(ExprId(index as u32));
@@ -184,7 +177,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `canBeConstValue`: what `bun run` has written a literal for. A BigInt is not among them.
     pub(super) fn can_be_const_value(&self, init: ExprId) -> bool {
         let folded = self.folded(init);
         let Value::Known(value) = folded.value else {
@@ -202,7 +194,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `"a" + "b"` is kept in two pieces.
     pub(super) fn is_kept_in_one_piece(&self, expression: ExprId, text: Atom) -> bool {
         let hir = self.hir;
         let mut e = expression;
@@ -245,8 +236,74 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `bun run` puts the value of a constant in place of its reads only where nothing but declarations of constants
-    /// stands in front of it in its list of statements, and at the top of a file only where the file has no `export { a } from`.
+    pub(super) fn is_hot_of_import_meta(&self, e: ExprId) -> bool {
+        let hir = self.hir;
+        matches!(hir.member_key(e), Some((object, MemberKey::Name(known::hot)))
+            if matches!(hir[hir.skip_type_assertions(object)].kind, ExprKind::ImportMeta))
+    }
+
+    pub(super) fn find_text_of_pattern(&self, e: ExprId) -> Option<Value> {
+        let is_written_by_transpiler = self.inputs.is_held_to_minified_syntax();
+        if let Some(text) = self.find_text_written_for_constructor(e) {
+            let text = Value::from(Constant::String(self.atoms.intern(text)));
+            return is_written_by_transpiler.then_some(text);
+        }
+        let ExprKind::Regex { pattern, flags } = self.hir[self.hir.skip_type_assertions(e)].kind
+        else {
+            return None;
+        };
+        let (pattern, flags) = (self.atoms.bytes(pattern), self.atoms.bytes(flags));
+        let is_same_in_every_run =
+            flags.is_sorted() && is_prototype_of_patterns_locked(self.inputs, self.atoms);
+        if !is_written_by_transpiler && !is_same_in_every_run {
+            return None;
+        }
+        let text = self.atoms.intern(&[b"/", pattern, b"/", flags].concat());
+        Some(Value::from(Constant::String(text)))
+    }
+
+    pub(super) fn find_text_joined_with_nothing(
+        &self,
+        left: ExprId,
+        right: ExprId,
+    ) -> Option<ExprId> {
+        let is_empty =
+            |e: ExprId| matches!(self.hir[e].kind, ExprKind::String(it) if it == known::empty);
+        let is_text = |e: ExprId| {
+            self.is_always_string(e)
+                || matches!(self.hir[e].kind, ExprKind::Binary { op: BinOp::Add, left, right }
+                    if self.is_always_string(left) || self.is_always_string(right))
+        };
+        let operands = [(left, right), (right, left)];
+        let found = operands.iter().find(|it| is_empty(it.1) && is_text(it.0));
+        found.map(|it| it.0)
+    }
+
+    pub(super) fn find_text_written_for_constructor(&self, e: ExprId) -> Option<&'static [u8]> {
+        let hir = self.hir;
+        let e = hir.skip_type_assertions(e);
+        let (ExprKind::Dot { .. }, Some((object, MemberKey::Name(known::constructor)))) =
+            (hir[e].kind, hir.member_key(e))
+        else {
+            return None;
+        };
+        match hir[hir.skip_type_assertions(object)].kind {
+            ExprKind::String(_) => Some(b"function String() { [native code] }"),
+            ExprKind::Regex { .. } => Some(b"function RegExp() { [native code] }"),
+            _ => None,
+        }
+    }
+
+    fn is_text_in_pieces(&self, e: ExprId) -> bool {
+        match self.folded(e).value {
+            Value::Known(value) => match self.evaluator.to_constant(value) {
+                Constant::String(text) => !self.is_kept_in_one_piece(e, text),
+                _ => false,
+            },
+            Value::Unknown => false,
+        }
+    }
+
     pub(super) fn is_in_constant_prefix(&self, init: ExprId) -> bool {
         let Parent::VarInit(declaration) = self.bound.parent_of_expr(init) else {
             return false;
@@ -256,7 +313,6 @@ impl<'s> Folder<'_, 's> {
         prefixes.contains(self.hir, self.bound, statement)
     }
 
-    /// `bun run` goes through the enums of a list of statements ahead of the rest of the list: an enum still has the names of the constants beside it.
     pub(super) fn is_in_enum_beside(&self, ident: ExprId, init: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let Parent::VarInit(declaration) = bound.parent_of_expr(init) else {
@@ -278,13 +334,11 @@ impl<'s> Folder<'_, 's> {
         bound.parent_of_stmt(enumeration) == bound.parent_of_stmt(constant)
     }
 
-    /// `to_boolean`
     pub(super) fn is_truthy_in_bun_run(&self, e: ExprId) -> Option<bool> {
         self.condition(e)
             .filter(|_| self.is_folded_by_bun_run(e) || self.is_condition_told_by_shape(e))
     }
 
-    /// `simplify_boolean` in front of `to_boolean`: the test of `?:`, of `if` and of a loop. `x && "a"` is tested as `x` is.
     pub(super) fn is_test_truthy_in_bun_run(&self, test: ExprId) -> Option<bool> {
         let hir = self.hir;
         let mut e = test;
@@ -316,7 +370,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// As a condition, `void x` is false and `typeof x` is true whatever `x` is, so `bun run` knows them where the build alone knows `x`.
     pub(super) fn tells_condition_by_shape(&self, e: ExprId) -> bool {
         let is_known = |operand: ExprId| self.is_truthy_in_bun_run(operand).is_some();
         match self.hir[e].kind {
@@ -335,7 +388,11 @@ impl<'s> Folder<'_, 's> {
                     BinOp::Comma => is_known(right),
                     BinOp::And => is_either(false),
                     BinOp::Or => is_either(true),
-                    // `to_finite_number`
+                    BinOp::Nullish => {
+                        self.is_nullish_in_bun_run(left) == Some(true)
+                            && self.is_literal_to_bun_run(left)
+                            && is_known(right)
+                    }
                     BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                         [left, right].iter().all(|&operand| {
                             self.is_literal_to_bun_run(operand)
@@ -345,7 +402,6 @@ impl<'s> Folder<'_, 's> {
                     _ => false,
                 }
             }
-            // `(f(), 1) ? a : b` is `(f(), a)`.
             ExprKind::Cond { test, branches } => {
                 let branches = self.hir.branches(branches);
                 match self.is_test_truthy_in_bun_run(test) {
@@ -363,7 +419,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `to_null_or_undefined`: an operator that always answers a number, a string or a boolean answers neither, whatever its operands are.
     pub(super) fn is_nullish_in_bun_run(&self, e: ExprId) -> Option<bool> {
         let hir = self.hir;
         let mut e = e;
@@ -390,6 +445,7 @@ impl<'s> Folder<'_, 's> {
                 | ExprKind::Object(_)
                 | ExprKind::Array(_)
                 | ExprKind::BigInt(_) => Some(false),
+                ExprKind::New(_) => self.is_truthy_in_bun_run(e).map(|_| false),
                 ExprKind::Unary { op, .. } => Some(op == UnOp::Void),
                 ExprKind::Binary {
                     op: BinOp::Comma,
@@ -406,7 +462,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `bun run` puts one operand in place of `left op right` where the left one decides, and knows of the whole what it knows of that operand.
     pub(super) fn note_nullish_logical_result(
         &mut self,
         e: ExprId,
@@ -438,7 +493,6 @@ impl<'s> Folder<'_, 's> {
             && self.is_folded_by_bun_run(e)
     }
 
-    /// `to_boolean` answers `NoSideEffects`: for a literal, a function, a pattern, for two finite numbers that are compared, and for `!` in front of any of them.
     pub(super) fn tells_condition_without_effects(&self, e: ExprId) -> bool {
         let hir = self.hir;
         let mut e = hir.skip_type_assertions(e);
@@ -448,6 +502,9 @@ impl<'s> Folder<'_, 's> {
             }
             match hir[e].kind {
                 ExprKind::Fn(_) | ExprKind::Regex { .. } => return true,
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                    return self.is_condition_told_by_shape(e);
+                }
                 ExprKind::Unary {
                     op: UnOp::Not,
                     operand,
@@ -461,12 +518,10 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `test ? yes : no` with a test that `to_boolean` knows is the arm alone, or `(test, arm)` with what `simplify_unused_expr` leaves of the test.
     pub(super) fn leaves_out_known_test(&self, test: ExprId) -> bool {
         self.tells_condition_without_effects(test) || self.removes_unused_value(test)
     }
 
-    /// What `operand` does where an operator takes no value of it. `is_left_out` is asked where the build does not know.
     pub(super) fn effects_where_unused(
         &self,
         operand: ExprId,
@@ -502,7 +557,6 @@ impl<'s> Folder<'_, 's> {
                 let is_type_of_require =
                     op == UnOp::Typeof && is_free_common_js(hir, self.bound, operand, require);
                 match op {
-                    // `bun run` writes `undefined` or a boolean in its place where the operand does nothing.
                     UnOp::Void => !self.is_removed_if_unused_by_bun_run(operand),
                     UnOp::Not => {
                         self.is_truthy_in_bun_run(operand).is_none()
@@ -512,6 +566,9 @@ impl<'s> Folder<'_, 's> {
                     UnOp::BitNot if !self.computes_with_constants(e) => true,
                     UnOp::Typeof if self.is_enum_member_written_in_place(operand) => true,
                     UnOp::Typeof if self.is_written_with_radix(operand) => false,
+                    UnOp::Plus | UnOp::Minus | UnOp::BitNot if self.is_text_in_pieces(operand) => {
+                        true
+                    }
                     _ => !is_type_of_require && by_build_alone(operand),
                 }
             }
@@ -529,7 +586,6 @@ impl<'s> Folder<'_, 's> {
                 {
                     !self.compares_bigint_written_with_radix(left, right)
                 }
-                // `bun run` compares literals.
                 BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
                     if [left, right]
                         .iter()
@@ -537,7 +593,6 @@ impl<'s> Folder<'_, 's> {
                 {
                     true
                 }
-                // `[] && "a"` stays as it is: the list may do something.
                 BinOp::And | BinOp::Or
                     if self.is_truthy_in_bun_run(left) == Some(op == BinOp::And)
                         && !self.tells_condition_without_effects(left) =>
@@ -545,14 +600,11 @@ impl<'s> Folder<'_, 's> {
                     true
                 }
                 _ if !by_build_alone(left) && !by_build_alone(right) => false,
-                // `1 < 2 && "a"` is `"a"`, and `2 < 1 && "a"` stays `2 < 1`.
                 BinOp::And | BinOp::Or if self.tells_condition_without_effects(left) => {
                     let selects_right = self.is_truthy_in_bun_run(left) == Some(op == BinOp::And);
                     by_build_alone(if selects_right { right } else { left })
                 }
-                // `x || "a"` stays as it is written where `bun run` does not know `x`: it knows that the whole is true, and not what it is.
                 BinOp::And | BinOp::Or if self.is_truthy_in_bun_run(left).is_none() => true,
-                // `(x || "a") || "b"` is `x || "a"`.
                 BinOp::And | BinOp::Or => by_build_alone(left),
                 BinOp::Nullish => by_build_alone(left) || self.is_nullish(left) != Some(false),
                 _ => true,
@@ -580,7 +632,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `Template::fold` joins what is ASCII.
     fn joins_template(&self, template: ExprId) -> bool {
         let hir = self.hir;
         let ExprKind::Template { exprs } = hir[template].kind else {
@@ -604,12 +655,10 @@ impl<'s> Folder<'_, 's> {
         Some(&written[..end])
     }
 
-    /// `0x1n`: `bun run` keeps the text. It knows what kind of value that is, and not which: whether it is zero, what it is as a string, which other text means the same.
     fn is_written_with_radix(&self, e: ExprId) -> bool {
         matches!(self.find_written_bigint(e), Some([b'0', _, ..]))
     }
 
-    /// `BigInt::check_equality`, and `null` and `undefined` are equal to no bigint.
     fn compares_bigint_written_with_radix(&self, left: ExprId, right: ExprId) -> bool {
         let is_nullish = |e: ExprId| self.is_nullish_in_bun_run(e) == Some(true);
         let is_digit = |byte: &&u8| **byte != b'_';
@@ -626,7 +675,6 @@ impl<'s> Folder<'_, 's> {
         is_nullish(left) || is_nullish(right) || is_same_text
     }
 
-    /// `bun run` computes with two numbers and leaves `undefined + 1` alone.
     pub(super) fn converts_an_operand_to_a_number(&self, e: ExprId) -> bool {
         let ExprKind::Binary { op, left, right } = self.hir[e].kind else {
             return false;
@@ -639,9 +687,6 @@ impl<'s> Folder<'_, 's> {
         is_arithmetic && !(is_number(left) && is_number(right))
     }
 
-    /// What `bun build` leaves alone is not yet left to run time: JSC's parser computes with the numbers that it finds in the printed text (`ASTBuilder::makeDivNode` ..),
-    /// and a constant of JSC that is no number is the one NaN, whatever its operation gave: `BytecodeGenerator::addConstantValue`.
-    /// `NaN` and `Infinity` are printed as names, which the parser takes for variables: `-(NaN + 1)` and `Infinity - Infinity` run.
     pub(super) fn is_computed_by_parser(&self, e: ExprId) -> bool {
         let is_number = |operand: ExprId| self.numbers_of_parser.contains(operand.idx());
         match self.hir[e].kind {
@@ -672,16 +717,36 @@ impl<'s> Folder<'_, 's> {
     }
 
     fn leaves_literals_alone(&self, e: ExprId, op: BinOp, left: ExprId, right: ExprId) -> bool {
-        match (self.folded(left).value, self.folded(right).value) {
-            (Value::Known(left), Value::Known(right)) => {
-                !self.evaluator.is_computed_by_bun_run(op, left, right)
+        let value_of = |operand: ExprId| {
+            let text_of_pattern = match op {
+                BinOp::Add => self.find_text_of_pattern(operand),
+                _ => None,
+            };
+            text_of_pattern.unwrap_or_else(|| self.folded(operand).value)
+        };
+        match (value_of(left), value_of(right)) {
+            (Value::Known(left_value), Value::Known(right_value)) => {
+                !(self.evaluator).is_computed_by_bun_run(op, left_value, right_value)
                     || (is_computed_only_among_constants(op) && !self.computes_with_constants(e))
+                    || self.compares_with_member_of_other_kind(op, left, right)
             }
             _ => false,
         }
     }
 
-    /// What `--define` or bunfig.toml gives for `e`. `bun run` has that in its place.
+    fn compares_with_member_of_other_kind(&self, op: BinOp, left: ExprId, right: ExprId) -> bool {
+        let is_comparison = matches!(
+            op,
+            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
+        );
+        let is_string = |e: ExprId| matches!(self.folded(e).value, Value::Known(value) if self.evaluator.is_string(value));
+        let is_number = |e: ExprId| self.folded(e).value.is_number();
+        is_comparison
+            && self.is_enum_member_written_in_place(right)
+            && !(is_number(left) && is_number(right))
+            && !(is_string(left) && is_string(right))
+    }
+
     pub(super) fn find_user_defined_value(&self, e: ExprId) -> Option<DefineValue<'s>> {
         let &state = self.path_states.get(&e)?;
         let value = self.inputs.value_of(state)?;

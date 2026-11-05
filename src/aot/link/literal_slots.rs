@@ -44,7 +44,6 @@ fn keeps_typed_slot(ty: &Type) -> bool {
         && ty.functions.is_empty()
 }
 
-/// Object literals are written through every type their property names satisfy, so a typed slot needs a check and a slow path at each store and a presence check at each read.
 pub(super) fn widen_literal_slots(layouts: &mut [Layout], input: &UseInput<'_>, types: &TypeTable) {
     let is_literal_layout = find_literal_layouts(input);
     input.for_each_layout(layouts, &is_literal_layout, &|layout, is_literal_layout| {
@@ -70,7 +69,6 @@ fn is_integer_within((minimum, maximum): (i64, i64), number: f64) -> bool {
     is_integer && !is_negative_zero && (minimum..=maximum).contains(&integer)
 }
 
-// The engine finds which objects a named layout stands for.
 fn may_hold(layouts: &[Layout], ty: &Type, value: &DataNode) -> bool {
     let is_unlisted = |id: &LayoutId| layouts.get(id.index()).is_none();
     if ty.layouts.iter().any(is_unlisted) {
@@ -98,7 +96,6 @@ fn may_hold(layouts: &[Layout], ty: &Type, value: &DataNode) -> bool {
     }
 }
 
-// The layout, and the index of the field.
 fn find_fields_filled_with_other_data(
     layouts: &[Layout],
     data: &[Data],
@@ -140,10 +137,8 @@ fn find_fields_filled_with_other_data(
     filled
 }
 
-// This cuts the work into tasks. No answer depends on it.
 const DATA_IN_A_TASK: usize = if cfg!(test) { 1 } else { 256 };
 
-/// An assertion lets a literal hold what the type of a field leaves out, and no store tests a literal that has become data.
 pub(super) fn expect_fields_filled_with_other_data(
     layouts: &mut [Layout],
     data: &[Data],
@@ -155,7 +150,6 @@ pub(super) fn expect_fields_filled_with_other_data(
     let filled = map_each(tasks, in_parallel, &|data| {
         find_fields_filled_with_other_data(read_layouts, data, types)
     });
-    // A field is marked once or many times, to the same end.
     for (layout, index) in filled.into_iter().flatten() {
         let declared = &mut layouts[layout.index()].fields[index].declared;
         declared.flags =
@@ -176,7 +170,6 @@ export function makeItem(): Item { return { id: "a", count: 1, done: false, tags
 export const values = [makeItem(), new Point()];
 "#;
 
-    // The layout of an interface has no name. Each source writes a name of a field once.
     fn is_expected(program: &Program, name: &str) -> bool {
         let has_name = |key: PropertyKeyId| {
             let text = program.property_keys.get(key).text;

@@ -172,7 +172,6 @@ fn the_name_that_a_function_expression_gives_itself_takes_no_store() {
         assert_eq!(shapes_in("/a.mjs", &held), [], "{keyword}");
         assert_eq!(shapes_in("/a.cjs", &held), [], "{keyword}");
     }
-    // A name that nothing is stored to makes no difference.
     let export = SWC_EXPORT.trim_end();
     let held = format!("var _export = {export};");
     assert_eq!(shapes_in("/a.cjs", &held), [Shape::ExportDefinesGetters]);
@@ -695,7 +694,6 @@ fn a_helper_around_a_require_that_differs_in_one_place_is_an_ordinary_function()
     let copy = Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks;
     let re_export = Shape::ReExportCopiesAllButDefault;
     let to_es_module = Shape::ToEsModuleShowsUnmarkedValueAsDefault;
-    // What calls the copying helper goes with it.
     for (from, to) in [
         ("from && typeof", "from || typeof"),
         ("=== \"object\"", "=== \"symbol\""),

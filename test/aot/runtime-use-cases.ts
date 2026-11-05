@@ -67,10 +67,11 @@ group("built-ins that a program names", () => {
 });
 
 group("code from strings", () => {
+  // A written text is unseen code: none of it is compiled with the program, and the call is an evaluator's like any other.
   test.each([["an indirect eval", `console.log((0, eval)("1 + 1"));`]])(
-    "text that is a constant is compiled with the program, so the report stays closed with %s",
+    "text that is a constant opens the report as any other text does, with %s",
     async (_, text) => {
-      expect(completeness(await of(text))).toEqual(closed);
+      expect(completeness(await of(text))).toEqual(open("eval: the program calls eval() or new Function()"));
     },
   );
 

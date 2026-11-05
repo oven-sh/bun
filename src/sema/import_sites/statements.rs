@@ -11,7 +11,6 @@ fn has_macro_type(hir: &File<'_>, attributes: ExprId) -> bool {
     hir.import_attribute(attributes, known::r#type) == Some(known::r#macro)
 }
 
-/// `import { m } from x with { type: "macro" }` is a syntax error that the parser recovers from: it names no module to run.
 pub(super) fn is_macro_import(hir: &File<'_>, import: ImportId) -> bool {
     hir[import].spec.is_some() && has_macro_type(hir, hir[import].attributes)
 }
@@ -31,7 +30,6 @@ fn import_decls(hir: &File<'_>, import: ImportId) -> impl Iterator<Item = Decl> 
     default.into_iter().chain(namespace).chain(named)
 }
 
-/// `NONE` for a name that the file also declares as a value: `import { A } from "m"; const A = 1;`. The import brings the type, and code that names `A` means the constant.
 fn symbols_of_value_imports(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -106,7 +104,6 @@ pub(super) fn scan_statements(
             is_host_value: false,
         });
     }
-    // `namespace N { import a = require("./a") }`: tsc refuses it, and `bun run` loads the file where the body of the namespace runs.
     for (index, import) in hir.import_equals.iter().enumerate() {
         if let Parent::Module(namespace) = bound.parent_of_stmt(import.stmt)
             && bound.makes_namespace_object(hir, namespace)

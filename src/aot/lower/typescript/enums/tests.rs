@@ -5,7 +5,6 @@ const DECLARED: (&str, &str) = (
     "a.ts",
     "export function make() { enum State { Ready, Done } return State; }",
 );
-/// As `tsc` prints it.
 const PRINTED: (&str, &str) = (
     "a.js",
     "export function make() {
@@ -15,7 +14,6 @@ const PRINTED: (&str, &str) = (
 }",
 );
 
-/// Whether the object of `make` is born with its members, so that nothing is stored and nothing is called.
 fn defines_members(program: (&str, &str), names_on_object_prototype: &[&str]) -> bool {
     let lowered = lower_program_below_object_prototype(&[program], names_on_object_prototype);
     assert_eq!(lowered.len(), 1);

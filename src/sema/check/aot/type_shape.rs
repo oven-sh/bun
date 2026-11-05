@@ -91,7 +91,6 @@ pub enum ShapeKind<'c> {
     Class(ClassRef),
     Object,
     Union(&'c [TypeId]),
-    /// `int32`, or `int32 & T`. `base` is the type without the tag.
     Int32 {
         base: TypeId,
     },

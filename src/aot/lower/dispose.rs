@@ -150,7 +150,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let name = self.file.name_given_by_binding(binding, name);
         let value = self.lower_named_evaluation(initializer, name);
         self.set_position(pattern.pos);
-        // `using x = null` disposes of nothing. `await using` still waits once at the end of the scope.
         let is_nothing = matches!(
             self.file.decisions().constant(hir, initializer),
             FoldedValue::Constant(Constant::Null | Constant::Undefined)
@@ -170,7 +169,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         is_last: bool,
         path: CleanupPath,
     ) {
-        // Exit paths are emitted after the scope's last statement, so the dispose call would otherwise report that statement's position.
         self.set_position(resource.position);
         let pending = match path {
             CleanupPath::Normal => None,
@@ -188,7 +186,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let done = self.create_block();
         let skipped = self.create_block();
         let method = self.branch_if_undefined(resource.method, skipped);
-        // The scope rethrows a dispose method's error with its own `throw`, so an uncaught error lists the frames of that `throw`.
         let handler = self.begin_handler(BlockRole::CatchHandler, None);
         let this = Some(resource.value);
         let result = call::emit_call(self, method, this, &[]);
@@ -277,7 +274,7 @@ fn add_resource(
     lowering.bind_pattern(decl.pat, value, source);
 }
 
-#[allow(clippy::needless_pass_by_value)] // the end of the scope
+#[allow(clippy::needless_pass_by_value)]
 fn end_resource_scope(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, scope: ResourceScope) {
     let mut follows_async_resource = false;
     for (index, &resource) in scope.resources.iter().enumerate().rev() {

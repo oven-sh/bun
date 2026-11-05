@@ -28,7 +28,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(value) = value else {
             return;
         };
-        // A holder holds nothing of the type that the name has.
         match self.file.inputs.modules.holder(self.file.file, symbol) {
             Some(_) => self.initialize_converted_symbol(symbol, data.name, value),
             None => scope::initialize_binding(self, Binding::Symbol(symbol), data.name, value),
@@ -64,7 +63,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(root.pos());
         let binding = self.file.bound.entity_root_binding(declaration);
         let mut value = self.get_binding_without_expression(binding, root.text);
-        // The binder has answered the variable of a load, which holds the root under a key: `Import::loaded_as`.
         if let Binding::Symbol(symbol) = binding
             && let Some((variable, key)) = hir.find_name_of_loaded_import(root.text)
             && self.file.bound.symbol(symbol).name == variable

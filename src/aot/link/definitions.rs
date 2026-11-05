@@ -55,7 +55,6 @@ fn is_common_js_file(projects: &Projects<'_, '_>, file: ProgramFile) -> bool {
         && !graph.is_library(file.file)
 }
 
-// ES importers hold copies of the names of a CommonJS file alone.
 fn find_file_with_copies(
     projects: &Projects<'_, '_>,
     exporter: ProgramModule,
@@ -78,7 +77,6 @@ fn find_writer(projects: &Projects<'_, '_>, exporter: ProgramModule) -> ExportWr
     }
 }
 
-// The variables that link defines: every synthetic export, then the copy of each that can have one.
 pub(super) fn synthetic_export_keys(projects: &Projects<'_, '_>) -> Vec<ProgramVariableKey> {
     let mut keys = Vec::new();
     for project in ProjectId::ALL {
@@ -98,7 +96,6 @@ pub(super) fn synthetic_export_keys(projects: &Projects<'_, '_>) -> Vec<ProgramV
     keys
 }
 
-// A file of the application names a class or a function of Bun's own modules as what a class of its own inherits from.
 pub(super) fn forget_library_layouts_without_definition(
     units: &mut [LinkUnit],
     tables: &[LinkTables],
@@ -106,7 +103,6 @@ pub(super) fn forget_library_layouts_without_definition(
     in_parallel: InParallel<'_>,
 ) {
     let is_defined = unmarked(layouts.keys.len());
-    // Most units have little to say, and a task for each costs more than what it does.
     let tasks: Vec<&[LinkUnit]> = units.chunks(UNITS_IN_A_TASK).collect();
     in_parallel(tasks.len(), &|task| {
         for unit in tasks[task] {
@@ -135,7 +131,6 @@ pub(super) fn forget_library_layouts_without_definition(
     });
 }
 
-/// The definitions of one layout, which follow each other in the unit from `start` on, by their types. `types`: those of `LinkUnit::object_types` that are theirs.
 fn order_definitions_of_layout(
     definitions: &mut [(LayoutId, Layout)],
     start: u32,
@@ -164,14 +159,10 @@ fn order_definitions_of_layout(
     }
 }
 
-/// In which order a file names its layouts, and meets the types of one layout, hangs on what its thread has lowered before: what is known of a type from an
-/// earlier file is not found out again. So nothing may go by the order of a unit's definitions. The numbers of the program go by the keys of the layouts:
-/// `order_program_layouts`. Which definition of a layout is the first, and in which order the others follow, goes by their types from here on.
 pub(super) fn order_layout_definitions(units: &mut [LinkUnit], in_parallel: InParallel<'_>) {
     let mut tasks: Vec<&mut [LinkUnit]> = units.chunks_mut(UNITS_IN_A_TASK).collect();
     for_each_mut(&mut tasks, in_parallel, &|units| {
         for unit in units.iter_mut() {
-            // A file says all that it has to say of a layout in one go.
             let (mut start, mut first_type) = (0, 0);
             for of_layout in unit
                 .layout_definitions
@@ -189,7 +180,6 @@ pub(super) fn order_layout_definitions(units: &mut [LinkUnit], in_parallel: InPa
     });
 }
 
-/// All that the numbers of the program hang on. How the definitions stand to each other is left out: `relate_layouts`, `relate_functions`.
 pub(super) fn choose_definitions(
     merged: &Merged<'_>,
     projects: &Projects<'_, '_>,
@@ -197,7 +187,6 @@ pub(super) fn choose_definitions(
 ) -> Definitions {
     debug_assert!(merged.units.is_sorted_by_key(|unit| unit.file));
     let unit_count = merged.units.len() as u32;
-    // Each kind of key has its own definitions.
     let mut steps = StepClock::new(Stage::LinkAndEmit);
     let ((functions, variables), chosen_layouts) = run_steps_beside(
         beside,
@@ -230,10 +219,8 @@ pub(super) fn choose_definitions(
     }
 }
 
-/// `Definitions::supertypes`, `Definitions::has_members_without_layout`
 pub(super) struct RelatedLayouts(ClosedFamilies);
 
-/// `bases_of_layouts`: `Definitions::bases_of_layouts`
 pub(super) fn relate_layouts(
     merged: &Merged<'_>,
     bases_of_layouts: &[Option<u32>],
@@ -244,7 +231,6 @@ pub(super) fn relate_layouts(
     RelatedLayouts(close_families(merged, bases_of_layouts, supertypes))
 }
 
-/// `Definitions::function_types`, `Definitions::builtin_members`
 pub(super) struct RelatedFunctions {
     function_types: SupertypeEdges,
     builtin_members: Vec<(u32, BuiltinId)>,
@@ -271,7 +257,6 @@ impl Definitions {
     }
 }
 
-/// `choose_definitions` with what it leaves out.
 #[cfg(test)]
 pub(super) fn choose_and_relate_definitions(
     merged: &Merged<'_>,
@@ -285,9 +270,7 @@ pub(super) fn choose_and_relate_definitions(
     definitions
 }
 
-/// `Definitions::functions`
 fn choose_functions(merged: &Merged<'_>) -> Vec<Option<DefinitionSite>> {
-    // The lowest number wins: a definition with parameters comes ahead of every one without, and an earlier one ahead of a later one.
     const WITHOUT_PARAMETERS: u64 = 1 << 63;
     const NO_DEFINITION: u64 = u64::MAX;
     assert!(
@@ -301,7 +284,6 @@ fn choose_functions(merged: &Merged<'_>) -> Vec<Option<DefinitionSite>> {
         for (index, (id, definition)) in (0u32..).zip(&link_unit.function_definitions) {
             let function = merged.function(link_unit, *id) as usize;
             let key = keys[function].key;
-            // Only the file that declares a function type records its parameters. Prefer that definition.
             let is_function_type = matches!(
                 key,
                 FunctionKey::Signature(_) | FunctionKey::ClassSignature(_)
@@ -328,26 +310,20 @@ fn choose_functions(merged: &Merged<'_>) -> Vec<Option<DefinitionSite>> {
         .collect()
 }
 
-/// What choosing asks of a definition of a layout. The records are large, and a program has many of them.
 #[derive(Copy, Clone)]
 struct DefinedLayout {
-    /// The merged index of the key.
     layout: u32,
     site: DefinitionSite,
-    /// `LinkUnit::object_types`
     object_type: Option<ObjectTypeKey>,
     is_mentioned_by_code: bool,
     has_place: bool,
-    /// The merged index of `Layout::base`.
     base: Option<u32>,
 }
 
-// These cut the work into tasks. No answer depends on them.
 const UNITS_IN_A_TASK: usize = if cfg!(test) { 2 } else { 64 };
 const KEYS_IN_A_TASK: usize = if cfg!(test) { 8 } else { 1 << 12 };
 const MAX_PARTS_OF_LAYOUTS: u32 = if cfg!(test) { 4 } else { 256 };
 
-/// What units that follow each other define, in their order, grouped by the part of the layout. `first_unit`: the index of the first of them.
 fn list_defined_layouts(
     merged: &Merged<'_>,
     first_unit: u32,
@@ -376,15 +352,11 @@ fn list_defined_layouts(
 }
 
 struct ChosenLayouts {
-    /// By the place of the layout in its part, like the next.
     sites: Vec<Option<DefinitionSite>>,
     bases: Vec<Option<u32>>,
-    /// Ascending.
     others: Vec<(u32, DefinitionSite)>,
 }
 
-// A plain layout is shown under the name, and at the place, of its first definition by a type that is declared in a file of the program.
-// What is chosen for a layout depends on its own definitions alone, in the order of the units.
 fn choose_layouts_of_part(
     merged: &Merged<'_>,
     defined: &[Grouped<DefinedLayout>],
@@ -396,7 +368,6 @@ fn choose_layouts_of_part(
     let mut object_types = FxHashSet::default();
     for definition in defined.iter().flat_map(|of_units| of_units.in_group(part)) {
         let DefinedLayout { layout, site, .. } = *definition;
-        // What a later file says of the same type is what the first file said.
         let ty = definition.object_type;
         if ty.is_some_and(|ty| !object_types.insert((layout, ty))) {
             continue;
@@ -430,10 +401,8 @@ fn choose_layouts_of_part(
     }
 }
 
-/// All parts laid end to end: the lists go by merged index.
 fn choose_layouts(merged: &Merged<'_>) -> ChosenLayouts {
     let layout_count = merged.layouts.keys.len() as u32;
-    // A part holds layouts whose merged indexes follow each other, so the parts laid end to end are in the order of the merged indexes.
     let layouts_in_a_part = layout_count.div_ceil(MAX_PARTS_OF_LAYOUTS).max(1);
     let part_count = layout_count.div_ceil(layouts_in_a_part) as usize;
     let first_units = (0u32..).step_by(UNITS_IN_A_TASK);
@@ -484,7 +453,6 @@ fn add_synthetic_exports(
         .into_iter()
         .map(|site| site.map(VariableDefinition::Unit))
         .collect();
-    // `merge_keys` has looked up every key of `synthetic_export_keys`: theirs is the list behind those of the tables, in their order.
     let listed = &merged.variables.local_to_merged[merged.tables.len()];
     let graphs = ProjectId::ALL.map(|project| projects.get(project).graph);
     let export_counts = graphs.map(|graph| graph.synthetic_exports().len());
@@ -493,7 +461,6 @@ fn add_synthetic_exports(
         |variable: u32, key: ProgramVariableKey| merged.variables.keys[variable as usize] == key;
     let mut define = |variable: u32, module, export: &SyntheticExport, writer| {
         let definition = &mut variables[variable as usize];
-        // A name that either project requires is tested when the module is linked.
         let (is_known_elsewhere, is_replaceable_elsewhere) = match *definition {
             Some(VariableDefinition::SyntheticExport {
                 is_known_member,
@@ -522,7 +489,6 @@ fn add_synthetic_exports(
                 next_copy += 1;
                 (file, listed[next_copy - 1])
             });
-            // The program does not reach the module.
             let Some(&module) = index_by_module.get(&exporter) else {
                 continue;
             };
@@ -534,14 +500,12 @@ fn add_synthetic_exports(
             let Some((file, copy)) = with_copies else {
                 continue;
             };
-            // A file that no ES module imports has no face.
             let Some(&face) = index_by_module.get(&ProgramModule::Face(file)) else {
                 continue;
             };
             debug_assert!(has_key(copy, context.variable_key(VariableKey::Copy(id))));
             let captures = projects.get(file.project).graph.commonjs();
             let captures = captures.face_captures(file.file);
-            // Whatever a CommonJS file exports, its importers find a `default`.
             let writer = match captures && export.name != bun_sema::atom::known::default {
                 true => ExportWriter::Capture,
                 false => ExportWriter::Face,
@@ -557,7 +521,6 @@ fn add_synthetic_exports(
             variable,
             ProgramVariableKey::MockOfRuntimeModule(named)
         ));
-        // The record that importers bind. The program may not reach the module.
         let exporter = context.module(ModuleRef::Runtime(named));
         if let Some(&module) = index_by_module.get(&exporter) {
             variables[variable as usize] = Some(VariableDefinition::MockOfRuntimeModule { module });
@@ -571,7 +534,6 @@ fn runtime_modules_named_by_mocks(projects: &Projects<'_, '_>) -> Vec<RuntimeMod
     graph.runtime_modules_named_by_mocks().to_vec()
 }
 
-/// `VariableKey::MockOf`, as `FileLowering::ensure_variable` makes it for a file.
 pub(super) fn variable_that_holds_mock(module: ModuleId) -> Variable {
     let mut declared = DeclaredType::untyped();
     declared.ty = TypeTable::ANYTHING_OR_ABSENT;
@@ -676,7 +638,6 @@ fn merge_builtin_members(merged: &Merged<'_>) -> Vec<(u32, BuiltinId)> {
     members
 }
 
-// A type lists its layouts by their numbers in the tables, and which files share tables differs from one build to the next.
 fn collect_merged_layouts(
     merged: &Merged<'_>,
     unit: &LinkUnit,
@@ -693,14 +654,12 @@ struct ClosedFamilies {
     has_members_without_layout: Vec<bool>,
 }
 
-/// A conversion that the program performs, by the merged indexes of the layouts on either side.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Conversion {
     sources: SmallVec<[u32; 4]>,
     targets: SmallVec<[u32; 4]>,
 }
 
-/// The conversions between layouts, in the order of the units, in lists that follow each other. One that a list holds already is left out: it adds nothing the second time.
 fn list_conversions(merged: &Merged<'_>) -> Vec<Vec<Conversion>> {
     let tasks: Vec<&[LinkUnit]> = merged.units.chunks(UNITS_IN_A_TASK).collect();
     map_each(tasks, merged.in_parallel, &|units| {
@@ -773,7 +732,6 @@ impl FamilyCloser {
         false
     }
 
-    // A layout of the source that does not yet reach a layout of the target goes below each of them.
     fn widen_families(&mut self, conversions: &[Vec<Conversion>]) {
         for conversion in conversions.iter().flatten() {
             for &layout in &conversion.sources {
@@ -805,7 +763,6 @@ impl FamilyCloser {
     }
 }
 
-// The family of a type is what reaches it over the conversions that the program performs, each in the direction the checker allows, and over the base of each class.
 fn close_families(
     merged: &Merged<'_>,
     bases_of_layouts: &[Option<u32>],
@@ -909,9 +866,6 @@ pub(super) fn synthetic_export_variable(
         ExportWriter::Body => VariableInitialization::Undefined,
     };
     let mut declared = DeclaredType::untyped();
-    // The object may lack the name when the copies are taken: the copy stays empty, and the check of the importer tests for that.
-    // An importer that the CommonJS file itself requires runs before the face has taken anything.
-    // A module of the library may lack a name that some file binds. That file fails to link, and a file that reads the name off the namespace tests for the empty variable.
     let may_stay_empty = match writer {
         ExportWriter::Capture | ExportWriter::Face => true,
         ExportWriter::Loader => !is_known_member,

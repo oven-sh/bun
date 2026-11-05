@@ -8,18 +8,17 @@ use super::interop::ModuleKind;
 use super::plan::ModuleRef;
 use super::requests::{FileScan, ScannedSite, Scans, is_jsx_site};
 use crate::load::sources::{SourceKind, parsed_source};
+use crate::module_keys::is_name_of_text;
 use bun_sema::hir::ExportId;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 
-/// A module whose load fails, and where the import that names nothing stands.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct UnloadableModule {
     pub file: FileId,
     pub importer: FileId,
     pub order: FailureOrder,
-    /// The module that it imports and that fails its load. `None`: the import that names nothing is its own.
     through: Option<FileId>,
 }
 
@@ -37,7 +36,6 @@ fn fails_load(pending: &PendingFailure, takes_link_failures: bool) -> bool {
         && pending.failure.effect() == FailureEffect::StopsBuild
 }
 
-/// The name that a link of the importer looks for and does not find.
 fn find_missing_name(kind: ModuleFailureKind) -> Option<RequiredName> {
     match kind {
         ModuleFailureKind::ExportNotFound { exporter, name }
@@ -60,7 +58,6 @@ fn kind_thrown_at_load(kind: ModuleFailureKind, build_says_nothing: bool) -> Mod
             is_loaded_at_start: false,
             is_silent: is_silent || build_says_nothing,
         },
-        // The link and the run time have one record for a name that a module lacks, and the error that they make of it says that the name is not found.
         ModuleFailureKind::ExportNotFound { exporter, name }
         | ModuleFailureKind::ExportAmbiguous { exporter, name } => {
             ModuleFailureKind::ExportMayBeAbsent {
@@ -76,11 +73,9 @@ fn kind_thrown_at_load(kind: ModuleFailureKind, build_says_nothing: bool) -> Mod
 
 fn find_load_failure(scans: &Scans, file: FileId) -> Option<FailureOrder> {
     let scan = scans.find(file)?;
-    // The body of a file of data would throw too, but the run time keeps the error of a file with code alone: the next load finds the file of data evaluated, and reads a variable that nothing has filled.
     if scan.interop.kind != ModuleKind::SourceText {
         return None;
     }
-    // Exports are resolved after the scans, so a scan holds neither `ExportNotFound` nor `ExportAmbiguous`.
     let mut failures = scan.failures.iter();
     let first = failures.find(|pending| fails_load(pending, false));
     first.map(|pending| pending.order)
@@ -112,7 +107,9 @@ fn find_files_reached_from_entry_points<Next: Iterator<Item = FileId>>(
     next: impl Fn(FileId) -> Next,
 ) -> Vec<bool> {
     let mut is_reached = vec![false; input.files.modules.len()];
+    let is_text = |file: FileId| is_name_of_text(input.sources.diagnostic_path(file));
     let entry_points = input.sources.entry_points().iter();
+    let entry_points = entry_points.filter(|entry_point| !is_text(entry_point.file));
     let mut left: Vec<FileId> = entry_points.map(|entry_point| entry_point.file).collect();
     while let Some(file) = left.pop() {
         if !core::mem::replace(&mut is_reached[file.idx()], true) {
@@ -130,7 +127,6 @@ pub(super) fn find_files_that_sites_name(input: &BindInput<'_, '_>, scans: &Scan
     find_files_reached_from_entry_points(input, |file| written_files(scans, file))
 }
 
-// One file with a mistake costs a test run what `bun test` loses to it, and an executable holds files that only a computed name may find. A mistake in a file of Bun's own is a fault of the compiler.
 fn may_fail_where_loaded(
     input: &BindInput<'_, '_>,
     is_named_by_sites: &[bool],
@@ -149,7 +145,6 @@ fn requires_jsx_module_that_is_missing(scan: &FileScan) -> bool {
     scan.interop.kind == ModuleKind::CommonJs && scan.failures.iter().any(lacks_jsx_module)
 }
 
-// A CommonJS file requires the modules of its JSX at the head of its body. Where only a computed path may find the file, that require fails when the file is loaded, as under `bun run`.
 pub(super) fn let_late_commonjs_files_fail_at_load(input: &BindInput<'_, '_>, scans: &mut Scans) {
     let files = input.files.compiled_files();
     let lacking = |file: &&FileId| {
@@ -175,7 +170,6 @@ pub(super) fn let_late_commonjs_files_fail_at_load(input: &BindInput<'_, '_>, sc
     }
 }
 
-// `bun run` reports a fold error when its loader reads the file.
 fn let_files_with_fold_errors_fail_at_load(input: &BindInput<'_, '_>, scans: &mut Scans) {
     let files = input.files.compiled_files();
     let has_errors = |file: &&FileId| !input.files.analysis(**file).errors.is_empty();
@@ -185,18 +179,15 @@ fn let_files_with_fold_errors_fail_at_load(input: &BindInput<'_, '_>, scans: &mu
     }
     let is_named_by_sites = find_files_that_sites_name(input, scans);
     for file in refused {
-        // Only the body of an ES module throws what its load ends with.
         if scans.of(file).interop.kind != ModuleKind::SourceText
             || !may_fail_where_loaded(input, &is_named_by_sites, file)
             || find_load_failure(scans, file).is_some()
         {
             continue;
         }
-        // A scan's failures are sorted by order, and no site has this number.
         let after_every_site = u32::MAX as usize;
         let site = ImportSiteKind::ExportFrom(ExportId(0));
         let written = WrittenPart::new(after_every_site, SitePart::Specifier, site, 0..0);
-        // `find_unloadable_modules` clears the flag: it keeps every module of a test run, and outside one a file that no site names is never loaded at start.
         let kind = ModuleFailureKind::NotAProgram {
             is_loaded_at_start: true,
             is_silent: true,
@@ -206,7 +197,6 @@ fn let_files_with_fold_errors_fail_at_load(input: &BindInput<'_, '_>, scans: &mu
     }
 }
 
-/// `is_found`: by file, set for each of `found`, and for whatever else is not to be added.
 fn add_transitive_importers(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -234,7 +224,6 @@ fn add_transitive_importers(
     }
 }
 
-// An `import` or `export .. from` that names nothing, or a file that is no program, fails the load of every module that reaches it through such statements, before one of them runs.
 pub(super) fn find_unloadable_modules(
     input: &BindInput<'_, '_>,
     scans: &mut Scans,
@@ -268,10 +257,8 @@ pub(super) fn find_unloadable_modules(
             }
         }
     }
-    // Where the import that names nothing is loaded at start, it stops the build, whoever else reaches it.
     let is_loaded_at_start = find_modules_loaded_at_start(input, scans);
     let is_late = |file: FileId| !is_loaded_at_start[file.idx()];
-    // In a test run each test file loads on its own, and one that fails fails alone, as under `bun test`.
     if !input.runs_tests {
         found.retain(|module| is_late(module.file) && is_late(module.importer));
     }
@@ -298,10 +285,6 @@ pub(super) fn find_unloadable_modules(
     found
 }
 
-// A name that a module lacks, or that two stars export, fails the link of every module that imports it through import statements.
-// The run-time link looks for the required name and throws before any of them runs. The body that throws is for a link that lets the name pass, as it does where a mock stands in place of the exporter.
-/// `pending` and `imports`: by compiled file, in one order. A list of `pending` has what the file exports ahead of what it imports, as a link looks for the names.
-/// `is_named_by_sites`: `find_files_that_sites_name`.
 pub(super) fn let_unlinkable_modules_fail_at_load(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -322,7 +305,6 @@ pub(super) fn let_unlinkable_modules_fail_at_load(
         }
         match scans.of(file).interop.kind {
             ModuleKind::SourceText => {}
-            // Nothing links a CommonJS file. It reads the names of its JSX off what `require` answers, and a name that is not there is undefined.
             ModuleKind::CommonJs => {
                 failures.retain(|it| find_missing_name(it.failure.kind).is_none());
                 continue;
@@ -353,13 +335,11 @@ pub(super) fn let_unlinkable_modules_fail_at_load(
     for module in unloadable.iter().chain(&found) {
         is_found[module.file.idx()] = true;
     }
-    // A module that is bound to the variables of one whose body is erased may run first, on a cycle.
     add_transitive_importers(input, scans, &mut is_found, &mut found);
     unloadable.append(&mut found);
     unloadable.shared_sort_unstable_by_key(|module| module.file);
 }
 
-// Under `bun run` a name that a module lacks is found out when the graph is linked, and this graph is never fetched whole.
 pub(super) fn drop_errors_of_unloadable_modules(
     pending: &mut [(FileId, Vec<PendingFailure>)],
     unloadable: &[UnloadableModule],

@@ -294,8 +294,6 @@ const requireCacheFunctions = [
 // JSCommonJSExtensions.cpp builtinLoader(): the functions under ".js", ".ts" and ".json" call it for a file that turns out to be an ES module. Nobody has one of them but from the table of loaders.
 const functionsOfDefaultLoaders = functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension");
 
-const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverseArray");
-
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
 
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
@@ -310,25 +308,12 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
-  "Array.prototype.every": fusedTraversalFunctions,
-  "Array.prototype.filter": fusedTraversalFunctions,
-  "Array.prototype.find": fusedTraversalFunctions,
-  "Array.prototype.findIndex": fusedTraversalFunctions,
-  "Array.prototype.flatMap": fusedTraversalFunctions,
-  "Array.prototype.forEach": fusedTraversalFunctions,
-  "Array.prototype.map": fusedTraversalFunctions,
-  "Array.prototype.reduce": fusedTraversalFunctions,
-  "Array.prototype.slice": fusedTraversalFunctions,
-  "Array.prototype.some": fusedTraversalFunctions,
-  "Array.prototype.sort": functionsIn(
-    "prelude/array-sort",
-    "sortByDifference",
-    "sortByReversedDifference",
-    "sortWhereNobodySeesTheComparator",
-  ).map(called => ({
-    ...called,
-    when: b.whenCallRunsOtherCode,
-  })),
+  "Array.prototype.sort": functionsIn("prelude/array-sort", "sortByDifference", "sortByReversedDifference").map(
+    called => ({
+      ...called,
+      when: b.whenCallRunsOtherCode,
+    }),
+  ),
   "Buffer.from": functionsIn("builtins/JSBufferConstructor", "from"),
   "Buffer.isBuffer": functionsIn("builtins/JSBufferConstructor", "isBuffer"),
   "Buffer.prototype.offset": functionsIn("builtins/JSBufferPrototype", "offset"),

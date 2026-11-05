@@ -44,7 +44,6 @@ pub(super) fn run<'s>(
     (bound, analysis)
 }
 
-/// `None`: what is known now calls for more than another look at the same tree.
 pub(super) fn run_again<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
@@ -68,7 +67,6 @@ pub(super) fn run_again<'s>(
             imported_names: previous.imported_names,
         },
     };
-    // Most constants decide no branch and name no file.
     let has_same_import_sites = from == AnalyzedAgainFrom::Folding
         && previous.errors.is_empty()
         && folded.errors.is_empty()
@@ -103,11 +101,9 @@ fn decide_format<'s>(
     folded: &FoldResult<'s>,
     scan: &ImportScan<'s>,
 ) -> FormatDecision {
-    // The format of a file is what `bun run` takes it for, whatever the build was told.
     let decisions_of_bun_run = folded.decisions.as_folded_under_minify_syntax();
     let decision = decide_module_format(hir, bound, &decisions_of_bun_run, scan);
     match decision.error {
-        // `bun run` refuses the file. A build that removes what is wrong with it compiles it.
         Some(_) => decide_module_format(hir, bound, &folded.decisions, scan),
         None => decision,
     }

@@ -23,7 +23,6 @@ pub(crate) enum RuntimeFileKind {
     Configuration,
 }
 
-/// Every module of Bun's has an id, so the tests name this one where they need a module that only the host has.
 #[cfg(test)]
 pub(crate) const HOST_VALUE_MODULE: &str = "bun:only-the-host-has-it";
 
@@ -41,7 +40,6 @@ struct RuntimeFile {
     contents: Option<&'static [u8]>,
 }
 
-/// The files and the directories.
 type DirectoryEntries = (Vec<Vec<u8>>, Vec<Vec<u8>>);
 
 pub(crate) struct RuntimeModules {
@@ -102,7 +100,6 @@ impl RuntimeModules {
         self.files.get(path).map(|file| file.kind)
     }
 
-    /// Whether only the files that name the file at `path` see what it declares.
     pub(crate) fn is_seen_only_by_name(&self, path: &[u8]) -> bool {
         (self.files.get(path)).is_some_and(|file| file.is_seen_only_by_name)
     }
@@ -129,7 +126,6 @@ impl RuntimeModules {
         manifest.part_seen_by_every_file(&file.archive_name)
     }
 
-    /// Whether a file that does not name the file at `path` sees only a part of it.
     pub(crate) fn is_seen_in_part(&self, path: &[u8]) -> bool {
         self.part_seen_by_every_file(path).is_some()
     }
@@ -179,7 +175,6 @@ impl RuntimeModules {
             RuntimeResolution::Module(_) if self.omits_builtin_modules => {
                 RuntimeResolution::HostValue
             }
-            // A test run has no entry point, so `bun test` has no such module, and says so to whoever asks for it.
             RuntimeResolution::Module(_)
                 if self.aliases.rewrite_jest_for_tests
                     && wraps_entry_point(specifier, self.aliases) =>
@@ -244,7 +239,6 @@ impl RuntimeModules {
         DECLARATION_FILES.map(virtual_path)
     }
 
-    /// The file that says what `require` answers for the module at `path`.
     pub(crate) fn declarations_of_module(&self, path: &[u8]) -> Option<Vec<u8>> {
         let extension_start = bun_core::strings::last_index_of_char(path, b'.')?;
         let declarations = [&path[..extension_start], b".listed.d.ts"].concat();
@@ -282,7 +276,6 @@ fn prelude_archive_name(name: &str) -> Vec<u8> {
     [&b"prelude/"[..], name.as_bytes()].concat()
 }
 
-// As `bun run` decides it: `load_env` in src/jsc/VirtualMachine.rs.
 fn runs_own_tests() -> bool {
     cfg!(test)
         || bun_core::env::IS_DEBUG
@@ -291,7 +284,6 @@ fn runs_own_tests() -> bool {
                 .is_some())
 }
 
-// The module whose one import is the entry point of `bun run`.
 fn wraps_entry_point(specifier: &[u8], aliases: Cfg) -> bool {
     let alias = Alias::get(specifier, Target::Bun, aliases);
     alias.is_some_and(|alias| {
@@ -302,7 +294,6 @@ fn wraps_entry_point(specifier: &[u8], aliases: Cfg) -> bool {
     })
 }
 
-// The names that `bun run` answers to Bun's own tests alone: `fetch_builtin_module` in src/runtime/jsc_hooks.rs.
 fn is_module_of_own_tests(specifier: &[u8], aliases: Cfg) -> bool {
     let Some(alias) = Alias::get(specifier, Target::Bun, aliases) else {
         return false;
@@ -321,7 +312,6 @@ fn is_module_of_own_tests(specifier: &[u8], aliases: Cfg) -> bool {
     )
 }
 
-/// The module of Bun that a program means with a specifier, however it spells it: "node:crypto", "crypto", "sys".
 pub(crate) fn find_module_named(specifier: &[u8]) -> Option<RuntimeModule> {
     let specifier = Alias::bun_prefixed_builtin(specifier).unwrap_or(specifier);
     let alias = Alias::get(specifier, Target::Bun, Cfg::default())?;
@@ -337,7 +327,6 @@ fn resolve_alias(manifest: &Manifest, specifier: &[u8], aliases: Cfg) -> Option<
     })
 }
 
-// Some names are there for Bun's own tests alone. An executable answers none of them.
 fn is_public(module: HostModuleId) -> bool {
     let module = RuntimeModule::from_registry_id(module.0);
     module.is_some_and(|it| {
@@ -361,7 +350,6 @@ fn collect_public_specifiers(manifest: &Manifest) -> Vec<(HostModuleId, &'static
     specifiers
 }
 
-/// Every line stays as long as it is, so what follows stands where it stood.
 fn leave_blank(text: &mut [u8]) {
     let mut rest = &mut *text;
     while let Some(line_end) = strings::index_of_char_usize(rest, b'\n') {
@@ -440,7 +428,6 @@ fn collect_directories(
 ) -> FxHashMap<Vec<u8>, DirectoryEntries> {
     let top_directory = HOST_ROOT.strip_suffix(b"/").unwrap_or(HOST_ROOT);
     let mut directories: FxHashMap<Vec<u8>, DirectoryEntries> = FxHashMap::default();
-    // The project is every file that a directory lists. What says something of one module comes with that module.
     let listed = files.iter().filter(|(_, file)| !file.comes_with_module);
     for path in listed.map(|(path, _)| path) {
         debug_assert!(path.starts_with(HOST_ROOT));
@@ -870,7 +857,6 @@ mod tests {
         assert!(text.find(line).is_some(), "{}", BStr::new(&text));
         assert_eq!(runtime.declarations_of_module(&declarations), None);
 
-        // A file that a directory lists is part of every program, and what it names is read.
         let (files, _) = runtime.entries(b"/$bun/js/node").unwrap();
         assert!(files.contains(&b"fs.ts".to_vec()));
         assert!(!files.contains(&b"fs.listed.d.ts".to_vec()));

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunExe, isASAN, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
@@ -46,7 +46,7 @@ test.skipIf(generated === undefined).each([
     const { errors, exitCode } = (await configurations())[configuration];
     expect({ errors, exitCode }).toEqual({ errors: [], exitCode: 0 });
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );
 
 test.skipIf(generated === undefined)(
@@ -56,5 +56,5 @@ test.skipIf(generated === undefined)(
     expect(withAssertions.ids).not.toBe("");
     expect(withAssertions.ids === withoutAssertions.ids).toBe(true);
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );

@@ -25,7 +25,6 @@ fn has_only_constant_members(members: &[(EnumMemberId, EnumMemberValue)]) -> boo
     })
 }
 
-// An integer key precedes every name in the order of an object's keys, wherever it is defined.
 fn has_only_index_reverse_keys(members: &[(EnumMemberId, EnumMemberValue)]) -> bool {
     members.iter().all(|&(_, value)| match value {
         EnumMemberValue::Number(number) => {
@@ -36,7 +35,6 @@ fn has_only_index_reverse_keys(members: &[(EnumMemberId, EnumMemberValue)]) -> b
     })
 }
 
-// `f() as number`: what is added behind the type would go with it.
 fn end_in_front_of_types(hir: &hir::File<'_>, mut expression: ExprId) -> u32 {
     while !is_parenthesized(hir, expression)
         && let Some(operand) = hir.type_assertion_operand(expression)
@@ -47,8 +45,6 @@ fn end_in_front_of_types(hir: &hir::File<'_>, mut expression: ExprId) -> u32 {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// An enum that is declared in a function stands in the text of that function. There it is written as what it does:
-    /// `enum E { A = 7, B = f() }` is `let E; ((E) => [E[E["A"] = 7] = "A", E[E["B"] = f()] = "B"])(E ||= {});`. An initializer that runs stays where it stands.
     fn note_enum_as_code(
         &mut self,
         declaration: EnumId,
@@ -133,7 +129,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if is_in_function {
             self.file.note_enum_as_code(declaration, &members);
         }
-        // `bun run` assigns the members.
         let can_define_members = has_only_constant_members(&members)
             && !(members.iter())
                 .any(|&(id, _)| self.file.is_name_on_object_prototype(hir[id].name));
@@ -141,7 +136,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let layout = self.file.container_layout(container.merged);
             let mut builder = self.begin_object(layout);
             let mut reverse_keys: SmallVec<[(PropertyName, ValueId); 16]> = SmallVec::new();
-            // A name that is an index may be the reverse key of another member, and the later of the two stays.
             let defines_names_first = has_only_index_reverse_keys(&members)
                 && !members.iter().any(|&(id, _)| {
                     let name = self.file.name_key(hir[id].name);
@@ -165,7 +159,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let container_object = self.ensure_container(container);
         let scope = bound.enum_scope[declaration.idx()];
-        self.enter_scope(scope);
+        self.enter_container_scope(scope, container_object);
         self.lower_enum_members(&members, &mut |lowering, name, value| {
             lowering.emit_set(container_object, name, value);
         });

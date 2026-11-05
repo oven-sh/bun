@@ -1,6 +1,3 @@
-//! What a build says of itself in the stage log, one line a fact, where tests look whether a run stayed closed.
-//! Every function returns at once unless `statistics::logs_stages()`, and is handed what its caller has worked out anyway.
-
 #[cfg(test)]
 mod tests;
 
@@ -35,18 +32,12 @@ pub(crate) enum FileLeavesOpen {
     MocksUnspelledModule,
     HandsOnUnspelledModule,
     LetsSpyOnGo,
-    /// `export const watch = (object, name) => spyOn(object, name)`: with how many texts the other files pass to it.
-    SpiesUnderNamesFromOutside {
-        texts_passed: usize,
-    },
-    HoldsTextThatSpies {
-        loads_by_unknown_path: bool,
-    },
+    SpiesUnderNamesFromOutside { texts_passed: usize },
+    HoldsTextThatSpies { loads_by_unknown_path: bool },
 }
 
 fn say(line: &str) {
     bun_core::print_errorln!("{}", line);
-    // Each thread has a buffer of its own, and a thread of the pool flushes it for nobody.
     bun_core::Output::flush();
 }
 
@@ -74,7 +65,6 @@ fn line_of_scan(counts: &CountsOfScan) -> String {
     )
 }
 
-/// The line on the texts comes first: harness/fixed-runs.ts holds the two in that order.
 pub(crate) fn say_scan(counts: &CountsOfScan) {
     if logs_stages() {
         say(&line_of_texts(counts));
@@ -151,7 +141,6 @@ fn line_of_load_that_goes_on(files_of_workers: usize) -> String {
     format!("AOT load goes on | with {files_of_workers} more files that Workers start from")
 }
 
-/// Nothing where the load has taken in no such file.
 pub(crate) fn say_load_goes_on(files_of_workers: usize) {
     if files_of_workers != 0 && logs_stages() {
         say(&line_of_load_that_goes_on(files_of_workers));
@@ -164,7 +153,6 @@ fn line_of_entries_that_may_answer(modules: usize) -> String {
     )
 }
 
-/// Nothing where no module may be answered so.
 pub(crate) fn say_entries_may_answer(modules: usize) {
     if modules != 0 && logs_stages() {
         say(&line_of_entries_that_may_answer(modules));
@@ -193,7 +181,6 @@ fn line_of_what_file_replaces(path: &[u8], members: &[BuiltinId]) -> String {
     )
 }
 
-/// Nothing of a file that replaces no member.
 pub(crate) fn say_what_file_replaces(path: &[u8], members: &[BuiltinId]) {
     if !members.is_empty() && logs_stages() {
         say(&line_of_what_file_replaces(path, members));
@@ -253,7 +240,6 @@ fn line_of_package_that_takes_from_test_runner(
     )
 }
 
-/// `exports.mockModule = (path, factory) => mock.module(path, factory)` in a file below node_modules. Nothing of a package that spells all it mocks and spies on.
 pub(crate) fn say_package_takes_from_test_runner(
     path: &[u8],
     mocks_unspelled_module: bool,
@@ -268,7 +254,6 @@ pub(crate) fn say_package_takes_from_test_runner(
     }
 }
 
-/// In the order of the line.
 const CAUSES_OF_UNSEEN_CODE: [UnseenCodeCause; 6] = [
     UnseenCodeCause::LoadsCodeByName,
     UnseenCodeCause::LoadsModuleByName,
@@ -292,7 +277,6 @@ fn line_of_code_that_build_does_not_see(records: [usize; 6]) -> String {
     )
 }
 
-/// How many records of each cause the engine has handed back, of a test run and of an executable alike.
 pub(crate) fn say_code_that_build_does_not_see(engine: &EngineResult) {
     if logs_stages() {
         let records = engine.unseen_code();

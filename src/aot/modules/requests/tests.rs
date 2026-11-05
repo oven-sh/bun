@@ -531,7 +531,6 @@ fn pattern_site_lists_candidates() {
 fn computed_site_beside_a_plugin_leaves_its_files_to_the_loader() {
     const PLUGIN: &str = r#"Bun.plugin({ name: "p", setup() {} });"#;
     const CHOICE: &str = r#"(flag ? "./pages/home.js" : "./pages/about.js")"#;
-    // The file, the body of a function, and whether the loader is given the names beside a plugin.
     let rows = [
         (
             "main.mjs",
@@ -545,7 +544,6 @@ fn computed_site_beside_a_plugin_leaves_its_files_to_the_loader() {
             true,
         ),
         ("main.mjs", "return import.meta.require(CHOICE);", true),
-        // `bun build` links these two.
         ("main.mjs", "return import(CHOICE);", false),
         ("main.cjs", "return require(CHOICE);", false),
     ];
@@ -577,7 +575,7 @@ fn computed_site_beside_a_plugin_leaves_its_files_to_the_loader() {
 }
 
 #[test]
-fn name_that_a_package_json_resolves_is_left_to_the_loader_beside_a_plugin() {
+fn every_name_of_a_file_is_left_to_the_loader_beside_a_plugin() {
     let files = [
         (
             "main.mjs",
@@ -604,11 +602,10 @@ fn name_that_a_package_json_resolves_is_left_to_the_loader_beside_a_plugin() {
             })
             .collect();
         spelled.sort();
-        // The names of packages are written down for entry points. A folder whose package.json names its main file stays linked.
-        let expected = [("./tool".to_string(), false), ("kit".to_string(), true)];
+        let expected = [("./tool".to_string(), true), ("kit".to_string(), true)];
         assert_eq!(spelled, expected);
         let entry_points = program.input.files.entry_points();
-        assert!(entry_points.contains(&program.file("node_modules/kit/start.js")));
+        assert!(!entry_points.contains(&program.file("node_modules/kit/start.js")));
         assert!(!entry_points.contains(&program.file("tool/start.js")));
     });
 }
@@ -735,7 +732,6 @@ fn load_of_file_missing_at_build_is_left_to_loader() {
             type_attribute: None,
         });
         let [imported, required] = left_to_loader.map(SiteAnswer::Module);
-        // Load lists the calls that load a module, and this one only looks for it.
         let resolved = SiteAnswer::Failed(ModuleFailureId(0));
         let sites = files.analysis(main).import_sites.iter();
         let answers: Vec<_> = sites
@@ -790,7 +786,6 @@ fn import_statement_hands_its_type_to_the_loader() {
         let (toml, text) = (Some(Loader::Toml), Some(Loader::Text));
         let expected = [toml, None, text, None, toml, text, None].map(external);
         assert_eq!(answers, expected);
-        // One module for each type, and the one that no attribute asks for comes first.
         let modules = [None, toml, text].map(external);
         let listed = program.graph.other_modules().iter();
         let listed: Vec<_> = listed.map(|&module| SiteAnswer::Module(module)).collect();

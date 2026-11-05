@@ -45,14 +45,12 @@ pub struct BuiltinTypeClass {
     pub denotation: Denotation,
 }
 
-/// Lists the paths of the values, in the order in which they claim a signature.
 pub type BuiltinValuePathList = Box<dyn Fn() -> &'static [BuiltinValuePath<'static>] + Send + Sync>;
 
 pub struct BuiltinTypeSymbols {
     classes: FxHashMap<Sym, BuiltinTypeClass>,
     types_by_class: Vec<(BuiltinClassIndex, Sym)>,
     values: BuiltinValuePathList,
-    /// What is asked about a method is answered from the paths that end in its name.
     methods: OnceLock<resolve::MethodsByName>,
     call_signatures: OnceLock<FxHashMap<FunctionRef, BuiltinValueIndex>>,
     program_subtypes: Vec<Sym>,
@@ -118,7 +116,6 @@ impl BuiltinTypeSymbols {
         self.classes_with_exact_type.binary_search(&class).is_ok()
     }
 
-    /// `files`: what `compute` was given.
     pub fn value_of_call_signature(
         &self,
         files: &Files<'_>,

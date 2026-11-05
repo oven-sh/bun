@@ -18,7 +18,6 @@ use crate::lower::{FileLowering, FunctionLowering, control, scope};
 use crate::modules::ShownNames;
 
 impl FileLowering<'_, '_, '_, '_> {
-    // A `let` or `const` whose one name Bun's transpiler may replace by the initializer.
     fn find_variable_named_once(&self, declaration: VarDeclId) -> Option<SymbolId> {
         let (hir, bound) = (self.hir, self.bound);
         let decl = hir[declaration];
@@ -40,7 +39,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The first statement of the list for which the transpiler prints something, and what stands behind it.
     fn find_printed_statement(&self, list: IdList<StmtId>) -> Option<(StmtId, IdList<StmtId>)> {
         let hir = self.hir;
         let index = hir.ids(list).position(|statement| {
@@ -53,7 +51,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some((hir.id_at(list, index), behind))
     }
 
-    // `value` is the name of the variable. Adds the positions of the casts around the name.
     fn push_casts_around_name(
         &mut self,
         value: ExprId,
@@ -76,7 +73,6 @@ impl FileLowering<'_, '_, '_, '_> {
             && self.bound.binding(current) == Binding::Symbol(symbol)
     }
 
-    // The transpiler counts the names in what stands behind a `return` too, which is not compiled.
     fn is_any_named_where_never_reached(&self, list: IdList<StmtId>, symbols: &[SymbolId]) -> bool {
         let (hir, bound, decisions) = (self.hir, self.bound, self.decisions());
         let never_reached = hir.ids(list).filter(|&it| decisions.is_dead_stmt(it));
@@ -94,16 +90,12 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
-    // Bun's transpiler prints the initializer of a `let` or `const` that is named once in place of the name, where the name is what the statement behind the declaration evaluates first.
-    // `const a = f(); const b = a; return b;` runs as `return f();`: the call stands in tail position, and no variable gives its name to a function that is made there.
-    // The positions that the value enters between the initializer and the result of the function, in order. None: the function does not return it at once.
     fn find_casts_up_to_return(
         &mut self,
         first: VarDeclId,
         mut behind: IdList<StmtId>,
     ) -> Option<SmallVec<[DeclaredType; 2]>> {
         let (hir, bound) = (self.hir, self.bound);
-        // In a row of variables that each hold what the one before held, the first is asked about the whole row.
         let initializer = self.skip_type_syntax(hir[first].init);
         if matches!(hir[initializer].kind, ExprKind::Ident(_))
             || self.is_class_named_by_its_declaration(initializer)
@@ -171,7 +163,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.lower_expression_in(initializer, Evaluation::at_tail(tail))
     }
 
-    // `behind`: what stands behind the statement of the declaration in its list.
     pub(super) fn lower_variable_declaration_in_list(
         &mut self,
         declaration: VarDeclId,
@@ -212,7 +203,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let dynamic_scope = bound.dynamic_lookup_scope(NodeData::Pat(decl.pat));
         let target = dynamic_scope.map(|_| self.resolve_pattern_target(decl.pat));
         let value = match hir[decl.pat].kind {
-            // `export const f = function () {}` in a namespace is the store `N.f = function () {}`, which names nothing.
             PatKind::Ident(_)
                 if self.is_container_member(decl.pat)
                     && !self.file.is_class_named_by_its_declaration(initializer) =>
@@ -233,7 +223,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                 }
             }
-            // The pattern takes each name from where the module keeps it, and nothing from what the call yields.
             PatKind::Object(_) if self.file.find_destructured_module(initializer).is_some() => {
                 self.lower_expression(initializer)
             }
@@ -255,7 +244,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `const f = () => ..`, where nobody reads `f`: whoever calls enters the function itself, so nobody ever has the function object.
     fn leaves_function_unmade(&mut self, pattern: PatId) -> bool {
         let (hir, bound) = (self.file.hir, self.file.bound);
         let PatKind::Ident(name) = hir[pattern].kind else {
@@ -280,7 +268,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         true
     }
 
-    // `const a = require(K)`, and `const a = __importStar(require(K))` where `K` has the marker: every use of `a` is bound to what the module exports, so only the `require` call in the initializer runs.
     fn initialize_holder(&mut self, pattern: PatId, initializer: ExprId) -> bool {
         let file = &*self.file;
         let PatKind::Ident(name) = file.hir[pattern].kind else {
@@ -298,7 +285,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         true
     }
 
-    // `var a = __toESM(require(K))`, `const a = __importStar(require(K))`. Each getter of what the helper makes reads its name on what `require` answered, so a variable of its own holds the answer for the names that are read through `a`: where the answer is as plain as `store_plain_answer` asks. Where `a` is only read by name it then holds the answer too, and the helper is not called. In every other case the helper is called as it is written.
     fn initialize_holder_of_copy(&mut self, pattern: PatId) -> bool {
         let file = &*self.file;
         let hir = file.hir;
@@ -354,11 +340,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         true
     }
 
-    // Asks the answer, ahead of the helper and by questions that run no code of the program:
-    // it is an object, and right above it stands `Object.prototype` or `Function.prototype`, so that nothing but ordinary objects answers for it;
-    // neither it nor what stands above it has a marker. So the helper, whose reads of the marker are all that could run code, runs none: it finds the answer as it is asked here, and no marker;
-    // it has each name that is read through the holder, as a name that the helper shows by a getter of its own or, where the property can never change, by the same property.
-    // Goes on behind the store where all of that holds, and to `otherwise`, with the variable empty, where it does not.
     fn store_plain_answer(
         &mut self,
         holder: Sym,
@@ -366,7 +347,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         shown: ShownNames,
         otherwise: BlockId,
     ) {
-        // `module.exports = late; var late = function () {};`
         let answer = self.branch_if_nullish(answer, otherwise);
         let get_prototype_of = self.emit_locked_builtin(BuiltinId::ObjectGetPrototypeOf);
         let above = emit_call(self, get_prototype_of, None, &[answer]);
@@ -398,7 +378,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let describe = self.emit_locked_builtin(BuiltinId::ObjectGetOwnPropertyDescriptor);
             let description = emit_call(self, describe, None, &[answer, name]);
             let description = self.branch_if_undefined(description, otherwise);
-            // Only the description of a property with a value says whether it is writable.
             let writable = self.emit_named_read(description, known::writable);
             self.branch_if_undefined(writable, otherwise);
             if shown == ShownNames::OwnEnumerableWithValue {
@@ -414,12 +393,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.put_module_variable(variable, answer);
     }
 
-    fn emit_own_property_test(&mut self, object: ValueId, name: ValueId) -> ValueId {
+    pub(in crate::lower) fn emit_own_property_test(
+        &mut self,
+        object: ValueId,
+        name: ValueId,
+    ) -> ValueId {
         let test = self.emit_locked_builtin(BuiltinId::ObjectPrototypeHasOwnProperty);
         emit_call(self, test, Some(object), &[name])
     }
 
-    fn go_on_if(&mut self, value: ValueId, expected: bool, otherwise: BlockId) {
+    pub(in crate::lower) fn go_on_if(
+        &mut self,
+        value: ValueId,
+        expected: bool,
+        otherwise: BlockId,
+    ) {
         let split = self.split_on_truthiness(value);
         let (goes_on, leaves) = match expected {
             true => (split.taken, split.not_taken),
@@ -501,7 +489,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         };
         let member = bound.export_symbol_of_value_symbol_if_exported(binding);
-        // `class K` beside `export namespace K` is not exported itself.
         if member == binding || !bound.symbol(member).decls.contains(&declaration) {
             return;
         }

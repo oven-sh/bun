@@ -53,27 +53,21 @@ impl Statistics {
 pub struct StageClock {
     times: [Duration; Stage::COUNT],
     running: Option<(Stage, Instant)>,
-    /// CPU time the process had used when the running stage began, if stages are logged.
     cpu_at_start: Duration,
-    /// The part of it in the kernel.
     kernel_time_at_start: Duration,
     instructions_at_start: Option<u64>,
 }
 
-/// What the process has used so far.
 #[derive(Default)]
 struct ProcessInfo {
     cpu: Duration,
-    /// The part of its CPU time that it has spent in the kernel: page faults, and memory given back.
     in_kernel: Duration,
-    /// Resident memory in bytes.
     resident: usize,
     peak: usize,
 }
 
 fn process_info() -> ProcessInfo {
     let (mut user, mut system, mut resident, mut peak) = (0, 0, 0, 0);
-    // A build with the address sanitizer has no mimalloc: its lines say zero.
     if !bun_alloc::USE_MIMALLOC {
         return ProcessInfo::default();
     }
@@ -95,7 +89,6 @@ fn process_info() -> ProcessInfo {
     }
 }
 
-/// mimalloc asks getrusage(), where on Linux a spawned process starts from the peak of its parent.
 fn own_peak() -> Option<usize> {
     #[cfg(target_os = "linux")]
     if let Ok(status) = bun_sys::File::read_from(bun_sys::Fd::cwd(), b"/proc/self/status") {
@@ -112,13 +105,10 @@ pub fn logs_stages() -> bool {
     bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
 }
 
-/// What `StageClock` reads. `None` where there is no counter.
 pub fn instructions_of_all_threads() -> Option<u64> {
     instructions::of_all_threads()
 }
 
-/// Instructions that the process's threads have retired in user mode since the first call of `of_all_threads`. The engine counts on the threads it starts.
-/// The front end runs on Bun's threads, some of which are older than the build, so the first call opens a counter on every thread that exists then, and threads started later inherit their parent's counter.
 #[cfg(target_os = "linux")]
 mod instructions {
     use core::ffi::{c_int, c_long, c_void};
@@ -145,7 +135,6 @@ mod instructions {
         const EXCLUDE_KERNEL: u64 = 1 << 5;
         const EXCLUDE_HYPERVISOR: u64 = 1 << 6;
         let flags = INHERIT | EXCLUDE_KERNEL | EXCLUDE_HYPERVISOR;
-        // The first version of `perf_event_attr`: type and size, config, period, sample type, read format, flags, and two more words.
         let attributes: [u64; 8] = [HARDWARE | SIZE << 32, INSTRUCTIONS, 0, 0, 0, flags, 0, 0];
         // SAFETY: the kernel reads the 64 bytes that the size names and keeps no pointer.
         let file = unsafe {
@@ -174,7 +163,6 @@ mod instructions {
             let thread = bun_core::fmt::parse_int::<c_int>(entry.name.slice_u8(), 10).ok();
             match thread.map(open_counter) {
                 Some(Some(counter)) => counters.push(counter),
-                // A thread may exit after it is listed, so a failure to open its counter is not a refusal by the kernel. The first thread listed never exits, so a failure there is one.
                 Some(None) if counters.is_empty() => return Vec::new(),
                 _ => {}
             }
@@ -208,7 +196,6 @@ mod instructions {
     }
 }
 
-/// ` | instructions 12.345678 M`, as the engine's lines say it, or nothing where there is no counter.
 struct InstructionsSince(Option<u64>, Option<u64>);
 
 impl core::fmt::Display for InstructionsSince {
@@ -264,7 +251,6 @@ impl StageClock {
             self.times[stage as usize] += wall;
             set_step_of_build(None);
             if logs_stages() {
-                // In the form of the engine's lines.
                 let info = process_info();
                 let cpu = info.cpu.saturating_sub(self.cpu_at_start);
                 let in_kernel = info.in_kernel.saturating_sub(self.kernel_time_at_start);
@@ -278,7 +264,6 @@ impl StageClock {
                     info.peak >> 20,
                     InstructionsSince(self.instructions_at_start, instructions::of_all_threads()),
                 );
-                // A later stage that stops the process would take the buffered line with it.
                 bun_core::Output::flush();
                 *END_OF_LAST_LINE.lock() = Some(begin_step());
             }
@@ -297,10 +282,8 @@ impl StageClock {
     }
 }
 
-/// The steps of a stage: a line for each where stages are logged, and nothing elsewhere. It prints on the thread that calls it, which is the build's or one of the pool.
 pub struct StepClock {
     stage: Stage,
-    /// When the step at hand began, with the CPU time and the instructions of the process by then. `None`: stages are not logged.
     began: Option<(Instant, Duration, Option<u64>)>,
 }
 
@@ -321,7 +304,6 @@ impl StepClock {
         self.began.is_some()
     }
 
-    /// `step` has run since the clock was made or since the step before it ended.
     pub fn end(&mut self, step: &str) {
         let Some((began, cpu_at_start, instructions_at_start)) = self.began else {
             return;
@@ -338,12 +320,10 @@ impl StepClock {
             info.peak >> 20,
             InstructionsSince(instructions_at_start, instructions::of_all_threads()),
         );
-        // Each thread has a buffer of its own, and a thread of the pool flushes it for nobody.
         bun_core::Output::flush();
         self.began = Some(begin_step());
     }
 
-    /// `end` for a step whose name has to be put together, which happens only where stages are logged.
     pub fn end_with(&mut self, name_step: impl FnOnce() -> String) {
         if self.logs() {
             self.end(&name_step());
@@ -351,10 +331,8 @@ impl StepClock {
     }
 }
 
-/// Where the last line of a stage or of `log_time_outside_stages` ended, with the CPU time and the instructions of the process by then.
 static END_OF_LAST_LINE: Guarded<Option<(Instant, Duration, Option<u64>)>> = Guarded::new(None);
 
-/// Zero in a process that is no Bun.
 fn time_since_process_began() -> Duration {
     match bun_core::start_time() {
         0 => Duration::ZERO,
@@ -365,9 +343,6 @@ fn time_since_process_began() -> Duration {
     }
 }
 
-/// A line for what the process has done since the last line of a stage or of this function ended, and at first since the process began. Nothing where stages are not logged.
-/// With it each moment of a build stands in a line: Bun's start and the script that asks for the build, what sets the build up, the engine as a whole, what follows it.
-/// The line also says how long the process has run, which is what the lines up to it add up to.
 pub fn log_time_outside_stages(name: &str) {
     if !logs_stages() {
         return;
@@ -392,15 +367,11 @@ pub fn log_time_outside_stages(name: &str) {
         since_process_began.as_secs_f64() * 1000.0,
     );
     bun_core::Output::flush();
-    // The next line counts the writing of this one.
     *END_OF_LAST_LINE.lock() = Some((now, info.cpu, instructions));
 }
 
-/// Where the last line of `log_part_outside_stages` ended, with the CPU time and the instructions of the process by then.
 static END_OF_LAST_PART: Guarded<Option<(Instant, Duration, Option<u64>)>> = Guarded::new(None);
 
-/// A line for a part of what the next line of `log_time_outside_stages` covers: what the process has done since the last line of a stage, of that function or of this one ended.
-/// So the parts of a line add up to it. `name` has a colon, as the label of every part.
 pub fn log_part_outside_stages(name: &str) {
     if !logs_stages() {
         return;
@@ -423,11 +394,9 @@ pub fn log_part_outside_stages(name: &str) {
         InstructionsSince(instructions_by_then, instructions),
     );
     bun_core::Output::flush();
-    // The next part counts the writing of this line.
     *END_OF_LAST_PART.lock() = Some((now, info.cpu, instructions));
 }
 
-/// A line for a time that the caller has measured, which lies inside the time of another line: `name` has a colon, as the label of every part.
 pub fn log_part_of_time_outside_stages(name: &str, wall: Duration) {
     if logs_stages() {
         bun_core::print_errorln!(

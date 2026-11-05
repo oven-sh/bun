@@ -235,6 +235,23 @@ fn entry_flags_of_source_functions() {
         ("export function f() { return new.target; }", target),
         ("export const g = function f() { return f; };", callee),
         ("export function f() { return arguments; }", arguments_flags),
+        ("export function f() { return arguments.length; }", count),
+        (
+            "export function f() { return arguments[arguments.length - 1]; }",
+            arguments_flags,
+        ),
+        (
+            "export function f() { return () => arguments.length; }",
+            arguments_flags,
+        ),
+        (
+            "export function f() { arguments.length = 0; return arguments.length; }",
+            arguments_flags,
+        ),
+        (
+            "export function* f() { yield arguments.length; }",
+            arguments_flags | this,
+        ),
         (
             "export function f(...rest) { return [arguments, rest]; }",
             count,
@@ -297,7 +314,6 @@ fn entry_flags_of_module_body() {
             probe.entry_flags(FunctionKey::ModuleBody(probe.analysis.file))
         })
     };
-    // `this` at the top of a CommonJS file is the object that the body begins with: nobody passes it.
     assert!(flags_of("main.cjs", "this.a = 1;").is_empty());
     assert!(flags_of("main.cjs", "exports.a = 1;").is_empty());
     assert!(flags_of("main.mjs", "this; export {};").is_empty());

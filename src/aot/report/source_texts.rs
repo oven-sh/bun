@@ -4,6 +4,7 @@ use bun_sema_driver::{self as driver, TextLocator};
 
 use crate::diagnostics::{SourcePosition, new_driver_diagnostic};
 use crate::engine::Position;
+use crate::ir::StringTable;
 use crate::ir::ids::{Id, ModuleId};
 use crate::load::read_file_bytes;
 use std::sync::OnceLock;
@@ -16,22 +17,18 @@ pub enum ModuleOrigin {
 }
 
 enum Text {
-    // A copy: the session that owns what the load has read is freed in front of the engine, and reports come behind it.
     Kept(Box<[u8]>),
-    // The file held these very bytes when the program was linked. Few builds ever show a line of a file, and the texts of a large program are hundreds of
-    // megabytes under the engine's summit, so whoever asks first reads the file again.
     OnDisk {
         path_on_disk: Box<[u8]>,
         len: usize,
-        read_again: OnceLock<Box<[u8]>>,
+        hash: u64,
+        read_again: OnceLock<Option<Box<[u8]>>>,
     },
 }
 
 pub struct ModuleSource {
-    // `Sources::diagnostic_path`
     pub path: Box<[u8]>,
     text: Text,
-    // `ModuleFragment::types_in_function_text`
     types_in_function_text: Option<PackedTypeRanges>,
     origin: ModuleOrigin,
 }
@@ -46,12 +43,12 @@ impl ModuleSource {
         }
     }
 
-    /// `path_on_disk`: for `read_file_bytes`, which gives the `len` bytes of the text now.
-    pub fn new_on_disk(path: &[u8], path_on_disk: &[u8], len: usize) -> ModuleSource {
+    pub fn new_on_disk(path: &[u8], path_on_disk: &[u8], text: &[u8]) -> ModuleSource {
         ModuleSource {
             text: Text::OnDisk {
                 path_on_disk: path_on_disk.into(),
-                len,
+                len: text.len(),
+                hash: StringTable::hash_of(text),
                 read_again: OnceLock::new(),
             },
             ..ModuleSource::new(path, &[])
@@ -83,7 +80,10 @@ impl ModuleSource {
     fn kept_len(&self) -> usize {
         match &self.text {
             Text::Kept(text) => text.len(),
-            Text::OnDisk { read_again, .. } => read_again.get().map_or(0, |text| text.len()),
+            Text::OnDisk { read_again, .. } => {
+                let text = read_again.get().and_then(Option::as_ref);
+                text.map_or(0, |text| text.len())
+            }
         }
     }
 
@@ -92,10 +92,11 @@ impl ModuleSource {
         types.map_or(0, |types| types.kept_len(self.len()))
     }
 
-    /// `destination` has room for `function_text_len()`.
     pub fn copy_function_text_to(&self, destination: &mut [u8]) {
-        if let Some(types) = &self.types_in_function_text {
-            types.remove_from(self.text(), destination);
+        if let Some(types) = &self.types_in_function_text
+            && let Some(text) = self.text()
+        {
+            types.remove_from(text, destination);
         }
     }
 
@@ -105,18 +106,20 @@ impl ModuleSource {
         text
     }
 
-    pub fn text(&self) -> &[u8] {
+    pub fn text(&self) -> Option<&[u8]> {
         match &self.text {
-            Text::Kept(text) => text,
+            Text::Kept(text) => Some(text),
             Text::OnDisk {
                 path_on_disk,
                 len,
+                hash,
                 read_again,
-            } => read_again.get_or_init(|| {
-                let text = read_file_bytes(path_on_disk).filter(|text| text.len() == *len);
-                // The file has gone or changed while the program was built. Every position still lies in the text: in its one line of blanks.
-                text.unwrap_or_else(|| vec![b' '; *len]).into()
-            }),
+            } => {
+                let is_as_compiled =
+                    |text: &Vec<u8>| text.len() == *len && StringTable::hash_of(text) == *hash;
+                let read = || Some(read_file_bytes(path_on_disk).filter(is_as_compiled)?.into());
+                read_again.get_or_init(read).as_deref()
+            }
         }
     }
 }
@@ -135,13 +138,11 @@ impl SourceTexts {
         self.modules.get(module.index())?.as_ref()
     }
 
-    /// The bytes of text that stay alive while the engine runs.
     pub fn size_of_texts(&self) -> usize {
         let sources = self.modules.iter().flatten();
         sources.map(ModuleSource::kept_len).sum()
     }
 
-    /// A module without a source counts as one of Bun's own: no report for users lists it.
     pub fn origin(&self, module: ModuleId) -> ModuleOrigin {
         let source = self.get(module);
         source.map_or(ModuleOrigin::Runtime, ModuleSource::origin)
@@ -157,7 +158,6 @@ impl SourceTexts {
 
 pub struct ModuleLocator<'t> {
     texts: &'t SourceTexts,
-    // By module. Positions come in the order of what they belong to, not of their modules, and a locator reads its whole text once.
     locators: Vec<Option<TextLocator<'t>>>,
 }
 
@@ -174,11 +174,10 @@ impl<'t> ModuleLocator<'t> {
         position: Position,
         reported: driver::Diagnostic,
     ) -> driver::Diagnostic {
-        let Some(source) = self.texts.get(position.module) else {
-            return reported;
-        };
-        let locator = self.locator_of(position.module, source);
-        locator.locate(position.offset, position.offset, reported)
+        match self.locator_of(position.module) {
+            Some(locator) => locator.locate(position.offset, position.offset, reported),
+            None => reported,
+        }
     }
 
     pub fn position_of(&mut self, position: Position) -> Option<SourcePosition> {
@@ -192,21 +191,23 @@ impl<'t> ModuleLocator<'t> {
     }
 
     pub fn has_text(&self, module: ModuleId) -> bool {
-        self.texts.get(module).is_some()
+        let source = self.texts.get(module);
+        source.and_then(ModuleSource::text).is_some()
     }
 
     pub fn line_and_column(&mut self, position: Position) -> Option<(u32, u32)> {
-        let source = self.texts.get(position.module)?;
-        let locator = self.locator_of(position.module, source);
+        let locator = self.locator_of(position.module)?;
         Some(locator.line_and_column(position.offset))
     }
 
-    fn locator_of(&mut self, module: ModuleId, source: &'t ModuleSource) -> &TextLocator<'t> {
+    fn locator_of(&mut self, module: ModuleId) -> Option<&TextLocator<'t>> {
+        let source = self.texts.get(module)?;
+        let text = source.text()?;
         let index = module.index();
         if self.locators.len() <= index {
             self.locators.resize_with(index + 1, || None);
         }
-        self.locators[index].get_or_insert_with(|| TextLocator::new(&source.path, source.text()))
+        Some(self.locators[index].get_or_insert_with(|| TextLocator::new(&source.path, text)))
     }
 
     pub fn source_line(&mut self, position: Position) -> Vec<u8> {
@@ -280,7 +281,7 @@ mod tests {
             .with_function_text(Some(PackedTypeRanges::default()));
         assert_eq!(source.len(), text.len());
         assert_eq!(source.function_text_len(), text.len());
-        assert!(source.text() == text);
+        assert!(source.text() == Some(&text[..]));
         assert!(source.function_text() == text);
     }
 
@@ -374,7 +375,7 @@ mod tests {
         std::fs::write(&path, "let a;\nb();\n")
             .expect("the folder for temporary files takes a file");
         let path_on_disk = from_native(path.to_str().expect("the path is text").as_bytes());
-        let on_disk = || ModuleSource::new_on_disk(b"/p/a.ts", &path_on_disk, 12);
+        let on_disk = || ModuleSource::new_on_disk(b"/p/a.ts", &path_on_disk, b"let a;\nb();\n");
 
         let texts = SourceTexts::new(vec![Some(on_disk())]);
         assert_eq!(
@@ -389,10 +390,15 @@ mod tests {
         assert_eq!(BString::from(locator.source_line(at(0, 8))), "b();");
         assert_eq!(texts.size_of_texts(), 12);
 
-        // A file that has changed or gone gives no line, and every position stays inside the text.
-        std::fs::write(&path, "let a;\n").expect("the file is written again");
-        assert_eq!(on_disk().text(), [b' '; 12]);
+        for edited in ["let a;\n", "let b;\na();\n"] {
+            std::fs::write(&path, edited).expect("the file is written again");
+            assert_eq!(on_disk().text(), None, "{edited:?}");
+        }
+        let texts = SourceTexts::new(vec![Some(on_disk())]);
+        let mut locator = ModuleLocator::new(&texts);
+        assert_eq!(locator.line_and_column(at(0, 7)), None);
+        assert_eq!(BString::from(locator.source_line(at(0, 8))), "");
         std::fs::remove_file(&path).expect("the file is there");
-        assert_eq!(on_disk().text(), [b' '; 12]);
+        assert_eq!(on_disk().text(), None);
     }
 }

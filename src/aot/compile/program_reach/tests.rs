@@ -8,7 +8,6 @@ use crate::compile::testing::{default_settings, set_up_output, with_bind_input};
 use crate::ir::run_serially;
 use crate::modules::bind_modules;
 
-// A number that hangs on the two alone.
 fn mix(first: usize, second: usize) -> usize {
     let mut mixed = (first as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
         ^ (second as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
@@ -24,11 +23,6 @@ enum Extra {
     WaysToModuleObjects,
 }
 
-// Five files to a group. `a` files import each other as a tree and call some of what they import, so that the program is loaded whole and reached in part.
-// What waits for a mark in the walk is there many times over, and what sets the mark stands in another file:
-// a name that the loader looks for in a file of a package without side effects, which runs once something of it is used (`q`),
-// the object of a CommonJS module, which somebody looks at before or after the module is found to run (`c`),
-// a member of an enum that the build knows until somebody gets hold of the enum or of one that it is made of (`e`).
 fn generate_program(groups: usize, extra: Extra) -> Vec<(String, String)> {
     let mut files = vec![
         (
@@ -42,7 +36,6 @@ fn generate_program(groups: usize, extra: Extra) -> Vec<(String, String)> {
         ),
     ];
     for group in 0..groups {
-        // Another group.
         let other = |salt: usize| (group + 1 + mix(group, salt) % (groups - 1)) % groups;
         let is_one_in = |count: usize, salt: usize| mix(group, salt) % count == 0;
 
@@ -189,7 +182,6 @@ fn generate_program(groups: usize, extra: Extra) -> Vec<(String, String)> {
         }
         files.push((format!("c{group}.cjs"), c));
 
-        // An enum is made of one of an earlier group, so that none is made of itself.
         let mut e = String::new();
         let made_of = match group {
             0 => "1".to_owned(),
@@ -212,7 +204,6 @@ fn generate_program(groups: usize, extra: Extra) -> Vec<(String, String)> {
     files
 }
 
-// All that the rest of the build can ask of what the walk found.
 struct Outcome {
     left_out: LeftOutCode,
     reached: ReachedModules,
@@ -343,14 +334,12 @@ fn run_in_reverse(count: usize, work: &(dyn Fn(usize) + Sync)) {
     (0..count).rev().for_each(work);
 }
 
-// The tasks of a round one after the other, in an order that hangs on the round.
 fn run_out_of_order(count: usize, work: &(dyn Fn(usize) + Sync)) {
     let mut order: Vec<usize> = (0..count).collect();
     order.sort_unstable_by_key(|&index| mix(index, count));
     order.into_iter().for_each(work);
 }
 
-// `look_at_one_thread`: what one thread finds, which is what every other way has to find.
 fn assert_same_on_any_number_of_threads(
     groups: usize,
     extra: Extra,
@@ -392,7 +381,6 @@ fn assert_same_on_any_number_of_threads(
     });
 }
 
-// How many of the enums of the `e` files have their objects made, and how many not.
 fn count_enums(input: &ProgramReachInput<'_, '_>, outcome: &Outcome) -> (usize, usize) {
     let (mut made, mut not_made) = (0, 0);
     for &file in input.files.compiled_files() {
@@ -417,7 +405,6 @@ fn ten_thousand_files_are_reached_alike_on_any_number_of_threads() {
         let file_count = input.files.compiled_files().len();
         assert!(file_count > 10_000, "{file_count} files are loaded");
         let (left_out, reached) = (&outcome.left_out, &outcome.reached);
-        // Each of these is empty in a program where nothing waits for anything.
         assert!(
             left_out.files.len() > 100,
             "files of the package that nothing uses"
@@ -452,7 +439,6 @@ fn files_that_loads_find_by_name_are_reached_alike_on_any_number_of_threads() {
 fn ways_to_module_objects_are_reached_alike_on_any_number_of_threads() {
     assert_same_on_any_number_of_threads(300, Extra::WaysToModuleObjects, |_, outcome| {
         assert!(!outcome.reached.naming_ways.is_empty());
-        // The 300 CommonJS files, and the ES modules that they require.
         assert!(outcome.reached.with_module_objects.len() > 300);
     });
 }

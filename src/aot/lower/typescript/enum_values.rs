@@ -44,7 +44,6 @@ impl KnownPrimitive {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// The value that stands in the place of a read of a member of an enum.
     pub(in crate::lower) fn find_enum_member_read(&mut self, access: ExprId) -> Option<Constant> {
         if let Some(&read) = self.enum_member_reads.get(&access) {
             return Some(read);
@@ -57,8 +56,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(read)
     }
 
-    /// `l.Level` of `l.Level.High`, where the enum is found on what `require` answers: `l` is the call, or a variable that holds its answer.
-    /// The value of the member is known. Evaluating `l` still runs the file, or throws where `l` holds nothing yet. A name that `import * as` binds does neither.
     pub(in crate::lower) fn find_member_of_loaded_module(&self, access: ExprId) -> Option<ExprId> {
         let (member, root) = self.find_member_and_root(access)?;
         let is_imported = self.symbol_named_by(root).is_some_and(|name| {
@@ -68,7 +65,6 @@ impl FileLowering<'_, '_, '_, '_> {
         (!is_imported).then_some(member)
     }
 
-    // `bun build` writes `1` for `l.Level.High` where `l` is imported, or is a `const` or a `let` that holds what `require` answers. Behind a `var` and behind a call it leaves the path.
     fn is_value_written_by_bundling(&self, access: ExprId) -> bool {
         let Some((_, root)) = self.find_member_and_root(access) else {
             return true;
@@ -77,7 +73,6 @@ impl FileLowering<'_, '_, '_, '_> {
             .is_some_and(|name| self.bound.initial_state(name) != InitialState::Undefined)
     }
 
-    // `l.Level` and `l` of `l.Level.High`, where the graph of modules knows what `l.Level` is.
     fn find_member_and_root(&self, access: ExprId) -> Option<(ExprId, ExprId)> {
         let (hir, modules) = (self.hir, self.inputs.modules);
         let member = self.skip_type_syntax(hir.member_key(access)?.0);
@@ -93,8 +88,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some((member, root))
     }
 
-    /// Reach keeps neither the enum nor the object of a module for a read that this answers, so nothing may leave such a read to the run time.
-    /// `KnownObjects::find_enum` has turned away an enum that a mock or a spy may replace.
     fn find_known_member_read(&self, access: ExprId) -> Option<(Constant, Validity)> {
         let members = KnownObjects::new(
             self.queries.files(),
@@ -112,7 +105,6 @@ impl FileLowering<'_, '_, '_, '_> {
         is_valid.then_some((read.value, read.validity))
     }
 
-    /// `-Level.Low`
     pub(in crate::lower) fn find_signed_enum_member(&self, expression: ExprId) -> Option<Constant> {
         let members = KnownObjects::new(
             self.queries.files(),
@@ -126,7 +118,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(number)
     }
 
-    /// The value that stands in the place of a name that is imported from a module of data.
     pub(in crate::lower) fn find_data_variable_read(&self, symbol: SymbolId) -> Option<Constant> {
         let members = KnownObjects::new(
             self.queries.files(),
@@ -140,7 +131,6 @@ impl FileLowering<'_, '_, '_, '_> {
         members.find_data_variable(named).map(|found| found.1)
     }
 
-    /// The value that stands in the place of a read out of the object of a module of data.
     pub(in crate::lower) fn find_data_member_read(&mut self, access: ExprId) -> Option<Constant> {
         let members = KnownObjects::new(
             self.queries.files(),

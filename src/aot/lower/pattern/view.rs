@@ -206,7 +206,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 let (identifier, name) = self.identifier_target(target)?;
                 let binding = self.bound.binding(identifier);
                 let position = self.hir[identifier].pos;
-                // In a list the transpiler reads the name before the target becomes `N.a`. In a record it looks afterwards.
                 let is_named = self.names_assigned_function(target)
                     || (holder == DefaultHolder::ArrayPattern
                         && !self

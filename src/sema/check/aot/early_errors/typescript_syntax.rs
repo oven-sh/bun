@@ -6,7 +6,6 @@ use crate::check::*;
 use smallvec::SmallVec;
 
 impl Checker<'_, '_> {
-    /// TypeScript's own syntax in places where `bun run` reports a syntax error.
     pub(super) fn check_typescript_syntax_early_errors(&mut self, file: FileId) {
         if self.hir(file).is_js {
             return;
@@ -19,7 +18,6 @@ impl Checker<'_, '_> {
         self.check_this_container_early_errors(file);
     }
 
-    /// `export { if }`, `export { "a" }`: without `from` the name on the left is a reference.
     pub(super) fn check_local_export_names(&mut self, file: FileId) {
         let hir = self.hir(file);
         for export in hir.exports.iter() {
@@ -59,7 +57,6 @@ impl Checker<'_, '_> {
             for p in this_parameter.into_iter().chain(function.params.iter()) {
                 self.check_parameter_syntax(file, kind, p);
             }
-            // Only a first parameter of that name is a type.
             for p in function.params.iter() {
                 if matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this))
                     && kind != FnKind::Arrow
@@ -96,7 +93,6 @@ impl Checker<'_, '_> {
         self.early_grammar_error_on_node(file, p, code, &[]);
     }
 
-    /// The parameters of what has no body. `bun run` reads a declaration as it reads a function, and reads over a signature in a type with a grammar of its own.
     fn check_signature_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for (index, function) in hir.fns.iter().enumerate() {
@@ -139,7 +135,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `?T`, `!T` and `T?` outside of a comment. `bun run` reads `T!` as `T`, and `T?` as an element of a tuple wherever one may stand: `[...T?]`.
     fn check_jsdoc_type_early_errors(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.rare_syntax & rare::JSDOC_TYPE == 0 {
@@ -162,7 +157,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// In a class, an index signature without a type. In an interface or a type literal, a private name and an initializer.
     fn check_type_member_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for (index, member) in hir.members.iter().enumerate() {
@@ -213,7 +207,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `this` right in the body of a namespace or in the initializer of an enum member.
     fn check_this_container_early_errors(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.enums.is_empty() && hir.modules.is_empty() {
@@ -233,7 +226,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// A statement of TypeScript that may only stand right in a file or right in a namespace.
     pub(super) fn check_typescript_statement_position(&mut self, file: FileId, s: StmtId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let parent = bound.parent_of_stmt(s);
@@ -252,7 +244,6 @@ impl Checker<'_, '_> {
                 ModuleName::Global => 2670,
             },
             StmtKind::ImportEquals(_) if !is_module_element => 1232,
-            // What runs is a constant of that name.
             StmtKind::ImportEquals(import)
                 if hir[import].name == known::let_
                     && matches!(hir[import].target, ImportEqualsTarget::Require(_))
@@ -276,7 +267,6 @@ impl Checker<'_, '_> {
         line_end(text, end) < skip_trivia(text, end)
     }
 
-    /// `import`, `export .. from`, `export {}` and `export default` in the body of a namespace.
     pub(super) fn check_module_syntax_in_namespace(&mut self, file: FileId, s: StmtId, code: u32) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Module(m) = bound.parent_of_stmt(s) else {

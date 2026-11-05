@@ -174,7 +174,6 @@ fn owner_captures_nothing() {
 #[test]
 fn single_user_copies_what_is_immutable_and_initialized_before_its_creation() {
     let at_entry = Some(Initialization::AT_SCOPE_ENTRY);
-    // The time of the user's creation, is the binding immutable, its initialization, is it copied.
     let rows = [
         (5, true, initialized_at(3), true),
         (5, true, initialized_at(7), false),
@@ -542,7 +541,6 @@ fn time_inside_a_later_function() {
     assert!(!fixture.is_initialized_before(binding, late, 5));
 }
 
-// `declare` writes the variable of a level, `use_each` what the innermost function does with the variable of each level.
 fn nest_functions(
     depth: usize,
     declare: impl Fn(usize) -> String,
@@ -559,7 +557,6 @@ fn nest_functions(
     source + "}\nf0();\n"
 }
 
-// The most captures of a function, and the most fields of an environment.
 fn lower_nested_functions(source: &str) -> (usize, usize) {
     let lowered = lower_program_with_limits(&[("main.js", source)], LimitValues::for_host());
     let fragment = &lowered[0].1.fragment;
@@ -580,7 +577,6 @@ fn function_that_reaches_too_many_scopes_gets_its_captures_in_one_object() {
             |level| format!("v{level}++;"),
         )
     };
-    // The innermost function has a variable of its own and captures an environment for each level around it.
     assert_eq!(
         lower_nested_functions(&stored(max_captures() + 1)),
         (max_captures(), 1)

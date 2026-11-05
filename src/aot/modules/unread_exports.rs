@@ -11,13 +11,11 @@ use core::ops::Range;
 
 struct DataModule {
     row: usize,
-    /// Its part of `ExportReads::is_read`: one mark for each of its symbols, by the number of the symbol.
     marks: Range<usize>,
     keeps_every_name: bool,
 }
 
 struct ExportReads {
-    /// By file: the place in `modules`.
     place_by_file: Vec<Option<u32>>,
     modules: Vec<DataModule>,
     is_read: Vec<bool>,
@@ -31,7 +29,6 @@ fn own_variable(file: FileId, export: &ModuleExport) -> Option<SymbolId> {
     }
 }
 
-// `require` may go somewhere as a value, and no site shows which files it is asked for then.
 fn answers_require_with_namespace(interop: Interop) -> bool {
     interop.require_result != RequireResult::DefaultExport || interop.answers_loader_with_namespace
 }
@@ -58,7 +55,6 @@ impl ExportReads {
             reads.modules.push(DataModule {
                 row: index,
                 marks: first_mark..first_mark + mark_count,
-                // A file of data has no star of its own: its names show in the run only where a mock stands for it.
                 keeps_every_name: row.is_library
                     || row.is_left_to_loader
                     || row.has_dynamic_names
@@ -90,11 +86,9 @@ impl ExportReads {
         }
     }
 
-    /// Something gets hold of the namespace object of the module, hands on whatever the module exports, or looks a name up in it while the program runs.
     fn ask_for_every_name(&mut self, module: ModuleRef) {
         match module {
             ModuleRef::File(file) => self.keep_every_name(file),
-            // Where a compiled file stands behind an external module, `FileRow::is_left_to_loader` says so of the file.
             ModuleRef::Inner { .. }
             | ModuleRef::Face(_)
             | ModuleRef::Check(_)
@@ -112,7 +106,6 @@ impl ExportReads {
             }
             | ImportBinding::NamespaceRead { module, .. }
             | ImportBinding::Exports { module } => self.ask_for_every_name(module),
-            // The accesses through the name are bound one by one. Where the object itself is looked at, `namespace_values` has the module.
             ImportBinding::Namespace {
                 phase: ImportPhase::Evaluation,
                 ..
@@ -146,19 +139,16 @@ impl ExportReads {
                     self.ask_for_every_name(*module);
                 }
             }
-            // Each answers with the namespace object, or lays a mock over every name.
             ImportSiteKind::ImportCall(_)
             | ImportSiteKind::MockModule(_)
             | ImportSiteKind::ImportByTestRunner(_)
             | ImportSiteKind::RequireByTestRunner(_) => match answer {
                 StoredSiteAnswer::Module(module) => self.ask_for_every_name(*module),
-                // A value that the build has not resolved is resolved when the call runs, and may lead to any file.
                 StoredSiteAnswer::AllModules | StoredSiteAnswer::Candidates(_) => {
                     self.every_module_keeps_every_name = true;
                 }
                 StoredSiteAnswer::Failed(_) | StoredSiteAnswer::Erased => {}
             },
-            // The first four bind names to variables. The others answer with a path, or with what `require` answers: the default export of every module that is not kept whole from the start.
             ImportSiteKind::JsxRuntime
             | ImportSiteKind::JsxPackage
             | ImportSiteKind::Import(_)
@@ -209,7 +199,6 @@ impl ExportReads {
     }
 }
 
-/// A file of data declares a variable for each of its keys, beside the one that holds the whole value. A variable that nothing asks for leaves the export table, and lowering does not fill it.
 pub(super) fn remove_unread_data_exports(rows: &mut [FileRow]) {
     let mut reads = ExportReads::new(rows);
     if reads.modules.is_empty() {
@@ -230,7 +219,6 @@ pub(super) fn remove_unread_data_exports(rows: &mut [FileRow]) {
         let row = &mut rows[module.row];
         let file = row.file;
         let is_read = &mut is_read[module.marks.clone()];
-        // A load that names no name takes the default export. One variable may stand under two names, and stays with either.
         let exports = row.exports.iter();
         let default_exports = exports.filter(|export| export.name == known::default);
         for variable in default_exports.filter_map(|export| own_variable(file, export)) {
@@ -245,7 +233,6 @@ pub(super) fn remove_unread_data_exports(rows: &mut [FileRow]) {
                 }
                 Some(_) | None => true,
             });
-        // Lowering searches the list by symbol.
         unread_exports.sort_unstable();
         unread_exports.dedup();
         row.unread_exports = unread_exports;

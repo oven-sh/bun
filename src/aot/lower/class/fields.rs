@@ -92,7 +92,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // An entry of a collection that is private state of the class.
     pub(in crate::lower) fn private_state_fields(
         &mut self,
         layout: LayoutId,
@@ -153,7 +152,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-// A super call in evaluated text hands the initializer whatever the parent returned.
 pub(in crate::lower) fn is_called_by_evaluated_text(
     file: &mut FileLowering<'_, '_, '_, '_>,
     class: ClassId,
@@ -293,7 +291,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // The transpiler of `bun run` writes the key of a member, where that is a name or a string, into a class with decorators and no name that is the member's value.
     fn find_name_of_decorated_value(&mut self, member: MemberId) -> Option<GivenName> {
         let node = self.file.hir[member];
         let PropKey::Name(name) = node.key else {
@@ -404,7 +401,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value
     }
 
-    // A block is a function of its own, so that a stack trace has a frame for it. The frame of the initializer is hidden.
     fn lower_static_block(&mut self, member: MemberId, this: ValueId) {
         let function = self.file.hir[member].func;
         if self.file.decisions().is_dead_function(function) {

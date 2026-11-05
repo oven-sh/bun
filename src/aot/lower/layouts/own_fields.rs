@@ -9,7 +9,6 @@ use crate::ir::generated::{Field, FieldFlags};
 pub(in crate::lower) struct OwnFields {
     fields: Vec<Field>,
     fields_by_key: Vec<u32>,
-    /// Until `finish`, once there are more than a few: the first field of each key.
     first_by_key: FxHashMap<PropertyKeyId, u32>,
     accessor_storages: Vec<(MemberId, u32)>,
     brand: Option<u32>,

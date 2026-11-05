@@ -1,11 +1,10 @@
-//! The functions that `bun_aot_interface` declares, in a Bun that is built without the ahead-of-time compiler.
-//! `engine::has_compiler()` is false in such a Bun. A function that callers reach before they check it returns an empty answer, and every other function panics.
-
 use bun_aot_interface::compile::{BuildFailed, Compilation};
 use bun_aot_interface::diagnostic_codes::Code;
 use bun_aot_interface::engine::{EngineModuleId, EngineResult, RejectedOptionWord};
 use bun_aot_interface::options::Options;
-use bun_aot_interface::report::{ReportEntry, ReportInput, ReportMessage, SourceTexts};
+use bun_aot_interface::report::{
+    ReportEntry, ReportInput, ReportMessage, SourceChanged, SourceTexts,
+};
 use bun_aot_interface::statistics::{StatisticId, Statistics};
 use bun_aot_interface::{Opaque, SourceProvider};
 use bun_ast::Log;
@@ -39,7 +38,7 @@ bun_aot_interface::define_linked_functions! {
     fn bun_aot_write_untyped_note(_statistics: &Statistics, _out: &mut Vec<u8>) { absent() }
     fn bun_aot_collect_report_entries(_input: &ReportInput<'_>, _kinds: ExplainSet) -> Vec<ReportEntry> { absent() }
     fn bun_aot_report_entries_to_messages(_texts: &SourceTexts, _entries: &[ReportEntry]) -> Vec<ReportMessage> { absent() }
-    fn bun_aot_write_obfuscation_map(_engine: &EngineResult, _texts: &SourceTexts, _file_name: &[u8], _debug_id: Option<&[u8]>) -> Vec<u8> { absent() }
+    fn bun_aot_write_obfuscation_map(_engine: &EngineResult, _texts: &SourceTexts, _file_name: &[u8], _debug_id: Option<&[u8]>) -> Result<Vec<u8>, SourceChanged> { absent() }
     fn bun_aot_globals_that_a_window_replaces() -> Vec<u32> { Vec::new() }
     fn bun_aot_lists_laid_anew_between_test_files() -> Vec<u32> { Vec::new() }
     fn bun_aot_imports_vitest(_path: &[u8], _text: &[u8]) -> bool { absent() }

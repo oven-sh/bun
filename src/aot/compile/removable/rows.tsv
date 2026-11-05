@@ -33,7 +33,7 @@
 -	-	-	-	-	ts	const MARK = import.meta.env.X;
 -	-	-	-	-	ts	const MARK = import.meta?.url;
 +	+	+	-	-	ts	const MARK = import.meta.main;
--	-	-	-	-	ts	const MARK = import.meta.hot;
++	-	-	folded	-	ts	const MARK = import.meta.hot;
 # names
 +	+	+	-	-	ts	const a = 1; const MARK = a;
 +	+	+	-	-	ts	function f(...a: any[]): any {} let a = f(); const MARK = a;
@@ -125,7 +125,7 @@
 +	+	+	-	-	ts	const MARK = self;
 -	-	-	-	-	ts	const MARK = Buffer;
 +	-	-	table	-	ts	const MARK = process;
--	-	-	-	-	ts	const MARK = Bun;
++	-	-	table	-	ts	const MARK = Bun;
 -	-	-	-	-	ts	const MARK = WeakRef;
 -	-	-	-	-	ts	const MARK = structuredClone;
 -	-	-	-	-	ts	const MARK = setImmediate;
@@ -276,7 +276,7 @@
 -	-	-	-	-	ts	const MARK = Symbol("x");
 -	-	-	-	-	ts	const MARK = Object.freeze({});
 -	-	-	-	-	ts	const MARK = Object.create(null);
--	+	+	missed	-	ts	const MARK = "abc".charCodeAt(1);
++	+	+	-	-	ts	const MARK = "abc".charCodeAt(1);
 -	-	-	-	-	ts	const MARK = Math.max(1, 2);
 -	-	-	-	-	ts	const MARK = String(1);
 -	-	-	-	-	ts	const MARK = Number("1");

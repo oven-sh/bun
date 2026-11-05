@@ -1,7 +1,7 @@
 use bun_sema::bind::{Binding, CodeUnit, Decl, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::{TreeNode, push_children};
-use bun_sema::hir::{ExprId, FnId, StmtId, is_moved_to_file_start};
+use bun_sema::hir::{ExprId, Flags, FnId, PatKind, StmtId, is_moved_to_file_start};
 use bun_sema::util::SharedSort;
 use bun_sort_by_number::{SortByNumber, number_of_pair};
 use rustc_hash::FxHashMap;
@@ -41,9 +41,26 @@ pub(in crate::lower::scope) fn walk_file(
     let mut read_by_nested_functions: Vec<SymbolId> =
         nested_reads.map(|read| read.symbol).collect();
     sort_unique(&mut read_by_nested_functions);
+    spread_looks_to_what_is_handed_on(input, &mut walk);
+    let is_looked_at = std::mem::take(&mut walk.is_looked_at);
     for read in reads {
-        // The closure is kept in a local of the owner unless a nested function reads the name too.
         let needs_shared_place = read_by_nested_functions.binary_search(&read.symbol).is_ok();
+        let sees_itself = walk
+            .functions_that_name_arguments
+            .binary_search(&read.function)
+            .is_ok();
+        if needs_shared_place
+            && !is_looked_at[read.symbol.idx()]
+            && !sees_itself
+            && !input.bound.is_visible_to_eval(read.symbol)
+        {
+            walk.created_at_each_read.push(read.symbol);
+            walk.made_at_first_read.push((read.symbol, read.function));
+            walk.function_references.push((read.reader, read.function));
+            walk.sites_that_start
+                .push((read.function, read.reader, read.time));
+            continue;
+        }
         let is_made_at_entry = always_read.binary_search(&read.symbol).is_ok()
             || makers.binary_search(&read.owner).is_ok();
         if needs_shared_place && is_made_at_entry {
@@ -65,7 +82,6 @@ pub(in crate::lower::scope) fn walk_file(
         }
         walk.sites_that_start
             .push((read.function, read.reader, read.time));
-        // The read may store the function object: Walker::record_store().
         if let Some(index) = read.enclosing_loop {
             let innermost = &mut walk.loops[index as usize];
             innermost.stored.push(BindingRef::Symbol(read.symbol));
@@ -76,6 +92,13 @@ pub(in crate::lower::scope) fn walk_file(
         }
     }
     sort_unique(&mut walk.made_at_first_read);
+    sort_unique(&mut walk.created_at_each_read);
+    let without_place = std::mem::take(&mut walk.created_at_each_read);
+    walk.uses.retain(|&(_, binding)| match binding {
+        BindingRef::Symbol(symbol) => without_place.binary_search(&symbol).is_err(),
+        BindingRef::Slot(..) => true,
+    });
+    walk.created_at_each_read = without_place;
     sort_unique(&mut walk.functions_created_before_loops);
     sort_unique(&mut walk.function_references);
     sort_unique(&mut walk.names_called);
@@ -94,7 +117,52 @@ pub(in crate::lower::scope) fn walk_file(
     walk
 }
 
-// Every iteration of a loop around the declaration has a binding of its own.
+fn spread_looks_to_what_is_handed_on(input: &ScopeInput<'_, '_>, walk: &mut ScopeWalk) {
+    let (hir, bound) = (input.hir, input.bound);
+    sort_unique(&mut walk.functions_that_name_arguments);
+    let handed = std::mem::take(&mut walk.names_handed_to_declarations);
+    let is_looked_at = &mut walk.is_looked_at;
+    let mut taken_by: Vec<(SymbolId, SymbolId)> = Vec::with_capacity(handed.len());
+    for (name, callee, index) in handed {
+        let mut parameters = hir[callee].params.iter();
+        let takes_rest = parameters
+            .clone()
+            .any(|parameter| hir[parameter].flags.contains(Flags::REST));
+        if takes_rest
+            || walk
+                .functions_that_name_arguments
+                .binary_search(&callee)
+                .is_ok()
+        {
+            is_looked_at[name.idx()] = true;
+            continue;
+        }
+        let Some(parameter) = parameters.nth(index as usize) else {
+            continue;
+        };
+        let pattern = hir[parameter].pat;
+        let symbol = match hir[pattern].kind {
+            PatKind::Ident(_) => bound.declared_symbol(Decl::Param(pattern)).some(),
+            _ => None,
+        };
+        match symbol.filter(|&symbol| !bound.is_visible_to_eval(symbol)) {
+            Some(symbol) => taken_by.push((symbol, name)),
+            None => is_looked_at[name.idx()] = true,
+        }
+    }
+    sort_unique(&mut taken_by);
+    let mut looked_at: Vec<SymbolId> = taken_by.iter().map(|entry| entry.0).collect();
+    looked_at.dedup();
+    looked_at.retain(|parameter| is_looked_at[parameter.idx()]);
+    while let Some(parameter) = looked_at.pop() {
+        for &(_, name) in entries_of(&taken_by, parameter) {
+            if !std::mem::replace(&mut is_looked_at[name.idx()], true) {
+                looked_at.push(name);
+            }
+        }
+    }
+}
+
 fn find_outermost_loop_sharing_binding(
     input: &ScopeInput<'_, '_>,
     loops: &[WalkedLoop],
@@ -118,9 +186,6 @@ fn find_outermost_loop_sharing_binding(
     found
 }
 
-// A function runs once something starts it: a call in the function that declares it, from the time of that call on, or a call in another function below that one, from the time on from which that function could run:
-// a closure from its making, a function that is itself made late from its own start. So two functions that call each other start where the first call from outside stands.
-// The time counts against what the function that declares it owns, and against nothing else: is_initialized_before().
 fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut ScopeWalk) {
     let sites = std::mem::take(&mut walk.sites_that_start);
     if sites.is_empty() {
@@ -129,7 +194,6 @@ fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut Sco
     let bound = input.bound;
     let (functions, function_of_fn) = (&mut walk.functions, &walk.function_of_fn);
     for &(_, symbol, function) in &walk.hoisted_functions {
-        // As FunctionLowering::instantiate_functions() asks.
         let is_never_made = matches!(
             bound.code_unit(bound.symbol_scope(symbol)),
             CodeUnit::Function(_)
@@ -169,7 +233,6 @@ fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut Sco
                 };
                 match around.creator {
                     Some(creator) => below_owner = creator,
-                    // The call stands outside of the function that declares the name.
                     None => {
                         start = 0;
                         break;
@@ -238,9 +301,11 @@ impl<'x, 's> Walker<'x, 's> {
             pending_stores: Vec::new(),
             unconditional_statements: Vec::new(),
             clock: 0,
+            is_only_called_or_tested: vec![false; hir.exprs.len()],
             walk: ScopeWalk {
                 function_of_fn: vec![None; hir.fns.len()],
                 use_counts: vec![0; bound.symbols.len()],
+                is_looked_at: vec![false; bound.symbols.len()],
                 symbol_initializations: vec![None; bound.symbols.len()],
                 last_store_times: vec![0; bound.symbols.len()],
                 is_initialized_conditionally: vec![false; bound.symbols.len()],
@@ -275,7 +340,6 @@ impl<'x, 's> Walker<'x, 's> {
         }
     }
 
-    // The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module of its own.
     fn declare_inner_module_bodies(&mut self) -> Vec<(FnId, WalkedFunctionId)> {
         let file = self.input.file;
         let callbacks = self.input.modules.inner_modules(file);
@@ -320,7 +384,6 @@ impl<'x, 's> Walker<'x, 's> {
                     self.walk.last_store_times[symbol.idx()] = time;
                 }
             }
-            // The decorators are walked first, and run among the other parts of the class or behind them all. So none of the stores that the function makes while it evaluates the class counts as made until the class is.
             Task::EndDecoratedClass { first_store } => {
                 let time = self.tick();
                 for &(symbol, _, function) in &self.walk.symbol_stores[first_store as usize..] {
@@ -330,7 +393,6 @@ impl<'x, 's> Walker<'x, 's> {
                     }
                 }
             }
-            // What is stored in a loop is stored until the loop ends, and the outermost loop ends last.
             Task::EndLoop(index) => {
                 let time = self.tick();
                 let ended = &mut self.walk.loops[index as usize];
@@ -403,7 +465,6 @@ impl<'x, 's> Walker<'x, 's> {
         self.children = children;
     }
 
-    // The code of a function, of a field initializer or of the file, whose top scope is `scope`. The file alone runs once.
     pub(super) fn enter_unit(&mut self, function: WalkedFunctionId, scope: ScopeId) -> Context {
         let context = Context {
             function,

@@ -13,6 +13,7 @@ mod folder_members;
 mod folder_names;
 mod folder_operators;
 mod inputs;
+mod known_constructors;
 mod known_sets;
 mod known_to_bun_run;
 mod removed_by_bun_run;
@@ -25,8 +26,8 @@ pub(crate) use dead_code::mark_nodes_below;
 pub(crate) use evaluate::is_exact_power;
 use evaluate::{Evaluator, Value};
 pub use inputs::{
-    Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, RuntimeValueKind,
-    StoredByMocks,
+    Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, PathInPlace,
+    RuntimeValueKind, StoredByMocks,
 };
 pub use known_sets::KnownSets;
 pub use removed_by_bun_run::is_removed_where_never_run;
@@ -103,6 +104,7 @@ impl<'s> Decision<'s> {
             DataValue::String(value) => Decision::Constant(Constant::String(value)),
             DataValue::BigInt(value) => Decision::Constant(Constant::BigInt(value)),
             DataValue::Array(_) | DataValue::Object(_) => Decision::Data(data),
+            DataValue::Temporal { .. } => Decision::Unknown,
         }
     }
 }
@@ -163,17 +165,23 @@ struct FoldedConstant {
     is_known_to_bun_run: bool,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum MadeByCall {
+    WholePath,
+    Part,
+}
+
 #[derive(Copy, Clone, Default, Debug)]
 pub struct Decisions<'s> {
     decided: &'s [(ExprId, Decision<'s>)],
     is_decided: NodeBits<'s>,
     constants: &'s [FoldedConstant],
     strings_and_numbers_of_bun_run_alone: NodeBits<'s>,
-    /// What the file was folded with. `KnownSets` is asked later and goes by the same.
     folded_with: FoldInputs<'s>,
     specifiers: &'s [(ExprId, ImportSpecifier)],
     paths_from_own_directory: &'s [ExprId],
     paths_made_by_calls: &'s [ExprId],
+    names_made_by_calls: &'s [(ExprId, MadeByCall)],
     data_literals: NodeBits<'s>,
     dead_exprs: NodeBits<'s>,
     dead_stmts: NodeBits<'s>,
@@ -190,7 +198,6 @@ pub struct Decisions<'s> {
 }
 
 impl<'s> Decisions<'s> {
-    /// `is_constant_in_bun_run` goes by `bun build` with the flags of this build. `bun run` minifies syntax whatever those are, and this goes by it.
     pub fn is_constant_under_minify_syntax(&self, hir: &File<'_>, expr: ExprId) -> bool {
         self.is_constant_in_bun_run(hir, expr) || self.folded_under_minify_syntax.has(expr.idx())
     }
@@ -238,8 +245,6 @@ impl<'s> Decisions<'s> {
         found.is_ok_and(|index| self.constants[index].is_known_to_bun_run)
     }
 
-    /// `[] ? "a" : "b"`, `typeof name ? 1 : 2`: its transpiler writes the string or the number alone, also where `constant` has no value
-    /// because the build does not know what the rest of the expression does.
     pub fn is_string_or_number_in_bun_run(&self, hir: &File<'_>, expr: ExprId) -> bool {
         match self.constant(hir, expr) {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
@@ -270,6 +275,12 @@ impl<'s> Decisions<'s> {
         self.paths_made_by_calls.binary_search(&argument).is_ok()
     }
 
+    pub fn find_what_call_made(&self, argument: ExprId) -> Option<MadeByCall> {
+        let made = self.names_made_by_calls;
+        let index = made.binary_search_by_key(&argument, |entry| entry.0).ok()?;
+        Some(made[index].1)
+    }
+
     #[inline]
     pub fn is_data_literal(&self, expr: ExprId) -> bool {
         self.data_literals.has(expr.idx())
@@ -285,28 +296,22 @@ impl<'s> Decisions<'s> {
         self.dead_stmts.has(stmt.idx())
     }
 
-    /// Ascending.
     pub fn decided(&self) -> &'s [(ExprId, Decision<'s>)] {
         self.decided
     }
 
-    /// Ascending. What stands below a dead expression is among them.
     pub fn dead_exprs(&self) -> impl Iterator<Item = ExprId> + use<'s> {
         self.dead_exprs.iter().map(|index| ExprId(index as u32))
     }
 
-    /// Ascending. What stands below a dead statement is among them.
     pub fn dead_stmts(&self) -> impl Iterator<Item = StmtId> + use<'s> {
         self.dead_stmts.iter().map(|index| StmtId(index as u32))
     }
 
-    /// `true && a`, `false || a`, `null ?? a`: each operator of which the build knows by the left operand that the right one is evaluated.
     pub fn operators_that_go_on_to_the_right(&self) -> &'s [ExprId] {
         self.goes_on_to_the_right
     }
 
-    /// Whether both remove the same code and know the same specifiers. Whoever looks for the import sites of a file, for its format and
-    /// for what it asks of other files reads nothing else of them.
     pub(crate) fn has_same_code_and_specifiers(&self, other: &Decisions<'_>) -> bool {
         self.dead_exprs.0 == other.dead_exprs.0
             && self.dead_stmts.0 == other.dead_stmts.0
@@ -317,7 +322,6 @@ impl<'s> Decisions<'s> {
             && self.specifiers == other.specifiers
     }
 
-    /// `bun run` folds less than a build does. In the result, only the code that `bun run` removes too is dead.
     pub fn as_folded_by_bun_run(&self) -> Decisions<'s> {
         Decisions {
             dead_exprs: self.dead_exprs_in_bun_run,
@@ -326,7 +330,6 @@ impl<'s> Decisions<'s> {
         }
     }
 
-    /// `as_folded_by_bun_run` goes by `bun build` with the flags of this build. `bun run` minifies syntax whatever those are, and this goes by it.
     pub fn as_folded_under_minify_syntax(&self) -> Decisions<'s> {
         Decisions {
             dead_exprs: self.dead_exprs_under_minify_syntax,
@@ -345,13 +348,11 @@ impl<'s> Decisions<'s> {
         self.short_circuited_links.has(expr.idx())
     }
 
-    /// It may read members of built-in objects: `reads_member`.
     #[inline]
     pub fn is_truthy_without_effects(&self, expr: ExprId) -> bool {
         self.truthy_without_effects.has(expr.idx())
     }
 
-    /// The build knows the value or what a test of it answers, and evaluating it reads members of built-in objects.
     #[inline]
     pub fn reads_member(&self, expr: ExprId) -> bool {
         self.member_reads.has(expr.idx())
@@ -397,7 +398,6 @@ pub(crate) fn fold_file<'s>(
     folder::run(hir, bound, inputs, file, atoms, arena)
 }
 
-/// What the operator makes of a constant. `None`: the build leaves it to the run time.
 pub fn apply_unary(atoms: &Interner<'_>, op: UnOp, operand: Constant) -> Option<Constant> {
     let over_limit_count = Cell::new(0);
     let evaluator = Evaluator::new(atoms, usize::MAX, &over_limit_count);
@@ -407,7 +407,6 @@ pub fn apply_unary(atoms: &Interner<'_>, op: UnOp, operand: Constant) -> Option<
     }
 }
 
-/// Whether Bun's transpiler puts the result in place of the operator too, where it has both operands as literals.
 pub fn is_computed_by_transpiler(atoms: &Interner<'_>, op: BinOp, operands: [Constant; 2]) -> bool {
     let over_limit_count = Cell::new(0);
     let evaluator = Evaluator::new(atoms, usize::MAX, &over_limit_count);
@@ -419,7 +418,6 @@ pub fn is_computed_by_transpiler(atoms: &Interner<'_>, op: BinOp, operands: [Con
     }
 }
 
-/// What an operator that evaluates both of its operands makes of two constants. `None`: the build leaves it to the run time.
 pub fn apply_binary(
     atoms: &Interner<'_>,
     op: BinOp,
@@ -438,7 +436,6 @@ pub fn apply_binary(
     }
 }
 
-/// The text of a template whose substitutions are constants. `None`: the build leaves it to the run time.
 pub fn apply_template(
     atoms: &Interner<'_>,
     texts: &[Atom],

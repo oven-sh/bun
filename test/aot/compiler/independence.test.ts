@@ -11,7 +11,7 @@
 //
 // A build writes its program with --aot-out, and `testaot bytes` prints what each unit of it compiles to: a hash of the code with the fields of its
 // relocations cleared, and each relocation by the name of its symbol. The numbers behind the names are the image's, and differ by right.
-// The numbers of shapes, orders and literal strings are the plan's. They follow the whole program and lie in the code as immediates and as sets of bits,
+// The numbers of shapes and orders are the plan's. They follow the whole program and lie in the code as immediates and as sets of bits,
 // so two programs, each with a plan of its own, differ in them by right. Bytes alone judge where those numbers are the same: under one plan
 // (same-bytes-alone), and beside padding that gives the plan nothing to number. Between any other two programs a unit with other bytes is held to its
 // operations, which name layouts and not shapes. One with the same operations passes, and is counted.

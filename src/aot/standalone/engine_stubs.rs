@@ -6,7 +6,6 @@ struct Bytes {
     length: usize,
 }
 
-// Weak: where the engine itself is linked, its definitions win.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 extern "C" fn Bun__AOT__hasCompiler() -> bool {
@@ -23,7 +22,6 @@ macro_rules! functions_of_no_engine {
     )*};
 }
 
-// Nothing compares these with `engine.rs`, `engine/shared.rs` and `src/jsc/bindings/BunAOTCompile.h`: all four list the same parameters in the same order.
 functions_of_no_engine! {
     fn Bun__AOT__initializeOptions(*mut c_void);
     fn Bun__AOT__applyOptionWord(*mut c_void, Bytes, *mut u8, usize) -> usize;
@@ -46,4 +44,6 @@ functions_of_no_engine! {
     fn Bun__AOT__describeRegExpSyntaxError(*const u8, usize, *const u8, usize, *mut u8, usize) -> usize;
     fn Bun__AOT__classifyRegExpLiteral(*const u8, usize, *const u8, usize) -> u32;
     fn Bun__AOT__describeRegExpConstructionError(*const u8, usize, *const u8, usize, *mut u8, usize) -> usize;
+    fn Bun__WTFStringHashLatin1(*const u8, usize) -> u32;
+    fn Bun__WTFStringHashUTF16(*const u16, usize) -> u32;
 }

@@ -162,7 +162,6 @@ fn find_contents_type(
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // The layout says what a field is declared to hold, so a store says it again only where the build owes the proof of an `int32`.
     pub(crate) fn convert_to_member(
         &mut self,
         access: ExprId,

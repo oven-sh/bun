@@ -99,8 +99,8 @@ const touchesOf = {
   read: words(`TypesInterned FunctionsRead ValuesRead`),
   scan: words(`ValuesScanned`),
   solve: words(`FactNodes FactEdges FactsCarriedOverEdges FactRounds FactRuleCalls FlowAppendedFields`),
-  passes: none,
-  plan: words(`ModulesWithoutState RequireSitesBound RequiresRecorded AsyncWorkersMade FieldsOutOfLine`),
+  passes: words(`FieldsHeldToWhatIsSeen`),
+  plan: words(`ModulesWithoutState RequireSitesBound RequiresRecorded AsyncWorkersMade FieldsOutOfLine NumbersOrUndefinedReturnedRaw`),
   compile: words(`
     UnitsCompiled UnitsWrittenStraight FunctionsWithAllIndirectCallersListed GenericEntriesOpenedByIndirectCalls
     GenericEntriesOpenedBesideCompiledTarget ClosedGenericEntries IndirectCallsThatMayEnterAnyClosure`),
@@ -111,7 +111,8 @@ const touchesOf = {
     ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfContents
     ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsThatNoTestTells
     URLsLeftUnbuilt IteratorsSteppedWithoutCall SerializersCreated OwnKeyWalksExpanded AccessesProven AccessesGuarded AccessesUnknown ValuesInDouble
-    AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay`),
+    AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay
+    LibraryFunctionsEnteredBehindRows SortsThatCallNoComparator NewListsInPlaceOfSpecies ClosuresMadeWhereCopiesHandThemOn SlicesMadeOfElementsInSight`),
   emit: words(`
     OperationsEmitted MachineOperationsAppended MachineOperationsScanned MachineOperationsAllocated MachineOperationsEncoded ValuesSpilled
     FormsThatDifferFromSchema FormsPickedByPlaceOtherThanLoop

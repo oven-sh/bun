@@ -64,7 +64,6 @@ impl Resolver<'_, '_> {
             return;
         }
         for (name, symbol) in declared_names(input) {
-            // Also of a binding that stands for nothing, because it is stored to: other files read what a store puts into it.
             let flags = input.bound.modifier_flags(input.hir, Decl::Var(name));
             if flags.contains(Flags::EXPORT) {
                 self.exported_symbols.insert(symbol);
@@ -143,7 +142,7 @@ impl Resolver<'_, '_> {
             } => {
                 let mut value = match self.value_of(*initializer) {
                     Some(value) => value,
-                    None => self.find_module_object_behind_tests(*initializer)?,
+                    None => self.find_object_only_held_by(*initializer)?,
                 };
                 for &name in members {
                     value = ResolvedValue::object(self.find_member(value, name)?);
@@ -153,8 +152,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// A `var` is undefined until its line has run. The members of these three are answered by the record of a module, with no look at what stands in front of the dot,
-    /// so such a variable only may hold one of them: what is read off it is read off what it holds then.
     pub(super) fn may_still_be_undefined(&self, symbol: SymbolId, value: ResolvedValue) -> bool {
         self.input.bound.initial_state(symbol) == InitialState::Undefined
             && matches!(
@@ -163,7 +160,6 @@ impl Resolver<'_, '_> {
             )
     }
 
-    /// `var freeModule = freeExports && typeof module == "object" && module`: the variable holds the module object or what is no object.
     pub(super) fn find_module_object_behind_tests(
         &self,
         initializer: ExprId,
@@ -176,10 +172,21 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn is_initialized_behind_tests(&self, symbol: SymbolId) -> bool {
+    pub(super) fn find_object_only_held_by(&self, initializer: ExprId) -> Option<ResolvedValue> {
+        let hir = self.input.hir;
+        match hir[hir.skip_type_assertions(initializer)].kind {
+            ExprKind::Call(_) | ExprKind::Ident(_) => {
+                let held = self.held_value_of(initializer);
+                held.filter(|held| table::is_of_test_runner(held.path.id))
+            }
+            _ => self.find_module_object_behind_tests(initializer),
+        }
+    }
+
+    fn only_holds_its_object(&self, symbol: SymbolId) -> bool {
         match self.aliases.get(&symbol) {
             Some(AliasSource::Initializer { initializer, .. }) => {
-                self.find_module_object_behind_tests(*initializer).is_some()
+                self.find_object_only_held_by(*initializer).is_some()
             }
             Some(AliasSource::Known(_)) | None => false,
         }
@@ -194,8 +201,7 @@ impl Resolver<'_, '_> {
             self.expose(value.path.id);
             return ExprState::Unresolved;
         }
-        match self.may_still_be_undefined(symbol, value) || self.is_initialized_behind_tests(symbol)
-        {
+        match self.may_still_be_undefined(symbol, value) || self.only_holds_its_object(symbol) {
             true => ExprState::Held(value),
             false => ExprState::Builtin(value),
         }
@@ -204,8 +210,7 @@ impl Resolver<'_, '_> {
     pub(super) fn collect_symbol_paths(&self) -> Vec<(SymbolId, BuiltinPath)> {
         let mut paths = Vec::new();
         for &symbol in self.aliases.keys() {
-            // It stands for nothing: where a test has failed it holds what the test answered.
-            if self.is_initialized_behind_tests(symbol) {
+            if self.only_holds_its_object(symbol) {
                 continue;
             }
             match self.resolve_alias(symbol) {

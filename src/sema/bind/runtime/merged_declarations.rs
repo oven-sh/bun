@@ -102,7 +102,6 @@ impl Declarations<'_, '_> {
         self.merge_exports_under_two_names(scope, symbol);
     }
 
-    // `export default class K` beside `export namespace K` is one variable. The name finds the export that was declared last, which is no variable where that is a type.
     fn merge_exports_under_two_names(&mut self, scope: ScopeId, local: SymbolId) {
         let (hir, bound) = (self.hir, &*self.bound);
         let found = bound.export_symbol_of_value_symbol_if_exported(local);
@@ -144,7 +143,6 @@ impl Declarations<'_, '_> {
         }
     }
 
-    // Bun's transpiler drops an import of a TypeScript file whose name is declared again further down. It declares `* as a` ahead of the default of the same statement.
     fn takes_name_of_imports(&self, names: &NameDeclarations, later: Declaration) -> bool {
         let holder = names.taker.or_else(|| names.first_by_kind.first().copied());
         let is_behind_its_default = matches!(

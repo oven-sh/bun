@@ -83,7 +83,6 @@ fn has_mark(files: &Files<'_>, file: FileId, written_at: TextRange) -> bool {
     strings::contains(text, b"MARK")
 }
 
-// The answers for the marked statements of a file. Of a statement with several declarations, the marked ones answer.
 fn ask(files: &Files<'_>, file: FileId, options: RemovableOptions) -> Vec<bool> {
     let hir = files.hir(file);
     let removable = Removable::new(files, file, options).expect("the file has a tree");
@@ -232,7 +231,6 @@ fn global_names_that_are_not_locked_are_left_out_as_whoever_runs_the_program_lea
         has_no_bundle: true,
         ..bundled
     };
-    // The statement, and who leaves it out: `bun build --compile`, the same with --minify-syntax, `bun run`.
     let rows = [
         ("const MARK = Map;", [true, true, true]),
         ("const MARK = process;", [true, true, true]),

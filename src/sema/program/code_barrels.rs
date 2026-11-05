@@ -100,7 +100,6 @@ impl BarrelRequests {
         *self.file(file) = FileRequests::Unparsed(Asked::All);
     }
 
-    /// The file is folded once more. What has been asked of it so far is asked of the result.
     pub(super) fn forget_folded_file(&mut self, file: u32) {
         let state = self.file(file);
         let asked = match state {
@@ -232,7 +231,6 @@ struct Summary<'a, 's> {
     analysis: &'a FileAnalysis<'s>,
     names: MemberNames,
     uses: ImportUses,
-    /// `CodeOptions::ignores_declared_side_effects`
     runs_all_that_is_loaded: bool,
 }
 
@@ -404,7 +402,6 @@ impl Summary<'_, '_> {
         for (symbol, imported) in self.bindings_of(import) {
             match (imported, self.find_members_read(symbol)) {
                 (Some(name), _) => names.push(name),
-                // The bundler loads every file behind `import *`, and leaves out those that nothing is read of only if they may go.
                 (None, Some(members))
                     if !self.hir[import].is_deferred && !self.runs_all_that_is_loaded =>
                 {
@@ -645,7 +642,6 @@ pub(super) fn erase_waiting_sites(
     code.index_targets_by_specifier();
 }
 
-/// `CodeHost::follows_imports_on_request`: what nothing asked for is as if it were not written.
 pub(super) fn erase_imports_not_followed(
     code: &mut LoadedCode<'_, '_>,
     loaded_targets: &mut Vec<u32>,
@@ -655,7 +651,6 @@ pub(super) fn erase_imports_not_followed(
     for resolution in &mut code.resolutions {
         let targets = next_target..next_target + files_of(*resolution).count();
         next_target = targets.end;
-        // Another import of the file may have led to some of the files that a computed name stands for.
         if loaded_targets[targets.clone()].contains(&NOT_LOADED) {
             *resolution = SiteResolution::Constant(CodeResolution::Erased);
             loaded_targets[targets].fill(NOT_LOADED);

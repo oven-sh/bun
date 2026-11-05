@@ -41,7 +41,6 @@ impl Walker<'_, '_> {
     fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
         let context = self.enter_unit(id, self.bound.fns[function.idx()].scope);
         self.push_task(Task::MarkCreated(id), context);
-        // A function that can be suspended holds its receiver, and what the names of its parameters hold, until it ends.
         let flags = self.hir[function].flags;
         let can_be_suspended = flags.intersects(Flags::ASYNC | Flags::GENERATOR);
         if can_be_suspended && self.hir.runtime_function_kind(function) != FnKind::Arrow {
@@ -198,7 +197,10 @@ impl Walker<'_, '_> {
                 Some(WalkedFunctionId::MODULE_BODY)
             }
             CodeUnit::File | CodeUnit::FieldInitializer(_) => return,
-            CodeUnit::Function(function) => self.walk.function_of_fn[function.idx()],
+            CodeUnit::Function(function) => {
+                self.walk.functions_that_name_arguments.push(function);
+                self.walk.function_of_fn[function.idx()]
+            }
         };
         let scope = self.bound.top_scope(self.hir, owner);
         self.record_slot_use(context.function, scope, ScopeSlot::ArgumentsBinding);
@@ -274,7 +276,6 @@ impl Walker<'_, '_> {
         }
     }
 
-    // The walk comes to the value of a field behind the code of the constructor that evaluates it, so it knows of nothing there whether it is initialized by then.
     fn visit_constructor_symbols(&mut self, eval: EvalScope, context: Context) {
         let (hir, bound) = (self.hir, self.bound);
         if eval.constructor_symbols.is_empty() {

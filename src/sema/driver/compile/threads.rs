@@ -28,8 +28,6 @@ pub fn run_on_one_thread_while<A: Send, B>(
     )
 }
 
-/// Calls `work` with every index below `count` on at most `threads` pool threads while the calling thread runs `meanwhile`.
-/// On a pool thread, `meanwhile` runs after them.
 pub fn run_on_threads_while<B>(
     caches: &ThreadCaches,
     threads: usize,
@@ -127,8 +125,6 @@ mod tests {
         });
     }
 
-    /// Starts regions of two runs on a pool thread until another thread takes one of the runs, where it calls
-    /// `on_other_thread`. The tests of this program share the pool, so at times it has no idle thread.
     fn start_regions_until_a_thread_joins(on_other_thread: &(dyn Fn() + Sync)) {
         let caches = ThreadCaches::default();
         let has_joined = AtomicBool::new(false);
@@ -169,6 +165,7 @@ mod tests {
         start_regions_until_a_thread_joins(&|| {});
     }
 
+    #[cfg(panic = "unwind")]
     fn panic_message_of(run: impl FnOnce()) -> String {
         let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
         let payload = payload.expect_err("it panics");
@@ -176,6 +173,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(panic = "unwind")]
     fn panic_in_a_region_continues_on_the_thread_that_started_it() {
         set_up_output();
         let caches = ThreadCaches::default();
@@ -188,6 +186,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(panic = "unwind")]
     fn panic_beside_a_region_continues_when_the_region_has_ended() {
         set_up_output();
         let caches = ThreadCaches::default();
@@ -203,6 +202,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(panic = "unwind")]
     fn panic_in_a_region_started_on_a_pool_thread_continues_on_the_thread_that_waits_for_it() {
         set_up_output();
         let caches = ThreadCaches::default();
@@ -215,6 +215,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(panic = "unwind")]
     fn panic_of_a_thread_that_joined_a_region_continues_on_the_thread_that_started_it() {
         set_up_output();
         if region_pool().max_threads() < 3 {

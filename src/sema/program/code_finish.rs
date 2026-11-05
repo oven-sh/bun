@@ -57,13 +57,14 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
                 payloads[file.idx()] = Some(payload);
             }
         }
-        let loaded = ProgramFiles {
+        CodeGraph {
+            is_compile_build: true,
             entry_points: slice_in(&entry_points, arena),
             compiled_files: slice_in(&compiled_files, arena),
             is_compiled: file_set_in(modules.len(), &compiled_files, arena),
             host_modules: sorted_set_in(host_modules, arena),
-        };
-        CodeGraph::new(loaded, session.keep(payloads))
+            host_payloads: session.keep(payloads),
+        }
     }
 
     fn remove_code_only_edges(&self, module: &mut Module<'s>, arena: &'s Arena) {
@@ -150,8 +151,6 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
     }
 }
 
-/// `CompiledModule::code_answers` and `CompiledModule::implied_answers` of a file of a load that still finds files.
-/// `target_files`: `None` where nothing has asked for the file so far. Such a site is erased if that is how the load ends.
 pub(super) fn find_answers_so_far<'s>(
     atoms: &Interner<'s>,
     arena: &'s Arena,
@@ -201,7 +200,7 @@ impl<'s> Files<'s> {
         if !self.code_graph.is_compile_build {
             return;
         }
-        let entry_points = self.code_graph.viewed().entry_points.iter().copied();
+        let entry_points = self.code_graph.entry_points.iter().copied();
         let all_files = (0..self.modules.len() as u32).map(FileId);
         let mut stack: Vec<(FileId, usize)> = Vec::new();
         for root in entry_points.chain(all_files) {

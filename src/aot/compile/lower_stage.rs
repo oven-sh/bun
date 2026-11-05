@@ -40,16 +40,12 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) struct LoweredUnit {
-    // A unit is a large record, and the list of what was lowered is copied and put in order on one thread.
     pub unit: Box<LinkUnit>,
     pub diagnostics: DiagnosticBuffer,
     pub queries: QueryStatistics,
-    /// The functions of the unit but for signatures, which have no body.
     pub functions_lowered: u64,
-    /// The values in the bodies of those functions.
     pub values_lowered: u64,
     pub known_helpers: KnownHelpersLowered,
-    /// `lower_file_that_throws` made the unit.
     pub throws_at_load: bool,
 }
 
@@ -57,9 +53,7 @@ struct DecidedProject {
     roles: RoleDecision,
     files_to_lower: Vec<FileId>,
     left_out_bodies: LeftOutBodies,
-    /// For each file in which `RoleDecision::diagnostics` has an early error: where the first one in the text stands there. Ascending.
     first_reported_early_errors: Vec<(FileId, u32)>,
-    /// The files of `RoleDecision::incomplete` that `add_incomplete_files` has the error `FileNestedTooDeeply` for. Ascending.
     files_nested_too_deeply: Vec<FileId>,
 }
 
@@ -82,9 +76,7 @@ struct ProjectToLower<'a, 'b, 's> {
     keys: KeyContext<'a>,
     inputs: &'a LoweringInputs<'a>,
     threads: NonZeroUsize,
-    /// The build logs its stages and has one thread: with more, what one thread reads also holds what the others retire meanwhile.
     counts_instructions: bool,
-    /// Where `counts_instructions`: what lowering has retired, without the check that comes before it.
     instructions_of_lowering: AtomicU64,
 }
 
@@ -156,7 +148,6 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
         )
     }
 
-    /// `None`: as `lower_file`. `Some(None)`: the file has an error that stops the build.
     fn lower_checked_file(
         &self,
         checker: &mut Checker<'_, 's>,
@@ -165,7 +156,6 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
         let path = self.loaded.loaded.files().module(file).file_name();
         let _work = current_work::working_on(current_work::Step::Lower, path);
         let may_fail_where_loaded = self.may_fail_where_loaded(file);
-        // Where the file may not fail, what the driver notes of its check stops the build, and a fold error has stopped it.
         let is_refused = self.cannot_be_lowered(checker, file)
             || may_fail_where_loaded
                 && (self.is_nested_too_deeply_to_check(checker, file)
@@ -187,7 +177,6 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             if may_fail_where_loaded
                 && let Some(sentence) = lowered.diagnostics.take_errors_found_at_load(view)
             {
-                // The next visit of the file takes out of the tables of the task what this one has added, and nothing may name that any more.
                 drop(lowered);
                 return self.lower_module_that_throws(checker, file, &sentence);
             }
@@ -221,7 +210,6 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             || self.decided.roles.has_early_error(file)
     }
 
-    /// A check of the whole tree has run out of stack, and the program has brought that about: the driver's note of it is the error `FileNestedTooDeeply`.
     fn is_nested_too_deeply_to_check(&self, checker: &Checker<'_, '_>, file: FileId) -> bool {
         let files = self.loaded.loaded.files();
         let nested_too_deeply = &self.decided.files_nested_too_deeply;
@@ -230,13 +218,11 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 && !is_fault_of_compiler(&incomplete_record_of(files, file))
     }
 
-    /// An ES module that folding refuses is an unloadable module of the graph, and its body throws what its load ends with.
     fn is_commonjs_file_that_folding_refuses(&self, file: FileId) -> bool {
         self.keys.graph.kind(file) == ModuleKind::CommonJs
             && !self.loaded.loaded.files().analysis(file).errors.is_empty()
     }
 
-    /// What the first error of a file that is refused says, and where it stands. `None`: nobody here knows.
     fn describe_first_error(&self, checker: &Checker<'_, '_>, file: FileId) -> Option<Vec<u8>> {
         let files = self.loaded.loaded.files();
         let hir = files.hir(file);
@@ -258,7 +244,6 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             return Some(at_offset(sentence.to_vec(), start));
         }
         if let Some(first) = self.decided.first_reported_early_error(file) {
-            // What follows the first line elaborates on it.
             let sentence = bun_core::strings::split(&first.text, b"\n").next()?;
             return Some(with_position(sentence.to_vec(), (first.line, first.column)));
         }
@@ -275,7 +260,6 @@ impl Build<'_> {
         self.clock.start(Stage::Check);
         let reached = self.find_reached_library_code(loaded, bound);
         let lowered = self.lower_application(loaded, bound, &reached);
-        // The link comes on top of all that lowering has left.
         let in_parallel = self.parallel_runner();
         for project in [ProjectId::Application, ProjectId::Runtime] {
             // SAFETY: both projects are lowered, and what follows reads names and text alone.
@@ -331,8 +315,6 @@ impl Build<'_> {
                     };
                     decide_roles(project.loaded, project.host, request, all_compiled_files)
                 }
-                // Bun's own modules keep their roles whatever type errors they have: lowering asks for each conversion whether
-                // the checker accepts it. The test `every_module_of_bun_keeps_its_types` lists the errors.
                 ProjectId::Runtime => keep_verified_roles(project.loaded, all_compiled_files),
             };
             let graph = &bound.projects.get(id).graph;
@@ -400,7 +382,6 @@ impl Build<'_> {
         find_reached_runtime_code(&reach_input, &self.parallel_runner())
     }
 
-    /// Bun's own modules are lowered beside the application, from one thread of the pool, which the idle ones help.
     fn lower_projects(
         &self,
         loaded: &LoadedBuild<'_, '_>,
@@ -408,7 +389,6 @@ impl Build<'_> {
         decided: &PerProject<DecidedProject>,
         left_out: PerProject<FxHashSet<FunctionRef>>,
     ) -> PerProject<CheckedProgram<Option<LoweredUnit>>> {
-        // A task of the application reads the trees of Bun's own modules, and which files still reach a tree is counted within one program.
         let library = loaded.project(ProjectId::Runtime).loaded.files();
         library.let_no_more_trees_go();
         let (application, runtime) = (ProjectId::Application, ProjectId::Runtime);
@@ -463,7 +443,6 @@ impl Build<'_> {
                             ),
                         };
                         if counts_instructions && instructions_of_all_threads().is_some() {
-                            // In the form of the engine's lines.
                             bun_core::print_errorln!(
                                 "AOT instructions: lowering | {}",
                                 of_application.instructions_of_lowering()
@@ -523,7 +502,6 @@ impl Build<'_> {
         extend_from_boxes(units, lowered_units, &in_parallel);
     }
 
-    /// Unless somebody chose a thread count, no more threads than there is source text for: each thread has a checker of its own, which finds out again what the others know.
     fn threads_to_lower(&self, files: &Files<'_>, files_to_lower: &[FileId]) -> NonZeroUsize {
         const SOURCE_BYTES_PER_THREAD: usize = 256 << 10;
         let texts = files_to_lower.iter();
@@ -610,7 +588,6 @@ impl Build<'_> {
         let (files, sources) = (loaded_project.loaded.files(), &loaded_project.sources);
         let mut file_inputs = collect_file_inputs(files, sources);
         let runs_tests = self.options.load.runs_tests;
-        // As `find_files_to_lower` has it.
         for demotion in &roles.demoted {
             let file = demotion.file;
             if roles.has_early_error(file)
@@ -622,7 +599,6 @@ impl Build<'_> {
         let mut library_functions = LibraryFunctions::compute(files, &file_inputs, sources);
         library_functions.leave_out(left_out_functions);
         library_functions.leave_out_declarations(bound_project.left_out.declarations.clone());
-        // Bun's own modules keep their types: no build of a user's is without them.
         let erases_types = self.options.aot.erases_types && project == ProjectId::Application;
         let lowering_roles = roles_for_lowering(&roles.roles, files, erases_types);
         let library = Library {
@@ -658,7 +634,6 @@ impl Build<'_> {
         let compiled = files.compiled_files().iter().copied();
         let mut files_of_dependencies: Vec<FileId> = compiled.filter(is_in_dependency).collect();
         files_of_dependencies.sort_unstable();
-        // Out of sight: in a text, in code from disk, or off the global object under a key that nobody knows, which also finds a loader.
         let mut lowered_files = file_inputs.iter().flatten();
         let makes_registries = project == ProjectId::Application
             && (loaded.can_load_code_at_run_time
@@ -709,7 +684,6 @@ impl Build<'_> {
     }
 }
 
-// By what the names are bound to, in code that is not dead.
 fn reads_source_paths(files: &Files<'_>, sources: &Sources) -> bool {
     files.compiled_files().iter().any(|&file| {
         if !sources.has_source_path(file) {
@@ -729,9 +703,6 @@ fn reads_source_paths(files: &Files<'_>, sources: &Sources) -> bool {
     })
 }
 
-// One file with a mistake costs a test run what `bun test` loses to it. An executable holds whatever a computed name may find, and a package brings
-// files that nobody ever loads: `bun run` says what is wrong with one where the program loads it. A file that a site spells stops the build, as it
-// stops `bun build`, and a mistake in a file of Bun's own is a fault of the compiler.
 pub(super) fn may_fail_where_loaded(
     project: ProjectId,
     runs_tests: bool,
@@ -753,7 +724,6 @@ pub(crate) fn find_files_to_lower(
         .collect()
 }
 
-// `RoleDecision::diagnostics` has the errors of a file in the order of its text.
 fn find_first_reported_early_errors(roles: &RoleDecision) -> Vec<(FileId, u32)> {
     let reported = (0u32..).zip(&roles.diagnostics);
     let early = reported.filter(|(_, it)| it.diagnostic.class == DiagnosticClass::EarlyError);
@@ -817,7 +787,6 @@ fn drop_reports_on_unloadable_modules(
     graph: &ModuleGraph,
     checked: &mut CheckedProgram<Option<LoweredUnit>>,
 ) {
-    // `lowered` is ascending.
     let is_lowered = |file: &FileId| {
         let found = checked.lowered.binary_search_by_key(file, |entry| entry.0);
         found.is_ok_and(|at| checked.lowered[at].1.is_some())
@@ -831,7 +800,6 @@ fn drop_reports_on_unloadable_modules(
     }
 }
 
-// The run says what is wrong with such a file, where it loads the file. None of its code runs, so no other error of it stops anything either.
 fn drop_errors_of_modules_that_throw(
     files: &Files<'_>,
     roles: &mut RoleDecision,
@@ -839,7 +807,6 @@ fn drop_errors_of_modules_that_throw(
 ) {
     let lowered = checked.lowered.iter();
     let throwing = lowered.filter(|(_, unit)| unit.as_ref().is_some_and(|it| it.throws_at_load));
-    // Ascending, as `lowered` is.
     let throwing: Vec<FileId> = throwing.map(|entry| entry.0).collect();
     if throwing.is_empty() {
         return;
@@ -857,14 +824,12 @@ fn drop_errors_of_modules_that_throw(
     checked.incomplete.retain(is_kept);
 }
 
-// `add_incomplete_files` tells what the program has brought about from what the compiler has.
 fn is_fault_of_compiler(file: &Incomplete) -> bool {
     let mut reported = Diagnostics::new();
     reported.add_incomplete_files(core::slice::from_ref(file));
     reported.has_internal_errors()
 }
 
-// What the driver notes of a file whose check has run out of stack, but for the place, which decides nothing.
 fn incomplete_record_of(files: &Files<'_>, file: FileId) -> Incomplete {
     let hir = files.hir(file);
     Incomplete {
@@ -878,7 +843,6 @@ fn incomplete_record_of(files: &Files<'_>, file: FileId) -> Incomplete {
     }
 }
 
-// The tree of a text that does not parse has holes that no rule of the language allows, a tree that the stack was too small for ends somewhere, and a class declaration without a name has a symbol that is in no scope.
 fn is_well_formed(files: &Files<'_>, file: FileId) -> bool {
     let module = files.module(file);
     let hir = files.hir(file);

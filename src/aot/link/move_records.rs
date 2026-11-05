@@ -23,11 +23,8 @@ use core::mem::take;
 use std::sync::{Arc, OnceLock};
 
 pub(super) struct ProgramTables {
-    /// A list for each unit, in the order of the units, which is the order of the program's ids.
-    /// A record holds the numbers of its tables, but for `function_types` and `builtin_members`.
     pub functions: Vec<FunctionsOfUnit>,
     pub layouts: Vec<Layout>,
-    /// A list for each unit that has any, in the order of the units.
     pub other_layout_definitions: Vec<Vec<(LayoutId, Layout)>>,
     pub variables: Vec<Variable>,
     pub eval_scopes: Vec<EvalScope>,
@@ -47,7 +44,6 @@ struct UnitOutput {
     expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
 }
 
-// A file may be in the build for the types it declares alone. Nothing loads it then, so the program has no record of it.
 fn forget_module_without_record(layout: &mut Layout, modules: &[Option<ModuleId>]) {
     let has_record = layout
         .module
@@ -73,7 +69,6 @@ fn program_ids_above<I: Id>(edges: &SupertypeEdges, merged: u32, ids: &[Option<I
     ids
 }
 
-// Each definition with the merged index of its key and with its site.
 fn take_definitions<I: Id, T>(
     unit: u32,
     definitions: &mut Vec<(I, T)>,
@@ -88,11 +83,9 @@ fn take_definitions<I: Id, T>(
 }
 
 struct RecordMover<'a> {
-    /// By the tables, then by the number in them: the merged index.
     merged_functions: &'a [Vec<u32>],
     merged_layouts: &'a [Vec<u32>],
     merged_variables: &'a [Vec<u32>],
-    /// By merged index.
     layout_keys: &'a [ProgramLayoutKey],
     definitions: &'a Definitions,
     numbering: &'a Numbering,
@@ -134,7 +127,6 @@ impl RecordMover<'_> {
                 id.index() == first.index() + output.functions.len(),
                 "program ids follow the order of the unit"
             );
-            // The record stays where it is, with the numbers of its tables. Only one that several keys share is copied.
             let record = Arc::make_mut(&mut function);
             record.function_types = program_ids_above(
                 &self.definitions.function_types,
@@ -202,7 +194,6 @@ impl RecordMover<'_> {
         output.expected_results = take(&mut unit.records.expected_results);
         for (id, expected) in &mut output.expected_results {
             expected.remap_ids(&map);
-            // The numbers of one set of tables say nothing of the order of the program's.
             expected.layouts.sort_unstable();
             *id = program_id_of_record(&ids.expected_results, *id);
         }
@@ -228,7 +219,6 @@ impl RecordMover<'_> {
         }
     }
 
-    /// `synthetic_exports`: `make_synthetic_export_variables`
     fn add_variables_without_unit(
         &self,
         variables: &RecordsById<Variable>,
@@ -266,13 +256,10 @@ struct SyntheticExportVariable {
     writer: ExportWriter,
 }
 
-// These cut the work into tasks. No answer depends on them.
 const SLOTS_IN_A_LOT: usize = if cfg!(test) { 2 } else { 1 << 10 };
 const LISTS_IN_A_TASK: usize = if cfg!(test) { 2 } else { 64 };
 
-/// A place for each id of one kind. A record is large to move, and a program has many: all threads make the places, fill them and empty them.
 struct RecordsById<T> {
-    /// Each of `SLOTS_IN_A_LOT` places but for the last.
     lots: Vec<Vec<OnceLock<T>>>,
 }
 
@@ -294,7 +281,6 @@ impl<T: Send + Sync> RecordsById<T> {
     }
 
     fn insert_all<I: Id + Send>(&self, lists: Vec<Vec<(I, T)>>, in_parallel: InParallel<'_>) {
-        // Most units have few records of a kind, or none.
         let mut lists = lists.into_iter().filter(|list| !list.is_empty());
         let mut tasks: Vec<Vec<Vec<(I, T)>>> = Vec::new();
         loop {
@@ -311,7 +297,6 @@ impl<T: Send + Sync> RecordsById<T> {
         });
     }
 
-    /// With room for an eighth more: a list that is full is copied as a whole for the first record that is added.
     fn into_records(self, in_parallel: InParallel<'_>) -> Vec<T> {
         let lots = map_each(self.lots, in_parallel, &|lot: Vec<OnceLock<T>>| {
             let slots = lot.into_iter().map(OnceLock::into_inner);
@@ -326,7 +311,6 @@ impl<T: Send + Sync> RecordsById<T> {
     }
 }
 
-// The ids of the records of a unit follow each other, and the first follows the last of the unit before.
 fn join_records<I: Id, T>(lists: Vec<Vec<(I, T)>>, count: usize) -> Vec<T> {
     let mut records: Vec<T> = Vec::with_capacity(count);
     for (id, record) in lists.into_iter().flatten() {
@@ -340,8 +324,6 @@ fn join_records<I: Id, T>(lists: Vec<Vec<(I, T)>>, count: usize) -> Vec<T> {
     records
 }
 
-/// The variables that link defines for the names that modules export, in the order of their ids.
-/// A name that no file spells gets its number here: the names of these variables come first among those, in the order of the variables.
 pub(super) fn make_synthetic_export_variables(
     definitions: &Definitions,
     numbering: &Numbering,
@@ -384,7 +366,6 @@ pub(super) fn make_synthetic_export_variables(
     variables.collect()
 }
 
-/// Takes the definitions and the records out of the units. The ids of `numbering.tables` are complete: strings, types and property keys too.
 pub(super) fn move_records(
     units: &mut [LinkUnit],
     functions: &MergedKeys<'_, ProgramFunctionKey>,
@@ -455,7 +436,6 @@ pub(super) fn move_records(
 
     steps.end("lists of the units");
 
-    // A record is large to move, and each kind has a table of its own.
     let (layouts, (variables, (eval_scopes, data, expected_results))) = run_steps_beside(
         beside,
         &mut steps,

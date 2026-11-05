@@ -1,3 +1,5 @@
+// Flags: --minify-syntax
+// `bun run` minifies syntax, and a message quotes what the same build prints without --aot.
 // Each line: the message where what `call` is called on is no function: it names the member that was called, as written.
 const show = (label, run) => {
   try {

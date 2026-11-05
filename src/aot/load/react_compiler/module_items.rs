@@ -12,7 +12,6 @@ use bun_sema::resolve::JsxSettings;
 use bun_sema::session::Arena;
 use std::borrow::Cow;
 
-// What is added has no text of its own: it stands at the start of the file, where `TextRange::default()` is.
 pub(crate) const POSITION: u32 = 0;
 const NAME_PREFIX: &[u8] = b"%react:";
 const OUTLINED: &[u8] = b"outlined:";
@@ -77,7 +76,6 @@ impl ModuleItems {
         }
     }
 
-    /// The text under which the symbol is registered, for a name that stands for one.
     pub(super) fn key_of_sentinel(atoms: &Interner<'_>, origin: SymbolOrigin) -> Option<Atom> {
         let sentinel = match origin {
             SymbolOrigin::MemoCacheSentinel => MEMO_CACHE_SENTINEL,
@@ -109,7 +107,6 @@ impl ModuleItems {
         atoms: &Interner<'_>,
         format: ModuleFormat,
     ) {
-        // Every function names the `Fragment` import, also one without a fragment.
         self.imports
             .retain(|import| is_referenced(file, import.local));
         let mut before = Vec::new();
@@ -147,7 +144,6 @@ fn jsx_import_of(kind: JsxImportKind) -> JsxImport {
     }
 }
 
-/// `_temp` for `%react:outlined:0:_temp`: what the compiler calls the function that it has outlined. Its `.name` says so, and a message that quotes it.
 pub(crate) fn name_of_outlined_function(name: &[u8]) -> Option<&[u8]> {
     let numbered = name.strip_prefix(NAME_PREFIX)?.strip_prefix(OUTLINED)?;
     let colon = bun_core::strings::index_of_char_usize(numbered, b':')?;
@@ -212,8 +208,6 @@ pub(crate) fn write_import(
     file.stmt(StmtKind::Import(import), POSITION)
 }
 
-/// `const module = require(path)`, then `const local = module.imported` for each name: a CommonJS file cannot hold an
-/// import statement. A bundle loads the module at the same place, the head of the file's body.
 fn write_require(
     file: &mut FileBuilder,
     atoms: &Interner<'_>,
@@ -253,7 +247,7 @@ pub(crate) fn write_constant(
     write_declaration(file, pat, init)
 }
 
-pub(crate) fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId) -> StmtId {
+fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId) -> StmtId {
     let declarations = file.add_var_decls(&[VarDecl {
         pat,
         ty: TypeNodeId::NONE,
@@ -265,7 +259,6 @@ pub(crate) fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId
     file.stmt(StmtKind::Var(declarations), POSITION)
 }
 
-/// `var sentinel`. Whoever reads it first fills it: an import cycle can call a function of the file before the body of the file begins.
 fn declare_sentinel(file: &mut FileBuilder, atoms: &Interner<'_>, sentinel: &[u8]) -> StmtId {
     let name = intern_item_name(atoms, sentinel, b"");
     let pat = file.pat(PatKind::Ident(name), POSITION, POSITION);
@@ -302,9 +295,7 @@ pub(crate) fn finish_file<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> File<'s> {
-    // The parser's filter covers the source text only. An empty filter answers "may mention" for every name.
     file.mentioned.clear();
-    // What stands in a JSDoc comment is no code, and a comment at the head of a file begins where the added statements stand. Nothing that the parser reads out of a comment begins at its first byte.
     if let Some(first) = file.jsdoc_comments.first_mut()
         && first.0 == POSITION
     {

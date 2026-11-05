@@ -345,7 +345,6 @@ fn super_call_in_arrow_references_constructor() {
         let constructor = only_function(hir, FnKind::Constructor);
         let scope = top_scope(bound, constructor);
         let arrow = walked(walk, only_function(hir, FnKind::Arrow));
-        // `s()` enters the arrow itself, so the constructor supplies what the arrow captures.
         let called = (walked(walk, constructor), only_function(hir, FnKind::Arrow));
         assert_eq!(walk.function_references, [called, (arrow, constructor)]);
         let expected = [

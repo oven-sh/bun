@@ -14,25 +14,17 @@ use bun_sema::program::{CodeAnswer, FileId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
-/// The files with `export *`, and what they name: `strongly_connected_components` of the tables.
 pub(super) struct Stars<'a> {
     pub edges: &'a [Vec<u32>],
     pub is_taken_by_star: &'a [bool],
     pub component_of: &'a [u32],
     pub components: &'a [Vec<usize>],
-    /// By component.
     pub dynamic_targets: &'a [DynamicStarTargets],
 }
 
-/// Which of the names that `export *` brings a file get a place in its table: those that somebody may ask the file for.
-/// With a place for each, the last file of a row of stars has one for every name of the row, and so has each file of the row: the square of the row.
 pub(super) struct AskedNames {
-    /// By component: somebody may get hold of the object that shows the names, or they show in the run.
     is_whole: Vec<bool>,
-    /// Asked for by name, of whatever file. And the names whose place says more than where a variable is: two files export the name, or it stands for something other than a variable of
-    /// the file that exports it.
     names: FxHashSet<Atom>,
-    /// The others: each is a variable of the one file that exports it.
     pub left_out: FxHashSet<Atom>,
 }
 
@@ -63,7 +55,6 @@ impl AskedNames {
         stars: &Stars<'_>,
     ) -> AskedNames {
         let everything = || AskedNames::everything(stars.components.len());
-        // Code that the build does not see, a mock and a spy ask for what they like.
         let mut externals = modules.external_kinds.iter();
         let code_out_of_sight_names_files = (input.runs_in_place
             || input.code_from_disk_names_files)
@@ -86,13 +77,10 @@ impl AskedNames {
             let table = find_table(table_files, ModuleRef::File(modules.table_file(module)?))?;
             Some(stars.component_of[table] as usize)
         };
-        // What the loader and `await` read off the object of a module.
         let mut names: FxHashSet<Atom> = [known::then, known::__esModule].into_iter().collect();
         names.extend(files.atoms.lookup(b"module.exports"));
         let mut owners: FxHashMap<Atom, u32> = FxHashMap::default();
-        // Whoever imports one of these may hold the object of a module.
         let mut more_than_variables: FxHashSet<Atom> = FxHashSet::default();
-        // By component: the components that it hands names on of, one by one.
         let mut handed_on: Vec<Vec<u32>> = vec![Vec::new(); stars.components.len()];
         for (table, module) in entries.iter().enumerate() {
             let sites = &scans.of(module.file).sites;
@@ -129,7 +117,6 @@ impl AskedNames {
                 }
             }
         }
-        // The host loads these whole.
         let written = input.sources.entry_points().iter().map(|it| it.file);
         for entry_point in written.chain(files.entry_points().iter().copied()) {
             if let Some(component) = component_of(ModuleRef::File(entry_point)) {
@@ -147,7 +134,6 @@ impl AskedNames {
             let sites = files.analysis(file).import_sites.iter();
             for (site, scanned) in sites.zip(&scan.sites) {
                 match (site.kind, scanned) {
-                    // The entries of the file say what these ask for.
                     (ImportSiteKind::ExportStar(_) | ImportSiteKind::ExportFrom(_), _)
                     | (_, ScannedSite::Unresolved | ScannedSite::Erased) => {}
                     (ImportSiteKind::Import(id), &ScannedSite::Module(target)) => {
@@ -169,7 +155,6 @@ impl AskedNames {
                             let Some(component) = component_of(target) else {
                                 continue;
                             };
-                            // A text that `eval` runs does with the name what it likes.
                             let is_followed = phase == ImportPhase::Evaluation
                                 && symbol.is_some()
                                 && !bound.is_visible_to_eval(symbol);
@@ -179,7 +164,6 @@ impl AskedNames {
                             }
                         }
                     }
-                    // Whatever else names a module may get hold of its object.
                     (_, &ScannedSite::Module(target)) => {
                         if let Some(component) = component_of(target) {
                             is_whole[component] = true;
@@ -194,7 +178,6 @@ impl AskedNames {
                     (_, ScannedSite::AllModules) => return everything(),
                 }
             }
-            // As for a worker.
             for answer in files
                 .compiled(file)
                 .map_or(&[][..], |it| it.implied_answers)
@@ -243,7 +226,6 @@ impl AskedNames {
                         continue;
                     };
                     match find_name_read_off(hir, bound, reference) {
-                        // Where no file has the marker, only the object says so.
                         Some(name) if name != known::__esModule => {
                             let found = namespaces.binary_search_by_key(&symbol, |it| it.0);
                             if found.is_ok() {
@@ -255,8 +237,6 @@ impl AskedNames {
                 }
             }
         }
-        // The object shows the names of the files behind the stars. `outer.inner.name()`: the reach takes the file of the function for what it finds in `this`, and the names that a file
-        // hands on one by one lead there.
         let mut followed: Vec<usize> = (0..is_whole.len()).filter(|&it| is_whole[it]).collect();
         while let Some(component) = followed.pop() {
             let members = stars.components[component].iter();
@@ -277,7 +257,6 @@ impl AskedNames {
     }
 }
 
-/// `name.member()`, where the name may stand for the object of a module: the reach takes the file that the import statement names for what the function finds in `this`.
 fn is_object_of_called_member(hir: &hir::File<'_>, bound: &Bound<'_>, reference: ExprId) -> bool {
     let object = find_outermost_type_assertion(hir, bound, reference);
     let Parent::Expr(member) = bound.parent_of_expr(object) else {
@@ -299,7 +278,6 @@ fn is_object_of_called_member(hir: &hir::File<'_>, bound: &Bound<'_>, reference:
     }
 }
 
-/// `ns.name`, where that reads the name and does no more: a store and a `delete` go by the object itself, a call hands it over as `this`, and a name that the run looks up may be another.
 fn find_name_read_off(hir: &hir::File<'_>, bound: &Bound<'_>, reference: ExprId) -> Option<Atom> {
     let Parent::Expr(member) = bound.parent_of_expr(reference) else {
         return None;

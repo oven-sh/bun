@@ -184,7 +184,6 @@ pub(super) fn check_only(program: &TestProgram<'_, '_>) -> CheckedBuild<()> {
     check(program, &|_, _| ())
 }
 
-/// The checker still goes through the whole of a file whose types depend on the order of the questions.
 pub(super) fn check_whole_files(program: &TestProgram<'_, '_>) -> CheckedBuild<()> {
     let (loaded, host, request) = (program.loaded, program.host, program.request);
     let compiled_files = program.files().compiled_files();
@@ -212,7 +211,6 @@ pub(super) fn project_disk(files: &[(&str, &str)], threads: usize) -> host::Disk
 pub(super) fn disk(threads: usize, already_read: host::AlreadyRead, root: &[u8]) -> host::Disk {
     static OUTPUT: Once = Once::new();
     OUTPUT.call_once(bun_core::output::stdio::init);
-    // Each test runs on a thread of its own, and a thread may print only once it has set itself up.
     bun_core::Output::Source::configure_thread_no_js();
     host::Disk::with_already_read(threads, already_read, root)
 }
@@ -311,6 +309,19 @@ pub(super) fn load_with_tsconfig_override<R>(
     };
     let entry_points = [entry_point];
     let roots = Roots::Written(&entry_points);
+    try_load(&project_disk(files, 1), &code, roots, &[], then)
+}
+
+pub(super) fn load_in_place<R>(
+    files: &[(&str, &str)],
+    working_directory: &[u8],
+    then: impl FnOnce(Result<&TestProgram<'_, '_>, LoadFailure>) -> R,
+) -> R {
+    let code = CodeOptions {
+        transpiles_by_working_directory: true,
+        ..CodeOptions::bun_run(working_directory)
+    };
+    let roots = Roots::Written(&["./main.ts"]);
     try_load(&project_disk(files, 1), &code, roots, &[], then)
 }
 

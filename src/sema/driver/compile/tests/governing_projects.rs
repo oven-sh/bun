@@ -66,7 +66,6 @@ fn nearest_configuration_governs() {
     });
 }
 
-// What `npm create vite` writes: the tsconfig.json lists projects and has no file and no option of its own.
 const SOLUTION: [TestFile; 7] = [
     (
         CONFIG,

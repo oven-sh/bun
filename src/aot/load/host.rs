@@ -80,7 +80,6 @@ const PAGE_NOT_NAMED_AS_ONE: &[u8] =
 const EXTENSIONS_OF_ENTRY_POINT_SOURCES: [&[u8]; 7] =
     [b"ts", b"tsx", b"jsx", b"mjs", b"mts", b"cjs", b"cts"];
 
-// The first sentence of the parser on a text that ECMAScript refuses, and where.
 fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
     let first = syntax_errors_of(hir).next()?;
     let mut sentence = Vec::new();
@@ -95,7 +94,6 @@ fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
     Some(sentence)
 }
 
-/// What of a request goes by the syntax of the file alone.
 fn ask_by_syntax<'r, 's>(
     request: &'r mut TransformRequest<'_, 's>,
 ) -> EarlyTransformRequest<'r, 's> {
@@ -146,20 +144,14 @@ pub(crate) struct LoadHost<'a> {
     modules_with_queries: ModulesWithQueries,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
-    /// As `entry_point_paths`, of `begin_at`.
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
-    /// `ResolvedBuiltins::may_store_path_of_main_module` of some file that was finished, be it that the file was parsed again since.
     may_store_path_of_main_module: AtomicBool,
-    /// Sorted. The entry points whose names say nothing about them and that aren't text.
     binary_entry_point_paths: Vec<Vec<u8>>,
-    /// Entry points that are named as declaration files and hold statements that run. `bun run` runs them.
     entry_points_that_run_despite_their_names: Vec<Vec<u8>>,
-    /// Sorted. Where the file that the executable holds for an entry point would lie on disk by its name, and the path of the entry point.
     entry_points_by_file: Vec<(Vec<u8>, Vec<u8>)>,
     extra_extensions: Vec<(Vec<u8>, ScriptKind)>,
     unreadable: Guarded<Vec<Vec<u8>>>,
-    /// Sorted.
     background_reads: Guarded<Vec<Vec<u8>>>,
     reads_in_background_after_load: bool,
 }
@@ -239,7 +231,6 @@ fn is_program(name: &[u8], text: &[u8], loader: Loader) -> bool {
     !is_refused
 }
 
-/// Under the name of a `.jsx` file the build would take the text too: nothing in it is TypeScript alone.
 fn is_javascript_too(typescript_options: &CompileParseOptions<'_>, text: &[u8]) -> bool {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
@@ -257,10 +248,7 @@ fn is_javascript_too(typescript_options: &CompileParseOptions<'_>, text: &[u8]) 
 }
 
 impl<'a> LoadHost<'a> {
-    /// The load that runs begins at what a `data:` URL holds too. Returns the path of the module with that text.
-    /// `None`: the URL holds no program. The run time says what is wrong with it where a Worker starts from it.
     pub(crate) fn begin_at_text(&self, url: &[u8]) -> Option<Vec<u8>> {
-        // `bun run` reads what a `data:` URL holds as TypeScript with JSX, whatever type the URL names.
         let loader = Loader::Tsx;
         let contents = self.input.provider.decode_data_url(url)?;
         if !is_program(url, &contents, loader) {
@@ -273,13 +261,10 @@ impl<'a> LoadHost<'a> {
         }))
     }
 
-    /// What the URL object says that `new URL(url)` makes. `None`: the constructor throws.
     pub(crate) fn write_url(&self, url: &[u8]) -> Option<Vec<u8>> {
         self.input.provider.write_url(url, None)
     }
 
-    /// What `new Blob([contents], { type })` holds, under the name by which the run time knows the text behind an object URL.
-    /// `None`: a Worker reads no code out of such a Blob.
     pub(crate) fn name_text_of_blob(
         &self,
         contents: &[u8],
@@ -294,14 +279,11 @@ impl<'a> LoadHost<'a> {
         })
     }
 
-    /// As `begin_at_text`, with what `name_text_of_blob` answers.
     pub(crate) fn begin_at_text_of_blob(&self, text: &EntryText) -> Option<Vec<u8>> {
         is_program(&text.name, &text.contents, text.loader)
             .then(|| self.plugins.add_entry_text(text))
     }
 
-    /// The load that runs begins at these files too, and at no others beside `Options::entry_points`. They are written as those are, their names say that
-    /// they are code, and none is read yet as an entry point is.
     pub(crate) fn begin_at(&self, entry_points: &[Vec<u8>]) {
         let paths = collect_entry_point_paths(self.disk, self.input.options, entry_points);
         self.has_found_entry_points
@@ -309,7 +291,6 @@ impl<'a> LoadHost<'a> {
         *self.found_entry_point_paths.lock() = paths;
     }
 
-    /// What takes a while to free, for whoever frees it beside other work.
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
         self.plugins.into_leftovers()
     }
@@ -360,7 +341,6 @@ impl<'a> LoadHost<'a> {
         }
     }
 
-    /// The caller runs `read_in_background` for `background_reads` once the program is loaded, and calls `finish_background_reads` when it needs the contents.
     pub(crate) fn reading_in_background_after_load(self) -> LoadHost<'a> {
         LoadHost {
             reads_in_background_after_load: true,
@@ -372,7 +352,6 @@ impl<'a> LoadHost<'a> {
         self.background_reads.lock().clone()
     }
 
-    /// `CodeHost::directory_of`
     pub(crate) fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         let working_directory = &self.input.options.code.working_directory;
         match (self.plugins).directory_of_virtual_module(path, working_directory) {
@@ -406,7 +385,6 @@ impl<'a> LoadHost<'a> {
     fn should_ask_plugins(&self, served_by: ServedBy, path: &[u8]) -> bool {
         match served_by {
             ServedBy::PluginModule => true,
-            // A page has a bundle of its own, which asks the plugins for it.
             ServedBy::Disk => {
                 !is_bundled(path)
                     && !is_declaration_file_name(path)
@@ -422,7 +400,6 @@ impl<'a> LoadHost<'a> {
                 && self.is_among(&self.found_entry_point_paths.lock(), path))
     }
 
-    /// `ScanInput::find_path_at_run_time`. An entry point that the load has found goes by where it lies, but for the copy of an embedded file.
     fn find_path_at_run_time(&self, path: &[u8]) -> Option<Vec<u8>> {
         if is_host_path(path) {
             return None;
@@ -445,7 +422,6 @@ impl<'a> LoadHost<'a> {
         ))
     }
 
-    /// The entry point that the run time finds where a name leads to `path` and no file lies there: `StandaloneModuleGraph::resolve`.
     fn find_entry_point_by_file(&self, path: &[u8]) -> Option<Vec<u8>> {
         let find = |file: &[u8]| {
             let by_file = &self.entry_points_by_file;
@@ -488,7 +464,6 @@ impl<'a> LoadHost<'a> {
         }
         let loaders = &self.input.options.load.loaders;
         if !self.is_entry_point(path) {
-            // `bun run` reads a file of a kind that nothing names as code for `require`. An executable carries it where `bun build` links the call.
             let carries = is_linked_by_bundler && !self.input.options.aot.runs_in_place;
             let kind = match kind {
                 CodeImportKind::Require if carries => CodeImportKind::Import,
@@ -496,7 +471,6 @@ impl<'a> LoadHost<'a> {
             };
             let runs_in_place = self.input.options.aot.runs_in_place;
             return match loader_by_path(loaders, path, kind) {
-                // The loader of `bun run` answers with the path of a shell script. `bun build` links an import of one to an empty string.
                 Loader::Bunsh if kind == CodeImportKind::Require || runs_in_place => Loader::File,
                 loader => loader,
             };
@@ -519,7 +493,6 @@ impl<'a> LoadHost<'a> {
         module.is_from_plugin.then_some(module.loader)
     }
 
-    /// The loader of the JavaScript that a plugin has answered for a TypeScript file.
     fn loader_in_place_of_typed_file(&self, path: &[u8]) -> Option<Loader> {
         if is_host_path(path) || is_declaration_file_name(path) {
             return None;
@@ -545,7 +518,6 @@ impl<'a> LoadHost<'a> {
         self.refuse(&[what, b": \"", shown, b"\""].concat());
     }
 
-    /// `loader`: the loader that the plugin answered with. `None`: the plugin is still deferring the file.
     fn refuse_plugin_answer_for_asset(&self, path: &[u8], loader: Option<Loader>) {
         let Some(loader) = loader else {
             let what = b"a plugin that still defers a file after every other module has loaded";
@@ -569,7 +541,6 @@ impl<'a> LoadHost<'a> {
 
     fn record_unreadable_asset(&self, path: &[u8]) {
         self.record_unreadable(path);
-        // The load has asked for the unreadable files by then, and nobody asks again.
         if self.reads_in_background_after_load {
             let shown = BStr::new(self.plugins.provider_path(path));
             self.input.messages.with_log(|log| {
@@ -612,7 +583,6 @@ impl<'a> LoadHost<'a> {
                 text => self.embed_asset(path, text),
             }
         }
-        // `defer()` waits until every other module is loaded, and every read above has begun.
         if !deferred.is_empty() {
             let DeferredReads { missing, .. } = self.plugins.finish_deferred_reads();
             for path in &missing {
@@ -622,7 +592,6 @@ impl<'a> LoadHost<'a> {
                 self.embed_asset(path, read(path));
             }
         }
-        // Every file is embedded by now, in the order in which the threads came to them.
         let (provider, messages) = (self.input.provider, self.input.messages);
         let _ = messages.with_log(|log| provider.check_embedded_files(log));
     }
@@ -656,7 +625,6 @@ impl<'a> LoadHost<'a> {
     }
 }
 
-/// `Host::log_steps_of_load`. Two loads run in a build, and `project` stands in front of the steps of one of them.
 pub(crate) fn log_steps_of_load(project: &'static str) -> Option<Box<dyn FnMut(&str)>> {
     let mut steps = StepClock::new(Stage::Load);
     if !steps.logs() {
@@ -690,7 +658,6 @@ impl Host for LoadHost<'_> {
         }
     }
 
-    // The files that run have been read by now, each through the plugins.
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         if let Some(text) = self.modules_with_queries.text_in_place_of_file(path) {
             return Cow::Owned(text.to_vec());
@@ -791,17 +758,14 @@ impl LoadHost<'_> {
                 has_globals_of_vitest: load.has_globals_of_vitest,
                 is_entry_point,
                 may_load_below_vitest: load.entry_point_imports_vitest && !is_entry_point,
-                // Which files Workers start from shows once the files are parsed, and this one is being parsed.
                 may_load_in_worker: true,
             };
-            // A file that gets the names keeps its components as they are written.
             if source.kind == SourceKind::Program
                 && test_runner_names::import_used_names(arena, atoms, request, file_of_run)
                     == TreeChange::Changed
             {
                 return TreeChange::Changed;
             }
-            // `bun test` leaves the test files and the preloads as they are written.
             if is_entry_point {
                 return TreeChange::Unchanged;
             }
@@ -839,7 +803,6 @@ impl LoadHost<'_> {
         request: &mut EarlyTransformRequest<'_, 's>,
         source: &mut ParsedSource,
     ) -> TreeChange {
-        // A component comes back from its compiler as it was written.
         let compiled = (self.react_compiler).transform(arena, atoms, request, source);
         match self.expand_globs(arena, atoms, request, source) {
             TreeChange::Unchanged => compiled,
@@ -860,7 +823,7 @@ impl CodeHost for LoadHost<'_> {
             return HostResolution::Erased;
         }
         let modules = &self.modules_with_queries;
-        if is_import
+        if request.form == CodeImportForm::WrittenByHost
             && let Some(path) =
                 modules.find_text(modules.file_behind(request.importer), request.specifier)
         {
@@ -875,14 +838,14 @@ impl CodeHost for LoadHost<'_> {
         }
         let resolution = match request.form {
             CodeImportForm::Macro => PluginResolution::NotHandled,
-            CodeImportForm::Static | CodeImportForm::Dynamic | CodeImportForm::ResolveOnly => {
-                self.plugins.resolve(request)
-            }
+            CodeImportForm::Static
+            | CodeImportForm::Dynamic
+            | CodeImportForm::ResolveOnly
+            | CodeImportForm::WrittenByHost => self.plugins.resolve(request),
         };
         match resolution {
             PluginResolution::Path(path) => return HostResolution::Path(path),
             PluginResolution::External { specifier } => {
-                // An alias for a module of Bun's own, which is compiled like any that the program names.
                 if let Some(resolution) = self.runtime_resolution(&specifier) {
                     return resolution;
                 }
@@ -897,7 +860,6 @@ impl CodeHost for LoadHost<'_> {
         if let Ok(index) = keys.binary_search_by(|(key, _)| key.as_slice().cmp(request.specifier)) {
             return HostResolution::Path(from_native(&keys[index].1));
         }
-        // A text that the build knows holds the path of a file as the program sees it when it runs.
         let options = self.input.options;
         if is_import
             && !options.aot.runs_in_place
@@ -912,7 +874,6 @@ impl CodeHost for LoadHost<'_> {
         }
         let load = &options.load;
         let directory = to_native(request.directory);
-        // `./a.ts?fresh=1`: a test run has a loader, which reads the file once more. An executable holds one more module of the file: `add_module_with_query`.
         let is_left_to_run_time = is_import
             && ((load.runs_tests && contains_char(request.specifier, b'?'))
                 || is_external(&load.externals, request.specifier, directory));
@@ -926,8 +887,6 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
-        // The resolver of the provider sees the disk alone. A file that the build was given in memory comes first.
-        // A program that runs in place imports what is on the disk: what its build is given in memory is an entry point that no import names.
         let options = self.input.options;
         let in_memory_files = &options.load.in_memory_files;
         if !in_memory_files.is_empty()
@@ -958,7 +917,6 @@ impl CodeHost for LoadHost<'_> {
         if !options.load.runs_tests || search.specifier != b"chai" {
             return found;
         }
-        // `NamesOfChai`. pnpm links chai next to vitest, not into the project's node_modules.
         let vitest = FileSearch {
             specifier: b"vitest/package.json",
             ..*search
@@ -997,14 +955,12 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
-        // Without the option the run time loads data files and refuses code.
         Some(match self.input.options.aot.loads_code_from_disk {
             true => ExternalKind::UncompiledCode,
             false => ExternalKind::HostValue,
         })
     }
 
-    // A test run has a loader, which reads the file again.
     fn holds_modules_with_queries(&self) -> bool {
         !self.input.options.load.runs_tests
     }
@@ -1033,7 +989,15 @@ impl CodeHost for LoadHost<'_> {
         LoadHost::directory_of(self, path)
     }
 
-    // The run time looks from the directory in the name of the module, and the name of a `data:` URL holds none that exists.
+    fn is_given_in_memory(&self, path: &[u8]) -> bool {
+        let load = &self.input.options.load;
+        let native = to_native(path);
+        !load.in_memory_file_keys.is_empty()
+            && (load.in_memory_files)
+                .binary_search_by(|(file, _)| file[..].cmp(native))
+                .is_ok()
+    }
+
     fn directory_of_dynamic_imports<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         match self.plugins.name_of_entry_text(path) {
             Some(name) if is_url_with_text(name) => {
@@ -1043,7 +1007,6 @@ impl CodeHost for LoadHost<'_> {
         }
     }
 
-    // The executable holds a module of Bun's own only if code names it: the run time refuses any other.
     fn find_runtime_modules(&self, prefix: &[u8], suffix: &[u8]) -> Vec<HostResolution> {
         if prefix.is_empty() && suffix.is_empty() {
             return Vec::new();
@@ -1061,7 +1024,6 @@ impl CodeHost for LoadHost<'_> {
             return Vec::new();
         }
         let mut files = vec![runtime_types::OTHER_NAMES_OF_TEST_RUNNER_PATH.to_vec()];
-        // A project that has installed them refers to this file itself.
         if !are_installed {
             files.push(runtime_types::GLOBALS_OF_TEST_RUNNER.to_vec());
         }
@@ -1150,7 +1112,6 @@ impl CodeHost for LoadHost<'_> {
             still_deferred,
         } = self.plugins.finish_deferred_reads();
         self.unreadable.lock().extend(missing);
-        // The load takes a path without a text for an empty module, and says nothing.
         for path in &still_deferred {
             self.refuse_plugin_answer_for_asset(path, None);
         }
@@ -1162,7 +1123,6 @@ impl CodeHost for LoadHost<'_> {
             && self.input.provider.asset_paths_ignore_contents()
     }
 
-    // The load calls this in each round that finds assets, with the assets of that round alone.
     fn start_background_reads(&self, paths: &[&[u8]]) -> bool {
         let mut reads = self.background_reads.lock();
         reads.extend(paths.iter().map(|path| path.to_vec()));
@@ -1229,7 +1189,6 @@ impl CodeHost for LoadHost<'_> {
                 loader,
             };
             let (provider, messages) = (self.input.provider, self.input.messages);
-            // An executable holds of a file what the bundler has made of it. A test run and a program that runs in place read the file as `bun run` does.
             let is_given_to_no_parser = !load.runs_tests
                 && !self.input.options.aot.runs_in_place
                 && !is_from_plugin
@@ -1264,18 +1223,14 @@ impl CodeHost for LoadHost<'_> {
             }
         };
         let Some(script_kind) = script_kind_of(loader) else {
-            // What a page loads in the browser lies in the folder of an executable, and a program that runs in place has none.
             if loader == Loader::Html && !load.runs_tests && self.input.options.aot.runs_in_place {
                 let what = b"an import of an HTML page in a program that runs in place";
                 self.refuse_file(what, path);
             }
-            // `bun test` hands the text of a JSON file to `JSON.parse`. The bundler's parser, which reads the file for an executable, takes more: `{}` for an empty text, 0x10, single quotes,
-            // whatever follows the first value. What `JSON.parse` says of the text is what the run asks the loader of `bun test` for.
             let is_refused_by_json_parse =
                 load.runs_tests && loader == Loader::Json && !is_taken_by_json_parse(text);
             if !is_refused_by_json_parse {
                 let mut parsed = parse_data(loader, plugin_module);
-                // The run time keeps the error of a file with code alone: the next load of a file of data whose body has thrown finds it evaluated. So an empty program stands in its place.
                 let source = parsed_source_mut(&mut parsed.payload);
                 if let Some(failure) = source.parse_failure.take() {
                     let options = CompileParseOptions {
@@ -1297,7 +1252,6 @@ impl CodeHost for LoadHost<'_> {
                         })),
                     };
                 }
-                // `leaves_to_run_time` goes by the name of the file alone, and nothing gives any other page a value.
                 if loader == Loader::Html
                     && load.runs_tests
                     && self.default_loader(path) != Loader::Html
@@ -1354,14 +1308,12 @@ impl CodeHost for LoadHost<'_> {
                 && !is_from_plugin
                 && loader_named_by_path(&load.loaders, path).is_none());
         let is_entry_point = is_entry_text || self.is_entry_point(path);
-        // A test run goes on where a test catches what the load of a file throws, as `bun test` does, and one file with a mistake stops no other test file.
         let fails_where_loaded =
             load.runs_tests && matches!(served_by, ServedBy::Disk) && !is_from_plugin;
         let parse_failure = match fails_where_loaded || (is_language_assumed && !is_entry_point) {
             true => describe_parse_failure(&hir, text),
             false => None,
         };
-        // `bun run` fails where the program loads it. An executable carries it where `bun build` does, like a file of a kind that nothing names.
         if parse_failure.is_some()
             && !self.input.options.aot.runs_in_place
             && request.loader == BY_NAME
@@ -1371,17 +1323,14 @@ impl CodeHost for LoadHost<'_> {
         if parse_failure.is_some() {
             hir = parse_for_compile(arena, &compile_options, EMPTY_MODULE, atoms);
         } else if is_bundled_commonjs && body_of_bundle.is_none() {
-            // Read as a program, such a text would run where `bun run` looks for a function to call.
             let what = b"a file that begins with \"// @bun @bun-cjs\" and does not go on with the function that bun build --format=cjs --target=bun writes";
             self.refuse_file(what, path);
         }
-        // `bun run` reads as TypeScript what nothing calls TypeScript. JavaScript there is held to the rules of `tsc` no more than in a `.js` file.
         let is_only_read_as_typescript = is_language_assumed
             && !script_kind.is_javascript()
             && parse_failure.is_none()
             && hir.check_directive.is_none()
             && is_javascript_too(&compile_options, parsed_text);
-        // `tsc` has other rules for a declaration file than for the same text as a program.
         if is_only_read_as_typescript || self.runs_despite_its_name(path) {
             hir.check_directive = Some(false);
         }
@@ -1402,7 +1351,6 @@ impl CodeHost for LoadHost<'_> {
         }
     }
 
-    // Each call gets a value, so that it is asked about once.
     fn run_macros<'s>(
         &self,
         arena: &'s Arena,
@@ -1431,7 +1379,6 @@ impl CodeHost for LoadHost<'_> {
         request: &mut EarlyTransformRequest<'_, 's>,
         payload: &mut Option<HostPayload>,
     ) -> bool {
-        // Which names of the test runner a file uses is a question to its bindings.
         if self.input.options.load.runs_tests {
             return false;
         }
@@ -1454,12 +1401,9 @@ impl CodeHost for LoadHost<'_> {
             return TreeChange::ChangedAndUnfinished;
         }
         let runs_tests = self.input.options.load.runs_tests;
-        // All that follows does what the parser of `bun test` does to a file, and that parser leaves a file under the mark as it is written.
         if runs_tests && hir::find_transpiled_mark(&request.hir.text).is_some() {
             return TreeChange::Unchanged;
         }
-        // To a test run the imports that stand for eager entries are imports like any other: a hoisted mock goes above them too. That asks for their bindings.
-        // Asked again, it finds no call that the parser expands.
         if runs_tests
             && self.expand_globs(arena, atoms, &mut ask_by_syntax(request), source)
                 == TreeChange::Changed

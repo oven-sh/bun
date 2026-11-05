@@ -48,7 +48,6 @@ pub enum Reference {
 #[derive(Default)]
 pub struct KnownHelpers {
     files: Vec<FileHelpers>,
-    /// By file. Empty: no collection of the program is private state.
     private_states: Vec<OnceLock<FilePrivateStates>>,
     binding_names: FxHashSet<Atom>,
 }
@@ -66,7 +65,6 @@ fn reads_private_state(helper: Helper) -> bool {
 }
 
 impl KnownHelpers {
-    /// `replaced`: `ProgramContents::replaced_builtins`. A replacement sees every entry, so none moves into a field.
     pub fn keep_private_states_in_collections(&mut self, replaced: &[u32]) {
         if private_state::replaces_method_of_collections(replaced) {
             self.private_states = Vec::new();
@@ -78,7 +76,6 @@ impl KnownHelpers {
         KnownHelpers::compute_below_added_names(files, &[], in_parallel)
     }
 
-    /// `names_added_to_builtins`: `ProgramContents::names_added_to_builtins`, in the atoms of `files`.
     pub fn compute_below_added_names(
         files: &Files<'_>,
         names_added_to_builtins: &[(BuiltinId, Atom)],
@@ -161,7 +158,6 @@ impl KnownHelpers {
     fn find_called_symbol(files: &Files<'_>, file: FileId, callee: ExprId) -> Option<SymbolId> {
         let (hir, bound) = (files.hir(file), files.bound(file));
         let mut callee = hir.skip_type_assertions(callee);
-        // `(0, helper)(..)`
         while let ExprKind::Binary {
             op: BinOp::Comma,
             left,
@@ -184,7 +180,6 @@ impl KnownHelpers {
         }
     }
 
-    /// The helper that a callee is whenever the call runs.
     pub fn certain_callee(
         &self,
         files: &Files<'_>,

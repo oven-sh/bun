@@ -6,8 +6,8 @@ use super::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, BunAOTBytes,
     EngineResult, FeatureUseRecord, FormBytesRecord, FunctionNameRecord, InternalErrorRecord,
     LackedFunctionRecord, LackedModuleRecord, LayoutNameRecord, LocaleUseRecord, ModuleBytesRecord,
-    ObfuscatedSiteRecord, OtherOriginsRecord, ResultRecord, TypeTestRecord, UnseenCodeRecord,
-    UserDiagnosticRecord, WorkerEntryRecord, WorkerStartRecord, WorkerURLRecord,
+    ObfuscatedSiteRecord, ResultRecord, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
+    WorkerEntryRecord, WorkerStartRecord, WorkerURLRecord,
 };
 use crate::ir::generated::StatisticId;
 
@@ -31,7 +31,6 @@ pub(super) struct Sections {
 }
 
 impl Sections {
-    /// The engine always writes one word for each statistic, and `Statistics::add_values` asserts that.
     pub(super) fn new() -> Sections {
         let empty = Sections {
             words: Section::ALL.map(|_| Vec::new()),
@@ -64,7 +63,6 @@ impl Sections {
 }
 
 pub(super) fn with_result<R>(sections: &Sections, then: impl FnOnce(&EngineResult) -> R) -> R {
-    // Never dropped: no engine allocated it.
     let result = ManuallyDrop::new(EngineResult {
         result: NonNull::dangling(),
         sections: sections.as_bytes(),
@@ -72,7 +70,6 @@ pub(super) fn with_result<R>(sections: &Sections, then: impl FnOnce(&EngineResul
     then(&result)
 }
 
-/// The image may be written.
 pub(super) fn with_result_to_write<R>(
     sections: &mut Sections,
     then: impl FnOnce(&mut EngineResult) -> R,
@@ -80,7 +77,6 @@ pub(super) fn with_result_to_write<R>(
     let mut bytes = sections.as_bytes();
     let image = Section::Image as usize;
     bytes[image].ptr = sections.words[image].as_mut_ptr().cast::<u8>();
-    // Never dropped: no engine allocated it.
     let mut result = ManuallyDrop::new(EngineResult {
         result: NonNull::dangling(),
         sections: bytes,
@@ -88,7 +84,6 @@ pub(super) fn with_result_to_write<R>(
     then(&mut result)
 }
 
-/// Every `TextRange` of a record leads into `text`.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct ResultRecords<'a> {
     pub image: &'a [u8],
@@ -107,7 +102,6 @@ pub(crate) struct ResultRecords<'a> {
     pub obfuscated_sites: &'a [ObfuscatedSiteRecord],
     pub bytes_by_module: &'a [ModuleBytesRecord],
     pub accesses: &'a [AccessRecord],
-    pub other_origins: &'a [OtherOriginsRecord],
     pub access_counts: &'a [AccessCountRecord],
     pub type_tests: &'a [TypeTestRecord],
     pub allocation_remarks: &'a [AllocationRemarkRecord],
@@ -135,7 +129,6 @@ impl ResultRecords<'_> {
             .with_records(self.obfuscated_sites)
             .with_records(self.bytes_by_module)
             .with_records(self.accesses)
-            .with_records(self.other_origins)
             .with_records(self.access_counts)
             .with_records(self.type_tests)
             .with_records(self.allocation_remarks)

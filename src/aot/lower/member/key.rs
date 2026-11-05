@@ -41,8 +41,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The key that the engine gives the symbol of `const name = Symbol(..)`: the number of the call, and the description.
-    // Of `const name = Symbol.for("text")`: the text, under which every file finds the one symbol.
     pub(in crate::lower) fn created_symbol_key(&mut self, name: Atom) -> Option<PropertyKeyId> {
         let creation = self.queries.symbol_creation(name)?;
         if creation.is_registered {
@@ -94,7 +92,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// `5`, `[8]`, `1n`, `[1 + 1]`: what the key of a class member is before it becomes a property key, where that is a constant and no name.
     pub(in crate::lower) fn find_constant_written_as_key(
         &self,
         member: MemberId,
@@ -161,7 +158,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.fragment.property_keys.get(key).string_name()
     }
 
-    /// What the property `name` of a function defined under a well-known symbol holds: "[Symbol.dispose]".
     pub(in crate::lower) fn find_name_under_symbol(
         &mut self,
         key: PropertyKeyId,
@@ -188,7 +184,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// The key, and the value that is converted to it at run time.
     pub(crate) fn lower_computed_property_name(
         &mut self,
         computed: ExprId,
@@ -244,7 +239,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let position = self.position();
         let value = self.lower_expression(key);
-        // Lowering the key emitted the dead-zone checks of its variables. Once they pass, the key is this constant.
         let constant = expression::find_constant_outside_dead_zone(self.file, key);
         match constant.and_then(|constant| self.file.find_key_of_constant(constant)) {
             Some(found) => {

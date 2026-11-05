@@ -34,8 +34,6 @@ pub(crate) fn settled_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Op
     }
 }
 
-/// The module that an import names, and the export it takes, or none for the whole module.
-/// `import { x }` without `from` is a syntax error that the parser recovers from: it names no module.
 pub(crate) fn find_imported_export(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -87,7 +85,6 @@ impl StepsLeft {
         passes_and: true,
     };
 
-    /// The steps behind which the value is what the way leads to, whatever the program does.
     fn proofs_alone(self) -> StepsLeft {
         StepsLeft {
             passes_choices: false,
@@ -96,7 +93,6 @@ impl StepsLeft {
         }
     }
 
-    /// What the steps leave open.
     fn most_other_values(self) -> OtherValues {
         match (self.passes_choices, self.passes_and) {
             (true, _) => OtherValues::Any,
@@ -159,7 +155,6 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         }
     }
 
-    // `const { b } = require("k").a; b.c` reads `c`, `b` and `a` off the exports of "k".
     fn find_names_read_off_module(
         self,
         e: ExprId,
@@ -208,7 +203,6 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         None
     }
 
-    // `fileURLToPath` for `require("url").fileURLToPath`. A request in `e` is a step: the `require` that it calls may be made of what is asked for here.
     fn find_export_read_off_module(
         self,
         e: ExprId,
@@ -327,13 +321,11 @@ pub fn may_require_get_members(hir: &File<'_>, bound: &Bound<'_>) -> bool {
         })
 }
 
-// Also in a variable: `const __filename = fileURLToPath(import.meta.url)`, as an ES module makes itself the name that a CommonJS file has.
 pub(crate) fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     let text = Text::of(hir, bound, None);
     names_own_file_behind(text, e, LONGEST_CHAIN_OF_BINDINGS, StepsLeft::ALL)
 }
 
-// Two variables may name each other: `const a = fileURLToPath(b), b = new URL(a)`.
 fn names_own_file_behind(
     text: Text<'_, '_, '_, '_>,
     e: ExprId,
@@ -363,7 +355,6 @@ fn is_written_as_own_file(
     let Some(conversions_left) = conversions_left.checked_sub(1) else {
         return false;
     };
-    // `new URL(import.meta.url).href`
     if let Some((url, MemberKey::Name(known::href))) = hir.member_key(e) {
         return settled_chain(hir, bound, url).any(|url| {
             let makes_url = match expr_kind(hir, url) {
@@ -378,7 +369,6 @@ fn is_written_as_own_file(
             makes_url && is_written_as_own_file(text, url, conversions_left, left)
         });
     }
-    // `"file://" + __filename`
     if let Some(ExprKind::Binary {
         op: BinOp::Add,
         left: scheme,
@@ -391,7 +381,6 @@ fn is_written_as_own_file(
                 .any(|path| is_path_of_own_file(text, path, conversions_left, left));
     }
     let is_path = |path| is_path_of_own_file(text, path, conversions_left, left);
-    // `fileURLToPath(import.meta.url)`, `pathToFileURL(__filename)`, `new URL(import.meta.url)`
     let (call, is_conversion) = match expr_kind(hir, e) {
         Some(ExprKind::Call(call)) => {
             let call = hir[call];
@@ -413,7 +402,6 @@ fn is_written_as_own_file(
         && names_own_file_behind(text, hir.id_at(call.args, 0), conversions_left, left)
 }
 
-// A path and no URL: behind `file://` a URL names something else.
 fn is_path_of_own_file(
     text: Text<'_, '_, '_, '_>,
     e: ExprId,
@@ -489,7 +477,6 @@ fn starts_at_own_folder(
     })
 }
 
-// `createRequire(base)`, `(0, module.createRequire)(base)`, `module.createRequire.call(undefined, base)`
 fn find_arguments_of_create_require(
     text: Text<'_, '_, '_, '_>,
     e: ExprId,
@@ -536,7 +523,6 @@ fn find_made_require(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> 
     }
 }
 
-// The name that holds what the call makes tells it from what another run of the call has made.
 fn find_require_made_for_choice(
     text: Text<'_, '_, '_, '_>,
     call: ExprId,
@@ -550,8 +536,6 @@ fn find_require_made_for_choice(
         .then_some(OwnRequire::MadeForChoice(holder))
 }
 
-// What bundlers print for `import.meta.url` in a CommonJS file: `typeof document === "undefined" ? pathToFileURL(__filename).href : document.currentScript.src`,
-// in the call, in a variable, or returned by a function.
 fn may_name_own_file(
     text: Text<'_, '_, '_, '_>,
     e: ExprId,
@@ -594,7 +578,6 @@ fn may_name_own_file(
     })
 }
 
-/// For the call that makes an `OwnRequire::MadeForChoice`: the name that holds it, and the place among the arguments of the file that it is made for.
 pub fn find_holder_of_require_made_for_choice(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -634,11 +617,8 @@ pub enum OwnRequire {
     OfFile,
     Made,
     MadeForPath(ExprId),
-    // For the file itself or for something else, held by this name: which of them is known when it has been made.
     MadeForChoice(SymbolId),
-    // Imported from the file at this path, which exports its own `require`.
     OfOtherFile(Atom),
-    // Imported from the file at this path, which exports what `createRequire` made for it.
     MadeInOtherFile(Atom),
 }
 
@@ -799,7 +779,6 @@ pub fn find_own_require(
     follow_to_own_require(Text::of(hir, bound, decisions), e, StepsLeft::ALL)
 }
 
-/// Of the value of `e`, where `find_own_require` finds a `require`.
 pub fn find_other_values_of_own_require(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -850,7 +829,6 @@ pub(super) fn follow_to_own_require(
             e = hir.skip_type_assertions(result);
             continue;
         }
-        // `module && module.require`, `(0, require)`: what can be called is the right side.
         if let Some(ExprKind::Binary {
             op: op @ (BinOp::And | BinOp::Comma),
             right,
@@ -884,7 +862,6 @@ pub(super) fn follow_to_own_require(
                 return sides.into_iter().any(is_own).then_some(OwnRequire::OfFile);
             }
         }
-        // `const load = module.require; load.call(module, "a")`
         if let Some((object, MemberKey::Name(known::require))) = hir.member_key(e)
             && is_free_common_js(
                 hir,
@@ -969,19 +946,14 @@ fn find_imported_require(
     find_imported_require_named(hir, hir[import].spec, export, left)
 }
 
-// A `require` that a file exports.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ExportedRequire {
     pub export: Atom,
-    /// Of the file that it resolves from. `None` is the exporting file.
     pub path: Option<Atom>,
-    /// `ImportedRequire::is_made`
     pub is_made: bool,
-    /// `ImportedRequire::other_values`
     pub other_values: OtherValues,
 }
 
-// `ExportedRequire::path` and `ExportedRequire::is_made`
 type WrittenRequire = (Option<Atom>, bool);
 
 fn find_require_written_as(
@@ -1022,7 +994,6 @@ fn find_require_held_by(
     }
 }
 
-// esbuild writes `export { __require }` into the chunk that its other chunks share.
 pub fn find_exported_requires(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -1081,7 +1052,6 @@ pub fn find_exported_requires(
         })
     });
     let mut found: Vec<ExportedRequire> = exported.collect();
-    // `export * from` passes on what the file does not export itself.
     for statement in hir.ids(hir.body) {
         let StmtKind::ExportStar {
             spec,
@@ -1169,7 +1139,6 @@ pub fn may_still_be_undefined(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> b
         }
         end = expr_kind(hir, e);
     }
-    // Only a walk that ends at the call that makes the function has seen every variable on the way: `(0, made)` hides one.
     !matches!(end, Some(ExprKind::Call(_)))
 }
 

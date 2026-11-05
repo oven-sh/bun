@@ -47,7 +47,6 @@ const BUILTIN_MODULE_TYPES: (&str, &str) = (
     "declare module \"node:path\";\ndeclare module \"bun:jsc\";",
 );
 const SMALL_PROGRAM: [(&str, &str); 2] = [("a.ts", "console.log(1);"), GLOBALS];
-// Native code looks for a method under this symbol, and loads the start-up modules to call it. `Symbol.for` of any other literal text brings nothing.
 const PROGRAM_WITH_STARTUP_CODE: [(&str, &str); 2] = [
     (
         "a.ts",
@@ -185,7 +184,6 @@ fn constructor_that_is_left_out_takes_the_class_token_as_a_class_token() {
 
 #[test]
 fn output_is_deterministic() {
-    // Importing one of Bun's modules brings in the start-up code. Two files alone give the threads nothing to divide differently from run to run.
     let files = [
         (
             "a.ts",
@@ -202,7 +200,6 @@ fn output_is_deterministic() {
     assert_eq!(first, print_linked_program(&project));
 }
 
-// Records and code are numbered by the tables of the checker task that lowered them, and which files share a task depends on scheduling. Program ids depend only on the sources.
 fn emit_bytes(files: &[(&str, &str)]) -> Vec<u8> {
     let project = TestProject::new(files, &default_settings());
     run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
@@ -219,7 +216,6 @@ fn emit_bytes(files: &[(&str, &str)]) -> Vec<u8> {
     })
 }
 
-// The configuration names no files, so every file of the folder is in the checker's program and has a number there.
 #[test]
 fn file_that_nothing_imports_changes_no_byte() {
     let shapes = "export interface Circle { kind: \"circle\"; radius: number }
@@ -315,7 +311,6 @@ fn a_file_that_only_a_computed_name_finds_is_judged_as_the_loader_judges_it() {
     assert!(!program.contains("Cannot assign to") && !program.contains("cannot be a read-only"));
 }
 
-// The barrel is left out, and stays as a placeholder on the cycle with the files behind its stars. The link stops at a key that a lowered file does not define.
 #[test]
 fn nothing_names_what_a_placeholder_declares() {
     let barrel = "export * from \"./first\";\nexport * from \"./second\";\nexport function describe() {}\nexport class Unread {}";
@@ -355,13 +350,10 @@ fn an_executable_has_a_file_of_data_as_the_type_that_the_scan_of_the_bundler_com
         let text = print_program(&expect_success(result, &log).program);
         ["conf.txt?jsonc", "conf.txt?text"].map(|form| text.contains(form))
     };
-    // The loader of `bun run` goes by what the program asks for first when it runs: both forms are there for it.
     assert_eq!(forms_of(call, statement, false), [true, true]);
     assert_eq!(forms_of(statement, call, false), [true, true]);
-    // The text is what the name of the file says: alone, it has the plain path.
     assert_eq!(forms_of(call, statement, true), [false, false]);
     assert_eq!(forms_of(statement, call, true), [true, false]);
-    // Two files of one level: the bundler parses them side by side. The statement goes first, as under `bun run`.
     let files = [
         ("a.js", "import \"./caller.js\";\nimport \"./holder.js\";"),
         ("caller.js", call),
@@ -500,7 +492,6 @@ fn counts_each_file_once() {
     assert_eq!(counted.map(count).iter().sum::<u64>(), file_count as u64);
 }
 
-// The text of a module of Bun's that the build has read to the end, if the module is in the program of the run time.
 fn is_runtime_module_read(source: &str, path: &[u8]) -> Option<bool> {
     let files = [("main.ts", source)];
     with_loaded_build(&files, &default_settings(), |_, loaded| {
@@ -553,7 +544,6 @@ fn program_holds_the_language_and_the_code_of_bun_behind_what_it_names() {
     assert!(writing > printing, "{writing}");
 }
 
-// Nothing that every program holds asks for bun:sql: `Bun.sql` and `Bun.SQL` alone do.
 #[test]
 fn module_of_bun_is_loaded_for_the_entry_that_asks_for_it() {
     let path = b"/$bun/js/bun/sql.ts";
@@ -577,7 +567,6 @@ fn each_public_module_of_bun_is_loaded_for_a_program_that_imports_it_alone() {
     });
 }
 
-// Where several files of Bun's declare one interface, the order of the files is the order of its members and overloads.
 #[test]
 fn files_of_bun_are_ordered_as_their_directories_list_them() {
     let files = [("main.ts", "import 'node:http'; console.log('a line');")];
@@ -590,7 +579,6 @@ fn files_of_bun_are_ordered_as_their_directories_list_them() {
         let own = paths.filter(|path| path.starts_with(b"/$bun/js/"));
         own.map(<[u8]>::to_vec).collect()
     });
-    // A name that ends a path sorts before every name that is followed by another.
     let key_of = |path: &[u8]| -> Vec<(bool, Vec<u8>)> {
         let names: Vec<&[u8]> = bun_core::strings::split(path, b"/").collect();
         let last = names.len() - 1;
@@ -928,7 +916,6 @@ fn erased_types_lower_every_file_as_inferred() {
     assert_eq!(checked_files, 1);
 }
 
-// The checker decides the role of each file of either project, and each file is lowered in that role.
 #[test]
 fn runtime_files_are_checked_and_lowered_with_their_types() {
     let files = [
@@ -1015,7 +1002,6 @@ fn names_of_commonjs_package_that_is_left_out_are_not_looked_for() {
     }
 }
 
-// The file may be imported while it runs, so whoever imports it asks for `default` when it is linked.
 #[test]
 fn commonjs_file_that_is_left_out_of_a_cycle_is_asked_for_nothing() {
     let linked = link_successfully(&[
@@ -1038,7 +1024,6 @@ fn commonjs_file_that_is_left_out_of_a_cycle_is_asked_for_nothing() {
     assert!(importer.required_names.is_empty());
 }
 
-// With a file that is left out goes what only that file names.
 #[test]
 fn package_that_is_left_out_takes_along_what_the_build_does_not_compile() {
     let importer = "import { first } from \"tools\";\nconsole.log(1);\nexport function unused() { return first; }\n";
@@ -1166,7 +1151,6 @@ fn import_of_uncompiled_code_lets_code_load_at_run_time() {
     assert!(!can_load_code("import \"node:fs\";\n"));
 }
 
-// No build looks for type errors, and what has an error has the type `any`.
 #[test]
 fn every_module_of_bun_keeps_its_types() {
     let modules = RuntimeModules::new(Archive::embedded(), false);
@@ -1220,7 +1204,6 @@ fn every_module_of_bun_keeps_its_types() {
     });
 }
 
-// See `Build::lower_projects`. A declaration with a written type is in no circle.
 #[test]
 fn types_of_bun_modules_lead_in_no_circle() {
     let modules = RuntimeModules::new(Archive::embedded(), false);
@@ -1302,7 +1285,6 @@ fn worker_file_named_by_url_is_an_entry_point_after_one_load() {
         source_path: format!("/project/{name}").into_bytes(),
     });
     let found_by_load = with_loaded_build(&files, &default_settings(), |build, loaded| {
-        // A load retires its sessions when it ends, so one that was thrown away and done again shows here.
         assert!(build.retired_sessions.is_empty());
         collect_entry_point_paths(loaded.project(ProjectId::Application), &[])
     });
@@ -1318,7 +1300,6 @@ fn worker_file_named_by_url_is_an_entry_point_after_one_load() {
     });
 }
 
-// `bun test` runs in place. Otherwise a file that fails to parse is embedded as an asset, as `bun build` does.
 #[test]
 fn test_file_with_syntax_error_yields_a_program() {
     let files = [
@@ -1374,7 +1355,7 @@ fn module_without_source_file_has_no_text() {
     let source = texts.get(program.entries[0].module);
     let source = source.expect("a compiled file has its text");
     assert_eq!(BStr::new(&source.path), "/project/a.ts");
-    assert_eq!(BStr::new(source.text()), files[0].1);
+    assert_eq!(source.text().map(BStr::new), Some(BStr::new(files[0].1)));
 }
 
 #[test]
@@ -1386,7 +1367,7 @@ fn function_text_of_a_module_is_its_text_without_the_types() {
     let (program, texts) = (&linked.program, &linked.summary.texts);
     let module = program.entries[0].module;
     let source = texts.get(module).expect("a compiled file has its text");
-    assert_eq!(BStr::new(source.text()), text);
+    assert_eq!(source.text().map(BStr::new), Some(BStr::new(text)));
     assert!(texts.size_of_texts() >= text.len());
 
     let function_text = source.function_text();
@@ -1572,7 +1553,6 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
     assert!(has_message(&log, Kind::Err, message));
     assert_eq!(log.msgs.len(), 1);
 
-    // The option leaves Bun's library to the run time: the program holds none of it, as asked.
     let (failed, log) = finish_build(true);
     assert!(failed.is_none());
     assert!(log.msgs.is_empty());

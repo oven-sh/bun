@@ -7,7 +7,6 @@ use crate::lower::FunctionLowering;
 use crate::lower::expression::Tail;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // The built-in gets the text when the program runs: none of it is compiled with the program.
     pub(super) fn lower_evaluated_text_call(
         &mut self,
         call: ExprId,

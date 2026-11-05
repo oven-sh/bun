@@ -17,7 +17,6 @@ pub(in crate::lower) type FunctionTypes = SmallVec<[FunctionId; 2]>;
 pub(in crate::lower) struct FunctionTypeState {
     declared: Vec<FunctionId>,
     classes: FxHashMap<ClassRef, FunctionId>,
-    /// What was asked for since `begin_list_of_function_types`, whether or not the file had declared it.
     asked_for: Option<FunctionTypes>,
 }
 
@@ -26,7 +25,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.types.function_types.asked_for = Some(FunctionTypes::new());
     }
 
-    /// `None`: no list was begun since the last one was taken.
     pub(in crate::lower) fn take_list_of_function_types(&mut self) -> Option<FunctionTypes> {
         self.types.function_types.asked_for.take()
     }
@@ -52,7 +50,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.list_function_type(function_type)
     }
 
-    /// What asking for the function type leaves in a file.
     pub(in crate::lower) fn declare_function_type_again(&mut self, function_type: FunctionId) {
         match self.function_key(function_type) {
             FunctionKey::Signature(declaration) => {
@@ -94,7 +91,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The link step puts a function with a body below its own signature. What runs behind an overload is declared elsewhere.
     fn declare_signature(&mut self, declaration: FunctionRef) -> FunctionId {
         let function_type = self.reference_function(FunctionKey::Signature(declaration));
         if self.add_declared(function_type)

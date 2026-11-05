@@ -80,8 +80,6 @@ impl PropertyKey {
     }
 }
 
-/// Ids compare by number, and the numbers in a task's tables depend on the thread schedule. An order that reaches the program may compare
-/// only keys that already hold program ids.
 impl Ord for PropertyKey {
     fn cmp(&self, other: &PropertyKey) -> Ordering {
         let fields = |key: &PropertyKey| {
@@ -112,7 +110,6 @@ pub struct PropertyKeyTable {
 }
 
 impl PropertyKeyTable {
-    /// The keys take their ids in the given order. No two of them are alike.
     pub fn of_distinct_keys(keys: Vec<PropertyKey>) -> PropertyKeyTable {
         let mut ids: HashTable<PropertyKeyId> = HashTable::with_capacity(keys.len());
         for (index, key) in keys.iter().enumerate() {
@@ -141,7 +138,6 @@ impl PropertyKeyTable {
         id
     }
 
-    /// The keys interned next take the ids from `length` on: whoever holds one of those has to forget it.
     pub fn truncate(&mut self, length: usize) {
         if self.list.len() <= length {
             return;
@@ -179,7 +175,6 @@ impl PropertyKeyTable {
 mod tests {
     use super::*;
 
-    /// 0 stands for the least value of a field, 1 and 2 for the next two.
     fn key_of([kind, text, owner, symbol, module, call_number]: [u32; 6]) -> PropertyKey {
         PropertyKey {
             kind: PropertyKeyKind::ALL[kind as usize],

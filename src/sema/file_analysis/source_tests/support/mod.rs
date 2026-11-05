@@ -104,7 +104,6 @@ impl Fold<'static> {
         max_string_bytes: MAX_FOLDED_STRING_BYTES,
     };
 
-    /// `--minify-syntax`: `bun build` then computes what `bun run` computes.
     pub(crate) const MINIFIED: Fold<'static> = Fold {
         minifies_syntax: true,
         ..Fold::NONE
@@ -360,6 +359,9 @@ impl<'s> Workspace<'s> {
             DataValue::Number(value) => value.to_string(),
             DataValue::String(text) => format!("{:?}", self.text(text)),
             DataValue::BigInt(digits) => format!("{}n", self.text(digits)),
+            DataValue::Temporal { class, text } => {
+                format!("{}({:?})", self.text(class), self.text(text))
+            }
             DataValue::Array(elements) => {
                 let elements: Vec<String> = elements
                     .iter()
@@ -391,6 +393,7 @@ impl<'s> Workspace<'s> {
             features_are_unknown: false,
             preserves_unused_imports: fold.preserves_unused_imports,
             minifies_syntax: fold.minifies_syntax,
+            is_read_left_out_where_unused: None,
             max_string_bytes: fold.max_string_bytes,
             max_pattern_bytes: fold.max_string_bytes,
         };

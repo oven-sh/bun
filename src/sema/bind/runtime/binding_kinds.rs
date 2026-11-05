@@ -14,7 +14,6 @@ pub(super) fn record_declared_binding_kinds(hir: &File<'_>, bound: &mut BoundBui
         let symbol = SymbolId(index);
         let kind = declared_binding_kind(hir, bound, symbol);
         record_binding_kind(bound, symbol, kind);
-        // The local symbol also lists what is declared under the name without `export`.
         let exported = bound.export_symbol_of_value_symbol_if_exported(symbol);
         if exported != symbol {
             let kind = declared_binding_kind_of(hir, bound, symbol, exported);

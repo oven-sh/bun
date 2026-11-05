@@ -19,7 +19,8 @@ pub use call_sites::{
     is_name_written_out,
 };
 pub(crate) use call_sites::{
-    call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope, may_construct_worker,
+    call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope, is_process,
+    may_construct_worker,
 };
 pub use changed_files::{
     TextsOfFile, find_texts_of_exports, write_from_other_folder, write_start_from_other_folder,
@@ -65,12 +66,8 @@ pub enum ImportSiteKind {
     ImportMetaRequire(ExprId),
     ImportMetaResolve(ExprId),
     GetBuiltinModule(ExprId),
-    /// `mock.module(specifier, factory)` of the test runner, which also goes by `jest.mock` and `vi.mock`. It loads nothing.
-    /// Also `build.module(specifier, factory)` in the `setup` of a plugin, which the loader keeps in the same table.
     MockModule(ExprId),
-    /// `vi.importActual(specifier)` and `vi.importMock(specifier)` of the test runner: native code imports the module.
     ImportByTestRunner(ExprId),
-    /// `jest.requireActual(specifier)`, `jest.requireMock(specifier)` and `jest.createMockFromModule(specifier)`: it requires the module.
     RequireByTestRunner(ExprId),
 }
 
@@ -89,27 +86,12 @@ impl ImportSiteKind {
             _ => None,
         }
     }
-
-    /// Whether the loader of the run time is given the `type` that is written here, where it loads the file.
-    pub fn hands_type_to_loader(self) -> bool {
-        matches!(
-            self,
-            ImportSiteKind::Import(_)
-                | ImportSiteKind::ExportFrom(_)
-                | ImportSiteKind::ExportStar(_)
-                | ImportSiteKind::ImportCall(_)
-        )
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ImportSpecifier {
     Constant(Atom),
-    Pattern {
-        prefix: Atom,
-        suffix: Atom,
-    },
-    /// One of a few, each of them a `Constant` or a `Pattern`: `FileAnalysis::alternatives_of`.
+    Pattern { prefix: Atom, suffix: Atom },
     OneOf(Alternatives),
     Unknown,
 }
@@ -121,8 +103,6 @@ pub struct ChangedPath {
     pub reaches_below: bool,
 }
 
-/// `export const put = (path, text) => writeFileSync(path, text)`: `put`, 0.
-/// `export const put = (name, text) => writeFileSync(join(import.meta.dir, name + ".js"), text)`: `put`, 0, between `./` and `.js`, from the folder of the file.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ExportedFileChanger {
     pub export: Atom,
@@ -133,7 +113,6 @@ pub struct ExportedFileChanger {
     pub starts_at_own_directory: bool,
 }
 
-/// `export const folder = join(import.meta.dir, "made")`: `folder`, `./made`, true.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ExportedText {
     pub export: Atom,
@@ -141,16 +120,13 @@ pub struct ExportedText {
     pub starts_at_own_directory: bool,
 }
 
-/// What a resolver answers for a name: `require.resolve` a path, `import.meta.resolve` a URL.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum ResolvedForm {
     Path,
     Url,
-    /// A `URL` object whose `href` is that URL.
     UrlObject,
 }
 
-/// A range of `FileAnalysis::alternatives`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Alternatives {
     pub(crate) first: u32,

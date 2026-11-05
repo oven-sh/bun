@@ -29,7 +29,6 @@ impl<'c> IntersectionSummary<'c> {
         match shape.kind {
             ShapeKind::Anything(reason) => match reason {
                 AnythingReason::Any => self.has_any_part = true,
-                // A brand is a phantom: no value has it when the program runs. `void & { brand }` holds `undefined`.
                 AnythingReason::Void => {
                     let undefined = TypeShape::undeclared(ShapeKind::Undefined);
                     self.wide_primitive.get_or_insert(undefined);

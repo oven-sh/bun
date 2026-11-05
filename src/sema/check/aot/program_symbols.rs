@@ -6,8 +6,6 @@ use crate::types::{SigData, SigId};
 use smallvec::SmallVec;
 
 pub const COMPILER_DECLARATIONS_PATH: &[u8] = b"/$bun/types/compiler.d.ts";
-/// `declare module "*";`, for a build whose imports are in other images: it reads none of those files, so what it imports has any type.
-pub const MODULES_IN_OTHER_IMAGES_PATH: &[u8] = b"/$bun/types/modules-in-other-images.d.ts";
 
 pub(in crate::check) struct ProgramSymbols {
     compiler_declarations: Option<FileId>,
@@ -48,7 +46,6 @@ impl ProgramSymbols {
         symbols
     }
 
-    /// The compiler declares a few types in the module "bun". Where no other file declares the module, nothing is known about its values.
     pub(in crate::check) fn is_bun_module_without_values(&self, module: Sym) -> bool {
         self.bun_module_without_values == Some(module)
     }
@@ -57,7 +54,6 @@ impl ProgramSymbols {
         self.int32
     }
 
-    /// Whether a type that somebody has written can be the alias. What the compiler predicts of untyped code is the alias in any program.
     pub(super) fn is_int32_written(&self) -> bool {
         self.is_int32_written
     }
@@ -97,7 +93,6 @@ fn find_type_alias(
         .then(|| files.canonical(alias))
 }
 
-/// Whatever is bound to a type spells its name: in a type, or where the name is imported or exported. In a program where no file does, nothing is.
 fn is_spelled_by_some_file(files: &Files<'_>, alias: Sym) -> bool {
     let name = files.symbol(alias).name;
     files.modules.iter().any(|module| {
@@ -144,7 +139,6 @@ impl Checker<'_, '_> {
 }
 
 impl<'s> Program<'s> {
-    /// Before the first tree is let go: it looks through all of them.
     pub fn find_symbols_of_compiler(&self) {
         self.aot_symbols();
     }

@@ -18,10 +18,8 @@ pub(super) struct DynamicBinding {
     pub(super) with_base: ValueId,
 }
 
-/// What a written name has led to where the objects of scopes are asked.
 pub(super) enum DynamicIdentifier {
     Name(DynamicBinding),
-    /// `size` in `namespace Box` is `Box.size` in what runs: the objects are asked for `Box`, and this is the object that it names.
     MemberOf(ValueId),
 }
 
@@ -52,7 +50,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(DynamicIdentifier::MemberOf(object))
     }
 
-    // The name is looked for from where `written` stands.
     fn resolve_dynamic_name(
         &mut self,
         written: ExprId,
@@ -196,7 +193,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) {
         let (object, dynamic) = self.begin_dynamic_use(holder);
         let key = self.scope_object_key(name);
-        // A store to a binding of an object asks once more whether the object still has the name. A proxy sees the question.
         let still_has_name = self.builder.prop_has(object, key);
         if self.mode() == ECMAMode::Strict {
             let kept = self.create_block();

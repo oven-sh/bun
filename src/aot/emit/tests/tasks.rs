@@ -81,7 +81,6 @@ fn large_table_is_chunked() {
     assert_eq!(counts, [4096, 4096, 1808]);
 }
 
-// One thread would write the strings of a large program while the others wait.
 #[test]
 fn strings_are_chunked_and_lie_in_the_program_as_in_the_table() {
     let mut program = Program::new();

@@ -37,8 +37,10 @@ pub enum KnownReference {
         builtin: BuiltinId,
         is_initialized_first: bool,
     },
-    /// The name is an import, or holds what `require` answered. Which function that is, the module graph says: `resolve_loaded_reference`.
-    Loaded { symbol: SymbolId, helper: Helper },
+    Loaded {
+        symbol: SymbolId,
+        helper: Helper,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -46,9 +48,7 @@ pub struct KnownFunction {
     pub shape: Shape,
     pub functions: Box<[FnId]>,
     pub references: Box<[KnownReference]>,
-    /// Whenever the function runs, each helper that it names is that helper and each built-in that it names is that built-in: the bindings are settled before it can run, and start-up locks the built-ins.
     pub relies_on_facts: bool,
-    /// Asked of a helper that replaces itself. Outside of the function, its name is written only to call it, so nobody sees which function the name holds.
     pub is_named_only_to_be_called: bool,
 }
 
@@ -70,7 +70,6 @@ pub enum Certainty {
 pub struct BindingValues {
     pub functions: SmallVec<[HeldFunction; 2]>,
     pub certainty: Certainty,
-    /// No code of the file runs while the binding is still empty: it is a function declaration, or it is defined in the head of a file that nothing enters ahead of its body.
     pub holds_from_the_start: bool,
 }
 
@@ -82,7 +81,6 @@ pub struct FileHelpers {
 }
 
 impl FileHelpers {
-    /// What `Quiet::allows_reads_of_open_globals` is for the head of the file.
     pub fn head_allows_reads_of_open_globals(&self) -> bool {
         self.head_allows_reads_of_open_globals
     }
@@ -145,13 +143,10 @@ pub(super) struct FindInput<'a, 's> {
     pub(super) decisions: &'a Decisions<'s>,
     pub(super) builtins: &'a ResolvedBuiltins,
     pub(super) module_format: ModuleFormat,
-    /// `ProgramContents::names_added_to_builtins`
     pub(super) names_added_to_builtins: &'a [(BuiltinId, Atom)],
-    /// Code of another file can call what the file exports before the file has run to its end.
     pub(super) is_held_early: &'a dyn Fn() -> bool,
 }
 
-// `reads_untouched_exports` takes the object that the file exports to be empty throughout the head, so a definition on it counts as any other call.
 fn is_call_that_runs_nothing(_: hir::CallId) -> bool {
     false
 }
@@ -277,7 +272,6 @@ impl<'a, 's> Finder<'a, 's> {
         functions
     }
 
-    // A declaration puts another function in its own place. The name that a function expression gives itself takes no store.
     fn stores_to_name_of_expression(&self, function: FnId) -> bool {
         let bound = self.file.bound;
         let own_name = bound.declared_symbol(Decl::Fn(function));
@@ -347,7 +341,6 @@ impl<'a, 's> Finder<'a, 's> {
         }
     }
 
-    // `import name from K`, `var name = require(K)`, `var name = require(K)["default"]`
     fn is_loaded_from_another_file(&self, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.file.hir, self.file.bound);
         if bound.binding_kind(symbol) == BindingKind::Import {
@@ -368,7 +361,6 @@ impl<'a, 's> Finder<'a, 's> {
             && bound.binding(callee) == Binding::CommonJs(CommonJsVariable::Require)
     }
 
-    // `var __defProp = Object.defineProperty;`: what the path held when the variable was initialized.
     fn is_alias_of_global(&self, symbol: SymbolId, path: &[&str]) -> bool {
         let recorded = self
             .file
@@ -511,7 +503,6 @@ impl<'a, 's> Finder<'a, 's> {
             && is_in_statement_of_file(self.file.bound, expression)
     }
 
-    // A bundler's `((x) => typeof require !== "undefined" ? require : ..)(function (x) { .. })` answers `require`. It defines nothing on `exports`.
     fn is_call_of_require_factory(&self, call: hir::CallId) -> bool {
         let hir = self.file.hir;
         match hir[hir.skip_type_assertions(hir[call].callee)].kind {
@@ -523,7 +514,6 @@ impl<'a, 's> Finder<'a, 's> {
         }
     }
 
-    // Code of another file that holds the exports of a file that has not run to its end finds nothing to call in a CommonJS file that has stored no export yet, and the function declarations in an ES module.
     fn may_start_early(&self) -> bool {
         *self.may_start_early.get_or_init(|| {
             self.is_es_module && self.exports_function_declaration() && (self.file.is_held_early)()
@@ -544,7 +534,6 @@ impl<'a, 's> Finder<'a, 's> {
             .get_or_init(|| self.ask_quiet_of_head(|quiet| quiet.find_end_of_head()))
     }
 
-    /// Nothing of the file but quiet code runs until the variable holds the value.
     fn is_in_head(&self, definition: Definition) -> bool {
         let hir = self.file.hir;
         let Some(statement) = definition.statement else {
@@ -555,7 +544,6 @@ impl<'a, 's> Finder<'a, 's> {
         }
         match hir[statement].kind {
             StmtKind::Var(_) => hir[definition.value].pos < self.end_of_head(),
-            // `name = value;` is never quiet.
             _ => {
                 hir[statement].start <= self.end_of_head()
                     && self.ask_quiet_of_head(|quiet| quiet.is_quiet_expression(definition.value))
@@ -563,7 +551,6 @@ impl<'a, 's> Finder<'a, 's> {
         }
     }
 
-    /// Nothing of the program runs between the start of the file and the expression.
     fn is_in_silent_head(&self, expression: ExprId) -> bool {
         let end = *self
             .end_of_silent_head
@@ -596,7 +583,6 @@ impl<'a, 's> Finder<'a, 's> {
         !self.may_start_early() && definition.is_some_and(|definition| self.is_in_head(definition))
     }
 
-    // `this && this.__helper` in the head of a CommonJS file: `this` is the object that the file exports, and it is still as it was made.
     fn reads_untouched_exports(&self, this: ExprId, member: ExprId) -> bool {
         if self.is_es_module {
             return false;
@@ -716,7 +702,6 @@ impl<'a, 's> Finder<'a, 's> {
             if !self.verify(function) {
                 return BindingValues::default();
             }
-            // What a helper stores to its own name is a part of the helper.
             let stability = bound
                 .binding_stability_ignoring(symbol, &|target| self.is_written_in(function, target));
             let is_stable = stability == BindingStability::Stable;
@@ -758,7 +743,6 @@ impl<'a, 's> Finder<'a, 's> {
         values
     }
 
-    // The longest path of names that the table knows, from each global that the function names.
     fn names_only_locked_globals(&self, globals: &[ExprId]) -> bool {
         let (hir, bound) = (self.file.hir, self.file.bound);
         let find_name = |name: Atom| table::find_name(self.file.atoms.bytes(name));

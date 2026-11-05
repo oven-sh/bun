@@ -57,9 +57,7 @@ fn find_direct_eval_call(hir: &File<'_>, bound: &BoundBuilder, ident: ExprId) ->
 
 #[derive(Default)]
 pub(super) struct DynamicScopes {
-    /// `with` statements, and the scopes that take the variables of text evaluated in their code. For a function that code is its body.
     pub scopes: Vec<u64>,
-    /// The functions that take the variables of text evaluated among their parameters.
     pub parameter_eval_scopes: Vec<u64>,
 }
 
@@ -149,7 +147,8 @@ impl ReferencePass<'_, '_> {
             let first_appended = appended.partition_point(|entry| entry.0 < at);
             for &(_, symbol) in appended[first_appended..].iter().take_while(|e| e.0 == at) {
                 if is_appended_visible(from) && seen.insert(bound.symbols[symbol.idx()].name) {
-                    self.list_eval_binding(Binding::Symbol(symbol));
+                    let own = bound.own_binding_of_decorated_class(symbol);
+                    self.list_eval_binding(Binding::Symbol(own.unwrap_or(symbol)));
                 }
             }
             from = scope.kind;

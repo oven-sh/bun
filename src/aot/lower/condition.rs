@@ -44,7 +44,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(position);
         let counted = self.enter_counted_expression(expression);
         if self.file.decisions().is_truthy_without_effects(expression) {
-            // `if (module)`: nothing is read, so that the test makes no module object.
             self.lower_member_reads(expression);
             let value = self.builder.boolean(true);
             self.branch_on_truthiness(value, if_true, if_false);
@@ -57,8 +56,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.leave_nesting();
     }
 
-    /// An arm is left out because folding has the answer of `test`.
-    /// `is_known_to_bun_run`: it leaves the arm out too, and takes no value of the test.
     pub(in crate::lower) fn lower_test_with_known_answer(
         &mut self,
         test: ExprId,
@@ -155,7 +152,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(on_not_taken);
     }
 
-    /// `value`: what was tested, which the local holds.
     fn finish_split_of_local(
         &mut self,
         split: Split,
@@ -172,15 +168,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(on_not_taken);
     }
 
-    /// `left`: what a test has left of `value`, which the local holds. The operation claims no type: whoever asks what the local is finds `value` behind it.
     fn narrow_local(&mut self, local: SymbolId, value: ValueId, left: ValueId) {
         let origin = self.builder.value_behind_tests(value);
         let narrowed = self.builder.narrow_by_test(origin, left);
         self.rebind_narrowed_local(local, narrowed, value);
     }
 
-    /// A list passes a look at its cell. Of whatever else the local holds the function is asked, as it is written: the prototype of lists, an instance of a class below and a proxy of a list pass too.
-    /// So the look decides nothing that the function would not: the engine leaves it out where it proves nothing.
     fn lower_is_array_test(
         &mut self,
         call: ExprId,
@@ -351,7 +344,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// `switch (typeof operand)` over written names, and `typeof operand === "object"`.
     pub(in crate::lower) fn jump_by_typeof(
         &mut self,
         value: ValueId,
@@ -413,7 +405,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(on_not_taken);
     }
 
-    /// `holder.key === other`, where `other` has one value.
     fn find_compared_field(
         &mut self,
         op: BinOp,
@@ -427,7 +418,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .filter(|_| self.file.has_unit_type(other))
     }
 
-    /// `fields`: by operand of the test. The blocks in which the two edges go on.
     fn split_on_comparison(
         &mut self,
         test: ValueId,
@@ -482,7 +472,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// `a && b`, `a || b`, `a ? b : c`, behind any number of `!` and of what only the checker reads: what lower_condition() takes apart.
     pub(in crate::lower) fn is_test_of_several(&self, expression: ExprId) -> bool {
         match self.hir[expression].kind {
             ExprKind::Binary {

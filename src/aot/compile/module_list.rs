@@ -18,7 +18,6 @@ use bun_sema::util::SharedSort;
 
 pub(super) struct ListedModules {
     list: ModuleList,
-    /// By `ModuleId`: the position in `list.inputs` of the file that holds the text of the module.
     input_of_module: Vec<Option<u32>>,
 }
 
@@ -31,7 +30,6 @@ struct Collector<'a, 's> {
     input_of_file: Vec<Option<u32>>,
 }
 
-/// `modules`: `Linked::modules`, in the order of `ModuleId`.
 pub(super) fn collect_module_list(
     loaded: &LoadedBuild<'_, '_>,
     bound: &BoundBuild,
@@ -92,7 +90,6 @@ pub(super) fn collect_module_list(
 }
 
 impl ListedModules {
-    /// `bytes_by_module`: `EngineResult::bytes_by_module`. Empty where no engine has made an image.
     pub(super) fn finish(mut self, bytes_by_module: &[ModuleBytesRecord]) -> ModuleList {
         for record in bytes_by_module {
             let module = record.module_id().index();
@@ -192,7 +189,6 @@ impl Collector<'_, '_> {
         }
     }
 
-    /// A file that only hands on what others export is left out of the program, and whoever imports it asks for those others itself.
     fn add_requests_passed_on(&self, file: FileId, imports: &mut Vec<ModuleImport>) {
         if !self.graph.has_record(file) {
             return;
@@ -211,7 +207,6 @@ impl Collector<'_, '_> {
         }
     }
 
-    /// As the bundler names a built-in module: without `node:`, but for a module that has no other name.
     fn builtin_path(&self, specifier: &[u8]) -> Vec<u8> {
         let alias = Alias::get(specifier, Target::Bun, self.aliases);
         match specifier.strip_prefix(b"node:") {
@@ -220,7 +215,6 @@ impl Collector<'_, '_> {
         }
     }
 
-    /// `None`: the program does not hold the module, so nothing loads it there.
     fn import_of(
         &self,
         kind: ModuleImportKind,
@@ -311,7 +305,6 @@ mod tests {
         }
     }
 
-    // `a.ts`, `b.cjs`, the face of `b.cjs`, a module of Bun's own.
     fn two_files_in_four_modules() -> ListedModules {
         ListedModules {
             list: ModuleList {

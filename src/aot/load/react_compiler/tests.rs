@@ -272,7 +272,6 @@ impl<'s> Tree<'s> {
         Some(hir.numbers[size as usize])
     }
 
-    /// Of `var name`, which stands nowhere but in `(name ??= globalThis.Symbol.for(key))`.
     fn sentinel_key(&self, name: &str) -> Option<String> {
         let hir = self.hir();
         let mut declarations = self

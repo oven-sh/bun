@@ -252,7 +252,6 @@ fn existing_ids_keep_their_nodes() {
     assert_eq!(compiled.function_count, written.function_count);
 }
 
-// Only the bundler can run a macro, and the parser expands macros before the compiler runs.
 #[test]
 fn file_with_macro_is_left_as_written_without_the_bundler() {
     let text = "import { version } from './macro.ts' with { type: 'macro' };\n\

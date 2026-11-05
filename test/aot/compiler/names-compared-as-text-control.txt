@@ -351,6 +351,11 @@ allows src/sema/fold/folder_calls.rs the scheme of a URL
     return self.atoms.bytes(url).starts_with(b"data:");
 allows src/sema/fold/folder_operators.rs a global whose identifier the binder calls free
     return matches!(hir[callee].kind, ExprKind::Ident(known::RegExp)) && self.bound.binding(callee) == Binding::Free;
+allows src/sema/fold/known_constructors.rs a constructor whose identifier the binder calls free
+    match (self.atoms.bytes(name), &arguments[..]) {
+        (b"Object", []) => Some(EmptyObject),
+        _ => None,
+    }
 allows src/aot/known_helpers/quiet.rs undefined behind Binding::Free
     return self.bound.binding(expression) == Binding::Free && name == known::undefined;
 finds src/aot/known_helpers/quiet.rs ==

@@ -15,8 +15,6 @@ impl NamedValues for NoNamedValues {
     }
 }
 
-/// As a library that compares two schemas does: `visit` hands both to one function a kind, and each of those goes on
-/// to its neighbors and, with the parts of both, back to `visit`. All are exported, so only the uses say what they take.
 fn write_visitors(kinds: usize) -> String {
     let mut text = String::from("export function visit(left, right) {\n");
     for kind in 0..kinds {
@@ -43,7 +41,6 @@ fn write_visitors(kinds: usize) -> String {
     text
 }
 
-/// Each hands what it gets on to the next, and the last reads a member of it.
 fn write_chain(length: usize) -> String {
     let mut text = String::new();
     for index in 0..length {
@@ -62,7 +59,6 @@ fn write_chain(length: usize) -> String {
     text
 }
 
-/// Each reads a member of what it gets and hands `handed_on` to the next, and the last to the first.
 fn write_ring(length: usize, handed_on: &str) -> String {
     let mut text = String::new();
     for index in 0..length {
@@ -76,7 +72,6 @@ fn write_ring(length: usize, handed_on: &str) -> String {
     text
 }
 
-/// None is exported, so what the callers pass says what each takes, and nearly all of them call one another in one cycle.
 fn write_functions_that_call_one_another_at_random(count: usize) -> String {
     let mut seed = 7;
     let mut next = || {
@@ -100,8 +95,6 @@ fn write_functions_that_call_one_another_at_random(count: usize) -> String {
     text
 }
 
-/// `first` and `second` hand what they get to each other, and each reads members of it. Behind that `first` hands it to
-/// `run`, which calls it.
 fn write_two_that_read_many_members_and_one_that_calls(reads: usize) -> String {
     let mut text = String::from("export function first(value) {\n");
     for index in 0..reads {
@@ -116,8 +109,6 @@ fn write_two_that_read_many_members_and_one_that_calls(reads: usize) -> String {
     text
 }
 
-/// As above, in a few lines: each level hands four parts of what it gets to the next, so the first of five reads more
-/// than two thousand members.
 fn write_two_that_read_a_wide_tree_and_one_that_calls() -> String {
     let mut text = String::from(
         "export function first(value) {
@@ -155,7 +146,6 @@ export function run(value) {
 enum Order {
     AsWritten,
     LastFirst,
-    /// Every third, then the rest.
     Scattered,
 }
 
@@ -180,7 +170,6 @@ fn ask_for_parameters_of(
     ask_for_parameters_from_height(name, text, order, max_inference_nodes, 0)
 }
 
-/// Calls `then` with that many more kilobytes of the stack in use.
 fn call_higher_up(kilobytes: usize, then: &mut dyn FnMut()) {
     let in_use = std::hint::black_box([0u8; 1024]);
     match kilobytes {
@@ -235,7 +224,6 @@ fn ask_for_parameters_from_height(
                         types.push((index, ty));
                     }
                 });
-                // The printer leaves out what it has no stack for.
                 for (index, ty) in types {
                     texts[index] = String::from_utf8(queries.type_text(ty)).unwrap();
                 }
@@ -246,8 +234,6 @@ fn ask_for_parameters_from_height(
     })
 }
 
-/// A method named by any symbol gives `Top` an index signature. Nothing lists the members of a class in a file
-/// that isn't checked until the first question about it.
 #[test]
 fn an_inherited_index_signature_does_not_depend_on_which_class_is_asked_for_first() {
     let text = "/** @type {symbol} */
@@ -279,7 +265,6 @@ fn types_in_a_cycle_do_not_depend_on_which_is_asked_for_first() {
     }
 }
 
-/// None is exported, so what the callers pass counts as well, and what they pass is what they were passed.
 #[test]
 fn types_in_a_cycle_of_private_functions_do_not_depend_on_which_is_asked_for_first() {
     let mut programs = Vec::new();
@@ -295,7 +280,6 @@ fn types_in_a_cycle_of_private_functions_do_not_depend_on_which_is_asked_for_fir
     programs.push(write_functions_that_call_one_another_at_random(300));
     for text in programs {
         let text = text.replace("export function", "function");
-        // One walk reaches all of a cycle, or a part of it.
         for max_inference_nodes in [4096, 100] {
             let ask = |order| ask_for_parameters_and_count(&text, order, max_inference_nodes).0;
             let as_written = ask(Order::AsWritten);
@@ -338,7 +322,6 @@ fn every_function_of_a_cycle_knows_what_the_others_read() {
     let (left, right) = (&answers[0], &answers[1]);
     assert!(left.contains("own0") && left.contains("own19"), "{left}");
     assert!(right.contains("any0") && right.contains("any19"), "{right}");
-    // `part` is handed on as `right` is.
     let count = |text: &String| answers.iter().filter(|&answer| answer == text).count();
     assert_eq!((count(left), count(right)), (49, 49 + 48));
 }
@@ -359,7 +342,6 @@ fn the_first_of_a_long_chain_of_calls_knows_what_the_last_reads() {
 fn a_cycle_of_functions_is_not_inferred_once_for_each_of_them() {
     for count in [300, 600] {
         let text = write_functions_that_call_one_another_at_random(count);
-        // One walk reaches all of the cycle, or a small part of it.
         for max_inference_nodes in [4096, 100] {
             for order in [Order::AsWritten, Order::LastFirst, Order::Scattered] {
                 let (answers, statistics) =
@@ -440,8 +422,6 @@ fn an_answer_does_not_depend_on_how_much_stack_the_asker_has_in_use() {
     }
 }
 
-/// `f` and `g` are inferred from each other, and each file enters that circle at its own end. Which of the files is thrown away and
-/// comes again in the last round depends on the threads.
 fn ask_for_results_of_a_circle_across_files(threads: usize) -> Vec<String> {
     let files = [
         ("main.ts", "import \"./a\";\nimport \"./b\";\n"),

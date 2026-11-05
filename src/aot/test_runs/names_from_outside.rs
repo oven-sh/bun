@@ -1,13 +1,9 @@
-//! Names that reach a write from another place than the write itself.
-//! `export const watch = (object, name) => spyOn(object, name)` in one file, `watch(lib, "total")` in another: the texts that go to the helper may be the name.
-//! `const put = object => { object.__mark = 1; }`, `put(Object.prototype)`: the name is spelled, and the object comes from somewhere.
-
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingInitializer, Decl, FnOwner, Parent, PatParent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue, KnownSets};
 use bun_sema::hir::{
-    BinOp, CallId, ExprId, ExprKind, FnId, IdList, ImportId, MemberKey, PatId, PatKind, PropKind,
-    StmtKind,
+    BinOp, CallId, ExprId, ExprKind, FnId, IdList, ImportId, MemberKey, NodeData, PatId, PatKind,
+    PropKind, StmtKind,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter};
 use bun_sema::program::{CodeAnswer, FileId, Files};
@@ -19,15 +15,12 @@ use super::out_of_sight::find_outermost_assertion;
 use crate::builtins::{BuiltinId, ResolvedBuiltins, table};
 use crate::load::sources::parsed_source;
 
-/// In `FileOfRun::texts_passed`, in the place of an import site: the file spells the text for a spy of its own.
 pub(super) const OWN_FILE: u32 = u32::MAX;
 
 pub(super) struct NamesFromOutside<'a, 's> {
     request: &'a FinishedFile<'a, 's>,
     builtins: &'a ResolvedBuiltins,
-    /// A package imports no helper of the tests, and is handed no object of theirs to write on.
     is_in_package: bool,
-    /// The calls in code that runs, in the order of the expressions.
     calls: Vec<(ExprId, CallId)>,
     names_stored: Vec<Atom>,
 }
@@ -61,7 +54,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    /// A parameter, a variable of a loop, what a call answers: a name that holds an object which the file has not made where the name is bound.
     fn is_object_from_somewhere(&self, object: ExprId) -> bool {
         let &FinishedFile { hir, bound, .. } = self.request;
         let object = hir.skip_type_assertions(object);
@@ -92,7 +84,23 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    // `object.name = value`, `object["name"] = value`
+    fn is_namespace_in_sight(&self, object: ExprId) -> bool {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let object = hir.skip_type_assertions(object);
+        if !bound.is_evaluated_ident(object)
+            || bound.dynamic_lookup_scope(NodeData::Expr(object)).is_some()
+        {
+            return false;
+        }
+        let Binding::Symbol(symbol) = bound.binding(object) else {
+            return false;
+        };
+        match *bound.symbol(symbol).decls {
+            [Decl::ImportNamespace(import)] => self.find_site_of_file(import).is_some(),
+            _ => false,
+        }
+    }
+
     fn look_at_store(&mut self, target: ExprId) {
         let hir = self.request.hir;
         let Some((object, key)) = hir.member_key(hir.skip_type_assertions(target)) else {
@@ -108,7 +116,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    // `Reflect.set(object, "name", value)`, `Object.defineProperty(object, "name", descriptor)`
     fn look_at_call_that_stores(&mut self, call: CallId) {
         let hir = self.request.hir;
         let callee = self.builtins.builtin_of_expression(hir[call].callee);
@@ -129,7 +136,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    /// `expression`: in code that runs.
     pub(super) fn look_at(&mut self, expression: ExprId, kind: ExprKind) {
         if self.is_in_package {
             return;
@@ -153,7 +159,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    // `watch` of `watch(..)`, `tracker` of `tracker.watch(..)`
     fn find_root_of(&self, value: ExprId) -> Option<SymbolId> {
         let &FinishedFile { hir, bound, .. } = self.request;
         let value = hir.skip_type_assertions(value);
@@ -165,8 +170,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    /// `const tracker = createTracker(); tracker.watch(holder, "read")`, `const { watch } = createTracker()`, `tracker = createTracker()` in a hook:
-    /// what a function of another file returns takes its texts there too. By the name that holds it, each once.
     fn find_what_imports_make(&self) -> Vec<(SymbolId, ImportId)> {
         let &FinishedFile { hir, bound, .. } = self.request;
         let mut made_by: Vec<(SymbolId, ImportId)> = Vec::new();
@@ -216,7 +219,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         made_by
     }
 
-    /// The import site of a file of the program.
     fn find_site_of_file(&self, import: ImportId) -> Option<u32> {
         let &FinishedFile {
             analysis,
@@ -234,7 +236,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    /// The constant texts among the operands of each call of what the file imports from another file, or of what that has made.
     fn find_texts_passed(&self) -> Vec<(u32, Atom)> {
         let &FinishedFile { hir, bound, .. } = self.request;
         let made_by = self.find_what_imports_make();
@@ -242,7 +243,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
             let made = made_by.binary_search_by_key(&symbol, |it| it.0);
             (self.find_import_of(symbol)).or_else(|| made.ok().map(|at| made_by[at].1))
         };
-        // `function start(watch: Tracker["watch"]) { watch(holder, "read"); }`, `start(tracker.watch)`: what goes into a call may be what a parameter of this file holds.
         let is_parameter =
             |symbol: SymbolId| matches!(bound.symbol(symbol).decls, &[Decl::Param(_)]);
         let mut handed_to_calls: Vec<ImportId> = Vec::new();
@@ -279,7 +279,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         passed
     }
 
-    // `["half"]`, or a name that is bound once to such a list.
     fn find_list_written(&self, list: ExprId) -> Option<IdList<ExprId>> {
         let &FinishedFile { hir, bound, .. } = self.request;
         let list = hir.skip_type_assertions(list);
@@ -298,7 +297,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    // What stands at the top of the pattern that binds `mention`: a declaration, a parameter.
     fn find_top_of_pattern(&self, mention: ExprId) -> Option<PatParent> {
         let bound = self.request.bound;
         let Binding::Symbol(name) = bound.binding(mention) else {
@@ -318,7 +316,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    /// `ROWS` for `name` in `for (const [kind, name] of ROWS)`, `ROW` in `const { name } = ROW`: what a pattern takes out of a list or an object is somewhere in it.
     fn find_what_pattern_takes_apart(&self, mention: ExprId) -> Option<ExprId> {
         let &FinishedFile { hir, bound, .. } = self.request;
         let PatParent::Var(declaration) = self.find_top_of_pattern(mention)? else {
@@ -336,7 +333,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         hir[declaration].init.some()
     }
 
-    // The function, for a name that a parameter binds, alone or in a pattern.
     fn find_function_of_parameter(&self, mention: ExprId) -> Option<FnId> {
         match self.find_top_of_pattern(mention)? {
             PatParent::Param(parameter) => Some(self.request.bound.param_fn[parameter.idx()]),
@@ -344,7 +340,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    /// `LISTED` for `name` in `LISTED.map(name => tapped(object, name))`.
     fn find_list_walked_by_callback(&self, mention: ExprId) -> Option<IdList<ExprId>> {
         let &FinishedFile { hir, bound, .. } = self.request;
         let function = self.find_function_of_parameter(mention)?;
@@ -367,7 +362,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    /// `[["half", 1]]` for `name` in `test.each([["half", 1]])("halves", (name, count) => tapped(object, name))`: what the call in front was handed may be what the callback is called with.
     fn find_operands_of_call_in_front(&self, mention: ExprId) -> Option<IdList<ExprId>> {
         let &FinishedFile { hir, bound, .. } = self.request;
         let function = self.find_function_of_parameter(mention)?;
@@ -390,9 +384,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         }
     }
 
-    /// The texts that the file itself spells for `value`: a constant, one of a known set, what the calls of a function of the file pass for a parameter, the elements of a list
-    /// that a callback walks or that the call in front of the callback's was handed. What is not spelled here comes from outside.
-    /// `being_filled`: the texts with holes around `value`. False: one of them fills a hole of its own, `watch(name + "Next")` in `watch(name)`, so nobody can list what the run makes.
     fn push_texts_spelled_for(
         &self,
         known: &mut KnownSets<'a, 's>,
@@ -465,8 +456,6 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         true
     }
 
-    /// `logHalf` and `logAdd` for `` `log${kind}` `` where `kind` is spelled as `Half` and `Add`. A hole that nobody spells leaves the whole text unspelled.
-    /// `being_filled` ends with `text`. False as for `push_texts_spelled_for`.
     fn push_texts_with_holes_filled(
         &self,
         known: &mut KnownSets<'a, 's>,
@@ -519,8 +508,11 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         } = self.request;
         found.texts_passed = self.find_texts_passed();
         let spies = self.builtins.spy_calls().iter();
-        let nameless =
-            spies.filter(|spy| spy.name.is_none() && !analysis.decisions.is_dead_expr(spy.call));
+        let nameless = spies.filter(|spy| {
+            spy.name.is_none()
+                && !analysis.decisions.is_dead_expr(spy.call)
+                && !self.is_namespace_in_sight(spy.object)
+        });
         let mut known = KnownSets::new(hir, bound, &analysis.decisions, atoms);
         let mut spelled = Vec::new();
         for spy in nameless {
@@ -539,15 +531,11 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
     }
 }
 
-/// What the spies under names from outside may be laid under.
 pub(super) struct NamesOfHelpers {
-    /// With repeats, in no order.
     pub names: Vec<Atom>,
-    /// How many texts go to each helper. To one that gets none, nobody spells a name: it may be any name.
     pub texts_passed: Vec<usize>,
 }
 
-/// Where in `helpers` stand `taker` and the files that it exports again, `export * from "./helper"`, and so on down: whoever calls what the file hands on calls the helper.
 fn find_helpers_behind(files: &Files<'_>, taker: FileId, helpers: &[FileId]) -> Vec<usize> {
     let mut reached = vec![taker];
     let mut looked_at = 0;
@@ -572,7 +560,6 @@ fn find_helpers_behind(files: &Files<'_>, taker: FileId, helpers: &[FileId]) -> 
         .collect()
 }
 
-/// `helpers`: the files with `FileOfRun::spies_under_names_from_outside`, ascending. Every text that goes to such a file may be the name.
 pub(super) fn settle_names_of_helpers(files: &Files<'_>, helpers: &[FileId]) -> NamesOfHelpers {
     let mut settled = NamesOfHelpers {
         names: Vec::new(),

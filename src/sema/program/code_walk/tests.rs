@@ -532,7 +532,6 @@ fn each_unit_of_work_wakes_a_sleeper_that_takes_it() {
             scope.spawn(|| {
                 let mut counts = counts.lock();
                 counts.asleep += 1;
-                // A wait may end though nobody has woken the thread.
                 while counts.units == 0 {
                     sleepers.wait_guarded(&mut counts);
                 }
@@ -540,7 +539,6 @@ fn each_unit_of_work_wakes_a_sleeper_that_takes_it() {
                 counts.taken += 1;
             });
         }
-        // Whoever has counted itself holds the lock until it waits.
         if is_reached_in_time(&|counts| counts.asleep == SLEEPERS) {
             give(0);
             give(2);
@@ -571,7 +569,6 @@ fn time_without_files_for_plugins_lies_between_an_answer_and_the_next_file() {
 #[test]
 fn every_file_of_a_wide_graph_is_loaded_on_many_threads() {
     const FILES: usize = 200;
-    // Each file imports the next three, so most of what a file finds is known, and a thread often finds a single new file.
     let text_of = |index: usize| {
         let next = index + 1..FILES.min(index + 4);
         let imports: Vec<String> = next.map(|it| format!("import \"./file-{it}\"")).collect();
@@ -586,7 +583,6 @@ fn every_file_of_a_wide_graph_is_loaded_on_many_threads() {
         .collect();
     let files: &'static [(&'static str, &'static str)] = files.leak();
     for threads in [1, 2, 16, 64] {
-        // A thread that nobody wakes sleeps forever.
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let host = StatementsHost {
@@ -614,7 +610,6 @@ fn file_with_many_imports_is_walked_alike_on_any_number_of_threads() {
     }));
     let files: &'static [(&'static str, &'static str)] = files.leak();
     let walk_on = |threads: usize| {
-        // A thread that nobody wakes sleeps forever.
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let host = StatementsHost {

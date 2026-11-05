@@ -72,7 +72,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 });
             }
             None => {
-                // `bun run` prints an expression that opens the head as it is written.
                 match init.some().map(|init| self.file.hir[init].kind) {
                     Some(StmtKind::Expr(opening)) => self.lower_taken_value_for_effect(opening),
                     Some(_) => self.lower_statement(init),
@@ -97,7 +96,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let scope = self.file.bound.own_scope(statement);
         let copied_scope = (scope.is_some() && is_let_declaration(hir, init)).then_some(scope);
-        // The test runs in a copy of the environment that the initializer ran in, even where the body is dead.
         if let Some(scope) = copied_scope {
             self.copy_iteration_bindings(scope);
         }
@@ -122,7 +120,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(scope) = copied_scope {
             self.copy_iteration_bindings(scope);
         }
-        // `bun run` prints the update as it is written.
         if update.is_some() {
             self.lower_taken_value_for_effect(update);
         }

@@ -72,7 +72,7 @@ impl Diagnostics {
         self.add_with_locator(locator.as_mut(), diagnostic);
     }
 
-    #[allow(clippy::needless_pass_by_value)] // the end of the diagnostic
+    #[allow(clippy::needless_pass_by_value)]
     pub(super) fn add_with_locator(
         &mut self,
         mut locator: Option<&mut SpanLocator<'_, '_>>,
@@ -89,7 +89,6 @@ impl Diagnostics {
             diagnostic.severity.category(),
         );
         match effect {
-            // Roles are final when the compiler reports.
             Effect::StopsBuild | Effect::Warns | Effect::WithdrawsTrust => {
                 let message = to_message(locator, &diagnostic);
                 self.add_message(code.number(), message);
@@ -135,7 +134,6 @@ impl Diagnostics {
         self.internal_errors.extend(lists.internal_errors);
     }
 
-    /// Where a line has another error, the error about a pattern on that line reports the same mistake a second time.
     fn drop_invalid_patterns_beside_other_errors(&mut self) {
         let invalid_pattern = Code::InvalidRegExp.number();
         let is_invalid_pattern = |entry: &Entry| entry.key.4 == invalid_pattern;
@@ -153,7 +151,6 @@ impl Diagnostics {
         });
     }
 
-    /// An import that fails at load has its warning. The checker's warning of the same import says nothing more.
     fn drop_second_error_of_import(&mut self) {
         let missing = std::mem::take(&mut self.missing_at_load);
         self.entries.retain(|entry| {
@@ -194,14 +191,11 @@ fn is_found_at_load(diagnostic: &Diagnostic) -> bool {
                 | Code::FeatureFlagNotAscii
                 | Code::FeatureOutsideCondition
                 | Code::FeatureImportedTwice
-                // The compiler cannot hold it, whatever JavaScript makes of it.
                 | Code::NestedTooDeeply
         )
 }
 
 impl DiagnosticBuffer {
-    /// Removes the errors that JavaScript itself finds when it parses or links the file, and answers the sentence of the first one in the text with ` (line:column)`.
-    /// `None`: there is no such error, and nothing is removed.
     pub(crate) fn take_errors_found_at_load(
         &mut self,
         view: ProgramView<'_, '_>,

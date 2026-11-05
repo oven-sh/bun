@@ -29,15 +29,12 @@ pub(crate) struct TypeState {
     exhausted: FxHashSet<CheckerTypeId>,
     facts: FxHashMap<(CheckerTypeId, u8), bool>,
     walk: exploration::Walk,
-    /// The tuple that `find_element_type` was asked about last, and the position of its first
-    /// element that is not one value.
     pub(in crate::lower) first_variable_element: Option<(CheckerTypeId, usize)>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct MappedType {
     mapped: Mapped,
-    // How many types it reaches, itself among them. Nothing, where they are more than the limit.
     weight: Option<u32>,
 }
 
@@ -70,7 +67,6 @@ impl FileLowering<'_, '_, '_, '_> {
         kept.or_else(|| self.types.facts.get(&(ty, fact as u8)).copied())
     }
 
-    // A fact that follows from answers that hold in every file lies with them. Any other holds for this file.
     fn keep_fact(&mut self, ty: CheckerTypeId, fact: KeptFact, holds: bool, unstable_answers: u64) {
         if !self.queries.keep_fact(ty, fact, holds, unstable_answers) {
             self.types.facts.insert((ty, fact as u8), holds);
@@ -112,7 +108,6 @@ impl FileLowering<'_, '_, '_, '_> {
         (contents != TypeTable::NEVER).then_some(contents)
     }
 
-    // What the type that the literal is written under declares. Where it is written under none, the engine finds out what the elements are.
     pub(crate) fn array_literal_contents(&mut self, literal: ExprId) -> TypeId {
         debug_assert!(
             matches!(

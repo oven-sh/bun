@@ -5,14 +5,8 @@ use std::cell::OnceCell;
 
 const RUNS_LATER: u32 = u32::MAX;
 
-/// Which reads of a `var` of the file come behind its initializer. The statements of the body of a file run in their order, so a read that one of them makes as it runs does.
-/// A function and the initializer of an instance field run when somebody calls them, and the text of one file does not say who: the class may be evaluated at the start of the file,
-/// another file may import this one in a cycle, a hook may ask for the file half way through its body. A read in one of them is never behind.
 pub(super) struct RunOrder {
-    /// The statements of the body are counted from 1.
     statement_of_initializer: FxHashMap<ExprId, u32>,
-    /// By expression. 0: no name that a statement of the body reads as it runs.
-    /// Found when somebody asks about a variable that a statement of the body of the file initializes. Most variables belong to functions.
     statement_of_read: OnceCell<Vec<u32>>,
 }
 

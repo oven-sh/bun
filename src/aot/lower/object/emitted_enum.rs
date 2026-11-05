@@ -18,19 +18,11 @@ use crate::lower::{FileLowering, FunctionLowering};
 struct Member {
     name: Atom,
     value: ExprId,
-    /// `E[E["A"] = 0] = "A"`: the second "A".
     name_under_value: Option<ExprId>,
 }
 
-/// What is printed for `enum E { A, B = 5, C = "c" }`. By `tsc`, with `exports.E = E = {}` in a CommonJS file:
-/// `var E; (function (E) { E[E["A"] = 0] = "A"; E[E["B"] = 5] = "B"; E["C"] = "c"; })(E || (E = {}));`
-/// By esbuild, Bun, swc and Babel, with an arrow function or a function:
-/// `var E = ((E2) => { E2[E2["A"] = 0] = "A"; E2["C"] = "c"; return E2; })(E || {});`
-/// By newer swc: `var E = function (E) { E[E["A"] = 0] = "A"; return E; }({});`
 pub(in crate::lower) struct EmittedEnum {
-    /// The `{}`.
     literal: ExprId,
-    /// `E = {}`, where the function returns nothing.
     stores: Option<ExprId>,
     members: Vec<Member>,
 }
@@ -38,7 +30,6 @@ pub(in crate::lower) struct EmittedEnum {
 const LARGEST_INDEX: f64 = i32::MAX as f64;
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// The symbol that a name is bound to. `None`: the expression is no name, or its name is bound to no symbol.
     pub(in crate::lower) fn symbol_named_by(&self, expression: ExprId) -> Option<SymbolId> {
         match (self.hir[expression].kind, self.bound.binding(expression)) {
             (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
@@ -46,7 +37,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // `E[key]`
     fn key_stored_under(&self, target: ExprId, object: SymbolId) -> Option<ExprId> {
         let ExprKind::Index {
             obj,
@@ -59,7 +49,6 @@ impl FileLowering<'_, '_, '_, '_> {
         (self.symbol_named_by(obj) == Some(object)).then_some(index)
     }
 
-    // `E["A"]`, which the parser may hold as `E.A`
     fn name_stored_under(&self, target: ExprId, object: SymbolId) -> Option<Atom> {
         if let ExprKind::Dot {
             obj,
@@ -106,7 +95,6 @@ impl FileLowering<'_, '_, '_, '_> {
         else {
             return None;
         };
-        // An index stands in front of every name whenever it is stored. Any other number is a name among the names.
         let written = hir.numbers[index as usize];
         let is_index = written.trunc() == written
             && (0.0..=LARGEST_INDEX).contains(&written)
@@ -118,7 +106,6 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // `exports.E`
     fn is_member_of_exports(&self, target: ExprId) -> bool {
         let ExprKind::Dot {
             obj,
@@ -132,7 +119,6 @@ impl FileLowering<'_, '_, '_, '_> {
             && self.bound.binding(obj) == Binding::CommonJs(CommonJsVariable::Exports)
     }
 
-    // Nothing has been stored in the variable when the statement runs: it is a `var`, the statement stands in the body that declares it, and it holds the only store to the variable or its only value.
     fn is_undefined_until(&self, variable: SymbolId, store: Option<ExprId>, call: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let (statement, initialized) = match (bound.parent_of_expr(call), store) {
@@ -168,7 +154,6 @@ impl FileLowering<'_, '_, '_, '_> {
             ),
             _ => false,
         });
-        // What fills a `var` without a store that is written: the wrapper of a CommonJS file, a function of a block, a parameter of the name.
         let runtime = &bound.runtime;
         let is_filled_at_entry = (runtime.redeclared_commonjs_variables().iter())
             .any(|redeclared| redeclared.0 == variable)
@@ -276,7 +261,6 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    /// For the `{}` that the statement stores in the variable.
     pub(in crate::lower) fn find_emitted_enum_born_at(
         &mut self,
         literal: ExprId,
@@ -303,7 +287,6 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    /// The function only fills the object, which nobody has seen, so the object is born full and the function is not called.
     pub(in crate::lower) fn lower_call_of_emitted_enum(&mut self, found: &EmittedEnum) -> ValueId {
         match found.stores {
             Some(stores) => {

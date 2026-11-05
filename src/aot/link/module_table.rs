@@ -49,7 +49,6 @@ pub(super) fn collect_modules(
     }
     add_requested_records(projects, &mut modules, &mut known_modules);
     let atoms = &projects.application.loaded.files().atoms;
-    // The index of a module is its id. Which tables name a module, and in which order, follows the schedule of the threads.
     modules.shared_sort_unstable_by(|&a, &b| compare_program_modules(a, b, atoms));
     assert!(
         modules.len() <= u32::MAX as usize,
@@ -62,7 +61,6 @@ pub(super) fn collect_modules(
     }
 }
 
-// No code names the face of a CommonJS file that is imported for its effects, or the check of a graph: a request does.
 fn add_requested_records(
     projects: &PerProject<LinkProject<'_, '_>>,
     modules: &mut Vec<ProgramModule>,
@@ -91,7 +89,6 @@ fn add_requested_records(
     }
 }
 
-/// `units` stand in the order of their files.
 pub(super) fn find_unit(units: &[LinkUnit], module: ProgramModule) -> Option<u32> {
     let file = module.file()?;
     let unit = units.binary_search_by_key(&file, |unit| unit.file).ok()?;

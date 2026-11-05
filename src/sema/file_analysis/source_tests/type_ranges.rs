@@ -7,7 +7,6 @@ use std::sync::Mutex;
 
 type Row = (&'static str, &'static str);
 
-/// TypeScript, and the same code as JavaScript.
 const EXACT_PAIRS: &[Row] = &[
     (
         r#"function f(a: number, b?: string): void { let c: number = a; }"#,
@@ -501,7 +500,6 @@ fn javascript_has_no_type_ranges() {
     });
 }
 
-// What is left is JavaScript, or TypeScript syntax that emits code and has no types left in it.
 #[test]
 fn test_programs_without_type_ranges_are_javascript() {
     let different = Mutex::new(Vec::new());

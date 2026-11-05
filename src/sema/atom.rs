@@ -513,6 +513,8 @@ known_atoms! {
     worker_threads = "worker_threads",
     node_worker_threads = "node:worker_threads",
     use_asm = "use asm",
+    hot = "hot",
+    charCodeAt = "charCodeAt",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

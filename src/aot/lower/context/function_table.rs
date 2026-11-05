@@ -5,16 +5,13 @@ use crate::ir::generated::{Function, SourceRange};
 use crate::ir::{FunctionId, FunctionKey, Id};
 use crate::lower::tables::Places;
 
-// Of one file. Only `places` goes on to the next file of the task.
 pub(super) struct FunctionTable {
-    // The index of a function in `headers`.
     places: Places,
     headers: Vec<Option<Function>>,
     queue: VecDeque<FunctionId>,
 }
 
 impl FunctionTable {
-    // `Places::begin_file` comes first.
     pub(super) fn new(places: Places) -> FunctionTable {
         FunctionTable {
             places,

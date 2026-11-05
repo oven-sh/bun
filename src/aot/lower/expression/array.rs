@@ -65,7 +65,6 @@ fn emit_syntax_error(
     lowering.emit_construct(constructor, Arguments::Values(smallvec![message]), None)
 }
 
-// For a pattern that is nested too deep for the stack at hand `new RegExp` throws an out-of-memory error, and a literal a SyntaxError.
 fn emit_deeply_nested_regexp(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     pattern: StringId,
@@ -184,7 +183,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn lower_appended_spread(&mut self, array: ValueId, spread: ExprId, iterable: ExprId) {
         let hir = self.file.hir;
         if !ends_in_array_literal(self.file, iterable) {
-            // JSC reports the iteration at the end of `...`.
             let position = hir[spread].pos + 3;
             let iterable = self.lower_expression(iterable);
             self.set_position(position);
@@ -238,7 +236,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-// `[a, ...[b, c]]`, `[a, ...(test ? [b] : [])]`: nobody else has the list, and nobody sees the iterator of lists hand out its elements. A hole is handed out as undefined.
 fn ends_in_array_literal(file: &FileLowering<'_, '_, '_, '_>, iterable: ExprId) -> bool {
     let hir = file.hir;
     if !file.is_array_iterator_protocol_intact() {
@@ -272,7 +269,6 @@ mod tests {
     use crate::ir::Opcode;
     use crate::ir::generated::RegExpFlags;
 
-    // How many closures the function makes in a row, with nothing in between that takes one.
     fn count_closures_that_wait(program: &str, function: &str) -> usize {
         let lowered = lower_program_replacing(&[("a.js", program)], &[]);
         let fragment = &lowered[0].1.fragment;
@@ -309,7 +305,6 @@ mod tests {
         let list = write_out(&|index| format!("() => {index}"));
         let object = write_out(&|index| format!("k{index}: () => {index}"));
         let indexes = write_out(&|index| format!("{index}: () => {index}"));
-        // The member that finds no room has been made by then.
         let heads = [
             ("async function", [32, 33, 32]),
             ("function*", [32, 33, 32]),

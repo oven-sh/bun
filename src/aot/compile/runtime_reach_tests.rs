@@ -2,7 +2,6 @@ use super::testing::{BUNDLED_LIBS, TestProject, default_settings, run_build, wit
 use crate::builtins::RuntimeModule;
 use crate::load::source_provider::WithoutServices;
 
-// A module of the test's stands in the place of `node:punycode`. Its `decode` alone loads `node:dgram`.
 const LIBRARY: &str = "/$bun/js/node/punycode.ts";
 
 fn reaches_node_dgram(program: &str, library: &[(&str, &str)]) -> bool {
@@ -134,7 +133,6 @@ fn pattern_over_a_name_that_holds_a_module_reads_its_keys() {
     ));
 }
 
-// What stands behind `process.send` loads `node:dgram`.
 #[test]
 fn file_that_is_left_out_and_imports_only_files_asks_for_nothing() {
     let manifest = r#"{ "name": "tools", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }"#;
@@ -156,7 +154,6 @@ fn file_that_is_left_out_and_imports_only_files_asks_for_nothing() {
     assert!(reaches_node_dgram(program, &package));
 }
 
-// The importer of a name asks nothing of Bun by itself: the file that hands the name on does, though none of its code runs.
 #[test]
 fn file_that_is_left_out_still_hands_on_a_name_of_a_module_of_bun() {
     let library =
@@ -174,7 +171,6 @@ fn file_that_is_left_out_still_hands_on_a_name_of_a_module_of_bun() {
     assert!(reaches_node_dgram(program, &files));
 }
 
-// A name that is put together at run time finds `node:punycode` whole.
 #[test]
 fn computed_load_in_a_file_that_is_left_out_finds_no_module() {
     let library =
@@ -203,7 +199,6 @@ fn computed_load_in_a_file_that_is_left_out_finds_no_module() {
     assert!(reaches("unused"));
 }
 
-// Only written names are handed to `load`, so it finds the modules of those names and leaves `node:punycode` read by name.
 #[test]
 fn load_whose_every_name_is_written_finds_the_modules_of_those_names_alone() {
     let library =
@@ -219,9 +214,30 @@ fn load_whose_every_name_is_written_finds_the_modules_of_those_names_alone() {
     assert!(reaches("process.argv[2]"));
 }
 
+#[test]
+fn load_whose_name_can_only_be_a_path_finds_no_module_of_the_library() {
+    let library =
+        format!("{DECODE}function encode() {{ return 1; }}\nexport default {{ encode, decode }};");
+    let reaches = |head: &str, name: &str| {
+        let program = format!(
+            "import {{ encode }} from \"node:punycode\";\n{head}\nconst name = process.argv[2];\nconsole.log(encode, import({name}));"
+        );
+        reaches_node_dgram(&program, &[(LIBRARY, library.as_str())])
+    };
+    assert!(!reaches("", "\"./\" + name"));
+    assert!(!reaches(
+        "import path from \"node:path\";",
+        "path.resolve(name)"
+    ));
+    assert!(reaches("", "\"node:\" + name"));
+    assert!(reaches(
+        "Bun.plugin({ name: \"p\", setup() {} });",
+        "\"./\" + name"
+    ));
+}
+
 fn count_lowered_files_of_bun(source: &str) -> usize {
     let mut project = TestProject::new(&[("a.js", source)], &default_settings());
-    // Importing one of Bun's modules also brings in the code that native code loads at startup. A program that imports nothing must hold it too, so that the counts differ only by what an import adds.
     project.keeps_library_code_without_names = true;
     run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
         with_bound_build(build, |build, loaded, bound| {

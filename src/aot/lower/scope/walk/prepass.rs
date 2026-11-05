@@ -17,7 +17,6 @@ fn is_variable_scope(kind: ScopeKind) -> bool {
     )
 }
 
-// The scopes that take the variables of evaluated text, and the functions that take the variables of text evaluated among their parameters.
 pub(super) fn collect_eval_variable_scopes(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,

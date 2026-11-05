@@ -2,37 +2,21 @@ use super::*;
 
 #[derive(Copy, Clone)]
 struct DominatedNode {
-    /// The last node that every path to it goes through. A node where paths begin has itself.
-    /// But for the back edges of loops an antecedent has a lower number, so a dominator has too.
     dominator: u32,
-    /// A dominator further up, such that n steps up take about log n.
     jump: u32,
     depth: u32,
-    /// The node where the paths to it begin: the start of its function. A walk passes the nodes of one function, and
-    /// goes on in another only from that start.
     start: u32,
 }
 
-/// FOR SPEED, where types alone are read. See `Checker::skip_to_dominator`.
 #[derive(Default)]
 pub(super) struct FlowDominators {
     pub(super) file: Option<FileId>,
-    /// Indexed by flow node.
     nodes: Vec<DominatedNode>,
-    /// The label of the innermost loop whose body holds the node, or 0.
     enclosing_loop: Vec<u32>,
-    /// The values of `start` with so many nodes that a walk among them can be far, in ascending order. What follows is
-    /// about their nodes alone.
     starts_of_many: Vec<u32>,
-    /// For each test, the `root_key` of each expression that `narrow` compares a reference with, the test's `start`, and
-    /// the node. Sorted.
     tests: Vec<(u32, u32, u32)>,
-    /// The nodes at which a walk for any reference has something to do, each behind its `start`. Sorted.
     about_anything: Vec<(u32, u32)>,
-    /// The calls, each behind its `start`. Sorted.
     calls: Vec<(u32, u32)>,
-    /// Indexed like `calls`: the last call at or before this one that isn't known to be idle, or `u32::MAX`. Calls only
-    /// become idle, so an entry only moves down.
     last_busy_call: Vec<u32>,
 }
 
@@ -54,7 +38,6 @@ impl NarrowingSubjects for TestRoots {
         true
     }
 
-    // The union of a type with itself is another type only for the types of mistakes.
     fn add_union(&mut self) {}
 }
 
@@ -82,7 +65,6 @@ impl FlowDominators {
         });
     }
 
-    /// The last node that every path to `a` and every path to `b` goes through.
     fn find_common(&self, mut a: u32, mut b: u32) -> Option<u32> {
         let at = |node: u32| self.nodes[node as usize];
         while a != b {
@@ -107,7 +89,6 @@ impl FlowDominators {
         Some(a)
     }
 
-    /// Of `node` and its dominators, the one with the lowest number that is at least `least`.
     fn find_highest_from(&self, mut node: u32, least: u32) -> u32 {
         loop {
             let here = self.nodes[node as usize];
@@ -141,7 +122,6 @@ impl FlowDominators {
 
 #[cfg(any(test, feature = "test_support"))]
 impl Checker<'_, '_> {
-    /// `u32::MAX`: no walk is far.
     pub fn set_far_walk(&mut self, steps: u32) {
         self.flow_memo.far_walk = Some(steps);
     }
@@ -166,7 +146,6 @@ impl Checker<'_, '_> {
             enclosing_loop: Vec::with_capacity(count),
             ..Default::default()
         };
-        // The loops whose bodies hold the node at hand, each with its last node.
         let mut open: Vec<(u32, u32)> = Vec::new();
         for (i, &node) in bound.flow.iter().enumerate() {
             let i = i as u32;
@@ -232,8 +211,6 @@ impl Checker<'_, '_> {
         self.flow_memo.dominators = index;
     }
 
-    /// The last call at or before the node `up_to` and after `least` that asserts something, never returns, or can't be
-    /// told yet. What a call does depends on no reference, so each is asked about once.
     fn find_last_busy_call_between(
         &mut self,
         file: FileId,
@@ -271,7 +248,6 @@ impl Checker<'_, '_> {
                 if is_cached {
                     self.note_settled_call(file, flow, signature.is_none());
                 }
-                // The note may have thrown the index away with everything else about the file.
                 if self.flow_memo.dominators.file != Some(file) {
                     return u32::MAX;
                 }
@@ -299,13 +275,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Follows a walk from `flow` up to the furthest node that every path to `flow` goes through, such that no node in
-    /// between can change what the walk finds: none assigns to the reference or tests it, and every call is idle. Whole
-    /// statements lie in between, with their branches and loops: whichever way through them the walk takes, it arrives
-    /// there with the same type. Returns that node, and how many nodes every path between the two goes through. Without this, n references after n loops take n * n steps, and leave as many entries
-    /// in the cache of loop types.
-    ///
-    /// tsgo counts how deep a walk goes and gives up at a limit (TS2563), which this does not follow.
     #[inline(never)]
     pub(super) fn skip_to_dominator(
         &mut self,
@@ -330,7 +299,6 @@ impl Checker<'_, '_> {
             self.index_flow_dominators(file);
         }
         let index = &self.flow_memo.dominators;
-        // What a loop's label has depends on the loop's body.
         let up_to = match self.bound(file).flow[flow.idx()] {
             Flow::Loop { start, len } => {
                 let edges = self.bound(file).edges(start, len).iter();

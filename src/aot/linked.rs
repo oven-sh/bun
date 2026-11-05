@@ -29,9 +29,9 @@ fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
     interface::Compilation {
         starts_workers_from_unseen_code,
         names_of_worker_files: compilation.started_workers.names,
+        names_followed: compilation.started_workers.names_followed,
         root_folders_spelled: compilation.started_workers.root_folders_spelled,
         holds_source_paths: compilation.holds_source_paths,
-        imports_file_with_query: compilation.started_workers.imports_file_with_query,
         program_files: compilation.started_workers.program_files,
         names_added_to_builtins: compilation.names_added_to_builtins,
         engine: interface::engine::EngineResult(Opaque::new(compilation.engine)),
@@ -139,7 +139,7 @@ interface::define_linked_functions! {
         report::to_messages(texts.0.get(), &entries)
     }
 
-    fn bun_aot_write_obfuscation_map(engine: &interface::engine::EngineResult, texts: &interface::report::SourceTexts, file_name: &[u8], debug_id: Option<&[u8]>) -> Vec<u8> {
+    fn bun_aot_write_obfuscation_map(engine: &interface::engine::EngineResult, texts: &interface::report::SourceTexts, file_name: &[u8], debug_id: Option<&[u8]>) -> Result<Vec<u8>, interface::report::SourceChanged> {
         let executable = report::obfuscation_map::Executable { file_name, debug_id };
         report::obfuscation_map::write(engine.0.get(), texts.0.get(), executable)
     }

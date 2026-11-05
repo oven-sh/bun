@@ -30,7 +30,6 @@ impl FileLowering<'_, '_, '_, '_> {
         lowering.finish();
     }
 
-    // Nothing that the build sees names the function.
     pub(crate) fn lower_left_out_function(&mut self, function: FunctionId) {
         let name = self.function_header(function).name;
         let kind = match self.source.dialect() {

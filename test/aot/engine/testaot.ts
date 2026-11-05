@@ -39,9 +39,11 @@ export const toolEnv = bunEnv.ASAN_OPTIONS
 
 export const whyNoTestaot = unsupported ?? (testaot ? undefined : "there is no testaot");
 export const whyNoEngineTests = whyNoTestaot ?? (engineTests ? undefined : "there is no folder aot-tests");
-export const whyNoNativeTests =
-  whyNoEngineTests ??
+/** `run-in-shell` and the native tests start the `jsc` that lies beside `testaot`. */
+export const whyNoShell =
+  whyNoTestaot ??
   (existsSync(join(dirname(testaot!), "jsc" + suffix)) ? undefined : "there is no jsc in the folder of testaot");
+export const whyNoNativeTests = whyNoEngineTests ?? whyNoShell;
 
 export async function runTool(cmd: string[], cwd?: string, env: Record<string, string | undefined> = {}) {
   await using child = Bun.spawn({
@@ -83,7 +85,8 @@ async function printOutputOfFailedTests(lines: string[], cwd?: string) {
 // Each is what a FAIL line has between "FAIL " and ": ", with forward slashes, under a TODO that says what it waits for.
 const failsToday: string[] = [];
 
-async function expectEveryTestPasses(args: string[], cwd?: string) {
+/** How many passed. */
+export async function expectEveryTestPasses(args: string[], cwd?: string) {
   const { lines, stderr, exitCode } = await runTool([testaot!, ...args], cwd);
   await printOutputOfFailedTests(lines, cwd);
   const failed = lines.filter(
@@ -102,9 +105,10 @@ async function expectEveryTestPasses(args: string[], cwd?: string) {
     stderr: expect.any(String),
     exitCode: listed ? 1 : 0,
   });
+  return parseInt(lines.at(-1)!);
 }
 
-const skipOrFail = (why: string) =>
+export const skipOrFail = (why: string) =>
   // CI packs the tools wherever Bun has the compiler.
   isCI && !isWindows && !unsupported
     ? test(`${why}: does ../harness/tests-that-start-tools-of-the-engine.ts see that this file imports ./testaot.ts?`, () =>

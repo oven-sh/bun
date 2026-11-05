@@ -44,7 +44,6 @@ pub(super) fn mentioned_id(state: ExprState) -> Option<BuiltinId> {
     }
 }
 
-// A JSX factory and the type names of decorator metadata are read where no expression stands.
 fn implicit_reference_path(
     hir: &hir::File<'_>,
     reference: &ImplicitReference,
@@ -96,7 +95,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // By a way on which `note_use_of_module_cache` follows nothing.
     pub(super) fn mention(&mut self, id: BuiltinId) {
         self.output.gets_at_entries_of_module_cache |= is_module_cache(id);
         self.output.mentioned.push(id);
@@ -104,7 +102,6 @@ impl Resolver<'_, '_> {
 
     pub(super) fn expose(&mut self, id: BuiltinId) {
         self.output.called.push(id);
-        // Whoever has it makes a `require` that nobody follows.
         if makes_require(id) {
             self.output.called.push(BuiltinId::ModuleRequire);
         }
@@ -115,8 +112,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // A sloppy function that is called without a receiver gets the global object as `this`, and no binding says how a function is called.
-    // An arrow function has the `this` of the code around it. That of a file is its `exports` or undefined.
     pub(super) fn may_be_global_object(&self, this: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         if hir.is_strict || self.input.dialect != SourceDialect::Program {
@@ -172,7 +167,6 @@ impl Resolver<'_, '_> {
         self.find_global(name).map(|global| global.id)
     }
 
-    // `this` stands for nothing, so nothing follows it, nor what is read off it.
     pub(super) fn find_global_out_of_sight_through(&self, this: ExprId) -> Option<BuiltinId> {
         if !self.may_be_global_object(this) {
             return None;
@@ -189,7 +183,6 @@ impl Resolver<'_, '_> {
 
     pub(super) fn classify_mentions(&mut self) {
         for expr in self.evaluated_exprs() {
-            // What `createRequire` has made stands for nothing. What is done with it is done with a `require`.
             let state = match self.state(expr) {
                 ExprState::Unresolved if matches!(self.input.hir[expr].kind, ExprKind::This) => {
                     if let Some(global) = self.find_global_out_of_sight_through(expr) {
@@ -252,7 +245,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // What the files of a test run replace is known only after they are resolved.
     fn walks_lists_as_the_language_says(&self) -> bool {
         let input = self.input;
         let stays = |id: BuiltinId| {
@@ -274,7 +266,6 @@ impl Resolver<'_, '_> {
         let Some(operand) = hir.ids(hir[call].args).nth(position) else {
             return false;
         };
-        // A set stands under the expression itself, never under a type assertion around it.
         let operand = hir.skip_type_assertions(operand);
         let folded = input.decisions.constant(hir, operand);
         let known;
@@ -302,7 +293,6 @@ impl Resolver<'_, '_> {
         !values.is_empty() && values.iter().all(is_other_text)
     }
 
-    // `process.on("exit", listener);`: the call itself says that the entry does not call what it calls for some texts alone.
     fn is_called_with_other_texts(&self, function: ExprId, id: BuiltinId) -> bool {
         let lists = table::entry(table::canonical_id(id)).calls_for_texts();
         if lists.is_empty() {

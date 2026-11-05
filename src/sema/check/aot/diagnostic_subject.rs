@@ -34,7 +34,6 @@ pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 4] 
         .lookup(b"ErrorConstructor")
         .and_then(|name| files.global_type_symbol(name))
         .map(|symbol| files.canonical(symbol));
-    // A program that adds to it (`declare global { namespace NodeJS { interface ProcessEnv { .. } } }`) declares it alone.
     let node_namespace = files
         .atoms
         .lookup(b"NodeJS")

@@ -104,7 +104,6 @@ pub(in crate::lower) struct ClassEvaluation {
 pub(crate) struct ClassState {
     plans: FxHashMap<ClassId, Rc<ClassPlan>>,
     constant_keys: FxHashMap<MemberId, PropertyKeyId>,
-    /// For a class, where the shape lists each of its members first.
     entries_of_members: FxHashMap<ClassId, FxHashMap<MemberId, u32>>,
     pub(in crate::lower) fields_under_signed_members: Vec<MemberId>,
 }
@@ -130,13 +129,11 @@ impl FileLowering<'_, '_, '_, '_> {
         plan
     }
 
-    /// A bundle writes the name of such a class down as a string before it renames bindings: the class shows the name that is written.
     pub(in crate::lower) fn has_standard_class_decorators(&mut self, class: ClassId) -> bool {
         has_decorators(self.hir, self.hir[class].modifiers)
             && self.class_plan(class).transform == ClassTransform::Standard
     }
 
-    /// The transpiler writes the declared name into such a class first. Then it replaces the variable, or makes the declaration a store that names nothing.
     pub(in crate::lower) fn is_class_named_by_its_declaration(&mut self, value: ExprId) -> bool {
         let hir = self.hir;
         match hir[self.skip_type_syntax(value)].kind {

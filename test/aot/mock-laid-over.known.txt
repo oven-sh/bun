@@ -4,15 +4,13 @@ packed beside preloads that mock | project.vi.mock.factory.hoisted | after names
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | table.n: SILENT | 2 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after | counter: SILENT | 1 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after | table.n: SILENT | 2 | at 3 4
-packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | again.inner: SILENT | real inner | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | default: SILENT | real default | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | fn: SILENT | real fn | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
-packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | space.inner: SILENT | real inner | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | import() | counter: SILENT | 1 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | import() | table.n: SILENT | 2 | at 3 4
-packed beside preloads that mock | project.vi.mock.factory.hoisted | namespace | added: SILENT | undefined | at 3 4
-packed beside preloads that mock | project.vi.mock.factory.hoisted | namespace | keys: SILENT | Color+Fixed+Klass+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | require() | counter: SILENT | 1 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | require() | table.n: SILENT | 2 | at 3 4
 packed beside preloads that mock | project.vi.mock.spy.hoisted | after namespace | counter: SILENT | 1 | at 3 4
@@ -28,15 +26,13 @@ packed | project.vi.mock.factory.hoisted | after namespace | counter: SILENT | 1
 packed | project.vi.mock.factory.hoisted | after namespace | table.n: SILENT | 2 | at 3 4
 packed | project.vi.mock.factory.hoisted | after | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.factory.hoisted | after | table.n: SILENT | 2 | at 3 4
-packed | project.vi.mock.factory.hoisted | barrel | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.vi.mock.factory.hoisted | barrel | again.inner: SILENT | real inner | at 3 4
 packed | project.vi.mock.factory.hoisted | barrel | default: SILENT | real default | at 3 4
 packed | project.vi.mock.factory.hoisted | barrel | fn: SILENT | real fn | at 3 4
 packed | project.vi.mock.factory.hoisted | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
-packed | project.vi.mock.factory.hoisted | barrel | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.vi.mock.factory.hoisted | barrel | space.inner: SILENT | real inner | at 3 4
 packed | project.vi.mock.factory.hoisted | import() | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.factory.hoisted | import() | table.n: SILENT | 2 | at 3 4
-packed | project.vi.mock.factory.hoisted | namespace | added: SILENT | undefined | at 3 4
-packed | project.vi.mock.factory.hoisted | namespace | keys: SILENT | Color+Fixed+Klass+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
 packed | project.vi.mock.factory.hoisted | require() | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.factory.hoisted | require() | table.n: SILENT | 2 | at 3 4
 packed | project.vi.mock.spy.hoisted | after namespace | counter: SILENT | 1 | at 3 4

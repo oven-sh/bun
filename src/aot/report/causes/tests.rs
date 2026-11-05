@@ -17,7 +17,6 @@ const NO_LOCATION: SourceLocation = SourceLocation {
 const EVERY_FAMILY: ExplainSet = ExplainSet::empty();
 const COST_BY_NAME: u64 = 28;
 const COST_TESTED: u64 = 2;
-// The fixture names function 0 and layouts 0 and 1.
 const DOUBLE: u32 = 0;
 const ITEM: u32 = 0;
 const ORDER: u32 = 1;
@@ -50,7 +49,6 @@ fn access(
         cause,
         layout: ABSENT_WORD,
         copies: 1,
-        distance: 0,
         witness: Witness {
             function: ABSENT_WORD,
             value: ABSENT_WORD,
@@ -63,8 +61,6 @@ fn access(
             KnowledgeLevel::Expected => AccessCost::TestsReceiver,
             KnowledgeLevel::Proven => AccessCost::Free,
         },
-        has_other_roots: 0,
-        other_origins: 0,
         loop_depth: 0,
     }
 }
@@ -106,22 +102,6 @@ fn with_witness_location(record: AccessRecord, location: SourceLocation) -> Acce
     }
 }
 
-fn with_other_origins(record: AccessRecord, other_origins: u32) -> AccessRecord {
-    AccessRecord {
-        has_other_roots: 1,
-        other_origins,
-        ..record
-    }
-}
-
-fn origins_in_program(offsets: &[u32]) -> OtherOriginsRecord {
-    let mut locations = [NO_LOCATION; 3];
-    for (slot, &offset) in locations.iter_mut().zip(offsets) {
-        *slot = location(PROGRAM, offset);
-    }
-    OtherOriginsRecord { locations }
-}
-
 fn module_counts(module: u32, access_costs: [u32; 4]) -> AccessCountRecord {
     let [looked_up, tests_receiver, tests_slot, free] = access_costs;
     AccessCountRecord {
@@ -142,7 +122,7 @@ fn origin_of(module: ModuleId) -> ModuleOrigin {
 }
 
 fn collect(records: &[AccessRecord]) -> Vec<Cause> {
-    collect_causes(records, &[], &origin_of, EVERY_FAMILY)
+    collect_causes(records, &origin_of, EVERY_FAMILY)
 }
 
 fn ranked(records: &[AccessRecord]) -> Vec<(Option<Position>, OriginCounts)> {
@@ -170,9 +150,7 @@ fn expected_cause(position: Option<Position>, accesses: OriginCounts) -> Cause {
         accesses,
         calls: OriginCounts::default(),
         operators: OriginCounts::default(),
-        alone: accesses.total(),
         in_loops: 0,
-        other_origins: Vec::new(),
         cost: counts(
             accesses.program * COST_BY_NAME,
             accesses.dependencies * COST_BY_NAME,
@@ -184,7 +162,6 @@ fn expected_cause(position: Option<Position>, accesses: OriginCounts) -> Cause {
 
 struct FullCause {
     accesses: [AccessRecord; 5],
-    other_origins: [OtherOriginsRecord; 1],
     access_counts: [AccessCountRecord; 3],
 }
 
@@ -206,12 +183,11 @@ impl FullCause {
         FullCause {
             accesses: [
                 in_loop(operation(PROGRAM, 0, AccessKind::Read, ORDER)),
-                with_other_origins(operation(PROGRAM, 4, AccessKind::Store, ITEM), 1),
+                operation(PROGRAM, 4, AccessKind::Store, ITEM),
                 in_loop(operation(PROGRAM, 8, AccessKind::Call, ABSENT_WORD)),
                 operation(PROGRAM, 12, AccessKind::Arithmetic, UNNAMED_LAYOUT),
                 operation(DEPENDENCY, 0, AccessKind::Read, ITEM),
             ],
-            other_origins: [origins_in_program(&[LINE_1_COLUMN_5])],
             access_counts: [
                 AccessCountRecord {
                     calls: [1, 0, 2],
@@ -226,7 +202,6 @@ impl FullCause {
     fn records(&self) -> ResultRecords<'_> {
         ResultRecords {
             accesses: &self.accesses,
-            other_origins: &self.other_origins,
             access_counts: &self.access_counts,
             ..ResultRecords::default()
         }
@@ -270,11 +245,6 @@ fn text_of(entry: &ReportEntry) -> BString {
 fn note_texts(entry: &ReportEntry) -> Vec<BString> {
     let notes = entry.notes.iter();
     notes.map(|note| BString::from(&note.text[..])).collect()
-}
-
-fn located_notes(entry: &ReportEntry) -> Vec<Option<Position>> {
-    let positions = entry.notes.iter().map(|note| note.position);
-    positions.filter(Option::is_some).collect()
 }
 
 fn why(cause: IllTypedCause) -> IllTypedWording {
@@ -492,7 +462,7 @@ fn families_filter() {
     assert_eq!(kinds.map(UnprovenCause::family), UnprovenCauseFamily::ALL);
     let records = [0, 1, 2].map(|index| by_name(PROGRAM, 0, kinds[index], index as u32));
     let collected = |families| -> Vec<UnprovenCause> {
-        let causes = collect_causes(&records, &[], &origin_of, families);
+        let causes = collect_causes(&records, &origin_of, families);
         causes.iter().map(|cause| cause.cause).collect()
     };
 
@@ -502,54 +472,6 @@ fn families_filter() {
     }
     let two_families = ExplainSet::ONLY_UNKNOWN_CODE | ExplainSet::ONLY_MUTATION;
     assert_eq!(collected(two_families), kinds[1..]);
-}
-
-#[test]
-fn other_origins_are_listed_once_without_the_entry_itself_and_the_runtime() {
-    let mut lists = [
-        origins_in_program(&[300, 200]),
-        origins_in_program(&[200, 100]),
-    ];
-    lists[1].locations[2] = location(RUNTIME, 400);
-    let records = [
-        with_other_origins(unknown_object(PROGRAM, 0, 100), 1),
-        with_other_origins(unknown_object(PROGRAM, 4, 100), 2),
-        unknown_object(PROGRAM, 8, 100),
-    ];
-    let others = [at(PROGRAM, 200), at(PROGRAM, 300)].map(Option::unwrap);
-    let expected = Cause {
-        alone: 1,
-        other_origins: others.to_vec(),
-        ..expected_cause(at(PROGRAM, 100), counts(3, 0))
-    };
-    let causes = collect_causes(&records, &lists, &origin_of, EVERY_FAMILY);
-    assert_eq!(causes, [expected]);
-}
-
-#[test]
-fn text_shows_three_other_origins_and_json_all() {
-    let lists = [
-        origins_in_program(&[0, 4, 8]),
-        origins_in_program(&[15, 19]),
-    ];
-    let records = [
-        with_other_origins(unknown_object(PROGRAM, 0, LINE_2_COLUMN_14), 1),
-        with_other_origins(unknown_object(PROGRAM, 4, LINE_2_COLUMN_14), 2),
-    ];
-    let records = ResultRecords {
-        other_origins: &lists,
-        ..accesses(&records)
-    };
-
-    let shown = located_notes(&text_entries(records)[1]);
-    assert_eq!(shown, [at(PROGRAM, 0), at(PROGRAM, 4), at(PROGRAM, 8)]);
-
-    let all = [(1, 1), (1, 5), (1, 9), (2, 1), (2, 5)]
-        .map(|(line, column)| format!(r#"{{"file":"src/a.ts","line":{line},"column":{column}}}"#))
-        .join(",");
-    let member = format!(r#""fixedByThisAlone":0,"otherOrigins":[{all}],"#);
-    let json = json_lines(records);
-    assert!(json[1].contains(&member), "{}", json[1]);
 }
 
 #[test]
@@ -611,8 +533,6 @@ fn text_entry_orders_notes() {
             "2 of 11 untyped accesses, and 1 of 4 in dependencies".to_owned(),
             "1 indirect call, 1 untyped operator".to_owned(),
             "2 of these run in a loop".to_owned(),
-            "1 of these stays untyped until other entries are fixed too".to_owned(),
-            "fix this too: the same operations also start here".to_owned(),
             "in function 'double'".to_owned(),
             "types: 'Item', 'Order'".to_owned(),
             format!(
@@ -623,7 +543,6 @@ fn text_entry_orders_notes() {
             "https://bun.com/docs/compiler/explain#passed-to-untyped-code".to_owned(),
         ]
     );
-    assert_eq!(located_notes(entry), [at(PROGRAM, LINE_1_COLUMN_5)]);
 }
 
 #[test]
@@ -796,8 +715,7 @@ fn json_has_numbers_then_every_member_of_a_cause() {
         r#""inDependency":false,"source":"let second = first.size;""#,
         &format!(r#""message":"{}","fix":"{}""#, wording.message, wording.fix),
         r#""url":"https://bun.com/docs/compiler/explain#passed-to-untyped-code""#,
-        r#""accesses":2,"dependencyAccesses":1,"calls":1,"operators":1,"fixedByThisAlone":4"#,
-        r#""otherOrigins":[{"file":"src/a.ts","line":1,"column":5}],"inLoops":2"#,
+        r#""accesses":2,"dependencyAccesses":1,"calls":1,"operators":1,"inLoops":2"#,
         r#""function":"double","types":["Item","Order"],"family":"unknown-code""#,
         &format!(r#""why":{{{members_of_why}}}"#),
     ]

@@ -12,15 +12,10 @@ use crate::load::runtime_modules::RuntimeModules;
 pub(crate) struct ScanInput<'a> {
     pub runtime_modules: &'a RuntimeModules,
     pub runs_tests: bool,
-    /// `AotOptions::loads_code_from_disk`
     pub loads_code_from_disk: bool,
-    /// In the format of the checker.
     pub is_file: &'a dyn Fn(&[u8]) -> bool,
-    /// `parses_text_as_data(default_loader(path))`
     pub is_data: &'a dyn Fn(&[u8]) -> bool,
-    /// `import.meta.path` of the file: `/$bunfs/root/lib/a.ts` in an executable. `None`: no file on disk.
     pub find_path_at_run_time: &'a dyn Fn() -> Option<Vec<u8>>,
-    /// `SourceProvider::write_url`
     pub write_url: &'a dyn Fn(&[u8], Option<&[u8]>) -> Option<Vec<u8>>,
 }
 
@@ -31,12 +26,9 @@ pub(super) struct ContentsScan<'a, 's> {
     pub(super) found: FileContents,
 }
 
-/// The objects that start a Worker where they are constructed, each as `table::canonical_id` names it.
 #[derive(Copy, Clone)]
 struct WorkerConstructors {
-    /// The global `Worker`.
     global: Option<BuiltinId>,
-    /// `Worker` of node:worker_threads.
     of_node: Option<BuiltinId>,
 }
 
@@ -63,15 +55,11 @@ impl WorkerConstructors {
     }
 }
 
-/// `SourceKind::Data`: `hir_from_data` makes a tree that stands for no text. What it holds are values, and no code of the program's.
-/// The name and the loader of the file do not tell: a plugin may answer with code for `a.tmpl`, and with data for `a.ts`.
-/// A program without a text has no expression either.
 fn is_made_from_data(hir: &File<'_>) -> bool {
     hir.source_len == 0
 }
 
 impl ContentsScan<'_, '_> {
-    /// Of `a + b + c` folding knows the outermost sum alone. `look_at_text` may climb to the same text from one of its parts: what it sees twice counts once.
     fn look_at_folded_text(&mut self, expression: ExprId) {
         let &FinishedFile { hir, analysis, .. } = self.request;
         match analysis.decisions.constant(hir, expression) {
@@ -99,7 +87,8 @@ impl ContentsScan<'_, '_> {
                 | DataValue::Null
                 | DataValue::Boolean(_)
                 | DataValue::Number(_)
-                | DataValue::BigInt(_) => {}
+                | DataValue::BigInt(_)
+                | DataValue::Temporal { .. } => {}
             }
         }
     }
@@ -120,14 +109,12 @@ impl ContentsScan<'_, '_> {
                 self.look_at_folded_text(expression);
             }
             ExprKind::New(_) => self.look_at_construction(expression),
-            // `["node:", "zlib"].join("")`, `"node:os,node:vm".split(",")`: what is written below the call is dead, and what folding has made of it stands in its place.
             ExprKind::Call(call) => {
                 self.look_at_folded_text(expression);
                 self.look_at_folded_data(expression);
                 self.look_at_call(expression, call);
             }
             ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                // A text out of a define or out of a data file is written nowhere else in the program.
                 self.look_at_folded_text(expression);
                 let builtin = self.find_builtin_that_may_be_named(expression);
                 if builtin.is_some_and(|builtin| constructors.has(builtin)) {
@@ -201,8 +188,8 @@ pub(crate) fn scan_file(
         }
     }
     scan.look_at_loads_of_worker_threads();
+    scan.look_at_constructions_behind_module_handed_on();
     scan.finish_names();
-    // An expression gets its number once its last part is read: a `new` among the arguments of another has the lower one.
     let starts = &mut scan.found.worker_starts;
     starts.shared_sort_unstable_by_key(|start| (hir[start.at].pos, start.at, start.name_node));
     scan.found

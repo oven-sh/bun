@@ -1,8 +1,3 @@
-//! Code that a file of a test run holds as text. A test hands code over as text, to a file that it writes and loads, to a Worker, to whatever evaluates it:
-//! `` writeFileSync(path, `import * as far from "${lib}"; import { spyOn } from "bun:test"; spyOn(far, "total")`) ``. No build sees it run, and the spy that it lays meets an
-//! export that the build has closed. So the text is read as code: parsed into a tree of its own, on the thread that has the file, and dropped.
-//! A text that is no program opens nothing.
-
 use std::borrow::Cow;
 use std::mem::take;
 
@@ -35,20 +30,14 @@ use crate::load::host_platform;
 use crate::load::runtime_modules::find_module_named;
 use crate::load::test_runner_names::{FileOfTestRun, import_used_names};
 
-// A name of a member is short.
 const MAX_FOLDED_STRING_BYTES: usize = 256;
 
-// Code that a file holds as text lies nowhere: nobody knows the folder that it is written to.
 const PATH_OF_TEXT: &[u8] = b"/text.ts";
 
 const IMPORT_OF_NAMES_OF_TEST_RUNNER: &[u8] = b"import { jest, spyOn, vi } from \"bun:test\";\n";
-/// What stands for a substitution where a text is wanted, as behind `from`. No file has the name.
 const MODULE_THAT_NOBODY_KNOWS: &[u8] = b"?";
-/// What stands for a string with a substitution in it anywhere else: `spyOn(lib, "${name}")`. Nothing declares the name.
 const VALUE_THAT_NOBODY_KNOWS: &[u8] = b"valueThatNobodyKnows";
 
-/// Code comes by a spy or a mock through one of these: the names that lead there and that `bun test` hands a file or a text is handed by who evaluates it, the modules of the
-/// runner, which spell `jest` or `test`, and the two objects that lead to `Bun.jest`. A free name is looked up by its text, so a text that spells none of them binds to none.
 const WAYS_TO_TEST_RUNNER: [&[u8]; 8] = [
     b"spyOn",
     b"mock",
@@ -68,7 +57,6 @@ pub(super) fn without_extension(path: &[u8]) -> &[u8] {
     stem.unwrap_or(path)
 }
 
-/// `"../lib.js"` in code that a test holds as text: the folder depends on where the file is written, and what is left of the path is what is known.
 pub(super) fn ends_with_module_in_text(path: &[u8], written: &[u8]) -> bool {
     let mut tail = written;
     while let Some(rest) = (tail.strip_prefix(b"../"))
@@ -86,7 +74,6 @@ pub(super) fn ends_with_module_in_text(path: &[u8], written: &[u8]) -> bool {
     !tail.is_empty() && (ends_in(path) || path.strip_suffix(b"/index").is_some_and(ends_in))
 }
 
-// `import * as lib from ${path}`. The parser mends an import without a module and reports nothing.
 fn names_module(before: &[u8]) -> bool {
     let before = trim_end_of_code(before);
     [&b"from"[..], b"import(", b"require("]
@@ -106,9 +93,7 @@ fn trim_end_of_code(code: &[u8]) -> &[u8] {
 
 #[derive(Default)]
 struct PlaceInCode {
-    /// Where the string began that the place is in.
     string: Option<usize>,
-    /// `/` to the end of the line, `*` to the next `*/`.
     comment: Option<u8>,
 }
 
@@ -124,7 +109,6 @@ impl PlaceInCode {
                 }
                 (Some(_), _) => {}
                 (None, Some(_)) if byte == b'\\' => at += 1,
-                // A string ends with its line.
                 (None, Some(quote)) if byte == text[quote] || byte == b'\n' => self.string = None,
                 (None, Some(_)) => {}
                 (None, None) if matches!(byte, b'"' | b'\'' | b'`') => self.string = Some(at),
@@ -181,7 +165,6 @@ fn join_texts(texts: &[&[u8]], filler: &[u8], strings_with_holes: StringsWithHol
                 if let Some((parts_passed, end)) = find_end_of_string(&texts[index..], text[open]) {
                     text.truncate(open);
                     place.string = None;
-                    // `import "${file}"`, but `import ${names} from "./lib"`.
                     match names_module(&text) || trim_end_of_code(&text).ends_with(b"import") {
                         true => text.extend(module()),
                         false => text.extend_from_slice(VALUE_THAT_NOBODY_KNOWS),
@@ -200,12 +183,10 @@ fn join_texts(texts: &[&[u8]], filler: &[u8], strings_with_holes: StringsWithHol
     text
 }
 
-// Without one of each no text takes a spy from the test runner and calls it.
 fn may_hold_code(text: &[u8]) -> bool {
     may_hold_code_together(&[text])
 }
 
-// Joined, whatever stands between them.
 fn may_hold_code_together(texts: &[&[u8]]) -> bool {
     let (one, other) = find_marks_of_code(texts);
     one && other
@@ -238,7 +219,6 @@ fn spells_name(text: &[u8], name: &[u8]) -> bool {
     false
 }
 
-/// An escape in a name may spell any letter of any of them, so a text that holds one is read.
 fn may_reach_test_runner(texts: &[&[u8]]) -> bool {
     texts.iter().any(|text| {
         strings::contains(text, b"\\u")
@@ -246,7 +226,6 @@ fn may_reach_test_runner(texts: &[&[u8]]) -> bool {
     })
 }
 
-/// Code comes to a built-in object from a name of the global object, and writes on it by an assignment, by `delete`, or by a function of `Object` or `Reflect`.
 fn may_write_on_builtins(texts: &[&[u8]]) -> bool {
     let names_global = |text: &&[u8]| {
         let mut words = text.split(|&byte| !is_part_of_name(byte));
@@ -283,19 +262,16 @@ fn quote(text: &[u8]) -> Vec<u8> {
     quoted
 }
 
-/// What the code in the texts of a file does.
 struct CodeInTexts {
-    /// In the texts that go into files.
     written: FoundInCode,
-    /// In the others.
     handed_on: FoundInCode,
 }
 
-/// What code in a text does, with the texts as bytes: the tree that spells them is dropped.
 #[derive(Default)]
 struct FoundInCode {
     names_spied: Vec<Vec<u8>>,
     modules_replaced: Vec<Vec<u8>>,
+    exports_spied: Vec<(Vec<u8>, Vec<u8>)>,
     replaced_members: Vec<BuiltinId>,
     opened_holders: Vec<BuiltinId>,
     names_added: Vec<(BuiltinId, Vec<u8>)>,
@@ -307,6 +283,7 @@ impl FoundInCode {
         self.left_open == LeftOpenByText::Nothing
             && self.names_spied.is_empty()
             && self.modules_replaced.is_empty()
+            && self.exports_spied.is_empty()
             && self.replaced_members.is_empty()
             && self.opened_holders.is_empty()
             && self.names_added.is_empty()
@@ -315,6 +292,7 @@ impl FoundInCode {
     fn append(&mut self, mut other: FoundInCode) {
         self.names_spied.append(&mut other.names_spied);
         self.modules_replaced.append(&mut other.modules_replaced);
+        self.exports_spied.append(&mut other.exports_spied);
         self.replaced_members.append(&mut other.replaced_members);
         self.opened_holders.append(&mut other.opened_holders);
         self.names_added.append(&mut other.names_added);
@@ -323,6 +301,12 @@ impl FoundInCode {
 
     fn take_what_code_in_text_does(&mut self, inner: ReadAsCode) {
         self.names_spied.extend(inner.names_spied);
+        for (module, name) in inner.exports_spied {
+            match module == MODULE_THAT_NOBODY_KNOWS {
+                true => self.names_spied.push(name),
+                false => self.exports_spied.push((module, name)),
+            }
+        }
         self.replaced_members.extend(inner.replaced_members);
         self.opened_holders.extend(inner.opened_holders);
         self.names_added.extend(inner.names_added);
@@ -341,8 +325,9 @@ impl FoundInCode {
         self.append(inner.in_texts);
     }
 
-    /// By bytes, each once.
     fn intern(mut self, atoms: &Interner<'_>) -> FoundInTexts {
+        self.exports_spied.shared_sort_unstable();
+        self.exports_spied.dedup();
         for texts in [&mut self.names_spied, &mut self.modules_replaced] {
             texts.shared_sort_unstable();
             texts.dedup();
@@ -351,6 +336,9 @@ impl FoundInCode {
         FoundInTexts {
             names_spied: intern(self.names_spied),
             modules_replaced: intern(self.modules_replaced),
+            exports_spied: (self.exports_spied.iter())
+                .map(|(module, name)| (atoms.intern(module), atoms.intern(name)))
+                .collect(),
             replaced_members: self.replaced_members,
             opened_holders: self.opened_holders,
             names_added: (self.names_added.iter())
@@ -361,24 +349,20 @@ impl FoundInCode {
     }
 }
 
-/// One text, read as a program.
 #[derive(Default)]
 struct ReadAsCode {
-    /// The parser reported an error and went on.
     has_syntax_error: bool,
     names_spied: Vec<Vec<u8>>,
-    /// The modules that it mocks, and those whose objects it spies on under a name that it does not spell, each as it writes it.
     modules: Vec<Vec<u8>>,
+    exports_spied: Vec<(Vec<u8>, Vec<u8>)>,
     spies_under_any_name: bool,
     mocks_any_module: bool,
     replaced_members: Vec<BuiltinId>,
     opened_holders: Vec<BuiltinId>,
     names_added: Vec<(BuiltinId, Vec<u8>)>,
-    /// A text may hold a text in turn.
     in_texts: FoundInCode,
 }
 
-/// A file, or a text that is read as one.
 #[derive(Copy, Clone)]
 struct Tree<'a, 's> {
     hir: &'a File<'s>,
@@ -386,12 +370,10 @@ struct Tree<'a, 's> {
     analysis: &'a FileAnalysis<'s>,
     atoms: &'a Interner<'s>,
     builtins: &'a ResolvedBuiltins,
-    /// In the format of the checker. `None`: it lies nowhere.
     folder: Option<&'a [u8]>,
 }
 
 impl<'a, 's> Tree<'a, 's> {
-    // A tree that the parser has mended holds names that are none, and so does a tagged template with an escape that has no value.
     fn text_of(&self, text: Atom) -> &'a [u8] {
         match text.is_none() {
             true => &b""[..],
@@ -403,7 +385,6 @@ impl<'a, 's> Tree<'a, 's> {
         self.analysis.decisions.is_dead_expr(expression)
     }
 
-    // `require("./lib")`, `await import("./lib")`
     fn find_module_loaded_by(&self, value: ExprId) -> Option<Atom> {
         let value = self.hir.skip_type_assertions(value);
         let call = match self.hir[value].kind {
@@ -423,7 +404,6 @@ impl<'a, 's> Tree<'a, 's> {
         }
     }
 
-    /// The module whose object `object` is by its binding, as the code writes it: `lib` of `import * as lib from "./lib"`, `require("./lib")`, a name that holds that.
     fn find_module_whose_object_is(&self, object: ExprId) -> Option<Atom> {
         let (hir, bound) = (self.hir, self.bound);
         let object = hir.skip_type_assertions(object);
@@ -446,15 +426,11 @@ impl<'a, 's> Tree<'a, 's> {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum WhereTextGoes {
-    /// `throw new Error("write: spyOn(lib, '" + name + "')")`, `console.warn(hint)`: an error of the language is made with it, or `console` prints it. Nobody runs it.
     IntoMessages,
-    /// A call of `node:fs` or `Bun.write` writes it, or its length is read.
     IntoFiles,
-    /// Whatever else gets a text may run it: `import("data:text/javascript," + encodeURIComponent(text))`, `module._compile(text, name)`, a function that nobody knows.
     Anywhere,
 }
 
-/// The furthest that the value of `text` goes, also through a variable that is given nothing else.
 fn find_where_text_goes(
     tree: Tree<'_, '_>,
     texts: &TextsOfFile<'_, '_>,
@@ -463,7 +439,6 @@ fn find_where_text_goes(
 ) -> WhereTextGoes {
     let (hir, bound) = (tree.hir, tree.bound);
     let mut value = text;
-    // A part of a text goes where the text goes.
     while let Parent::Expr(parent) = bound.parent_of_expr(value)
         && (hir.type_assertion_operand(parent) == Some(value)
             || matches!(
@@ -540,7 +515,6 @@ fn takes_messages(tree: Tree<'_, '_>, callee: ExprId) -> bool {
     })
 }
 
-/// What parses the texts of one file. The table of the names of built-ins takes longer to make than a text to read: it is made once for all of them.
 struct Look<'t> {
     session: &'t Session,
     atoms: Interner<'t>,
@@ -548,7 +522,6 @@ struct Look<'t> {
 }
 
 impl<'t> Look<'t> {
-    /// `None`: the text is no program.
     fn look_at_text(&self, text: &[u8]) -> Option<ReadAsCode> {
         let (arena, atoms) = (self.session.arena(), &self.atoms);
         let parse_options = CompileParseOptions {
@@ -569,7 +542,6 @@ impl<'t> Look<'t> {
         }
         let has_syntax_error = hir.has_parse_diagnostics;
         hir.text = Cow::Borrowed(text);
-        // Whoever reads a text knows neither the defines nor the features of the run that evaluates it: what stands under `if (feature("X"))` may run.
         let fold_options = FoldOptions {
             features_are_unknown: true,
             max_string_bytes: MAX_FOLDED_STRING_BYTES,
@@ -583,11 +555,9 @@ impl<'t> Look<'t> {
         let file = inputs_of_file_that_nobody_describes();
         let (mut bound, mut analysis) =
             analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
-        // The parser bears a deeper text than the binder.
         if bound.ran_out_of_stack {
             return None;
         }
-        // `bun test` hands every file the names of the test runner: `jest.mock("./a", ..)` and `vi.spyOn(..)` need no import. A build gives the file the import, and so does the look.
         let mut request = TransformRequest {
             path: PATH_OF_TEXT,
             hir: &mut hir,
@@ -659,7 +629,12 @@ impl<'t> Look<'t> {
                 continue;
             }
             match (spy.name, tree.find_module_whose_object_is(spy.object)) {
-                (Some(name), _) => read.names_spied.push(tree.text_of(name).to_vec()),
+                (Some(name), Some(module)) => {
+                    let module = tree.text_of(module).to_vec();
+                    read.exports_spied
+                        .push((module, tree.text_of(name).to_vec()));
+                }
+                (Some(name), None) => read.names_spied.push(tree.text_of(name).to_vec()),
                 (None, Some(module)) => read.modules.push(tree.text_of(module).to_vec()),
                 (None, None) => read.spies_under_any_name = true,
             }
@@ -694,29 +669,22 @@ impl<'t> Look<'t> {
         Some(read)
     }
 
-    /// `texts`: a string, or what stands between the substitutions of a template.
     fn look_at_code_in_texts(&self, texts: &[&[u8]]) -> FoundInCode {
         let mut found = FoundInCode::default();
         if !texts.iter().any(|text| may_hold_code(text)) {
             return found;
         }
-        // What a substitution stands for is not known: a value or a name, nothing, as where it adds statements, or a number.
-        // The value comes first: `spyOn(lib, ${name})` with nothing for the name is a program too, and lays no spy.
         let fillers: &[&[u8]] = match texts.len() {
             1 => &[b""],
             _ => &[VALUE_THAT_NOBODY_KNOWS, b"", b"0"],
         };
-        // "Write `using spy = spyOn(...)`": the parser goes on behind a syntax error, and nothing runs such a text.
         let mut read_with_syntax_error: Vec<ReadAsCode> = Vec::new();
         for filler in fillers {
-            // `from "${folder}/lib.ts"` with nothing for the folder names a file, and not the one that is meant.
             let unknown = join_texts(texts, filler, StringsWithHoles::AreUnknown);
             let filled = join_texts(texts, filler, StringsWithHoles::HoldFiller);
             let filled = (filled != unknown).then_some(filled);
             for text in [Some(unknown), filled].into_iter().flatten() {
-                // The body of a function, which may return.
                 let body = [b"async function body() {\n", &text[..], b"\n}"].concat();
-                // A text that is evaluated is handed names by who evaluates it, so `spyOn(..)` needs no import. A text that declares such a name itself fails to parse this way.
                 let with_names = [IMPORT_OF_NAMES_OF_TEST_RUNNER, &text[..]].concat();
                 let takes_spy_from_nowhere =
                     strings::contains(&text, b"spyOn") && !strings::contains(&text, b"bun:test");
@@ -738,9 +706,6 @@ impl<'t> Look<'t> {
                 }
             }
         }
-        // A substitution may stand for what no filler is, a name or a keyword: `lib.${method}()`. Then no way parses, and the text that is made may run: each
-        // way is read as far as the parser gets behind its errors.
-        // What such a text spells counts. What it leaves open does not: a tree that the parser has mended is not what anybody wrote, and English reads as a spy on anything.
         if texts.len() > 1 {
             for mut inner in read_with_syntax_error {
                 inner.spies_under_any_name = false;
@@ -754,7 +719,6 @@ impl<'t> Look<'t> {
     }
 }
 
-/// For a tree of which nobody says how it is loaded.
 pub(super) fn inputs_of_file_that_nobody_describes<'s>() -> FileInputs<'s> {
     FileInputs {
         declared_module_type: DeclaredModuleType::Unknown,
@@ -766,11 +730,9 @@ pub(super) fn inputs_of_file_that_nobody_describes<'s>() -> FileInputs<'s> {
     }
 }
 
-/// The texts of one tree that may be code which reaches the test runner. The loop over the tree hands it each expression that runs, and the texts are parsed behind the loop.
 pub(super) struct TextReader<'a, 's> {
     tree: Tree<'a, 's>,
     texts_of_file: TextsOfFile<'a, 's>,
-    /// Where each is written, and the texts that stand between the parts that nobody knows.
     candidates: Vec<(ExprId, Vec<Vec<u8>>)>,
 }
 
@@ -790,7 +752,6 @@ impl<'a, 's> TextReader<'a, 's> {
         }
     }
 
-    /// `fold`, `file`: they are asked for nothing that a path written from the folder of the file hangs on.
     pub(super) fn new(
         request: &'a FinishedFile<'a, 's>,
         builtins: &'a ResolvedBuiltins,
@@ -808,7 +769,6 @@ impl<'a, 's> TextReader<'a, 's> {
         TextReader::of_tree(tree, fold, file)
     }
 
-    /// What the file spells is text like the text around it: `import * as lib from ${JSON.stringify(join(import.meta.dir, "../lib.ts"))}`.
     fn find_text_of(&self, part: ExprId) -> Option<Vec<u8>> {
         let Tree { hir, builtins, .. } = self.tree;
         let part = hir.skip_type_assertions(part);
@@ -836,7 +796,6 @@ impl<'a, 's> TextReader<'a, 's> {
         })
     }
 
-    /// The texts that stand between the parts that nobody knows.
     fn join_what_is_known(&self, parts: &[Result<&[u8], ExprId>]) -> Vec<Vec<u8>> {
         let (mut texts, mut last): (Vec<Vec<u8>>, Vec<u8>) = (Vec::new(), Vec::new());
         for &part in parts {
@@ -853,7 +812,6 @@ impl<'a, 's> TextReader<'a, 's> {
         texts
     }
 
-    /// The texts to look at. What is written may hold one mark of code, and a `const` that goes into it the other: `${imports} ${functions}`.
     fn join_what_may_hold_code(&self, parts: &[Result<&[u8], ExprId>]) -> Option<Vec<Vec<u8>>> {
         let written: Vec<&[u8]> = parts.iter().filter_map(|part| part.ok()).collect();
         let texts = match find_marks_of_code(&written) {
@@ -875,6 +833,42 @@ impl<'a, 's> TextReader<'a, 's> {
         }
     }
 
+    fn join_sum(&self, mut sum: ExprId) -> Option<Vec<Vec<u8>>> {
+        let hir = self.tree.hir;
+        let mut parts: Vec<Result<&[u8], ExprId>> = Vec::new();
+        while let ExprKind::Binary {
+            op: BinOp::Add,
+            left,
+            right,
+        } = hir[sum].kind
+        {
+            parts.push(Err(right));
+            sum = left;
+        }
+        parts.push(Err(sum));
+        parts.reverse();
+        for part in &mut parts {
+            if let Err(operand) = *part
+                && let ExprKind::String(text) = hir[operand].kind
+            {
+                *part = Ok(self.tree.text_of(text));
+            }
+        }
+        let texts = self.join_what_may_hold_code(&parts);
+        texts.filter(|texts| texts.len() == 1)
+    }
+
+    fn is_piece_of_sum_read_whole(&self, piece: ExprId) -> bool {
+        let Tree { hir, bound, .. } = self.tree;
+        let mut sum = piece;
+        while let Parent::Expr(parent) = bound.parent_of_expr(sum)
+            && matches!(hir[parent].kind, ExprKind::Binary { op: BinOp::Add, .. })
+        {
+            sum = parent;
+        }
+        sum != piece && self.join_sum(sum).is_some()
+    }
+
     fn keep(&mut self, written_at: ExprId, texts: Vec<Vec<u8>>) {
         let parts: Vec<&[u8]> = texts.iter().map(Vec::as_slice).collect();
         if may_be_code_that_counts(&parts) {
@@ -882,43 +876,24 @@ impl<'a, 's> TextReader<'a, 's> {
         }
     }
 
-    // Most strings of a file are no code, and are copied nowhere.
     pub(super) fn keep_whole(&mut self, written_at: ExprId, text: &[u8]) {
         if may_be_code_that_counts(&[text]) {
             self.candidates.push((written_at, vec![text.to_vec()]));
         }
     }
 
-    /// `expression`: in code that runs.
     pub(super) fn look_at(&mut self, expression: ExprId, kind: ExprKind) {
         let Tree { hir, analysis, .. } = self.tree;
         match kind {
-            ExprKind::String(text) => self.keep_whole(expression, self.tree.text_of(text)),
-            // `"import * as lib from " + JSON.stringify(path) + ";"`, once for the whole sum, where all of it is known.
+            ExprKind::String(text) => {
+                let text = self.tree.text_of(text);
+                if may_be_code_that_counts(&[text]) && !self.is_piece_of_sum_read_whole(expression)
+                {
+                    self.candidates.push((expression, vec![text.to_vec()]));
+                }
+            }
             ExprKind::Binary { op: BinOp::Add, .. } if !self.is_left_of_sum(expression) => {
-                let mut parts: Vec<Result<&[u8], ExprId>> = Vec::new();
-                let mut sum = expression;
-                while let ExprKind::Binary {
-                    op: BinOp::Add,
-                    left,
-                    right,
-                } = hir[sum].kind
-                {
-                    parts.push(Err(right));
-                    sum = left;
-                }
-                parts.push(Err(sum));
-                parts.reverse();
-                for part in &mut parts {
-                    if let Err(operand) = *part
-                        && let ExprKind::String(text) = hir[operand].kind
-                    {
-                        *part = Ok(self.tree.text_of(text));
-                    }
-                }
-                if let Some(texts) = self.join_what_may_hold_code(&parts)
-                    && texts.len() == 1
-                {
+                if let Some(texts) = self.join_sum(expression) {
                     self.keep(expression, texts);
                 }
             }
@@ -933,7 +908,6 @@ impl<'a, 's> TextReader<'a, 's> {
                     self.keep(expression, texts);
                 }
             }
-            // `["spyOn(", "lib", ")"].join("")`: what is written below the call is dead, and what folding has made of it stands in its place.
             ExprKind::Call(_) => {
                 if let FoldedValue::Constant(Constant::String(text))
                 | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) =
@@ -946,7 +920,6 @@ impl<'a, 's> TextReader<'a, 's> {
         }
     }
 
-    /// What the texts that go into files do, and what the others do.
     fn read_with(self, look: &Look<'_>) -> CodeInTexts {
         let (mut written, mut handed_on) = (FoundInCode::default(), FoundInCode::default());
         for (written_at, texts) in &self.candidates {
@@ -964,7 +937,6 @@ impl<'a, 's> TextReader<'a, 's> {
         CodeInTexts { written, handed_on }
     }
 
-    /// `FileOfRun::in_texts_written`, `FileOfRun::in_texts_handed_on`
     pub(super) fn finish(self) -> (FoundInTexts, FoundInTexts) {
         if self.candidates.is_empty() {
             return Default::default();

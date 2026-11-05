@@ -507,6 +507,19 @@ fn name_in_place_is_the_binding_at_hand() {
 }
 
 #[test]
+fn first_name_of_a_path_in_place_is_the_binding_at_hand() {
+    let source = "export function probe(probeHolder) { return PROBE_PATH; }";
+    let probe = lower_file(PATHS, "main.js", source);
+    assert_eq!(probe.count(Opcode::PropGet), 2, "{probe}");
+    assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+
+    let source = "export function probe(probeHolder) { return process.env.PROBE_ALIAS; }";
+    let probe = lower_file(PATHS, "main.js", source);
+    assert_eq!(probe.count(Opcode::PropGet), 1, "{probe}");
+    assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+}
+
+#[test]
 fn defined_path_is_read_for_effect() {
     let probe = lower_body(PATHS, "PROBE_PATH;");
     let [_, _, member] = probe.reads()[..] else {

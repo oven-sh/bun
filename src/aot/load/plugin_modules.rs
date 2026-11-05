@@ -43,7 +43,6 @@ pub(crate) enum ModuleText {
 pub(crate) struct DeferredReads {
     pub texts: Vec<(Vec<u8>, Cow<'static, [u8]>)>,
     pub missing: Vec<Vec<u8>>,
-    /// The plugin deferred these again. Nothing is reported for them and `read` still answers `ModuleText::Deferred`, so the caller refuses them.
     pub still_deferred: Vec<Vec<u8>>,
 }
 
@@ -61,7 +60,7 @@ pub(crate) struct StoredModule {
 }
 
 impl StoredModule {
-    #[allow(clippy::ptr_arg)] // a borrowed text is kept without a copy
+    #[allow(clippy::ptr_arg)]
     fn new(contents: &Cow<'static, [u8]>, loader: Loader, is_from_plugin: bool) -> StoredModule {
         StoredModule {
             loader,
@@ -99,7 +98,6 @@ pub(crate) struct PluginModules<'a> {
 }
 
 impl<'a> PluginModules<'a> {
-    /// The tables, which take a while to free.
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
         Box::new((
             self.resolutions,
@@ -172,8 +170,6 @@ impl<'a> PluginModules<'a> {
         cell.get_or_init(resolve).clone()
     }
 
-    /// Returns the path of a module with the text.
-    /// The path of a module for the database that the specifier names where the program runs. Nothing is read at the build.
     pub(crate) fn add_database(&self, specifier: &[u8]) -> Vec<u8> {
         let mut buffer = vec![0; specifier.len() + 2];
         let normalized = normalize_string_buf::<true, Posix, false>(specifier, &mut buffer);
@@ -364,14 +360,12 @@ impl<'a> PluginModules<'a> {
         Some((namespace.as_slice(), plugin_path.as_slice()))
     }
 
-    // As the bundler has it: the directory in the path that the plugin gave the module, below the working directory if it is relative.
     pub(crate) fn directory_of_virtual_module(
         &self,
         path: &[u8],
         working_directory: &[u8],
     ) -> Option<Vec<u8>> {
         let (namespace, plugin_path) = self.virtual_module(path)?;
-        // `bun run` looks from the working directory for what such a text imports.
         if namespace == ENTRY_TEXT_NAMESPACE {
             return Some(working_directory.to_vec());
         }
@@ -408,7 +402,6 @@ impl<'a> PluginModules<'a> {
         if self.virtual_module(path).is_some() {
             return None;
         }
-        // The checker reads a program as well, and both read one text of it: what TypeScript decodes.
         if loader.is_javascript_like() {
             return self.disk.read(path);
         }
@@ -417,7 +410,6 @@ impl<'a> PluginModules<'a> {
             Some(contents) => contents.to_vec(),
             None => read_file_bytes(path)?,
         };
-        // `bun` knows two byte order marks, and none in a file of fewer than three bytes. Whatever else a file begins with is its text.
         Some(Cow::Owned(match BOM::detect(&bytes) {
             Some(mark) if !reads_raw_bytes(loader) => {
                 mark.remove_and_convert_to_utf8_and_free(bytes)
@@ -439,12 +431,8 @@ fn import_kind(kind: CodeImportKind, form: CodeImportForm) -> ImportKind {
         (CodeImportKind::EntryPoint, _) => ImportKind::EntryPointBuild,
         (_, CodeImportForm::ResolveOnly) => ImportKind::RequireResolve,
         (_, CodeImportForm::Dynamic) => ImportKind::Dynamic,
-        (CodeImportKind::Import, CodeImportForm::Static | CodeImportForm::Macro) => {
-            ImportKind::Stmt
-        }
-        (CodeImportKind::Require, CodeImportForm::Static | CodeImportForm::Macro) => {
-            ImportKind::Require
-        }
+        (CodeImportKind::Import, _) => ImportKind::Stmt,
+        (CodeImportKind::Require, _) => ImportKind::Require,
     }
 }
 

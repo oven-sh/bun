@@ -17,7 +17,6 @@ pub(super) enum PatternNode {
     Assignment(ExprId),
 }
 
-/// What holds the target that a default stands behind.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum DefaultHolder {
     Parameter,
@@ -83,7 +82,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.enter_nesting(position)
     }
 
-    // The reference of `[a.b] = ..` is evaluated before the value is read. Every other target is resolved at the store.
     fn prepare_target(&mut self, target: PatternNode) -> Option<Reference> {
         let PatternNode::Assignment(expression) = target else {
             return None;
@@ -96,7 +94,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // Lowering a default leaves its last position behind, on the path that skips the default too.
     fn finish_target(&mut self, target: PatternNode, prepared: Option<Reference>, value: ValueId) {
         match prepared {
             Some(reference) => {
@@ -123,7 +120,6 @@ fn apply_default(
         target,
         holder,
         &mut |lowering, value| {
-            // Under an annotation the node has the type the annotation gives the member, and the default is converted to it.
             let PatternNode::Binding(pattern) = target else {
                 return value;
             };
@@ -140,7 +136,6 @@ fn apply_default(
     )
 }
 
-// The default is evaluated where the value is `undefined`, and `convert` gives it the type of what receives it.
 pub(super) fn apply_default_with(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     value: ValueId,

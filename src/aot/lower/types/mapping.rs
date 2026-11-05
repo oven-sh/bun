@@ -16,7 +16,6 @@ impl FileLowering<'_, '_, '_, '_> {
         if let Some(entry) = self.find_mapped(ty) {
             return entry.mapped;
         }
-        // Read before `explore`: the checker's answers during exploration decide the components, so an unstable one must count too.
         let unstable_answers_before = self.queries.count_unstable_answers();
         match self.explore(ty) {
             Some(components) => {
@@ -123,7 +122,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn map_mapped_child(&mut self, edge: TypeEdge) -> Mapped {
-        // The checker does not memoize a shape it cut short on a low stack, so the table can see an edge that the exploration did not.
         let Some(entry) = self.find_mapped(edge.target) else {
             return Mapped::UNKNOWN;
         };

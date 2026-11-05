@@ -458,7 +458,7 @@ export async function judgeFreshRows(tablePath: string, only: RegExp | null = nu
     }
     for (const [classes, type] of newValuesOf(entry)) {
       const key = `${entry.path} > ${classes}`;
-      if (key in notCalled) {
+      if (key in notCalled || familiesNotCalled.some(each => each.rows.test(entry.path))) {
         found.notCalled.push(key);
         continue;
       }

@@ -1,11 +1,8 @@
-//! `bun build --format=cjs --target=bun` writes the function that the loader calls with the five values of a CommonJS file. What runs is its body.
-
 use std::ops::Range;
 
 use bun_core::strings;
 use bun_sema::hir::{find_transpiled_mark, is_marked_as_commonjs};
 
-// Up to the last of the five names. Blanks and comments may stand between any two.
 const HEAD: [&[u8]; 12] = [
     b"(",
     b"function",
@@ -56,7 +53,6 @@ fn find_body_start(text: &[u8], start: usize) -> Option<usize> {
     take(text, take(text, list_end, b")")?, b"{")
 }
 
-// Behind the function stand blank lines and comments, such as the one that names a source map.
 fn trim_blanks_and_comments_at_end(mut text: &[u8]) -> &[u8] {
     loop {
         text = text.trim_ascii_end();
@@ -74,7 +70,6 @@ fn trim_blanks_and_comments_at_end(mut text: &[u8]) -> &[u8] {
     }
 }
 
-/// `})` or `});` at the end of `text`, which starts with the body.
 fn find_tail(text: &[u8]) -> Option<Range<usize>> {
     let function = trim_blanks_and_comments_at_end(text);
     let statement = function.strip_suffix(b";").unwrap_or(function);
@@ -83,7 +78,6 @@ fn find_tail(text: &[u8]) -> Option<Range<usize>> {
     Some(body.len()..function.len())
 }
 
-/// The text with blanks in place of the function around the body, so that every position stays. `None`: something else stands behind the mark.
 pub(crate) fn blank_commonjs_wrapper(text: &[u8]) -> Option<Vec<u8>> {
     let head_start = find_transpiled_mark(text)?.end;
     let body_start = find_body_start(text, head_start)?;

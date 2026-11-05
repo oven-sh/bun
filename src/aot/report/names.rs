@@ -3,8 +3,6 @@ use super::source_texts::{ModuleOrigin, SourceTexts};
 use crate::engine::{EngineResult, FunctionNameRecord};
 use crate::ir::ids::{FunctionId, LayoutId, ModuleId};
 
-/// The engine lists the functions and layouts that its other records name, ascending by id and each once.
-/// A name is empty where the program gives none, and for an id that is not listed.
 #[derive(Copy, Clone)]
 pub(super) struct Names<'a> {
     engine: &'a EngineResult,
@@ -80,7 +78,6 @@ mod tests {
     const ORDER: TextRange = range(21, 5);
     const NO_NAME: TextRange = range(0, 0);
 
-    // No id is the index of its record, and no function has the id of a layout.
     const FUNCTIONS: &[FunctionNameRecord] = &[
         listed_function(2, OWN_MODULE, DOUBLE),
         listed_function(5, MODULE_WITHOUT_SOURCE, READ_FILE),

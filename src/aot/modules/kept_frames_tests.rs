@@ -3,7 +3,6 @@ use bun_sema::import_sites::ends_in_call_that_reads_frame_of_caller;
 
 use crate::modules::testing::{file_named, member_named, with_test_run_graph};
 
-// Whether a compiled test run keeps the frame of `() => <receiver>.requireActual("./dep.cjs")`, as the transpiler of `bun test` does.
 fn keeps_frame(head: &str, receiver: &str) -> bool {
     let text = format!("{head} export const actual = () => {receiver}.requireActual('./dep.cjs');");
     let files = [

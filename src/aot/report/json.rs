@@ -77,21 +77,6 @@ impl JsonWriter {
         self.needs_comma = true;
     }
 
-    pub(super) fn objects<T>(
-        &mut self,
-        key: &str,
-        items: impl IntoIterator<Item = T>,
-        mut write_members: impl FnMut(&mut JsonWriter, T),
-    ) {
-        self.begin_array(key);
-        for item in items {
-            self.begin_element();
-            write_members(self, item);
-            self.end_object();
-        }
-        self.end_array();
-    }
-
     pub(super) fn begin_element(&mut self) {
         if self.needs_comma {
             self.bytes.push(b',');

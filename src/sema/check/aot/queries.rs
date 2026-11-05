@@ -60,8 +60,6 @@ pub struct Queries<'c, 'p, 's> {
     had_run_out_of_stack: bool,
     pub(super) infers_nothing_from_use: bool,
     answers_nothing: bool,
-    /// A question since `note_idle` ran out of stack. What it computed on the way isn't kept, so the questions about the
-    /// code nested in what it was about would each compute most of it again, with less stack.
     pub(super) lacks_stack: bool,
 }
 
@@ -76,25 +74,19 @@ fn is_accessor(kind: ObjectMemberKind) -> bool {
 pub(super) struct Memo<'c> {
     gave_up: GaveUpAnswers,
     members: FxHashMap<TypeId, Result<&'c [ObjectMember], GaveUp>>,
-    /// Of the two types that `members_typed_otherwise` was asked about last.
     most_recent_checked_members: [Option<(TypeId, Vec<CheckedMember>)>; 2],
     pub(super) names_typed_by_this: FxHashMap<Sym, (&'c [Atom], usize)>,
-    /// The methods among what a plain class declares itself whose types depend on what `this` is.
     pub(super) methods_typed_by_this: FxHashMap<Sym, &'c [Atom]>,
-    /// The classes of which every method, inherited ones too, has been followed into a class below.
     pub(super) classes_compared_with_an_heir: FxHashSet<Sym>,
     signature_results: FxHashMap<SigId, CheckedType>,
     signatures: FxHashMap<SigId, SignatureShape<'c>>,
     function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
     classes: FxHashMap<ClassDeclaration, Option<&'c ClassShape<'c>>>,
     classes_with_accessor_at_or_above: FxHashMap<ClassDeclaration, bool>,
-    /// Of the classes that `classes_with_accessor_at_or_above` lists.
     names_of_accessors: FxHashSet<MemberName>,
-    /// Whether whoever looks for the name from below the class finds an accessor in it or above it.
     inherited_accessors: FxHashMap<(ClassDeclaration, MemberName), bool>,
     own_constructor_function_shapes: FxHashMap<FunctionRef, Option<&'c ClassShape<'c>>>,
     variables: FxHashMap<Sym, WrittenType>,
-    /// By the address of a permanent list of declarations.
     pub(super) member_trusts: FxHashMap<usize, Trust>,
     member_accesses: FxHashMap<ExprId, Result<MemberLookup, GaveUp>>,
     resolved_calls: FxHashMap<ExprId, Result<Option<CallTarget>, GaveUp>>,
@@ -106,22 +98,16 @@ pub(super) struct Memo<'c> {
     pub(super) unwritten_forms: FxHashMap<(FileId, TypeNodeId), GaveUp>,
     pub(super) alias_forms: FxHashMap<Sym, AliasForm>,
     pub(super) reference_index: Option<ReferenceIndex<'c>>,
-    /// For a call: which of its arguments is the first spread. `u32::MAX`: none.
     pub(super) first_spread_arguments: FxHashMap<ExprId, u32>,
     pub(super) exported_symbols: Option<FxHashSet<Sym>>,
     pub(super) parameters_taking_elements: FxHashMap<(Atom, usize), u8>,
     pub(super) usages: FxHashMap<Subject, UsageState>,
-    /// The subjects that were left as `UsageState::NotKept` since a question ran out of stack.
     pub(super) usages_that_lacked_stack: Vec<Subject>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
-    /// By the address of a part of a tree, which the entry holds.
     pub(super) types_of_parts: FxHashMap<*const Usage, (Rc<Usage>, TypeId)>,
-    /// Whether a type has every one of many members. By the type and the address of the members, which the entry holds.
     pub(super) members_found: FxHashMap<(TypeId, *const MembersByName), (Rc<MembersByName>, bool)>,
-    /// `without_nullish` of a union of many types.
     pub(super) unions_without_nullish: FxHashMap<TypeId, TypeId>,
     pub(super) types_in_progress: TypesInProgress,
-    /// For a sum that a question went through: whether what it yields is used as an int32.
     pub(super) sums_used_as_int32: FxHashMap<ExprId, bool>,
     pub(super) declared_signatures: Option<Rc<DeclaredSignatures>>,
 }
@@ -167,8 +153,6 @@ impl<'p, 's> Checker<'p, 's> {
             self.is_type_checked && self.task.file == Some(file) && self.stack.is_empty()
         );
         let read_types_alone = std::mem::replace(&mut self.reads_types_alone, true);
-        // Not where the file can only reach the depth limit. What the order adds there is that the analysis of flow is off behind
-        // the first walk that goes too deep, and every question begins with it on: `take_cut_state`.
         if self.bound(file).has_loop_types_that_depend_on_order
             && !self.has_checked_source_file(file)
         {
@@ -252,14 +236,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.c.idle_between_statements();
     }
 
-    /// For a file that the build refuses. An answer about code that is nested too deeply is given up on for lack of stack
-    /// and not kept, so each level would ask about all the levels below it again.
     pub fn answer_nothing_from_now_on(&mut self) {
         self.answers_nothing = true;
         self.infers_nothing_from_use = true;
     }
 
-    /// A question that no earlier answer settles is given up on, whatever it asks.
     pub fn answers_only_what_is_known(&self) -> bool {
         self.answers_nothing || self.lacks_stack
     }
@@ -279,7 +260,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Why the question that ends here has no answer. `enclosing`: the state of the question around it, which goes on.
     #[inline(never)]
     fn end_question(
         &mut self,
@@ -323,7 +303,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let enclosing = self.take_cut_state();
         let limit_hits = self.c.instantiation_limit_hits;
-        // However deep in the code its asker stands, a question gets the same stack, so what it answers is a matter of the question.
         let stack_of_task = is_outermost.then(|| self.c.begin_stack_of_question());
         self.depth += 1;
         let computed = compute(self);
@@ -610,8 +589,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub fn expression_type(&mut self, expression: ExprId) -> CheckedType {
-        // Between questions the checker has no check mode, recheck or contextual binding pattern in progress, so the cached
-        // type is what `type_of_expr` returns.
         if self.depth == 0 && !self.answers_nothing && !self.lacks_stack {
             self.require_live_expression(expression)?;
             if let Some(ty) = self.type_left_by_check(expression) {
@@ -641,8 +618,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// `contextual_type` of an expression whose value is never a promise. `return` in an async function is written under
-    /// `Order | PromiseLike<Order>`: this answers `Order`.
     pub fn contextual_type_of_settled_value(
         &mut self,
         expression: ExprId,
@@ -734,7 +709,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         true
     }
 
-    /// What is expected of `literal`, which may be nothing. `None`: that isn't known for good.
     fn literal_context(&mut self, literal: ExprId) -> Option<Option<TypeId>> {
         if let Some(&known) = self.memo.literal_contexts.get(&literal) {
             return Some(known);
@@ -817,7 +791,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     pub fn without_nullish(&mut self, ty: TypeId) -> CheckedType {
         let ty = self.resolved(ty)?;
-        // FOR SPEED: it is asked at every read off a value, and n reads off a union of n types went through n * n of them.
         let is_union_of_many = self.c.parts(ty).len() > 8;
         if is_union_of_many && let Some(&known) = self.memo.unions_without_nullish.get(&ty) {
             return Ok(known);
@@ -897,9 +870,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// The declaration of the only signature that the call can resolve to, found without a look at the arguments:
-    /// the callee is a name that declares one function with a body and no other value, or its type has one signature.
-    /// Where `resolved_call` finds a signature for the call, it is of that declaration.
     pub fn only_declaration_called(&mut self, call: ExprId) -> Option<FunctionRef> {
         let found = self.memoized(
             call,
@@ -912,12 +882,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         found.ok().flatten()
     }
 
-    /// Whether a type that is written in the program can be `int32`.
     pub fn is_int32_written(&self) -> bool {
         self.c.p.aot_symbols().is_int32_written()
     }
 
-    /// What `function_signature` has as written for each parameter. Nothing else is asked about them.
     pub fn written_parameters(&mut self, function: FunctionRef) -> &'c [WrittenParameter] {
         if let Some(&known) = self.memo.written_parameters.get(&function) {
             return known;
@@ -930,7 +898,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         parameters
     }
 
-    /// What `function_signature` has as written for the result of a function that is no constructor. Nothing else is asked.
     pub fn written_result(&mut self, function: FunctionRef) -> WrittenType {
         if let Some(&known) = self.memo.written_results.get(&function) {
             return known;
@@ -1019,7 +986,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         written
     }
 
-    /// Of a result that nobody has written it says nothing: to infer one is to check the body. `function_result` does.
     pub fn function_signature(&mut self, function: FunctionRef) -> SignatureShape<'c> {
         self.memoized_signature(
             function,
@@ -1086,8 +1052,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         kept: for<'m> fn(&'m mut KeptMemo<'c>) -> &'m mut FxHashMap<K, SignatureShape<'c>>,
         compute: impl FnOnce(&mut Self) -> SignatureShape<'c>,
     ) -> SignatureShape<'c> {
-        // The file of a function infers the parameters that the function leaves untyped. A class without a constructor takes the
-        // parameters of a class above it, and its shape names no declaration.
         let holds_everywhere_else = file_of_parameters != Some(self.file);
         if holds_everywhere_else && let Some(&known) = kept(&mut self.kept).get(&key) {
             if self.depth == 0 {
@@ -1103,7 +1067,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         shape
     }
 
-    /// Whether the class or one above it declares a getter or a setter. Asked of each class of a row, so each step is asked once.
     pub fn has_accessor_at_or_above(&mut self, declaration: ClassDeclaration) -> bool {
         let mut chain = Vec::new();
         let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
@@ -1155,7 +1118,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `None`: the class says nothing of the name. Else whether whoever looks for the name from below finds an accessor here.
     fn find_accessor_in(
         &self,
         shape: &ClassShape<'_>,
@@ -1188,8 +1150,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .then_some(false)
     }
 
-    /// `this.size = size` below `set size(..)` of a base class runs the setter and creates no property. Each class of a row asks, so each step up
-    /// the row is taken once for a name, and none for a name that no class there declares as an accessor.
     pub fn inherits_accessor(&mut self, shape: &ClassShape<'_>, name: MemberName) -> bool {
         if !matches!(name, MemberName::String(_))
             || !self.has_accessor_at_or_above(shape.declaration)
@@ -1206,7 +1166,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut current = self.declared_parent(shape.declaration);
         let found = loop {
             let Some(class) = current else { break false };
-            // What a walk round a cycle finds depends on where it began.
             if !seen.insert(class) {
                 return false;
             }
@@ -1330,11 +1289,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
-    /// The members that `object_type` and `base` both have under one string name, with different types, in the order of `base`.
-    /// A method that both inherit is the function that was declared, in each of them. Such methods are listed until the
-    /// caller says that it has followed all of them (`note_methods_followed`), and then no more: see `MethodsAbove`.
-    /// It keeps no list of the members of either: a class has those of all the classes above it, so the lists of a row of classes
-    /// that extend one another take room that grows with the square of its length.
     pub fn members_typed_otherwise(
         &mut self,
         object_type: TypeId,
@@ -1349,7 +1303,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 methods.filter(|_| self.unstable_answers == unstable_answers),
             ));
         }
-        // In such a row the base is the class that was asked about just before, and classes that extend one class follow one another.
         let (in_base, base_is_kept) = self.checked_members_for_now(base)?;
         let (members, is_kept) = self.checked_members_for_now(object_type)?;
         let mut types: FxHashMap<Atom, TypeId> = FxHashMap::default();
@@ -1385,7 +1338,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         compared.insert(methods.class);
     }
 
-    /// The list, and whether the same question gets the same answer later.
     fn checked_members_for_now(
         &mut self,
         object_type: TypeId,
@@ -1423,8 +1375,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         member: ListedMember,
     ) -> PositionTypes {
         let row = self.kept.object_row(object_type);
-        let index = member.property_index;
-        if let Some(known) = self.kept.find_member_types(row, index) {
+        if let Some(known) = self.kept.find_member_types(row, member) {
             return PositionTypes {
                 written: self.written_as_known(known.written),
                 checked: self.answer_as_known(known.checked),
@@ -1436,16 +1387,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         });
         let is_answer = !matches!(types.written, WrittenType::GaveUp(_)) && types.checked.is_ok();
         if is_answer && !is_inferred && self.unstable_answers == unstable_answers {
-            self.keep_member_types(object_type, index, types);
+            self.keep_member_types(object_type, member, types);
         }
         types
     }
 
-    /// Whether `listed_member_types` gives every file that the task visits the answer that it gave last.
     pub fn keeps_listed_member_types(&mut self, object_type: TypeId, member: ListedMember) -> bool {
         let row = self.kept.object_row(object_type);
-        let known = self.kept.find_member_types(row, member.property_index);
-        known.is_some()
+        self.kept.find_member_types(row, member).is_some()
     }
 
     fn written_as_known(&mut self, written: WrittenType) -> WrittenType {
@@ -1457,7 +1406,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.ask_written(|_| written)
     }
 
-    fn keep_member_types(&mut self, object_type: TypeId, index: u32, types: PositionTypes) {
+    fn keep_member_types(
+        &mut self,
+        object_type: TypeId,
+        member: ListedMember,
+        types: PositionTypes,
+    ) {
         let row = self.kept.object_row(object_type);
         if !self.kept.has_room_for_member_types(row) {
             let declared = self.declared_type_of_this(object_type);
@@ -1467,7 +1421,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 .map_or(0, |members| members.shape().props.len());
             self.kept.make_room_for_member_types(row, count as u32);
         }
-        self.kept.keep_member_types(row, index, types);
+        self.kept.keep_member_types(row, member, types);
     }
 
     pub fn index_signatures(

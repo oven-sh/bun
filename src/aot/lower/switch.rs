@@ -102,7 +102,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.leave_own_scope(scope);
     }
 
-    /// `switch (typeof operand)` where every case is a written text: the operand.
     fn find_operand_switched_by_kind(
         &mut self,
         subject: ExprId,
@@ -126,7 +125,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut first = 0;
         while first < cases.len {
             let mut end = first + 1;
-            // A clause that counts how often it is entered has a block of its own.
             while end < cases.len
                 && hir[cases.at(end as usize - 1)].body.is_empty()
                 && !self.file.counts_executions()
@@ -145,7 +143,6 @@ fn find_constant(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) ->
     let inner = file.skip_type_syntax(expression);
     let folded = match file.decisions().constant(file.hir, inner) {
         FoldedValue::Unknown => match file.find_enum_member_read(inner) {
-            // `case require("./levels").Level.High:` runs the file when the clause is come to.
             Some(_) if file.find_member_of_loaded_module(inner).is_some() => FoldedValue::Unknown,
             Some(value) => FoldedValue::Constant(value),
             None => FoldedValue::Unknown,

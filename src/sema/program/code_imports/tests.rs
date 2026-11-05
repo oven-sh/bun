@@ -149,42 +149,25 @@ fn unknown_answer_has_host_modules_as_candidates() {
 
 #[test]
 fn get_builtin_module_returns_host_modules_only() {
-    let in_one_program = |resolution| builtin_module_or_erased(resolution, &|_| false);
     let host_module = CodeResolution::HostModule(HostModuleId(7));
-    assert_eq!(in_one_program(host_module), host_module);
+    assert_eq!(builtin_module_or_erased(host_module), host_module);
     let source = CodeResolution::File(HOST_MODULE_SOURCE);
-    assert_eq!(in_one_program(source), source);
+    assert_eq!(builtin_module_or_erased(source), source);
     let host_value = CodeResolution::External {
         specifier: b"node:buffer",
         kind: ExternalKind::HostValue,
     };
-    assert_eq!(in_one_program(host_value), host_value);
+    assert_eq!(builtin_module_or_erased(host_value), host_value);
 
     let program_file = CodeResolution::File(FILE);
-    assert_eq!(in_one_program(program_file), CodeResolution::Erased);
+    assert_eq!(
+        builtin_module_or_erased(program_file),
+        CodeResolution::Erased
+    );
     for other in &OTHER_RESOLUTIONS[1..] {
-        assert_eq!(in_one_program(*other), CodeResolution::Erased, "{other:?}");
+        let answer = builtin_module_or_erased(*other);
+        assert_eq!(answer, CodeResolution::Erased, "{other:?}");
     }
-}
-
-#[test]
-fn get_builtin_module_returns_a_host_module_that_another_program_holds() {
-    let is_path = |specifier: &[u8]| specifier == b"node:path";
-    let left_to_loader = |specifier| CodeResolution::External {
-        specifier,
-        kind: ExternalKind::UncompiledCode,
-    };
-    let held = left_to_loader(b"node:path");
-    assert_eq!(builtin_module_or_erased(held, &is_path), held);
-    assert_eq!(
-        builtin_module_or_erased(left_to_loader(b"/project/file.js"), &is_path),
-        CodeResolution::Erased
-    );
-    let program_file = CodeResolution::File(FILE);
-    assert_eq!(
-        builtin_module_or_erased(program_file, &|_| true),
-        CodeResolution::Erased
-    );
 }
 
 #[test]
@@ -435,7 +418,6 @@ fn folded_path_into_external_package() {
     };
     with_context(&host, |context| {
         let specifier = ImportSpecifier::Constant(context.atoms.intern(PATH));
-        // The object stands for whatever folding makes a text of and `bun build` does not.
         with_attributes(&[(known::r#type, known::r#type)], |hir, folded| {
             let ExprKind::Object(properties) = hir[folded].kind else {
                 unreachable!("with_attributes hands over an object");

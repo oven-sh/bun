@@ -312,6 +312,19 @@ pub(crate) fn record_peak_rss_kb(kilobytes: u64) -> u64 {
 
 /// `exited_mb` is what the kernel reports of exited workers. It folds in the processes that a worker waited for, and a spawned
 /// process starts from the peak of its parent, so it says something about a worker only above the peak of this process.
+pub(crate) fn peak_of_this_process_mb() -> u32 {
+    #[cfg(unix)]
+    let before_resets = record_peak_rss_kb(0) / 1024;
+    #[cfg(not(unix))]
+    let before_resets = 0;
+    let peak = (Bun__AOT__peakResidentMegabytesOfProcess() as u64).max(before_resets);
+    u32::try_from(peak).unwrap_or(u32::MAX)
+}
+
+pub(crate) fn logs_accounts() -> bool {
+    env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
+}
+
 pub(crate) fn log_largest_worker(reported_mb: u32, exited_mb: u32) {
     if env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
         let is_inherited = exited_mb as usize <= Bun__AOT__peakResidentMegabytesOfProcess();
@@ -361,7 +374,7 @@ pub(crate) fn log_account_of_process(who: core::fmt::Arguments<'_>) {
             own.ru_majflt,
             own.ru_nvcsw,
             own.ru_nivcsw,
-            (Bun__AOT__peakResidentMegabytesOfProcess() as u64).max(record_peak_rss_kb(0) / 1024),
+            peak_of_this_process_mb(),
         );
         Output::flush();
     }

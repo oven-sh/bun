@@ -56,7 +56,6 @@ pub struct OptionWord {
     pub line: u32,
 }
 
-/// `file`: from the folder of the test, or from the root of its sections.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Place {
     pub file: String,
@@ -70,7 +69,6 @@ pub struct ExpectedDiagnostic {
     pub line: u32,
 }
 
-/// What stands between a `FILE` line and the next, or `GENERATED`, or the end.
 pub struct Section {
     pub path: String,
     pub text: String,
@@ -86,7 +84,6 @@ pub struct SameRuns {
     pub line: u32,
 }
 
-/// Every line below `line` is a check line that the driver has written.
 pub struct Generated {
     pub functions: Vec<String>,
     pub line: u32,
@@ -108,7 +105,6 @@ pub struct CheckGroup {
 pub struct TestFile {
     pub runs: Vec<RunDirective>,
     pub option_words: Vec<OptionWord>,
-    /// Those of `OPTIONS(<prefix>)`.
     pub option_words_of_runs: Vec<(String, OptionWord)>,
     pub sections: Vec<Section>,
     pub links: Vec<Link>,
@@ -291,7 +287,6 @@ fn find_group(groups: &[CheckGroup], prefix: &str) -> Option<usize> {
 }
 
 impl TestFile {
-    /// Those of `OPTIONS`, then those of `OPTIONS(<prefix>)`.
     pub fn option_words_for(&self, prefix: &str) -> Vec<&OptionWord> {
         let own = self.option_words_of_runs.iter();
         let own = own.filter(|(of, _)| of == prefix).map(|(_, word)| word);
@@ -536,7 +531,6 @@ mod tests {
         checks.map(|check| (check.kind, check.count)).collect()
     }
 
-    /// What `parse_check_line` reads off the part of a directive's name that follows the prefix.
     fn parse_check_kind(suffix: Option<&str>) -> Result<(CheckKind, u32), String> {
         let mut file = parse_without_errors("// RUN: lower\n");
         let name = match suffix {

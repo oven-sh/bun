@@ -46,10 +46,7 @@ struct CandidateSearch<'a, 'h> {
     request: ComputedCodeRequest<'a>,
     directory: &'a [u8],
     extensions: Vec<Vec<u8>>,
-    /// The walk began at a path, in the package of the importer: the folder of another package is not part of that.
     stays_out_of_other_packages: bool,
-    /// An executable, and the tsconfig lets the name mean a file of the project: the files of an installed package stay on disk, where
-    /// `bun build --compile` without `--aot` leaves them, and the name counts as one made at run time.
     leaves_installed_packages_on_disk: bool,
     tried: FxHashSet<Vec<u8>>,
     runtime_modules: Vec<ComputedCandidate<'h>>,
@@ -71,7 +68,6 @@ impl<'h> Resolver<'h> {
         search.finish(outcome)
     }
 
-    /// What one of a few specifiers finds. Each is a text, or the start and the end of one. Those of `request` are not read.
     pub fn resolve_alternative_code<'a>(
         &self,
         request: &ComputedCodeRequest<'a>,
@@ -89,8 +85,6 @@ impl<'h> Resolver<'h> {
         search.finish(outcome)
     }
 
-    /// Whether `request` names by a path the file at `path`, and that file belongs to a package that the build leaves outside. The host loads the files of such a
-    /// package: a module of the program would run beside the one that the host has under the name of the package.
     pub fn leads_into_package_left_outside(&self, request: &CodeRequest<'_>, path: &[u8]) -> bool {
         let own_folder = match request.directory.starts_with(b"/") {
             true => request.directory,
@@ -126,8 +120,6 @@ impl<'h> Resolver<'h> {
         )
     }
 
-    // A package goes by the folder that it is installed in, which is what a name finds, and one that lies elsewhere by its `package.json`.
-    // `--packages external` is about the others: a file stays in the program with the rest of its own package.
     fn find_name_of_other_package(&self, own_folder: &[u8], folder: &[u8]) -> Option<Vec<u8>> {
         const INSTALLED_IN: &[u8] = b"/node_modules/";
         let folder = [strings::without_trailing_slash(folder), b"/"].concat();
@@ -151,7 +143,7 @@ impl<'h> Resolver<'h> {
 }
 
 impl<'a, 'h> CandidateSearch<'a, 'h> {
-    #[allow(clippy::large_types_passed_by_value)] // kept in the search
+    #[allow(clippy::large_types_passed_by_value)]
     fn new(
         resolver: &'a Resolver<'h>,
         request: ComputedCodeRequest<'a>,
@@ -267,8 +259,6 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         outcome
     }
 
-    /// `"/" + name`, `"../../../" + name`: steps that lead out of the package of the importer, and name no folder there, say nothing of where the file lies.
-    /// It is a name made at run time. Without a package: out of the folder where the build runs, or else that of the importer.
     fn lies_in_own_package(&self, root: &[u8]) -> bool {
         let resolver = self.resolver;
         let is_named = |manifest: &&CodeManifest<'h>| !manifest.name.is_empty();
@@ -308,7 +298,6 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         Ok(())
     }
 
-    /// `"paths": { "*": ["./*"] }`, a `baseUrl`: "pkg/build/" + name may lie in the project as well as in an installed package.
     fn add_configured_candidates(&mut self) -> Result<(), ComputedUnknown> {
         let Some(config) = self.resolver.enclosing_code_config(self.directory) else {
             return Ok(());
@@ -328,7 +317,6 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         outcome
     }
 
-    /// The prefix ends inside the name of a package: every installed package whose name begins so may be meant.
     fn add_candidates_by_start_of_name(&mut self) -> Result<(), ComputedUnknown> {
         let (resolver, prefix) = (self.resolver, self.request.prefix);
         self.add_configured_candidates()?;
@@ -356,7 +344,6 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
                     self.add_exported_candidates(manifest, exports, &name)?;
                 }
             }
-            // It comes to the folder of each package, which is its name, and finds nothing in one that has `exports`.
             self.walk_below(&node_modules, b"", SpecifierForm::Path)?;
         }
         for node_path in &resolver.code_options().node_paths {
@@ -556,7 +543,6 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
                 if is_root && !name.starts_with(name_prefix) && !has_matching_spelling(&name) {
                     continue;
                 }
-                // LICENSE, Makefile, a lock file.
                 if !has_extension(&name) {
                     continue;
                 }
@@ -621,11 +607,9 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             form: request.form,
         };
         let candidate = match self.resolver.resolve_code(&request) {
-            // LICENSE, Makefile, a lock file.
             CodeResolution::File(file) if !has_extension(split_after_last_slash(file.path).1) => {
                 return Ok(());
             }
-            // The host loads the files of a package that the build leaves outside.
             CodeResolution::File(file)
                 if (self.resolver).leads_into_package_left_outside(&request, file.path) =>
             {
@@ -638,11 +622,6 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             }
             CodeResolution::File(file) => ComputedCandidate::File(file),
             CodeResolution::HostModule(module) => ComputedCandidate::HostModule(module),
-            // An earlier compile could not take that one file. The loader says what is wrong with it where the name is that one; the others are what they were.
-            CodeResolution::External {
-                kind: ExternalKind::UncompiledCode,
-                specifier,
-            } if self.resolver.code_host().is_left_to_loader(specifier) => return Ok(()),
             CodeResolution::External {
                 kind: ExternalKind::UncompiledCode,
                 ..
@@ -792,7 +771,6 @@ fn compare_candidates(a: &ComputedCandidate<'_>, b: &ComputedCandidate<'_>) -> O
     }
 }
 
-// `@scope/name` or `name`, up to the slash behind it.
 pub(super) fn written_package_name(specifier: &[u8]) -> Option<&[u8]> {
     let slash = strings::index_of_char_usize(specifier, b'/');
     if !specifier.starts_with(b"@") {
@@ -804,7 +782,6 @@ pub(super) fn written_package_name(specifier: &[u8]) -> Option<&[u8]> {
     Some(&specifier[..name_len])
 }
 
-// The folder of a package in `node_modules`: its written name without a version, `name` of `name@1.0.0`.
 pub(super) fn installed_name(specifier: &[u8]) -> Option<&[u8]> {
     if specifier.is_empty() {
         return None;

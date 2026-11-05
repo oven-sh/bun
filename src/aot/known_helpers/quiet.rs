@@ -9,23 +9,16 @@ use bun_sema::hir::{
     PropKey, PropKind, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 
-/// Recognizes code that runs nothing of its file: it calls no function, stores to nothing that existed before it and hands nothing of the file to anybody.
 pub struct Quiet<'a, 's> {
     pub atoms: &'a Interner<'s>,
     pub hir: &'a hir::File<'s>,
     pub bound: &'a Bound<'s>,
     pub decisions: &'a Decisions<'s>,
-    /// Of the file, once `ResolvedBuiltins::unlock` has run: start-up does not lock what a test of the run replaces.
     pub builtins: &'a ResolvedBuiltins,
-    /// A read of a global, or of a member of one, that start-up does not lock counts as quiet.
     pub allows_reads_of_open_globals: bool,
-    /// Whether a call runs nothing of the program once its arguments are evaluated, such as a definition on `exports` whose descriptor has been read.
-    /// After such a definition `exports` is no longer empty, yet a read of it still counts as quiet: code that answers true here must account for those reads itself.
     pub runs_nothing: &'a dyn Fn(hir::CallId) -> bool,
 }
 
-/// A plain object that has no such property of its own answers `undefined`: `Object.prototype` has none, and in an executable it takes none.
-/// `added`: `ProgramContents::names_added_to_builtins`: what the tests of a run lay there.
 pub(super) fn is_absent_from_object_prototype(
     atoms: &Interner<'_>,
     added: &[(BuiltinId, Atom)],
@@ -57,7 +50,6 @@ pub(super) fn is_in_statement_of_file(bound: &Bound<'_>, expression: ExprId) -> 
         .is_some_and(|statement| bound.parent_of_stmt(statement) == Parent::File)
 }
 
-/// Neither `with` nor evaluated text decides at run time what the name means.
 pub(super) fn has_fixed_binding(bound: &Bound<'_>, name: ExprId) -> bool {
     bound.dynamic_lookup_scope(NodeData::Expr(name)).is_none()
 }
@@ -66,7 +58,6 @@ pub(super) fn is_global_name(bound: &Bound<'_>, name: ExprId) -> bool {
     bound.binding(name) == Binding::Free && has_fixed_binding(bound, name)
 }
 
-/// `object.name` and `object["name"]` outside an optional chain.
 pub(super) fn plain_member(hir: &hir::File<'_>, expression: ExprId) -> Option<(ExprId, Atom)> {
     let (ExprKind::Dot {
         chain: Chain::No, ..
@@ -84,7 +75,6 @@ pub(super) fn plain_member(hir: &hir::File<'_>, expression: ExprId) -> Option<(E
 }
 
 impl Quiet<'_, '_> {
-    /// The built-in that a path of names from a global leads to, where every step is locked and none is an accessor.
     pub fn find_locked_builtin(&self, expression: ExprId) -> Option<BuiltinId> {
         let (hir, bound) = (self.hir, self.bound);
         let expression = hir.skip_type_assertions(expression);
@@ -109,7 +99,6 @@ impl Quiet<'_, '_> {
         is_fixed_value.then_some(found)
     }
 
-    /// A locked path that leads to an object, which is truthy.
     pub fn names_locked_object(&self, expression: ExprId) -> bool {
         self.find_locked_builtin(expression).is_some_and(|found| {
             !matches!(
@@ -128,7 +117,6 @@ impl Quiet<'_, '_> {
             && is_in_statement_of_file(self.bound, expression)
     }
 
-    // While only quiet code has run, the object that a CommonJS file exports is still empty.
     fn is_untouched_exports(&self, expression: ExprId) -> bool {
         let expression = self.hir.skip_type_assertions(expression);
         let is_exports_variable = matches!(self.hir[expression].kind, ExprKind::Ident(_))
@@ -152,7 +140,6 @@ impl Quiet<'_, '_> {
         }
     }
 
-    // `Object.getOwnPropertyNames`, `import.meta.require`
     fn is_path_from_global(&self, expression: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let expression = hir.skip_type_assertions(expression);
@@ -186,7 +173,6 @@ impl Quiet<'_, '_> {
         })
     }
 
-    // `(function () { var inner = function () { .. }; return function () { .. }; })()`
     fn is_quiet_when_called(&self, function: FnId) -> bool {
         let record = self.hir[function];
         if record.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || !record.params.is_empty() {
@@ -305,12 +291,10 @@ impl Quiet<'_, '_> {
         }
     }
 
-    /// The start of the first statement of the file that is not quiet, or of the first such declaration if that statement declares variables.
     pub fn find_end_of_head(&self) -> u32 {
         self.find_end_of_head_in(self.hir.body)
     }
 
-    /// The same of the statements of a function. Code that asks this must see to it that they name neither `exports` nor `this` of the file, which are no longer untouched there.
     pub fn find_end_of_head_in(&self, statements: hir::IdList<StmtId>) -> u32 {
         let hir = self.hir;
         let mut statements = hir.ids(statements);

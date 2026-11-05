@@ -3539,11 +3539,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             let Some(next) = next else {
-                let says_nothing_of_members =
-                    (merged_resolved_symbol.symbol()).is_some_and(|module| {
-                        self.is_declared_in_place_of_bun_types(module)
-                            || files.stands_for_modules_in_other_images(module)
-                    });
+                let says_nothing_of_members = (merged_resolved_symbol.symbol())
+                    .is_some_and(|module| self.is_declared_in_place_of_bun_types(module));
                 if reports_errors && !says_nothing_of_members {
                     let namespace = fully_qualified_name_of(self, current_namespace);
                     let right = self.hir(file).node(current);

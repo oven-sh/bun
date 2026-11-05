@@ -18,30 +18,21 @@ use bun_sema::hir::{
 };
 use bun_sema::util::{FxHashSet, SharedSort};
 
-/// A name that stands for a module: an import of its namespace or of its exports as a whole, or a holder.
 #[derive(Copy, Clone)]
 struct Root {
     symbol: SymbolId,
     stands_for: StandsFor,
-    /// The position in the list of holders.
     holder: Option<u32>,
 }
 
-/// What the members of an expression are the members of.
 #[derive(Copy, Clone)]
 pub(super) enum StandsFor {
-    /// What `import * as ns` shows.
     ImportedNamespace(ModuleRef),
-    /// What `require` of an ES module answers.
     RequiredNamespace(ModuleRef),
-    /// `module.exports` of a CommonJS module.
     Exports(ModuleRef),
-    /// What `__toESM(require(K))` and `__importStar(require(K))` make: a new object with a getter for each name that the answer of `require` has by then, which reads the name there.
     Copy {
         module: ModuleRef,
-        /// `default` is a name like the others: the text of the module says that it has the marker, and the helper is not told to pass over it.
         has_marker: bool,
-        /// `__importStar`
         is_star: bool,
     },
 }
@@ -83,7 +74,6 @@ impl FileBinder<'_, '_> {
             .shared_sort_unstable_by_key(|&(member, _)| member);
     }
 
-    // Whoever reads under `default` what `require` answered looks at the object of the module, and so does the helper of TypeScript.
     fn settle_copies(&mut self, holders: &mut [Holder]) {
         let mut called_through = core::mem::take(&mut self.imports.copies_called_through);
         called_through.shared_sort_unstable();
@@ -136,7 +126,6 @@ impl FileBinder<'_, '_> {
                 self.look_at(root.stands_for);
             }
         }
-        // The root of `import b = a.c`, the factory of a JSX element: such a read takes the object itself and reads `c` off it.
         for binding in analysis.bindings_read_without_expression(hir, bound) {
             if let Some(position) = find_root(roots, binding) {
                 self.look_at_root(roots[position], holders);
@@ -159,7 +148,6 @@ impl FileBinder<'_, '_> {
                 continue;
             }
             let root = roots[position];
-            // Under `with`, or beside a sloppy direct `eval`, the name is resolved at run time and may name something else.
             let is_resolved_at_run_time = bound
                 .dynamic_lookup_scope(NodeData::Expr(reference))
                 .is_some();
@@ -171,7 +159,6 @@ impl FileBinder<'_, '_> {
             if !core::mem::replace(&mut is_used_as_value[position], true) {
                 self.look_at_root(root, holders);
             }
-            // A spy takes the names that `note_what_a_spy_may_reach` replaces. It finds no module behind a name that the run looks up.
             let is_taken_by_spy =
                 !is_resolved_at_run_time && objects_of_spies.binary_search(&reference).is_ok();
             if !is_taken_by_spy
@@ -195,7 +182,6 @@ impl FileBinder<'_, '_> {
         self.look_at(root.stands_for);
     }
 
-    /// Something gets hold of the object itself.
     pub(super) fn look_at(&mut self, stands_for: StandsFor) {
         let module = stands_for.module();
         let is_namespace = match stands_for {
@@ -205,13 +191,11 @@ impl FileBinder<'_, '_> {
         if is_namespace && self.namespace_value_set.insert(module) {
             self.imports.namespace_values.push(module);
         }
-        // The namespace object of a CommonJS module shows `module.exports` as `default`.
         if self.is_commonjs(module) && self.exports_value_set.insert(module) {
             self.imports.exports_values.push(module);
         }
     }
 
-    /// A CommonJS file reads what its JSX imports from a CommonJS module off the value that `require` answers.
     pub(super) fn look_at_required_jsx_module(&mut self, exporter: ModuleRef) {
         if self.is_commonjs(ModuleRef::File(self.file)) && self.is_commonjs(exporter) {
             self.look_at(StandsFor::Exports(exporter));
@@ -245,7 +229,6 @@ impl FileBinder<'_, '_> {
             return;
         }
         let (context, target) = (self.context, site.target);
-        // `init_x()` gives `undefined`.
         if self.is_esm_wrapper(target) {
             return;
         }
@@ -256,9 +239,6 @@ impl FileBinder<'_, '_> {
             ),
             _ => (StandsFor::Exports(target), View::Exports(target)),
         };
-        // A file that loads again, and a file that a mock stands for, answer with another object than these variables.
-        // `require.cache[path].exports = other`: from then on `require` of the ES module at `path` answers `other`.
-        // `require.cache["fs"] = { exports: fake }`: from then on `require("fs")` answers `fake`.
         let may_answer_another_object = context.evicted.is_stored_in_cache(target)
             || (context.order.is_code_of_program(target)
                 && (context.evicted.contains(target)
@@ -309,17 +289,14 @@ impl FileBinder<'_, '_> {
         }
         match self.bind_member_path(call, answer) {
             true => self.look_at(answer),
-            // A module that is one value may be false, zero or null.
             false => self.imports.unread_sites.push((call, false)),
         }
     }
 
-    // Whether a helper that reads `__esModule` off the result of `require` is sure to find it true.
     fn is_marked(&self, answer: StandsFor) -> bool {
         let module = answer.module();
         (self.context.marker)(module) == Some(true)
             && match answer {
-                // An ES module may export the name itself, with whatever value.
                 StandsFor::RequiredNamespace(_) => {
                     self.resolve_name(module, known::__esModule).is_err()
                 }
@@ -328,7 +305,6 @@ impl FileBinder<'_, '_> {
             }
     }
 
-    // `const a = __importStar(require(K))` and `const a = __importDefault(require(K))`, where the module has the marker: the helper answers what `require` answers.
     fn find_holder_of_marked_module(
         &self,
         required: ExprId,
@@ -364,7 +340,6 @@ impl FileBinder<'_, '_> {
         self.find_holder_declared_by(declaration)
     }
 
-    // `var a = __toESM(require(K))`, `const a = __importStar(require(K))`
     fn bind_copy(
         &mut self,
         site: &PlannedSite,
@@ -402,7 +377,6 @@ impl FileBinder<'_, '_> {
         true
     }
 
-    // `__toESM(require(K))`, `__importStar(require(K))`
     fn find_copy(&self, site: &PlannedSite, required: ExprId) -> Option<CopiedExports> {
         let (hir, bound, context) = (self.hir, self.bound, self.context);
         let target = site.target;
@@ -428,7 +402,6 @@ impl FileBinder<'_, '_> {
         let helpers = context.known_helpers;
         let known = helpers.certain_callee(context.files, self.file, call.callee)?;
         let is_ordinary_object = match target {
-            // A mock, and an entry that a test stores in `require.cache`, answer with an object of the program.
             ModuleRef::Runtime(_) => {
                 !context.mocked.contains(target) && !context.evicted.is_table_reached()
             }
@@ -493,7 +466,6 @@ impl FileBinder<'_, '_> {
         })
     }
 
-    // Whether each helper that the helper binds a name with defines a getter, or hands on a property that cannot change: none copies the value of the moment.
     fn binds_getters(&self, helper: &KnownFunction) -> bool {
         let helpers = self.context.known_helpers;
         helper.references.iter().all(|reference| match *reference {
@@ -511,7 +483,6 @@ impl FileBinder<'_, '_> {
         })
     }
 
-    // `a.default` and `a.n`, where `a` holds the copy of an answer of which the text does not say that it has the marker. `Some(true)`: nothing else is to be bound.
     fn bind_member_of_answer(
         &mut self,
         holder: ExprId,
@@ -526,7 +497,6 @@ impl FileBinder<'_, '_> {
         };
         let is_called = is_callee(hir, bound, member);
         if name == known::default {
-            // What `require` answered, unless the run finds the marker on it.
             if is_star || is_called {
                 return None;
             }
@@ -534,7 +504,6 @@ impl FileBinder<'_, '_> {
             self.imports.answer_members.push((member, whole));
             return Some(true);
         }
-        // The copy has a getter for a name only where the answer has the name when the copy is made, which the run asks the answer. A name of which the build cannot say that the answer has it is left to the copy.
         let has_name = match module {
             ModuleRef::Runtime(module) => self.is_member_of_runtime_module(module, name),
             _ => self.has_name_once_run(module, name),
@@ -554,7 +523,6 @@ impl FileBinder<'_, '_> {
     }
 
     fn find_holder_declared_by(&self, declaration: VarDeclId) -> Option<SymbolId> {
-        // `using a = require(K)` asks the object for its disposer.
         if matches!(
             self.hir[declaration].kind,
             VarKind::Using | VarKind::AwaitUsing
@@ -564,7 +532,6 @@ impl FileBinder<'_, '_> {
         self.find_holder(self.hir[declaration].pat)
     }
 
-    /// A `const`, `let` or `var` that is declared once, never stored to again, not exported and not seen by `eval`.
     pub(super) fn find_holder(&self, pattern: PatId) -> Option<SymbolId> {
         let bound = self.bound;
         if !matches!(self.hir[pattern].kind, PatKind::Ident(_)) {
@@ -573,14 +540,12 @@ impl FileBinder<'_, '_> {
         let holder = bound.declared_symbol(Decl::Var(pattern));
         let is_holder = holder.is_some()
             && bound.is_stable_binding(holder)
-            // `with (o) { var a = require(K) }` may store to `o.a`.
             && bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
             && !self.is_exported(holder)
             && !bound.is_visible_to_eval(holder);
         is_holder.then_some(holder)
     }
 
-    // `const { a, b: c = d } = require(K)` reads the names once, at that point.
     fn bind_pattern(&mut self, pattern: PatId, answer: StandsFor) -> bool {
         let hir = self.hir;
         let PatKind::Object(properties) = hir[pattern].kind else {
@@ -595,7 +560,6 @@ impl FileBinder<'_, '_> {
                 return false;
             }
             match self.resolve_member(answer, name) {
-                // The pattern copies a variable, and a namespace or a built-in object behind the name has none.
                 Some(NamedMember::Binding(binding)) if !has_variable(binding) => return false,
                 Some(found) => members.push(((answer.module(), name), found)),
                 None => return false,
@@ -605,7 +569,6 @@ impl FileBinder<'_, '_> {
         true
     }
 
-    /// What a read of the name finds. `None`: only the object knows.
     pub(super) fn resolve_member(&self, stands_for: StandsFor, name: Atom) -> Option<NamedMember> {
         let (context, module) = (self.context, stands_for.module());
         let is_copy = matches!(stands_for, StandsFor::Copy { .. });
@@ -613,12 +576,10 @@ impl FileBinder<'_, '_> {
         if is_exports && !context.input.is_plain_name(name) {
             return None;
         }
-        // A name that the module gets later has no getter.
         if is_copy && name != known::__esModule && !self.has_name_once_run(module, name) {
             return None;
         }
         if name == known::__esModule {
-            // An ES module may export the name itself.
             if let StandsFor::RequiredNamespace(_) = stands_for
                 && let Ok((binding, None)) = self.resolve_name(module, name)
             {
@@ -647,7 +608,6 @@ impl FileBinder<'_, '_> {
             Ok((binding, None)) => {
                 (!is_exports || has_variable(binding)).then_some(NamedMember::Binding(binding))
             }
-            // The namespace object of a module whose names are all known has no such property.
             Err(_) if matches!(stands_for, StandsFor::RequiredNamespace(_)) => {
                 Some(NamedMember::Fixed(Member::Undefined))
             }
@@ -655,7 +615,6 @@ impl FileBinder<'_, '_> {
         }
     }
 
-    // `if (wanted) { var a = require(K); }`
     fn may_be_undefined(&self, reference: ExprId) -> bool {
         let reference = self.hir.skip_type_assertions(reference);
         matches!(self.hir[reference].kind, ExprKind::Ident(_))
@@ -667,7 +626,6 @@ impl FileBinder<'_, '_> {
             }
     }
 
-    // The member that the reference is the object of, and what that member stands for in its turn.
     fn bind_enclosing_member(
         &mut self,
         reference: ExprId,
@@ -677,7 +635,6 @@ impl FileBinder<'_, '_> {
         let (member, name) = enclosing_member(hir, bound, reference)?;
         let module = stands_for.module();
         let is_exports = matches!(stands_for, StandsFor::Exports(_) | StandsFor::Copy { .. });
-        // Whether a store or a `delete` succeeds depends on the object itself. `module.exports` may be null, and a `var` is undefined until its initializer has run, so `a?.n` needs the value.
         if is_assignment_target(hir, bound, member)
             || is_deleted(hir, bound, member)
             || (!is_outside_optional_chain(hir, member)
@@ -739,7 +696,6 @@ impl FileBinder<'_, '_> {
                 StandsFor::ImportedNamespace(inner)
             }
         });
-        // A mock of the module answers the name with an object of its own, and what is read off that is no name of the module behind `export * as`.
         if let Some(inner) = inner
             && self.context.mocked.contains(module)
         {
@@ -749,7 +705,6 @@ impl FileBinder<'_, '_> {
         Some((member, inner))
     }
 
-    // Returns true if the object itself is needed: the reference is not the object of a bound member access, and it is more than a test for truthiness or null.
     fn bind_member_path(&mut self, mut reference: ExprId, mut stands_for: StandsFor) -> bool {
         let mut is_member_bound = false;
         while let Some((member, inner)) = self.bind_enclosing_member(reference, stands_for) {
@@ -760,7 +715,6 @@ impl FileBinder<'_, '_> {
             (reference, stands_for) = (member, inner);
         }
         if is_member_bound {
-            // `ns.inner`, where something looks at the namespace that `inner` is.
             self.look_at(stands_for);
             return false;
         }
@@ -775,7 +729,6 @@ impl FileBinder<'_, '_> {
         )
     }
 
-    // Putting `true` in place of an object here gives the same result.
     fn is_only_tested(&self, expression: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let tested = find_outermost_type_assertion(hir, bound, expression);
@@ -845,7 +798,6 @@ fn add_holder(
     });
 }
 
-/// What a name that an import statement declares stands for, where that is a module.
 pub(super) fn imported_module(binding: PendingBinding) -> Option<StandsFor> {
     match binding {
         PendingBinding::Bound(ImportBinding::Exports { module }) => {
@@ -899,7 +851,6 @@ pub(super) fn find_outermost_type_assertion(
     outermost
 }
 
-// `object.name` and `object["name"]`
 fn enclosing_member(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -916,7 +867,6 @@ fn enclosing_member(
     }
 }
 
-// `a.n = v`, `a.n += v`, `a.n++`, a part of a pattern that is stored to, the head of a loop.
 fn is_assignment_target(hir: &hir::File<'_>, bound: &Bound<'_>, member: ExprId) -> bool {
     let target = find_outermost_type_assertion(hir, bound, member);
     bound.get_assignment_target(hir, target).is_some()
@@ -943,7 +893,6 @@ fn is_deleted(hir: &hir::File<'_>, bound: &Bound<'_>, member: ExprId) -> bool {
     })
 }
 
-// The object would be `this`.
 fn is_callee(hir: &hir::File<'_>, bound: &Bound<'_>, member: ExprId) -> bool {
     let outermost = find_outermost_type_assertion(hir, bound, member);
     let Some(user) = parent_expression(bound, outermost) else {

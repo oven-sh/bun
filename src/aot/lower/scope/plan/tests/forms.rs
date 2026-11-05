@@ -133,7 +133,7 @@ fn mapped_argument_index_of_duplicate() {
         assert_eq!(callee.storage, Storage::Local);
     });
 
-    let strict = "'use strict'; function probe(once) { return arguments.length + once; } \
+    let strict = "'use strict'; function probe(once) { return arguments[0] + once; } \
                   module.exports = probe;";
     analyze_source("main.cjs", strict, |probe| {
         let function = probe.function("probe");
@@ -141,6 +141,14 @@ fn mapped_argument_index_of_duplicate() {
         assert_eq!(probe.form_of("once"), BindingForm::Stored);
         let callee = probe.slot(function, ScopeSlot::Callee);
         assert_eq!(probe.analysis.placement(callee), None);
+    });
+
+    let counted = "function probe(once) { once = 1; return arguments.length + once; } \
+                   module.exports = probe;";
+    analyze_source("main.cjs", counted, |probe| {
+        let object = probe.arguments_object(probe.function("probe"));
+        assert_eq!(object, ArgumentsObject::None);
+        assert_eq!(probe.form_of("once"), BindingForm::Stored);
     });
 
     let unused = "function probe(once) { return once; } module.exports = probe;";
@@ -171,11 +179,14 @@ fn parameter_is_mapped_only_where_that_can_be_told() {
     ] {
         assert!(!mapped(only_reads, "once"), "{only_reads}");
     }
-    assert!(!mapped("return arguments.length + once;", "once"));
+    assert!(!mapped(
+        "return arguments.length + arguments.callee.name + once;",
+        "once"
+    ));
     for only_reads_names in [
-        "once = 1; return arguments.length + once;",
+        "once = 1; return arguments.length + arguments.callee.name + once;",
         "once++; return () => arguments.length + arguments.callee.name + once;",
-        "var once = 1; return arguments.length;",
+        "var once = 1; return arguments.length + arguments.callee.name;",
     ] {
         assert!(!mapped(only_reads_names, "once"), "{only_reads_names}");
     }
@@ -239,7 +250,6 @@ fn read_that_may_miss_hands_arguments_on_below_a_name_that_a_test_run_lays() {
             mapped("Object.prototype.other = 1;", may_miss),
             "{may_miss}"
         );
-        // A test run that lays nothing there compiles what an executable compiles.
         assert!(!mapped("", may_miss), "{may_miss}");
         assert!(
             !mapped("Array.prototype.extra = 1;", may_miss),

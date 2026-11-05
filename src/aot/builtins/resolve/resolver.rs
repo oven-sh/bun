@@ -94,12 +94,9 @@ pub(super) enum AliasSource {
     },
 }
 
-/// What the resolver reads off a file whichever part of it is resolved.
 pub struct FileFacts {
-    // The position and the id of every expression, in the order of the positions.
     exprs_by_position: Vec<(u32, u32)>,
     declared_aliases: Vec<(SymbolId, AliasSource)>,
-    // Where the name is written, or the id of the initializer without its type assertions, and the index of the alias. Both in order.
     aliases_by_position: Vec<(u32, u32)>,
     aliases_by_initializer: Vec<(u32, u32)>,
     symbols_exported_by_name: FxHashSet<SymbolId>,
@@ -149,7 +146,6 @@ impl FileFacts {
         facts
     }
 
-    // The ids of the expressions that are written in the ranges lie in this range.
     fn ids_within(&self, ranges: &[Range<u32>]) -> Range<u32> {
         let mut ids = 0..0;
         for range in ranges {
@@ -167,7 +163,6 @@ impl FileFacts {
 #[derive(Default)]
 pub(super) struct ResolverOutput {
     pub(super) mentioned: Vec<BuiltinId>,
-    // What would be in `mentioned` but for the text of the call.
     pub(super) called_with_other_texts: Vec<BuiltinId>,
     pub(super) called: Vec<BuiltinId>,
     pub(super) loaded: Vec<BuiltinId>,
@@ -193,7 +188,6 @@ pub(super) struct ResolverOutput {
 
 pub(super) struct Resolver<'a, 's> {
     pub(super) input: &'a ResolveInput<'a, 's>,
-    // Of the expressions from `first_state` on. What has none does not count as evaluated.
     states: Vec<ExprState>,
     first_state: u32,
     pub(super) facts: Option<&'a FileFacts>,
@@ -204,25 +198,18 @@ pub(super) struct Resolver<'a, 's> {
     pub(super) exposes_own_module_object: bool,
     pub(super) exposes_own_require: bool,
     pub(super) stores_to_exports: Vec<ExprId>,
-    // `createRequire` comes out of it.
     pub(super) loads_node_module: bool,
     pub(super) output: ResolverOutput,
-    // Only what is written in one of these ranges of positions counts as evaluated. They are in order and do not overlap.
     within: Option<&'a [Range<u32>]>,
-    // Made when it is first asked for: few parts of a file let a binding hold a built-in.
     named_outside: OnceCell<FxHashSet<SymbolId>>,
-    // What `is_kept_for_unlisted_members` has answered for a variable and an object: each answer walks over the names of the file.
     pub(super) kept_variables: RefCell<FxHashMap<(SymbolId, BuiltinId), bool>>,
     known_sets: RefCell<KnownSets<'a, 's>>,
-    // The ids of the expressions that count as evaluated lie in this range, which is short for a part of a file.
     evaluated: Range<u32>,
-    // The evaluated expressions whose state `resolve` computes, and the evaluated calls with and without `new`. Both in order.
     computed: Vec<ExprId>,
     calls: Vec<ExprId>,
     work_stack: Vec<ExprId>,
 }
 
-// `compute_state` answers `Unresolved` for every other kind, which waits for nothing.
 fn can_stand_for_builtin(kind: ExprKind) -> bool {
     matches!(
         kind,
@@ -245,7 +232,6 @@ fn sorted_unique<T: Ord>(mut list: Vec<T>) -> Box<[T]> {
     list.into_boxed_slice()
 }
 
-/// `require`, `module`, `node:module`, and what hangs below them; and whatever loads under a name that it is given, wherever it hangs.
 pub(super) fn is_of_loader(id: BuiltinId) -> bool {
     let id = table::canonical_id(id);
     let root = table::root_of(id);
@@ -257,8 +243,6 @@ pub(super) fn is_of_loader(id: BuiltinId) -> bool {
         )
 }
 
-// Asked where the lists reach a loader that is given names which the build does not know: whether such a name may be a path.
-// `process.getBuiltinModule` takes none. Below an object that goes out of sight it counts like any loader: whoever has `process` also has `mainModule`.
 fn reaches_loader_of_paths(
     loaded: &[BuiltinId],
     called: &[BuiltinId],
@@ -309,6 +293,13 @@ pub(super) fn count_states(
     Resolver::new(input, Some(ranges), Some(facts)).states.len()
 }
 
+fn binding_of_defined_root(input: &ResolveInput<'_, '_>, expression: ExprId) -> Binding {
+    match input.hir[expression].kind {
+        ExprKind::Ident(_) => input.bound.binding(expression),
+        _ => input.bound.runtime.binding_of_defined_path(expression),
+    }
+}
+
 impl<'a, 's> Resolver<'a, 's> {
     fn new(
         input: &'a ResolveInput<'a, 's>,
@@ -352,7 +343,6 @@ impl<'a, 's> Resolver<'a, 's> {
         }
     }
 
-    /// `KnownSets::of`
     pub(super) fn known_set(&self, expr: ExprId) -> SmallVec<[Constant; 4]> {
         SmallVec::from_slice(self.known_sets.borrow_mut().of(expr))
     }
@@ -376,7 +366,6 @@ impl<'a, 's> Resolver<'a, 's> {
             })
     }
 
-    // An alias whose name and whose initializer are both written elsewhere stands for nothing here, and nobody asks for it.
     pub(super) fn add_declared_aliases_of_part(&mut self, facts: &FileFacts) {
         self.has_seen_declarations = true;
         let ids = self.first_state..self.first_state + self.states.len() as u32;
@@ -469,7 +458,6 @@ impl<'a, 's> Resolver<'a, 's> {
         self.evaluated.clone().map(ExprId)
     }
 
-    // Whether an expression counts as evaluated never changes, so what is outside the range stays as it is marked.
     fn mark_unevaluated_exprs(&mut self) {
         let input = self.input;
         let mut evaluated = 0..0;
@@ -487,7 +475,6 @@ impl<'a, 's> Resolver<'a, 's> {
                 self.calls.push(expr);
             }
             let state = match input.decisions.decision(expr) {
-                // Only a test run has the choice that `asks_who_loads` knows.
                 Decision::Unknown
                     if can_stand_for_builtin(kind)
                         || (input.runs_tests && matches!(kind, ExprKind::Cond { .. })) =>
@@ -499,6 +486,11 @@ impl<'a, 's> Resolver<'a, 's> {
                 | Decision::Constant(_)
                 | Decision::Data(_)
                 | Decision::DeferredData => ExprState::Unresolved,
+                Decision::GlobalPath(_)
+                    if binding_of_defined_root(input, expr) != Binding::Free =>
+                {
+                    ExprState::Unresolved
+                }
                 Decision::GlobalPath(path) => self.resolve_global_path(path),
             };
             self.set_state(expr, state);
@@ -520,7 +512,6 @@ impl<'a, 's> Resolver<'a, 's> {
     }
 
     fn resolve(&mut self, start: ExprId) {
-        // What an expression waits for is written in front of it, but for a name that is read above its declaration.
         if self.find_unvisited_dependency(start).is_none() {
             let state = self.compute_state(start);
             self.set_state(start, state);
@@ -539,7 +530,6 @@ impl<'a, 's> Resolver<'a, 's> {
         }
     }
 
-    // No program can write the name of such a variable.
     fn asks_who_loads(&self, test: ExprId) -> bool {
         let (hir, atoms) = (self.input.hir, self.input.atoms);
         match hir[test].kind {
@@ -627,7 +617,6 @@ impl<'a, 's> Resolver<'a, 's> {
             ExprKind::Binary { op: BinOp::Comma, right, .. } => {
                 ExprState::of_value(self.value_of(right).map(ResolvedValue::with_side_effects))
             }
-            // `typeof module == "object" && module`, as lodash asks for it: `a && b` answers `a` only where `a` is no object, so what it holds is the module object or no object at all.
             ExprKind::Binary { op: BinOp::And, right, .. } => {
                 match self.value_of(right).or_else(|| self.held_value_of(right)) {
                     Some(value) if table::canonical_id(value.path.id) == BuiltinId::ModuleObject => {
@@ -636,9 +625,6 @@ impl<'a, 's> Resolver<'a, 's> {
                     _ => ExprState::Unresolved,
                 }
             }
-            // `(loadedByWorker ??= ..) ? vi : local`: load/test_runner_names.rs writes a name of the test runner so in every file that a Worker may load. Where the file has the names it is the object of the
-            // runner. In any other realm it is what that realm calls so, which reaches nothing of this run. Where a script has laid the name on `globalThis` it is what the script has laid, and what that does
-            // to the run it does in code of its own. So whoever looks for what the tests replace follows it, and lowering is told nothing.
             ExprKind::Cond { test, branches } if self.asks_who_loads(test) => {
                 let of_runner = self.input.hir.branches(branches).no;
                 match self.value_of(of_runner).or_else(|| self.held_value_of(of_runner)) {
@@ -669,7 +655,6 @@ impl<'a, 's> Resolver<'a, 's> {
             linked_functions: &output.linked_functions,
         };
         let uses = RuntimeUses::of_mentions(&mentions, input.platform);
-        // `helper(process)`, `delete globalThis.kept`, `pathsOf(import.meta)` in a test run: the object only leads to a loader. Whoever loads through it what the build has not seen is refused aloud.
         let leads_alone = |id: &BuiltinId| input.runs_tests && !is_of_loader(*id);
         let without_what_leads = |list: &[BuiltinId]| -> Vec<BuiltinId> {
             list.iter().copied().filter(|id| !leads_alone(id)).collect()

@@ -10,8 +10,6 @@ use std::sync::Arc;
 
 const REMAPPED_ID_KIND_COUNT: usize = 12;
 
-// These mirror aot/ir/AOTExternalFunctionBodies.h in JavaScriptCore.
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct IdRemapTable {
@@ -47,7 +45,6 @@ const _: () = assert!(
         && size_of::<ExternalFunctionBodies>() == 32
 );
 
-// The engine reads an entry as the program's number plus one, and 0 as no record. An id holds its number plus one in a `NonZeroU32`, so `None` is 0.
 fn table_of<I: Id>(ids: &[Option<I>]) -> IdRemapTable {
     const { assert!(size_of::<Option<I>>() == 4 && align_of::<Option<I>>() == 4) };
     IdRemapTable {
@@ -56,7 +53,6 @@ fn table_of<I: Id>(ids: &[Option<I>]) -> IdRemapTable {
     }
 }
 
-// In the order of `RemappedIDKind`.
 fn tables_of(ids: &TableIds) -> UnitIdRemap {
     UnitIdRemap {
         tables: [
@@ -76,7 +72,6 @@ fn tables_of(ids: &TableIds) -> UnitIdRemap {
     }
 }
 
-// Without tables, code and records hold the program's ids, and the engine wants 0 everywhere.
 fn unit_index_of(list: &FunctionsOfUnit, unit_count: usize) -> u32 {
     if unit_count == 0 {
         return 0;
@@ -88,14 +83,10 @@ fn unit_index_of(list: &FunctionsOfUnit, unit_count: usize) -> u32 {
     list.tables
 }
 
-/// The code of every function and the tables that lead the engine from the numbers in code and records to the program's ids.
 pub struct ExternalBodies {
-    /// One body behind the other. Where lowering wrote them they lay among all that it has freed since, a few hundred thousand blocks
-    /// that each kept the page around it.
     code: Vec<u32>,
     bodies: Vec<ExternalFunctionBody>,
     units: Vec<UnitIdRemap>,
-    /// Owns the `TableIds`.
     _functions: LinkedFunctions,
 }
 
@@ -103,7 +94,6 @@ pub struct ExternalBodies {
 unsafe impl Send for ExternalBodies {}
 
 impl ExternalBodies {
-    /// `lists` is what `functions.take_lists()` gave. The records stay in it, without their code.
     pub(super) fn take_from(
         lists: &mut [FunctionsOfUnit],
         functions: LinkedFunctions,
@@ -186,7 +176,6 @@ impl ExternalBodies {
         sizes.sum()
     }
 
-    /// Valid while `self` is alive, wherever it moves: every list lies on the heap, and nothing writes one again.
     pub fn as_engine_argument(&self) -> ExternalFunctionBodies {
         debug_assert_eq!(self.code.len() * 4, self.size_in_bytes());
         ExternalFunctionBodies {

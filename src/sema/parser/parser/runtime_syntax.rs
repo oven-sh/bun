@@ -122,8 +122,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         else {
             return is_of_file && !self.f.is_js && self.f.is_erased_statement(statement);
         };
-        // `bun run` keeps the directives of a file alone. There it passes over what it erases, looks through parentheses and casts, and compares values.
-        // A file under its mark goes to the engine as it is written.
         let is_transpiled = self.options.compiles && find_transpiled_mark(self.lx.src).is_none();
         let raw = match is_of_file && is_transpiled {
             true => self.f.value_read_as_directive(expr),
@@ -217,7 +215,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         parsed.last().map_or(ExprId::NONE, |it| it.1)
     }
 
-    /// A mistake that TypeScript's parser reads over and `bun run` reports as a syntax error, in code or in a type.
     #[cold]
     #[inline(never)]
     pub(super) fn flag_early_error(&mut self, code: u32, at: (u32, u32), args: &[&[u8]]) {

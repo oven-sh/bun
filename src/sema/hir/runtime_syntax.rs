@@ -110,8 +110,6 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// Whether `bun run` drops a namespace that has these modifiers and this body: it keeps no statement of the body.
-    /// The namespaces in the body have their answers already.
     pub fn erases_namespace(&self, flags: Flags, body: IdList<StmtId>) -> bool {
         let mut is_prologue = true;
         flags.intersects(Flags::AMBIENT | Flags::REPARSED)
@@ -122,7 +120,6 @@ impl<S: Storage> FileIn<S> {
             })
     }
 
-    /// The value of the string that `bun run` takes for a directive where the expression is a statement of a prologue: it looks through parentheses and casts.
     pub fn value_read_as_directive(&self, written: ExprId) -> Option<Atom> {
         let text = self.skip_type_assertions(written);
         match self.exprs.get(text.idx())?.kind {
@@ -148,7 +145,6 @@ impl<S: Storage> FileIn<S> {
         let Some(kind) = self.stmts.get(statement.idx()).map(|it| it.kind) else {
             return true;
         };
-        // `export declare` names a member of the object, so the object is there.
         let is_member =
             |flags: Flags| !flags.contains(Flags::AMBIENT) || flags.contains(Flags::EXPORT);
         match kind {
@@ -168,7 +164,6 @@ impl<S: Storage> FileIn<S> {
             StmtKind::Enum(enumeration) => {
                 (self.enums.get(enumeration.idx())).is_none_or(|it| is_member(it.flags))
             }
-            // The `b` of `namespace a.b` is kept as a statement of `a` even where it is dropped itself.
             StmtKind::Module(inner) => {
                 self.modules.get(inner.idx()).is_none_or(|it| !it.is_erased)
                     || is_nested_namespace(self, statement)
@@ -253,7 +248,6 @@ pub fn find_runtime_constructor(hir: &File, class: ClassId) -> Option<MemberId> 
     })
 }
 
-/// `constructor(public a)`: the parameters that the constructor stores in properties of their names.
 pub fn parameter_properties(hir: &File, constructor: FnId) -> impl Iterator<Item = ParamId> {
     hir[constructor].params.iter().filter(move |&parameter| {
         let node = hir[parameter];
@@ -262,7 +256,6 @@ pub fn parameter_properties(hir: &File, constructor: FnId) -> impl Iterator<Item
     })
 }
 
-/// The first `super(..)` among the statements of the body of a constructor. What `bun run` adds to the constructor of a derived class stands behind it.
 pub fn find_super_call_statement(hir: &File, constructor: FnId) -> Option<(StmtId, ExprId)> {
     let FnBody::Block(statements) = hir[constructor].body else {
         return None;
@@ -280,7 +273,6 @@ pub fn find_super_call_statement(hir: &File, constructor: FnId) -> Option<(StmtI
 
 const TRANSPILED_MARK: &[u8] = b"// @bun";
 
-/// The line that starts with `// @bun`, if it is the first line or follows a hashbang. `bun run` hands such a file to the engine as it is written.
 pub fn find_transpiled_mark(text: &[u8]) -> Option<Range<usize>> {
     let end_of_line = |start: usize| {
         let length = strings::index_of_char_usize(&text[start..], b'\n')?;
@@ -295,7 +287,6 @@ pub fn find_transpiled_mark(text: &[u8]) -> Option<Range<usize>> {
         .then(|| start..end_of_line(start).unwrap_or(text.len()))
 }
 
-/// The text behind such a line is the function that the loader calls with the five values of a CommonJS file. Behind any other mark stands an ES module.
 pub fn is_marked_as_commonjs(mark: &[u8]) -> bool {
     let mut rest = &mark[TRANSPILED_MARK.len()..];
     while let Some(at) = strings::index_of_char_usize(rest, b'@') {
@@ -303,7 +294,6 @@ pub fn is_marked_as_commonjs(mark: &[u8]) -> bool {
         if word.starts_with(b"bun-cjs") {
             return true;
         }
-        // `bun run` does not look at the byte behind a word that it knows, nor at the one behind an `@` that starts none.
         let passed = match word.starts_with(b"bytecode") {
             true => b"bytecode".len() + 1,
             false => 1,

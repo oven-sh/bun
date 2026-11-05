@@ -128,7 +128,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             BinOp::BitAnd => self.builder.bit_and(left, right),
             BinOp::BitOr => self.builder.bit_or(left, right),
             BinOp::BitXor => self.builder.bit_xor(left, right),
-            BinOp::Instanceof => self.builder.instance_of(left, right, None),
+            BinOp::Instanceof => self.builder.instance_of(left, right),
             BinOp::In => self.builder.elem_has(right, left),
             BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => {
                 debug_assert!(
@@ -214,7 +214,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-/// The test, and whether the operator asks for its opposite.
 pub(in crate::lower) fn emit_comparison(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     op: BinOp,

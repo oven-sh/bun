@@ -1,6 +1,3 @@
-//! `bun test` gives a test file that asks for a DOM the globals of a window: src/js/internal/test/environment.ts defines each of these names on `globalThis` anew.
-//! No file of the run spells the stores, so the scan of the test files does not find them. test/aot/dom-environment.test.ts holds this list against that file.
-
 use crate::builtins::table;
 
 #[rustfmt::skip]
@@ -44,7 +41,6 @@ const NAMES: &[&str] = &[
     "URLSearchParams",
 ];
 
-/// Those of the names that are built-in objects of Bun, by their numbers in the table. Ascending.
 pub(crate) fn globals_that_a_window_replaces() -> Vec<u32> {
     let mut globals: Vec<u32> = (NAMES.iter())
         .filter_map(|name| table::global(table::find_name(name.as_bytes())?))

@@ -486,12 +486,6 @@ export default b.declarations(
           args: { source: b.string, destination: arrayBufferView },
           capability: "heap",
           uses: { this: b.inspected, source: characters, destination: changesState },
-          directEntry: b.typedEntry({
-            calls: { latin1: "TextEncoder__encodeInto8", utf16: "TextEncoder__encodeInto16" },
-            headers: ["headers-handwritten.h"],
-            parameters: ["Characters", "Bytes"],
-            returnsFields: ["read", "written"],
-          }),
         },
         {
           ...encodedInto,

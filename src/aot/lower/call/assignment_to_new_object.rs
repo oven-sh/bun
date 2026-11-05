@@ -7,9 +7,6 @@ use crate::lower::FunctionLowering;
 use crate::lower::expression::Tail;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // `Object.assign({}, source)`: nobody else has the literal, so the source is copied as `{ ...source }` copies it, by stores.
-    // With more sources the literal is an ordinary object and one call takes them all: behind a source that it goes through key by key, a string or an object with an accessor, it takes the names of each later one in front of its symbols.
-    // The function that the text names is read all the same.
     pub(super) fn lower_assignment_to_new_object(
         &mut self,
         call: ExprId,

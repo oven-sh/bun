@@ -51,8 +51,6 @@ impl ImportUses {
     }
 }
 
-/// The import statements that bind names, but no namespace, where no code of the file uses any of the names. They ascend.
-/// None where the file names `eval`: a text may read what no expression spells.
 pub fn find_imports_of_unused_names(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -192,7 +190,9 @@ pub(super) fn compute_import_uses(
             continue;
         };
         let is_live = match reference.kind {
-            ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::JsxFragment => {
+            ImplicitReferenceKind::JsxFactory
+            | ImplicitReferenceKind::JsxFragment
+            | ImplicitReferenceKind::DefinedPath => {
                 !matches!(reference.node, NodeData::Expr(e) if decisions.is_dead_expr(e))
             }
             ImplicitReferenceKind::DecoratorMetadata(_) => true,

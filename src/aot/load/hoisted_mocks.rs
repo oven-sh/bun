@@ -55,10 +55,7 @@ struct Use {
 pub(crate) struct Plan {
     places: Vec<(StmtId, Place)>,
     uses: Vec<Use>,
-    /// The factory and the fragment of classic JSX, and a class that decorator metadata names: no expression spells the name, so there is none to rewrite.
-    /// The binder finds the loaded module by `Import::loaded_as`.
     named_implicitly: Vec<ImportId>,
-    /// `import * as ns`, `export { ns }`: the clause names the variable of the load.
     exported_namespaces: Vec<(ExportSpecId, ImportId)>,
     paths_written_as_imports: Vec<(ExprId, ExprId)>,
 }
@@ -290,7 +287,6 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
         if is_test_module(path) || table::module_by_specifier(path) == Some(RuntimeModule::Bun) {
             return Place::BeforeHoisted;
         }
-        // Only an attribute that chooses how the file is loaded keeps the statement.
         let chooses_loader = |attributes: ExprId| {
             let keys = [known::r#type, known::embed];
             keys.iter()
@@ -299,7 +295,6 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
         if node.is_deferred || node.attributes.some().is_some_and(chooses_loader) {
             return Place::InPlace;
         }
-        // `export { a }` needs `a` to be a binding. The variable of a load is one, and holds what a namespace names.
         let names = self.names_of(import);
         let mut members = names.iter().filter(|it| it.2 != Atom::NONE);
         if members.any(|it| exported.contains(&it.1)) {
@@ -312,7 +307,6 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
         let bound = self.request.bound;
         let names = self.names_of(import);
         let mut symbols = names.iter().map(|it| bound.declared_symbol(it.0));
-        // `import a = ns.a`: an entity name is no expression either.
         let aliases = (0..self.hir.import_equals.len() as u32).map(ImportEqualsId);
         let roots: Vec<Binding> = aliases.map(|it| bound.entity_root_binding(it)).collect();
         symbols.any(|symbol| {
@@ -531,7 +525,6 @@ fn write_use(
 fn write_load(file: &mut FileBuilder, statement: StmtId, import: ImportId, local: Atom) -> StmtId {
     let (start, loc) = (file[statement].start, file[statement].loc);
     let path = file[import].spec;
-    // The parser lists every specifier for the type checker, by the kind of its use.
     file.specifier_uses.push(SpecifierUse {
         spec: path,
         pos: start,
@@ -798,7 +791,6 @@ mod tests {
                 r#"import { vi } from "bun:test"; import { captured } from "./side"; vi.mock("./mod", () => ({})); console.log(captured);"#,
                 "import 1 | mock() | const = await import ./side | log()",
             ),
-            // A free name asks which realm loads the file: the imports of "bun:test" and of "bun", and the variable that holds the answer.
             (
                 "a.test.js",
                 r#"import { captured } from "./side"; jest.mock("./mod", () => ({})); console.log(captured);"#,
@@ -819,7 +811,6 @@ mod tests {
                 r#"import { vi } from "bun:test"; import "./side"; const a = "a", b = -1; const c = String("c"); vi.mock("./mod", () => ({ a, b, c }));"#,
                 "import 1 | declaration | mock() | await import ./side | declaration",
             ),
-            // An import of "bun" reads `globalThis.Bun`.
             (
                 "a.test.js",
                 r#"import "./side"; import { file } from "bun"; import { vi } from "bun:test"; vi.mock("./mod", () => ({})); console.log(file);"#,
@@ -882,7 +873,6 @@ mod tests {
                 r#"import { vi as runner } from "bun:test"; import { captured } from "./side"; runner.mock("./mod", () => ({})); console.log(captured);"#,
                 "import 1 | mock() | const = await import ./side | log()",
             ),
-            // Only `jest` has chains.
             (
                 r#"import { jest as vi } from "bun:test"; import "./side"; vi.unmock("./mod").mock("./mod", () => ({}));"#,
                 "import 1 | mock() | await import ./side",
@@ -952,7 +942,6 @@ mod tests {
         });
     }
 
-    /// Plain Bun's parser has erased the type syntax by the time it looks for the call: a mark on `vi`, on the method or on the path hides nothing.
     #[test]
     fn a_type_mark_on_the_runner_the_method_or_the_path_hides_no_mock() {
         let test_file = |call: &str| {
@@ -960,7 +949,6 @@ mod tests {
                 "import {{ test, vi, jest }} from \"bun:test\";\nimport {{ captured }} from \"./side\";\n{call}\ntest(\"t\", () => console.log(captured));"
             )
         };
-        // A path that is written as an import is the path alone: nothing loads the module ahead of its mock.
         let loads_what_it_mocks = |text: &str| {
             with_tree("a.test.ts", text, |hir, _, text_of| {
                 hir.exprs.iter().any(|it| match it.kind {
@@ -972,58 +960,45 @@ mod tests {
                 })
             })
         };
-        // The call, and how `describe` tells its statement.
         let calls = [
-            // vi as any
             (
                 r#"(vi as any).mock("./mod", () => ({ value: 2 }));"#,
                 "mock()",
             ),
-            // vi, not null
             (r#"vi!.mock("./mod", () => ({ value: 2 }));"#, "mock()"),
-            // vi under two marks
             (
                 r#"(vi as unknown as typeof vi).mock("./mod", () => ({ value: 2 }));"#,
                 "mock()",
             ),
-            // vi satisfies
             (
                 r#"(vi satisfies typeof vi).mock("./mod", () => ({ value: 2 }));"#,
                 "mock()",
             ),
-            // jest as any
             (
                 r#"(jest as any).mock("./mod", () => ({ value: 2 }));"#,
                 "mock()",
             ),
-            // the method, not null
             (r#"vi.mock!("./mod", () => ({ value: 2 }));"#, "expression"),
-            // the method as any
             (
                 r#"(vi.mock as any)("./mod", () => ({ value: 2 }));"#,
                 "expression",
             ),
-            // a chain of jest
             (
                 r#"(jest as any).mock("./mod", () => ({ value: 2 })).mock("./side", () => ({}));"#,
                 "mock()",
             ),
-            // the path as an import with a mark
             (
                 r#"vi.mock(import("./mod") as any, () => ({ value: 2 }));"#,
                 "mock()",
             ),
-            // the path as an awaited import with marks
             (
                 r#"vi.mock((await (import("./mod") as any)) as any, () => ({ value: 2 }));"#,
                 "mock()",
             ),
-            // the call as any
             (
                 r#"vi.mock("./mod", () => ({ value: 2 })) as any;"#,
                 "expression",
             ),
-            // no mark
             (r#"vi.mock("./mod", () => ({ value: 2 }));"#, "mock()"),
         ];
         let mut wrong = Vec::new();

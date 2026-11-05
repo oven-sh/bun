@@ -1,5 +1,3 @@
-//! What `bun test` asks of the compiler outside a build.
-
 use std::borrow::Cow;
 
 use bun_paths::resolve_path::basename;
@@ -18,7 +16,6 @@ use crate::builtins::table::{self, BuiltinId, BuiltinName, MemberLookup, Mutabil
 use crate::load::fold_inputs::create_application_fold_inputs;
 use crate::load::host_platform;
 
-/// TypeScript drops an import whose names nobody uses, and with it the site. The parser of `bun test` has seen the statement by then.
 fn writes_import_of_values_from_vitest(hir: &File<'_>) -> bool {
     hir.imports.iter().any(|import| {
         import.spec == known::vitest
@@ -29,18 +26,13 @@ fn writes_import_of_values_from_vitest(hir: &File<'_>) -> bool {
     })
 }
 
-/// `bun test` asks this at run time about a compiled test file or preload. It has to ask the same two questions that `import_used_names` asks of the file
-/// in a build. If the answers differ, the file gets the globals of one runner and the files it loads get the globals of the other.
 pub(crate) fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
-    // The parser of `bun test` does not look into a file under the mark, so what such a file loads has the names of "bun:test".
     if find_transpiled_mark(text).is_some() {
         return false;
     }
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
-    // A build compiles an entry point that is named like a declaration file as TypeScript if it holds statements that run, and leaves it out otherwise:
-    // `LoadHost::runs_despite_its_name`.
     let has_declaration_file_name = is_declaration_file_name(path);
     let parse_options = CompileParseOptions {
         path,
@@ -60,7 +52,6 @@ pub(crate) fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
     }
     hir.text = Cow::Borrowed(text);
     let runs_in_place = true;
-    // The build starts from the options of its command line and bunfig.toml, `--define` among them. Nobody hands those to the run.
     let fold = create_application_fold_inputs(
         &FoldOptions::default(),
         arena,
@@ -92,7 +83,6 @@ fn find_locked_member_of(holder: BuiltinId, name: BuiltinName) -> Option<Builtin
     };
     let entry = table::entry(member);
     let is_own = entry.holder.map(table::canonical_id) == Some(holder);
-    // `ConstantUnlessWritten` counts too. The runner's store is native code, so the build sees no write and would treat the member as a constant.
     (is_own && entry.mutability != Mutability::ChangesOnItsOwn && entry.scope == Scope::Realm)
         .then_some(member)
 }
@@ -102,8 +92,6 @@ fn find_locked_member_of_global(global: &[u8], name: &[u8]) -> Option<BuiltinId>
     find_locked_member_of(table::canonical_id(holder), table::find_name(name)?)
 }
 
-/// With `--isolate=modules` the test files share one `process`, and between files the runner replaces `process.argv` and `Bun.argv` with new arrays:
-/// Bun__Process__resetArgv(). Returns the table numbers of both, in ascending order.
 pub(crate) fn lists_laid_anew_between_test_files() -> Vec<u32> {
     let holders = [&b"process"[..], b"Bun"].into_iter();
     let lists = holders.filter_map(|holder| find_locked_member_of_global(holder, b"argv"));
@@ -126,7 +114,6 @@ mod tests {
             ("a.test.cjs", "require('vitest');", true),
             ("a.test.cjs", "require('vi' + 'test');", true),
             ("a.test.js", "if (undefined) import('vitest');", false),
-            // TypeScript drops the unused import, so it leaves no import site.
             ("a.test.ts", "import { vi } from 'vitest';", true),
             ("a.test.ts", "import vitest from 'vitest';", true),
             ("a.test.ts", "import * as vitest from 'vitest';", true),

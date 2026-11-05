@@ -6,27 +6,21 @@ use crate::ir::references::IdMap;
 use core::mem::take;
 use std::sync::Arc;
 
-/// What one unit defines, in its order.
 pub struct FunctionsOfUnit {
-    /// Index into `LinkedFunctions::tables`: records and code hold the numbers of these tables.
     pub tables: u32,
     pub functions: Vec<Arc<Function>>,
 }
 
-/// The functions of the program where lowering made them, with what leads from their numbers to the program's.
 #[derive(Default)]
 pub struct LinkedFunctions {
     tables: Vec<TableIds>,
-    /// One list after the other, the functions stand in the order of their program ids.
     lists: Vec<FunctionsOfUnit>,
 }
 
-/// `None`: the records and the code of the list hold the program's ids already.
 fn ids_of<'a>(tables: &'a [TableIds], list: &FunctionsOfUnit) -> Option<&'a TableIds> {
     tables.get(list.tables as usize)
 }
 
-// `move_records` has written `function_types` and `builtin_members` in the program's ids. All else holds the numbers of the tables.
 fn remap_to_program_ids(function: &mut Function, map: &IdMap<'_>) {
     let function_types = take(&mut function.function_types);
     let builtin_members = take(&mut function.builtin_members);
@@ -37,7 +31,6 @@ fn remap_to_program_ids(function: &mut Function, map: &IdMap<'_>) {
 
 impl LinkedFunctions {
     pub(crate) fn new(tables: Vec<TableIds>, lists: Vec<FunctionsOfUnit>) -> LinkedFunctions {
-        // A list whose tables are missing would pass for one in the program's ids.
         assert!(
             lists.iter().all(|list| ids_of(&tables, list).is_some()),
             "the tables of every list have ids"
@@ -45,7 +38,6 @@ impl LinkedFunctions {
         LinkedFunctions { tables, lists }
     }
 
-    /// Records and code hold the program's ids already: no tables.
     pub fn of_program_functions(functions: Vec<Function>) -> LinkedFunctions {
         LinkedFunctions {
             tables: Vec::new(),
@@ -64,12 +56,10 @@ impl LinkedFunctions {
         &self.tables
     }
 
-    /// The ids of the tables stay, for whoever reads records and code where they are.
     pub(crate) fn take_lists(&mut self) -> Vec<FunctionsOfUnit> {
         take(&mut self.lists)
     }
 
-    /// Records and code in the program's ids, in the order of their own.
     pub fn into_program_functions(self, in_parallel: InParallel<'_>) -> Vec<Function> {
         let mut functions = Vec::with_capacity(self.function_count());
         let LinkedFunctions { tables, lists } = self;
@@ -112,7 +102,6 @@ mod tests {
         }
     }
 
-    // Ids for what `Function::default()` names: type 0 and module 0.
     fn ids_with_module(module: usize) -> TableIds {
         TableIds {
             types: vec![Some(TypeId::new(0))],
@@ -179,7 +168,6 @@ mod tests {
         };
         assert_eq!(function.name, Some(StringId::new(7)));
         assert_eq!(function.module, ModuleId::new(5));
-        // The tables have no id for any function.
         assert_eq!(function.function_types, function_types);
         assert_eq!(function.builtin_members, [BuiltinId::default()]);
         let mut variables = Vec::new();

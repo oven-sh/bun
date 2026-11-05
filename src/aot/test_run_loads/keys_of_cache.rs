@@ -1,5 +1,3 @@
-//! What the keys say under which a file takes entries out of the table of loaded modules, `require.cache` and `Module._cache`, and under which it stores entries there.
-
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, Parent, SymbolId};
@@ -15,7 +13,6 @@ use crate::builtins::{KeyOfModuleCache, ResolvedBuiltins, RuntimeModule};
 use crate::diagnostics::range_of_node;
 use crate::load::contents::load_names::find_entry_that_require_looks_for;
 
-/// `const path = require.resolve("./a"); delete require.cache[path];`. `None`: nobody can read the key.
 fn find_file_of_key(request: &FinishedFile<'_, '_>, key: KeyOfModuleCache) -> Option<FileOfKey> {
     let &FinishedFile {
         hir,
@@ -28,7 +25,6 @@ fn find_file_of_key(request: &FinishedFile<'_, '_>, key: KeyOfModuleCache) -> Op
         KeyOfModuleCache::Computed(key) => key,
     };
     let mut key = hir.skip_type_assertions(key);
-    // `const a = b, b = a` leads round.
     let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::new();
     loop {
         if let FoldedValue::Constant(Constant::String(path))
@@ -60,19 +56,15 @@ fn find_file_of_key(request: &FinishedFile<'_, '_>, key: KeyOfModuleCache) -> Op
     }
 }
 
-/// A text that hangs on where the load has found a name, so only whoever joins the files can read it: `dirname(require.resolve("react-dom")) + sep`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TextOfRun {
     Text(Atom),
-    /// `require.resolve("react-dom")`: the place of the call in `FileAnalysis::import_sites`.
     PathOfSite(u32),
     Dirname(Box<TextOfRun>),
     Concatenation(Box<[TextOfRun; 2]>),
-    /// `sep` of `node:path`
     Separator,
 }
 
-/// `led_here`: the names whose values hold `text`. `var a = b + "x", b = a + "y"` leads round.
 fn find_text_of_run(
     request: &FinishedFile<'_, '_>,
     text: ExprId,
@@ -132,7 +124,6 @@ fn find_text_of_run(
     }
 }
 
-/// `if (key.startsWith(folder) && ..) delete require.cache[key]`: wherever the key comes from, what is taken out there lies below the folder.
 fn find_start_of_key(request: &FinishedFile<'_, '_>, key: ExprId) -> Option<TextOfRun> {
     let &FinishedFile {
         hir, bound, atoms, ..
@@ -179,7 +170,6 @@ fn find_start_of_key(request: &FinishedFile<'_, '_>, key: ExprId) -> Option<Text
             _ => return None,
         }
     };
-    // Up to the function or the file around the place.
     while let Parent::Stmt(parent) = bound.parent_of_stmt(statement)
         && parent.is_some()
     {
@@ -194,8 +184,6 @@ fn find_start_of_key(request: &FinishedFile<'_, '_>, key: ExprId) -> Option<Text
     None
 }
 
-/// `delete require.cache[path.join(root, platform, "audio-capture.node")]`: folding knows how the key ends, so what is taken out is a file whose path ends so.
-/// False: of some text that the key may be nothing is known.
 fn note_parts_of_key(request: &FinishedFile<'_, '_>, key: ExprId, found: &mut LoadsOfFile) -> bool {
     let &FinishedFile {
         analysis, atoms, ..
@@ -221,7 +209,6 @@ fn note_parts_of_key(request: &FinishedFile<'_, '_>, key: ExprId, found: &mut Lo
     true
 }
 
-/// `require.cache[key] = entry`, `[require.cache[key]] = []`, `(require.cache[key] as unknown) &&= null`. Not `delete require.cache[key]`.
 fn is_stored_under(hir: &File<'_>, bound: &Bound<'_>, key: ExprId) -> bool {
     let Parent::Expr(entry) = bound.parent_of_expr(key) else {
         return false;
@@ -238,8 +225,6 @@ fn is_stored_under(hir: &File<'_>, bound: &Bound<'_>, key: ExprId) -> bool {
     bound.get_assignment_target(hir, target).is_some()
 }
 
-/// `ResolvedBuiltins::keys_taken_out_of_module_cache`: a deletion and a store both take the entry of a file out, and a store may leave an entry that answers `require()`
-/// of a module of the library. `find_library_modules_stored_in_cache` has the keys that are spelled.
 pub(super) fn look_at_keys(
     request: &FinishedFile<'_, '_>,
     builtins: &ResolvedBuiltins,
@@ -284,7 +269,6 @@ pub(super) fn look_at_keys(
         }
         let texts = match file {
             Some(FileOfKey::Path(_)) => continue,
-            // `require.resolve` answers the name of a Node.js module as it is asked.
             Some(FileOfKey::Site(site)) => &analysis.import_sites[site as usize].specifier,
             None => {
                 (analysis.find_key_stored_in_cache(written)).unwrap_or(&ImportSpecifier::Unknown)
@@ -309,8 +293,6 @@ fn find_module_stored_under(key: &[u8]) -> Option<RuntimeModule> {
     (looked_under == key).then_some(module)
 }
 
-/// `require.cache[Buffer.from("75726c", "hex").toString()] = { exports: fake }`: from then on `require("url")` answers with what the entry exports.
-/// The modules of the library under whose key one of `keys` may be, each a start and an end, or a whole text. By registry id, each once.
 pub(super) fn find_library_modules_that_entries_may_answer(
     atoms: &Interner<'_>,
     keys: &[(Atom, Option<Atom>)],

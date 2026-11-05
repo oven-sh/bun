@@ -1,6 +1,3 @@
-//! A `const` that a file exports holds one value from the moment it is initialized. Where folding the exporting file finds that value, the files that
-//! import the name are folded with it, so a branch that it decides loads nothing. What such a file exports in turn may then be a constant too.
-
 use super::*;
 use crate::bind::{Binding, BindingInitializer, BindingKind};
 use crate::fold::{Constant, FoldedValue};
@@ -12,12 +9,9 @@ use std::sync::Arc;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Export {
-    /// The build does not follow the name to what it holds.
     Unknown,
-    /// The way to the name leads through a file without side effects that nobody asks for anything.
     NotLoaded,
     Missing,
-    /// Two `export *` of a file give the name two meanings, so nobody can import it and no namespace object has it.
     Ambiguous,
     Variable {
         file: u32,
@@ -44,32 +38,19 @@ impl Export {
     }
 }
 
-/// What one look at the names leaves for the next, which asks only where an answer can have changed.
 #[derive(Default)]
 pub(super) struct NamesLookedUp {
-    /// The files that were parsed or folded since.
     parsed_since: Vec<u32>,
-    /// Those of them that mock a file.
     mocking_since: Vec<u32>,
-    /// Those of them with a statement or a call of `CodeTarget::has_type_of_shared_kind`.
     with_shared_types_since: Vec<u32>,
-    /// A file, and a file that reads a variable of it under a name. A file that is asked again enters its pairs again.
     readers: Vec<(u32, u32)>,
-    /// How many `readers` there were when each last stood there once.
     reader_count_without_repeats: usize,
     replacements: FxHashMap<u32, u32>,
     file_count_of_replacements: usize,
-    /// The files that a test mocks. An importer reads what the mock stores, not what the file declares.
     mocked: FxHashSet<u32>,
-    /// The variables of other files that a mocked file exports again. The mock is stored in them.
     mocked_variables: FxHashSet<(u32, SymbolId)>,
-    /// A test mocks a file under a path that the build does not know.
     mocks_any_file: bool,
-    /// For a path, the forms that statements and calls ask for under a `type` other than "json": `CodeTarget::has_type_of_shared_kind`.
     forms_of_shared_types: FxHashMap<Vec<u8>, Vec<u32>>,
-    /// The forms of a path that has two. All the statements get the one that the loader comes to first, and which that is shows when every file is
-    /// there: `share_modules_among_types`. Until then nobody knows what a statement that names one of them reads. Where an `import()` asks for one of them
-    /// nobody knows it behind that either: the call may run in front of the statement, and then the statement gets the form of the call.
     forms_that_share_a_module: FxHashSet<u32>,
 }
 
@@ -94,7 +75,6 @@ impl NamesLookedUp {
         }
     }
 
-    /// Call behind a look, which asks a file once.
     fn drop_repeated_readers(&mut self) {
         if self.reader_count_without_repeats == 0 {
             self.reader_count_without_repeats = self.readers.len();
@@ -106,13 +86,9 @@ impl NamesLookedUp {
     }
 }
 
-/// The `export *` statements of a file that pass names on, and behind which of them a name can be found.
 #[derive(Default)]
 struct Stars {
-    /// In their order, each with whether the build fails to see every name behind it.
     statements: Vec<(StmtId, bool)>,
-    /// For a name that a file behind a statement exports, twice the index of the first such statement, and one more where a later one may have it too.
-    /// Empty where there is one statement and so nothing to choose: in a row of files, each with a star over the one before, the lists are the square of the row.
     first_with_name: FxHashMap<Atom, u32>,
 }
 
@@ -130,11 +106,9 @@ struct Exports<'w, 's, 'r> {
     mocks_any_file: bool,
     forms_that_share_a_module: &'w FxHashSet<u32>,
     resolved: FxHashMap<(u32, Atom), Option<Export>>,
-    /// By file. Every thread computes the same value for a file.
     stars: &'w [OnceLock<Arc<Stars>>],
     files_with_stars_in_progress: Vec<u32>,
     first_targets_of_sites: RefCell<FxHashMap<u32, Vec<u32>>>,
-    /// The files whose variables the names of the file in hand lead to.
     files_read: Vec<u32>,
 }
 
@@ -285,18 +259,15 @@ impl<'s> Exports<'_, 's, '_> {
         }
     }
 
-    /// The `export *` statements of a file for whose names `resolve` finds something other than `Missing`. `None`: any name may be one.
     fn stars_of_file_with_known_names(&mut self, file: u32) -> Option<Arc<Stars>> {
         let parsed = self.files[file as usize].parsed.as_ref()?;
         let is_module = parsed.code.analyzed.analysis.module_format == ModuleFormat::Esm;
         if !is_module || parsed.parse.hir.has_errors {
             return None;
         }
-        // In a circle of `export *` a name that nobody exports is unknown.
         self.stars_of(file).filter(|stars| stars.sees_every_name())
     }
 
-    /// The names for which `resolve` finds something other than `Missing` in the file. `None`: any name may be one.
     fn names_found_in(&mut self, mut file: u32) -> Option<Vec<Atom>> {
         let files = self.files;
         let mut names = Vec::new();
@@ -315,7 +286,6 @@ impl<'s> Exports<'_, 's, '_> {
         }
     }
 
-    /// `None`: the statements of the file are being looked at.
     fn stars_of(&mut self, file: u32) -> Option<Arc<Stars>> {
         if let Some(known) = self.stars[file as usize].get() {
             return Some(Arc::clone(known));
@@ -359,7 +329,6 @@ impl<'s> Exports<'_, 's, '_> {
         if self.files[file as usize].parsed.is_none() {
             return Export::Unknown;
         }
-        // Behind every other statement the name is missing.
         let Some(stars) = self.stars_of(file) else {
             return Export::Unknown;
         };
@@ -385,11 +354,9 @@ impl<'s> Exports<'_, 's, '_> {
         found
     }
 
-    /// `ResolveExport`
     fn resolve(&mut self, file: u32, name: Atom) -> Export {
         match self.resolved.get(&(file, name)) {
             Some(&Some(export)) => return export,
-            // The name is passed round in a circle.
             Some(None) => return Export::Unknown,
             None => {}
         }
@@ -423,7 +390,6 @@ impl<'s> Exports<'_, 's, '_> {
             || self.mocked_variables.contains(&(file, symbol))
     }
 
-    /// `None`: the file exports names that the build does not see.
     fn find_variables_exported_again(&mut self, file: u32) -> Option<Vec<(u32, SymbolId)>> {
         let parsed = self.files[file as usize].parsed.as_ref();
         let format = parsed.map(|it| it.code.analyzed.analysis.module_format);
@@ -469,12 +435,10 @@ impl<'s> Exports<'_, 's, '_> {
             Export::Variable {
                 value: Some(value), ..
             } => value,
-            // Nobody asks because what the value decides left no other read.
             Export::NotLoaded => {
                 let mut known = self.files[file as usize].imported_constants.iter();
                 return known.find(|constant| constant.name == name).copied();
             }
-            // What a namespace object answers for a name that its module does not export is the object's affair: the host keeps names above it.
             Export::Missing
             | Export::Ambiguous
             | Export::Variable { value: None, .. }
@@ -547,7 +511,6 @@ fn find_mocked_files(exports: &Exports<'_, '_, '_>, files: &[u32]) -> Vec<u32> {
     mocked
 }
 
-/// `import text from "./a.txt" with { type: "text" }` loads a form of the file. The loader of `bun run` keeps it under the path of the file, where a mock finds it.
 fn find_forms_of_mocked_files(
     files: &[WalkedFile<'_, '_>],
     mocked_before: &FxHashSet<u32>,
@@ -573,8 +536,6 @@ fn find_forms_of_mocked_files(
     forms
 }
 
-/// `import a from "./a.json" with { type: "yaml" }` beside `import b from "./a.json" with { type: "text" }`, in one file or in two. Returns the forms
-/// that are found to share a module with another. `import("./a.json", { with: { type: "yaml" } })` asks for a form as a statement does.
 fn find_forms_that_share_a_module(
     files: &[WalkedFile<'_, '_>],
     looked_up: &mut NamesLookedUp,
@@ -611,7 +572,6 @@ fn find_forms_that_share_a_module(
     found
 }
 
-/// The code of a file reads what a mock stores in its variables too. Returns the files that were folded, or would be, as if they read what they declare.
 fn find_files_stored_by_mocks<'s>(
     context: &CodeLoadContext<'_, 's, '_>,
     files: &[WalkedFile<'s, '_>],
@@ -646,7 +606,6 @@ fn find_files_stored_by_mocks<'s>(
     found
 }
 
-/// Each folding knows more than the one before, so there are few. Behind this many a file is folded as if it stood alone.
 const MOST_FOLDINGS_OF_ONE_FILE: u32 = 64;
 
 const FILES_OF_ONE_SHARE: usize = 128;
@@ -660,12 +619,9 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
     let mut parsed = std::mem::take(&mut looked_up.parsed_since);
     let mocking = std::mem::take(&mut looked_up.mocking_since);
     let with_shared_types = std::mem::take(&mut looked_up.with_shared_types_since);
-    // What joins them from here on was looked at when it was parsed.
     let parsed_count = parsed.len();
-    // The files that read a constant of a form are asked again when a second form of its path turns up.
     let forms = find_forms_that_share_a_module(&state.files, &mut looked_up, &with_shared_types);
     parsed.extend(forms);
-    // Which file runs in place of which hangs on the files that are there.
     let mut asks_every_file = false;
     if looked_up.file_count_of_replacements != state.files.len() {
         let replacements = find_files_required_in_place_of_others(context, state);
@@ -674,7 +630,6 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
         looked_up.file_count_of_replacements = state.files.len();
     }
     let stars: Vec<OnceLock<Arc<Stars>>> = state.files.iter().map(|_| OnceLock::new()).collect();
-    // The files that read a constant of a file are asked again when a mock of it turns up.
     let may_mock: Vec<u32> = (mocking.iter().chain(&parsed[parsed_count..]))
         .copied()
         .collect();
@@ -683,7 +638,6 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
     let mocked = mocked.into_iter().chain(forms);
     let newly_mocked: Vec<u32> = mocked.filter(|&it| looked_up.mocked.insert(it)).collect();
     parsed.extend(&newly_mocked);
-    // What a mocked file exports again shows as the files behind it are parsed.
     let mut exports = Exports::new(&state.files, &looked_up, &stars);
     let mut mocked: Vec<u32> = looked_up.mocked.iter().copied().collect();
     mocked.shared_sort_unstable();
@@ -750,7 +704,6 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
         }
         (importers, reads)
     };
-    // The share size doesn't depend on the thread count, so every machine gets the same result.
     let shares: Vec<&[u32]> = asked.chunks(FILES_OF_ONE_SHARE).collect();
     let answers: Vec<Guarded<_>> = shares.iter().map(|_| Guarded::new(None)).collect();
     context.host.parallel(shares.len(), &|share| {

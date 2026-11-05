@@ -172,12 +172,10 @@ impl TestUnit {
         }
     }
 
-    /// With tables of its own. `finish` ends it.
     pub(super) fn new(file: FileId) -> TestUnit {
         TestUnit::with_fragment(file, FragmentBuilder::alone(file))
     }
 
-    /// Writes under the tables of `task`, after the files that the task has already visited. `finish_in` ends it.
     pub(super) fn new_in(file: FileId, task: &mut TaskState) -> TestUnit {
         TestUnit::with_fragment(file, FragmentBuilder::new(file, task))
     }
@@ -406,7 +404,6 @@ pub(super) fn finish_unit(projects: &Projects<'_, '_>, fragment: FragmentBuilder
     unit_in(projects, ProjectId::Application, fragment)
 }
 
-/// One unit of the application per file, filled by `fill`. The files in one list share tables, like the files that one task of the checker visits.
 pub(super) fn units_in_tasks(
     projects: &Projects<'_, '_>,
     tasks: &[&[FileId]],
@@ -433,7 +430,6 @@ pub(super) fn create_runtime_function(id: u32, function: FunctionId) -> RuntimeF
     }
 }
 
-/// What `link` holds once it has chosen the definitions.
 pub(super) struct Prepared<'a> {
     pub units: Vec<LinkUnit>,
     pub tables: Vec<LinkTables>,
@@ -487,7 +483,6 @@ pub(super) fn prepare<'a>(mut units: Vec<LinkUnit>, projects: &Projects<'a, '_>)
     }
 }
 
-/// The program lists its functions. `Linked::functions` holds the same functions, also in the program's ids, and no tables.
 pub(super) fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     let in_parallel = input.in_parallel;
     let mut linked = super::link(input)?;

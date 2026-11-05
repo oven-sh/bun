@@ -64,8 +64,6 @@ impl Reference {
     }
 }
 
-/// Each list is indexed by the id a record has in one set of tables and holds that record's id in the program.
-/// `None`: the program has no such record.
 #[derive(Copy, Clone)]
 pub struct IdMap<'a> {
     pub strings: &'a [Option<StringId>],

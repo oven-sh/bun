@@ -565,7 +565,6 @@ fn table_of_distinct_types_finds_each_type() {
     interned.union(object, literal);
     interned.intern(array_of(object));
     interned.intern(Type::environment(layout(3)));
-    // More than one task hashes them.
     for maximum in 1..10_000 {
         interned.intern(Type::integers(0, maximum));
     }

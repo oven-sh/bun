@@ -68,7 +68,6 @@ fn write_witness(
 
 type ReachableFeature<'a> = (Feature, &'a FeatureUseRecord);
 
-// A feature that no code names, that --trim removes, and that a place in the program can still reach.
 fn find_removed_but_reachable<'a>(
     input: &ReportInput<'a>,
     positions: &mut Positions<'_>,
@@ -224,7 +223,6 @@ fn locale_line(input: &ReportInput<'_>, positions: &mut Positions<'_>) -> Report
     }
     let requirements = input.decision.map_or(&[][..], |it| &it.requirements);
     match &input.used_features.locales {
-        // Unseen code can ask for any locale, so the plan ignores the list and keeps them all.
         UsedLocales::Listed(_) if can_run_unseen_code(input.used_features, requirements) => {
             let why = b"code loaded at run time could use any";
             entry_at(line_from(&[b"locales: all, because ", why]), None)
@@ -306,7 +304,6 @@ fn write_reachable(
     position
 }
 
-// A name that the program can write says more than the name of a class that only the engine has. The records of a feature are in no order that means anything.
 fn record_with_written_name<'a>(
     records: &'a [FeatureUseRecord],
     first: &'a FeatureUseRecord,

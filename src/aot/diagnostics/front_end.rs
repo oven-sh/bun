@@ -91,8 +91,6 @@ impl Diagnostics {
         let mut locator = SpanLocator::new(view);
         let mut files_with_syntax_errors = Vec::new();
         for failure in modules.errors().iter().chain(modules.failures()) {
-            // The build stops here, before the check that reports syntax errors. A file that does not parse exports
-            // little, so its syntax errors say why the name is missing.
             if let ModuleFailureKind::ExportNotFound { exporter, .. } = failure.kind
                 && let ModuleRef::File(exporter) = exporter
                 && failure.effect() == FailureEffect::StopsBuild
@@ -134,7 +132,6 @@ impl Diagnostics {
                 ModuleFailureKind::ExportAmbiguous { name, .. } => {
                     Diagnostic::new(Code::AmbiguousExport, span, &[atoms.bytes(name)])
                 }
-                // The run throws if the name is missing. Either only the run can tell, or the module may fail where it is loaded.
                 ModuleFailureKind::ExportMayBeAbsent { .. } => continue,
             };
             diagnostic.severity = match failure.effect() {
@@ -175,7 +172,6 @@ impl Diagnostics {
     }
 
     pub(crate) fn add_incomplete_files(&mut self, incomplete: &[Incomplete]) {
-        // Whatever walks a tree that is deeper may run out of stack: that is the program's doing, and no fault of the compiler.
         const DEEPEST_THAT_MUST_BE_WALKED: u32 = 2000;
         for file in incomplete {
             let path = to_native(&file.path);
@@ -243,12 +239,10 @@ pub(crate) fn code_of_failure(failure: CodeFailure) -> Code {
     }
 }
 
-/// What keeps a file from being compiled. `/** @import Foo#bar */`: a mistake in a comment of a JavaScript file does not.
 pub(crate) fn syntax_errors_of<'a>(hir: &'a File<'_>) -> impl Iterator<Item = &'a hir::Diagnostic> {
     hir.syntax_errors()
 }
 
-/// What the first fold error of the file says, with ` (line:column)`. `None`: it has none.
 pub(crate) fn describe_first_fold_error(
     view: ProgramView<'_, '_>,
     file: FileId,

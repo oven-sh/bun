@@ -51,7 +51,6 @@ pub(super) fn destructure_array(
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // The state holds [[Done]]: a finished iterator steps to (true, undefined) and is not closed.
     fn emit_pattern_step(&mut self, iterator: ValueId, position: u32, index: u32) -> IteratorStep {
         self.set_position(position);
         self.emit_iterator_step(iterator, IteratorKind::Sync, Some(index))

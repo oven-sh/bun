@@ -8,21 +8,17 @@ use bun_sema::hir::{self, ExprId, ExprKind, PropId, PropKey, PropKind, Span, Stm
 use bun_sema::program::Files;
 use bun_sema::util::SharedSort;
 
-/// A getter of the object that one of Bun's own modules exports: `get WriteStream() { .. }` in the literal, or `Object.defineProperty(assert, "AssertionError", { get() { .. } })`.
 #[derive(Default)]
 pub struct DeferredExports {
-    /// In the order of the registry, and of the bytes.
     names: Vec<(u32, Box<[u8]>)>,
 }
 
-/// The native modules that mirror an object of the host, which makes most of its members at their first read: `process.stdout` loads `node:stream`.
 const MODULES_THAT_MIRROR_AN_OBJECT: [RuntimeModule; 3] = [
     RuntimeModule::NodeModule,
     RuntimeModule::NodeProcess,
     RuntimeModule::Bun,
 ];
 
-/// The host reads an export of such a module off the object when something first asks for the name.
 pub(super) fn mirrors_an_object(module: RuntimeModule) -> bool {
     MODULES_THAT_MIRROR_AN_OBJECT.contains(&module)
 }
@@ -73,11 +69,9 @@ impl LibraryModule<'_, '_> {
         let Some(exported) = exported else {
             return Vec::new();
         };
-        // `export default { .. }`
         let ExprKind::Ident(_) = hir[exported].kind else {
             return self.find_getters_of_literal(self.as_literal(exported));
         };
-        // `export default a`
         let Binding::Symbol(symbol) = self.bound.binding(exported) else {
             return Vec::new();
         };
@@ -116,7 +110,6 @@ impl LibraryModule<'_, '_> {
             .collect()
     }
 
-    // `Object.defineProperty(a, "name", { get() { .. }, .. })` as a statement of the module.
     fn find_defined_getter(&self, exported: SymbolId, statement: ExprId) -> Option<Atom> {
         let hir = self.hir;
         let ExprKind::Call(call) = hir[hir.skip_type_assertions(statement)].kind else {

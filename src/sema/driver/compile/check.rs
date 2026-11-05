@@ -37,8 +37,6 @@ pub fn check_and_lower<'s, T: Send>(
     )
 }
 
-/// What a check of the whole of each file reports, whatever its effect on a build would be. No build asks for it: a test does, to see
-/// what the checker makes of a program.
 pub fn check_whole_files<'s>(
     loaded: &LoadedProgram<'s>,
     host: &dyn Host,
@@ -68,19 +66,14 @@ pub fn check_whole_files<'s>(
     )
 }
 
-/// The files are lowered in so many passes, in program order, each with a checker that knows nothing yet.
 pub struct Passes<'a> {
     pub count: PassCount,
-    /// Called between two passes, when the types and signatures of the pass before mean nothing any more.
     pub before_next: &'a (dyn Fn() + Sync),
 }
 
 #[derive(Copy, Clone)]
 pub enum PassCount {
-    /// Whatever the files are like.
     Exactly(usize),
-    /// A second pass takes time and saves memory. So there is one where the files hold no more text than this, and two above it,
-    /// unless a pass would wait for its largest file: see `passes_that_wait_for_no_file`.
     TwoAboveBytesOfText(u64),
 }
 
@@ -98,7 +91,6 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     let files = loaded.files();
     let is_left_out = |file: FileId| is_left_out(request, file);
     let is_checker_renewed = AtomicBool::new(false);
-    // Lowering asks the checker of its task what the first early error of a file says, also where the roles were decided by it.
     let requested = |file: FileId| match is_left_out(file) {
         true => Requested::Types,
         false => requested_diagnostics(loaded.origin(file), request.code.looks_for_type_errors),
@@ -229,10 +221,6 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     }
 }
 
-// A file is lowered by one thread, and a pass ends when its last file is lowered. Where the largest file is more than a thread's share
-// of a pass, the threads wait for it at the end of its pass with nothing to do, while the files of the next pass lie there. So there
-// are at most as many passes as leave each thread a share of the size of the largest file. The number of threads is fixed, not the
-// machine's: where the checker's limit is met, the passes decide what a program's types are, and those may not depend on the core count.
 const THREADS_OF_A_PASS: usize = 16;
 
 fn passes_that_wait_for_no_file(files: &Files<'_>, to_check: &[FileId], most: usize) -> usize {
@@ -245,9 +233,6 @@ fn passes_that_wait_for_no_file(files: &Files<'_>, to_check: &[FileId], most: us
     (sizes().sum::<usize>() / (largest * THREADS_OF_A_PASS)).clamp(1, most.max(1))
 }
 
-// The files in program order, cut into `count` parts of about as many bytes of text. What a file of one part refers to in another part
-// the checker of its pass works out again, so each cut falls, within a sixth of a part's share to either side, where the fewest
-// references go across it.
 fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Vec<Vec<FileId>> {
     if count < 2 || to_check.len() < 2 {
         return vec![to_check];
@@ -256,7 +241,6 @@ fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Ve
     for (position, &file) in (0u32..).zip(&to_check) {
         position_of[file.idx()] = position;
     }
-    // At `n`: how many more references go across a cut in front of the file at `n` than across one in front of the file before it.
     let mut changes = vec![0i64; to_check.len() + 1];
     let mut sizes_so_far = Vec::with_capacity(to_check.len() + 1);
     let mut so_far = 0usize;
@@ -309,13 +293,11 @@ fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Ve
     parts
 }
 
-// None of its statements is compiled, also where it is lowered for its place among the modules.
 fn is_left_out(request: &CompileRequest<'_, '_>, file: FileId) -> bool {
     let left_out = bodies_left_out_of_check(request);
     left_out.is_some_and(|left_out| left_out.contains_file(file))
 }
 
-/// Whoever looks for type errors looks at all that is written, also at what no build compiles.
 fn bodies_left_out_of_check<'a>(request: &CompileRequest<'a, '_>) -> Option<&'a LeftOutBodies> {
     match request.code.looks_for_type_errors {
         true => None,

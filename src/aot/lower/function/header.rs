@@ -94,7 +94,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The function makes the array itself, so nothing tests that it is one. What an array type says it holds is expected.
     fn compute_rest_position(&mut self, position: DeclaredType) -> DeclaredType {
         let types = &mut self.fragment.types;
         let declared = types.without_primitives(position.ty, Primitives::NULLISH);
@@ -228,7 +227,6 @@ fn create_source_header(
     let key = FunctionKey::Source(source);
     let declared = file.function_positions(function);
     let kind = file.compute_function_kind(function);
-    // A constructor begins where its parameters start: JSC shows the frame of a class that is called without `new` there.
     let position = match kind {
         FunctionKind::BaseConstructor | FunctionKind::DerivedConstructor => {
             file.parameters_position(function)
@@ -241,7 +239,6 @@ fn create_source_header(
         Some(FramesMark::Hidden) => header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES,
         None => {}
     }
-    // JSC records no positions in a function that is written inside a built-in function.
     if header.enclosing_runtime_function.is_some()
         || header
             .syntax
@@ -301,8 +298,6 @@ fn create_source_header(
     header
 }
 
-/// `bun run` has some functions of the library inside a built-in function, whose frames are native code, where an executable has them in a module.
-/// The first statement of such a function says how a stack trace lists it.
 fn find_frames_mark(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> Option<FramesMark> {
     let hir = file.hir;
     if file.source.dialect() == SourceDialect::Runtime

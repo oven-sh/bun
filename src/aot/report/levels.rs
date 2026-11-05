@@ -10,7 +10,6 @@ pub(super) const ASCENDING_LEVELS: [KnowledgeLevel; KnowledgeLevel::COUNT] = [
     KnowledgeLevel::Proven,
 ];
 
-// The word of a record in which the engine's `AOTExplainRecords.cpp` counts a level.
 const fn rank_of(level: KnowledgeLevel) -> usize {
     match level {
         KnowledgeLevel::Unknown => 0,
@@ -81,7 +80,6 @@ impl CostCounts {
         }
     }
 
-    // The engine counts a cost in the word that has the number of the enumerator.
     pub fn get(&self, cost: AccessCost) -> u64 {
         self.counts[cost as usize]
     }

@@ -51,7 +51,6 @@ impl BuiltinEntry {
         self.dependencies().implemented_by
     }
 
-    /// What hangs on the operands of the entry, or on what is done with a value that it hands out.
     pub fn guessed_functions(&self) -> &'static [RuntimeFunction] {
         self.dependencies().guessed
     }
@@ -76,7 +75,6 @@ pub fn namespace_of(module: RuntimeModule) -> BuiltinId {
     module_data(module).namespace
 }
 
-/// `bun run` replaces `import * as ns from "bun"` by `var ns = globalThis.Bun` and `import("bun")` by `Promise.resolve(globalThis.Bun)`.
 pub fn object_replacing_namespace(module: RuntimeModule) -> Option<BuiltinId> {
     let data = module_data(module);
     let is_replaced = data.flags.contains(ModuleFlags::HAS_OPEN_NAMESPACE);
@@ -105,7 +103,6 @@ pub fn own_member(holder: BuiltinId, name: BuiltinName) -> Option<BuiltinId> {
     Some(span[position])
 }
 
-/// What the export `name` holds in the module whose `require` answers `module_object`.
 pub fn find_export(module_object: BuiltinId, name: BuiltinName) -> ExportLookup {
     if let Some(module) = entry(module_object).module.map(module_data) {
         if module.exports_held_by_namespace.contains(&name) {
@@ -147,7 +144,6 @@ pub fn canonical_id(id: BuiltinId) -> BuiltinId {
     entry(id).same_object_as.unwrap_or(id)
 }
 
-/// `vi.resetModules()`, `jest.resetModules()`: every file that has loaded loads again, as behind a `delete` under each key of `require.cache`.
 pub fn resets_modules(id: BuiltinId) -> bool {
     matches!(
         canonical_id(id),
@@ -157,7 +153,6 @@ pub fn resets_modules(id: BuiltinId) -> bool {
     )
 }
 
-/// `jest.useFakeTimers()`: the runner stores functions of its own in the place of the timers.
 pub fn fakes_timers(id: BuiltinId) -> bool {
     matches!(
         canonical_id(id),
@@ -167,7 +162,6 @@ pub fn fakes_timers(id: BuiltinId) -> bool {
     )
 }
 
-/// `vi.stubGlobal(name, value)` defines `globalThis[name]`.
 pub fn stubs_global(id: BuiltinId) -> bool {
     matches!(
         canonical_id(id),
@@ -175,14 +169,12 @@ pub fn stubs_global(id: BuiltinId) -> bool {
     )
 }
 
-/// `expect.extend(matchers)` puts a function of its own under each name of `matchers` on all three: `Expect::extend()` in src/runtime/test_runner/expect.rs.
 pub const HOLDERS_OF_MATCHERS: [BuiltinId; 3] = [
     BuiltinId::Expect,
     BuiltinId::ExpectPrototype,
     BuiltinId::ExpectStaticPrototype,
 ];
 
-/// Start-up makes the place and every object on the way to it immutable.
 pub fn is_locked(id: BuiltinId) -> bool {
     let mut next = Some(id);
     while let Some(place) = next {
@@ -246,7 +238,6 @@ pub fn specifier_of(module: RuntimeModule) -> &'static [u8] {
     module_data(module).specifier.as_bytes()
 }
 
-/// `fs` for `node:fs`. `None`: the specifier of the module does not begin with `node:`.
 pub fn name_without_node_prefix(module: RuntimeModule) -> Option<&'static [u8]> {
     specifier_of(module).strip_prefix(b"node:")
 }
@@ -254,7 +245,6 @@ pub fn name_without_node_prefix(module: RuntimeModule) -> Option<&'static [u8]> 
 #[cfg(feature = "linked_names")]
 fn text_of_text_name(index: usize) -> &'static [u8] {
     unsafe extern "C" {
-        /// `BuiltinTextStorage` of AOTBuiltinTable.h: the number of texts, where each starts, then the texts, each with a zero behind it.
         #[link_name = "builtinTableTextNames"]
         static TEXT_NAMES: u32;
     }
@@ -282,7 +272,6 @@ pub fn text_of_name(name: BuiltinName) -> &'static [u8] {
         [SYMBOL_NAME_TEXT_STARTS[index] as usize..SYMBOL_NAME_TEXT_STARTS[index + 1] as usize]
 }
 
-/// Whether native code puts a property under `name` on some object: a member of a built-in object, or what a constructor or a function defines on a new instance, on its result or on an operand.
 pub fn is_stored_by_native_code(name: BuiltinName) -> bool {
     let index = name.0 as usize;
     NAMES_STORED_BY_NATIVE_CODE[index / 8] >> (index % 8) & 1 != 0
@@ -292,7 +281,6 @@ pub fn is_symbol_name(name: BuiltinName) -> bool {
     name.0 as usize >= TEXT_NAME_COUNT
 }
 
-/// The texts of the names that are no symbols ascend.
 pub fn find_name(text: &[u8]) -> Option<BuiltinName> {
     let (mut low, mut high) = (0, TEXT_NAME_COUNT);
     while low < high {
@@ -378,12 +366,10 @@ pub fn host_reads(context: HostReadContext) -> impl Iterator<Item = &'static Hos
         .filter(move |read| read.context == context)
 }
 
-/// Whether `builtin`, which is a canonical id, makes its answer out of text or bytes, and may make it with the layouts of the type that the answer is written under.
 pub fn is_parser(builtin: BuiltinId) -> bool {
     PARSERS.binary_search(&builtin).is_ok()
 }
 
-/// Whether `builtin`, which is a canonical id, answers a query that settles to rows.
 pub fn answers_query(builtin: BuiltinId) -> bool {
     QUERY_FUNCTIONS.binary_search(&builtin).is_ok()
 }

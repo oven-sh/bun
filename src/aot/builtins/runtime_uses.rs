@@ -13,9 +13,7 @@ mod tests;
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct RuntimeUses {
     pub modules: Box<[RuntimeModule]>,
-    /// Those of `modules` off which native code may read any export.
     pub modules_read_whole: Box<[RuntimeModule]>,
-    /// What native code reads off the others. A module that is in neither list is only evaluated.
     pub exports_read: Box<[(RuntimeModule, &'static str)]>,
     pub functions: Box<[RuntimeFunction]>,
 }
@@ -24,7 +22,6 @@ struct Collected {
     modules: DynamicBitSet,
     modules_read_whole: DynamicBitSet,
     exports_read: Vec<(RuntimeModule, &'static str)>,
-    /// By row of `table::runtime_functions()`: the numbers of functions are far apart.
     functions: DynamicBitSet,
 }
 
@@ -34,21 +31,17 @@ struct Collector {
     work_stack: Vec<BuiltinId>,
     collected: Collected,
     has_unknown_module_loader: bool,
-    /// Nothing is looked for above an object of the host: `RuntimeUses::of_every_program`.
     assumes_language_is_held: bool,
 }
 
-/// What `Collector::walk_reachable_entries` collects from one entry. Each file asks about the same few entries.
 struct Reached {
     modules: Box<[RuntimeModule]>,
     modules_read_whole: Box<[RuntimeModule]>,
     exports_read: Box<[(RuntimeModule, &'static str)]>,
-    /// Rows of `table::runtime_functions()`.
     functions: Box<[u32]>,
     has_unknown_module_loader: bool,
 }
 
-/// `id` is canonical.
 fn reached_from(
     id: BuiltinId,
     platform: Platforms,
@@ -93,7 +86,6 @@ fn reached_from(
 const UNKNOWN_MODULE_LOADERS: BuiltinFlags =
     BuiltinFlags::LOADS_MODULE_BY_NAME.union(BuiltinFlags::RUNS_UNSEEN_CODE);
 
-// The compiler calls its own functions where it sees fit, and a model stands for native code.
 fn is_called_without_a_name(role: RuntimeFunctionRole) -> bool {
     matches!(
         role,
@@ -149,7 +141,6 @@ impl Collected {
             .retain(|(module, _)| !is_read_whole(module));
         self.exports_read.shared_sort_unstable();
         self.exports_read.dedup();
-        // In the order of the table, which is that of the numbers.
         let rows = table::runtime_functions();
         let mut set_rows = self.functions.iterator::<true, true>();
         let functions = std::iter::from_fn(|| set_rows.next())
@@ -212,12 +203,10 @@ impl Collector {
             self.add_module(module);
         }
         self.add_functions(table::STARTUP_FUNCTIONS);
-        // No program names it: the engine states its rows with those of the start-up.
         self.add_entry(BuiltinId::UndeclaredNativeCode);
         for &id in language_entries_with_code() {
             self.add_entry(id);
         }
-        // Reading an accessor is calling its getter.
         self.add_functions(table::ACCESSOR_FUNCTIONS);
         self.add_functions(table::MODULE_LOADER_FUNCTIONS);
         self.add_functions(table::FUNCTIONS_FOR_ANY_HOST_OBJECT);
@@ -317,7 +306,6 @@ impl Collector {
     }
 }
 
-/// `id`: a canonical id.
 pub fn is_unknown_module_loader(id: BuiltinId) -> bool {
     table::entry(id).flags.intersects(UNKNOWN_MODULE_LOADERS)
 }
@@ -342,17 +330,14 @@ pub fn reaches_unknown_module_loader(
             ends.any(reaches_loader)
         })
     };
-    // A load makes the object of the module. Where that is a constructor, as that of `node:module` is, nothing has been constructed.
     loaded.iter().chain(called).any(is_loader)
         || called.iter().any(class_reaches_loader)
         || exposed.iter().any(|&id| reaches_loader(id))
 }
 
-/// What a piece of source says of the built-ins.
 #[derive(Copy, Clone, Default)]
 pub struct Mentions<'a> {
     pub mentioned: &'a [BuiltinId],
-    /// Those of `mentioned` that are only called, each time with a text that is none of those for which the entry calls more. They ascend.
     pub called_with_other_texts: &'a [BuiltinId],
     pub exposed: &'a [BuiltinId],
     pub linked_functions: &'a [RuntimeFunction],
@@ -393,7 +378,6 @@ impl Collector {
 }
 
 impl RuntimeUses {
-    /// Whether some of it is a module of the host, which is written with all of the language and of the host at hand.
     pub fn has_module_of_host(&self) -> bool {
         let has_source = |module: &RuntimeModule| {
             (table::module_data(*module).flags).contains(table::ModuleFlags::HAS_SOURCE)
@@ -401,8 +385,6 @@ impl RuntimeUses {
         self.modules.iter().any(has_source)
     }
 
-    /// The code that is reached by values and not by bindings: the language, the helpers of the compiler, what the host loads to print an object with a method of its own,
-    /// and what an open world enters. Facts says which of it runs.
     pub fn of_every_program(platform: Platforms) -> RuntimeUses {
         let mut collector = Collector::new(platform);
         collector.add_what_every_program_holds();

@@ -1,8 +1,3 @@
-//! The code that a file puts together for a Worker out of constants and of its own path:
-//! `"data:text/javascript," + encodeURIComponent('import("' + import.meta.dir + '/job.js")')`, `URL.createObjectURL(new Blob([text]))`, `new Worker(text, { eval: true })`.
-//! Folding knows no path of the run. Nothing is followed out of the file or through what a function of the program's answers.
-//! The run time finds compiled code by the whole text, so a text that the program never makes adds an entry point and takes none away.
-
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
@@ -25,7 +20,6 @@ use crate::load::is_host_path;
 use crate::load::module_paths::with_separators_of_host;
 use crate::module_keys::is_url_with_text;
 
-/// A path that the program has put together, with forward slashes. Elsewhere than on Windows a backslash is part of a name.
 fn without_separators_of_run(path: Vec<u8>, sees_backslashes: bool) -> Vec<u8> {
     match sees_backslashes {
         true => with_forward_slashes(path),
@@ -33,7 +27,6 @@ fn without_separators_of_run(path: Vec<u8>, sees_backslashes: bool) -> Vec<u8> {
     }
 }
 
-/// `path.join()` of node:path, for paths with forward slashes. `None`: a part is written in another way.
 fn join_paths(parts: &[Vec<u8>]) -> Option<Vec<u8>> {
     let written = parts.iter().map(Vec::as_slice);
     let written: Vec<&[u8]> = written.filter(|part| !part.is_empty()).collect();
@@ -68,7 +61,6 @@ fn join_paths(parts: &[Vec<u8>]) -> Option<Vec<u8>> {
     Some(path)
 }
 
-/// `path.dirname()` of node:path, for an absolute path with forward slashes.
 fn find_folder(path: &[u8]) -> Option<&[u8]> {
     if !is_absolute(path) {
         return None;
@@ -86,7 +78,6 @@ fn find_folder(path: &[u8]) -> Option<&[u8]> {
 }
 
 impl ContentsScan<'_, '_> {
-    /// `new Worker(argument, options)`: each text that `argument` may be and that holds the code, or stands for it. `name`: what sema knows of `argument`.
     pub(super) fn add_code_given_to_worker(
         &mut self,
         argument: ExprId,
@@ -120,7 +111,6 @@ impl ContentsScan<'_, '_> {
             }
         }
         for text in texts {
-            // `Worker` of node:worker_threads makes a Blob without a type of the text. The constructor reads what a `data:` URL holds as code, whatever type the URL names.
             if is_evaluated {
                 self.found.texts_behind_object_urls.push((text, None));
             } else if is_url_with_text(atoms.bytes(text)) {
@@ -149,8 +139,6 @@ impl ContentsScan<'_, '_> {
         })
     }
 
-    /// The expressions one of which gives `argument` its value: the arms of `?:`, `||`, `??` and `&&`, what a name is initialized with, what is passed for a parameter.
-    /// A value that nobody knows is left out.
     fn find_values_given(&self, argument: ExprId) -> Vec<ExprId> {
         let &FinishedFile { hir, analysis, .. } = self.request;
         let mut values = Vec::new();
@@ -180,7 +168,6 @@ impl ContentsScan<'_, '_> {
                     right,
                     ..
                 } => pending.push(right),
-                // A text and a URL are what they are awaited as.
                 ExprKind::Await(awaited) => pending.push(awaited),
                 ExprKind::Ident(_) => match self.find_symbol_read(expression) {
                     Some(symbol) => pending.extend(self.find_values_held(expression, symbol)),
@@ -192,7 +179,6 @@ impl ContentsScan<'_, '_> {
         values
     }
 
-    /// What `name` is initialized with where it is never stored to. Of a parameter: what the calls pass for it, where every mention of its function calls the function.
     fn find_values_held(&self, name: ExprId, symbol: SymbolId) -> Vec<ExprId> {
         let &FinishedFile {
             hir,
@@ -212,7 +198,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// The text that `expression` evaluates to each time. A URL object counts as what it says. `names`: the variables that the way here has led through.
     fn find_text(&self, expression: ExprId, names: &mut Vec<SymbolId>) -> Option<Vec<u8>> {
         let &FinishedFile {
             hir,
@@ -221,7 +206,6 @@ impl ContentsScan<'_, '_> {
             ..
         } = self.request;
         let expression = hir.skip_type_assertions(expression);
-        // Whoever asks joins it to a text or writes it into a template.
         match analysis.decisions.constant(hir, expression) {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
                 return match constant {
@@ -265,7 +249,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// String.raw`import("${import.meta.dir}\job.js")`
     fn find_raw_text(&self, tagged: CallId, names: &mut Vec<SymbolId>) -> Option<Vec<u8>> {
         let &FinishedFile { hir, atoms, .. } = self.request;
         let tag = self.find_builtin_named(hir[tagged].callee)?;
@@ -291,7 +274,6 @@ impl ContentsScan<'_, '_> {
         }
         let symbol = self.find_symbol_read(name)?;
         let is_looked_up_at_run_time = bound.dynamic_lookup_scope(NodeData::Expr(name)).is_some();
-        // `const text = "a" + text` leads back to itself.
         if is_looked_up_at_run_time || !bound.is_stable_binding(symbol) || names.contains(&symbol) {
             return None;
         }
@@ -304,7 +286,6 @@ impl ContentsScan<'_, '_> {
         text
     }
 
-    /// `__filename` and `__dirname`: in an executable, where the file lay when the program was built (`Sources::source_path`).
     fn find_source_path(&self, name: ExprId, variable: CommonJsVariable) -> Option<Vec<u8>> {
         let &FinishedFile {
             path,
@@ -340,20 +321,17 @@ impl ContentsScan<'_, '_> {
         builtin.map(table::canonical_id)
     }
 
-    /// The name of the export of `module` that `expression` is.
     fn find_export_of(&self, module: Option<RuntimeModule>, expression: ExprId) -> Option<&[u8]> {
         let expression = self.request.hir.skip_type_assertions(expression);
         let export = self.find_export_named(expression, module?)?;
         Some(self.request.atoms.bytes(export))
     }
 
-    /// Whether the program sees its own paths with backslashes when it runs: `B:\~BUN\root\a.js` in an executable for Windows.
     fn sees_backslashes(&self) -> Option<bool> {
         let path = (self.input.find_path_at_run_time)()?;
         Some(with_separators_of_program(&path) != path)
     }
 
-    /// `sep` of node:path
     fn find_separator(&self, expression: ExprId) -> Option<Vec<u8>> {
         let export = self.find_export_of(worker_builtins().paths, expression)?;
         match export == b"sep" {
@@ -362,7 +340,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// `encodeURIComponent(text)`, `btoa(text)`, a function of node:path or node:url, `url.toString()`
     fn find_text_of_call(&self, call: CallId, names: &mut Vec<SymbolId>) -> Option<Vec<u8>> {
         let &FinishedFile { hir, atoms, .. } = self.request;
         let known = worker_builtins();
@@ -389,7 +366,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// `join(..)`, `resolve(..)` and `dirname(path)` of node:path
     fn find_path_made(
         &self,
         function: &[u8],
@@ -412,7 +388,6 @@ impl ContentsScan<'_, '_> {
         Some(with_separators_of_host(&path, sees_backslashes))
     }
 
-    /// `fileURLToPath(url)` and `pathToFileURL(path)` of node:url
     fn find_text_made_of_url(
         &self,
         function: &[u8],
@@ -432,7 +407,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// `new URL(text)`, `new URL(text, base)`
     fn find_href_of_new_url(&self, call: CallId, names: &mut Vec<SymbolId>) -> Option<Vec<u8>> {
         let hir = self.request.hir;
         if self.find_constructor_called(call) != Some(Constructor::Url) {
@@ -452,11 +426,9 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// `new URL("./job.js", import.meta.url)`, where no parser of URLs need be asked: it escapes nothing in the name. A build without the run time's parser has none.
     fn find_url_of_file_beside(&self, call: CallId) -> Option<Vec<u8>> {
         let name = self.find_file_named_by_own_url(call)?.1;
         let name = self.request.atoms.bytes(name);
-        // The parser of URLs escapes fewer characters than whoever writes `import.meta.url`.
         let is_escaped = write_file_url(&[b"/", name].concat())? != [b"file:///", name].concat();
         if is_escaped {
             return None;
@@ -466,7 +438,6 @@ impl ContentsScan<'_, '_> {
         write_file_url(&resolve_paths(&[folder, name.to_vec()])?)
     }
 
-    /// What the URL object says that `url` is, also under a name: `new URL(..)`, `pathToFileURL(..)`.
     fn find_href(&self, url: ExprId, names: &mut Vec<SymbolId>) -> Option<Vec<u8>> {
         let hir = self.request.hir;
         let makes_url = match hir[self.find_value_under_name(url)].kind {
@@ -480,7 +451,6 @@ impl ContentsScan<'_, '_> {
         makes_url.then(|| self.find_text(url, names))?
     }
 
-    /// `import.meta.path` and what else holds the path of the file, `path.sep`, and `href` and `pathname` of a URL object.
     fn find_text_of_member(&self, member: ExprId, names: &mut Vec<SymbolId>) -> Option<Vec<u8>> {
         let &FinishedFile {
             hir, bound, atoms, ..
@@ -496,7 +466,6 @@ impl ContentsScan<'_, '_> {
         if !matches!(hir[object].kind, ExprKind::ImportMeta) {
             return match name {
                 b"href" => self.find_href(object, names),
-                // As it is written in the URL: what stands there as `%20` stands so in the path too.
                 b"pathname" => {
                     let url = self.find_href(object, names)?;
                     let written = url.strip_prefix(b"file://")?;
@@ -523,8 +492,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// `URL.createObjectURL(new Blob([text, ..], { type }))`, where the URL and the Blob may each stand under a name: each text that the Blob may hold, and the type that is written.
-    /// A list of one part holds whatever the part may be. Of several parts each is one text: one of each of several sets would be their product.
     fn find_texts_behind_object_url(&self, url: ExprId) -> Option<(Vec<Vec<u8>>, Option<Atom>)> {
         let hir = self.request.hir;
         let known = worker_builtins();
@@ -562,7 +529,6 @@ impl ContentsScan<'_, '_> {
         Some((vec![contents], r#type))
     }
 
-    /// Of `{ type: "text/javascript" }`. `None`: nobody knows what the object says.
     fn find_type_of_blob(&self, options: ExprId) -> Option<Option<Atom>> {
         let &FinishedFile { hir, atoms, .. } = self.request;
         let ExprKind::Object(properties) = hir[hir.skip_type_assertions(options)].kind else {

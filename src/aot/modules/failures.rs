@@ -35,19 +35,12 @@ pub enum ModuleFailureKind {
         specifier: Atom,
         reason: CodeFailure,
     },
-    /// What an `import` or `export .. from` names, in a module that only a site which can catch the failure loads.
     UnresolvedAtLoad {
         specifier: Atom,
         reason: CodeFailure,
     },
-    /// The importer is loaded as a program but is not one: only the way it is loaded says that it is a program, or this is a test run, where a file with a mistake fails alone.
-    /// The site is the statement that stands in place of its text.
-    /// Also a file that folding refuses and that may fail where it is loaded. Its tree is its own, and the site names no statement of it.
     NotAProgram {
-        /// Set until `find_unloadable_modules` finds that the file may fail where it is loaded, and gives it a body that throws.
-        /// Nothing throws a record that is made with the flag clear: the file would load as the empty module that stands in its place.
         is_loaded_at_start: bool,
-        /// The build says nothing: only a computed path may find the file, or its name says what it is and the loader says what is wrong with it.
         is_silent: bool,
     },
     ExportNotFound {
@@ -58,8 +51,6 @@ pub enum ModuleFailureKind {
         exporter: ModuleRef,
         name: Atom,
     },
-    /// A name that an ES module imports from a CommonJS module whose body may end without it: only the run knows.
-    /// Also a name that the build knows to be missing or ambiguous, if the importer may fail where it is loaded. `asked_by` is `None` there, even for an `export .. from`.
     ExportMayBeAbsent {
         exporter: ModuleRef,
         name: Atom,
@@ -68,7 +59,6 @@ pub enum ModuleFailureKind {
 }
 
 impl ModuleFailure {
-    /// The module that the importer names and that lacks the name.
     pub fn exporter(&self) -> Option<ModuleRef> {
         match self.kind {
             ModuleFailureKind::ExportNotFound { exporter, .. }
@@ -80,7 +70,6 @@ impl ModuleFailure {
         }
     }
 
-    /// An executable reads no `package.json`, so its resolver answers with whatever file lies at that path.
     pub fn is_refusal_of_package_json(&self) -> bool {
         match self.kind {
             ModuleFailureKind::Unresolved { reason, .. }
@@ -94,7 +83,6 @@ impl ModuleFailure {
         }
     }
 
-    /// `./a.js?again`: `bun run` finds one more module of the file, and an executable holds none. Nothing that the program could throw there is what `bun run` does.
     pub fn is_refusal_of_compiler(&self) -> bool {
         matches!(
             self.kind,
@@ -105,8 +93,6 @@ impl ModuleFailure {
         )
     }
 
-    /// Reads the record alone. Whoever knows that a file may fail where it is loaded, as every file of a test run may, changes the kind of the record.
-    /// That has to happen before `number_failures`: a record that starts to throw takes an id, and the id of every record after it moves up by one.
     pub fn effect(&self) -> FailureEffect {
         match self.kind {
             ModuleFailureKind::Unresolved { .. } if self.is_refusal_of_compiler() => {
@@ -119,14 +105,12 @@ impl ModuleFailure {
                 | SiteForm::GetBuiltinModule
                 | SiteForm::Mock => FailureEffect::ThrowsAtSite,
             },
-            // The link has no record for a name that cannot be bound: `ExportNotFound` and `ExportAmbiguous` are never among the failures that throw.
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: true,
                 ..
             }
             | ModuleFailureKind::ExportNotFound { .. }
             | ModuleFailureKind::ExportAmbiguous { .. } => FailureEffect::StopsBuild,
-            // What throws it: the body of the module that stands in its place, the body of each module whose load it fails, the check of the graph where the imports are linked.
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: false,
                 ..
@@ -155,7 +139,6 @@ pub(super) struct PendingFailure {
     pub failure: ModuleFailure,
 }
 
-/// Where a module writes a specifier, or a name of another module.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct WrittenPart {
     pub order: FailureOrder,
@@ -213,7 +196,6 @@ impl NumberedFailures {
     }
 }
 
-/// An id is the place of a record among those that throw. A list is numbered once, and whoever needs an id asks `id_of` on that result.
 pub(super) fn number_failures(
     file_count: usize,
     mut pending: Vec<(FileId, Vec<PendingFailure>)>,

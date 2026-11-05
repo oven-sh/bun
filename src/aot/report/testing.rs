@@ -90,7 +90,6 @@ impl<'a> ReportFixture<'a> {
 
     pub(super) fn with_input<R>(&self, then: impl FnOnce(&ReportInput<'_>) -> R) -> R {
         let texts = texts();
-        // The ranges of the test's own records count from the start of its text.
         let mut text = self.records.text.to_vec();
         let function_names = FUNCTIONS.map(|(function, module, name)| FunctionNameRecord {
             function,

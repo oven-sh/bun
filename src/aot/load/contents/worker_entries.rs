@@ -31,50 +31,33 @@ use crate::options::PathOptions;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum WorkerNameForm {
-    /// `new Worker("./w.ts")`: read as an entry point is written.
     AsWritten,
-    /// `new URL(c, import.meta.url)`, `join(__dirname, c)`, `import.meta.dir + c`: `FileAnalysis::is_path_from_own_directory`.
     FromOwnFolder,
-    /// `require.resolve(c)`, `import.meta.resolve(c)`: `FileAnalysis::find_resolved_form`.
     Resolved(ResolvedForm),
-    /// `import path from "./w.ts" with { type: "file" }`: the import site.
     EmbeddedFile(u32),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct WorkerStart {
-    /// The `new`.
     pub at: ExprId,
     pub name_node: ExprId,
-    /// `Unknown` only where `is_argument_of_constructor`.
     pub name: ImportSpecifier,
     pub form: WorkerNameForm,
-    /// The first one. Neither a `new URL` that stands alone nor a preload is.
     pub is_argument_of_constructor: bool,
 }
 
 struct WorkerBuiltins {
-    /// The global `Worker`.
     constructor: Option<BuiltinId>,
     name_of_constructor: Option<BuiltinName>,
-    /// The global `URL`.
     url_constructor: Option<BuiltinId>,
-    /// `import.meta.url`
     own_url: Option<BuiltinId>,
     name_of_own_url: Option<BuiltinName>,
-    /// node:worker_threads
     threads: Option<RuntimeModule>,
-    /// `encodeURIComponent`, `btoa`
     encoders: [(Option<BuiltinId>, Encoder); 2],
-    /// The global `Blob`.
     blob_constructor: Option<BuiltinId>,
-    /// `URL.createObjectURL`
     object_url_maker: Option<BuiltinId>,
-    /// `String.raw`
     raw_text_maker: Option<BuiltinId>,
-    /// node:path
     paths: Option<RuntimeModule>,
-    /// node:url
     urls: Option<RuntimeModule>,
 }
 
@@ -117,7 +100,6 @@ enum Constructor {
     Url,
 }
 
-/// Whether what the site asks for is `module`, or may be where the name is computed.
 fn may_load(resolution: SiteResolution<'_>, module: RuntimeModule) -> bool {
     let is_module = |id: Option<HostModuleId>| {
         id.and_then(|id| RuntimeModule::from_registry_id(id.0)) == Some(module)
@@ -129,7 +111,6 @@ fn may_load(resolution: SiteResolution<'_>, module: RuntimeModule) -> bool {
     match resolution {
         SiteResolution::Constant(CodeResolution::File(file)) => is_module(file.host_module),
         SiteResolution::Constant(CodeResolution::HostModule(id)) => is_module(Some(id)),
-        // With --no-builtin-modules no module of the library has an id.
         SiteResolution::Constant(CodeResolution::External {
             specifier,
             kind: ExternalKind::HostValue,
@@ -169,8 +150,6 @@ fn begins_with_scheme(text: &[u8]) -> bool {
     text[0].is_ascii_alphabetic() && text[..end].iter().all(is_of_scheme)
 }
 
-/// Whether a text that is read as a URL against the URL of a file names what the same text names as a path from the folder of that file.
-/// The parser of URLs drops blanks at both ends and control characters, takes `\` for `/`, and whoever reads the path back decodes `%`.
 fn is_plain_relative_path(text: &[u8]) -> bool {
     let (Some(&first), Some(&last)) = (text.first(), text.last()) else {
         return false;
@@ -183,8 +162,6 @@ fn is_plain_relative_path(text: &[u8]) -> bool {
         && !begins_with_scheme(text)
 }
 
-/// `data:text/javascript,..`, `data:application/typescript;base64,..`: a whole `data:` URL whose type is that of a script. An image or a style sheet is no code that a Worker starts from.
-/// `const start = "data:text/javascript,"` holds nothing: the program goes on to add the code.
 pub(super) fn is_url_with_code(text: &[u8]) -> bool {
     let Some(written) = text.strip_prefix(b"data:") else {
         return false;
@@ -236,7 +213,6 @@ impl ContentsScan<'_, '_> {
         self.found.hands_worker_constructor_on |= !self.is_constructed_or_only_tested(expression);
     }
 
-    /// The resolver of built-ins follows no module of the library that is written in JavaScript, so nobody else sees where `Worker` of node:worker_threads goes.
     pub(super) fn look_at_loads_of_worker_threads(&mut self) {
         let &FinishedFile {
             hir,
@@ -335,7 +311,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// Also where the name is looked up at run time, under `with` or beside a direct eval: it may be the global.
     pub(super) fn find_builtin_that_may_be_named(&self, expression: ExprId) -> Option<BuiltinId> {
         match self.builtins.of_expr(expression) {
             Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) => Some(path.id),
@@ -345,7 +320,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// `globalThis.Worker` where `globalThis` is looked up at run time: the resolver of built-ins reads no member off such a name.
     fn find_member_of_dynamic_global(&self, member: ExprId) -> Option<BuiltinId> {
         let &FinishedFile { hir, atoms, .. } = self.request;
         let (object, MemberKey::Name(name)) = hir.member_key(member)? else {
@@ -359,6 +333,34 @@ impl ContentsScan<'_, '_> {
             return None;
         }
         table::global(table::find_name(atoms.bytes(name))?)
+    }
+
+    pub(super) fn look_at_constructions_behind_module_handed_on(&mut self) {
+        let &FinishedFile {
+            hir,
+            bound,
+            analysis,
+            ..
+        } = self.request;
+        if !self.found.hands_worker_constructor_on {
+            return;
+        }
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::New(call) = hir[expression].kind else {
+                continue;
+            };
+            let callee = hir.skip_type_assertions(hir[call].callee);
+            let Some((_, MemberKey::Name(member))) = hir.member_key(callee) else {
+                continue;
+            };
+            if self.is_name_of_worker(member)
+                && !analysis.decisions.is_dead_expr(expression)
+                && bound.parent_of_expr(expression) != Parent::None
+                && self.find_constructor_called(call).is_none()
+            {
+                self.add_start_of_worker(expression, call);
+            }
+        }
     }
 
     fn find_constructor_called(&self, call: CallId) -> Option<Constructor> {
@@ -400,11 +402,8 @@ impl ContentsScan<'_, '_> {
         });
     }
 
-    /// `{ preload: "./first.ts" }`, `{ preload: ["./first.ts", "./second.ts"] }`: the Worker loads those files in front of its own, and reads each text as it reads the one that it starts from.
-    /// The literal may stand under a name, and so may a literal that it spreads and the list. A text too many adds a candidate entry point and never takes one away.
     fn add_preloads(&mut self, construction: ExprId, options: ExprId) {
         let &FinishedFile { hir, atoms, .. } = self.request;
-        // `const options = { ...options }` leads back to itself.
         let mut literals = vec![self.find_value_under_name(options)];
         let mut looked_at = 0;
         while let Some(&literal) = literals.get(looked_at) {
@@ -451,7 +450,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// What a name is initialized with, or the expression itself. Without type assertions.
     fn find_value_under_name(&self, expression: ExprId) -> ExprId {
         let &FinishedFile { hir, bound, .. } = self.request;
         let expression = hir.skip_type_assertions(expression);
@@ -465,10 +463,8 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// sema keeps what it knows of `argument` under the argument as it is written, with its type assertions.
     fn find_name_given_to_worker(&self, argument: ExprId) -> (ImportSpecifier, WorkerNameForm) {
         let &FinishedFile { hir, analysis, .. } = self.request;
-        // Folding may know the path of the copy in the executable, which says nothing of the file on disk.
         if let Some(site) = self.find_import_of_embedded_file(argument) {
             let name = analysis.import_sites[site].specifier;
             return (name, WorkerNameForm::EmbeddedFile(site as u32));
@@ -496,8 +492,6 @@ impl ContentsScan<'_, '_> {
         (name, form)
     }
 
-    /// `data:text/javascript,..` and `blob:..` hold or stand for the code itself. The load begins at what it knows whole (`FileContents::urls_with_code`, `texts_behind_object_urls`).
-    /// Any other runs as the run time reads it.
     fn is_inline_worker_source(&self, name: &ImportSpecifier) -> bool {
         let &FinishedFile {
             analysis, atoms, ..
@@ -511,7 +505,6 @@ impl ContentsScan<'_, '_> {
         })
     }
 
-    /// Nobody knows the name, or one of its values is the code itself. The engine takes a URL object for the name of some entry point, so nobody else says so.
     fn may_be_out_of_sight(&self, name: &ImportSpecifier) -> bool {
         let mut alternatives = self.request.analysis.alternatives_of(name).iter();
         alternatives.any(|alternative| {
@@ -531,9 +524,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// `import path from "./w.ts" with { type: "file" }`, where `argument` is `path`: the index of the import site. `import { default as path }` and
-    /// `namespace.default` of `import * as namespace` are the same value, and so is a name that is initialized with one of the three and never stored to.
-    /// Folding hands the path of a copy to no other file, so nobody else reads these.
     fn find_import_of_embedded_file(&self, argument: ExprId) -> Option<usize> {
         let &FinishedFile {
             hir,
@@ -584,7 +574,6 @@ impl ContentsScan<'_, '_> {
         analysis.import_site_index(ImportSiteKind::Import(import))
     }
 
-    /// Of `new URL(c, import.meta.url)`: `c`, and what it names from the folder of the file, `./lib/w.ts`.
     fn find_file_named_by_own_url(&self, call: CallId) -> Option<(ExprId, Atom)> {
         let &FinishedFile {
             hir, bound, atoms, ..
@@ -606,7 +595,6 @@ impl ContentsScan<'_, '_> {
         Some((written, name))
     }
 
-    /// `import.meta.url`, also under a name that the resolver of built-ins follows.
     fn names_own_url(&self, expression: ExprId) -> bool {
         let hir = self.request.hir;
         let known = worker_builtins();
@@ -618,14 +606,12 @@ impl ContentsScan<'_, '_> {
         if let Some(builtin) = find_builtin(expression) {
             return Some(builtin) == known.own_url;
         }
-        // The resolver answers for a member only where the table lists it under its holder.
         let import_meta = Some(table::canonical_id(BuiltinId::ImportMeta));
         let member = hir.member_key(hir.skip_type_assertions(expression));
         matches!(member, Some((object, MemberKey::Name(name)))
             if find_builtin(object) == import_meta && self.is_named(name, known.name_of_own_url))
     }
 
-    /// The start of the Worker says what the URL names.
     fn is_worker_argument(&self, url: ExprId) -> bool {
         let &FinishedFile { hir, bound, .. } = self.request;
         let mut node = url;
@@ -645,7 +631,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// Nobody gets the constructor from `mention` but a `new` that `look_at_construction` reads.
     fn is_constructed_or_only_tested(&self, mention: ExprId) -> bool {
         let &FinishedFile { hir, bound, .. } = self.request;
         let mut node = mention;
@@ -653,7 +638,6 @@ impl ContentsScan<'_, '_> {
             let parent = match bound.parent_of_expr(node) {
                 Parent::Expr(parent) => parent,
                 Parent::Stmt(statement) => return is_condition_or_unused(hir, node, statement),
-                // `const Worker = threads.Worker`: each mention of the name is looked at like this one.
                 Parent::VarInit(declaration) => {
                     let name = hir[declaration].pat;
                     return self.is_stable_unexported_name(name)
@@ -664,7 +648,6 @@ impl ContentsScan<'_, '_> {
             };
             match hir[parent].kind {
                 _ if hir.type_assertion_operand(parent).is_some() => {}
-                // `new (Worker || Other)(name)` is no start that anybody records.
                 ExprKind::New(call) => {
                     return hir.skip_type_assertions(hir[call].callee) == mention;
                 }
@@ -672,7 +655,6 @@ impl ContentsScan<'_, '_> {
                     op: UnOp::Not | UnOp::Typeof | UnOp::Void,
                     ..
                 } => return true,
-                // The class on the right may have a `Symbol.hasInstance` of the program's, which is handed what stands on the left.
                 ExprKind::Binary {
                     op: BinOp::Instanceof,
                     right,
@@ -682,7 +664,6 @@ impl ContentsScan<'_, '_> {
                     op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq,
                     ..
                 } => return true,
-                // `a && b` answers `a` only where `a` is no object.
                 ExprKind::Binary {
                     op: BinOp::And | BinOp::Comma,
                     left,
@@ -716,7 +697,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// The site hands `module` itself to the code around it.
     fn loads_module(&self, site: Option<usize>, module: RuntimeModule) -> bool {
         let Some(site) = site else {
             return false;
@@ -740,7 +720,6 @@ impl ContentsScan<'_, '_> {
             && self.loads_module(analysis.import_site_of_call(call), module)
     }
 
-    /// `import * as threads`, `import threads`, `const threads = require("node:worker_threads")`
     fn holds_module(&self, symbol: SymbolId, module: RuntimeModule) -> bool {
         let &FinishedFile {
             hir,
@@ -778,7 +757,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// Of `threads.Worker`: `Worker`.
     fn find_export_read_off_module(&self, member: ExprId, module: RuntimeModule) -> Option<Atom> {
         let hir = self.request.hir;
         match hir.member_key(member) {
@@ -791,7 +769,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// Of what `import { Worker }`, `const { Worker } = threads` and `const Worker = threads.Worker` bind: `Worker`.
     fn find_export_held(&self, symbol: SymbolId, module: RuntimeModule) -> Option<Atom> {
         let &FinishedFile {
             hir,
@@ -818,7 +795,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// The name of the export of `module` that `expression` is.
     fn find_export_named(&self, expression: ExprId, module: RuntimeModule) -> Option<Atom> {
         match self.request.hir[expression].kind {
             ExprKind::Dot { .. } | ExprKind::Index { .. } => {
@@ -851,7 +827,6 @@ impl ContentsScan<'_, '_> {
         export.is_some_and(|export| self.is_name_of_worker(export))
     }
 
-    /// Of an expression that is the module: what is done with it hands on a member under a written name, or binds it so that `holds_worker_threads` and `holds_node_worker` know the names.
     fn reads_only_named_members(&self, mention: ExprId) -> bool {
         let &FinishedFile { hir, bound, .. } = self.request;
         let mut node = mention;
@@ -860,7 +835,6 @@ impl ContentsScan<'_, '_> {
                 Parent::Expr(parent) if hir.type_assertion_operand(parent).is_some() => {
                     node = parent;
                 }
-                // The namespace object has the module once more, under `default`.
                 Parent::Expr(parent) => {
                     return matches!(hir.member_key(parent), Some((object, MemberKey::Name(name)))
                         if object == node && name != known::default);
@@ -874,7 +848,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// A plain name that holds what it is initialized with, and that only the expressions of this file read.
     fn is_stable_unexported_name(&self, name: PatId) -> bool {
         let &FinishedFile { hir, bound, .. } = self.request;
         match bound.initialized_binding(name) {
@@ -913,7 +886,7 @@ fn is_absolute(path: &[u8]) -> bool {
     path.starts_with(b"/") || matches!(path, [drive, b':', b'/', ..] if drive.is_ascii_alphabetic())
 }
 
-fn with_forward_slashes(mut path: Vec<u8>) -> Vec<u8> {
+pub(crate) fn with_forward_slashes(mut path: Vec<u8>) -> Vec<u8> {
     for byte in &mut path {
         if *byte == b'\\' {
             *byte = b'/';
@@ -922,7 +895,6 @@ fn with_forward_slashes(mut path: Vec<u8>) -> Vec<u8> {
     path
 }
 
-// As `import.meta.url` and `pathToFileURL()` write it when the program runs: they escape what Node escapes, and the parser of URLs escapes the rest.
 pub(crate) fn write_file_url(path: &[u8]) -> Option<Vec<u8>> {
     if !is_absolute(path) {
         return None;
@@ -960,7 +932,31 @@ pub(crate) fn write_file_url(path: &[u8]) -> Option<Vec<u8>> {
     Some(url)
 }
 
-fn read_file_url(url: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn write_url_of_module(public_path: &[u8]) -> Option<Vec<u8>> {
+    write_file_url(&with_forward_slashes(public_path.to_vec()))
+}
+
+pub(crate) fn join_to_url_of_module(public_path: &[u8], name: &[u8]) -> Option<Vec<u8>> {
+    let url = write_url_of_module(public_path)?;
+    let written = strings::split(&url[b"file://".len()..], b"/");
+    let mut kept: Vec<&[u8]> = written.filter(|segment| !segment.is_empty()).collect();
+    let is_drive = |segment: &[u8]| matches!(segment, [drive, b':'] if drive.is_ascii_alphabetic());
+    let floor = usize::from(kept.first().is_some_and(|&first| is_drive(first)));
+    kept.pop();
+    for segment in strings::split(name, b"/") {
+        match segment {
+            b"" | b"." => {}
+            b".." if kept.len() > floor => {
+                kept.pop();
+            }
+            b".." => {}
+            _ => kept.push(segment),
+        }
+    }
+    Some([&b"file:///"[..], &kept.join(&b"/"[..])].concat())
+}
+
+pub(crate) fn read_file_url(url: &[u8]) -> Option<Vec<u8>> {
     let written = url.strip_prefix(b"file://")?;
     if !written.starts_with(b"/") || strings::index_of_any(written, b"?#").is_some() {
         return None;
@@ -986,8 +982,7 @@ fn read_file_url(url: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
-// `path.resolve()` of node:path, for paths with forward slashes. `None`: the answer hangs on the working directory, or a part is written in another way.
-fn resolve_paths(parts: &[Vec<u8>]) -> Option<Vec<u8>> {
+pub(crate) fn resolve_paths(parts: &[Vec<u8>]) -> Option<Vec<u8>> {
     let first = parts.iter().rposition(|part| is_absolute(part))?;
     let root_length = match parts[first].starts_with(b"/") {
         true => 1,
@@ -1014,7 +1009,6 @@ fn resolve_paths(parts: &[Vec<u8>]) -> Option<Vec<u8>> {
     Some(resolved)
 }
 
-/// A directory that the host has named, `C:\a\b` on Windows, as a program is taken to write it here.
 fn with_separators_of_program(directory: &[u8]) -> Vec<u8> {
     match directory {
         [drive, b':', b'\\', ..] if drive.is_ascii_alphabetic() => {
@@ -1024,7 +1018,6 @@ fn with_separators_of_program(directory: &[u8]) -> Vec<u8> {
     }
 }
 
-/// The file on disk that an executable holds under `named`, a path below its `root`. A `..` that led out of the root directory is held as `_.._`.
 fn find_path_on_disk(root_directory: &[u8], root: &[u8], named: &[u8]) -> Option<Vec<u8>> {
     let segments = strings::split(named.strip_prefix(root)?, b"/");
     let segments = segments.map(|it| if it == b"_.._" { &b".."[..] } else { it });
@@ -1032,7 +1025,6 @@ fn find_path_on_disk(root_directory: &[u8], root: &[u8], named: &[u8]) -> Option
     resolve_paths(&[with_separators_of_program(root_directory), name])
 }
 
-/// The file on disk that a program names by the path or the `file:` URL that it sees for the file when it runs in an executable, with forward slashes.
 pub(crate) fn find_file_named_as_in_executable(
     paths: &PathOptions,
     name: &[u8],
@@ -1044,7 +1036,6 @@ pub(crate) fn find_file_named_as_in_executable(
     }
 }
 
-/// `FoundEntryPoint::source_path` of a file that the load knows as `path`.
 pub(crate) fn source_path_of(path: &[u8]) -> Vec<u8> {
     with_separators_of_host(to_native(path), cfg!(windows))
 }
@@ -1076,6 +1067,22 @@ mod tests {
         let url = write_file_url(b"C:/a/b.ts");
         assert_eq!(url.as_deref(), Some(&b"file:///C:/a/b.ts"[..]));
         assert_eq!(write_file_url(b"a/b.ts"), None);
+    }
+
+    #[test]
+    fn url_takes_a_folder_away_where_the_path_of_a_module_spells_a_parent() {
+        let says = |path: &[u8], name: &[u8]| join_to_url_of_module(path, name).unwrap();
+        let main = b"/$bunfs/root/main.js";
+        assert_eq!(says(main, b"./lib/a.js"), b"file:///$bunfs/root/lib/a.js");
+        assert_eq!(says(main, b"../job.js"), b"file:///$bunfs/job.js");
+        assert_eq!(says(main, b"../../job.js"), b"file:///job.js");
+        assert_eq!(says(main, b"../../../job.js"), b"file:///job.js");
+        let below = b"/$bunfs/root/lib/a.js";
+        assert_eq!(says(below, b"../../job"), b"file:///$bunfs/job");
+        let above = b"/$bunfs/root/_.._/jobs/a.js";
+        assert_eq!(says(above, b"../../x.js"), b"file:///$bunfs/root/x.js");
+        let on_windows = b"B:\\~BUN\\root\\main.js";
+        assert_eq!(says(on_windows, b"../../../job.js"), b"file:///B:/job.js");
     }
 
     #[test]

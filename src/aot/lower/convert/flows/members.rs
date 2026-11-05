@@ -87,13 +87,11 @@ fn is_assignable_without_nullish(
 }
 
 fn record_pair(file: &mut FileLowering<'_, '_, '_, '_>, source: TypeId, target: FlowTarget) {
-    // Also where both types have one layout, and there is no pair to record.
     file.note_layouts_of_objects(target.mapped);
     let facts = &mut file.fragment.family_facts;
     facts.record_conversion(source, target.mapped);
 }
 
-// One type for all of them: the checker lists the members of a union in the order of their ids, which follow its schedule, and link reads the pairs in the order they were recorded.
 fn union_of_layouts(file: &mut FileLowering<'_, '_, '_, '_>, members: &[Member]) -> TypeId {
     let types = &mut file.fragment.types;
     let layouts: SmallVec<[TypeId; 4]> = members

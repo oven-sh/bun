@@ -331,7 +331,6 @@ impl EndFinder<'_, '_, '_> {
 
     fn find_parent_of_created_object(&self, created: ExprId) -> Option<LinkEnd> {
         let mut value = created;
-        // `var proto = Object.assign(proto, { .. })`: a variable is followed into its initializer once.
         let mut followed = FxHashSet::default();
         loop {
             value = self.hir.skip_type_assertions(value);

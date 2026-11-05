@@ -10,6 +10,7 @@ mod flow_skips;
 mod governing_projects;
 mod inference_order;
 mod left_out_bodies;
+mod listed_members;
 mod load;
 mod load_task;
 mod queue;

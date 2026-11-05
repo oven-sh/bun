@@ -12,32 +12,24 @@ pub struct Options<'a> {
     pub executable_identity: ExecutableIdentity,
     pub image_form: Option<TargetImageForm>,
     pub entry_points: Vec<Vec<u8>>,
-    // Its paths are in the checker's format. Every other path in these options is native.
     pub code: CodeOptions,
     pub typescript_libs: Libs<'a>,
     pub load: LoadOptions,
     pub paths: PathOptions,
     pub removable: RemovableOptions,
-    // --metafile
     pub lists_modules: bool,
-    // --minify-identifiers without --keep-names
     pub minifies_identifiers: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct RemovableOptions {
-    // --ignore-dce-annotations
     pub ignores_pure_annotations: bool,
-    // --jsx-side-effects
     pub jsx_has_side_effects: bool,
-    // `bun test`, `bun run`: no bundler leaves out the declarations that nothing uses.
     pub has_no_bundle: bool,
-    // --minify-syntax
     pub is_told_to_minify_syntax: bool,
 }
 
 impl RemovableOptions {
-    // `bun run` minifies syntax whatever it is told.
     pub fn minifies_syntax(self) -> bool {
         self.has_no_bundle || self.is_told_to_minify_syntax
     }
@@ -58,32 +50,21 @@ pub struct LoadOptions {
     pub loaders: Vec<(Vec<u8>, Loader)>,
     pub externals: Externals,
     pub react_compiler: ReactCompilerMode,
-    /// Of `bun test`: which files of the project it compiles, by their native paths. Those may be `.ts` files.
     pub react_compiler_filter: Option<PathFilter>,
     pub in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
-    /// Sorted. The key of each of `in_memory_files` as the build's options write it, and its path. An import that spells the key means the file, wherever the import stands.
     pub in_memory_file_keys: Vec<(Vec<u8>, Vec<u8>)>,
-    /// The entry points that are text, not files.
     pub entry_texts: Vec<EntryText>,
     pub omits_builtin_modules: bool,
     pub runs_tests: bool,
     pub has_globals_of_vitest: bool,
-    /// A test file or a preload may import "vitest". While `bun test` loads such a file, what it loads for the first time gets no `jest`, `xit`, `xtest` or `xdescribe`.
-    /// `false` says that none of them does.
     pub entry_point_imports_vitest: bool,
-    /// Strictly ascending, by their numbers in the table. In a test run: the locked members of built-in objects that the runner itself replaces and no file spells, so they are compiled as members that may change.
-    /// These are the globals of a window, which the runner defines for a test file that asks for a DOM, and `process.argv` and `Bun.argv`, which it sets again between test files. The load itself finds what the files replace.
     pub replaced_builtins: Vec<u32>,
-    /// In a test run: the files that the runner starts as test files, by their native paths, links followed. The package.json files above them say what the project ships.
     pub test_files: Vec<Vec<u8>>,
-    /// In a test run: the file of each `--preload`, by its native path, as it is written and with links followed. An entry point that is none of these is a test file.
     pub paths_of_preloads: Vec<Vec<u8>>,
 }
 
-/// An entry point that the build is given as text instead of a file.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct EntryText {
-    /// How `Options::entry_points` writes it, and what the run time knows the module by.
     pub name: Vec<u8>,
     pub contents: Vec<u8>,
     pub loader: Loader,
@@ -114,7 +95,6 @@ pub struct PathOptions {
     pub module_prefix: Vec<u8>,
     pub root_directory: Vec<u8>,
     pub entry_point_names: Vec<Vec<u8>>,
-    /// The name of the file that the executable holds for each of `Options::entry_points`, below its root. The run time finds an entry point by that name too. None where the program runs in place.
     pub entry_point_file_names: Vec<Vec<u8>>,
 }
 
@@ -151,7 +131,6 @@ impl LoadOptions {
     }
 }
 
-/// A thread has a heap of its own, so beyond sixteen each thread asks for a share of the memory that the process may use.
 fn default_thread_count(processors: usize, memory: usize) -> usize {
     const THREADS_WHATEVER_THE_MEMORY: usize = 16;
     const MEMORY_PER_THREAD: usize = 256 << 20;
@@ -160,18 +139,14 @@ fn default_thread_count(processors: usize, memory: usize) -> usize {
 }
 
 impl Options<'_> {
-    // The inspector evaluates text, and an external package is read from the disk: code that the build does not see.
     pub fn can_load_code_at_run_time(&self) -> bool {
         self.aot.admits_inspector || !self.load.externals.is_empty()
     }
 
-    /// `AotOptions::loads_code_from_disk` without `isolates_code_from_disk`: where the build knows of code that it has not compiled (a package left out, a file that was missing, a copy under a query), that code counts as naming every file of the program and every export.
-    /// So does whatever may ask for a data file or for the original beside a mock. Isolated, none of them does: such code names globals, built-ins, what lies on disk and what it is handed.
     pub fn code_from_disk_names_files(&self) -> bool {
         self.aot.loads_code_from_disk && !self.aot.isolates_code_from_disk
     }
 
-    /// Unless somebody chose a number: every processor that the process may use, as far as its memory goes.
     pub fn thread_count(&self) -> NonZeroUsize {
         let count = match self.aot.thread_count {
             Some(count) => count.get() as usize,
@@ -193,7 +168,6 @@ impl Options<'_> {
         } = &self.load;
         debug_assert!(!self.entry_points.is_empty());
         debug_assert_eq!(self.paths.entry_point_names.len(), self.entry_points.len());
-        // Where the files of the program lie on disk under their own paths, no path tells the image from the disk.
         debug_assert!(
             !self.aot.isolates_code_from_disk
                 || (self.aot.loads_code_from_disk
@@ -281,7 +255,6 @@ mod tests {
 
     #[test]
     fn only_code_from_disk_that_is_not_isolated_names_files() {
-        // `loads_code_from_disk`, `isolates_code_from_disk`, whether that code names the files of the program.
         for (loads, isolates, names_files) in [
             (false, false, false),
             (true, false, true),

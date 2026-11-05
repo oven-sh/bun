@@ -20,7 +20,6 @@ struct Visit {
     open_start: usize,
 }
 
-/// Empty between two walks, which use their memory one after the other.
 #[derive(Default)]
 pub(super) struct Walk {
     states: FxHashMap<CheckerTypeId, NodeState>,
@@ -59,7 +58,6 @@ fn leave_type(walk: &mut Walk) {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // Nothing, where the limit on the types of one walk is exhausted.
     pub(super) fn explore(&mut self, root: CheckerTypeId) -> Option<SmallVec<[Component; 1]>> {
         debug_assert!(
             self.find_mapped(root).is_none(),
@@ -69,7 +67,6 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let edges = collect_edges(self, root);
-        // Most types have no part, or parts that are mapped: a component by itself, which needs no walk to be found.
         if edges
             .iter()
             .all(|edge| self.find_mapped(edge.target).is_some())
@@ -119,7 +116,6 @@ impl FileLowering<'_, '_, '_, '_> {
         true
     }
 
-    // Nothing, where they are more than the limit.
     pub(super) fn count_reachable_types(&mut self, root: CheckerTypeId) -> Option<u32> {
         let limit = self.inputs.limits.get(LimitId::MaxTypeNodes);
         let mut visited = FxHashSet::default();

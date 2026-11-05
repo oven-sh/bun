@@ -93,7 +93,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(join);
     }
 
-    // `left ?? ..`, where the lowering itself writes the right side.
     pub(in crate::lower) fn lower_unless_nullish(
         &mut self,
         left: ValueId,
@@ -214,7 +213,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// Tests `a ? b : c ? d : e` in turn: `lower_arm` gets each arm that can run, in the block where it runs.
     pub(in crate::lower) fn lower_conditional_arms(
         &mut self,
         expression: ExprId,
@@ -271,8 +269,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-// `bun build` leaves the left of a comma out of a value that is taken only where it minifies, so a name is read there.
-// A name of the top level has no dead zone in what it writes.
 fn lower_part_of_comma(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     part: ExprId,
@@ -289,7 +285,6 @@ fn lower_part_of_comma(
     }
 }
 
-/// `usage`: of the value of the whole.
 pub(super) fn lower_comma_prefix(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,

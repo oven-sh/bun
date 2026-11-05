@@ -248,7 +248,6 @@ fn find_call_site(
         if is_import_meta {
             return Some(create_site(ImportSiteKind::ImportMetaRequire(call), args));
         }
-        // `module?.require(..)` reads `module`.
         let is_module = is_free_common_js(hir, bound, object, CommonJsVariable::Module);
         return is_module.then(|| create_site(ImportSiteKind::Require(call), args));
     }
@@ -263,7 +262,6 @@ fn find_call_site(
         let on_process = is_process(hir, bound, object, &[known::globalThis, known::global]);
         return on_process.then(|| create_site(ImportSiteKind::GetBuiltinModule(call), args));
     }
-    // A name that is made at run time says nothing of the modules that the build knows, unlike that of a mock.
     let is_written_out = matches!(
         expr_kind(hir, hir.id_at(args, 0)),
         Some(ExprKind::String(_))
@@ -290,8 +288,6 @@ fn find_call_site(
     None
 }
 
-/// Whether the call of an `ImportSiteKind::MockModule` is the `build.module(..)` of a plugin. A mock is laid over the module that its name resolves to.
-/// The module of a plugin answers for the name as it is written, from then on, and what the name stood for stays as it is for whoever has it.
 pub fn is_module_call_of_plugin(hir: &File<'_>, bound: &Bound<'_>, call: ExprId) -> bool {
     let Some(ExprKind::Call(call)) = expr_kind(hir, call) else {
         return false;
@@ -301,8 +297,6 @@ pub fn is_module_call_of_plugin(hir: &File<'_>, bound: &Bound<'_>, call: ExprId)
             if is_module_of_plugin(hir, bound, hir.skip_type_assertions(object), name))
 }
 
-// `build.module(..)`, where `build` is the first parameter of the `setup` of an object literal, as `Bun.plugin` takes one.
-// The loader answers for the name from then on, as it does for a mock.
 fn is_module_of_plugin(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
     if name != known::module {
         return false;
@@ -327,8 +321,6 @@ fn is_module_of_plugin(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: 
     })
 }
 
-// `object.name` is `mock.module`, or `mock` or `doMock` of `jest` or `vi`, where the object is imported from the test runner.
-// "vitest" has `vi` under the name `vitest` too.
 fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
     let holders: &[Atom] = match name {
         _ if name == known::module => &[known::mock],
@@ -340,8 +332,6 @@ fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom)
     may_be_export_of_test_runner(hir, bound, object, holders)
 }
 
-// The transpiler of `bun test` knows `jest` and `vi` by the name that an import statement binds, and by none that holds its value: `reads_frame_of_caller` in
-// src/js_parser/lower/hoist_test_mocks.rs.
 fn is_name_that_transpiler_knows(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -356,7 +346,6 @@ fn is_name_that_transpiler_knows(
                 if [known::bun_test, known::jest_globals, known::vitest].contains(&specifier)
                     && holders.contains(&export))
         }
-        // `inWorker ? vi : imported`: so the load stage writes a free `vi` in a file that a Worker may load too. No other free `vi` is left in such a file.
         Some(ExprKind::Cond { branches, .. }) => {
             is_free_name(hir, bound, hir.branches(branches).yes, holders)
                 && may_be_export_of_test_runner(hir, bound, object, holders)
@@ -365,7 +354,6 @@ fn is_name_that_transpiler_knows(
     }
 }
 
-// `vi.importActual("./a")`, `expect(a).toMatchInlineSnapshot()`: native code finds the file or the position of the call in the frame of its caller.
 fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> bool {
     let callee = hir.skip_type_assertions(hir[call].callee);
     let Some((object, MemberKey::Name(name))) = hir.member_key(callee) else {
@@ -402,8 +390,6 @@ fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> boo
     is_name_that_transpiler_knows(hir, bound, object, holders)
 }
 
-/// In a test run Bun's transpiler prints `return vi.importActual("./a")` as `const value = vi.importActual("./a"); return value`, and leaves such an
-/// initializer where it is: a tail call would drop the frame that the call reads. Whether `value` is one that it treats so.
 pub fn ends_in_call_that_reads_frame_of_caller(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -446,7 +432,6 @@ fn is_export_of_test_runner(
     {
         return true;
     }
-    // `require("bun:test").jest`, and `runner.jest` behind `import * as runner` or `const runner = require("bun:test")`.
     let find_constant = |e| match expr_kind(hir, e) {
         Some(ExprKind::String(text)) => Some(Constant::String(text)),
         _ => None,
@@ -458,7 +443,6 @@ fn is_export_of_test_runner(
     if find_members(object).is_some_and(|members| is_holder(&members)) {
         return true;
     }
-    // A function reads a constant that is declared further down.
     let mut members: Vec<Atom> = Vec::new();
     while let Some((below, MemberKey::Name(name))) = hir.member_key(object) {
         members.push(name);
@@ -481,7 +465,6 @@ fn is_export_of_test_runner(
     })
 }
 
-// `jest.mock(a).mock(b)`: the methods of `jest` answer `jest`.
 fn find_receiver_of_first_method(hir: &File<'_>, mut object: ExprId) -> Option<ExprId> {
     while let Some(ExprKind::Call(call)) = expr_kind(hir, object) {
         let callee = hir.skip_type_assertions(hir[call].callee);
@@ -576,7 +559,7 @@ pub(super) fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: 
         && bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
 }
 
-pub(super) fn is_process(
+pub(crate) fn is_process(
     hir: &File<'_>,
     bound: &Bound<'_>,
     e: ExprId,
@@ -619,7 +602,6 @@ pub(crate) fn is_free_common_js(
         && !is_in_with_scope(bound, e)
 }
 
-/// The `module` of `module.require(..)`. Bun's transpiler prints `require(..)` there: the callee is the `require` of the file, and nothing reads `module`.
 pub fn find_module_printed_as_require(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -648,8 +630,6 @@ pub fn find_module_printed_as_require(
     }
 }
 
-/// `bun build` links an import, `require(K)`, `module.require(K)` and `import a = require(K)` to the file. In its executable the loader of
-/// `bun run` answers every other call: what `createRequire` made, `import.meta.require`, `require` under another name.
 pub fn is_linked_by_bundler(hir: &File<'_>, bound: &Bound<'_>, site: ImportSiteKind) -> bool {
     let call = match site {
         ImportSiteKind::ImportMetaRequire(_) => return false,
@@ -664,10 +644,6 @@ pub fn is_linked_by_bundler(hir: &File<'_>, bound: &Bound<'_>, site: ImportSiteK
         || find_module_printed_as_require(hir, bound, callee).is_some()
 }
 
-/// The transpiler reads the name in an import, `import(K)`, `require(K)`, `module.require(K)` and `require.resolve(K)`, and prints the one that the loader knows.
-/// These hand their argument to the loader as the program wrote it: `import.meta.require(K)`, what `createRequire` made, the `require` of another file,
-/// `require.call(..)`, `require.apply(..)`, `require(K, more)`, `process.getBuiltinModule(K)`.
-/// `const load = require; return load(K)` it reads too, where it puts `require` in place of `load`. Where it does so is not followed: such a call counts as read.
 pub fn is_name_read_by_transpiler(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -688,7 +664,6 @@ pub fn is_name_read_by_transpiler(
             == Some(OwnRequire::OfFile)
 }
 
-/// What `bun build` reads in a call that loads: a text, texts joined by `+`, and a choice between such.
 pub fn is_name_written_out(hir: &File<'_>, name: ExprId) -> bool {
     match hir[hir.skip_type_assertions(name)].kind {
         ExprKind::String(_) => true,
@@ -939,7 +914,6 @@ fn find_key_stored_in_cache(
     {
         target = parent;
     }
-    // `delete require.cache[key]` takes an entry out as a store does.
     let is_deleted = matches!(
         bound.parent_of_expr(target),
         Parent::Expr(parent) if matches!(expr_kind(hir, parent), Some(ExprKind::Unary { op: UnOp::Delete, .. }))
@@ -974,8 +948,6 @@ fn is_worker_threads(specifier: Atom) -> bool {
     specifier == known::worker_threads || specifier == known::node_worker_threads
 }
 
-/// Whether the constructor in `new callee(..)` is the `Worker` of the platform, under whatever name the file holds it. `None` where neither the binder nor
-/// the record of an import leads to it: a parameter, an import of another file, a member of an object that nobody knows, a class with a base.
 fn find_whether_constructor_is_worker(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -1016,8 +988,6 @@ fn find_whether_constructor_is_worker(
     }
 }
 
-/// Whether `new callee(..)` may start a Worker. `import { Worker as Thread } from "node:worker_threads"` binds the constructor, and a class or a function of
-/// the file that is called `Worker` is the file's own. A constructor that cannot be followed counts by its name, which only takes more in.
 pub(crate) fn may_construct_worker(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> bool {
     let callee = hir.skip_type_assertions(callee);
     let is_called_worker = matches!(
@@ -1027,7 +997,6 @@ pub(crate) fn may_construct_worker(hir: &File<'_>, bound: &Bound<'_>, callee: Ex
     find_whether_constructor_is_worker(hir, bound, callee).unwrap_or(is_called_worker)
 }
 
-// `new Worker(name)`: the argument with what it may be, where it is no constant and is known in part.
 fn find_name_of_worker(
     inputs: &ScanInputs<'_, '_>,
     construction: ExprId,
@@ -1092,7 +1061,6 @@ const UNRESOLVED_SPECIFIER_PREFIXES: [&[u8]; 9] = [
     b"./", b"../", b"/", b"file://", b".\\", b"..\\", b"\\", b"node:", b"bun:",
 ];
 
-/// A path it only joins to the URL of the module, and the name of a built-in module is its own answer.
 pub fn does_import_meta_resolve_ask_resolver(specifier: &[u8]) -> bool {
     let mut prefixes = UNRESOLVED_SPECIFIER_PREFIXES.iter();
     !prefixes.any(|prefix| specifier.starts_with(prefix))
@@ -1135,7 +1103,6 @@ fn call_specifier(
     find_specifier(inputs, argument, alternatives, false)
 }
 
-// Of a file that a call changes. Whatever it may be counts.
 fn path_specifier(
     inputs: &ScanInputs<'_, '_>,
     argument: ExprId,
@@ -1180,7 +1147,6 @@ fn find_specifier(
         [pattern @ ImportSpecifier::Pattern { .. }] => Some(pattern),
         _ => None,
     };
-    // Folding knows the start of a text up to the first part that it does not know.
     let length_of_start = |specifier| match specifier {
         ImportSpecifier::Pattern { prefix, .. } => inputs.atoms.bytes(prefix).len(),
         _ => 0,
@@ -1208,7 +1174,6 @@ fn find_specifier(
     })
 }
 
-// `export const put = (path, text) => writeFileSync(path, text)`: whoever calls `put` says which file changes.
 fn find_exports_that_take(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
@@ -1236,7 +1201,6 @@ fn find_exports_that_take(
     changers.collect()
 }
 
-// `put("state", text)`, where `put` writes `join(import.meta.dir, name + ".js")`: `./state.js`.
 fn write_around(
     inputs: &ScanInputs<'_, '_>,
     changed: &ChangedPath,
@@ -1281,7 +1245,6 @@ fn write_around(
     })
 }
 
-// `join(process.cwd(), "lib", "a.js")` as `./lib/a.js`, which the file system reads from the same folder.
 fn find_path_below_working_directory(
     inputs: &ScanInputs<'_, '_>,
     path: ExprId,

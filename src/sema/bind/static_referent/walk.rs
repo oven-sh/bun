@@ -405,12 +405,9 @@ fn find_deciding_store(
     }
 }
 
-/// What a walk has passed, in order. A walk that branches off adds to the list of the walk that it leaves, and takes its own part away when it ends.
 struct Trail<T> {
     items: SmallVec<[T; 8]>,
-    /// A walk that forgets what it has passed sees the list from here on.
     first_seen: usize,
-    /// The places of each item, once the list is long.
     places: Option<FxHashMap<T, SmallVec<[u32; 1]>>>,
 }
 
@@ -496,7 +493,6 @@ impl<T: Copy + Eq + Hash> Trail<T> {
     }
 }
 
-/// All that a walk goes on by from a name, but for the trails.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct PlaceOfWalk {
     name: Sym,
@@ -511,17 +507,13 @@ pub(super) struct ReferentWalk<'c, 's, C: ReferentContext<'s>> {
     visited: Trail<Sym>,
     pending_members: SmallVec<[Atom; 4]>,
     entered_callees: Trail<FunctionRef>,
-    /// The call through which each of `entered_callees` was entered.
     entered_calls: SmallVec<[(FileId, CallId); 2]>,
     open_calls: Trail<(FileId, CallId)>,
     followed_stores: Trail<(FileId, ExprId)>,
     certainty: ReferentCertainty,
     follows_stored_members: bool,
     open_branches: u32,
-    /// What a branch found from a place without an answer of a trail. `c ? a : a` goes on from `a` twice: without this a row of names that each stand for one of two of the name before takes
-    /// twice as long with each name.
     found_from: FxHashMap<PlaceOfWalk, ResolvedReferent<C::Builtin, C::Module>>,
-    /// How often a trail has had a say in where the walk goes: it ended a walk that came round, or its names were asked what is stored on them. A stack too low for a branch counts as well.
     answers_of_trails: u32,
     session: PhantomData<&'s ()>,
 }
@@ -580,7 +572,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         found
     }
 
-    /// `places`: takes the places that a branch comes to.
     fn run_from(
         &mut self,
         mut step: StepOf<'s, C>,
@@ -628,8 +619,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
     }
 
-    /// The functor walks on from here. Behind it this walk stands where it stood. Nothing where the stack is too low for one more branch: each branch is a call, and a row of names may be as long
-    /// as a file.
     fn branch_off<R>(&mut self, walk_on: impl FnOnce(&mut Self) -> R) -> Option<R> {
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
             self.answers_of_trails += 1;
@@ -759,7 +748,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 if !matches!(yes, StaticReferent::Function(_) | StaticReferent::Class(_)) {
                     return unknown(UnknownReferent::NotAReference);
                 }
-                // From one name, with the trails as they stand here, the walk goes one way.
                 let symbol_named_by = |arm: ExprId| {
                     let arm = hir.skip_type_assertions(arm);
                     match (hir[arm].kind, context.bound(file).binding(arm)) {
@@ -1158,7 +1146,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         self.certainty = ReferentCertainty::Expected;
         self.visited.forget();
         match stored {
-            // `const kept = holder.name; holder.name = kept;`
             Some(store) if self.followed_stores.contains(store) => unknown(UnknownReferent::Cycle),
             Some((file, value)) => {
                 self.followed_stores.push((file, value));

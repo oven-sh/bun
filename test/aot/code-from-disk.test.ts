@@ -13,7 +13,7 @@
 //   flags     more flags for both builds
 //   aotFlags  more flags for the build with --aot
 //   env       more of the environment in which both run
-//   differs   what the build with --aot prints where it is meant to differ from the other, and the case says why
+//   differs   what the build with --aot prints where it is meant to differ from the other, or how it ends where it is meant to end otherwise, and the case says why
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync } from "node:fs";
@@ -31,10 +31,13 @@ type Case = {
   aotFlags?: string[];
   env?: Record<string, string>;
   entryPoints?: string[];
-  differs?: string;
+  differs?: string | { stdout: string; stderr: unknown; exitCode: number };
 };
 
 const timeout = 600_000;
+
+// docs/compiler/compatibility.mdx: such a file has globals, built-in modules, what lies on disk and what the program hands it.
+const refusal = "code that this executable loads from disk can't load the files that were compiled into it";
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -444,8 +447,8 @@ const cases: Record<string, Case> = {
     },
     prints: "true 41 define,double\ntrue WORDS QUIET true\n",
   },
-  // A bundle holds a file twice that is an entry point and is imported by another one. Compiled ahead of time it is one module.
-  "an entry point named by a file from disk is the compiled module, and runs once": {
+  // An entry point is a file of the executable like any other.
+  "a file from disk that names an entry point is refused": {
     program: {
       "main.ts":
         prelude +
@@ -460,7 +463,7 @@ const cases: Record<string, Case> = {
       "plugin.ts": `export async function seen(path: string) { const { state } = await import(path); return state.count++; }`,
     },
     prints: "shared runs\nshared runs\n0 1\n",
-    differs: "shared runs\n1 2\n",
+    differs: { stdout: "shared runs\n", stderr: expect.stringContaining(refusal), exitCode: 1 },
   },
   // Built-in objects stay read-only. The words are for the author of the file, who can't show the build anything.
   "such a file assigns to built-ins that the program calls": {
@@ -579,55 +582,37 @@ const cases: Record<string, Case> = {
     prints: `plugin: {"kind":"js"} js\n[ "preload" ]\n`,
   },
   // The first file writes the second, which names the entry point as the executable at hand does.
-  "a file in front of the program imports the entry point, and a file of the program asks for it while it is loaded": {
+  "a file in front of the program that imports the entry point is refused, and the program does not run": {
     program: {
       "main.ts":
         prelude +
-        `import "./asks.cjs";
-        import "./last.cjs";
-        console.log("the entry point runs");
+        `console.log("the entry point runs");
         export const answer = 42;
         if (process.argv.length > 3) void import(at("plain.js"));`,
-      "asks.cjs": `console.log("a file of the program asks");
-        import("./main.ts").then(namespace => console.log("it gets", namespace.answer));`,
-      "last.cjs": `console.log("the last file runs");`,
     },
     env: { BUN_OPTIONS: "--preload ./writes.cjs --preload ./written.mjs" },
     disk: {
       "writes.cjs": `require("node:fs").writeFileSync("written.mjs", "import { answer } from " + JSON.stringify(Bun.main) + ';\\nconsole.log("the file in front gets", answer);\\n');`,
       "written.mjs": "",
     },
-    prints:
-      "a file of the program asks\nthe last file runs\nthe entry point runs\nthe file in front gets 42\nit gets 42\n",
+    prints: "the entry point runs\nthe file in front gets 42\n",
+    differs: { stdout: "", stderr: expect.stringContaining(refusal), exitCode: 1 },
   },
-  // A bundle runs the module that throws in front of the CommonJS file. Compiled ahead of time the files run in the order of `bun run`.
-  "a file of the program that requires the entry point then catches what a module of the graph throws": {
+  "whoever listens for what nobody catches hears that refusal": {
     program: {
       "main.ts":
         prelude +
-        `import "./asks.cjs";
-        import "./throws.ts";
-        console.log("the entry point runs");
-        export const answer = 42;
+        `console.log("the entry point runs");
         if (process.argv.length > 3) void import(at("plain.js"));`,
-      "asks.cjs": `console.log("a file of the program asks");
-        try {
-          console.log("it gets", require("./main.ts").answer);
-        } catch (error) {
-          console.log("it catches", error.name, error.message);
-        }`,
-      "throws.ts": `console.log("the last module runs");
-        throw new RangeError("thrown by the last module");`,
     },
     env: { BUN_OPTIONS: "--preload ./writes.cjs --preload ./written.mjs" },
     disk: {
-      "writes.cjs": `process.on("uncaughtException", error => console.log("nobody catches", error.name, error.message));
+      "writes.cjs": `process.on("uncaughtException", error => console.log("nobody catches", error.name, error.code));
         require("node:fs").writeFileSync("written.mjs", "import " + JSON.stringify(Bun.main) + ";");`,
       "written.mjs": "",
     },
-    prints: "the last module runs\nnobody catches RangeError thrown by the last module\n",
-    differs:
-      "a file of the program asks\nthe last module runs\nit catches RangeError thrown by the last module\nnobody catches RangeError thrown by the last module\n",
+    prints: "the entry point runs\n",
+    differs: "nobody catches Error ERR_MODULE_NOT_FOUND\n",
   },
   "text that is evaluated loads files where the program does": {
     program: {
@@ -784,7 +769,7 @@ console.log(result.success, result.logs.filter(log => log.message.includes("TS10
 
         for (const [index, [name, it]] of group.entries()) {
           test(
-            isShared ? name : "answers as without --aot",
+            isShared ? name : "does what the case says",
             async () => {
               const disk = join(folder, "disk", String(index));
               mkdirSync(disk, { recursive: true });
@@ -804,9 +789,10 @@ console.log(result.success, result.logs.filter(log => log.message.includes("TS10
               // What is printed names files, and Windows spells them otherwise: there the build without --aot alone says what is right.
               const prints = (!isWindows && it.prints) || expect.any(String);
               expect(plain).toEqual({ stdout: prints, stderr: "", exitCode: 0, signal: null });
-              expect(await run(executables.compiled)).toEqual(
-                it.differs === undefined ? plain : { ...plain, stdout: it.differs },
-              );
+              expect(await run(executables.compiled)).toEqual({
+                ...plain,
+                ...(typeof it.differs === "string" ? { stdout: it.differs } : it.differs),
+              });
             },
             timeout,
           );

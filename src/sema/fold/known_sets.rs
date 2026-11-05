@@ -1,8 +1,3 @@
-//! Folding answers with one constant or with nothing. Where a file spells every value that an expression may have, the values are found here, for the
-//! expression that somebody asks about. Few are ever asked about, so no file is walked for them.
-//! A set is all the values or it is nothing: whoever reads one leans on there being no other. Nothing in `check` reads it.
-//! A set of one value stands where folding has no constant: `name` in `for (const name of ["exit"])`.
-
 use super::inputs::LinkForm;
 use super::{
     Constant, Decision, Decisions, DefineRoot, DefineValue, FoldInputs, FoldedValue,
@@ -29,35 +24,24 @@ enum Found {
     NotLookedAt,
     InProgress,
     Unknown,
-    /// A range of `KnownSets::values`, never empty.
-    Values {
-        first: u32,
-        count: u32,
-    },
+    Values { first: u32, count: u32 },
 }
 
-/// Where a variable gets the one value that it holds as long as it lives.
 #[derive(Copy, Clone)]
 enum Source {
     Unknown,
     Initializer(ExprId),
-    /// `for (const name of walked)`, where `walked` is the array literal `list` or names it.
-    Element {
-        list: ExprId,
-        walked: ExprId,
-    },
+    Element { list: ExprId, walked: ExprId },
 }
 
 enum Origin {
     Initializer(ExprId),
-    /// The right side of the `for`-`of` whose head declares the variable.
     ElementOf(ExprId),
 }
 
 #[derive(Copy, Clone)]
 enum Asked {
     Value(ExprId),
-    /// The elements of an array literal. The literal itself is never asked for as a value, so both variants can share one entry of `found`.
     Elements(ExprId),
 }
 
@@ -76,11 +60,9 @@ enum Part {
     Asked(Asked),
 }
 
-/// What a sum or a template joins: for each part, from left to right, the values that it may have.
 #[derive(Default)]
 struct Parts {
     values: Vec<Constant>,
-    /// Where the values of each part end.
     ends: Vec<usize>,
 }
 
@@ -91,12 +73,9 @@ impl Parts {
     }
 }
 
-/// What the mentions of a file say of the variables that hold its array literals. Each list is made when it is first asked for.
 #[derive(Default)]
 pub(super) struct ListHolders {
-    /// By symbol: some mention may change the list that the variable holds, or hand it on.
     handed_on: OnceCell<PositionSet>,
-    /// By symbol: `export { name }`, `import a = name.b`, the factory of a JSX element, the metadata of a decorator.
     named_without_expression: OnceCell<PositionSet>,
 }
 
@@ -118,20 +97,24 @@ fn name_of_method(
     is_function.then_some(method)
 }
 
-/// The name under which every array finds the function of the language that joins it. `None`: a run may find something else there.
 pub(super) fn name_of_join(inputs: &FoldInputs<'_>, atoms: &Interner<'_>) -> Option<Atom> {
     name_of_method(inputs, atoms, b"Array", b"join")
 }
 
-/// The same for a text and the function that cuts it.
 pub(super) fn name_of_split(inputs: &FoldInputs<'_>, atoms: &Interner<'_>) -> Option<Atom> {
     name_of_method(inputs, atoms, b"String", b"split")
 }
 
-/// The same for a text and the function that puts another text where a pattern matches. It asks the pattern, whose prototype is locked as a whole, for `exec`.
 pub(super) fn name_of_replace(inputs: &FoldInputs<'_>, atoms: &Interner<'_>) -> Option<Atom> {
     name_of_method(inputs, atoms, b"RegExp", b"exec")?;
     name_of_method(inputs, atoms, b"String", b"replace")
+}
+
+pub(super) fn is_prototype_of_patterns_locked(
+    inputs: &FoldInputs<'_>,
+    atoms: &Interner<'_>,
+) -> bool {
+    name_of_method(inputs, atoms, b"RegExp", b"exec").is_some()
 }
 
 fn kind_at(hir: &File<'_>, e: ExprId) -> Option<ExprKind> {
@@ -147,7 +130,6 @@ fn outermost_cast<'s>(hir: &File<'s>, bound: &Bound<'s>, mut e: ExprId) -> ExprI
     e
 }
 
-/// No store, no `delete`, and no call, which would hand the object over as `this`.
 fn is_only_read<'s>(hir: &File<'s>, bound: &Bound<'s>, access: ExprId) -> bool {
     let access = outermost_cast(hir, bound, access);
     if bound.get_assignment_target(hir, access).is_some() {
@@ -177,8 +159,6 @@ fn is_called<'s>(hir: &File<'s>, bound: &Bound<'s>, access: ExprId) -> bool {
     matches!(kind_at(hir, user), Some(ExprKind::Call(call)) if hir[call].callee == callee && hir[call].chain == Chain::No)
 }
 
-/// `for (.. of list)`, `list[index]`, `list.length`, and `list.join(..)` under `name_of_join`: it reads the list and hands it to nobody.
-/// Anything else may change the list or hand it to code that does.
 fn leaves_list_as_written<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
@@ -209,7 +189,6 @@ fn leaves_list_as_written<'s>(
 }
 
 impl ListHolders {
-    /// Another file sees the variable, or this one names it where no expression spells it. Whoever goes by the mentions alone misses these.
     pub(super) fn is_reached_without_mention<'s>(
         &self,
         hir: &File<'s>,
@@ -236,7 +215,6 @@ impl ListHolders {
             || declarations.any(|&it| bound.modifier_flags(hir, it).contains(Flags::EXPORT))
     }
 
-    /// `join` and `is_dead` are asked once, for the whole file: a mention that `is_dead` takes away does not count.
     pub(super) fn is_handed_on<'s>(
         &self,
         hir: &File<'s>,
@@ -264,7 +242,6 @@ impl ListHolders {
     }
 }
 
-/// The sets of one file. What is found on the way to one answer is kept for the next.
 pub struct KnownSets<'a, 's> {
     hir: &'a File<'s>,
     bound: &'a Bound<'s>,
@@ -289,7 +266,6 @@ fn combines_values(kind: ExprKind) -> bool {
     }
 }
 
-/// NaN is one value here, and 0 and -0 are two.
 fn is_same_value(left: Constant, right: Constant) -> bool {
     match (left, right) {
         (Constant::Number(left), Constant::Number(right)) => {
@@ -299,7 +275,6 @@ fn is_same_value(left: Constant, right: Constant) -> bool {
     }
 }
 
-/// `None`: the values from `first` on would be more than a set holds.
 fn add_distinct(values: &mut Vec<Constant>, first: usize, value: Constant) -> Option<()> {
     if values[first..].iter().any(|&it| is_same_value(it, value)) {
         return Some(());
@@ -312,7 +287,6 @@ fn add_distinct(values: &mut Vec<Constant>, first: usize, value: Constant) -> Op
 }
 
 impl<'a, 's> KnownSets<'a, 's> {
-    /// `decisions`: what folding made of `hir`.
     pub fn new(
         hir: &'a File<'s>,
         bound: &'a Bound<'s>,
@@ -333,8 +307,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         }
     }
 
-    /// Every value `e` may have where `Decisions::constant` does not answer, in the order the text names them, each once. Empty: the file does not
-    /// spell them all, or `constant` knows the one. A set stands under the expression itself, never under a type assertion around it.
     pub fn of(&mut self, e: ExprId) -> &[Constant] {
         let may_have_set = |kind| matches!(kind, ExprKind::Ident(_)) || combines_values(kind);
         let is_asked = self.kind_of(e).is_some_and(may_have_set)
@@ -350,7 +322,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         &[]
     }
 
-    /// `a + b` in `a + b + c` is joined together with `c`, as folding does. The template of a tagged template is not a value.
     fn is_joined_by_parent(&self, e: ExprId) -> bool {
         let Parent::Expr(above) = self.bound.parent_of_expr(e) else {
             return false;
@@ -408,7 +379,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         }
     }
 
-    /// The part whose values are the variable's values.
     fn part_of_source(&mut self, source: Source) -> Part {
         match source {
             Source::Initializer(value) => self.part(value),
@@ -424,7 +394,6 @@ impl<'a, 's> KnownSets<'a, 's> {
             && bound.dynamic_lookup_scope(NodeData::Expr(name)).is_none()
     }
 
-    /// A read written before the expression that gives the variable its value, or inside it, may run in the dead zone.
     fn source_of_read(&mut self, read: ExprId) -> Source {
         let Binding::Symbol(variable) = self.bound.binding(read) else {
             return Source::Unknown;
@@ -463,7 +432,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         }
     }
 
-    /// `None` unless the variable is a `const`, a `using`, or a `let` that nothing stores to.
     fn find_origin(&self, variable: SymbolId) -> Option<Origin> {
         let (hir, bound) = (self.hir, self.bound);
         let holds_one_value = matches!(
@@ -498,7 +466,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         }
     }
 
-    /// A test stores into the variables of a file from outside, into a `const` too.
     fn is_stored_by_mocks(&self, variable: SymbolId) -> bool {
         match self.inputs.stored_by_mocks {
             StoredByMocks::Nothing => false,
@@ -512,7 +479,6 @@ impl<'a, 's> KnownSets<'a, 's> {
             .is_reached_without_mention(self.hir, self.bound, variable)
     }
 
-    /// The array literal whose elements `for (.. of walked)` hands out. A name stands for the literal that it was given only where the list stays as it is written.
     fn find_iterated_list(&self, walked: ExprId) -> Option<ExprId> {
         let (hir, bound) = (self.hir, self.bound);
         let written = hir.skip_type_assertions(walked);
@@ -552,7 +518,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         found.copied().unwrap_or(Found::NotLookedAt)
     }
 
-    /// An entry that is in progress stays on `waiting` below its parts and is joined once it is on top again.
     fn find(&mut self, asked: Asked) -> Found {
         self.waiting.push(asked);
         while let Some(&top) = self.waiting.last() {
@@ -577,7 +542,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         self.found_for(asked)
     }
 
-    /// `None`: the part is unknown, or it depends on itself.
     fn push(&mut self, part: Part) -> Option<()> {
         let Part::Asked(asked) = part else {
             return matches!(part, Part::Constant(_)).then_some(());
@@ -597,7 +561,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         self.push(part)
     }
 
-    /// `None`: a part that the whole cannot do without is unknown.
     fn push_parts(&mut self, asked: Asked) -> Option<()> {
         let (hir, decisions) = (self.hir, self.decisions);
         let e = match asked {
@@ -610,7 +573,6 @@ impl<'a, 's> KnownSets<'a, 's> {
             Asked::Value(e) => e,
         };
         match hir[e].kind {
-            // The build puts something else in its place.
             _ if !matches!(decisions.decision(e), Decision::Unknown) => None,
             ExprKind::Cond { branches, .. } => {
                 let Branches { yes, no } = hir.branches(branches);
@@ -634,7 +596,6 @@ impl<'a, 's> KnownSets<'a, 's> {
             }
             ExprKind::Binary { left, right, .. } => {
                 self.push_operand(left)?;
-                // The right side counts only if some value of the left side reaches it.
                 if !decisions.is_dead_expr(right) {
                     let _ = self.push_operand(right);
                 }
@@ -714,7 +675,6 @@ impl<'a, 's> KnownSets<'a, 's> {
                 let ExprKind::Array(items) = hir[list].kind else {
                     return None;
                 };
-                // A hole or a spread is an unknown part, so the whole list is unknown.
                 return (hir.ids(items)).try_for_each(|item| self.add_values_of_part(item, first));
             }
             Asked::Value(e) => e,
@@ -743,7 +703,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         }
     }
 
-    /// `left || right`, `left && right`, `left ?? right`
     fn add_results_of_choice(
         &mut self,
         op: BinOp,
@@ -803,8 +762,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         self.add_joined(&parts, first)
     }
 
-    /// One value of each part, joined from left to right. Parts that have one value and stand side by side are joined in one step: a text that is
-    /// written in a thousand pieces is copied once for each result, and not a thousand times.
     fn add_joined(&mut self, parts: &Parts, first: usize) -> Option<()> {
         let mut begin = *parts.ends.first()?;
         let mut joined = parts.values[..begin].to_vec();
@@ -830,7 +787,6 @@ impl<'a, 's> KnownSets<'a, 's> {
         joined.try_for_each(|value| add_distinct(&mut self.values, first, value))
     }
 
-    /// `start + run[0] + run[1] + ..`. Once `start` is a text, everything after it becomes text.
     fn append(&self, mut start: Constant, mut run: &[Constant]) -> Option<Constant> {
         let max_string_bytes = self.inputs.max_string_bytes();
         while let Some((&next, rest)) = run.split_first() {

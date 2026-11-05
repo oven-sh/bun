@@ -326,7 +326,6 @@ const aotTestsThatAskTheSystem = [
   "aot/a-hardened-build",
   "aot/executable-memory-filter",
   "aot/compiled-code-mapping",
-  "aot/code-addresses-have-names",
   "aot/symbols-of-compiled-functions",
   "aot/packed-relocations",
   "aot/static-tls-size",
@@ -446,6 +445,7 @@ const aotTestsThatAskWindows = [
 const aotTestsThatFeedNothingNew = [
   "aot/tools/same-code-",
   "aot/entry-points-begin-programs-of-their-own",
+  "aot/audit-agrees-with-the-executable",
   "aot/transpiler-parity-",
   "aot/builtins/differential/",
   "aot/build-options",

@@ -5,8 +5,6 @@ const GAUGE: (&str, &str) = (
     "if (globalThis.cold) throw 0;\nexports.reading = 1;",
 );
 
-/// The first `test_files` files are the test files, in the order in which the build was given them, and the next `preloads` the preloads.
-/// Answers the files that run again, in the order in which they are given.
 fn files_that_run_again<'a>(
     files: &[(&'a str, &str)],
     test_files: usize,
@@ -25,7 +23,6 @@ fn what_threw_under_one_test_file_runs_again_for_the_next() {
     let asks = "import { test } from 'bun:test';\nconst gauge = require('./gauge.cjs');\ntest('reads', () => gauge.reading);";
     let files = [("a.test.ts", asks), ("b.test.ts", asks), GAUGE];
     assert_eq!(files_that_run_again(&files, 2, 0), ["gauge.cjs"]);
-    // Nobody is left to ask.
     assert!(files_that_run_again(&[("a.test.ts", asks), GAUGE], 1, 0).is_empty());
 }
 
@@ -50,7 +47,6 @@ fn what_one_test_file_alone_asks_for_is_told_apart_for_the_first_alone() {
     let with_own = "const own = require('./own.cjs');\nconst gauge = require('./gauge.cjs');";
     let first_has_it = [("a.test.ts", with_own), ("b.test.ts", shared), own, GAUGE];
     assert_eq!(files_that_run_again(&first_has_it, 2, 0), ["gauge.cjs"]);
-    // The runner may take the files in another order than the build was given them, so no later file counts as the last.
     let second_has_it = [("a.test.ts", shared), ("b.test.ts", with_own), own, GAUGE];
     assert_eq!(
         files_that_run_again(&second_has_it, 2, 0),
@@ -100,7 +96,6 @@ fn a_hoisted_statement_runs_in_front_of_the_imports_that_are_written_above_it() 
             "{test_file}"
         );
     }
-    // Without the move the function comes to be when panel.cjs has ended.
     let in_place = format!(
         "import './panel.cjs';\n{}",
         probe.replace("vi.hoisted", "(run => run())")

@@ -26,7 +26,6 @@ pub(super) fn declare_module_body(file: &mut FileLowering<'_, '_, '_, '_>) -> Mo
             file.ensure_variable(VariableKey::Symbol(symbol));
         }
     }
-    // Link finds the bodies of the further modules of the file by their keys.
     for &callback in modules.inner_modules(file.file) {
         let module = ModuleRef::Inner {
             file: file.file,
@@ -83,11 +82,9 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.inputs.modules.has_top_level_await(self.file) {
             header.flags |= FunctionFlags::IS_ASYNC;
         }
-        // Nobody passes the body anything.
         if kind == ModuleKind::CommonJs {
             header.flags = header.flags.without(self.scopes.entry_flags(key));
         }
-        // The text of the file is the function that such a body calls. Nobody wrote the body, so no stack trace lists it.
         if self.body_form() == commonjs::BodyForm::Wrapped {
             header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
         }
@@ -95,7 +92,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn lower_module_body(&mut self, function: FunctionId) {
-        // The file defines the variable, whether or not a file of the program imports it.
         if super::imports::holds_mock_in_variable(self.inputs.modules, self.file) {
             self.ensure_variable(VariableKey::MockOf(self.file));
         }
@@ -121,7 +117,6 @@ impl FileLowering<'_, '_, '_, '_> {
         });
     }
 
-    // No code of the program runs in it or in what it calls. So when any does, whatever that code can name of a file on a cycle with its own is made.
     pub(crate) fn lower_instantiation(&mut self, function: FunctionId) {
         let scope = file_scope(self);
         let modules = self.inputs.modules;
@@ -135,7 +130,6 @@ impl FileLowering<'_, '_, '_, '_> {
         let undefined = lowering.builder.undefined();
         lowering.emit_return(undefined, None);
         lowering.builder.switch_to(split.taken);
-        // In front of the calls: a cycle comes back here.
         let is_taken = lowering.builder.boolean(false);
         lowering.builder.put_module_variable(state, is_taken);
         let makes_scope = modules.makes_scope_ahead(own_file);
@@ -200,7 +194,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn finish_module(&mut self, roots: ModuleRoots) -> ModuleFragment {
-        // Nothing of a placeholder runs, so nobody asks for a line or for the text of a function of it.
         let is_placeholder = self.inputs.modules.is_placeholder(self.file);
         let text: &[u8] = match is_placeholder {
             true => &[],
@@ -221,7 +214,6 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // What a file on a cycle has had made ahead of this run of the body is this run's. What an earlier run has taken is that run's: each has variables of its own.
     fn emit_instantiation_of_own_file(&mut self) {
         let own_file = self.file.file;
         let state = self

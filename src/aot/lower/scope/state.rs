@@ -26,18 +26,14 @@ pub(super) struct EnteredScope {
     pub(super) environment: Option<LocalVariable>,
 }
 
-/// The cell of a scope that nothing has asked for yet.
 pub(super) struct EnvironmentPutOff {
     pub(super) scope: ScopeId,
-    /// How many scopes were entered when this one was.
     pub(super) depth: usize,
     pub(super) variable: LocalVariable,
     pub(super) layout: LayoutId,
     pub(super) fields: SmallVec<[u32; 8]>,
     pub(super) values: SmallVec<[ValueId; 8]>,
-    /// The entry of the scope, then the start of each statement of `list` in its turn.
     pub(super) place: Place,
-    /// The statements that are all there is of the scope from its entry on: the body of the function, the block.
     pub(super) list: IdList<StmtId>,
 }
 
@@ -47,9 +43,7 @@ pub(crate) struct ScopeState {
     pub(super) environments_put_off: Vec<EnvironmentPutOff>,
     pub(in crate::lower) locals: FxHashMap<BindingRef, LocalBinding>,
     pub(in crate::lower) entry_this: Option<ValueId>,
-    /// The captures of a function that gets them in one object, read out of it at entry.
     pub(in crate::lower) unpacked_captures: Vec<ValueId>,
-    /// By declared function that is created at its first read: a value of its local that is known to be the closure.
     pub(super) created_functions: FxHashMap<SymbolId, ValueId>,
 }
 

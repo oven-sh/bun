@@ -339,19 +339,6 @@ fn checked_file_reads_jsx_pragmas_like_tsc() {
     assert_jsx_pragmas(&[tsx(false), javascript(false, false)], &cases);
 }
 
-/// A line: what this program prints under `bun run` and as an executable of `bun build --compile`, then its comments. Its tsconfig.json says "jsx": "react".
-///
-/// ```js
-/// let ran = 0;
-/// function mark() { ran++; }
-/// const pick = (name) => (tag) => (tag === "a" ? name : tag);
-/// const React = { createElement: pick("createElement"), Fragment: "Fragment" };
-/// const h = pick("h"), g = pick("g"), F = "F";
-/// /* the comments */ mark();
-/// console.log(ran, <a />, <></>);
-/// ```
-///
-/// `jsxDEV` of `./tiny/jsx-dev-runtime` answers with that name. Where a line has fewer words the program has fewer elements: their factory would be no name.
 const READ_BY_BUN_RUN: &str = r"
 0 | /* @__PURE__ */
 0 | /* #__PURE__ */

@@ -213,15 +213,11 @@ pub(crate) fn run_as_coordinator(
         },
         coverage_files: Default::default(),
         last_header_idx: None,
-        header_printed_by_worker: None,
         frame: Frame::default(),
         files_done: 0,
         spawned_count: 0,
         live_workers: 0,
         aborted: None,
-        ends_as_in_one_process: false,
-        exit_code_left_by_tests: None,
-        failed_to_write_inline_snapshots: false,
         stop_reason: None,
         last_printed_dot: false,
         #[cfg(windows)]
@@ -578,34 +574,27 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
-pub(crate) struct PendingFile {
-    idx: u32,
-    /// What the files before this one have left in `process.exitCode`, in whichever worker they ran.
-    exit_code: Option<u8>,
-}
-
-struct RunningFile {
-    idx: u32,
-    before: crate::test_runner::jest::Summary,
-    before_unhandled: u32,
-    exit_code_before: u8,
-    started_ns: u64,
-    resident_at_start: Option<ResidentAtStart>,
-}
-
 pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel<WorkerCommands>,
     /// Reused across all worker → coordinator emits.
     frame: Frame,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
-    pub(crate) pending_file: Option<PendingFile>,
+    pub(crate) pending_idx: Option<u32>,
     pub(crate) pending_path: Vec<u8>,
     /// `first_loads` of the process that ran in this one's place before it.
     pub(crate) pending_first_loads: Vec<u8>,
     running: Option<RunningFile>,
     /// EOF, error, `.shutdown`, or a corrupt frame.
     pub(crate) done: bool,
+}
+
+struct RunningFile {
+    idx: u32,
+    before: crate::test_runner::jest::Summary,
+    before_unhandled: u32,
+    started_ns: u64,
+    resident_at_start: Option<ResidentAtStart>,
 }
 
 impl WorkerCommands {
@@ -621,7 +610,10 @@ impl WorkerCommands {
         let Some(file) = self.running.take() else {
             return;
         };
-        let growth = file.resident_at_start.map(growth_since).unwrap_or_default();
+        let mut growth = file.resident_at_start.map(growth_since).unwrap_or_default();
+        if file.resident_at_start.is_none() && crate::cli::run_compiled::logs_accounts() {
+            growth.peak = crate::cli::run_compiled::peak_of_this_process_mb();
+        }
         let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
             .ns()
             .saturating_sub(file.started_ns);
@@ -651,10 +643,6 @@ impl WorkerCommands {
             wf.u32(growth.of_worker);
             wf.u32(growth.largest_child);
             wf.u32(growth.peak);
-            wf.u32(match vm.exit_handler.exit_code {
-                code if code == file.exit_code_before => 0,
-                code => u32::from(code) + 1,
-            });
             wf.str(&first_loads);
         });
     }
@@ -665,13 +653,11 @@ impl ChannelOwner for WorkerCommands {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         match kind {
             frame::Kind::Run => {
-                let idx = rd.u32();
+                self.pending_idx = Some(rd.u32());
                 self.pending_path.clear();
                 self.pending_path.extend_from_slice(rd.str());
-                let exit_code = rd.u32().checked_sub(1).map(|code| code as u8);
                 self.pending_first_loads.clear();
                 self.pending_first_loads.extend_from_slice(rd.str());
-                self.pending_file = Some(PendingFile { idx, exit_code });
             }
             frame::Kind::Shutdown => self.done = true,
             _ => {}
@@ -727,15 +713,15 @@ impl<'a> WorkerLoop<'a> {
             // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
             let mut waits_for_command = bun_io::KeepAlive::init();
             waits_for_command.ref_(bun_io::js_vm_ctx());
-            while self.cmds.pending_file.is_none() && !self.cmds.done {
+            while self.cmds.pending_idx.is_none() && !self.cmds.done {
                 vm.event_loop_ref().tick();
-                if self.cmds.pending_file.is_some() || self.cmds.done {
+                if self.cmds.pending_idx.is_some() || self.cmds.done {
                     break;
                 }
                 vm.event_loop_ref().auto_tick();
             }
             waits_for_command.unref(bun_io::js_vm_ctx());
-            let Some(PendingFile { idx, exit_code }) = self.cmds.pending_file.take() else {
+            let Some(idx) = self.cmds.pending_idx.take() else {
                 break;
             };
             if self.files_run == 0 {
@@ -748,14 +734,10 @@ impl<'a> WorkerLoop<'a> {
             self.reporter.jest.bail = 0;
             self.cmds.emit(frame::Kind::FileStart, |wf| wf.u32(idx));
 
-            if let Some(code) = exit_code {
-                vm.exit_handler.exit_code = code;
-            }
             self.cmds.running = Some(RunningFile {
                 idx,
                 before: *self.reporter.summary(),
                 before_unhandled: self.reporter.jest.unhandled_errors_between_tests,
-                exit_code_before: vm.exit_handler.exit_code,
                 started_ns: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
                 resident_at_start: start_measuring_growth(),
             });
@@ -921,7 +903,7 @@ pub(crate) fn run_as_worker(
         cmds: WorkerCommands {
             channel: Channel::default(),
             frame: Frame::default(),
-            pending_file: None,
+            pending_idx: None,
             pending_path: Vec::new(),
             pending_first_loads: Vec::new(),
             running: None,

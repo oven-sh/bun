@@ -10,52 +10,37 @@ use crate::modules::{
     ExportBinding, ImportBinding, ModuleExport, ModuleGraph, ModuleRef, SyntheticExport,
 };
 
-/// How the question for a name has come to a file.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum AskedBy {
-    /// The import statement names the file. What its mock makes of a name that the factory left out is the mock's to say.
     Statement,
-    /// `export { a as b } from "./c"`: the name is an export of the file that hands it on, whatever the mock has: undefined where the mock lacks it.
     Name,
-    /// `export *` hands on what the mock has. For a name that it lacks the next star of the file is asked.
     Star,
 }
 
 #[derive(Copy, Clone)]
 pub(super) enum Step {
-    /// A file that a mock may stand in place of, with the name that it is asked for there. `behind`: the first step that does not lie below the file.
     Station {
         file: FileId,
         name: Atom,
         asked_by: AskedBy,
-        /// The file on the way that names this one. None: the file that reads.
         asked_from: Option<FileId>,
         behind: usize,
     },
-    /// What declares the name is reached, and no mock stands on the way.
     Declaration,
 }
 
-/// The way from a name that is asked of a file to what declares it, in the order in which the loader looks: `export { a as b } from "./c"` hands the question on
-/// under another name, `export *` under the same, and of several stars the first that has the name answers.
 struct WayToDeclaration<'a> {
     modules: &'a ModuleGraph,
     asking_file: Option<FileId>,
     steps: Vec<Step>,
     path: Vec<FileId>,
     files_on_path: FxHashSet<FileId>,
-    /// What a star heard that asked a file for a name, and the step of the innermost station that it stood below. Stars meet again behind a fork: whoever reaches
-    /// the steps of the second one has been through those of the first, and none of them answered. That holds below the same station alone: a mock that lacks the
-    /// name sends the run past what lies below it. What a station itself shows goes by who asks it, so each asks. And an answer that was made while the way came
-    /// round in a ring holds for that way alone.
     answers_to_stars: FxHashMap<(FileId, Atom), (bool, Option<usize>)>,
     rings_met: usize,
-    /// Ascending.
     stations_on_path: Vec<usize>,
 }
 
 impl WayToDeclaration<'_> {
-    /// Whether the name is found below the file whichever mocks stand.
     fn ask(&mut self, file: FileId, name: Atom, asked_by: AskedBy) -> bool {
         if self.files_on_path.contains(&file) {
             self.rings_met += 1;
@@ -105,7 +90,6 @@ impl WayToDeclaration<'_> {
 
     fn ask_exports(&mut self, file: FileId, name: Atom) -> bool {
         let modules = self.modules;
-        // The table names the variable, and lists what somebody reads off the object of the file. The statement names the next file on the way.
         if let Some((ModuleRef::File(next), name)) = modules.find_what_hands_on_names(file, name) {
             return self.ask(next, name, AskedBy::Name);
         }
@@ -135,7 +119,6 @@ impl WayToDeclaration<'_> {
                     None => false,
                 }
             }
-            // A name of a CommonJS file that another file hands on.
             Some((ExportBinding::Synthetic(handed_on), _)) => {
                 match *modules.synthetic_export(handed_on) {
                     SyntheticExport {
@@ -153,7 +136,6 @@ impl WayToDeclaration<'_> {
                 self.steps.push(Step::Declaration);
                 true
             }
-            // The table has lost what nobody reads off the object of the file: `ModuleGraph::limit_exports`.
             None => {
                 self.ask_stars(file, name)
                     || (modules.is_brought_by_star(file, name)
@@ -162,7 +144,6 @@ impl WayToDeclaration<'_> {
         }
     }
 
-    /// The stars whose names the build knows: what one of them names may have the name from a file that a mock stands in place of. On any other way no mock stands.
     fn ask_ordinary_stars(&mut self, file: FileId, name: Atom) -> bool {
         let modules = self.modules;
         let requests = modules.requests(file).iter();
@@ -188,13 +169,11 @@ impl WayToDeclaration<'_> {
     }
 }
 
-/// Empty where `!modules.reaches_mock(asked.0)`.
 pub(super) fn find_way_to_declaration(
     modules: &ModuleGraph,
     asking_file: Option<FileId>,
     asked: (FileId, Atom),
 ) -> Vec<Step> {
-    // Every step of the way follows a request.
     if !modules.reaches_mock(asked.0) {
         return Vec::new();
     }
@@ -222,7 +201,6 @@ fn has_declaration(steps: &[Step]) -> bool {
     steps.iter().any(|step| matches!(step, Step::Declaration))
 }
 
-/// Where nothing says what was asked: the file that `binding` leads to, and the name of it there. None for a variable of a file from which no way comes to a mock.
 pub(super) fn find_what_binding_leads_to(
     modules: &ModuleGraph,
     binding: ImportBinding,
@@ -254,7 +232,6 @@ pub(super) fn find_what_binding_leads_to(
     }
 }
 
-/// The way from what the statement asks. Where the tables end before the declaration, the way from what the binding leads to follows.
 pub(super) fn find_way_of_read(
     modules: &ModuleGraph,
     reader: FileId,
@@ -265,7 +242,6 @@ pub(super) fn find_way_of_read(
         Some(asked) => find_way_to_declaration(modules, Some(reader), asked),
         None => Vec::new(),
     };
-    // The table of a file that hands a name on lists what somebody reads off its object. The end of the way is known without it.
     let is_station_of = |steps: &[Step], end: FileId| {
         let mut stations = steps.iter();
         stations.any(|step| matches!(*step, Step::Station { file, .. } if file == end))
@@ -287,7 +263,6 @@ pub(super) fn find_way_of_read(
                 file,
                 name,
                 asked_from,
-                // Only the file that the statement names is asked by it.
                 asked_by: match asked_by {
                     AskedBy::Statement if asked.is_some_and(|asked| asked.0 != file) => {
                         AskedBy::Name
@@ -302,7 +277,6 @@ pub(super) fn find_way_of_read(
     steps
 }
 
-/// A module of Bun's own that a mock names, where `binding` is a name of it. Bun's own code never sees a mock.
 fn find_runtime_module_that_may_be_mocked(
     file: &FileLowering<'_, '_, '_, '_>,
     binding: ImportBinding,
@@ -325,7 +299,6 @@ fn find_runtime_module_that_may_be_mocked(
         .then_some((VariableKey::MockOfRuntimeModule(module), name))
 }
 
-/// What a mock on the way of `binding` answers, and `read_without_mock` where none stands.
 pub(super) fn emit_behind_stations(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: ImportBinding,
@@ -338,13 +311,11 @@ pub(super) fn emit_behind_stations(
     if !has_station(&steps) && runtime_station.is_none() {
         return read_without_mock(lowering);
     }
-    // Where the tables do not lead to the declaration, the binding does.
     if !has_declaration(&steps) {
         steps.push(Step::Declaration);
     }
     let result = lowering.builder.create_variable(None);
     let join = lowering.create_block();
-    // A block for each step that something leads to, one for whoever has asked every star in vain, and one for the declaration.
     let nothing = steps.len();
     let declaration = steps.len() + 1;
     let mut blocks: Vec<Option<BlockId>> = vec![None; steps.len() + 2];
@@ -381,7 +352,6 @@ pub(super) fn emit_behind_stations(
         let next = block_at(lowering, &mut blocks, index + 1);
         lowering.jump(next);
         lowering.builder.switch_to(split.not_taken);
-        // `bun test` leaves a module that has run as it is where `vi.doMock()` names it: whoever was linked to it before keeps it. The run time knows who was.
         let mocked = (lowering.file.fragment).declare_module(ModuleRef::File(file));
         let importer = match asked_from {
             Some(importer) => (lowering.file.fragment).declare_module(ModuleRef::File(importer)),
@@ -391,7 +361,6 @@ pub(super) fn emit_behind_stations(
         let asks_mock = lowering.create_block();
         (lowering.builder).branch(sees_mock, Edge::to(asks_mock), Edge::to(next));
         lowering.continue_in(asks_mock);
-        // The mock that stood when the importer was linked, which may have ended since.
         let mock = lowering.builder.mock_seen_by(mocked, importer);
         if asked_by != AskedBy::Statement {
             let key = lowering.file.name_key(name);
@@ -418,7 +387,6 @@ pub(super) fn emit_behind_stations(
     }
     if let Some(block) = blocks[declaration] {
         lowering.continue_in(block);
-        // What is declared by a module of Bun's own: the mock of that module is asked last.
         if let Some((key, name)) = runtime_station {
             let variable = lowering.file.ensure_variable(key);
             let mock = lowering.builder.get_module_variable(variable);

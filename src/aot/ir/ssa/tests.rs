@@ -458,7 +458,6 @@ fn variable_stored_once_above_a_loop_that_modifies_it_is_the_parameter_in_the_bo
     assert_eq!(builder.read_variable(variable), counter);
 }
 
-/// `yield*` after a `finally` that returns is unreachable, so no jump into the first header is emitted.
 #[test]
 fn loop_headers_that_reach_one_another_by_their_first_edges_are_linked() {
     let mut builder = create_builder(&[TypeTable::BOOLEAN, TypeTable::STRING]);

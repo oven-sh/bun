@@ -7,8 +7,6 @@ const TEST_SCRIPT: Setup = Setup {
 
 const HEAD: &str = "var _a, _c, f = function () { return 1; };\n";
 
-// The twelve texts of test/aot/a-polyfill-behind-a-test-for-its-member-costs-no-second-build.test.ts. Nothing defines `undefined` here, so the twelfth compares with `void 0`.
-// No holder stands behind `_c` in the second, so the last two store to the member itself: behind a variable that is filled, and behind a holder that is stored.
 const BEHIND_A_TEST: &[&str] = &[
     r#"Symbol.dispose ??= Symbol.for("d");"#,
     r#"(_a = (_c = Symbol).dispose) !== null && _a !== void 0 ? _a : (_c.dispose = Symbol.for("d"));"#,

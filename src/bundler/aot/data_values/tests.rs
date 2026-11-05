@@ -1,6 +1,5 @@
 use bun_alloc::AstAlloc;
 use bun_ast::{ExprNodeList, Ref, Source};
-use bun_core::strings::contains;
 use bun_parsers::json::{parse_json_into_arena, parse_utf8};
 use bun_sema::session::Session;
 
@@ -139,6 +138,10 @@ impl ValueSink for ValueCounter {
     }
 
     fn big_int(&mut self, _digits: &[u8]) {
+        self.values += 1;
+    }
+
+    fn temporal(&mut self, _class: &[u8], _text: &[u8]) {
         self.values += 1;
     }
 
@@ -553,11 +556,16 @@ fn limit_is_equal_in_every_build() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn toml_date_time_is_not_data() {
-    with_scope(|_, _, scratch| {
+fn toml_date_time_names_its_class() {
+    with_scope(|atoms, arena, scratch| {
         let date = E::EString::init_toml_datetime(b"1979-05-27", E::TomlDateTimeKind::LocalDate);
         let root = Expr::init(date, Loc::EMPTY);
-        assert!(matches!(write_error(&root, scratch), NotData::TomlDateTime));
+        let expected = DataValue::Temporal {
+            class: atoms.intern(b"PlainDate"),
+            text: atoms.intern(b"1979-05-27"),
+        };
+        let value = data_value_from_expr(&root, scratch, arena, atoms);
+        assert_eq!(*value.unwrap(), expected);
     });
 }
 
@@ -577,12 +585,6 @@ fn each_error_is_reported_once() {
         max_data_nodes()
     );
     assert_eq!(reported_text(NotData::TooLarge), size_message.as_bytes());
-    let date_time = reported_text(NotData::TomlDateTime);
-    assert!(date_time.starts_with(b"TS100050"));
-    assert!(contains(
-        &date_time,
-        b"the TOML file \"/project/value.toml\""
-    ));
 }
 
 #[test]

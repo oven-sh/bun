@@ -55,7 +55,6 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^native:Bindgen:bake_plugins\.bind\.ts:setPages$/, "it changes how modules are loaded"],
   [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],
   [/^%CompilerHelpers%\.(plainQuery(Entries|Keys|Values)|pairsOfFlatEntries)$/, "the compiler hands it what another helper answered for the same operands, and takes that on trust"],
-  [/^%CompilerHelpers%\.(lastPieceOfSplit|numberOfPiecesOfSplit)$/, "the compiler hands it a separator that it has seen not to be empty, and takes that on trust"],
   [/^%CompilerHelpers%\.(appendIterable|takeFromIterable)$/, "it is written with the intrinsics that read @@iterator and step generators, and only compiled code has those"],
   [/^%PrivateGlobals%\.requireCommonJS$/, "only `require` of the library calls it, with a module object that it has just made, and native code takes that on trust"],
   [/^MessagePort\.prototype\.close$/, "node:worker_threads lays a function of its own over it, and this realm has that one"],

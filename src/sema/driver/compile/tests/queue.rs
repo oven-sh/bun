@@ -171,7 +171,6 @@ fn a_second_thread_works_beside_a_file_that_takes_as_long_as_the_round() {
     });
 }
 
-// The list of watched cells belongs to the whole process, so a test removes its own cells even when it fails.
 struct EndsWatch<'a, 's>(&'a Files<'s>);
 
 impl Drop for EndsWatch<'_, '_> {
@@ -199,9 +198,6 @@ fn check_and_let_trees_go(
 
 const LONGEST_WAIT: Duration = Duration::from_secs(60);
 
-// Trees wait for the tasks that began before the commit, and those of the tests beside this one count too. The end of any task lets
-// go what waits no more.
-// None: the tests beside this one held every bit that a task can have, so the trees stay for good.
 fn wait_until_tree_is_gone(files: &Files<'_>, file: FileId) -> Option<()> {
     let began = Instant::now();
     while !files.is_tree_gone(file) {
@@ -270,16 +266,12 @@ fn the_tree_of_the_last_file_of_the_last_pass_stays() {
     assert!(!is_tree_of_last_file_gone(true));
 }
 
-// `late.ts` is checked when the trees of `far.ts`, which it has nothing to do with, are gone, so whoever reads them panics. What is
-// reported in `late.ts`.
-// None: see `wait_until_tree_is_gone`.
 fn codes_reported_for_an_import_without_types() -> Option<Vec<u32>> {
     let files = [
         (
             "main.ts",
             "import \"./a.ts\";\nimport \"./far.ts\";\nimport \"./late.ts\";\n",
         ),
-        // Every task reads the file with the lowest number, which holds the symbol of `undefined`.
         ("a.ts", "export const first = [1].join();\n"),
         ("far.ts", "export const far = [1, 2, 3].join();\n"),
         (
@@ -306,18 +298,12 @@ fn codes_reported_for_an_import_without_types() -> Option<Vec<u32>> {
     })
 }
 
-// The hint under the error says whether the program has `@types/untyped`, which every module is asked about. What is read of each is
-// a list that stays when its trees go.
 #[test]
 fn an_import_of_a_package_without_types_reads_no_tree_that_is_gone() {
     let codes = ask_until_answered(codes_reported_for_an_import_without_types);
     assert!(codes.contains(&7016), "{codes:?}");
 }
 
-// `late.ts` imports only `mid.ts`, and what it reads there has a type that `far.ts` declares. `near.ts` is committed behind both, and
-// no file that is left reaches it: once its trees are gone, so are all that wait for no more than the commits so far.
-// `rest.ts` is listed and never committed, because trees are freed only while a listed file is still uncommitted.
-// None: see `wait_until_tree_is_gone`.
 fn check_file_that_reaches_a_tree_through_types() -> Option<()> {
     let files = [
         (
@@ -325,7 +311,6 @@ fn check_file_that_reaches_a_tree_through_types() -> Option<()> {
             "import \"./a\";\nimport \"./mid\";\nimport \"./near\";\n\
              import \"./late\";\nimport \"./rest\";\n",
         ),
-        // Every task reads the file with the lowest number, which holds the symbol of `undefined`.
         ("a.ts", "export const first = [1].join();\n"),
         (
             "far.ts",
@@ -365,9 +350,6 @@ fn a_tree_reached_through_the_types_of_another_file_stays_until_its_reader_is_co
     ask_until_answered(check_file_that_reaches_a_tree_through_types);
 }
 
-// `asks.ts` and `asks-too.ts` are visited by tasks that aren't the first in program order, and each looks through the exports of
-// every module. In `ring.cjs`, late in the program, `module.exports = exports.default` leads back to itself. Only the first file that
-// leads to such a cycle may enter it, so both tasks are discarded. The second goes straight to the module that stopped the first.
 #[test]
 fn a_search_of_every_module_that_cannot_end_stops_at_once() {
     const MODULES: usize = 30;
@@ -426,9 +408,6 @@ fn a_search_of_every_module_that_cannot_end_stops_at_once() {
     });
 }
 
-// The message says that `{ a: Hidden }` is no number. The file doesn't import `Hidden`, nor a module that exports it, so every
-// module of the program is searched for one that does. `line_before`: what stands on the line before the error. Returns how
-// many modules were searched and how many diagnostics the file reports.
 fn modules_searched_for_a_message(main: &str, line_before: &str) -> (usize, usize) {
     let take = match main.ends_with(".ts") {
         true => "function take(count: number) { return count; }",
@@ -623,8 +602,6 @@ fn aliases_of_an_export_table_are_listed_once() {
                 ))
             ),
         ),
-        // Each error is about an object literal that holds a type the file doesn't import, which is looked for among
-        // the exports of every namespace that it does import.
         (
             "main.ts".to_owned(),
             format!(
@@ -659,7 +636,6 @@ fn aliases_of_an_export_table_are_listed_once() {
         });
         assert_eq!(count_reported(&report, main, 2322), ERRORS);
         let read = read.load(Ordering::Relaxed);
-        // The exports of each namespace, of `makers` and of the file itself, and the globals.
         assert!(
             (NAMESPACES..=NAMESPACES + 3).contains(&read),
             "{read} tables"

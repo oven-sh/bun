@@ -18,7 +18,6 @@ struct CallResult {
     is_type_argument_unwritten: bool,
 }
 
-/// The parameter that takes the argument at `index`, and where that is a rest parameter the place in its list.
 fn find_parameter<P: Copy>(
     parameters: &[P],
     index: usize,
@@ -35,7 +34,6 @@ fn find_parameter<P: Copy>(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // `box.get()` with `box: Box<string>` and `get(): T`: the type argument was written with the receiver's type.
     fn find_result_through_written_receiver(&mut self, call: ExprId) -> Option<WrittenType> {
         let ExprKind::Call(site) = self.hir[call].kind else {
             return None;
@@ -53,15 +51,12 @@ impl FileLowering<'_, '_, '_, '_> {
         is_instantiated.then_some(written)
     }
 
-    // The proof of an `int32` is owed where the callee returns. Whoever reads the result stores nothing.
     fn create_call_result_position(&mut self, result: PositionTypes) -> DeclaredType {
         let position = self.create_position(result);
         let flags = position.flags.without(PositionFlags::IS_INT32_PROMISE);
         DeclaredType { flags, ..position }
     }
 
-    // The engine may not know who is called, or may see through a type that lies. The proof of a promise that the result enters by way of an operator, as in
-    // `Math.floor(next() / 2)`, rests on what is written, so an `int32` that the declaration writes is said at the call.
     fn find_int32_result(&mut self, declaration: FunctionRef) -> Option<CallResult> {
         if !self.queries.is_int32_written() {
             return None;
@@ -80,12 +75,10 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // Of a call of code that is not in the program. The engine sees what a function of the program returns.
     fn find_call_result(&mut self, call: ExprId) -> Option<CallResult> {
         if !self.is_checked() {
             return None;
         }
-        // No look at the arguments where they decide nothing.
         if let Some(function) = self.queries.only_declaration_called(call)
             && matches!(
                 self.classify_call_result(Some(function)),
@@ -109,7 +102,6 @@ impl FileLowering<'_, '_, '_, '_> {
             && (written.written()).is_some_and(|written| Ok(written) != target.result.checked);
         target.result.written = match written_with_receiver {
             Some(written) => written,
-            // What is written is the type parameter. The checker has what this call puts in its place.
             None if is_instantiated => WrittenType::Unwritten,
             None => target.result.written,
         };
@@ -121,8 +113,6 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // The engine sees what a function of the program returns where it knows who is called, and where the function writes its result. Of any other call whose
-    // result is read like an object, what the checker has is a guess: the engine tests it where it goes by it.
     fn find_objects_expected_of_call(&mut self, call: ExprId) -> Option<TypeId> {
         if !self.is_checked() || !matches!(self.hir[call].kind, ExprKind::Call(_)) {
             return None;
@@ -149,8 +139,6 @@ impl FileLowering<'_, '_, '_, '_> {
         names_layouts.then_some(expected)
     }
 
-    // Where a returned call stays a tail call none of its casts is tested, and the caller tests what arrives. Where it does not, the casts are conversions in their order.
-    // The cast behind this one is the result of the function around the call, and nobody reads a proof behind a return. So a type argument that nobody wrote is only expected here, as a bare `T` always was.
     pub(in crate::lower) fn find_position_of_returned_call(
         &mut self,
         call: ExprId,
@@ -187,7 +175,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(PositionTypes { written, checked })
     }
 
-    // Whichever signature the checker finds for the call, an `int32` is one that the declaration writes.
     fn passes_no_int32(
         &mut self,
         callee: FunctionRef,
@@ -210,7 +197,6 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    /// The position, where it is written `int32`.
     pub(in crate::lower) fn find_int32_position(
         &mut self,
         types: PositionTypes,
@@ -265,7 +251,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         };
         let shape = self.file.queries.signature(target.signature);
-        // The signature of a call holds the receiver's type arguments, which may be inferred.
         let declared_parameters = match target.declaration {
             Some(declaration) => self.file.queries.function_signature(declaration).parameters,
             None => shape.parameters,
@@ -280,7 +265,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .map_or(WrittenType::Unwritten, |declared| declared.written);
             let is_optional =
                 (shape.parameters.get(index)).is_some_and(|parameter| parameter.is_optional);
-            // The callee tests its parameters where it is entered.
             let found = self.file.find_int32_position(types, declared, is_optional);
             let Some(declared) = found else {
                 continue;
@@ -293,7 +277,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // No operation holds one element of a spread argument, so the flow into the first `int32` parameter that the spread can reach is a request for the list, which no proof admits.
     pub(crate) fn convert_argument_list(&mut self, call: ExprId, list: ValueId) {
         let hir = self.file.hir;
         let (ExprKind::Call(site) | ExprKind::New(site)) = hir[call].kind else {

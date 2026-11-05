@@ -18,7 +18,6 @@ use crate::lower::quoted_text::{append_printed_name, append_printed_number, appe
 use crate::lower::{FileLowering, FunctionLowering};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // `f?.()` leaves its chain where `f` is null or undefined.
     pub(in crate::lower) fn leave_chain_if_nullish(
         &mut self,
         site: Call,
@@ -34,7 +33,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // A built-in that the signature of the call names says more than the type the checker has for the callee.
     pub(in crate::lower) fn lower_callee(
         &mut self,
         callee: ExprId,
@@ -66,7 +64,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_global_path_callee(&mut self, inner: ExprId, path: &[Atom]) -> Callee {
-        let last = self.lower_global_path_holder(path);
+        let last = self.lower_global_path_holder(inner, path);
         let name = Some(self.file.intern_atom(last.name));
         if let Some(builtin) = find_locked_builtin(self.file, inner) {
             return Callee::without_key(self.emit_locked_builtin(builtin), last.holder, name);
@@ -77,7 +75,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let function = self.emit_get(holder, PropertyName::Constant(key));
                 (function, Some(key))
             }
-            None => (self.emit_free_name_get(last.name, false), None),
+            None => (self.get_root_of_global_path(inner, last.name), None),
         };
         Callee {
             function: self.expect_resolved_path(inner, function),
@@ -128,7 +126,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // Plain Bun calls the `require` of the file for `module.require(..)` and reads no `module`, which an ES module does not have.
     fn lower_module_require_callee(
         &mut self,
         access: ExprId,
@@ -142,7 +139,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let name = Some(self.file.intern_atom(known::require));
                 Callee::without_key(function, None, name)
             }
-            // The scope walk records the `module` that is written, so no function holds `require` for this call.
             BodyForm::Wrapped => {
                 let name = self.file.find_callee_name(access);
                 self.lower_ordinary_member_callee(access, exit, name)
@@ -187,7 +183,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let function = self.lower_callee_of_answer(access, Some(this));
             return Callee::without_key(function, Some(this), name);
         }
-        // `bun build` has the value in place of the member, so nothing is `this`.
         if let Some(constant) = self.file.find_enum_member_read(access) {
             if let Some(member) = self.file.find_member_of_loaded_module(access) {
                 self.check_member_root(member);
@@ -197,14 +192,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.lower_ordinary_member_callee(access, exit, name)
     }
 
-    // By the way that is written the callee may be anything, so the call keeps apart what was read on the answer.
     fn lower_callee_of_answer(&mut self, access: ExprId, base: Option<ValueId>) -> ValueId {
         let (function, on_answer) = self.lower_member_of_answer_below(access, base);
         self.callees_read_on_answers.insert(function, on_answer);
         function
     }
 
-    // `(0, a.n)`: `a.n`
     fn find_member_of_answer_behind_number(&self, callee: ExprId) -> Option<ExprId> {
         let hir = self.file.hir;
         let ExprKind::Binary {
@@ -249,7 +242,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (written != callee && scope.is_some()).then_some(written)
     }
 
-    // The value of a choice is no reference: each arm is lowered as the name that it is, so the object of a `with` that has the name is `this`.
     fn lower_callee_chosen_by_build(&mut self, choice: ExprId, written: ExprId) -> Callee {
         let name = self.file.find_callee_name(written);
         let join = self.create_block();
@@ -285,7 +277,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.lower_callee_chosen_by_build(inner, written);
         }
         if !matches!(hir[inner].kind, ExprKind::Ident(_)) {
-            // `(await a.b)()`
             let name = match hir[inner].kind {
                 ExprKind::Await(_) => self.file.find_callee_name(inner),
                 _ => None,
@@ -325,8 +316,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// `a.b.c`, `this.#x`, `a?.b[key]`: a callee that consists of names, as plain Bun quotes it in "a.b.c is not a function".
-    /// Answers false, with `path` in any state, for anything else and for what is too long to be worth its bytes in the executable.
     fn append_written_path(&self, expression: ExprId, path: &mut Vec<u8>) -> bool {
         const LONGEST_PATH: usize = 80;
         let hir = self.hir;
@@ -336,7 +325,6 @@ impl FileLowering<'_, '_, '_, '_> {
             ExprKind::This => path.extend_from_slice(b"this"),
             ExprKind::Super => path.extend_from_slice(b"super"),
             ExprKind::ImportMeta => path.extend_from_slice(b"import.meta"),
-            // What is called or read from stands in brackets.
             ExprKind::Await(mut awaited) => {
                 path.extend_from_slice(b"(await ");
                 while let ExprKind::Await(next) = hir[self.skip_type_syntax(awaited)].kind {
@@ -354,7 +342,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 if !self.append_written_path(obj, path) {
                     return false;
                 }
-                // Plain Bun prints `a["b"]` as `a.b` before it runs the file.
                 let name = self.queries.atom_bytes(name);
                 if hir.is_name_resolved_by_transpiler(inner, name) {
                     path.extend_from_slice(if chain == Chain::Start { b"?." } else { b"." });

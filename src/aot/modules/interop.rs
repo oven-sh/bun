@@ -16,8 +16,6 @@ pub struct Interop {
     pub kind: ModuleKind,
     pub export_rule: SyntheticExportRule,
     pub require_result: RequireResult,
-    /// True for a text or Markdown file in an executable, unless `require_result` is `Namespace`. `require_result` holds only for the `require` calls that `bun build` links.
-    /// Every other call goes to the loader, which answers with the namespace, `{ default }`.
     pub answers_loader_with_namespace: bool,
 }
 
@@ -48,7 +46,6 @@ impl Interop {
         RequireResult::Namespace,
     );
 
-    /// The callback of `__commonJS(cb)` or `__esm(fn)`: a body and no export table, whichever helper wraps it.
     pub(crate) const INNER_MODULE: Interop = Interop::new(
         ModuleKind::CommonJs,
         SyntheticExportRule::None,

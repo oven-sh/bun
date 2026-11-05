@@ -1,6 +1,3 @@
-//! What a file does with the table of loaded modules, `require.cache` and `Module._cache`: which entries it takes out, and whether the table goes
-//! where somebody else may take one out. Whoever reads the table takes nothing out. And whether the file gets at what an entry holds.
-
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
 use super::resolver::Resolver;
@@ -9,7 +6,6 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::Parent;
 use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 
-/// `delete require.cache[key]`, `require.cache[key] = undefined`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum KeyOfModuleCache {
     Text(Atom),
@@ -43,8 +39,6 @@ pub(super) fn is_function_that_loader_calls(id: BuiltinId) -> bool {
 }
 
 impl Resolver<'_, '_> {
-    /// `Module._resolveFilename = f`: the loader calls `f` on the object of `node:module`, with the module object of whoever asks. Each of the two loads
-    /// under whatever name it is given, and no expression of the file names either.
     pub(super) fn note_use_of_function_that_loader_calls(&mut self, function: ExprId) {
         if self.is_stored_to(function) {
             self.expose(BuiltinId::NodeModule);
@@ -52,8 +46,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// `require.extensions[".js"] = loader`: the next `require()` of such a file hands it to the loader, as if the file had been taken out of the table of
-    /// loaded modules. Whoever reads a loader changes none.
     pub(super) fn note_use_of_table_of_loaders(&mut self, table: ExprId) {
         self.output.loses_sight_of_module_cache |= match self.find_member_of(table) {
             Some(loader) => self.is_deleted(loader) || self.is_stored_to(loader),
@@ -67,7 +59,6 @@ impl Resolver<'_, '_> {
         };
     }
 
-    // `Reflect.deleteProperty(require.cache, key)`
     fn find_key_that_call_deletes(&self, table: ExprId) -> Option<ExprId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut operand = table;
@@ -90,7 +81,6 @@ impl Resolver<'_, '_> {
         key.filter(|&key: &ExprId| is_deletion && !matches!(hir[key].kind, ExprKind::Spread(_)))
     }
 
-    // `require.cache[key] = undefined`, `[require.cache[key]] = []`, `(require.cache[key] as unknown) &&= null`
     fn is_stored_to(&self, entry: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut target = entry;
@@ -102,11 +92,9 @@ impl Resolver<'_, '_> {
         bound.get_assignment_target(hir, target).is_some()
     }
 
-    /// `table`: an expression that stands for the table.
     pub(super) fn note_use_of_module_cache(&mut self, table: ExprId) {
         let hir = self.input.hir;
         if let Some(entry) = self.find_member_of(table) {
-            // `require()` takes a falsy entry for none, so a store takes the entry out as a deletion does. Whoever reads an entry takes none out.
             if self.is_deleted(entry) || self.is_stored_to(entry) {
                 let key = match hir.member_key(entry) {
                     Some((_, MemberKey::Name(text) | MemberKey::PrivateName(text))) => {

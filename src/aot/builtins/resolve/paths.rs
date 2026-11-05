@@ -7,7 +7,6 @@ use crate::builtins::table::{
 use bun_sema::atom::Atom;
 use bun_sema::hir::{ExprId, MemberKey, NodeData};
 
-// No object holds the exports of `bun:bundle` at run time, so no store can replace one.
 fn is_erased_namespace(object: BuiltinId) -> bool {
     object == BuiltinId::BunBundle
 }
@@ -136,7 +135,6 @@ impl Resolver<'_, '_> {
             MemberKey::Computed(computed) => {
                 let key = self.value_of(computed)?;
                 let symbol = table::well_known_symbol(key.path.id)?;
-                // `unlock` knows the id of the member and not the id of its key.
                 let key = match self.input.runs_tests {
                     true => key.predicted(),
                     false => key,

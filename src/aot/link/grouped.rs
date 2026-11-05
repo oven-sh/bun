@@ -1,11 +1,8 @@
-/// Items in groups, those of one group in a row.
 pub(super) struct Grouped<T> {
     pub items: Vec<T>,
-    /// `items[starts[group]..starts[group + 1]]` are in `group`.
     starts: Vec<u32>,
 }
 
-/// `Grouped::starts`
 fn starts_of_groups(groups: &[u32], group_count: usize) -> Vec<u32> {
     let mut starts = vec![0u32; group_count + 1];
     for &group in groups {
@@ -20,7 +17,6 @@ fn starts_of_groups(groups: &[u32], group_count: usize) -> Vec<u32> {
 }
 
 impl<T: Copy> Grouped<T> {
-    /// `groups` holds the group of each item. The items of a group keep their order.
     pub(super) fn new(items: &[T], groups: &[u32], group_count: usize) -> Grouped<T> {
         assert_eq!(items.len(), groups.len());
         let starts = starts_of_groups(groups, group_count);

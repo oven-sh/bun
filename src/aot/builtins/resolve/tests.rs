@@ -107,7 +107,6 @@ struct Case<'a, 's> {
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
     resolved: &'a ResolvedBuiltins,
-    // How many expressions the resolver has kept a state of.
     states: usize,
 }
 
@@ -160,7 +159,6 @@ fn find_target(atoms: &Interner<'_>, specifier: ImportSpecifier) -> Option<Runti
     module.map(|module| module.1)
 }
 
-// The facts of the file change nothing in what is found in a part of it.
 fn assert_same_answers(with_facts: &ResolvedBuiltins, without: &ResolvedBuiltins, source: &str) {
     let describe = |resolved: &ResolvedBuiltins| {
         format!(
@@ -190,7 +188,6 @@ fn assert_same_answers(with_facts: &ResolvedBuiltins, without: &ResolvedBuiltins
     assert_eq!(describe(with_facts), describe(without), "{source}");
 }
 
-// An executable refuses a write that replaces a member of a built-in object, so nothing may be opened for one. The names that it adds are listed in every build.
 fn assert_no_writes_are_found(resolved: &ResolvedBuiltins, source: &str) {
     let finds_nothing = resolved.replaced_members().is_empty()
         && resolved.opened_holders().is_empty()
@@ -205,7 +202,6 @@ fn with_case<R>(setup: Setup, source: &str, then: impl FnOnce(&Case<'_, '_>) -> 
     with_parts(setup, source, None, then)
 }
 
-// `parts`: only the code in these pieces of the source counts. They stand in it in this order, each once.
 fn with_parts<R>(
     setup: Setup,
     source: &str,

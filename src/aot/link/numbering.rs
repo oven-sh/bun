@@ -23,14 +23,11 @@ use bun_sort_by_number::{SortByNumber, number_of_pair};
 use core::convert::identity;
 use core::mem::replace;
 
-/// Each list is indexed by the id a record has in one set of tables and holds that record's id in the program.
-/// `None`: the program has no such record.
 #[derive(Default)]
 pub struct TableIds {
     pub strings: Vec<Option<StringId>>,
     pub property_keys: Vec<Option<PropertyKeyId>>,
     pub types: Vec<Option<TypeId>>,
-    /// Empty.
     pub type_sites: Vec<Option<TypeSiteId>>,
     pub expected_results: Vec<Option<ExpectedResultId>>,
     pub layouts: Vec<Option<LayoutId>>,
@@ -61,12 +58,10 @@ impl TableIds {
     }
 }
 
-// An id is a word of the wire, whatever machine the build aims at.
 const MAX_PROGRAM_IDS: u64 = LimitId::MaxProgramIds.value(Architecture::ARM64);
 const _: () = assert!(MAX_PROGRAM_IDS == LimitId::MaxProgramIds.value(Architecture::X86_64));
 const _: () = assert!(MAX_PROGRAM_IDS < ABSENT_WORD as u64);
 
-/// `LimitId::MaxProgramIds`, for the records of one kind.
 pub(super) fn check_count_of_ids(count: usize) -> Result<(), Vec<LinkError>> {
     let (limit, count) = (LimitId::MaxProgramIds, count as u64);
     match count > MAX_PROGRAM_IDS {
@@ -104,18 +99,13 @@ impl ProgramCounts {
 }
 
 pub(super) struct Numbering {
-    /// By merged index, like the next two.
     pub functions: Vec<Option<FunctionId>>,
     pub layouts: Vec<Option<LayoutId>>,
     pub variables: Vec<Option<VariableId>>,
-    /// By the index in `ModuleTable::modules`.
     pub modules: Vec<Option<ModuleId>>,
-    /// By `modules::ModuleFailureId`. A list ends behind the last failure that has an id.
     pub module_failures: PerProject<Vec<Option<ModuleFailureId>>>,
     pub counts: ProgramCounts,
-    /// In the order of `LinkTables`.
     pub tables: Vec<TableIds>,
-    /// By `LayoutId`.
     pub layout_keys: Vec<ProgramLayoutKey>,
 }
 
@@ -149,7 +139,6 @@ fn resolve_program_ids<I: Id>(local_to_merged: &[u32], ids: &[Option<I>]) -> Vec
         .collect()
 }
 
-// The merged indexes of what the units define, units in the order of their files, the definitions of a unit in its order.
 fn list_chosen_definitions<I: Id, T, D: PartialEq>(
     units: &[LinkUnit],
     definitions_of: fn(&LinkUnit) -> &Vec<(I, T)>,
@@ -170,7 +159,6 @@ fn list_chosen_definitions<I: Id, T, D: PartialEq>(
     order
 }
 
-// Code reads a variable whose key its tables name. The object of a module reads what the export table of the module lists.
 fn find_variables_that_are_read(
     merged: &Merged<'_>,
     shown_by_export_tables: &[ProgramVariableKey],
@@ -189,7 +177,6 @@ fn find_variables_that_are_read(
     is_read
 }
 
-// The loader fills every export that has an id when it links the module, so one that nothing reads gets none.
 fn number_variables_that_link_defines(
     listed: impl Iterator<Item = u32>,
     definitions: &[Option<VariableDefinition>],
@@ -201,11 +188,9 @@ fn number_variables_that_link_defines(
         let variable = variable as usize;
         let is_in_program = match definitions[variable] {
             Some(VariableDefinition::SyntheticExport { .. }) => is_read[variable],
-            // The host stores there, whoever reads it.
             Some(VariableDefinition::MockOfRuntimeModule { .. }) => true,
             Some(VariableDefinition::Unit(_)) | None => false,
         };
-        // Both projects list a name that both import.
         if is_in_program && ids[variable].is_none() {
             ids[variable] = Some(VariableId::new(*count));
             *count += 1;
@@ -215,9 +200,7 @@ fn number_variables_that_link_defines(
 
 fn order_program_layouts(merged: &Merged<'_>, definitions: &Definitions) -> Vec<u32> {
     debug_assert_eq!(definitions.layouts.len(), merged.layouts.keys.len());
-    // A merged index is the rank of its key.
     let sites = (0u32..).zip(&definitions.layouts);
-    // By unit, as `list_chosen_definitions` orders them, then by key: `order_layout_definitions` says why.
     let defined = sites
         .clone()
         .filter_map(|(layout, site)| Some(((*site)?, layout)));
@@ -232,7 +215,6 @@ fn order_program_layouts(merged: &Merged<'_>, definitions: &Definitions) -> Vec<
     })
 }
 
-/// The roots in their order, but each base ahead of what extends it.
 fn order_layouts(
     layout_count: usize,
     roots: &[u32],
@@ -254,7 +236,6 @@ fn order_layouts(
     order
 }
 
-// By project, then by the number that the graph of the project gives the failure.
 fn number_named_failures<'a>(
     named: impl Iterator<Item = (ProjectId, &'a [modules::ModuleFailureId])>,
     count: &mut usize,
@@ -285,8 +266,6 @@ fn number_records<I: Id, T>(records: &[(I, T)], ids: &mut [Option<I>], count: &m
     }
 }
 
-// A visit that was thrown away has taken numbers too. No unit holds their records.
-// `counts`: of the scopes, the data and the expected results.
 fn number_records_of_units(
     units: &[LinkUnit],
     tables: &[LinkTables],
@@ -328,7 +307,6 @@ fn has_unit(units: &[LinkUnit], file: ProgramFile) -> bool {
     units.binary_search_by_key(&file, |unit| unit.file).is_ok()
 }
 
-// A file that maps an overload names what runs behind it, lowered or not. Only the edge reads that name.
 fn mark_sources_of_function_type_edges(merged: &Merged<'_>) -> Vec<bool> {
     let mut is_source = vec![false; merged.functions.keys.len()];
     for unit in merged.units {
@@ -354,7 +332,6 @@ fn find_function_without_definition(merged: &Merged<'_>, definitions: &Definitio
     found.map(|(function, _)| function)
 }
 
-// A file that was lowered defines whatever another file may name of it.
 fn stop_at_key_without_definition(merged: &Merged<'_>, definitions: &Definitions) {
     let units = merged.units;
     if let Some(function) = find_function_without_definition(merged, definitions) {
@@ -382,8 +359,6 @@ fn stop_at_key_without_definition(merged: &Merged<'_>, definitions: &Definitions
     }
 }
 
-/// What a unit defines is in the program. The strings, the property keys and the types of the tables get their ids elsewhere.
-/// `synthetic_exports`: `synthetic_export_keys`, whose order is that of the ids. `shown_by_export_tables`: `variables_shown_by_export_tables`, in any order.
 pub(super) fn number_program(
     merged: &Merged<'_>,
     definitions: &Definitions,
@@ -397,7 +372,6 @@ pub(super) fn number_program(
     stop_at_key_without_definition(merged, definitions);
     steps.end("number: what is named is defined");
 
-    // None of these asks for a number of the others.
     let (function_ids, (table_ids, (variable_ids, (layout_keys, layout_ids)))) = run_steps_beside(
         beside,
         &mut steps,
@@ -448,7 +422,6 @@ pub(super) fn number_program(
                             let variable_count = merged.variables.keys.len();
                             let mut variable_ids: Vec<Option<VariableId>> =
                                 number_in_order(variable_count, variable_order, count);
-                            // `merge_keys` has looked each of them up: theirs is the list behind those of the tables.
                             let listed = &merged.variables.local_to_merged[tables.len()];
                             debug_assert_eq!(listed.len(), synthetic_exports.len());
                             number_variables_that_link_defines(
@@ -499,7 +472,6 @@ pub(super) fn number_program(
         let named_modules = named.modules.iter();
         ids.modules = named_modules
             .map(|module| {
-                // The program has no record of a file that it does not reach.
                 let index = *index_by_module.get(module)?;
                 module_ids[index as usize]
             })
@@ -524,7 +496,6 @@ pub(super) fn number_program(
     }
 }
 
-/// Each list is indexed by the program's id.
 #[cfg(test)]
 pub(crate) struct ProgramKeys {
     pub functions: Vec<ProgramFunctionKey>,

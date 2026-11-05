@@ -13,9 +13,7 @@ use std::cmp::Reverse;
 struct TypeRange {
     start: u32,
     end: u32,
-    // So many bytes stand in its place that the source lacks. A range either removes or adds.
     added: u32,
-    // How much shorter the text in front of it is than the source in front of it.
     removed_before: i64,
 }
 
@@ -25,7 +23,6 @@ impl TypeRange {
     }
 }
 
-/// A part of the source in whose place `text` stands.
 pub struct ReplacedText {
     pub start: u32,
     pub end: u32,
@@ -88,12 +85,10 @@ impl TypeRanges {
         )
     }
 
-    /// Where a part of the source that starts at `offset` starts in the text: behind what is added there.
     pub fn map_start(&self, offset: u32) -> u32 {
         self.map_end(offset)
     }
 
-    /// Where a part of the source that ends at `offset` ends in the text: what is added there belongs to what stands in front of it.
     pub fn map_end(&self, offset: u32) -> u32 {
         self.map(
             offset,
@@ -112,11 +107,8 @@ impl TypeRanges {
     }
 }
 
-/// The ranges in two or three bytes each, for whoever keeps them as long as the text.
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct PackedTypeRanges {
-    // For each range, how many bytes are kept between it and the range before it, and its length: seven bits a byte, the lowest first.
-    // No length: how many bytes the text has there that the source lacks follows.
     bytes: Box<[u8]>,
     removed: i64,
     written_over: Box<[(u32, Box<[u8]>)]>,
@@ -127,7 +119,6 @@ impl PackedTypeRanges {
         (len_of_text as i64 - self.removed) as usize
     }
 
-    /// `kept` has room for `kept_len(text.len())`.
     pub fn remove_from(&self, text: &[u8], kept: &mut [u8]) {
         let (mut bytes, mut at, mut written) = (&self.bytes[..], 0, 0);
         let mut keep = |part: &[u8], added_behind: usize| {
@@ -186,7 +177,6 @@ pub fn find_type_ranges(file: &File<'_>) -> TypeRanges {
     find_type_ranges_beside(file, Vec::new())
 }
 
-/// `find_type_ranges` goes back from a type over the comments in front of it. Those stay, and the others go.
 pub fn keep_only_comments_beside_types<'s>(file: &mut File<'s>, arena: &'s Arena) {
     let mut passed = Vec::new();
     if !file.is_js && !file.comments.is_empty() {
@@ -221,7 +211,6 @@ pub fn find_type_ranges_beside(file: &File<'_>, mut replaced: Vec<ReplacedText>)
             _ => removed.push((start, end)),
         }
     }
-    // The last byte of what is removed there stays, and a `;` is written over it.
     let mut ends_of_statements = finder.ends_of_statements;
     ends_of_statements.sort_unstable();
     let mut last_written = None;
@@ -240,11 +229,9 @@ pub fn find_type_ranges_beside(file: &File<'_>, mut replaced: Vec<ReplacedText>)
         }
     }
     removed.retain(|range| range.0 < range.1);
-    // What stands in a part that is removed goes with it.
     let is_kept = |part: &ReplacedText| {
         let start = part.start;
         let end = part.end.min(start + part.text.len() as u32);
-        // Text that is only added belongs to what stands in front of it.
         let next =
             removed.partition_point(|range| range.1 < start || (range.1 == start && start < end));
         !part.text.is_empty() && removed.get(next).is_none_or(|range| end <= range.0)
@@ -291,11 +278,8 @@ struct Finder<'a, 's> {
     file: &'a File<'s>,
     text: &'a [u8],
     found: Vec<(u32, u32)>,
-    // Where the text would mean something else with the type merely gone.
     replaced: Vec<ReplacedText>,
-    // Offsets in what is removed. What stood there kept two statements or two members of a class apart.
     ends_of_statements: Vec<u32>,
-    // Indexes in the comments of the file.
     comments_passed: RefCell<Vec<u32>>,
 }
 
@@ -327,7 +311,6 @@ impl<'a, 's> Finder<'a, 's> {
         let file = self.file;
         for index in 0..file.stmts.len() {
             let statement = StmtId(index as u32);
-            // The `b` of `namespace a.b` goes with `a` or stays with it.
             if file.is_erased_statement(statement) && !is_nested_namespace(file, statement) {
                 let end = self.end_of_erased_statement(file[statement].loc.end as usize);
                 self.add_whole(file[statement].start, end as u32);
@@ -379,12 +362,10 @@ impl<'a, 's> Finder<'a, 's> {
         }
     }
 
-    // `(Color as any).Green`: a part that the caller replaces goes as a whole, and nothing is found in it.
     fn leave_what_stands_in(&mut self, replaced: &mut Vec<ReplacedText>) {
         if replaced.is_empty() {
             return;
         }
-        // Where two start at one offset, text that is only added comes first: it belongs to what stands in front.
         replaced.sort_unstable_by_key(|part| {
             let is_written_over = part.start < part.end;
             (part.start, is_written_over, Reverse(part.end))
@@ -393,9 +374,7 @@ impl<'a, 's> Finder<'a, 's> {
         let mut outermost: Vec<ReplacedText> = Vec::with_capacity(replaced.len());
         for part in replaced.drain(..) {
             match outermost.last_mut() {
-                // `-Level.Low` and the `Level.Low` in it: the outer part stays.
                 Some(last) if part.start < last.end => {}
-                // What is only added behind a part is the end of what stands in the place of that part.
                 Some(last) if part.end == last.end => {
                     last.text = [&last.text[..], &part.text[..]].concat().into();
                 }
@@ -403,7 +382,6 @@ impl<'a, 's> Finder<'a, 's> {
             }
         }
         *replaced = outermost;
-        // Text that is only added where a part starts belongs to what stands in front of the part.
         let stands_in_part = |start: u32, end: u32| {
             let behind = replaced.partition_point(|part| part.start < end);
             let last = behind.checked_sub(1).map(|last| &replaced[last]);
@@ -474,14 +452,12 @@ impl<'a, 's> Finder<'a, 's> {
         }
     }
 
-    // Read backward, nothing tells where a comment begins: `/* a /* b */`, `/"/ // c`, `/[//]/`, a line inside a template. The lexer has said it.
     fn skip_trivia_back(&self, mut at: usize) -> usize {
         let comments = &self.file.comments;
         loop {
             while is_space(self.byte_before(at)) {
                 at -= 1;
             }
-            // The blanks at the end of a `//` comment are part of it.
             let before = comments.partition_point(|comment| (comment.pos as usize) < at);
             match before.checked_sub(1) {
                 Some(last) if comments[last].end as usize >= at => {
@@ -502,7 +478,6 @@ impl<'a, 's> Finder<'a, 's> {
         bytes.contains(&self.byte(self.skip_trivia(end)))
     }
 
-    // A member of a class may have such a name.
     fn is_followed_by_operator_word(&self, end: usize) -> bool {
         let rest = self.text.get(self.skip_trivia(end)..).unwrap_or_default();
         [&b"instanceof"[..], b"in"].iter().any(|&word| {
@@ -511,7 +486,6 @@ impl<'a, 's> Finder<'a, 's> {
         })
     }
 
-    /// Removes a statement, or a member of a class. What follows it may begin a statement or a member, and would go on with an expression in front of it.
     fn add_whole(&mut self, start: u32, end: u32) {
         self.add(start, end);
         let end = end as usize;
@@ -618,7 +592,6 @@ impl<'a, 's> Finder<'a, 's> {
         self.add(start as u32, end);
     }
 
-    // `constructor(public a) {}` means `a; constructor(a) { this.a = a; }`: the fields in front of every member, the stores where `bun run` puts them.
     fn add_parameter_properties(&mut self, class: ClassId) {
         let file = self.file;
         let Some(constructor) = find_runtime_constructor(file, class) else {
@@ -688,7 +661,6 @@ impl<'a, 's> Finder<'a, 's> {
         self.add_end_of_field_named_like_modifier(member, after_mark);
     }
 
-    // `static?: T` or `get!: T` and a line break: by itself the name would be a modifier of the member on the next line.
     fn add_end_of_field_named_like_modifier(&mut self, member: &Member, after_mark: usize) {
         if !matches!(member.kind, MemberKind::Property) || member.init.some().is_some() {
             return;
@@ -747,7 +719,6 @@ impl<'a, 's> Finder<'a, 's> {
                 _ => return,
             }
         }
-        // `async <T>` and a line break: `async` by itself in front of a line break is a name, and no arrow function follows it.
         let next = self.skip_trivia(end);
         if self.byte(next) == b'(' && self.has_line_break(end, next) {
             end = next;
@@ -773,7 +744,6 @@ impl<'a, 's> Finder<'a, 's> {
         self.add_angle_brackets(self.file[first].start, self.file[last].end);
     }
 
-    // What a cast that ends at `end` holds, through the casts in it: a binary expression without parentheses whose operator binds looser than the one behind the cast.
     fn find_operand_that_binds_looser(&self, mut operand: ExprId, end: usize) -> Option<ExprId> {
         let behind = match self.text.get(self.skip_trivia(end)..).unwrap_or_default() {
             [b'*', b'*', ..] => 5,
@@ -793,7 +763,6 @@ impl<'a, 's> Finder<'a, 's> {
             return None;
         };
         let own = match op {
-            // `a ** b ** c` is `a ** (b ** c)`.
             BinOp::Pow => 4,
             BinOp::Mul | BinOp::Div | BinOp::Rem => 4,
             BinOp::Add | BinOp::Sub => 3,
@@ -809,7 +778,6 @@ impl<'a, 's> Finder<'a, 's> {
             self.byte(expression.pos as usize) == b'<' && expression.pos < operand_start;
         if !is_prefix {
             let start = end_of_expr(self.file, operand);
-            // `a + b as T * c` is `(a + b) * c`.
             match self.find_operand_that_binds_looser(operand, expression.end as usize) {
                 Some(looser) => {
                     let open = start_of(self.file, looser);
@@ -826,7 +794,6 @@ impl<'a, 's> Finder<'a, 's> {
                 }
                 None => self.add(start, expression.end),
             }
-            // `a as T` and a line break end a statement. `a` and a line break go on with `(b)`.
             if self.is_followed_by_one_of(expression.end as usize, b"([`") {
                 self.ends_of_statements.push(start);
             }
@@ -836,16 +803,13 @@ impl<'a, 's> Finder<'a, 's> {
         if self.byte_before(close_end) != b'>' {
             return;
         }
-        // `return <T>` and a line break: `return` by itself in front of a line break returns nothing.
         if self.has_line_break(close_end, operand_start as usize) {
             close_end = operand_start as usize;
         }
         let rest = &self.text[operand_start as usize..];
-        // `() => <T>{}`, `<T>function () {}()`: by itself the operand would begin a block or a declaration.
         let begins_statement = [&b"{"[..], b"function", b"class", b"async"]
             .iter()
             .any(|start| rest.starts_with(start));
-        // `return<T>a`
         let joins_names = close_end == operand_start as usize
             && is_part_of_name(self.byte_before(expression.pos as usize))
             && rest.first().is_some_and(|&byte| is_part_of_name(byte));

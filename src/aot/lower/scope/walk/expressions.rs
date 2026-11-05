@@ -1,7 +1,8 @@
 use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, PrivateMembers, ScopeId, SymbolId};
 use bun_sema::fold::{Decision, TreeNode};
 use bun_sema::hir::{
-    Call, CallId, ExprId, ExprKind, JsxId, MemberId, NodeData, PatId, PatKind, PropKey,
+    BinOp, Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId, PatKind,
+    PropKey, UnOp,
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxCallee, JsxImport, RequireCallForm,
@@ -24,7 +25,6 @@ use crate::lower::scope::{
 use crate::lower::{class, parameters};
 use crate::modules::{Member, ModuleRef, Site, SiteAnswer};
 
-// What `try_lower_module_call` asks before it looks at the callee.
 fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_count: usize) -> bool {
     match site.kind {
         ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => match answer {
@@ -55,7 +55,33 @@ impl Walker<'_, '_> {
         }
         match self.decisions.decision(expression) {
             Decision::Unknown => {}
+            Decision::GlobalPath(_) => {
+                let is_bound_name = matches!(self.hir[expression].kind, ExprKind::Ident(_))
+                    && self.bound.binding(expression) != Binding::Free;
+                if is_bound_name {
+                    self.visit_identifier(expression, context);
+                }
+                for binding in bindings_of(&self.jsx_uses, expression) {
+                    self.record_binding_use(context, binding, false);
+                }
+                return;
+            }
             _ => return,
+        }
+        match self.hir[expression].kind {
+            ExprKind::Cond { test: tested, .. }
+            | ExprKind::Unary {
+                op: UnOp::Not | UnOp::Typeof,
+                operand: tested,
+            }
+            | ExprKind::Binary {
+                op: BinOp::And,
+                left: tested,
+                ..
+            } => {
+                self.note_name_that_nobody_looks_at(tested);
+            }
+            _ => {}
         }
         match self.hir[expression].kind {
             ExprKind::Ident(_) => self.visit_identifier(expression, context),
@@ -71,9 +97,7 @@ impl Walker<'_, '_> {
             ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
                 self.visit_call(expression, call, context);
             }
-            // The store is made when the operands have been evaluated.
             ExprKind::Unary { operand, .. } => self.push_operands_of_store([operand], context),
-            // A pattern runs its keys, its targets and its defaults when the value has been evaluated.
             ExprKind::Assign { target, value, .. } if self.is_assignment_pattern(target) => {
                 self.push_operands_of_store([value, target], context);
             }
@@ -119,13 +143,36 @@ impl Walker<'_, '_> {
         )
     }
 
+    pub(super) fn note_name_that_nobody_looks_at(
+        &mut self,
+        expression: ExprId,
+    ) -> Option<SymbolId> {
+        if expression.is_none() {
+            return None;
+        }
+        let name = self.hir.skip_type_assertions(expression);
+        if !matches!(self.hir[name].kind, ExprKind::Ident(_)) {
+            return None;
+        }
+        self.is_only_called_or_tested[name.idx()] = true;
+        match self.bound.binding(name) {
+            Binding::Symbol(symbol) => Some(symbol),
+            _ => None,
+        }
+    }
+
     fn visit_identifier(&mut self, identifier: ExprId, context: Context) {
         self.visit_name(identifier, self.bound.binding(identifier), context);
     }
 
-    // The binding is read, or stored to, where `identifier` stands.
     fn visit_name(&mut self, identifier: ExprId, binding: Binding, context: Context) {
         let (bound, function) = (self.bound, context.function);
+        if let Binding::Symbol(symbol) = binding
+            && (!self.is_only_called_or_tested[identifier.idx()]
+                || bound.is_store_target(identifier))
+        {
+            self.walk.is_looked_at[symbol.idx()] = true;
+        }
         if let (Binding::Symbol(symbol), true) = (binding, bound.is_store_target(identifier)) {
             self.walk.symbol_stores.push((symbol, identifier, function));
             self.walk.last_store_times[symbol.idx()] = u32::MAX;
@@ -146,6 +193,12 @@ impl Walker<'_, '_> {
         }
     }
 
+    pub(super) fn note_binding_is_looked_at(&mut self, binding: Binding) {
+        if let Binding::Symbol(symbol) = binding {
+            self.walk.is_looked_at[symbol.idx()] = true;
+        }
+    }
+
     pub(super) fn record_binding_use(
         &mut self,
         context: Context,
@@ -155,9 +208,7 @@ impl Walker<'_, '_> {
         match binding {
             Binding::Symbol(symbol) => {
                 self.record_symbol_use(context, symbol);
-                // The read may make the function object and keep it in the place of the name.
                 let (hir, bound) = (self.hir, self.bound);
-                // Nearly every name that is read is no function declaration: one look in a table says so.
                 let owner = match bound.initializing_declaration(symbol) {
                     Some(bun_sema::bind::Decl::Fn(_)) => {
                         bound.code_unit(bound.symbol_scope(symbol))
@@ -168,8 +219,6 @@ impl Walker<'_, '_> {
                     CodeUnit::Function(owner) => self.walk.function_of_fn[owner.idx()],
                     CodeUnit::File | CodeUnit::FieldInitializer(_) => None,
                 };
-                // The body of a module runs once, and the graph of modules reads what it declares out of statements that nobody walks:
-                // `__export(all, { name: () => name })` in the callback of a bundler's wrapper.
                 let owner = owner.filter(|it| self.walk.functions[it.index()].creator.is_some());
                 if let Some(owner) = owner
                     && let Some(function) = find_declaration_made_at_first_read(hir, bound, symbol)
@@ -183,7 +232,6 @@ impl Walker<'_, '_> {
                         enclosing_loop: context.enclosing_loop,
                         time,
                     });
-                    // In a loop each turn would ask anew whether the function object is there.
                     let is_made_at_entry =
                         !context.is_conditional || context.enclosing_loop.is_some();
                     if is_made_at_entry && owner == context.function {
@@ -208,7 +256,15 @@ impl Walker<'_, '_> {
     }
 
     fn visit_member(&mut self, access: ExprId, object: ExprId, index: ExprId, context: Context) {
-        // Bun's transpiler prints `require(..)` for `module.require(..)`, so the lowering may read either name.
+        let counted =
+            parameters::find_function_whose_arguments_are_counted(self.hir, self.bound, access);
+        if let Some(function) = counted
+            && self.walk.function_of_fn[function.idx()] == Some(context.function)
+        {
+            let read = (context.function, ArgumentRead::Count);
+            self.walk.argument_reads.push(read);
+            return;
+        }
         if let Some(module) = find_module_printed_as_require(self.hir, self.bound, access) {
             let require = Binding::CommonJs(CommonJsVariable::Require);
             self.visit_name(module, require, context);
@@ -225,7 +281,6 @@ impl Walker<'_, '_> {
         self.push_expressions([index], context);
     }
 
-    // `exports.a` and `module.exports.a` in the callback of `__commonJS((exports, module) => { .. })`, where `a` is a variable of the module.
     fn names_variable_of_inner_module(&self, access: ExprId) -> bool {
         if self.inner_module_parameters.is_empty() {
             return false;
@@ -256,6 +311,22 @@ impl Walker<'_, '_> {
             }
     }
 
+    fn note_names_handed_to_declaration(&mut self, expression: ExprId, call: &Call, callee: FnId) {
+        let arguments = self.hir.ids(call.args);
+        let spreads = |argument: ExprId| matches!(self.hir[argument].kind, ExprKind::Spread(_));
+        if !matches!(self.hir[expression].kind, ExprKind::Call(_)) || arguments.clone().any(spreads)
+        {
+            return;
+        }
+        for (index, argument) in arguments.enumerate() {
+            if let Some(name) = self.note_name_that_nobody_looks_at(argument) {
+                self.walk
+                    .names_handed_to_declarations
+                    .push((name, callee, index as u32));
+            }
+        }
+    }
+
     fn visit_call(&mut self, expression: ExprId, call: CallId, context: Context) {
         let call = self.hir[call];
         let mut binds_this_for_what_follows = false;
@@ -282,23 +353,27 @@ impl Walker<'_, '_> {
                 self.visit_direct_eval(expression, eval, context);
             }
             self.record_argument_read(&call, context);
-            // Else the lowering emits the load of the module and never reads the callee.
             let loads_module = self.evaluates_inner_module(expression, &call)
                 || (self.walk.has_wrapper_parameters
                     && self.is_bound_module_call(expression, &call));
             if !loads_module {
-                // Whoever calls supplies what the function captures, and does not read its name.
                 let called = find_declaration_called_by_name(self.hir, self.bound, expression);
                 match called.filter(|called| self.runs_behind_initialization(called, context)) {
                     Some(called) => {
                         let reference = (context.function, called.function);
                         self.walk.function_references.push(reference);
                         self.walk.calls_by_name.push((expression, called.function));
+                        self.note_names_handed_to_declaration(expression, &call, called.function);
                         let site = (called.function, context.function, self.tick());
                         self.walk.sites_that_start.push(site);
                         self.walk.names_called.extend(called.initialized);
                     }
-                    None => self.push_expressions([call.callee], context),
+                    None => {
+                        if matches!(self.hir[expression].kind, ExprKind::Call(_)) {
+                            self.note_name_that_nobody_looks_at(call.callee);
+                        }
+                        self.push_expressions([call.callee], context)
+                    }
                 }
             }
         }
@@ -309,8 +384,6 @@ impl Walker<'_, '_> {
         }
     }
 
-    // Nobody has the function before its name is filled, so its own body runs behind that. Any other call does if the walk has passed the initialization, which no switch can jump over
-    // (`initialize_symbol`): a body is walked where its function is made. But for a declared function of the scope of the name: it is made where the scope is entered.
     fn runs_behind_initialization(&self, called: &CalledByName, context: Context) -> bool {
         let Some(symbol) = called.initialized else {
             return true;
@@ -338,7 +411,6 @@ impl Walker<'_, '_> {
         is_behind
     }
 
-    // `require_a()`, where `var require_a = __commonJS(cb)`.
     fn evaluates_inner_module(&self, expression: ExprId, call: &Call) -> bool {
         if !call.args.is_empty() || self.input.modules.inner_modules(self.input.file).is_empty() {
             return false;
@@ -349,7 +421,6 @@ impl Walker<'_, '_> {
         }
     }
 
-    // `require("./a")`, `require.resolve("./a")`, `module.require("./a")` in a file that keeps the five names as parameters, where nothing can put another value behind the name.
     fn is_bound_module_call(&self, expression: ExprId, call: &Call) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let analysis = &self.input.compiled.analysis;
@@ -429,6 +500,7 @@ impl Walker<'_, '_> {
             self.use_this(context);
         }
         for binding in bindings_of(&self.jsx_uses, expression) {
+            self.note_binding_is_looked_at(binding);
             self.record_binding_use(context, binding, false);
         }
         let key_argument = find_key_argument(hir, callee, jsx);
@@ -488,7 +560,6 @@ impl Walker<'_, '_> {
         }
     }
 
-    // The keys and the defaults are pushed in the order in which they run: what belongs to an inner pattern runs before what follows that pattern in the outer one.
     pub(super) fn visit_pattern(&mut self, pattern: PatId, role: PatternRole, context: Context) {
         let hir = self.hir;
         let mut initialized: SmallVec<[SymbolId; 4]> = SmallVec::new();

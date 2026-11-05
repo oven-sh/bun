@@ -1,7 +1,7 @@
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use super::inputs::{
-    DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind, StoredByMocks,
+    DefinePath, DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind, StoredByMocks,
 };
 use super::run_order::RunOrder;
 use super::{Constant, Decision, FoldedValue};
@@ -16,6 +16,12 @@ use crate::module_format::settled_main_module_operand;
 
 impl<'s> Folder<'_, 's> {
     pub(super) fn fold_ident(&mut self, e: ExprId, name: Atom) -> Folded {
+        if self.is_bound_through_name_in_place(e, name)
+            && let Some(root) = self.inputs.root(DefineRoot::Global(name))
+            && let Some(DefineValue::GlobalPath(path @ &[_, _, ..])) = self.inputs.value_of(root)
+        {
+            return self.decide(e, Decision::GlobalPath(path));
+        }
         match self.bound.binding(e) {
             Binding::Free
             | Binding::CommonJs(
@@ -53,8 +59,17 @@ impl<'s> Folder<'_, 's> {
     }
 
     fn is_bound_through_name_in_place(&self, e: ExprId, name: Atom) -> bool {
+        let written = DefinePath {
+            root: DefineRoot::Global(name),
+            members: &[],
+        };
+        let is_own_name = match self.bound.binding(e) {
+            Binding::Free => true,
+            Binding::Symbol(symbol) => self.bound.symbol(symbol).name == name,
+            Binding::Arguments(_) | Binding::CommonJs(_) => false,
+        };
         let mut names_in_place = self.inputs.names_in_place.iter();
-        self.bound.binding(e) != Binding::Free && names_in_place.any(|it| it.0 == name)
+        !is_own_name && names_in_place.any(|it| it.path == written)
     }
 
     fn is_process_import(&self, symbol: SymbolId) -> bool {
@@ -83,7 +98,7 @@ impl<'s> Folder<'_, 's> {
         let is_in_chain = chain != Chain::No;
         let form = LinkForm {
             is_in_optional_chain: is_in_chain,
-            is_index: hir.is_written_in_brackets(e),
+            is_index: hir.is_written_in_brackets(e) && !self.is_hot_of_import_meta(obj),
         };
         let object_state = self.path_states.get(&obj);
         let object_state =
@@ -97,6 +112,16 @@ impl<'s> Folder<'_, 's> {
         }
         if let Some(folded) = self.fold_enum_member_read(e) {
             return folded;
+        }
+        if name == known::hot
+            && self.is_hot_of_import_meta(e)
+            && !is_in_chain
+            && !self.is_assignment_target(e)
+            && !self.is_delete_operand(e)
+        {
+            self.mark_folded_by_build_alone(e);
+            self.conditions_told_by_shape.insert(e.idx());
+            return self.decide(e, Decision::Constant(Constant::Undefined));
         }
         let object_kind = hir[hir.skip_type_assertions(obj)].kind;
         let is_main_access = matches!(object_kind, ExprKind::ImportMeta) && name == known::main;
@@ -113,7 +138,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    // `import.meta` belongs to one file: only the text of the file stores into it or hands it to somebody who does.
     fn is_main_of_import_meta_written(&self) -> bool {
         *self.is_main_of_import_meta_written.get_or_init(|| {
             let mut exprs = (0..self.hir.exprs.len()).map(|index| ExprId(index as u32));
@@ -202,7 +226,6 @@ impl<'s> Folder<'_, 's> {
 
     fn is_stored_by_mocks(&self, symbol: SymbolId) -> bool {
         match self.inputs.stored_by_mocks {
-            // A mock of a module of Bun's own stands in its place. Nothing is stored in the variables of its code.
             _ if self.file.is_library => false,
             StoredByMocks::Nothing => false,
             StoredByMocks::Variables(variables) => variables.binary_search(&symbol).is_ok(),
@@ -210,7 +233,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `export const a = 1`, and `const a = 1; export { a as b }`. `export default a` copies the value.
     fn is_exported_variable(&self, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let variables = self.exported_variables.get_or_init(|| {
@@ -234,7 +256,6 @@ impl<'s> Folder<'_, 's> {
         variables.binary_search(&symbol).is_ok()
     }
 
-    /// `features.inlining`: `bun build` has it under `--minify-syntax` alone. Without it a constant keeps its name, and a read in front of the declaration throws.
     fn is_inlined_by_bun_run(&self, ident: ExprId, symbol: SymbolId, init: ExprId) -> bool {
         self.minifies_syntax()
             && self.bound.binding_kind(symbol) == BindingKind::Const
@@ -267,7 +288,6 @@ impl<'s> Folder<'_, 's> {
             });
         }
         match self.folded_value(init) {
-            // The value stands in place of the name, so nothing asks whether the constant has been initialized.
             FoldedValue::Constant(constant)
                 if (is_inlined || (is_const && self.is_library_binding(symbol)))
                     && !self.is_assignment_target(ident) =>

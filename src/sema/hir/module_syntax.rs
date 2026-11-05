@@ -31,7 +31,6 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// See [`super::Import::loaded_as`]: the variable of the load, and the key under which it holds `name`: none for a namespace.
     pub fn find_name_of_loaded_import(&self, name: Atom) -> Option<(Atom, Atom)> {
         let mut loaded = self.imports.iter().filter(|it| it.loaded_as.is_some());
         loaded.find_map(|it| {

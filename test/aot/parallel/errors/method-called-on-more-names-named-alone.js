@@ -1,3 +1,5 @@
+// Flags: --minify-syntax
+// `bun run` minifies syntax, and a message quotes what the same build prints without --aot.
 // The receiver of a refused call may be a construction, a call, or a list or an object written on the spot: it is quoted as Bun's transpiler prints it.
 function Late(z) {
   this.z = z;

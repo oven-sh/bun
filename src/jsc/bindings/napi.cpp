@@ -17,7 +17,6 @@
 #include "napi_type_tag.h"
 
 #include "helpers.h"
-#include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>

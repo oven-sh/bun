@@ -44,7 +44,6 @@ pub(crate) fn lower_direct_eval(
     let ordinary = lowering.create_block();
     let join = lowering.create_block();
     let result = lowering.builder.add_parameter(join, None);
-    // What is called there is any function but eval.
     let other_function = lowering.builder.add_edge_result(ordinary);
     let ordinary_edge = Edge::with_proofs(ordinary, &[0]);
     lowering
@@ -69,7 +68,6 @@ pub(crate) fn lower_direct_eval(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // `eval("require")`: a text that is known at the build and is nothing but the name of a binding that the call sees reads that binding, like the name written in its place.
     fn find_binding_named_by_text(
         &self,
         call: ExprId,
@@ -133,7 +131,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 let is_derived = self.is_derived_constructor(function);
                 let kind = hir.runtime_function_kind(function);
                 let mut flags = compute_function_flags(kind, is_derived);
-                // The engine parses `super()` in a text that the constructor of any class evaluates itself. In a class without a parent the call throws when it runs.
                 if kind == FnKind::Constructor
                     && !arrow_flags.contains(EvalScopeFlags::IS_IN_ARROW_FUNCTION)
                 {

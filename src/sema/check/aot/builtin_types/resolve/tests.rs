@@ -221,7 +221,6 @@ fn classes_of_library_types(
     })
 }
 
-// What is answered for one signature is what the list of all of them has.
 fn values_of_signatures(
     files: &Files<'_>,
     values: &[BuiltinValuePath<'_>],

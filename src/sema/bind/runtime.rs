@@ -28,6 +28,7 @@ pub use self::storage::RuntimeTablesIn;
 use super::decorator_metadata::MetadataReference;
 use super::{BoundBuilder, Decl, ScopeId, SymbolId};
 use crate::atom::{Atom, Intern, known};
+use crate::fold::PathInPlace;
 use crate::hir::*;
 use crate::util::FxHashMap;
 use smallvec::SmallVec;
@@ -40,7 +41,6 @@ pub struct RuntimeBindOptions {
     pub jsx_fragment_root: Option<Atom>,
     pub emits_decorator_metadata: bool,
     pub hoists_top_level_variables: bool,
-    /// A test run: its files may lay names on `Object.prototype`, accessors among them. Which names is known once every file is bound.
     pub object_prototype_takes_names: bool,
 }
 
@@ -160,11 +160,8 @@ bitflags::bitflags! {
         const HAS_DIRECT_EVAL = 1 << 2;
         const HAS_ARGUMENTS_VARIABLE = 1 << 3;
         const HAS_REST_PATTERN_OR_DEFAULT = 1 << 4;
-        /// Somewhere `arguments` is more than the object of a member or an element that is read.
         const HANDS_ARGUMENTS_ON = 1 << 5;
-        /// Somewhere `arguments[key]` is read. `arguments.name` never names an element.
         const READS_ELEMENTS_OF_ARGUMENTS = 1 << 6;
-        /// Only where `RuntimeBindOptions::object_prototype_takes_names`: somewhere a member of `arguments` is read that the object may lack, so that the read goes on to `Object.prototype`.
         const MAY_READ_ABOVE_ARGUMENTS = 1 << 7;
     }
 }
@@ -173,6 +170,7 @@ bitflags::bitflags! {
 pub enum ImplicitReferenceKind {
     JsxFactory,
     JsxFragment,
+    DefinedPath,
     DecoratorMetadata(MetadataReference),
 }
 
@@ -203,7 +201,6 @@ pub struct EarlyRedeclaration {
 pub struct EvalScope {
     pub scope: ScopeId,
     pub symbols: IdList<SymbolId>,
-    /// What the constructors declare that the values of instance fields around the call may be moved into: `constructor_of_field_value`.
     pub constructor_symbols: IdList<SymbolId>,
     pub is_sloppy: bool,
 }
@@ -228,7 +225,6 @@ pub struct ImplicitReference {
     pub kind: ImplicitReferenceKind,
     pub name: Atom,
     pub binding: Binding,
-    /// The name is read from what `binding` holds, under this key: [`Import::loaded_as`]. `NONE`: `binding` is the name's own.
     pub member: Atom,
 }
 
@@ -300,7 +296,7 @@ pub(in crate::bind) struct RuntimeInput<'a, 's> {
     pub idents: &'a [(ExprId, ScopeId)],
     pub options: RuntimeBindOptions,
     pub atoms: &'a dyn Intern,
-    pub names_in_place: &'a [(Atom, Atom)],
+    pub names_in_place: &'a [PathInPlace<'a>],
 }
 
 #[derive(Default)]

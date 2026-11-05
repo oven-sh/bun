@@ -1,8 +1,3 @@
-//! `vi.mock("./lib")` and `jest.mock("./lib")` without a factory. Where a file of the same name lies in the folder `__mocks__` beside the module, the test
-//! runner loads that file in the module's place; for a package or a module of Bun's own, the file of that name in `__mocks__` where the run was started.
-//! No import names the file. It is a source of the project like any other, so it is compiled with the program.
-//! The rule is `findManualModuleMock()` in src/jsc/bindings/BunPlugin.cpp.
-
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{basename, dirname};
 use bun_sema::hir::ExprKind;
@@ -11,7 +6,6 @@ use bun_sema::resolve::{CodeResolution, ExternalKind, FinishedFile, SiteResoluti
 
 use crate::load::is_in_node_modules;
 
-// The order in which the resolver tries them for a path without one.
 const EXTENSIONS: [&[u8]; 9] = [
     b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
 ];
@@ -58,7 +52,6 @@ pub(crate) fn find_manual_mocks(
             {
                 beside(module.path)
             }
-            // The module lies in a program below this one, and its name stands as it is written.
             SiteResolution::Constant(CodeResolution::External {
                 specifier: [b'.' | b'/', ..],
                 kind: ExternalKind::UncompiledCode,

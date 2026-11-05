@@ -1,3 +1,5 @@
+// Reference: bun build --compile
+// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 // `const [ x,y ] = null`: the message quotes the list as Bun prints it, '[x, y]', however its blanks, commas and comments are written.
 const lists = {
   blanksInside(v) { const [ x ] = v; return x; },

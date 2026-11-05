@@ -19,7 +19,6 @@ const NO_LOCATION: SourceLocation = SourceLocation {
     module: ABSENT_WORD,
     position: 0,
 };
-// The fixture names function 0 in PROGRAM, function 1 in RUNTIME and layout 0, and has no module 9.
 const PROGRAM_FUNCTION: u32 = 0;
 const RUNTIME_FUNCTION: u32 = 1;
 const UNNAMED_FUNCTION: u32 = 9;
@@ -161,7 +160,6 @@ fn copies_of(line: &str) -> u32 {
         .expect("a number of copies")
 }
 
-// `copies` is the one number of a record that the report prints as it is, so it tells the records apart: each gets its place, from 1.
 fn listed_places(records: &[TypeTestRecord]) -> Vec<u32> {
     let numbered: Vec<TypeTestRecord> = (1..)
         .zip(records)

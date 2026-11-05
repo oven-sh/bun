@@ -36,7 +36,6 @@ impl Lookup<'_, '_> {
         self.find(start, name, u32::MAX).binding
     }
 
-    /// `pos` is the position of the mention of `name`.
     pub(super) fn find(&self, start: ScopeId, name: Atom, pos: u32) -> Found {
         let (mut at, mut from, mut dynamic_scope) = (start, ScopeKind::Block, ScopeId::NONE);
         let mut inner = ScopeId::NONE;
@@ -54,7 +53,6 @@ impl Lookup<'_, '_> {
                 };
             }
             if dynamic_scope.is_none() && self.has_visible_eval_variables(at, from, pos) {
-                // The scope of a parameter says on which side the lookup enters the function.
                 dynamic_scope = match from {
                     ScopeKind::Param(_) => inner,
                     _ => at,
@@ -72,7 +70,6 @@ impl Lookup<'_, '_> {
         }
     }
 
-    /// The namespace or the enum that has the binding as a member. Such a member is no variable in what runs: `size` in `namespace Box` is `Box.size` there.
     pub(super) fn find_container(&self, binding: Binding) -> Option<SymbolId> {
         let Binding::Symbol(symbol) = binding else {
             return None;
@@ -81,8 +78,6 @@ impl Lookup<'_, '_> {
         parent.filter(|&parent| parent != self.bound.file_symbol)
     }
 
-    /// The innermost `with` between code in `start` and the body of the container, `body`, that the code names a member of.
-    /// What is looked for at run time there is the parameter that holds the object of the container. It keeps the name of the container where the code stands in a `with`, whose object can so take the name. The variables of evaluated text cannot: without a `with` the bundler gives the parameter a name of its own.
     pub(super) fn find_with_inside(&self, start: ScopeId, body: ScopeId) -> ScopeId {
         let mut at = start;
         while at.is_some() && at != body {
@@ -94,7 +89,6 @@ impl Lookup<'_, '_> {
         ScopeId::NONE
     }
 
-    // Code among the parameters of a function does not see the variables of text evaluated in the body. Code in the body sees the variables of both texts.
     fn has_visible_eval_variables(&self, at: ScopeId, from: ScopeKind, pos: u32) -> bool {
         if has_bit(&self.dynamic.parameter_eval_scopes, at.idx()) {
             return true;
@@ -104,7 +98,6 @@ impl Lookup<'_, '_> {
                 if is_among_parameters(self.hir, function, from, pos))
     }
 
-    // Text evaluated in the body of a function declares its variables in the environment of the body's variables.
     pub(super) fn is_behind_eval_variables(&self, found: &Found, pos: u32) -> bool {
         if !has_bit(&self.dynamic.scopes, found.scope.idx()) {
             return false;
@@ -142,7 +135,6 @@ impl Lookup<'_, '_> {
         }
         let mut variables = COMMONJS_VARIABLES.into_iter();
         let variable = variables.find(|variable| variable.name() == name)?;
-        // Bun's transpiler gives an ES module what it reads of the five. A module that the engine gets as written has none.
         let is_written_module = find_marked_format(&self.hir.text) == Some(ModuleFormat::Esm);
         (!is_written_module).then_some(Binding::CommonJs(variable))
     }

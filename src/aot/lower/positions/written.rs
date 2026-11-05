@@ -3,17 +3,14 @@ use bun_sema::hir::{Call, ExprId, ExprKind};
 use crate::lower::FileLowering;
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// The start of the last token of `expression`, from the tree alone. For `a[i]` that is the last token of `i`.
     pub(in crate::lower) fn last_token_position_of(&self, expression: ExprId) -> u32 {
         let hir = self.hir;
         let mut last = self.skip_type_syntax(expression);
         loop {
             let next = match hir[last].kind {
-                // A build parses `a["b"]` into such a node too, and the position of its name is where the literal starts.
                 ExprKind::Dot { .. } => return hir.name_pos(last),
                 ExprKind::Index { index, .. } => index,
                 ExprKind::Call(site) | ExprKind::New(site) => match hir[site].close_pos {
-                    // `new F`
                     u32::MAX => hir[site].callee,
                     close => return close,
                 },
@@ -21,19 +18,16 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprKind::Cond { branches, .. } => hir.branches(branches).no,
                 ExprKind::Assign { value, .. } => value,
                 ExprKind::Await(operand) | ExprKind::Unary { operand, .. } => operand,
-                // A tagged template is among them: its `close_pos` is no position.
                 _ => return hir[last].pos,
             };
             last = self.skip_type_syntax(next);
         }
     }
 
-    /// A call reports at the end of its callee.
     pub(in crate::lower) fn call_position(&self, site: Call) -> u32 {
         self.last_token_position_of(site.callee)
     }
 
-    /// `new F(..)` reports as a call does, `new F` at the `new`.
     pub(in crate::lower) fn construct_position(&self, expression: ExprId) -> u32 {
         let hir = self.hir;
         let ExprKind::New(site) = hir[expression].kind else {
@@ -45,7 +39,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// A call that loads a module reports where any call of its callee does.
     pub(in crate::lower) fn load_position(&self, call: ExprId) -> u32 {
         let hir = self.hir;
         let ExprKind::Call(site) = hir[call].kind else {
@@ -64,7 +57,6 @@ mod tests {
     use crate::load::host_platform;
     use crate::lower::LoweringOptions;
 
-    // Where the operations with `opcode` report, in the order of the code.
     fn reported_positions(source: &str, opcode: Opcode) -> Vec<u32> {
         let options = LoweringOptions {
             platform: host_platform(),

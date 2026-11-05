@@ -43,7 +43,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         emit_import_binding_asked(self, binding, name, path, asked)
     }
 
-    /// `import { a } from "bun"` runs as `var { a } = Bun` where the statement stands.
     pub(crate) fn lower_import(&mut self, import: ImportId) {
         let named = self.file.hir[import].named.iter().map(Decl::ImportSpec);
         let whole = [Decl::ImportNamespace(import), Decl::ImportDefault(import)];
@@ -62,8 +61,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 ImportBinding::Builtin(object) if self.file.is_exported_variable(key) => {
                     self.emit_builtin_import(object, None)
                 }
-                // A link reads every name that the statement imports from the object of a built-in module, whether or not anything uses the name.
-                // It shows where the object lists a member from its first read on.
                 ImportBinding::CapturedBuiltin { member, export }
                     if table::entry(member).is_added_at_first_read =>
                 {
@@ -90,7 +87,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.check_initialized(value, name)
     }
 
-    // A name of a library module is a variable that the loader fills. `Err`: the value itself.
     fn find_synthetic_variable(
         &mut self,
         export: SyntheticExportId,
@@ -118,7 +114,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `import { A } from "./a.cjs"; export { A }` in a TypeScript module that is linked without the export where the file lacks the name: `A` reads as `undefined` there.
     fn emit_read_of_copy_that_may_stay_empty(&mut self, key: VariableKey) -> ValueId {
         let variable = self.file.ensure_variable(key);
         let value = self.builder.get_module_variable(variable);
@@ -136,7 +131,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.read_variable(result)
     }
 
-    // Another module imports the name, so its variable stays empty where the module turns out to lack the name. The namespace object knows what `ns.x` finds then.
     fn emit_synthetic_member_read(&mut self, export: SyntheticExportId, access: ExprId) -> ValueId {
         let key = match self.find_synthetic_variable(export) {
             Ok(key) => key,
@@ -164,9 +158,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.read_variable(result)
     }
 
-    // ES modules see a CommonJS file through its face.
     fn emit_module_namespace(&mut self, module: ModuleRef, phase: ImportPhase) -> ValueId {
-        // Whichever mock stands now answers: the run time is asked at each read, as for `require()`.
         if let ModuleRef::External { specifier, .. } = module
             && phase == ImportPhase::Evaluation
             && self.file.inputs.modules.is_made_by_mocks_alone(module)
@@ -187,12 +179,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(mocked) = mocked else {
             return self.builder.module_namespace(module, phase, false, false);
         };
-        // `bun test` leaves a module that has run as it is where `vi.doMock()` names it. Whoever was linked to it before keeps its object; whoever comes behind gets the object of the mock.
         let importer = self.file.module_id();
         self.emit_namespace_behind_mock(mocked, module, Some(importer))
     }
 
-    /// `require("./m.mjs").name`: the module is asked for by name.
     pub(crate) fn emit_namespace_asked_by_name(&mut self, module: ModuleRef) -> ValueId {
         let mocked = match module {
             ModuleRef::File(file) => {
@@ -207,7 +197,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// `importer`: whose link decides. Without one what stands now answers.
     fn emit_namespace_behind_mock(
         &mut self,
         mocked: FileId,
@@ -236,7 +225,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.jump(join);
             self.continue_in(of_mock);
         }
-        let object = self.builder.module_namespace(module, phase, false, true);
+        let object = match importer {
+            Some(importer) => self.builder.namespace_seen_by(module, importer),
+            None => self.builder.module_namespace(module, phase, false, true),
+        };
         self.builder.write_variable(result, object);
         self.jump(join);
         self.continue_in(join);
@@ -259,7 +251,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             {
                 self.builder.builtin(locked, false)
             }
-            // A locked property that holds a function of the host, which has no entry of its own: `import { wrap } from "node:module"`.
             Some((_, Mutability::AlwaysLocked | Mutability::ChangesOnItsOwn)) => {
                 self.emit_export_read(id)
             }
@@ -282,7 +273,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // A module that is not in the program has no object.
     pub(crate) fn lower_namespace_receiver(&mut self, object: ExprId) -> ValueId {
         let file = &*self.file;
         let name = file.hir.skip_type_assertions(object);
@@ -290,7 +280,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Binding::Symbol(symbol) if matches!(file.hir[name].kind, ExprKind::Ident(_)) => {
                 file.inputs.modules.import_binding(file.file, symbol)
             }
-            // `require("./m.mjs").inner` where m.mjs has `export * as inner from ..`.
             _ => (file.inputs.modules.member_binding(file.file, name))
                 .filter(|binding| matches!(binding, ImportBinding::Namespace { .. }))
                 .unwrap_or(ImportBinding::Local),
@@ -300,11 +289,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ImportBinding::Namespace { module, .. } if file.inputs.modules.is_left_out(module) => {
                 self.builder.undefined()
             }
-            // The read of the member below it has evaluated what stands in front.
             ImportBinding::Namespace { module, phase } if is_member => {
                 self.emit_module_namespace(module, phase)
             }
-            // `const a = require("./m.mjs")`: `a` stands for what `import * as a` stands for, and so does the call itself in `require("./m.mjs").f()`, which the read of the member has evaluated.
             _ => match file.find_view(name) {
                 Some(View::Namespace(module)) => {
                     self.emit_module_namespace(module, ImportPhase::Evaluation)
@@ -317,29 +304,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_namespace_member(&mut self, access: ExprId) -> Option<ValueId> {
         let file = &mut *self.file;
         let binding = file.inputs.modules.member_binding(file.file, access)?;
-        let asked = match file.hir.member_key(access) {
-            Some((object, MemberKey::Name(name))) => {
-                let object = file.hir.skip_type_assertions(object);
-                let imported = match file.bound.binding(object) {
-                    Binding::Symbol(symbol)
-                        if matches!(file.hir[object].kind, ExprKind::Ident(_)) =>
-                    {
-                        match file.inputs.modules.import_binding(file.file, symbol) {
-                            ImportBinding::Namespace { module, .. } => Some(module),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                // `const a = require("./m.mjs")`: `a` stands for what `import * as a` stands for, and so does the call itself.
-                let required = || match file.find_view(object) {
-                    Some(View::Namespace(module)) => Some(module),
-                    Some(View::Exports(_)) | None => None,
-                };
-                match imported.or_else(required) {
-                    Some(ModuleRef::File(module)) => Some((module, name)),
-                    _ => None,
-                }
+        let written_on = file.inputs.modules.find_module_accessed(file.file, access);
+        let asked = match (written_on, file.hir.member_key(access)) {
+            (Some(ModuleRef::File(module)), Some((_, MemberKey::Name(name)))) => {
+                Some((module, name))
             }
             _ => None,
         };
@@ -358,7 +326,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => None,
         };
         let position = file.hir[access].pos;
-        // Whoever reads `a.c` has read `a` first, which throws in the dead zone of `a`: before `const a = require(..)` has run.
         self.check_member_root(access);
         self.set_position(position);
         let modules = self.file.inputs.modules;
@@ -372,12 +339,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-/// `VariableKey::MockOf`. A module of Bun's own code is mocked by its name, not as a file.
 pub(super) fn holds_mock_in_variable(modules: &ModuleGraph, file: FileId) -> bool {
     modules.holds_mock_in_variable(file)
 }
 
-/// The module that the import statement of `symbol` names, and the name that it asks of the module.
 fn find_written_import(
     file: &FileLowering<'_, '_, '_, '_>,
     symbol: SymbolId,
@@ -403,8 +368,6 @@ pub(super) fn emit_import_binding(
     emit_import_binding_asked(lowering, binding, name, path, None)
 }
 
-// A mock that comes before the body of a file has run stands in place of the file. What it answers is the host's to say, at each read: which names it has, what
-// a name that it leaves out reads as, whether the read throws. The host stores its object in a variable of the file, which is empty while no such mock stands.
 pub(super) fn emit_import_binding_asked(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: ImportBinding,
@@ -443,7 +406,6 @@ fn emit_read_without_mock(
     }
 }
 
-/// What a mock on the way of `binding` answers, and `read` where none stands.
 fn emit_behind_mocks(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: ImportBinding,
@@ -451,7 +413,6 @@ fn emit_behind_mocks(
     read: ReadWithoutMock,
 ) -> ValueId {
     let modules = lowering.file.inputs.modules;
-    // `export * as inner from "./dep"`: which object of a file that may be mocked the file between hands on goes by the link of that file. The run time knows it.
     if let ImportBinding::Namespace {
         module: ModuleRef::File(target),
         phase: ImportPhase::Evaluation,
@@ -505,7 +466,6 @@ fn emit_unmocked_binding(
             let namespace = lowering.emit_module_namespace(module, ImportPhase::Evaluation);
             lowering.emit_named_read(namespace, export_name)
         }
-        // Where the module has no object every use of the import is a member that is bound, and nothing looks at what it holds.
         ImportBinding::Exports { module } => match commonjs::emit_module_value(lowering, module) {
             Some(value) => value,
             None => lowering.builder.boolean(true),
@@ -519,7 +479,6 @@ fn emit_unmocked_binding(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// Whether a mock may stand on the way from the import to what declares it. What a read gives is then the mock's to say, whatever the declaration holds.
     pub(in crate::lower) fn may_be_answered_by_mock(&self, symbol: SymbolId) -> bool {
         let modules = self.inputs.modules;
         let asked = find_written_import(self, symbol);

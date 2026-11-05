@@ -6,9 +6,7 @@ use super::*;
 
 #[derive(Default)]
 struct Simplified {
-    // The expressions of which only parts are evaluated, each for what it does.
     in_part: Vec<ExprId>,
-    // The regular expression literals of which nothing is left.
     regexp_literals: Vec<ExprId>,
 }
 
@@ -18,9 +16,7 @@ fn sort_and_dedup(mut expressions: Vec<ExprId>) -> Vec<ExprId> {
     expressions
 }
 
-// `simplify_unused_expr` of src/js_parser/scan/scan_side_effects.rs: what `bun build` and `bun run` leave of an expression whose value nothing uses.
 impl Removable<'_, '_> {
-    // The head of a `for` holds statements which the parser does not visit as statements.
     fn is_in_loop_head(&self, statement: StmtId) -> bool {
         let Parent::Stmt(parent) = self.bound.parent_of_stmt(statement) else {
             return false;
@@ -57,7 +53,6 @@ impl Removable<'_, '_> {
         simplified
     }
 
-    // The expressions of the file of which only parts are evaluated, each for what it does, ascending.
     pub(crate) fn find_simplified_expressions(&self) -> Vec<ExprId> {
         let hir = self.hir;
         let has_marks = !self.options.ignores_pure_annotations
@@ -69,7 +64,6 @@ impl Removable<'_, '_> {
         sort_and_dedup(self.simplify_unused_expressions().in_part)
     }
 
-    // `a || b` is `a` where `b` never runs.
     fn skip_operands_that_never_run(&self, expression: ExprId) -> ExprId {
         let hir = self.hir;
         let mut current = hir.skip_type_assertions(expression);
@@ -90,7 +84,6 @@ impl Removable<'_, '_> {
         matches!(self.hir[value].kind, ExprKind::Regex { .. }).then_some(value)
     }
 
-    // `to_boolean` knows the answer, whatever making the object does.
     fn is_written_as_object(&self, expression: ExprId) -> bool {
         matches!(
             self.hir[self.skip_operands_that_never_run(expression)].kind,
@@ -98,7 +91,6 @@ impl Removable<'_, '_> {
         )
     }
 
-    // An expression of which something is left is printed as it is written.
     fn simplify_unused_if_nothing_is_left(&self, expression: ExprId, simplified: &mut Simplified) {
         let found_before = simplified.regexp_literals.len();
         if !self.simplify_unused(expression, simplified) {
@@ -106,14 +98,11 @@ impl Removable<'_, '_> {
         }
     }
 
-    // The regular expression literals of the file that `bun run` does not print, so that the engine never reads their patterns, ascending.
-    // Besides the values that nothing uses, it leaves out what it folds: `s_if`, `s_while`, `s_for`, `e_unary` and `visit_binary` of src/js_parser/visit.
     pub(crate) fn find_regexp_literals_left_out(&self) -> Vec<ExprId> {
         let hir = self.hir;
         let mut simplified = self.simplify_unused_expressions();
         for statement in hir.stmts.iter() {
             match statement.kind {
-                // The test stays with an `else` that stays.
                 StmtKind::If { test, no, .. }
                     if self.is_written_as_object(test)
                         && (no.is_none() || is_removed_where_never_run(hir, no)) =>
@@ -146,7 +135,6 @@ impl Removable<'_, '_> {
                         simplified.regexp_literals.extend(literal);
                     }
                     BinOp::Comma => {
-                        // A comma on the left has a turn of its own for its left operand.
                         let unused = match hir[left].kind {
                             ExprKind::Binary {
                                 op: BinOp::Comma,
@@ -165,7 +153,7 @@ impl Removable<'_, '_> {
         sort_and_dedup(simplified.regexp_literals)
     }
 
-    #[allow(clippy::unnecessary_fold)] // every expression is simplified, also behind one that stays
+    #[allow(clippy::unnecessary_fold)]
     fn simplify_all_unused(
         &self,
         expressions: impl Iterator<Item = ExprId>,
@@ -176,7 +164,6 @@ impl Removable<'_, '_> {
         })
     }
 
-    // `true`: nothing is left of the expression.
     fn simplify_unused(&self, expression: ExprId, simplified: &mut Simplified) -> bool {
         let hir = self.hir;
         let decisions = &self.analysis.decisions;
@@ -239,7 +226,6 @@ impl Removable<'_, '_> {
             },
             ExprKind::Call(call) | ExprKind::New(call) => {
                 let call = &hir[call];
-                // The bundler prints the spread of an argument as a statement, which is no program.
                 let is_spread =
                     |argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
                 if !call.is_pure
@@ -285,7 +271,6 @@ impl Removable<'_, '_> {
                 simplified.in_part.push(expression);
                 self.simplify_all_unused(hir.ids(items), simplified)
             }
-            // The bundler also trims the properties beside a spread. Here such an object is made as it is written.
             ExprKind::Object(properties) => {
                 let is_spread = |property: &PropId| hir[*property].kind == PropKind::Spread;
                 if properties.iter().any(|property| is_spread(&property)) {
@@ -306,7 +291,6 @@ impl Removable<'_, '_> {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr)
             | ExprKind::Instantiation { expr, .. } => self.simplify_unused(expr, simplified),
-            // A cast may test the value of its operand. An operand of which a part is left out has none.
             ExprKind::As { expr, .. } => {
                 let (listed, literals) =
                     (simplified.in_part.len(), simplified.regexp_literals.len());
@@ -322,7 +306,6 @@ impl Removable<'_, '_> {
         }
     }
 
-    // An element is a marked call: of the tag, an object of the attributes, and the children.
     fn simplify_unused_element(
         &self,
         expression: ExprId,
@@ -346,7 +329,6 @@ impl Removable<'_, '_> {
         self.simplify_all_unused(parts, simplified)
     }
 
-    // `is_primitive_with_side_effects`
     fn is_primitive_whatever_it_does(&self, expression: ExprId) -> bool {
         let hir = self.hir;
         let expression = hir.skip_type_assertions(expression);

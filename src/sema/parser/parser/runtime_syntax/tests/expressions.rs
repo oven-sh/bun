@@ -335,9 +335,7 @@ const BINARY_OPERATORS: [(&str, T); 25] = [
     ("**", T::AsteriskAsterisk),
 ];
 
-/// `parseBinaryExpressionRest` of TypeScript 6 over words: behind `as T` it goes on in the same loop, with the precedence that it was entered with.
 fn climb(words: &[&str]) -> String {
-    // Of each call that waits for its right operand: its left operand, and the precedence that it was entered with.
     let mut waiting: Vec<(String, u8)> = Vec::new();
     let mut left = words[0].to_string();
     let (mut at, mut precedence) = (1, 0);
@@ -377,7 +375,6 @@ enum Part {
 
 fn shape_of(file: &FileBuilder, text: &str, root: ExprId) -> String {
     let mut shape = String::new();
-    // What is still to be written, the next part last.
     let mut parts = vec![Part::Expression(root)];
     while let Some(part) = parts.pop() {
         let expression = match part {
@@ -417,12 +414,10 @@ fn an_operator_behind_a_cast_binds_as_in_typescript() {
     for (first, _) in BINARY_OPERATORS {
         for (second, _) in BINARY_OPERATORS {
             for (third, _) in BINARY_OPERATORS {
-                // They go on with the type.
                 if matches!(third, "|" | "&") {
                     continue;
                 }
                 let operators = [first, second, third];
-                // A syntax error without parentheses.
                 if operators.contains(&"??")
                     && (operators.contains(&"||") || operators.contains(&"&&"))
                 {
@@ -452,7 +447,6 @@ fn an_operator_behind_a_cast_binds_as_in_typescript() {
 
 #[test]
 fn only_the_checker_reports_a_cast_that_cannot_be_erased() {
-    // typescript-go's disallowUnerasableAssertion.ts.
     let reported = [
         "1 + 1 as number * 2",
         "1 + 1 as any as number * 2",

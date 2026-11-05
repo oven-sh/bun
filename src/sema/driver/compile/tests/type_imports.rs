@@ -276,7 +276,6 @@ fn name_that_runs_keeps_code_answer_in_jsdoc() {
         let index = program.file("node_modules/dep/index.js");
         let lib = program.file("node_modules/dep/lib.js");
         assert_eq!(imported_files(program.files(), index, "./lib"), [lib]);
-        // The declaration file is in the program for what it says of `lib.js` alone.
         let declarations = program.file("node_modules/dep/lib.d.ts");
         let own_declaration = imported_files(program.files(), lib, "declaration=");
         assert_eq!(own_declaration, [declarations]);

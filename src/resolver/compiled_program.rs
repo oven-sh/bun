@@ -111,16 +111,14 @@ pub struct CompiledProgram {
     pub allows_code_from_disk: bool,
     /// The last folders of the root directory where the program writes a path that goes up out of them and comes back.
     root_folders_spelled: &'static [u8],
-    /// By entry point: the image of the program that begins there, a part of `image`. Empty: `image` is one image, of one program with all entry points.
-    images: Box<[&'static [u8]]>,
-    /// An index into `entry_points`, where the process does not start with the first program.
-    start: Option<usize>,
     module_lookup: OnceLock<ModuleLookup>,
     test_of_path_starts: OnceLock<TestOfPathStart>,
     test_of_names_left_outside: OnceLock<TestOfNamesLeftOutside>,
     module_listing: OnceLock<ModuleListing>,
     /// What every path that the executable answers for outside of its own root begins with; found by the graph at the first question.
     pub common_start_of_source_paths: OnceLock<Option<Box<[u8]>>>,
+    /// `StandaloneModuleGraph::find_starts_of_code_above_root`
+    pub starts_of_code_above_root: OnceLock<(Box<[usize]>, Box<[Box<[u8]>]>)>,
 }
 
 /// Answers the public path of the module compiled at that path, in memory that is never freed.
@@ -247,7 +245,7 @@ pub(crate) fn public_path_from_root(public_root: &[u8], relative: &[u8]) -> Vec<
 }
 
 /// The public path a file would have, without a trailing `/`.
-pub(crate) fn join_public_path(
+pub fn join_public_path(
     public_root: &[u8],
     source_dir: &[u8],
     specifier: &[u8],
@@ -393,13 +391,12 @@ impl CompiledProgram {
             further_package_names: Box::new([]),
             allows_code_from_disk: false,
             root_folders_spelled: b"",
-            images: Box::new([]),
-            start: None,
             module_lookup: OnceLock::new(),
             test_of_path_starts: OnceLock::new(),
             test_of_names_left_outside: OnceLock::new(),
             module_listing: OnceLock::new(),
             common_start_of_source_paths: OnceLock::new(),
+            starts_of_code_above_root: OnceLock::new(),
         }
     }
 
@@ -521,43 +518,6 @@ impl CompiledProgram {
             &[root],
         );
         joined.map(<[u8]>::to_vec)
-    }
-
-    pub fn with_images(mut self, images: Box<[&'static [u8]]>) -> CompiledProgram {
-        debug_assert!(images.is_empty() || images.len() == self.entry_points.len());
-        self.images = images;
-        self
-    }
-
-    /// The process starts with the program that begins at this entry point.
-    pub fn start_at(&mut self, entry_point: usize) {
-        debug_assert!(entry_point < self.images.len());
-        self.start = Some(entry_point);
-    }
-
-    /// One for each program.
-    pub fn images(&self) -> impl Iterator<Item = &'static [u8]> {
-        let only = self.images.is_empty().then_some(self.image);
-        only.into_iter().chain(self.images.iter().copied())
-    }
-
-    /// Of the program that the process starts with.
-    pub fn first_image(&self) -> &'static [u8] {
-        if let Some(start) = self.start {
-            return self.images[start];
-        }
-        let mut images = self.images.iter();
-        let first = images.find(|image| core::ptr::eq(image.as_ptr(), self.image.as_ptr()));
-        first.copied().unwrap_or(self.image)
-    }
-
-    /// Of the program that begins at the entry point with this key. A global that begins elsewhere runs the first program.
-    pub fn image_beginning_at(&self, module_path: &[u8]) -> &'static [u8] {
-        let mut entry_points = self.entry_points.iter().zip(&self.images);
-        let found = entry_points.find(|(entry_point, _)| {
-            entry_point.module_path == module_path || entry_point.source_path == module_path
-        });
-        found.map_or_else(|| self.first_image(), |(_, image)| *image)
     }
 
     pub fn set_module_lookup(&self, lookup: ModuleLookup) {
@@ -803,6 +763,17 @@ impl CompiledProgram {
             name.imported
         };
         Some(entry_point.map(|index| self.entry_points[index as usize].module_path))
+    }
+
+    pub fn find_name_that_build_followed(
+        &self,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+    ) -> Option<&'static [u8]> {
+        let folder = join_public_path(public_root, source_dir, b".")?;
+        self.find_package_name(&[&folder[..], b"//", specifier].concat(), is_require)?
     }
 
     /// The order of `bun run`: the file as spelled, with each extension, with a TypeScript extension in place of the written one, then the directory: the main file that its `package.json` names, then its index file. No extension is added to a name that was written as that of a directory, like `./a/`.

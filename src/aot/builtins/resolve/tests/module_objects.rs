@@ -290,7 +290,6 @@ fn the_main_module_without_its_name() {
 
 #[test]
 fn where_no_expression_names_the_object() {
-    // These two come to `require` too, and whoever has it reads its `main`.
     for source in ["eval(text);", "arguments;"] {
         let expected = [("", OwnFile, Object), ("", EntryPoint, HandedOn)];
         assert_mentions(source, &expected);
@@ -521,7 +520,6 @@ fn a_var_that_may_still_be_undefined_only_may_hold_the_object() {
             ("m", EntryPoint, Object),
         ],
     );
-    // A read ahead of the line of a `let` or a `const` throws.
     for source in [
         "let m = module; f(m.id);",
         "const m = module; const n = m; f(n.id);",

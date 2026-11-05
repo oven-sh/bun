@@ -1,11 +1,7 @@
-//! The keys under which an executable stores the program's modules. The build names each module by these rules, and the run time looks modules up by the same rules.
-
 use bun_ast::Loader;
 use bun_paths::fs::PathName;
 use std::hash::{DefaultHasher, Hasher};
 
-/// Made from a file's modification time and size, so it changes when the file is rewritten. The build records one for each file the program may read from disk again,
-/// and the run time computes another before it first loads the compiled version of that file. Never zero: zero means no file.
 pub fn stamp_of_file(written_seconds: i64, written_nanoseconds: i64, size: u64) -> u64 {
     let written = (written_seconds as u64)
         .wrapping_mul(1_000_000_000)
@@ -18,7 +14,6 @@ pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
     (b".css", Loader::Css),
     (b".cts", Loader::Ts),
     (b".html", Loader::Html),
-    // Bun reads JSX in `.js` files.
     (b".js", Loader::Jsx),
     (b".json", Loader::Json),
     (b".json5", Loader::Json5),
@@ -37,12 +32,10 @@ pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
     (b".yml", Loader::Yaml),
 ];
 
-/// The loader that an import without attributes uses.
 pub fn loader_by_name(path: &[u8]) -> Loader {
     loader_by_path_or(DEFAULT_LOADERS, path, Loader::File)
 }
 
-/// `unnamed`: the loader for a file whose extension matches no loader.
 pub fn loader_by_path_or<E: AsRef<[u8]>>(
     table: &[(E, Loader)],
     path: &[u8],
@@ -80,7 +73,6 @@ pub fn loader_name(loader: Loader) -> &'static str {
     loader.into()
 }
 
-/// The `type` attribute that `bun run` prints on an import statement that asks for `loader`.
 pub fn type_attribute_of(loader: Loader) -> &'static str {
     match loader {
         Loader::Bunsh => "sh",
@@ -89,18 +81,15 @@ pub fn type_attribute_of(loader: Loader) -> &'static str {
     }
 }
 
-/// A file loaded the way an import without attributes loads it is keyed by its plain path. Loaded with any other loader, it is keyed by this.
 pub fn path_of_form(path: &[u8], loader: Loader) -> Vec<u8> {
     [path, b"?", loader_name(loader).as_bytes()].concat()
 }
 
-/// The path of the file that a form is made of: what `path_of_form` was given. `None`: the path holds no `?`.
 pub fn path_without_form(path: &[u8]) -> Option<&[u8]> {
     let mark = bun_core::strings::last_index_of_char(path, b'?')?;
     Some(&path[..mark])
 }
 
-/// True if the module's value comes from the file's contents alone, not from its path.
 pub fn parses_text_as_data(loader: Loader) -> bool {
     matches!(
         loader,
@@ -114,7 +103,6 @@ pub fn parses_text_as_data(loader: Loader) -> bool {
     )
 }
 
-/// True if `bun run` creates the module's exports while it loads the file. Evaluating such a module runs no code, and none of its exports has a temporal dead zone.
 pub fn makes_values_at_load(loader: Loader) -> bool {
     matches!(
         loader,
@@ -131,18 +119,13 @@ pub fn makes_values_at_load(loader: Loader) -> bool {
     )
 }
 
-/// The keys to look under for the module that an import of `path` with `{ type: type_attribute }` gets.
 #[derive(PartialEq, Eq, Debug)]
 pub struct PlacesOfForm {
-    /// The first key to look under.
     pub path_of_form: Vec<u8>,
-    /// True if an import without attributes gets the same module, unless a build option gave the file another loader.
     pub is_form_without_attributes: bool,
 }
 
-/// `None`: the run-time loader creates the module, as it does in an executable that is not compiled ahead of time. For a type that loads the file as code it runs the code once more, and for a type that yields the file's path it reads nothing.
 pub fn places_of_form(path: &[u8], type_attribute: &[u8]) -> Option<PlacesOfForm> {
-    // A database is not parsed from the file's text, but every importer of the file shares one object.
     let has_form = |&it: &Loader| parses_text_as_data(it) || it == Loader::Sqlite;
     let loader = Loader::from_string(type_attribute).filter(has_form)?;
     Some(PlacesOfForm {
@@ -151,24 +134,20 @@ pub fn places_of_form(path: &[u8], type_attribute: &[u8]) -> Option<PlacesOfForm
     })
 }
 
-/// The key of the form that uses the default loader for `path`. `None` if that loader does not parse data.
 pub fn path_of_default_form(path: &[u8]) -> Option<Vec<u8>> {
     let loader = loader_by_name(path);
     let has_form = !is_url_with_text(path) && parses_text_as_data(loader);
     has_form.then(|| path_of_form(path, loader))
 }
 
-/// An import without attributes loads the URL's contents as code, whatever the URL ends in.
 pub fn is_url_with_text(path: &[u8]) -> bool {
     path.starts_with(b"data:")
 }
 
-/// True if `path` is not a file path but the URL of source text that a Worker starts from.
 pub fn is_name_of_text(path: &[u8]) -> bool {
     path.starts_with(b"data:") || path.starts_with(b"blob:")
 }
 
-/// The key under which an executable stores the code that a Worker starts from through an object URL. It is derived from the text and its loader, and it is shaped like an object URL.
 pub fn name_of_text(loader: Loader, text: &[u8]) -> Vec<u8> {
     let half = |which: u8| {
         let mut hasher = DefaultHasher::new();

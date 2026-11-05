@@ -9,7 +9,6 @@ export function entries(key, value) { return Object.fromEntries([[key, value]]);
 export function spread(first, second) { return [first, ...[second]]; }
 ";
 
-// The operation that a function has only where the array of its text is made and iterated.
 const FUNCTIONS: [(&str, Opcode); 4] = [
     ("set", Opcode::NewArray),
     ("map", Opcode::NewArray),

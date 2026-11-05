@@ -24,7 +24,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.find_assigned_function_name(target).is_some()
     }
 
-    // `(a) = function () {}` names nothing. Nor does `a = function () {}` where a namespace exports `a`: it is the store `N.a = function () {}`.
     fn find_assigned_function_name(&self, target: ExprId) -> Option<(Binding, Atom)> {
         if self
             .hir

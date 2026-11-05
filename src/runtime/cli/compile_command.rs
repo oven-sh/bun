@@ -156,4 +156,7 @@ pub(crate) enum CompileFailure {
         path: Vec<u8>,
         error: bun_sys::Error,
     },
+    SourceChanged {
+        path: Vec<u8>,
+    },
 }

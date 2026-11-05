@@ -7,7 +7,6 @@ use crate::ir::{DeclaredType, FunctionKey, Type, TypeTable};
 use crate::lower::FileLowering;
 use crate::lower::function_types::find_explicit_constructor;
 
-// `const zero = 0` holds the integer. Its type does not say so: TypeScript's `0` is also the type of `-0`.
 fn is_const_written_as_zero(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
     let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
         return false;
@@ -64,8 +63,6 @@ impl FileLowering<'_, '_, '_, '_> {
         );
         let is_stored_again = !files.bound(symbol.file).is_stable_binding(symbol.id);
         let written = self.queries.written_variable_type(symbol);
-        // Nobody declares what a variable without an annotation holds, or what a pattern takes out: the engine follows what is stored there.
-        // Where several stores meet it has nothing to follow, so a variable that is stored to again has the checker's type.
         let is_declared = is_parameter || is_stored_again || written.written().is_some();
         let checked = match is_declared && declaring_file == self.file {
             true => self.queries.binding_type(pattern),
@@ -79,7 +76,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // `var v = 1`, `let v;` and the `v` of `(v?: number) => {}` hold `undefined` before anything is stored.
     fn starts_undefined(&self, symbol: Sym, declaring_file: FileId, pattern: PatId) -> bool {
         let files = self.queries.files();
         if files.bound(symbol.file).initial_state(symbol.id) == InitialState::Undefined {
@@ -130,7 +126,6 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             None => self.find_defined_function(find_only_definition(self, symbol)?),
         };
-        // A file whose load fails makes nothing of what it declares, and neither does a placeholder.
         let modules = self.inputs.modules;
         key.filter(|key| {
             let home = key.home_file();
@@ -159,12 +154,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 FnBody::Block(_) | FnBody::Expr(_) => true,
             };
         }
-        // The variable that a function in a block also declares in sloppy code is `undefined` until the block runs.
         has_body && files.bound(symbol.file).initial_state(symbol.id) == InitialState::Initialized
     }
 }
 
-// `for (const v of list)` stores into `v` before anything reads it.
 fn is_loop_head(hir: &File<'_>, bound: &Bound<'_>, declaration: VarDeclId) -> bool {
     let statement = bound.var_stmt[declaration.idx()];
     let Parent::Stmt(parent) = bound.parent_of_stmt(statement) else {

@@ -31,30 +31,21 @@ pub struct ModuleFragment {
     pub body: Option<FunctionId>,
     pub data: Option<DataId>,
     pub positions: SourcePositions,
-    /// What is cut out of the source to get the text of its functions. None: the program holds no such text.
     pub types_in_function_text: Option<PackedTypeRanges>,
-    /// `lower_file_that_throws` made the unit: whoever loads the file gets the error of the body, and nothing that the file imports is loaded for it.
     pub throws_at_load: bool,
 }
 
 pub struct Fragment {
     pub file: FileId,
     pub is_checked: bool,
-    /// Every id below, and every id in a record or in code below, is a number of these tables.
     pub tables: Arc<SharedTables>,
-    /// How long the tables were when the file was done.
     pub lengths: TableLengths,
     pub functions: Vec<(FunctionId, Arc<Function>)>,
     pub layouts: Vec<(LayoutId, Layout)>,
-    /// By index in `layouts`, ascending: the type that a definition of a plain layout speaks of.
     pub object_types: Vec<(u32, ObjectTypeKey)>,
-    /// For `SaidTypes::note_commit`.
     pub said_types: Vec<CheckerTypeId>,
-    /// The layouts that the code of the file names, as against those that only a type reached from one names, ascending.
     pub layouts_named_by_code: Vec<LayoutId>,
-    /// The layouts with which the code or the data of the file makes an object, ascending.
     pub allocated_layouts: Vec<LayoutId>,
-    /// The keys under which the code or the data of the file puts a property into an object, ascending.
     pub written_keys: Vec<PropertyKeyId>,
     pub variables: Vec<(VariableId, Variable)>,
     pub eval_scopes: Vec<(EvalScopeId, EvalScope)>,
@@ -62,7 +53,6 @@ pub struct Fragment {
     pub expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
     pub supertype_edges: Vec<(LayoutId, LayoutId)>,
     pub function_type_edges: Vec<(FunctionId, FunctionId)>,
-    /// Empty: only the flow of a value put a built-in function into a family.
     pub builtin_members: Vec<(FunctionId, BuiltinId)>,
     pub(crate) family_facts: FamilyFacts,
     pub runtime_functions: Vec<RuntimeFunctionEntry>,
@@ -71,11 +61,8 @@ pub struct Fragment {
 
 struct KeyTable<K> {
     ids: FxHashMap<K, u32>,
-    /// Between two visits the list lies in `UnitTables`.
     keys: Vec<K>,
-    /// By id: the last visit that named the key. 0: none.
     named_in: Vec<u32>,
-    /// By id: the last visit that defined the key. 0: none.
     defined_in: Vec<u32>,
 }
 
@@ -100,7 +87,6 @@ impl<K: Copy + Eq + Hash> KeyTable<K> {
         self
     }
 
-    /// The id of the key, which no visit names by that.
     fn number<I: Id>(&mut self, key: K) -> I {
         match self.ids.entry(key) {
             Entry::Occupied(entry) => I::new(*entry.get() as usize),
@@ -115,12 +101,10 @@ impl<K: Copy + Eq + Hash> KeyTable<K> {
         }
     }
 
-    /// Whether the visit names the key for the first time.
     fn name(&mut self, id: impl Id, visit: u32) -> bool {
         replace(&mut self.named_in[id.index()], visit) != visit
     }
 
-    /// The id of the key, and whether the visit names the key for the first time.
     fn declare<I: Id>(&mut self, key: K, visit: u32) -> (I, bool) {
         let id: I = self.number(key);
         (id, self.name(id, visit))
@@ -155,7 +139,6 @@ impl<K: Copy + Eq + Hash> KeyTable<K> {
     }
 }
 
-/// What finds the keys of a task's tables, and in which visit each key was named and defined.
 #[derive(Default)]
 pub(crate) struct KeyFinders {
     functions: KeyTable<FunctionKey>,
@@ -166,7 +149,6 @@ pub(crate) struct KeyFinders {
 }
 
 impl KeyFinders {
-    /// Forgets every key whose number lies at or behind `lengths`. It may cost the size of the tables.
     pub(crate) fn truncate(&mut self, lengths: TableLengths) {
         self.functions.truncate(lengths.functions);
         self.layouts.truncate(lengths.layouts);
@@ -176,7 +158,6 @@ impl KeyFinders {
     }
 }
 
-/// By id: the last visit that set the mark. 0, or no entry: none.
 #[derive(Default)]
 pub(crate) struct FileMarks {
     layout_allocated_in: Vec<u32>,
@@ -184,7 +165,6 @@ pub(crate) struct FileMarks {
     key_written_in: Vec<u32>,
 }
 
-/// Whether the visit sets the mark for the first time.
 fn set_mark(marked_in: &mut Vec<u32>, id: impl Id, visit: u32) -> bool {
     if marked_in.len() <= id.index() {
         marked_in.resize(id.index() + 1, 0);
@@ -223,7 +203,6 @@ pub(crate) struct FragmentBuilder {
     pub(crate) family_facts: FamilyFacts,
     pub(crate) is_checked: bool,
     file: FileId,
-    /// `TaskState::visit`
     visit: u32,
     function_keys: KeyTable<FunctionKey>,
     layout_keys: KeyTable<LayoutKey>,
@@ -240,25 +219,20 @@ pub(crate) struct FragmentBuilder {
     allocated_layouts: Vec<LayoutId>,
     written_keys: Vec<PropertyKeyId>,
     variables: Vec<(VariableId, Variable)>,
-    /// `UnitTables::eval_scope_count`
     eval_scope_count: u32,
     eval_scopes: Vec<(EvalScopeId, EvalScope)>,
-    /// `UnitTables::data_count`
     data_count: u32,
     data: Vec<(DataId, Data)>,
-    /// `UnitTables::expected_result_count`
     expected_result_count: u32,
     expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
     supertype_edges: Vec<(LayoutId, LayoutId)>,
     function_type_edges: Vec<(FunctionId, FunctionId)>,
     runtime_functions: Vec<RuntimeFunctionEntry>,
-    /// `FragmentBuilder::alone`
     #[cfg(test)]
     own_state: Option<Box<TaskState>>,
 }
 
 impl FragmentBuilder {
-    /// The tables, the finders and the marks of the task are with the builder until `finish` or `abandon`.
     pub(crate) fn new(file: FileId, state: &mut TaskState) -> FragmentBuilder {
         if let Some((last_file, lengths)) = state.last_visit
             && last_file == file
@@ -308,7 +282,6 @@ impl FragmentBuilder {
         }
     }
 
-    /// With tables of its own.
     #[cfg(test)]
     pub(crate) fn alone(file: FileId) -> FragmentBuilder {
         let mut state = Box::new(TaskState::new());
@@ -327,7 +300,6 @@ impl FragmentBuilder {
         layout
     }
 
-    /// The file names the layout only with `name_layout`.
     pub(crate) fn number_layout(&mut self, key: LayoutKey) -> LayoutId {
         self.layout_keys.number(key)
     }
@@ -365,12 +337,10 @@ impl FragmentBuilder {
         self.layout_keys.key_of(layout)
     }
 
-    /// In the order in which this file named them first.
     pub(crate) fn layouts_named_in_file(&self) -> &[LayoutId] {
         &self.layouts_named_in_file
     }
 
-    /// A length of `layouts_named_in_file`.
     pub(crate) fn end_layouts_of_code(&mut self) -> usize {
         debug_assert!(self.code_layout_count.is_none());
         let count = self.layouts_named_in_file.len();
@@ -403,7 +373,6 @@ impl FragmentBuilder {
         self.functions.push((id, function));
     }
 
-    /// `FileLowering::finish_function_texts`
     pub(crate) fn map_function_texts(&mut self, map: impl Fn(SourceRange) -> SourceRange) {
         for (_, function) in &mut self.functions {
             let mapped = map(function.text);
@@ -422,7 +391,6 @@ impl FragmentBuilder {
         self.layouts.push((id, layout));
     }
 
-    // A plain layout has a definition for each type that has it. Returns which of the file's definitions it is.
     pub(crate) fn define_object_type(
         &mut self,
         id: LayoutId,
@@ -458,7 +426,6 @@ impl FragmentBuilder {
         }
     }
 
-    /// In the order in which this file noted them first.
     pub(crate) fn allocated_layouts(&self) -> &[LayoutId] {
         &self.allocated_layouts
     }
@@ -474,7 +441,6 @@ impl FragmentBuilder {
         }
     }
 
-    // Whoever builds what the record describes makes objects with its layouts and puts its keys into them.
     fn note_what_is_built(&mut self, reference: Reference) {
         match reference {
             Reference::Layout(layout) => self.note_allocation(layout),
@@ -507,7 +473,6 @@ impl FragmentBuilder {
         self.add_described_result(expected)
     }
 
-    // What a call is declared to answer where nothing of the compiler's builds the answer.
     pub(crate) fn add_described_result(&mut self, expected: ExpectedResult) -> ExpectedResultId {
         let count = &mut self.expected_result_count;
         add_record(&mut self.expected_results, count, expected)
@@ -521,7 +486,6 @@ impl FragmentBuilder {
         }
     }
 
-    /// In the order in which they were added. An edge may stand there more than once.
     pub(crate) fn supertype_edges(&self) -> &[(LayoutId, LayoutId)] {
         &self.supertype_edges
     }
@@ -539,7 +503,6 @@ impl FragmentBuilder {
         self.runtime_functions.push(entry);
     }
 
-    /// A private library function hides itself. Only a recursively private one hides what is written inside it.
     pub(crate) fn lists_functions_inside(&self, function: FunctionId) -> bool {
         self.runtime_functions.iter().any(|entry| {
             entry.function == function && entry.visibility == FunctionVisibility::Private
@@ -627,7 +590,6 @@ impl FragmentBuilder {
         self.finish(module, &mut state)
     }
 
-    /// The visit is thrown away: the task gets back what it lent, without what the visit added.
     pub(crate) fn abandon(self, state: &mut TaskState) {
         let last_visit = state.last_visit.take();
         let (file, lengths) = last_visit.expect("`new` notes the visit");

@@ -19,6 +19,11 @@ use crate::statistics::Statistics;
 
 pub struct SourceTexts(pub Opaque);
 
+#[derive(Debug)]
+pub struct SourceChanged {
+    pub path: Vec<u8>,
+}
+
 pub struct ReportEntry(pub Opaque);
 
 impl ReportEntry {

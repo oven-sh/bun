@@ -32,7 +32,6 @@ pub fn write_summary(input: &ReportInput<'_>, out: &mut Vec<u8>) {
     }
 }
 
-/// The lines of the program and its packages, and the time of all stages of the compiler together.
 pub(super) struct CompileSpeed {
     pub(super) lines: u64,
     pub(super) milliseconds: u64,

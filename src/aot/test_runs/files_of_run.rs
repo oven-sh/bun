@@ -1,8 +1,3 @@
-//! Whose each file of a test run is. The runner says which files it starts: the test files and the preloads. From that list the rest follows by the imports.
-//! Of the tests: the files of the list, what takes something from the test runner, what the preloads alone load, and a file of the project that the files of the tests alone import.
-//! Of the product: every other file of the project, and whatever those load: an executable of the project holds them too, and they meet in the run what they meet there.
-//! What a file is called, and the folder that it lies in, say nothing: `bun test ./checks/latest.ts`, `src/app.ts` beside `src/app.test.ts`.
-
 use std::borrow::Cow;
 use std::mem::replace;
 
@@ -15,7 +10,7 @@ use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Binding, RuntimeBindOptions};
 use bun_sema::file_analysis::analyze_file;
 use bun_sema::fold::{FoldInputs, FoldOptions};
-use bun_sema::hir::{ExprId, ExprKind, FileKind, PropKey, StmtKind};
+use bun_sema::hir::{ExprId, ExprKind, FileKind, PropKey, StmtId, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{ancestors, inside};
@@ -33,7 +28,6 @@ use crate::load::sources::parsed_source;
 use crate::load::{is_in_node_modules, read_file_bytes};
 use crate::options::Options;
 
-/// The files that `first` load, themselves included, and what those load in turn, by `FileId::idx()`. The search goes into no file that `stops` it.
 pub(super) fn find_files_loaded_from(
     files: &Files<'_>,
     first: Vec<FileId>,
@@ -52,7 +46,6 @@ pub(super) fn find_files_loaded_from(
     is_reached
 }
 
-/// The entry points that the build was given: what the runner starts.
 pub(super) struct ListedByRunner {
     pub test_files: Vec<FileId>,
     pub preloads: Vec<FileId>,
@@ -65,7 +58,6 @@ pub(super) fn find_files_listed_by_runner(input: &RunInput<'_, '_>) -> ListedByR
     let preloads: FxHashSet<FileId> = preloads
         .filter_map(|path| files.by_path.get(&from_argument(started_in, path)[..]))
         .collect();
-    // The load has found the entry points behind those: a Worker starts there, or a name finds them.
     let written = files.entry_points().iter().copied();
     let written = written.take(options.entry_points.len());
     let (preloads, test_files) = written.partition(|file| preloads.contains(file));
@@ -83,12 +75,9 @@ fn read_file(in_memory_files: &[(Vec<u8>, Vec<u8>)], path: &[u8]) -> Option<Vec<
     }
 }
 
-/// What the package.json files above the test files say of the product: the nearest, and the root's in a workspace.
 #[derive(Default)]
 struct Manifests {
-    /// The files that `main`, `module` and `bin` name, and `index.js` beside a manifest that names none.
     ways_into_project: FxHashSet<Vec<u8>>,
-    /// The names under `dependencies`, `peerDependencies` and `optionalDependencies`: what the project says that it needs when it runs.
     packages_of_product: FxHashSet<Vec<u8>>,
 }
 
@@ -151,7 +140,6 @@ impl Manifests {
         for test_file in &options.load.test_files {
             let test_file = from_argument(&options.code.working_directory, test_file);
             for folder in ancestors(dirname::<Posix>(&test_file)) {
-                // What lies above it has been read with it.
                 if !seen.insert(folder.to_vec()) {
                     break;
                 }
@@ -165,7 +153,6 @@ impl Manifests {
     }
 }
 
-// The folder of the package that holds the file: `../node_modules/name` or `../node_modules/@scope/name`. Nothing for a file of the project itself.
 fn package_of(path: &[u8]) -> &[u8] {
     const FOLDER: &[u8] = b"/node_modules/";
     let Some(at) = strings::last_index_of(path, FOLDER) else {
@@ -194,7 +181,6 @@ struct Folder {
     folders: Vec<Vec<u8>>,
 }
 
-// node_modules and folders whose names begin with a dot are left out.
 fn list(path: &[u8]) -> Folder {
     let mut found = Folder {
         files: Vec::new(),
@@ -219,18 +205,13 @@ fn list(path: &[u8]) -> Folder {
     found
 }
 
-/// What the search on disk goes by. The paths are in the format of the checker.
 struct CodeOnDisk<'a> {
-    /// The folder that the runner was started in.
     root: &'a [u8],
     in_memory_files: &'a [(Vec<u8>, Vec<u8>)],
-    /// Whether the run holds the file at the path.
     is_compiled: &'a (dyn Fn(&[u8]) -> bool + Sync),
     in_parallel: InParallel<'a>,
 }
 
-/// The files with code below the folder that the runner was started in, which the run does not compile. In the format of the checker, ascending. Each folder is listed once.
-/// The load lists every file of the project of a tsconfig.json for the sake of its types: `src/main.ts`, which no test imports, is such a file, and no file of the run.
 fn list_code_that_run_does_not_reach(disk: &CodeOnDisk<'_>) -> Vec<Vec<u8>> {
     let root = disk.root;
     let mut unread: Vec<Vec<u8>> = Vec::new();
@@ -251,7 +232,6 @@ fn list_code_that_run_does_not_reach(disk: &CodeOnDisk<'_>) -> Vec<Vec<u8>> {
     unread
 }
 
-/// `./load`, `./load.ts`, `./load.js` for load.ts, and `.` or `./support` for support/index.ts.
 fn spells(written: &[u8], file: &[u8]) -> bool {
     written == file
         || written == without_extension(file)
@@ -265,7 +245,6 @@ fn spells(written: &[u8], file: &[u8]) -> bool {
 #[derive(Default)]
 struct Written {
     takes_from_test_runner: bool,
-    /// With whether the file takes the module for itself: `export { load } from "./load"` does not.
     paths: Vec<(Vec<u8>, bool)>,
 }
 
@@ -317,14 +296,12 @@ fn read_what_file_writes(path: &[u8], text: &[u8]) -> Written {
     let sited: FxHashSet<Vec<u8>> = written.paths.iter().map(|it| it.0.clone()).collect();
     for (expression, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
         match node.kind {
-            // `createRequire(import.meta.url)("./src/loads.cjs")`, `new URL("./worker.ts", import.meta.url)`.
             ExprKind::String(text) if text.is_some() && is_relative(atoms.bytes(text)) => {
                 let path = from_argument(folder, atoms.bytes(text));
                 if !sited.contains(&path) {
                     written.paths.push((path, true));
                 }
             }
-            // `bun test` hands every file the names of the test runner.
             ExprKind::Ident(name) if name.is_some() => {
                 let is_free = !bound.ran_out_of_stack
                     && bound.is_evaluated_ident(expression)
@@ -339,7 +316,6 @@ fn read_what_file_writes(path: &[u8], text: &[u8]) -> Written {
     written
 }
 
-/// The last word of a path as an import writes it: `load` for load.ts, `support` for support/index.ts.
 fn find_last_word(file: &[u8]) -> &[u8] {
     match without_extension(basename(file)) {
         b"index" => basename(dirname::<Posix>(file)),
@@ -347,26 +323,18 @@ fn find_last_word(file: &[u8]) -> &[u8] {
     }
 }
 
-/// Whether the text holds one of the words as a part of a path: between slashes and quotes, with an extension or without. One pass over the text, however many words are sought.
 fn may_write_path_to(text: &[u8], last_words: &FxHashSet<&[u8]>) -> bool {
     let mut parts = strings::split_any(text, b"/\"'`");
     parts.any(|part| last_words.contains(part) || last_words.contains(without_extension(part)))
 }
 
-/// For each of `asked`, a file on disk that imports it and is the product's: the run does not reach it, it takes nothing from the test runner, and neither does anybody on the way
-/// down to it from a file that nobody imports. `main.ts` imports it, and no test imports `main.ts`. A fixture that only test files import, which this run does not hold, speaks for nothing.
-/// Nor does a file that nobody imports and that only exports it again: such a file stands for whoever imports that file.
 fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<Option<Vec<u8>>> {
     let unread = list_code_that_run_does_not_reach(disk);
     let in_memory_files = disk.in_memory_files;
-    // The files that are asked for, and behind them each file on disk that comes to one of them and takes nothing from the test runner.
     let mut sought: Vec<Vec<u8>> = asked.to_vec();
-    // By place in `sought`: whether somebody on disk imports the file, and the places of what it imports, with whether it takes that for itself.
     let mut is_imported = vec![false; sought.len()];
     let mut imports: Vec<Vec<(usize, bool)>> = vec![Vec::new(); sought.len()];
-    // By place in `unread`.
     let mut place_in_sought: Vec<Option<usize>> = vec![None; unread.len()];
-    // A file is parsed once, in the first round that seeks a name which it mentions.
     let mut written_by: Vec<Option<Written>> = unread.iter().map(|_| None).collect();
     let mut first_unread = 0;
     while first_unread < sought.len() && !unread.is_empty() {
@@ -384,7 +352,6 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
         for written in written_by.iter_mut().filter(|it| it.is_none()) {
             *written = parsed.next().flatten();
         }
-        // The places in `sought`, by what an import may write for the file: its path without the extension, and the folder of an index file.
         let mut sought_under: FxHashMap<&[u8], Vec<usize>> = FxHashMap::default();
         for place in round {
             let without = without_extension(&sought[place]);
@@ -393,7 +360,6 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
                 sought_under.entry(folder).or_default().push(place);
             }
         }
-        // The place in `unread` of who imports, the place in `sought` of what it imports, and whether it takes that for itself.
         let mut found: Vec<(usize, usize, bool)> = Vec::new();
         for (importer, written) in written_by.iter().enumerate() {
             for (spelled, takes_for_itself) in written.iter().flat_map(|it| &it.paths) {
@@ -408,7 +374,6 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
                 }
             }
         }
-        // `true` comes behind `false`: the last way to a file says whether one of them takes it for itself.
         found.shared_sort_unstable();
         for (index, &(importer, imported, takes_for_itself)) in found.iter().enumerate() {
             let is_last_way =
@@ -429,14 +394,12 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
             imports[place].push((imported, takes_for_itself));
         }
     }
-    // Down from the files that nobody imports.
     let mut taken_by: Vec<Option<usize>> = vec![None; sought.len()];
     let roots = (asked.len()..sought.len()).filter(|&place| !is_imported[place]);
     let mut pending: Vec<usize> = roots.collect();
     while let Some(importer) = pending.pop() {
         for &(imported, takes_for_itself) in &imports[importer] {
             if (takes_for_itself || is_imported[importer]) && taken_by[imported].is_none() {
-                // Who only exports it again stands for whoever imports that file.
                 let through = taken_by[importer].filter(|_| !takes_for_itself);
                 taken_by[imported] = Some(through.unwrap_or(importer));
                 pending.push(imported);
@@ -449,8 +412,6 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
         .collect()
 }
 
-/// For the runner, behind a run that has refused a load which `file` asked for: the file on disk that makes `file` the product's. Native paths.
-/// linked.rs calls it, which no test build holds.
 #[cfg(not(test))]
 pub(crate) fn find_importer_outside_run(
     root: &[u8],
@@ -467,10 +428,8 @@ pub(crate) fn find_importer_outside_run(
     Some(to_native(&importer).to_vec())
 }
 
-/// What the search for the helpers of the tests asks.
 struct FilesByImports<'a, 's> {
     files: &'a Files<'s>,
-    /// By `FileId::idx()`.
     referrers: Vec<Vec<FileId>>,
     is_in_package: Vec<bool>,
     is_of_tests: Vec<bool>,
@@ -478,7 +437,6 @@ struct FilesByImports<'a, 's> {
 }
 
 impl FilesByImports<'_, '_> {
-    /// What speaks for the product in the run itself: a way into the project that a manifest names, a file that nobody takes, and a file that a package imports.
     fn find_ways_into_product(&self) -> Vec<FileId> {
         let files = self.files;
         let mut is_entry_point = vec![false; self.referrers.len()];
@@ -490,7 +448,6 @@ impl FilesByImports<'_, '_> {
         let ways = own.filter(|&index| {
             let referrers = &self.referrers[index];
             let is_taken = !referrers.is_empty() || is_entry_point[index];
-            // Nothing runs a file that is read for its types alone.
             let runs_in_package = |referrer: &FileId| {
                 self.is_in_package[referrer.idx()] && parsed_source(files, *referrer).is_some()
             };
@@ -502,16 +459,12 @@ impl FilesByImports<'_, '_> {
         ways.map(|index| FileId(index as u32)).collect()
     }
 
-    /// The compiled files of the project whose every importer is a file of the tests or one of these. From the tests down: a ring of imports that somebody enters from outside it is
-    /// never begun. `stays`: by `FileId::idx()`, what is none of them whoever imports it.
     fn find_files_that_tests_alone_come_to(&self, stays: &[bool]) -> Vec<FileId> {
         let files = self.files;
         let count = self.referrers.len();
         let may_help =
             |index: usize| !self.is_in_package[index] && !self.is_of_tests[index] && !stays[index];
-        // By `FileId::idx()`: the importers that run and have yet to be found.
         let mut others = vec![0u32; count];
-        // A Worker that a test starts begins at a file that nobody imports.
         let mut is_imported = vec![false; count];
         for &file in files.entry_points() {
             is_imported[file.idx()] = true;
@@ -554,7 +507,6 @@ impl FilesByImports<'_, '_> {
 fn loads_what_it_is_told(files: &Files<'_>, file: FileId) -> bool {
     parsed_source(files, file).is_some_and(|source| {
         let names = &source.contents.names;
-        // `imports_given_unknown_names` lists every imported function that a call gives a value nobody reads. Few of them load.
         names.loads_by_unknown_name
             || names.loads_by_unknown_path
             || !names.unknown_names_at.is_empty()
@@ -562,10 +514,19 @@ fn loads_what_it_is_told(files: &Files<'_>, file: FileId) -> bool {
     })
 }
 
-/// What a file of the tests is given and a file of the product is not: it loads what nobody has compiled, its writes to the built-in objects are honored, and the texts that it holds
-/// are read as code. A file that does neither of the first two runs alike on either side, and on the side of the product it is compiled as the executable has it.
-/// A text takes no file across: nobody knows where it runs. `export const MOD = "globalThis.ArrayBuffer = .."` is for a context of `node:vm` as often as not, and read as code of
-/// this realm it opens the built-in for every file of the run. Where it does run here, the write is refused by name.
+fn only_hands_names_on(files: &Files<'_>, file: FileId) -> bool {
+    let hir = files.hir(file);
+    let mut statements = hir
+        .ids(hir.body)
+        .map(|statement: StmtId| hir[statement].kind);
+    statements.len() != 0
+        && statements.all(|kind| match kind {
+            StmtKind::ExportNamed(export) => hir[export].has_module_specifier,
+            StmtKind::ExportStar { .. } => true,
+            _ => false,
+        })
+}
+
 fn asks_for_what_tests_are_given(files: &Files<'_>, file: FileId) -> bool {
     let Some(source) = parsed_source(files, file) else {
         return true;
@@ -577,11 +538,9 @@ fn asks_for_what_tests_are_given(files: &Files<'_>, file: FileId) -> bool {
         || !builtins.opened_holders().is_empty()
 }
 
-/// By `FileId::idx()`: whose each file is, and `ModuleFlags::LOADS_COMPILED_FILES_ALONE`.
 pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec<bool>) {
     let (files, options) = (input.files, input.options);
     let count = files.modules.len();
-    // With `--aot-allow-code-from-disk` every file is read as the tests are.
     if !options.aot.only_tests_load_code_from_disk {
         return (vec![WhoseFile::OfTests; count], vec![false; count]);
     }
@@ -604,27 +563,11 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
     for &file in listed.test_files.iter().chain(&listed.preloads) {
         by_imports.is_of_tests[file.idx()] = true;
     }
-    // No executable holds a file of the project that takes something from the test runner, wherever it lies. A package that asks `typeof jest` to find out where it runs
-    // is given the name too, and the executable holds it.
     for file in compiled().filter(|file| !by_imports.is_in_package[file.idx()]) {
         by_imports.is_of_tests[file.idx()] |=
             parsed_source(files, file).is_none_or(|it| it.of_run.takes_from_test_runner);
     }
     let is_of_tests_by_itself = by_imports.is_of_tests.clone();
-    // No executable holds a preload, nor what the preloads alone load: `import "./patch"` in setup/preload.ts.
-    if !listed.preloads.is_empty() {
-        let by_others = find_files_loaded_from(files, listed.test_files, &|_| false);
-        let stops = |file: FileId| by_others[file.idx()];
-        let by_preloads = find_files_loaded_from(files, listed.preloads, &stops);
-        for index in (0..count).filter(|&index| by_preloads[index]) {
-            by_imports.is_of_tests[index] |= !by_imports.is_in_package[index];
-        }
-    }
-    // Nor a file of the project that the files of the tests alone import: `export const load = path => import(path)` in support/, beside tests/. Nor, of what only such files import,
-    // however deep, a file that asks for what the tests are given: the helper that a fixture imports and that loads what the test has written. The rest of what lies deeper stays the
-    // product's: where tests import the entry points of a program and no manifest names them, that is the program.
-    // A file that somebody else imports too stays the product's, with whatever lies on a ring of imports with it. What speaks for the product stops the way down:
-    // `find_ways_into_product`, and a file on disk.
     let mut is_of_product_for_sure = vec![false; count];
     for file in by_imports.find_ways_into_product() {
         is_of_product_for_sure[file.idx()] = true;
@@ -663,12 +606,22 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
             helpers = by_imports.find_files_that_tests_alone_come_to(&is_of_product_for_sure);
         }
     }
-    let is_behind_helper = |file: &&FileId| {
+    let mut is_behind_helper = vec![false; count];
+    for &file in &helpers {
         let mut referrers = by_imports.referrers[file.idx()].iter();
-        referrers.any(|it| !by_imports.is_of_tests[it.idx()] && parsed_source(files, *it).is_some())
-    };
-    helpers.retain(|file| !is_behind_helper(&file) || asks_for_what_tests_are_given(files, *file));
-    let behind_helpers = helpers.iter().filter(is_behind_helper).count();
+        is_behind_helper[file.idx()] = referrers.any(|it| {
+            !by_imports.is_of_tests[it.idx()]
+                && parsed_source(files, *it).is_some()
+                && (is_behind_helper[it.idx()] || !only_hands_names_on(files, *it))
+        });
+    }
+    helpers.retain(|file| {
+        !is_behind_helper[file.idx()] || asks_for_what_tests_are_given(files, *file)
+    });
+    let behind_helpers = helpers
+        .iter()
+        .filter(|file| is_behind_helper[file.idx()])
+        .count();
     for file in helpers {
         by_imports.is_of_tests[file.idx()] = true;
     }
@@ -681,9 +634,6 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
     let own = compiled().filter(|file| !is_of_tests[file.idx()] && !is_in_package[file.idx()]);
     let is_of_product =
         find_files_loaded_from(files, own.collect(), &|file| is_of_tests[file.idx()]);
-    // No executable holds a package that only the tests themselves reach. webpack loads `ts-loader` by `require(loader.path)`, and so do babel, eslint and rollup load what a test
-    // names for them. The file that writes such a load may leave the compiled files. The rest of the package stays as it is: nothing there asks to leave.
-    // `src/main.ts` imports "@nestjs/core", and no test loads `src/main.ts`: what the project says that it needs when it runs is the product's.
     let package_of_file = |file: FileId| package_of(files.module(file).file_name());
     let first = compiled().filter(|&file| match is_in_package[file.idx()] {
         true => (manifests.packages_of_product).contains(name_of_package(package_of_file(file))),

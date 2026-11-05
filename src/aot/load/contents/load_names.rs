@@ -1,28 +1,31 @@
 use std::sync::OnceLock;
 
 use bun_ast::Target;
+use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, Decl, FnOwner, Parent, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
-use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::fold::{Constant, FoldedValue, MadeByCall};
 use bun_sema::hir::{
     BinOp, Branches, CallId, ExprId, ExprKind, File, FnId, FnKind, ImportId, PropKind, StmtKind,
 };
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, find_names_exported_for, find_parameter_named,
-    find_values_of_parameter, is_name_read_by_transpiler, is_name_written_out,
+    ImportSite, ImportSiteKind, ImportSpecifier, ends_in_call_that_reads_frame_of_caller,
+    find_names_exported_for, find_parameter_named, find_values_of_parameter,
+    is_name_read_by_transpiler, is_name_written_out,
 };
-use bun_sema::program::{CodeAnswer, CodeView, ComputedTarget, ComputedTargets, FileId, Files};
+use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
 use bun_sema::resolve::{
     CodeFailure, CodeResolution, ComputedResolution, ExternalKind, FinishedFile, SiteResolution,
 };
 use bun_sema::util::{FxHashMap, SharedSort};
 use smallvec::{SmallVec, smallvec};
 
+use super::entry_points::is_relative_path;
 use super::scan::{ContentsScan, ScanInput};
 use super::worker_entries::is_url_with_code;
-use crate::builtins::{BuiltinId, KeyOfModuleCache, RuntimeModule, table};
+use crate::builtins::{BuiltinId, KeyOfModuleCache, ResolvedBuiltins, RuntimeModule, table};
 use crate::load::is_in_node_modules;
 use crate::load::loader_aliases::{
     LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
@@ -30,7 +33,6 @@ use crate::load::loader_aliases::{
 use crate::load::runtime_modules::RuntimeResolution;
 use crate::load::sources::{parsed_source, parsed_source_in};
 
-/// `module` is what `name` stands for, and `name` is one of the values of `argument`, the first argument of a load.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct NamedModule {
     pub argument: ExprId,
@@ -38,63 +40,45 @@ pub(crate) struct NamedModule {
     pub module: RuntimeModule,
 }
 
-/// `class Manager { load(name) { return require(name); } }`: the name is a parameter of a function that a property holds.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct LoadUnderParameter {
     pub property: Atom,
-    /// Of the parameter among the parameters.
     pub place: u32,
-    /// `require(name)`, not `import(name)`.
     pub requires: bool,
 }
 
-/// `this.load("a-driver")`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct TextPassedToProperty {
     pub property: Atom,
-    /// Of the text among the arguments.
     pub place: u32,
     pub text: Atom,
 }
 
 #[derive(Default)]
 pub(crate) struct NamedLoads {
-    /// By `argument`, then by the registry id of `module`, then by the bytes of `name`. Each once.
     pub modules: Vec<NamedModule>,
-    /// What a call gives to a binding that the file imports: `import { __require } from "./chunk.js"; __require("node:fs")`. In the order of the nodes.
     pub passed_to_imports: Vec<(SymbolId, NamedModule)>,
-    /// The imported bindings that a call gives a name which the build does not know. Ascending, each once.
     pub imports_given_unknown_names: Vec<SymbolId>,
-    /// `resolve_loads_through_imported_loaders`
     through_imported_loaders: OnceLock<LoadsThroughImportedLoaders>,
-    /// Library modules that a call passes for a parameter which a loader gets: `function load(name) { return __require(name); }`. By registry id, each once.
     pub passed_for_parameters: Vec<RuntimeModule>,
-    /// Library modules whose name the file writes as a string value anywhere in live code, or takes out of a data file. By registry id, each once.
     pub written_as_values: Vec<RuntimeModule>,
     pub loads_by_unknown_name: bool,
-    /// The unknown name may be a path: `require(x)`, `import(x)`, not `process.getBuiltinModule(x)`.
+    pub loads_by_path_alone: bool,
     pub loads_by_unknown_path: bool,
-    /// Indexes into `FileAnalysis::import_sites`, ascending. A loader that goes somewhere as a value has no place here.
     pub unknown_names_at: Vec<u32>,
-    /// The same, only with `loads_code_from_disk`.
+    pub sought_from_unknown_folders: Vec<(Atom, bool)>,
     pub files_missing_at_build_at: Vec<u32>,
-    /// The same, only with `loads_code_from_disk`: the name is that of data, `./made.json`. No code comes with the file, so it sets neither flag.
     pub data_missing_at_build_at: Vec<u32>,
-    /// In the order of `unknown_names_at`, where each of them stays: whoever else gets hold of the function passes what it likes.
     pub under_parameters: Vec<LoadUnderParameter>,
-    /// In the order of the nodes, with repeats. Objects are not told apart and nothing is followed: `EntryPointFinder` asks for a text where some file loads
-    /// under the name of the property, and a text that leads to no file of code from there counts for nothing.
     pub texts_passed_to_properties: Vec<TextPassedToProperty>,
 }
 
 struct LoadsThroughImportedLoaders {
-    /// `NamedLoads::modules`, and of `passed_to_imports` what goes to a loader. In the order of `modules`.
     modules: Vec<NamedModule>,
     gives_unknown_name: bool,
 }
 
 impl NamedLoads {
-    /// `modules`, and once every file of the application is loaded also what the file gives to a loader that it imports.
     pub(crate) fn all_modules(&self) -> &[NamedModule] {
         match self.through_imported_loaders.get() {
             Some(found) => &found.modules,
@@ -110,8 +94,62 @@ pub(crate) fn names_plugin(files: &dyn CodeView<'_>) -> bool {
     })
 }
 
-/// `const name = "./a.js"; import(name)`, `import("./" + kind + ".js")`: this build knows the files, and `bun build` leaves the call to the run time, where a plugin may answer it.
-/// The files belong to the program. In a program that names `Bun.plugin` the call asks the loader, which asks the plugins and then finds the file.
+pub(crate) fn mentions_plugin(files: &dyn CodeView<'_>) -> bool {
+    let mut compiled = files.compiled_files().iter();
+    compiled.any(|&file| {
+        parsed_source_in(files, file).is_some_and(|source| {
+            let mut mentioned = source.builtins.mentioned().iter();
+            mentioned.any(|&id| table::is_plugin(id))
+        })
+    })
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum PathAlone {
+    ByItsStart,
+    ByTestOfWholePath,
+}
+
+const NAMES_OF_TEST_RUNNERS: [&[u8]; 2] = [b"@jest/globals", b"vitest"];
+
+fn may_library_module_begin_with(start: &[u8]) -> bool {
+    let names = BUN_ALIASES.iter().copied().flatten().map(|entry| entry.0);
+    let mut names = names.chain(NAMES_OF_TEST_RUNNERS);
+    names.any(|name| name.starts_with(start))
+}
+
+pub(crate) fn find_why_resolver_takes_name_for_path(
+    analysis: &FileAnalysis<'_>,
+    atoms: &Interner<'_>,
+    name: ExprId,
+) -> Option<PathAlone> {
+    let decisions = &analysis.decisions;
+    let made_by_call = decisions.find_what_call_made(name);
+    match (made_by_call, decisions.specifier(name)) {
+        (Some(MadeByCall::WholePath), _) => Some(PathAlone::ByTestOfWholePath),
+        (Some(MadeByCall::Part), _) => None,
+        (None, _) if decisions.is_path_from_own_directory(name) => Some(PathAlone::ByItsStart),
+        (None, ImportSpecifier::Pattern { prefix, .. }) => {
+            let start = atoms.bytes(prefix);
+            let may_be_name =
+                start.is_empty() || start.starts_with(b"#") || may_library_module_begin_with(start);
+            (!may_be_name).then_some(PathAlone::ByItsStart)
+        }
+        (None, _) => None,
+    }
+}
+
+fn answers_for_names_itself(builtins: &ResolvedBuiltins) -> bool {
+    builtins.names_plugin() || builtins.stores_loader_functions()
+}
+
+pub(crate) fn does_some_file_answer_for_names(files: &Files<'_>) -> bool {
+    let mut compiled = files.compiled_files().iter();
+    compiled.any(|&file| {
+        parsed_source(files, file).is_none_or(|it| answers_for_names_itself(&it.builtins))
+    })
+}
+
 pub(crate) fn is_followed_further_than_bundler(
     files: &dyn CodeView<'_>,
     file: FileId,
@@ -132,15 +170,6 @@ pub(crate) fn is_followed_further_than_bundler(
         || !is_name_read_by_transpiler(hir, bound, decisions, site.kind)
 }
 
-/// `kit-a`, `@scope/kit/sub`, `~/alias`: no path: a package.json or a tsconfig.json says which file it is, and an executable has that written down for its entry points.
-/// Not so `#inner`, which the `imports` of the importer's own package.json resolve.
-pub(crate) fn is_resolved_by_manifest(spelling: &[u8]) -> bool {
-    !spelling.starts_with(b".")
-        && !spelling.starts_with(b"#")
-        && !bun_paths::is_absolute_loose(spelling)
-}
-
-/// In the format of the checker.
 pub(crate) fn find_files_followed_further_than_bundler(files: &dyn CodeView<'_>) -> Vec<Vec<u8>> {
     let mut found: Vec<Vec<u8>> = Vec::new();
     if !names_plugin(files) {
@@ -154,23 +183,8 @@ pub(crate) fn find_files_followed_further_than_bundler(files: &dyn CodeView<'_>)
             if !is_followed_further_than_bundler(files, file, site) {
                 continue;
             }
-            match *answer {
-                CodeAnswer::File(target) => found.push(files.file_name(target).to_vec()),
-                // The loader of an executable reads no package.json and no tsconfig.json: what those make of a name is written down for entry points.
-                CodeAnswer::Computed(ComputedTargets::Modules { spellings, .. }) => {
-                    let named = spellings
-                        .iter()
-                        .filter_map(|&(spelling, target)| match target {
-                            ComputedTarget::File(target)
-                                if is_resolved_by_manifest(files.atoms().bytes(spelling)) =>
-                            {
-                                Some(files.file_name(target).to_vec())
-                            }
-                            _ => None,
-                        });
-                    found.extend(named);
-                }
-                _ => {}
+            if let CodeAnswer::File(target) = *answer {
+                found.push(files.file_name(target).to_vec());
             }
         }
     }
@@ -190,7 +204,6 @@ fn sort_modules(modules: &mut Vec<RuntimeModule>) {
     modules.dedup();
 }
 
-// The number of an atom follows the order in which threads met its text, so names are ordered by their bytes.
 fn sort_named_modules(named: &mut Vec<NamedModule>, atoms: &Interner<'_>) {
     let key = |it: &NamedModule| (it.argument, it.module.registry_id());
     named.shared_sort_unstable_by(|left, right| {
@@ -200,15 +213,13 @@ fn sort_named_modules(named: &mut Vec<NamedModule>, atoms: &Interner<'_>) {
     named.dedup();
 }
 
-/// A load that is given a name the build does not know may be given any text that the program writes as a value, in whichever file.
-/// A text that is left to the run time loads what it names whatever the compiled code does. In the order of the registry.
 pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
     application: &Files<'_>,
 ) -> Vec<RuntimeModule> {
-    // Each visit of every file costs a few misses of the cache a file, so there is one.
     let mut modules: Vec<RuntimeModule> = Vec::new();
     let mut written: Vec<RuntimeModule> = Vec::new();
     let mut loads_by_unknown_name = false;
+    let (mut loads_by_path_alone, mut is_answered_otherwise) = (false, false);
     for &file in application.compiled_files() {
         let source = parsed_source(application, file);
         loads_by_unknown_name = loads_by_unknown_name
@@ -217,20 +228,19 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
         let Some(source) = source else {
             continue;
         };
+        loads_by_path_alone |= source.contents.names.loads_by_path_alone;
+        is_answered_otherwise |= answers_for_names_itself(&source.builtins);
         modules.extend(&source.library_modules_named_in_text_left_to_run_time);
         modules.extend(&source.contents.names.passed_for_parameters);
         written.extend(&source.contents.names.written_as_values);
     }
-    if loads_by_unknown_name {
+    if loads_by_unknown_name || (loads_by_path_alone && is_answered_otherwise) {
         modules.append(&mut written);
     }
     sort_modules(&mut modules);
     modules
 }
 
-/// The key under which `require(name)` looks in `require.cache` before it loads a module of the library, and that module: `overridableRequire` in CommonJS.ts.
-/// It looks for a Node.js module under a name that is written without `node:`, and for one of Bun's own (`bun:sqlite`, `ws`) under what the resolver makes of the name.
-/// `require("bun")` is read as `Bun`.
 pub(crate) fn find_entry_that_require_looks_for(name: &[u8]) -> Option<(&[u8], RuntimeModule)> {
     let path = Alias::get(name, Target::Bun, Cfg::default())?
         .path
@@ -247,9 +257,6 @@ pub(crate) fn find_module_looked_up_in_cache(name: &[u8]) -> Option<RuntimeModul
     find_entry_that_require_looks_for(name).map(|entry| entry.1)
 }
 
-/// `require.cache["fs"] = { exports: fake }`: from then on `require("fs")` answers with what the entry exports, and `require("node:fs")` with the module.
-/// The modules of the library under whose key the file spells a store or a deletion. Under a key that no file spells the run time refuses an entry:
-/// `ModuleGraph::is_held_under_name_without_prefix`.
 pub(crate) fn find_library_modules_stored_in_cache(
     files: &Files<'_>,
     file: FileId,
@@ -319,8 +326,6 @@ fn imports_loader(files: &Files<'_>, mut file: FileId, mut symbol: SymbolId) -> 
     false
 }
 
-/// esbuild exports `__require` from a shared chunk, so whether `__require("node:fs")` loads a module is known once the file that exports it is loaded.
-/// Asked once every file of the application is loaded. True: the file gives such a loader a name that the build does not know.
 pub(crate) fn resolve_loads_through_imported_loaders(files: &Files<'_>, file: FileId) -> bool {
     let Some(source) = parsed_source(files, file) else {
         return false;
@@ -351,12 +356,9 @@ pub(crate) fn resolve_loads_through_imported_loaders(files: &Files<'_>, file: Fi
     found.gives_unknown_name
 }
 
-/// What a call that loads takes as its first argument.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum LoadArgument {
-    /// `require(x)`, `import(x)`, `vi.importActual(x)`
     ModuleOrPath,
-    /// `process.getBuiltinModule(x)`
     LibraryModule,
 }
 
@@ -387,13 +389,11 @@ fn find_module(input: &ScanInput<'_>, atoms: &Interner<'_>, name: Atom) -> Optio
     }
 }
 
-// A path where the program may lay a file before it loads it. What a package looks for and does without, `require("./build/Release/addon.node")`, is none.
 fn is_path_that_program_may_write(importer: &[u8], specifier: &[u8]) -> bool {
     (specifier.starts_with(b"./") || specifier.starts_with(b"../") || specifier.starts_with(b"/"))
         && !is_in_node_modules(importer)
 }
 
-// In a test run a statement counts too: an earlier test file may write what this file imports.
 fn may_find_file_later(input: &ScanInput<'_>, site: &ImportSite) -> bool {
     match site.kind {
         ImportSiteKind::ImportCall(_)
@@ -414,7 +414,6 @@ fn may_find_file_later(input: &ScanInput<'_>, site: &ImportSite) -> bool {
     }
 }
 
-/// `writeFileSync(path, text); await import(path)`: the load spells a path at which the build finds no file. The loader of the run time reads the file when the call runs.
 fn names_file_missing_at_build(
     request: &FinishedFile<'_, '_>,
     input: &ScanInput<'_>,
@@ -431,7 +430,6 @@ fn names_file_missing_at_build(
                 && !(input.is_data)(atoms.bytes(text)))
     };
     match resolution {
-        // A query asks for a copy of a file that is there.
         SiteResolution::Constant(CodeResolution::External {
             specifier,
             kind: ExternalKind::UncompiledCode,
@@ -444,7 +442,6 @@ fn names_file_missing_at_build(
         SiteResolution::Constant(CodeResolution::NotFound(CodeFailure::ModuleNotFound)) => {
             may_be_written(&site.specifier)
         }
-        // `for (const name of ["a", "b"]) await import(`./plugin-${name}.mjs`)`: a value that found no file is resolved when the call runs.
         SiteResolution::Computed(ComputedResolution::Candidates { spellings, .. }) => {
             let is_spelled = |specifier: &ImportSpecifier| {
                 matches!(*specifier, ImportSpecifier::Constant(text)
@@ -457,7 +454,6 @@ fn names_file_missing_at_build(
     }
 }
 
-/// `writeFileSync(path, "{}"); require(path)`: the same, where the path is that of data. The resolver leaves an absolute path to the run time by itself.
 fn names_data_missing_at_build(
     request: &FinishedFile<'_, '_>,
     input: &ScanInput<'_>,
@@ -491,7 +487,6 @@ fn is_left_operand_of_sum(request: &FinishedFile<'_, '_>, expression: ExprId) ->
     matches!(kind, ExprKind::Binary { op: BinOp::Add, left, .. } if left == expression)
 }
 
-// `"data:text/javascript," + code`: what the build knows is the start of a text, and not the text.
 fn is_part_of_longer_text(request: &FinishedFile<'_, '_>, expression: ExprId) -> bool {
     let Parent::Expr(above) = request.bound.parent_of_expr(expression) else {
         return false;
@@ -502,7 +497,6 @@ fn is_part_of_longer_text(request: &FinishedFile<'_, '_>, expression: ExprId) ->
     )
 }
 
-// Asked of a right operand or a substitution, where folding knows a sum. `4 + 4` is none.
 fn is_made_of_texts(request: &FinishedFile<'_, '_>, expression: ExprId) -> bool {
     match request.hir[expression].kind {
         ExprKind::String(_) | ExprKind::Template { .. } => true,
@@ -511,8 +505,6 @@ fn is_made_of_texts(request: &FinishedFile<'_, '_>, expression: ExprId) -> bool 
     }
 }
 
-/// `"node:" + "re" + "pl"`: a part of a longer constant text is no value by itself. The longest such text around `part`, and what makes it.
-/// Only the last part that is made of texts climbs, so a text costs no more than the number of its parts.
 fn find_whole_text(request: &FinishedFile<'_, '_>, part: ExprId, text: Atom) -> (ExprId, Atom) {
     let (hir, bound) = (request.hir, request.bound);
     let mut whole = (part, text);
@@ -537,7 +529,6 @@ fn find_whole_text(request: &FinishedFile<'_, '_>, part: ExprId, text: Atom) -> 
         }
         match constant_text(request, above) {
             Some(text) => whole = (above, text),
-            // `a + b + c`: folding answers for the outermost sum alone.
             None if matches!(hir[above].kind, ExprKind::Binary { .. })
                 && is_left_operand_of_sum(request, above) => {}
             None => break,
@@ -547,7 +538,6 @@ fn find_whole_text(request: &FinishedFile<'_, '_>, part: ExprId, text: Atom) -> 
     whole
 }
 
-// The load holds what it names, where it is reached.
 fn is_fully_known_load_argument(
     analysis: &FileAnalysis<'_>,
     call: ExprId,
@@ -564,7 +554,6 @@ fn is_fully_known_load_argument(
         && (analysis.alternatives_of(&site.specifier).iter()).all(is_constant)
 }
 
-// A text that is only compared, or is the key of a member, comes to no loader. Any other may: through a variable, a parameter, a list, a property. Nothing is followed.
 fn is_written_as_value(request: &FinishedFile<'_, '_>, mut expression: ExprId) -> bool {
     let (hir, bound) = (request.hir, request.bound);
     loop {
@@ -617,7 +606,6 @@ fn is_written_as_value(request: &FinishedFile<'_, '_>, mut expression: ExprId) -
             ExprKind::Cond { test, .. } if test == expression => return false,
             ExprKind::Cond { .. } => expression = above,
             ExprKind::Unary { .. } => return false,
-            // The other parts may be empty when the code runs.
             ExprKind::Binary { op: BinOp::Add, .. } | ExprKind::Template { .. }
                 if constant_text(request, above).is_none() =>
             {
@@ -625,7 +613,6 @@ fn is_written_as_value(request: &FinishedFile<'_, '_>, mut expression: ExprId) -
             }
             ExprKind::Binary { .. } | ExprKind::Template { .. } => return false,
             ExprKind::Index { index, .. } if index == expression => return false,
-            // The name of a member, written as a text.
             ExprKind::Dot { obj, .. } if obj != expression => return false,
             ExprKind::Call(_) | ExprKind::ImportCall { .. }
                 if is_fully_known_load_argument(request.analysis, above, expression) =>
@@ -637,7 +624,6 @@ fn is_written_as_value(request: &FinishedFile<'_, '_>, mut expression: ExprId) -
     }
 }
 
-/// `class { load(name) {} }`, `{ load(name) {} }`, `{ load: name => .. }`, `tools.load = function (name) {}`
 fn find_property_written_for(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<Atom> {
     let kind = hir.runtime_function_kind(function);
     let value = match (kind, bound.fns[function.idx()].owner) {
@@ -665,7 +651,6 @@ fn find_property_written_for(hir: &File<'_>, bound: &Bound<'_>, function: FnId) 
     }
 }
 
-/// `require(name)` and `import(name)`, where the build knows nothing of `name` but that it is a parameter. An export is a property of the namespace.
 fn find_loads_under_parameter(
     request: &FinishedFile<'_, '_>,
     site: &ImportSite,
@@ -704,7 +689,6 @@ fn find_loads_under_parameter(
         .collect()
 }
 
-/// `this.load(..)`, `(0, tools.load)(..)`, and `load(..)` where the file imports `load`.
 fn find_property_called(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> Option<Atom> {
     let mut callee = hir.skip_type_assertions(callee);
     if let ExprKind::Binary {
@@ -729,7 +713,6 @@ fn find_property_called(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> Op
     }
 }
 
-// Lists the library modules that the first argument of a load may name. True: it may also be a name that the build does not know.
 fn add_names_in(
     scan: &mut ContentsScan<'_, '_>,
     argument: ExprId,
@@ -767,7 +750,6 @@ fn add_names_in(
                     let Branches { yes, no } = hir.branches(branches);
                     pending.extend([(yes, is_passed), (no, is_passed)]);
                 }
-                // What is passed for it is looked at already.
                 (ExprKind::Ident(_), Binding::Symbol(parameter))
                     if follows_parameters && followed.contains(&parameter) => {}
                 (ExprKind::Ident(_), Binding::Symbol(parameter)) if follows_parameters => {
@@ -784,18 +766,32 @@ fn add_names_in(
     has_unknown_name
 }
 
+fn find_name_sought_from_unknown_folder(
+    request: &FinishedFile<'_, '_>,
+    site: &ImportSite,
+) -> Option<(Atom, bool)> {
+    let (call, requires) = match site.kind {
+        ImportSiteKind::ImportByTestRunner(call) => (call, false),
+        ImportSiteKind::RequireByTestRunner(call) => (call, true),
+        _ => return None,
+    };
+    let ImportSpecifier::Constant(name) = site.specifier else {
+        return None;
+    };
+    let keeps_frame = ends_in_call_that_reads_frame_of_caller(request.hir, request.bound, call);
+    (is_relative_path(request.atoms.bytes(name)) && !keeps_frame).then_some((name, requires))
+}
+
 impl ContentsScan<'_, '_> {
     pub(super) fn look_at_site(&mut self, index: usize) {
         let (request, input) = (self.request, self.input);
         let (analysis, atoms) = (request.analysis, request.atoms);
         let names = &mut self.found.names;
         let site = &analysis.import_sites[index];
-        // A file that is folded again may keep the sites of the folding before.
         let call = site.kind.call();
         if call.is_some_and(|call| analysis.decisions.is_dead_expr(call)) {
             return;
         }
-        // Without the option the run time refuses code that is not in the program.
         if input.loads_code_from_disk {
             let resolution = request.resolutions[index];
             if names_file_missing_at_build(request, input, site, resolution) {
@@ -811,7 +807,6 @@ impl ContentsScan<'_, '_> {
         if site.specifier_node.is_none() {
             return;
         }
-        // The module behind the one name of a site is an answer of the site itself.
         let is_choice = matches!(site.specifier, ImportSpecifier::OneOf(_));
         let mut is_known = true;
         let mut may_name_library_module = false;
@@ -826,8 +821,6 @@ impl ContentsScan<'_, '_> {
                         });
                     }
                 }
-                // `require("node:" + name)`: a part of a name names no module of the library, so it brings none in. The whole name is one that the build does not know.
-                // `require("./locales/" + name)` finds no module of the library, whatever the name is.
                 ImportSpecifier::Pattern { prefix, suffix } => {
                     is_known = false;
                     let (prefix, suffix) = (atoms.bytes(prefix), atoms.bytes(suffix));
@@ -840,11 +833,16 @@ impl ContentsScan<'_, '_> {
                 }
             }
         }
+        (names.sought_from_unknown_folders)
+            .extend(find_name_sought_from_unknown_folder(request, site));
         if is_known {
             return;
         }
+        let name = site.specifier_node;
+        let is_path_alone = find_why_resolver_takes_name_for_path(analysis, atoms, name).is_some();
         names.unknown_names_at.push(index as u32);
-        names.loads_by_unknown_name |= may_name_library_module;
+        names.loads_by_unknown_name |= may_name_library_module && !is_path_alone;
+        names.loads_by_path_alone |= is_path_alone;
         names.loads_by_unknown_path |= argument_kind == LoadArgument::ModuleOrPath;
         (names.under_parameters).extend(find_loads_under_parameter(request, site));
     }
@@ -870,8 +868,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// A call that is no import site and may load all the same: `process.getBuiltinModule(flag ? "node:vm" : "node:v8")`,
-    /// `__require("node:fs")` of esbuild, `createRequire("/")("node:path")`.
     pub(super) fn look_at_call(&mut self, expression: ExprId, call: CallId) {
         let request = self.request;
         let (hir, bound, analysis) = (request.hir, request.bound, request.analysis);
@@ -930,7 +926,6 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    /// A text in a list or an object that folding has put in the place of an expression. Nothing is followed.
     pub(super) fn look_at_text_in_data(&mut self, text: Atom) {
         let module = find_module(self.input, self.request.atoms, text);
         self.found.names.written_as_values.extend(module);
@@ -940,13 +935,9 @@ impl ContentsScan<'_, '_> {
         let (request, builtins, input) = (self.request, self.builtins, self.input);
         let atoms = request.atoms;
         let names = &mut self.found.names;
-        // `f(require)`, `f.call(require)`, what `createRequire` made for a path that the build cannot read: nobody sees what the loader is given.
-        // `process.getBuiltinModule(x)` is no import site, and takes no path.
         names.loads_by_unknown_name |= builtins.loads_unknown_modules();
-        // Nobody has read what the text imports that lies at the path of a missing file when the call runs.
         names.loads_by_unknown_path |=
             builtins.hands_on_loader_of_paths() || !names.files_missing_at_build_at.is_empty();
-        // `require(require("./config.json").driver)`: the site that takes such a name counts as one that the build does not know.
         for &name in request.analysis.names_out_of_data_files {
             let module = find_module(input, atoms, name);
             names.written_as_values.extend(module);

@@ -421,7 +421,6 @@ fn last_part_of_a_comma_and_arms_that_name_one_thing() {
     );
 }
 
-// Each arm is walked from the name before: without a memory of what was found from it, 2^64 walks.
 #[test]
 fn row_of_names_that_each_stand_for_one_of_two_of_the_name_before() {
     let row = |first: &str, last: &str| {
@@ -461,7 +460,6 @@ fn row_of_names_that_each_stand_for_one_of_two_of_the_name_before() {
             assert_eq!(found, program.function(0, "g"));
         },
     );
-    // Two rows, each name one of the two names before.
     let mut text = String::from("function f() {} const a0 = f; const b0 = f;");
     for index in 1..=64 {
         let before = index - 1;
@@ -474,7 +472,6 @@ fn row_of_names_that_each_stand_for_one_of_two_of_the_name_before() {
     });
 }
 
-// What a trail has a say in is walked anew from each arm: the names on the way are asked what is stored on them.
 #[test]
 fn arms_that_come_to_a_member_stored_on_a_name_on_the_way() {
     const STORED: &[&str] = &[
@@ -488,7 +485,6 @@ fn arms_that_come_to_a_member_stored_on_a_name_on_the_way() {
             assert_eq!(found, program.function(0, "g"), "{text}");
         });
     }
-    // Behind `c` the store on `a` is not on the way.
     let text = "function f() {} function g() {} const a = f; const c = f; a.m = g; const b = x ? a : c; export default b;";
     with_program(&[("a.mjs", text)], |program| {
         let found = program.resolve_default_export(Some("m")).referent;

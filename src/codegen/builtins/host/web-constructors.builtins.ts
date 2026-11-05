@@ -608,7 +608,8 @@ export default b.declarations(
     throws: true,
     uses: {
       this: [
-        b.createdIn(b.instance("DOMException").fresh, b.nativeCell(reasonsOfSignalsCell)),
+        // Native code lays line, column, sourceURL and stack on it, which no `new DOMException()` has: it is not called fresh.
+        b.createdIn(b.instance("DOMException"), b.nativeCell(reasonsOfSignalsCell)),
         b.returnedFrom(reasonsOfSignalsCell),
       ],
     },

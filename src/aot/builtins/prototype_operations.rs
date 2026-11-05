@@ -30,7 +30,7 @@ pub fn prototype_operation_of(builtin: BuiltinId) -> Option<PrototypeOperation> 
     }
 }
 
-#[allow(clippy::needless_pass_by_value)] // taken apart
+#[allow(clippy::needless_pass_by_value)]
 pub fn named_value_of<M>(referent: StaticReferent<BuiltinId, M>) -> Option<NamedValue> {
     match referent {
         StaticReferent::Class(class) => Some(NamedValue::Class(class)),

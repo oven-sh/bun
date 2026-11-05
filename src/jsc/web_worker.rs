@@ -90,8 +90,6 @@ pub struct WebWorker {
     exec_argv_len: usize,
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
-    /// In an executable whose entry points begin programs of their own: the image of the program that begins at the specifier.
-    image: Option<&'static [u8]>,
     /// The specifier is a `data:` or `blob:` URL, or a file on disk, that the build has not seen: the Worker runs it and nothing of the compiled program.
     runs_apart_from_compiled_program: bool,
     preloads: Vec<Box<[u8]>>,
@@ -479,14 +477,6 @@ impl WebWorker {
                     && !crate::compiled_program::is_compiled_module(path)
             })
         };
-        let image = crate::compiled_program::has_image_for_each_entry_point().then(|| {
-            let dot_slash = OnceCell::new();
-            // SAFETY: as for the preloads.
-            let path = unsafe {
-                resolve_entry_point_specifier_quietly(parent, spec_slice.slice(), &dot_slash)
-            };
-            crate::compiled_program::image_of_worker(path)
-        });
 
         // Everything the worker thread needs from this VM is copied here, on
         // its own thread; the worker never dereferences `parent`.
@@ -562,7 +552,6 @@ impl WebWorker {
             exec_argv_len,
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
-            image,
             runs_apart_from_compiled_program,
             preloads,
             name: if name_str.is_empty() {
@@ -1024,10 +1013,8 @@ impl WebWorker {
             return Ok(core::ptr::null_mut());
         }
 
-        let runs_apart = self.runs_apart_from_compiled_program
-            && crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
-        if !runs_apart && let Some(image) = self.image {
-            crate::compiled_program::use_image_of_worker(image);
+        if self.runs_apart_from_compiled_program {
+            crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
         }
         let vm = VirtualMachine::init_worker(
             self,

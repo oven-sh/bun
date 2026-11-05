@@ -2,7 +2,7 @@ use bun_sema::program::{CodeAnswer, Files, HostModuleId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 
-use crate::builtins::table::{ModuleFlags, module_data, runtime_function};
+use crate::builtins::table::{ModuleFlags, module_by_specifier, module_data, runtime_function};
 use crate::builtins::{Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
 use crate::load::contents::ProgramContents;
 use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
@@ -15,7 +15,6 @@ pub(crate) struct RuntimeRoots {
     pub modules_named_at_run_time: Vec<RuntimeModule>,
     pub imports_cluster: bool,
     pub imports_uncompiled_code: bool,
-    /// A module of the host, code that the build does not see or a Worker is in the program, so the engine may enter functions of the host that no file names.
     pub keeps_code_without_names: bool,
 }
 
@@ -27,10 +26,10 @@ fn has_source(module: RuntimeModule) -> bool {
     module_data(module).flags.contains(ModuleFlags::HAS_SOURCE)
 }
 
-/// What a program holds of Bun's own code beside what its files name.
 #[derive(Copy, Clone)]
 pub(crate) struct FurtherLibraryCode {
     pub serves_unseen_code: bool,
+    pub loads_code_from_disk: bool,
 }
 
 pub(crate) fn collect_runtime_roots(
@@ -65,7 +64,12 @@ pub(crate) fn collect_runtime_roots(
     named.dedup();
     asks_module_of_host |= named.iter().copied().any(has_source);
     host_loaded.extend(named.iter().copied());
-    // A function that comes along tells by its bindings what it runs, as the program does. A module evaluates too much for that, and what a Worker sends may be anything.
+    if further.serves_unseen_code
+        || imports_uncompiled_code
+        || (further.loads_code_from_disk && contents.loads_by_unknown_path)
+    {
+        host_loaded.extend(module_by_specifier(b"node:worker_threads"));
+    }
     let keeps_code_without_names = further.serves_unseen_code
         || imports_uncompiled_code
         || asks_module_of_host
@@ -159,12 +163,22 @@ mod tests {
         RuntimeModules::new(Archive::embedded(), false)
     }
 
+    const NOTHING_FURTHER: FurtherLibraryCode = FurtherLibraryCode {
+        serves_unseen_code: false,
+        loads_code_from_disk: false,
+    };
+
     fn collect_roots_of(source: &str, runtime_modules: &RuntimeModules) -> RuntimeRoots {
+        collect_roots_beside(source, runtime_modules, NOTHING_FURTHER)
+    }
+
+    fn collect_roots_beside(
+        source: &str,
+        runtime_modules: &RuntimeModules,
+        further: FurtherLibraryCode,
+    ) -> RuntimeRoots {
         let files = [("main.ts", source)];
         with_loaded_build(&files, &default_settings(), |_, loaded| {
-            let further = FurtherLibraryCode {
-                serves_unseen_code: false,
-            };
             collect_runtime_roots(
                 loaded.project(ProjectId::Application).loaded.files(),
                 loaded.contents,
@@ -242,6 +256,36 @@ mod tests {
             "export const load = (name: string) => process.getBuiltinModule(name);"
         ));
         assert!(keeps("export const worker = new Worker('./main.ts');"));
+    }
+
+    #[test]
+    fn host_loads_worker_threads_where_code_that_nobody_reads_may_start_a_worker() {
+        let runtime = runtime_modules();
+        let threads = module_by_specifier(b"node:worker_threads").unwrap();
+        let is_loaded = |source: &str, further: FurtherLibraryCode| {
+            let roots = collect_roots_beside(source, &runtime, further);
+            let is_root = has_module_root(&runtime, &roots, threads);
+            assert_eq!(roots.host_loaded_modules.contains(&threads), is_root);
+            is_root
+        };
+        assert!(!is_loaded("export {};", NOTHING_FURTHER));
+        assert!(is_loaded(
+            "import 'https://example.com/a.js';",
+            NOTHING_FURTHER
+        ));
+        let beside_unseen_code = FurtherLibraryCode {
+            serves_unseen_code: true,
+            ..NOTHING_FURTHER
+        };
+        assert!(is_loaded("export {};", beside_unseen_code));
+        let beside_code_from_disk = FurtherLibraryCode {
+            loads_code_from_disk: true,
+            ..NOTHING_FURTHER
+        };
+        assert!(!is_loaded("export {};", beside_code_from_disk));
+        let loads = "export const load = (at: string) => import(at);";
+        assert!(!is_loaded(loads, NOTHING_FURTHER));
+        assert!(is_loaded(loads, beside_code_from_disk));
     }
 
     #[test]

@@ -19,7 +19,7 @@ mod retire;
 
 pub use self::code_file::byte_range_of_node;
 pub use self::code_graph::*;
-pub use self::code_load::{CompileInputs, MainModule};
+pub use self::code_load::CompileInputs;
 pub use self::retire::{ModuleCell, ReadingNoTrees, ReadingTask};
 
 use self::code_load::{
@@ -27,9 +27,7 @@ use self::code_load::{
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
-use crate::check::aot::{
-    BuiltinTypeSymbols, COMPILER_DECLARATIONS_PATH, MODULES_IN_OTHER_IMAGES_PATH,
-};
+use crate::check::aot::{BuiltinTypeSymbols, COMPILER_DECLARATIONS_PATH};
 use crate::check::errors::{SuggestionLookup, is_close};
 use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
@@ -2063,11 +2061,6 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 return SymFlags::all();
             };
             let target = self.export_symbol_of_value_symbol_if_exported(target);
-            // TypeScript binds an import from `declare module "m";` to the module: `any` as a value, and an error as a type (2709). What lies in
-            // another image has any type in both places: it has every meaning, as an import that failed has, so that nothing is reported.
-            if self.stands_for_modules_in_other_images(target) {
-                return SymFlags::all();
-            }
             if self.flags(target).contains(SymFlags::ALIAS) {
                 if target == symbol || seen_symbols.contains(&target) {
                     break;
@@ -10850,11 +10843,6 @@ impl<'s> Files<'s> {
                 });
             (!is_rejected).then_some((file, decl))
         })
-    }
-
-    pub fn stands_for_modules_in_other_images(&self, module: Sym) -> bool {
-        self.is_shorthand_ambient_module_symbol(module)
-            && self.module(module.file).path.text == MODULES_IN_OTHER_IMAGES_PATH
     }
 
     /// `isShorthandAmbientModuleSymbol`: true if `ValueDeclaration`, which is the first of several

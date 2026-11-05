@@ -22,25 +22,18 @@ use std::collections::BinaryHeap;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum InnerModuleKind {
-    /// `var require_x = __commonJS((exports, module) => { .. })`
     CommonJs,
-    /// `var init_x = __esm(() => { .. })`: its variables are bindings of the file.
     Esm,
 }
 
-/// A module that a bundler wrapped in a function. The function is its body, and a call of the holder evaluates it.
 #[derive(Copy, Clone, Debug)]
 pub struct InnerModule {
     pub callback: FnId,
     pub kind: InnerModuleKind,
-    /// `require_x`, `init_x`. Every mention of it is a call without arguments.
     pub holder: SymbolId,
-    /// It declares holders only and has no code.
     pub statement: StmtId,
-    /// A call behind a failure throws the same error again. Otherwise it answers as if the body had ended.
     pub keeps_error: bool,
     pub exports_parameter: Option<SymbolId>,
-    /// It occurs only as `module.exports`.
     pub module_parameter: Option<SymbolId>,
 }
 
@@ -53,10 +46,8 @@ enum Role {
 
 #[derive(Default)]
 struct FileModules {
-    /// In the order of the text.
     modules: Box<[InnerModule]>,
     by_callback: Box<[(FnId, u32)]>,
-    /// The live calls of the holders, ascending.
     calls: Box<[(ExprId, u32)]>,
     names_super: bool,
 }
@@ -69,7 +60,6 @@ pub struct WrappedModules {
 struct WrapperShape {
     kind: InnerModuleKind,
     keeps_error: bool,
-    /// The function is the first member of a literal: `__commonJS({ "src/x.js"(exports, module) { .. } })`.
     takes_literal: bool,
 }
 
@@ -89,7 +79,6 @@ fn classify(shape: Shape) -> Option<WrapperShape> {
             (InnerModuleKind::Esm, false, true)
         }
         Shape::EsmRunsFirstOwnNameOnceRethrows => (InnerModuleKind::Esm, true, true),
-        // A body that threw runs again at the next call.
         Shape::CommonJsRunsFirstOwnNameAgainAfterThrow => return None,
         _ => return None,
     };
@@ -100,18 +89,14 @@ fn classify(shape: Shape) -> Option<WrapperShape> {
     })
 }
 
-/// Where the code that holds a call of a holder starts to run at the earliest.
 #[derive(Copy, Clone)]
 enum SiteTime {
-    /// A position in the text of the file: the code of the file itself runs in that order.
     At(u32),
-    /// When the body of that candidate starts.
     WithBodyOf(usize),
 }
 
 struct Candidate {
     module: InnerModule,
-    /// Where the call of the helper ends: the holder is set from there on.
     defined_at: u32,
     sites: Vec<SiteTime>,
     calls: Vec<ExprId>,
@@ -126,7 +111,6 @@ struct Finder<'a, 's> {
     bound: &'a Bound<'s>,
     decisions: &'a Decisions<'s>,
     builtins: &'a ResolvedBuiltins,
-    /// What `export { .. }` names.
     exported_symbols: FxHashSet<SymbolId>,
     candidates: Vec<Candidate>,
     by_callback: Vec<(FnId, u32)>,
@@ -143,7 +127,6 @@ fn find_by_key<K: Ord + Copy, T: Copy>(
     Some(entries[at])
 }
 
-// The declaration or the parameter that the pattern is a part of: its defaults and computed keys are evaluated there.
 fn parent_of_pattern(bound: &Bound<'_>, mut pattern: PatId) -> Parent {
     loop {
         match bound.pat_parent[pattern.idx()] {
@@ -155,7 +138,6 @@ fn parent_of_pattern(bound: &Bound<'_>, mut pattern: PatId) -> Parent {
     }
 }
 
-/// The functions around an expression, from the innermost out. `None`: the expression stands where this cannot tell.
 fn find_functions_around(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -210,7 +192,6 @@ fn find_functions_around(
     Some(functions)
 }
 
-/// The call without arguments that a name is the callee of.
 fn find_plain_call_of(hir: &hir::File<'_>, bound: &Bound<'_>, name: ExprId) -> Option<ExprId> {
     let callee = find_outermost_type_assertion(hir, bound, name);
     let Parent::Expr(call) = bound.parent_of_expr(callee) else {
@@ -241,7 +222,6 @@ impl Finder<'_, '_> {
             (ExprKind::Fn(_), false) => argument,
             (ExprKind::Object(properties), true) if properties.len() == 1 => {
                 let property = hir[properties.at(0)];
-                // `{ __proto__: f }` has no member.
                 let is_plain = matches!(property.kind, PropKind::Init | PropKind::Method)
                     && matches!(property.key, PropKey::Name(_))
                     && !hir::is_proto_setter(&property);
@@ -258,7 +238,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    // The function becomes the body of a module, which has no parameters, no `this`, no `arguments` and no name, and whose value nobody sees.
     fn can_be_body(&self, callback: FnId, kind: InnerModuleKind) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let record = hir[callback];
@@ -280,7 +259,6 @@ impl Finder<'_, '_> {
         }
         match kind {
             InnerModuleKind::CommonJs => true,
-            // A call of the holder answers what the function returned.
             InnerModuleKind::Esm => {
                 let mut returns = bound.ids(bound.fns[callback.idx()].returns);
                 returns.all(|statement: StmtId| match hir[statement].kind {
@@ -403,7 +381,6 @@ impl Finder<'_, '_> {
         find_by_key(&self.by_callback, function, |entry| entry.0).map(|entry| entry.1 as usize)
     }
 
-    // `var x_exports = {}`
     fn holds_new_empty_object(&self, expression: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let expression = hir.skip_type_assertions(expression);
@@ -422,7 +399,6 @@ impl Finder<'_, '_> {
             && bound.is_stable_binding(symbol)
     }
 
-    // A helper that only makes a function, only answers `require`, or only defines getters on an object that nobody else has.
     fn runs_nothing(&self, call: CallId) -> bool {
         let hir = self.hir;
         let site = hir[call];
@@ -470,7 +446,6 @@ impl Finder<'_, '_> {
         if let Some(around) = self.candidate_of_callback(outermost) {
             return Some(SiteTime::WithBodyOf(around));
         }
-        // Nothing calls a function while the head runs.
         Some(SiteTime::At(match hir[outermost].kind {
             FnKind::Decl => end_of_head,
             _ => end_of_head.max(hir[outermost].start),
@@ -511,10 +486,8 @@ impl Finder<'_, '_> {
         names_exports && is_plain && !is_deleted
     }
 
-    // `new.target` and `super` mean those of the nearest function that is no arrow function.
     fn refuse_owner_of(&mut self, expression: ExprId) {
         let Some(functions) = find_functions_around(self.hir, self.bound, expression) else {
-            // Every candidate stands at the top of the file, so its function is the outermost one around what it holds.
             for candidate in &mut self.candidates {
                 candidate.is_refused = true;
             }
@@ -556,7 +529,6 @@ impl Finder<'_, '_> {
                 continue;
             };
             let index = index as usize;
-            // Under `with` the run decides what the name means.
             if bound
                 .dynamic_lookup_scope(NodeData::Expr(expression))
                 .is_some()
@@ -593,8 +565,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    // When the first call of each holder runs at the earliest. Each time goes on once, from the earliest on, to the calls in the body that it starts.
-    // Bodies that only call each other never start.
     fn find_first_calls(&self) -> Vec<u32> {
         let count = self.candidates.len();
         let mut called_in_body: Vec<Vec<u32>> = vec![Vec::new(); count];
@@ -607,7 +577,6 @@ impl Finder<'_, '_> {
                 }
             }
         }
-        // Whoever holds the function that the helper made can call it from there on.
         for (candidate, called) in self.candidates.iter().zip(&called_in_body) {
             if candidate.is_refused {
                 let times = called.iter().map(|&it| Reverse((candidate.defined_at, it)));
@@ -626,7 +595,6 @@ impl Finder<'_, '_> {
             if candidate.is_refused {
                 continue;
             }
-            // A call ahead of the definition throws and starts nothing.
             let start = time.max(candidate.defined_at);
             let times = called_in_body[index].iter().map(|&it| Reverse((start, it)));
             pending.extend(times);
@@ -653,8 +621,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    // A call ahead of the definition finds the holder empty and throws. A statement that declares anything but holders keeps its code.
-    // Whether a holder is refused here changes no time: its function starts at the first call behind the definition either way.
     fn refuse_misfits(&mut self) {
         let first_calls = self.find_first_calls();
         for (candidate, first_call) in self.candidates.iter_mut().zip(first_calls) {
@@ -723,8 +689,6 @@ fn find_in_file(files: &Files<'_>, helpers: &KnownHelpers, file: FileId) -> File
 }
 
 impl WrappedModules {
-    /// `runs_again`: the body of the file may run a second time. Each run makes holders of its own, and each of those runs its function.
-    /// The caller says the same of a file in which no site evaluates a module.
     pub fn compute(
         files: &Files<'_>,
         helpers: &KnownHelpers,
@@ -754,7 +718,6 @@ impl WrappedModules {
         wrapped
     }
 
-    /// The inner modules of a file, in the order of the text.
     pub fn of_file(&self, file: FileId) -> &[InnerModule] {
         match self.files.get(file.idx()) {
             Some(found) => &found.modules,
@@ -768,14 +731,12 @@ impl WrappedModules {
         Some(&found.modules[index as usize])
     }
 
-    /// Of a file with inner modules: some code of it that is not dead names `super`.
     pub fn names_super(&self, file: FileId) -> bool {
         self.files
             .get(file.idx())
             .is_some_and(|found| found.names_super)
     }
 
-    /// `require_x()`, `init_x()` in code that is not dead, each with the module that it evaluates.
     pub fn calls_in(&self, file: FileId) -> impl Iterator<Item = (ExprId, &InnerModule)> {
         let found = self.files.get(file.idx());
         let calls = found.map_or(&[][..], |found| &found.calls[..]);
@@ -784,7 +745,6 @@ impl WrappedModules {
             .filter_map(move |&(call, index)| Some((call, &found?.modules[index as usize])))
     }
 
-    /// `require_x()`, `init_x()`: the module that the call evaluates.
     pub fn of_call(&self, files: &Files<'_>, file: FileId, call: ExprId) -> Option<&InnerModule> {
         let found = self.files.get(file.idx())?;
         if found.calls.is_empty() {
@@ -795,7 +755,6 @@ impl WrappedModules {
         Some(&found.modules[index as usize])
     }
 
-    /// The inner module whose body holds the expression, be it in a function of that body.
     pub fn enclosing(
         &self,
         files: &Files<'_>,
@@ -809,7 +768,6 @@ impl WrappedModules {
         self.of_callback(file, *functions.last()?)
     }
 
-    /// The inner module whose exports object the expression resolves to by binding: the first parameter of its function, or `.exports` of the second.
     #[cfg(test)]
     pub fn is_exports_object(
         &self,
@@ -867,7 +825,6 @@ var __esmRethrows = (fn, res, err) => () => {
         WrappedModules::compute(files, helpers, &|_| false, &run_serially)
     }
 
-    /// The names of the holders of the inner modules of `main.mjs`, each with `!` if it keeps its error.
     fn holders_in(body: &str) -> Vec<String> {
         let main = format!("{BUN}{body}");
         holders_of(&[("main.mjs", main.as_str())], "main.mjs")
@@ -909,7 +866,6 @@ export default require_b();
         );
     }
 
-    // The helpers as esbuild and rolldown write them: the function is the one member of a literal.
     #[test]
     fn a_function_that_is_the_first_member_of_a_literal_is_found() {
         let body = r#"var require_a = __commonJS({ "src/a.js"(exports) { exports.a = 1; } });
@@ -945,7 +901,6 @@ var __esm = (fn, res) => function __init() {
         }
     }
 
-    // esbuild defines `__require` ahead of the wrappers.
     #[test]
     fn the_helpers_behind_the_alias_of_require_are_certain() {
         let main = r#"var __getOwnPropNames = Object.getOwnPropertyNames;

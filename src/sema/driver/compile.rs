@@ -14,10 +14,7 @@ mod threads;
 pub use check::{
     PassCount, Passes, check_and_lower, check_and_lower_noting_commits, check_whole_files,
 };
-pub use load::{
-    FileFinder, FileFinderTables, find_configuration_of_each_entry_point, load_program,
-    resolve_names_known_in_part,
-};
+pub use load::{FileFinder, FileFinderTables, load_program, resolve_names_known_in_part};
 pub use locator::{Locator, TextLocator};
 pub use log_message::log_message;
 pub use roles::{decide_roles, keep_verified_roles};
@@ -35,9 +32,7 @@ use bun_sema::check::aot::{Effect, FileOrigin, LeftOutBodies};
 use bun_sema::check::commit::CyclesEntered;
 use bun_sema::check::{Checker, Program, Requested};
 use bun_sema::fold::FoldInputs;
-use bun_sema::program::{
-    FileId, FileRole, Files, FindsEntryPoints, IN_CONFIGURATION, MainModule, Sym,
-};
+use bun_sema::program::{FileId, FileRole, Files, FindsEntryPoints, IN_CONFIGURATION, Sym};
 use bun_sema::resolve::{CodeFailure, CodeOptions};
 use bun_sema::session::SessionSlot;
 use bun_sema::util::SharedSort;
@@ -50,14 +45,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[derive(Copy, Clone)]
 pub enum EntryPoints<'a> {
     Written(&'a [Vec<u8>]),
-    WrittenFor(&'a [Vec<u8>], MainModule),
-    /// `WrittenFor`, and the files that a look at the code of the program names while it is loaded: `CompileInputs::finds_entry_points`.
-    /// The written ones alone choose the configuration of the program: a found file is read as a file that the program imports, whichever configuration lies nearest to it.
-    WrittenAndFound(&'a [Vec<u8>], MainModule, &'a FindsEntryPoints<'a>),
+    WrittenAndFound(&'a [Vec<u8>], &'a FindsEntryPoints<'a>),
     Resolved(&'a [Vec<u8>]),
-    Configured(&'a [Vec<u8>], Option<&'a [u8]>),
-    // Under the configuration nearest to the first. The program begins elsewhere.
-    Imported(&'a [Vec<u8>]),
 }
 
 pub struct CompileRequest<'a, 's> {
@@ -75,9 +64,7 @@ pub struct CompileRequest<'a, 's> {
 pub struct LoadedProgram<'s> {
     program: &'s UnsafeCell<Program<'s>>,
     files: &'s Files<'s>,
-    /// All that the checker makes is allocated here, and nothing of the files. So it can go while the files are still read.
     checker_session: &'s SessionSlot,
-    /// For `renew_checker`, when trees have gone.
     node_counts: bun_sema::check::NodeCounts,
     is_checker_freed: AtomicBool,
     cycles_entered: Guarded<Vec<(u32, u32, usize, CyclesEntered)>>,
@@ -86,23 +73,17 @@ pub struct LoadedProgram<'s> {
     pub diagnostics: Vec<BuildDiagnostic>,
     bun_types: BunTypes,
     has_configuration_file: bool,
-    /// Ascending. `leave_files_to_loader`
     files_left_to_loader: OnceLock<Box<[FileId]>>,
 }
 
-/// Which declarations of Bun's own API a load has read.
 pub(crate) enum BunTypes {
-    /// Those that the project has installed. Bun's own modules are taken so too: no diagnostic of theirs is put down to a lack.
     Installed,
-    /// Those that the build brings along, where the load reads none that are installed.
     Brought,
-    /// None.
     Missing(WithoutBunTypes),
 }
 
 pub(crate) struct WithoutBunTypes {
     pub incomplete_containers: [Option<Sym>; 4],
-    /// `CodeHost::errors_with_bun_types`
     pub errors_with_bun_types: Option<Vec<(Vec<u8>, u32)>>,
 }
 
@@ -126,8 +107,6 @@ impl<'s> LoadedProgram<'s> {
         self.origins[file.idx()]
     }
 
-    /// The files that `bun build` would put into no bundle, because only a computed name finds them. Whoever has the module graph says which, ahead of every check:
-    /// such a file is judged as the loader judges it where the program loads it.
     pub fn leave_files_to_loader(&self, mut files: Vec<FileId>) {
         files.sort_unstable();
         let _ = self.files_left_to_loader.set(files.into_boxed_slice());
@@ -137,10 +116,6 @@ impl<'s> LoadedProgram<'s> {
         self.files_left_to_loader.get().map_or(&[], |files| files)
     }
 
-    /// Frees most of the HIR and of the binder's tables of every file.
-    ///
-    /// # Safety
-    /// Every program that reads the files is lowered, and nothing reads a tree from now on.
     pub unsafe fn free_trees(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
         let files = self.files();
         in_parallel(files.modules.len(), &|index| {
@@ -149,10 +124,6 @@ impl<'s> LoadedProgram<'s> {
         });
     }
 
-    /// Frees the types, the tables and everything else that the checker has made.
-    ///
-    /// # Safety
-    /// Nothing asks the checker anything from now on, and nothing that it has made is referred to.
     pub unsafe fn free_checker(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
         if self.is_checker_freed.swap(true, Ordering::Relaxed) {
             return;
@@ -164,11 +135,6 @@ impl<'s> LoadedProgram<'s> {
         }
     }
 
-    /// Frees what `free_checker` frees and puts a checker in its place that knows nothing yet.
-    /// What the checker holds grows with every file that it has looked at, and a file asks about few of the others.
-    ///
-    /// # Safety
-    /// No task runs, and nothing that the checker has made is referred to.
     pub(crate) unsafe fn renew_checker(
         &self,
         in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync)),
@@ -307,10 +273,8 @@ pub(crate) struct FileWork<'a, 's> {
     pub requested: &'a (dyn Fn(FileId) -> Requested + Sync),
     pub after_file: Option<&'a (dyn Fn(&mut Checker<'_, 's>, FileId) + Sync)>,
     pub after_commit: &'a (dyn Fn(FileId) + Sync),
-    /// What `after_file` needs of a file and no checker is asked for. Another thread calls it while the file is checked.
     pub beside_file: Option<&'a (dyn Fn(FileId) + Sync)>,
     pub frees_tree: &'a (dyn Fn(FileId) -> bool + Sync),
-    /// Nobody reads a tree once the files of this pass are final.
     pub is_last_pass: &'a (dyn Fn() -> bool + Sync),
     pub note_cycles_entered: Option<&'a (dyn Fn(FileId, CyclesEntered) + Sync)>,
     pub cycles_entered_before: &'a (dyn Fn() -> CyclesEntered + Sync),
@@ -319,10 +283,6 @@ pub(crate) struct FileWork<'a, 's> {
 }
 
 impl FileWork<'_, '_> {
-    /// What the checker is told while `after_file` asks about `file`. Under `Requested::Types` a question takes the first look at a
-    /// function expression that a check of the file would have taken, whoever has asked about the function before. Where the types
-    /// depend on the order of the questions, `Checker::with_queries` goes through the whole file first, unless it is told that
-    /// `check_file` has: there it is told what `check_file` was told.
     pub(crate) fn requested_while_asked(&self, files: &Files<'_>, file: FileId) -> Requested {
         match files.bound(file).has_types_that_depend_on_order() {
             true => (self.requested)(file),

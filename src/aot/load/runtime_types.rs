@@ -1,12 +1,9 @@
-//! The declarations of what the run time provides: `bun-types` and the packages that it rests on, as the executable of Bun holds them. A build reads them where a project has not installed `@types/bun`.
-
 use bun_builtin_sources::Archive;
 
 pub(crate) const TYPE_ROOT: &[u8] = b"/$bun/packages/node_modules/@types";
 pub(crate) const GLOBALS_OF_TEST_RUNNER: &[u8] =
     b"/$bun/packages/node_modules/bun-types/test-globals.d.ts";
 
-// `bun test` answers these names with its own runner, whatever is installed.
 pub(crate) const OTHER_NAMES_OF_TEST_RUNNER_PATH: &[u8] = b"/$bun/types/test-runner.d.ts";
 pub(crate) const OTHER_NAMES_OF_TEST_RUNNER: &[u8] = b"declare module \"@jest/globals\" {
   export * from \"bun:test\";
@@ -40,7 +37,6 @@ pub(crate) fn read(path: &[u8]) -> Option<Vec<u8>> {
     Archive::read(&name_in_archive(path)?)
 }
 
-/// The files and the directories.
 pub(crate) fn entries(path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     let (mut files, mut directories): (Vec<Vec<u8>>, Vec<Vec<u8>>) = Default::default();
     let Some(directory) = name_of_directory(path) else {

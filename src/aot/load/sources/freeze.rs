@@ -32,7 +32,6 @@ pub(crate) struct FreezeInput<'a, 's> {
     pub manifest: &'static Manifest,
     pub host_loaded_modules: &'a [RuntimeModule],
     pub modules_named_at_run_time: &'a [RuntimeModule],
-    /// One for each file of `Files::entry_points()` after those of `Options::entry_points`, in the same order.
     pub found_entry_points: &'a [FoundEntryPoint],
 }
 
@@ -43,7 +42,6 @@ pub(crate) struct FrozenSources {
 
 const FILES_FROZEN_IN_A_RUN: usize = 64;
 
-/// `compute_public_path` names entry point `i` of `Files::entry_points()` by `entry_point_names[i]`.
 fn with_names_of_found_entry_points<'a>(
     paths: &'a PathOptions,
     found_entry_points: &[FoundEntryPoint],
@@ -117,7 +115,6 @@ pub(crate) fn freeze_sources(
     })
 }
 
-/// The image has one module table: a module of the application and one of Bun's own cannot have the same path either.
 pub(crate) fn check_unique_paths_across_projects(
     projects: PerProject<(&Files<'_>, &Sources)>,
 ) -> Result<(), InternalError> {
@@ -143,7 +140,6 @@ fn runtime_module_of(kind: SourceKind) -> Option<RuntimeModule> {
     }
 }
 
-// Consecutive files.
 #[derive(Default)]
 struct FrozenRun {
     entries: Vec<SourceEntry>,
@@ -258,7 +254,6 @@ fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) ->
                     EntryPoint { file, kind }
                 })
                 .collect();
-            // `vi.importMock("./a")`: native code loads the file by its path, as the runner loads a test file.
             let compiled_files = files.compiled_files().iter();
             for compiled in compiled_files.filter_map(|&file| files.compiled(file)) {
                 let sites = compiled.analysis.import_sites.iter();
@@ -289,7 +284,6 @@ fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) ->
                     }
                 }
             }
-            // `jest.mock("os")` with a `__mocks__/os.js` on disk: the test runner loads that file, and no import names it.
             let sources = files.compiled_files().iter();
             let sources = sources.filter_map(|&file| parsed_source(files, file));
             let manual_mocks: FxHashSet<&[u8]> = sources

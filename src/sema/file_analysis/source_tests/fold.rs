@@ -67,6 +67,20 @@ const NAME_IN_PLACE: Fold<'static> = Fold {
     defines: &[(Path::Global(&["MODE"]), Defined::GlobalPath(&["mode"]))],
     ..Fold::NONE
 };
+const NAME_IN_PLACE_OF_PATH: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::Global(&["config", "mode"]),
+            Defined::GlobalPath(&["mode"]),
+        ),
+        (
+            Path::Global(&["LEVEL"]),
+            Defined::GlobalPath(&["settings", "level"]),
+        ),
+        (Path::Global(&["LOADER"]), Defined::GlobalPath(&["require"])),
+    ],
+    ..Fold::NONE
+};
 const CONFIG: Fold<'static> = Fold {
     defines: &[(
         Path::Global(&["CONFIG"]),
@@ -456,8 +470,8 @@ const CONSTANT_TESTS: &[DeadCalls] = &[
     (
         "a.mjs",
         "var C = false; function f() { if (C) a(); } f();",
-        &["a"],
         &[],
+        &["a"],
     ),
     (
         "a.mjs",
@@ -678,7 +692,6 @@ const UNDECIDED_LOADER_VALUES: &[DeadCalls] = &[
     ("a.cjs", "module.exports ? a() : b();", &[], &["a", "b"]),
 ];
 
-// `bun run` removes each statement whole and forgets its names. Without `module`, `exports` and `this` the file may be an ES module, where they are not what folding has for them.
 const STATEMENTS_REMOVED_WITH_LOADER_VALUES: &[DeadCalls] = &[
     ("a.js", "{ /* @__PURE__ */ a(typeof module); }", &["a"], &[]),
     ("a.js", "/* @__PURE__ */ a(this);", &["a"], &[]),
@@ -1527,11 +1540,57 @@ fn name_in_place_of_a_free_name_is_bound_where_it_stands() {
             );
         }
     });
-    // Where the name in place is free too, it is a name of the global object.
     folded("a.mjs", "function pick() { MODE; }", NAME_IN_PLACE, |s| {
         assert_eq!(s.binding("MODE", 0), Binding::Free);
         let mode = [s.workspace.atom("mode")];
         assert_eq!(decision(s, s.ident("MODE", 0)), Decision::GlobalPath(&mode));
+    });
+}
+
+#[test]
+fn name_in_place_of_a_path_is_bound_where_it_stands() {
+    let text = "const mode = 1; config.mode; function pick(mode) { return config.mode; } \
+        function own(config) { return config.mode; }";
+    folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
+        let paths: Vec<ExprId> = (0..s.hir.exprs.len() as u32)
+            .map(ExprId)
+            .filter(|&e| matches!(s.hir[e].kind, ExprKind::Dot { .. }))
+            .collect();
+        let bindings = paths
+            .iter()
+            .map(|&e| s.bound.runtime.binding_of_defined_path(e));
+        let bindings: Vec<Binding> = bindings.collect();
+        let of_file = Binding::Symbol(s.variable("mode", 0));
+        assert_eq!(bindings[0], of_file);
+        assert!(
+            matches!(bindings[1], Binding::Symbol(symbol) if Binding::Symbol(symbol) != of_file)
+        );
+        assert_eq!(bindings[2], Binding::Free);
+    });
+}
+
+#[test]
+fn first_name_of_a_path_in_place_of_a_name_is_bound_where_it_stands() {
+    let text = "const settings = { level: 1 }; LEVEL; function pick(settings) { return LEVEL; }";
+    folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
+        let path = [s.workspace.atom("settings"), s.workspace.atom("level")];
+        for nth in 0..2 {
+            assert_eq!(
+                decision(s, s.ident("LEVEL", nth)),
+                Decision::GlobalPath(&path)
+            );
+        }
+        assert_eq!(s.binding("LEVEL", 0), Binding::Free);
+        assert!(matches!(s.binding("LEVEL", 1), Binding::Symbol(_)));
+    });
+}
+
+#[test]
+fn require_in_place_of_a_name_is_the_variable_at_hand_and_not_that_of_the_file() {
+    let text = "LOADER; function pick(require) { return LOADER; }";
+    folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
+        assert_eq!(s.binding("LOADER", 0), Binding::Free);
+        assert!(matches!(s.binding("LOADER", 1), Binding::Symbol(_)));
     });
 }
 

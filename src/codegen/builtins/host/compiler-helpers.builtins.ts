@@ -68,26 +68,10 @@ const sortInPlace = (name: string) =>
     implementation: b.compiled("prelude/array-sort", name),
   }) satisfies b.FunctionField;
 
-// What a program reads off text.split(separator) where no list is made, for a separator that is not empty.
-const walkOverPiecesOfSplit = (name: string, returns: b.TableType) =>
-  ({
-    args: { text: b.string, separator: b.string },
-    returns,
-    capability: "js",
-    throws: true,
-    runsOnlyOperandCode: true,
-    runsUnseenCode: false,
-    uses: { text: [b.readAsCharacters], separator: [b.readAsCharacters] },
-    implementation: b.compiled("prelude/string-splits", name),
-  }) satisfies b.FunctionField;
-
 // A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
 const kept = [b.retained];
-const keptWithContents = [b.retained, b.contentsStoredIn(b.nativeMemory)];
 const usedAsKey = [b.retained, b.runs("ToPrimitive")];
-// The compiler writes a number here. Anything else would be compared with one.
-const comparedWithNumbers = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"))];
 
 const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
   ({
@@ -407,19 +391,6 @@ export default b.declarations(
     }),
     sortByDifference: sortInPlace("sortByDifference"),
     sortByReversedDifference: sortInPlace("sortByReversedDifference"),
-    sortWhereNobodySeesTheComparator: sortInPlace("sortWhereNobodySeesTheComparator"),
-    lastPieceOfSplit: walkOverPiecesOfSplit("lastPieceOfSplit", b.string),
-    numberOfPiecesOfSplit: walkOverPiecesOfSplit("numberOfPiecesOfSplit", b.length),
-    ...helpersIn("prelude/array-traversal", {
-      traverseArray: {
-        array: keptWithContents,
-        start: comparedWithNumbers,
-        end: comparedWithNumbers,
-        shape: comparedWithNumbers,
-        operands: keptWithContents,
-        operand: [b.retained, b.returned],
-      },
-    }),
     // The protocol of iteration, for a loop over a value of which the engine knows nothing. The engine calls the functions directly, and goes by what their code does.
     ...helpersIn("prelude/iterator-consumers", {
       openIterator: { iterable: calledOrChanged },

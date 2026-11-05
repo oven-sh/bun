@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { without } from "./harness/capabilities";
 import { afterAll } from "./harness/default-timeout";
 import { compiler, readers, sender } from "./harness/reads-of-null";
 import { withoutCoreDump } from "./harness/without-core-dump";
@@ -142,7 +143,7 @@ describe.concurrent("reading a property of null throws a TypeError", () => {
   }, 120_000);
 
   // A build that tests for null in front of the load raises no signal, and the case above would hold whatever the program listened for.
-  test.skipIf(!isLinux || isASAN || !compiler)(
+  test.skipIf(!isLinux || isASAN || !!without("a C compiler"))(
     "and in that program a read of null raises the signal",
     async () => {
       const [executable, built] = await Promise.all([

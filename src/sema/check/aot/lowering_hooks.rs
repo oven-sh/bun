@@ -1,6 +1,3 @@
-//! What lowering needs from the checker besides its answers: a slot for state it keeps across files, and a dense number per
-//! type. Nothing here runs unless lowering calls it.
-
 use super::kept_answers::RowsCarriedOver;
 use super::queries::Queries;
 use crate::check::Checker;
@@ -10,15 +7,10 @@ use crate::types::TypeId;
 use core::any::Any;
 
 impl Checker<'_, '_> {
-    /// State that lowering keeps across the files this checker visits. It leaves this place when the task ends.
-    /// `with_queries` borrows the checker, so take the state out before that call and put it back after.
     pub fn state_of_lowering(&mut self) -> &mut Option<Box<dyn Any + Send>> {
         &mut self.aot_answers.of_lowering
     }
 
-    /// Where a task ends, `hand_on` is given what `state_of_lowering` holds. What it returns is for the next task of the thread.
-    /// Whatever goes by an address of the checker's means nothing there, so it is freed here, and so is what goes by
-    /// `Queries::row_of_type`, but for the rows that are carried over, which have new numbers.
     pub fn hand_state_of_lowering_on_with(
         &mut self,
         hand_on: fn(
@@ -29,15 +21,12 @@ impl Checker<'_, '_> {
         self.aot_answers.hand_on_of_lowering = Some(hand_on);
     }
 
-    /// What was handed on by an earlier task of this thread, the last that left something in `state_of_lowering`.
     pub fn state_of_lowering_in_last_task(&mut self) -> &mut Option<Box<dyn Any + Send>> {
         &mut self.aot_answers.of_lowering_in_last_task
     }
 }
 
 impl Queries<'_, '_, '_> {
-    /// 0, 1, 2.. in the order types are first asked about. A type keeps its number across every file the checker's task
-    /// visits. Numbers change exactly when `Checker::state_of_lowering` is emptied.
     #[inline]
     pub fn is_known_to_every_task(&self, ty: TypeId) -> bool {
         ty.local_number().is_none()
@@ -47,8 +36,6 @@ impl Queries<'_, '_, '_> {
         self.kept.type_row(ty).number()
     }
 
-    /// The type that checking the file cached for the expression. Opens no question. It equals `type_of_expr` only
-    /// between questions, when the checker has no check mode, recheck or contextual binding pattern in progress.
     #[inline]
     pub(super) fn type_left_by_check(&mut self, expression: ExprId) -> Option<TypeId> {
         let left = self.c.cached_type_of_expr(self.file, expression);
@@ -57,10 +44,12 @@ impl Queries<'_, '_, '_> {
     }
 }
 
-/// `KeptAnswers::take` creates a mimalloc arena, which is foreign code that Miri can't run.
 #[cfg(all(test, not(miri)))]
 mod tests {
-    use crate::check::aot::KeptAnswers;
+    use crate::atom::Atom;
+    use crate::check::aot::{
+        KeptAnswers, ListedMember, MemberName, ObjectMemberKind, PositionTypes,
+    };
     use crate::types::TypeId;
 
     #[test]
@@ -91,7 +80,6 @@ mod tests {
         let (mut memo, _arena) = answers.take();
         assert_eq!(memo.type_row(TypeId::STRING).number(), 0);
 
-        // A task that leaves nothing takes nothing away.
         answers.clear();
         let state = answers.of_lowering_in_last_task.as_ref();
         assert_eq!(
@@ -128,7 +116,6 @@ mod tests {
         let expected = (vec![None, Some(0), None, None], 1);
         assert_eq!(state.ok(), Some(Box::new(expected)));
 
-        // It stays for as long as tasks end well, asked for or not.
         let (mut memo, arena) = answers.take();
         assert_eq!(memo.type_row(TypeId::ANY).number(), 1);
         answers.put_back(memo, arena);
@@ -143,5 +130,22 @@ mod tests {
         answers.end_task();
         let (mut memo, _arena) = answers.take();
         assert_eq!(memo.type_row(TypeId::ANY).number(), 0);
+    }
+
+    #[test]
+    fn types_kept_for_a_member_are_not_found_for_another_name_under_its_number() {
+        let member = |name: u32| ListedMember {
+            name: MemberName::String(Atom(name)),
+            kind: ObjectMemberKind::Field,
+            is_optional: false,
+            property_index: 0,
+        };
+        let (mut memo, _arena) = KeptAnswers::default().take();
+        let row = memo.object_row(TypeId::ANY);
+        memo.make_room_for_member_types(row, 1);
+        let types = PositionTypes::unwritten(Ok(TypeId::STRING));
+        memo.keep_member_types(row, member(1), types);
+        assert_eq!(memo.find_member_types(row, member(1)), Some(types));
+        assert_eq!(memo.find_member_types(row, member(2)), None);
     }
 }

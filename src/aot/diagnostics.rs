@@ -28,7 +28,6 @@ use crate::diagnostic_codes::Code;
 use crate::load::Sources;
 use crate::statistics::Stage;
 
-// The row of `effect_of` for a `Code`: the source cannot be compiled as written, in any file.
 pub(crate) const COMPILER_DIAGNOSTIC_CLASS: DiagnosticClass = DiagnosticClass::EarlyError;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -82,7 +81,6 @@ pub(crate) enum Int32FlowValue {
     Expression {
         start: u32,
         text: Vec<u8>,
-        /// What to write in its place.
         advice: Vec<u8>,
         is_any: bool,
     },
@@ -90,13 +88,10 @@ pub(crate) enum Int32FlowValue {
     SpreadArgument,
 }
 
-/// What the error about a value that enters a position declared `int32` says beside the engine's reason.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Int32Flow {
     pub file: FileId,
-    /// Of the conversion, which is where the engine reports.
     pub position: u32,
-    /// The position, as the first words of a sentence.
     pub subject: Vec<u8>,
     pub value: Int32FlowValue,
 }
@@ -206,7 +201,6 @@ impl LoadMessages {
     pub(crate) fn with_log<R>(&self, call: impl FnOnce(&mut Log) -> R) -> R {
         let mut log = Log::init();
         let result = call(&mut log);
-        // Every read of a file and every question to the plugins comes by here, and nearly all of them say nothing.
         if !log.msgs.is_empty() || log.warnings != 0 || log.errors != 0 {
             log.append_to(&mut self.lists.lock().log);
         }
@@ -301,8 +295,6 @@ pub(crate) struct Diagnostics {
     entries: Vec<Entry>,
     internal_errors: Vec<InternalError>,
     error_count: u32,
-    /// Modules that fail when they load, by file and by what the checker says of them: `drop_second_error_of_import`.
     missing_at_load: FxHashSet<(Vec<u8>, Vec<u8>)>,
-    /// By `Sources::diagnostic_path` and `Int32Flow::position`. Of two at one place the first stays: whoever knows the position better describes it ahead of the conversion.
     int32_flows: FxHashMap<(Vec<u8>, u32), Int32Flow>,
 }

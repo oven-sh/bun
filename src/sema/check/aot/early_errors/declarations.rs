@@ -28,8 +28,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    // The transpiler reads one file and cannot tell what an import names, so it goes by the order.
-    // It drops an import whose name is declared further down, by another import or by the file itself. It refuses an import of a name that the file itself declares further up.
     pub(super) fn check_import_redeclaration_early_errors(&mut self, file: FileId) {
         if self.hir(file).is_js {
             return;
@@ -80,8 +78,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    // `bun build` refuses a file that assigns to a `const` or `using` binding or to an import, wherever the assignment stands.
-    // Where no bundle is made, the store to an import throws when it runs, and so does the store to a name that the host has put in the place of a written one.
     pub(super) fn check_constant_assignment_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_bundled = self.p.files.options.builds_executable && !self.is_left_to_loader(file);
@@ -107,8 +103,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    // `bun build` refuses a file that assigns to a member of `import * as star` or deletes one. In `bun test` the statement throws when it runs, or stores `__esModule`,
-    // and the other tests of the file run.
     pub(super) fn check_namespace_member_assignment_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if self.p.files.options.allows_es_module_mark

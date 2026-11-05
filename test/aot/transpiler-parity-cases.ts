@@ -50,7 +50,7 @@ const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
 
-// path -> test name as `bun test` prints it -> the difference documented in docs/compiler/compatibility.mdx.
+// path -> test name as `bun test` prints it -> why it fails.
 // A type error stops the build.
 // In mode `bundles` a test with several entry points is one test per entry point, `<id>/<file name of the entry point>`.
 const expectedFailures: Record<string, Record<string, string>> = {
@@ -77,8 +77,6 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${decoratorExpressions} > repeated export around a decorator is rejected`]: checkerSpeaksFirst,
     [`${decoratorExpressions} > type arguments in decorator member expression are stripped`]:
       "TS1477: a property access follows an instantiation expression",
-    [`${decorators} > members stay where they are written > a read of the class name before its class decorators run is undefined`]:
-      "the read throws a ReferenceError, as it does natively: the name is not initialized yet",
   },
   "test/bundler/bundler_jsx.test.ts": {
     "bundler > jsx/AutomaticFragmentNamedImportDev": untypedPackages,

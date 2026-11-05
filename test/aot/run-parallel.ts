@@ -9,6 +9,9 @@
 //   --seconds=<n>     the time limit of a run. Default: 90, or 240 under ASAN
 //   --more-flags="--aot-check=Validate"   every build takes these flags too: the programs under the compiler's own checks. A check counts, prints and
 //                     keeps more than a build without it: what a program says that a build counts or prints is not asked, and no `// Todo:` is held to fail
+//   --env-of-the-executable="A=b C=d"   every executable runs with these variables too. No build does, and no reference: the programs under a collector that is forced, say.
+//                     What a run counts, how it grows and what it prints of what the compiler saves hang on when the collector runs: they are not asked, and no `// Todo:` is held to fail
+//   --instructions    how a program grows with its data, or a build with its program, is counted in instructions (`perf stat`, Linux), not taken from the clock: the same on a machine that is shared
 //   --deal            builds and runs nothing: prints a line for each program, { ms, files }, with what all its builds take. scripts/runner.node.ts deals the programs to the shards by it
 //
 // THE FRAMES OF A STACK TRACE ARE NOT HELD TO PLAIN BUN: their number, names, lines and columns. The message is. A program that does not print as its reference does is compared once more
@@ -57,6 +60,20 @@
 //                                      The rest of the program is held as ever. A name that nothing counts fails with or without them.
 //                                      A line that begins like one of the three and is not of that form fails the program: nothing that looks like a bound is passed over.
 //                                      In a folder with a main file they may stand in any file: none of the others is a program
+//   // Sizes: 1000 4000 16000          what one piece of its data costs must not hang on how much data there is. The program makes its data of the size that SIZE says and
+//   // Passes: 350                     does its deed PASSES times over. Three sizes, each four times the one before. The executable of the first build is run at each, and
+//   // Grows: linear                   (t(16n) - t(4n)) / (t(4n) - t(n)) is at most 9: the differences strike out the start, linear gives 4, n log n less than 5, a square 16.
+//                                      t is the time the processors spent in the program, and the passes are raised until the smallest run takes 50 ms. Only what is over
+//                                      the bound is run twice more, and judged by the least at each size. Under --instructions t is a count, and the bound is 6.
+//                                      All three lines or none. Not asked under --more-flags or ASAN.
+//                                      Whoever writes one: the passes make some 200 M instructions at the smallest size; what it keeps alive stays small (past some 30,000
+//                                      cells a unit costs twice as much, once, in plain Bun too: three sizes cannot tell that step from a square); plain Bun is linear in it
+//   // Grows: the build, linear        the program is a WRITER: it prints a program of the size SIZE that holds PASSES copies of its function under names of their own. Any three
+//                                      rising sizes. Each of the three programs is built with one thread, and its executable must print what plain Bun prints of it. What the
+//                                      build holds at its peak may rise by 200 bytes for each byte that the program grows by (the dearest takes 70), and 32 MB.
+//                                      UNDER --instructions what the build takes must grow as the size does: (t3 - t2) / (t2 - t1) is at most 1.5 times (s3 - s2) / (s2 - s1).
+//                                      Only a count says that: a build has a long start of its own, and by the clock what lies between two builds drowns in it
+//   // Grows: the build, a square      the same, held against the squares of the sizes: what is so today and ought to be linear. Work that doubles with each step is over both
 // Those lines may also stand at the end, in front of the last comment: a stored output may name lines of the program, and a line more at the top moves them.
 // It may end with a comment that says what is expected where that is not what plain Bun does:
 //   /* Output: .. */                   what the executable prints. Behind a line `exit code <n>` stands the line that names the error
@@ -106,6 +123,9 @@ type Program = {
   statistics: Bound[];
   counts: Bound[];
   boundsNotRead: string[];
+  /** What `// Sizes:` and `// Passes:` say. */
+  growth?: { sizes: number[]; passes: number; of: "the run" | "the build"; power: number };
+  growthNotRead?: string;
   output?: string;
   buildErrors?: string;
   way: "compiled" | `under ${string}`;
@@ -166,6 +186,12 @@ const files = listed
 const jobs = Number(option("jobs")) || availableParallelism();
 const takesTheFirstBuildAlone = process.argv.includes("--no-erased");
 const moreFlags = option("more-flags")?.split(/\s+/).filter(Boolean) ?? [];
+const envOfEveryExecutable = Object.fromEntries(
+  (option("env-of-the-executable")?.split(/\s+/).filter(Boolean) ?? []).map(word => word.split(/=(.*)/s).slice(0, 2)),
+);
+const runsAreAsUsersRunThem = !Object.keys(envOfEveryExecutable).length;
+const countsInstructions = process.argv.includes("--instructions");
+if (countsInstructions && !Bun.which("perf")) throw new Error("--instructions: there is no `perf` here");
 const isASAN = (() => {
   try {
     return require("bun:internal-for-testing").isASANEnabled() as boolean;
@@ -212,7 +238,7 @@ const environment = {
   NO_COLOR: "1",
   TZ: "Etc/UTC",
   BUN_AOT_VERBOSE: "1",
-  // For the builds. No user sets it, so what is RUN runs without it, the executable and plain Bun alike (`asUsersRunIt`): the reference is `bun <file>` as users run it.
+  // For the builds. No user sets it, so what is RUN runs without it, the executable and plain Bun alike (`envOfRuns`): the reference is `bun <file>` as users run it.
   // On one thread plain Bun reads the texts in the order in which they are asked for, which hid what a ring of modules does at default flags.
   BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
   // A Bun ends with the process that started it, and takes along what it started itself.
@@ -506,7 +532,8 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
     };
     const ms = Math.round(performance.now() - began);
     noteProcess(cmd, cwd, ms, Number(child.resourceUsage()?.cpuTime.total ?? 0) / 1000);
-    return { output, ms, peakMB: Math.round(held.peak / 2 ** 20) };
+    const userMs = Number(child.resourceUsage()?.cpuTime.user ?? 0) / 1000;
+    return { output, ms, userMs, peakMB: Math.round(held.peak / 2 ** 20) };
   } finally {
     timers.forEach(clearTimeout);
     if (!isWindows) endGroup(pid, "SIGKILL");
@@ -632,7 +659,7 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   const sum = (name: string) => all.reduce((total, verdict) => total + Number(verdict[name] ?? 0), 0);
   const failed = all.some(({ state }) => state === "fail");
   if (program.todo !== undefined && !all.some(({ died }) => died)) {
-    if (failed || moreFlags.length || program.todo.startsWith("Not every time:")) {
+    if (failed || moreFlags.length || !runsAreAsUsersRunThem || program.todo.startsWith("Not every time:")) {
       if (program.todo.startsWith("only frames")) programsMarkedForFramesAlone++;
       return say({ file: program.file, state: "skip", message: `todo: ${program.todo}` });
     }
@@ -711,12 +738,31 @@ function read(file: string): Program {
   );
   const bounds = boundLines.map(readBound).filter(bound => bound !== undefined);
   const namesModules = someFileOf(path, text => namesMuchOfTheLibrary.test(text));
+  const saidOfGrowth = [lines("Sizes"), lines("Passes"), lines("Grows")];
+  const sizes = (saidOfGrowth[0][0] ?? "").split(/\s+/).map(Number);
+  const passes = Number(saidOfGrowth[1][0]);
+  const growsWithProgram = saidOfGrowth[2][0]?.startsWith("the build, ") ?? false;
+  const growthIsRead =
+    saidOfGrowth.every(said => said.length === 1) &&
+    sizes.length === 3 &&
+    sizes.every(
+      (size, index) =>
+        Number.isSafeInteger(size) &&
+        size > 0 &&
+        (index === 0 || (growsWithProgram ? size > sizes[index - 1] : size === 4 * sizes[index - 1])),
+    ) &&
+    Number.isSafeInteger(passes) &&
+    passes > 0 &&
+    ["linear", "the build, linear", "the build, a square"].includes(saidOfGrowth[2][0]);
   return {
     file,
     path,
     flags,
     env: Object.fromEntries(lines("Env").map(line => line.split(/=(.*)/s).slice(0, 2))),
-    envOfExecutable: Object.fromEntries(lines("Env of the executable").map(line => line.split(/=(.*)/s).slice(0, 2))),
+    envOfExecutable: {
+      ...envOfEveryExecutable,
+      ...Object.fromEntries(lines("Env of the executable").map(line => line.split(/=(.*)/s).slice(0, 2))),
+    },
     envOfBuild: Object.fromEntries(lines("Env of the build").map(line => line.split(/=(.*)/s).slice(0, 2))),
     buildPrints: lines("Build prints").map(line => {
       const [, times, text] = /^(\d+) x (.*)$/.exec(line)!;
@@ -743,6 +789,19 @@ function read(file: string): Program {
     statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
     counts: bounds.filter(({ kind }) => kind !== "STATISTIC"),
     boundsNotRead: boundLines.filter(line => !readBound(line)),
+    growth: growthIsRead
+      ? {
+          sizes,
+          passes,
+          of: growsWithProgram ? "the build" : "the run",
+          power: saidOfGrowth[2][0].endsWith("a square") ? 2 : 1,
+        }
+      : undefined,
+    growthNotRead:
+      growthIsRead || saidOfGrowth.every(said => said.length === 0)
+        ? undefined
+        : "not of the form `// Sizes: <n> <4n> <16n>`, `// Passes: <n>`, `// Grows: linear`, each once" +
+          ", or three rising sizes and `// Grows: the build, linear` or `the build, a square`",
     output: last("Output"),
     buildErrors: last("Build errors"),
     way: "compiled",
@@ -819,6 +878,153 @@ function unmetBounds(counted: Map<string, number>, bounds: Bound[], who: "build"
   });
 }
 
+// Counted, a linear program reads 3.9 to 5.2. By the clock, on a machine with twice as much to do as it has processors, up to 6.9; a square 14 to 16 either way.
+const mostThatIsLinear = countsInstructions ? 6 : 9;
+const leastMsOfSmallestRun = 50;
+/**
+ * How what the executable takes grows with its data. A run that does not end as the program ends fails it.
+ * Other work on the machine can only make a run longer, and no such noise makes a square look linear: what is within the bound at once is through.
+ */
+async function measureGrowth(
+  { growth, exitCode }: Program,
+  executable: string,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<{ growth: number; message?: string; output?: Output }> {
+  const { sizes } = growth!;
+  // A count has no noise to speak of, and an eighth of the work says the same.
+  let passes = countsInstructions ? Math.max(1, Math.round(growth!.passes / 8)) : growth!.passes;
+  const counted = `${executable}.instructions`;
+  const take = async (size: number) => {
+    const cmd = countsInstructions
+      ? ["perf", "stat", "-x,", "-e", "instructions:u", "-o", counted, "--", executable]
+      : [executable];
+    const { output, userMs } = await withSlot(() =>
+      start(cmd, cwd, { ...env, SIZE: String(size), PASSES: String(passes) }),
+    );
+    if (output.overLimit || output.signal || output.exitCode !== exitCode) return { output, taken: NaN };
+    if (!countsInstructions) return { output, taken: userMs };
+    const written = await Bun.file(counted)
+      .text()
+      .catch(() => "");
+    rmSync(counted, { force: true });
+    const [, instructions] = /^(\d+),,instructions/m.exec(written) ?? [];
+    return { output, taken: Number(instructions) / 1e6 };
+  };
+  const unit = countsInstructions ? "M instructions" : "ms";
+  for (let raised = 0; !countsInstructions && raised < 4; raised++) {
+    const { output, taken } = await take(sizes[0]);
+    if (Number.isNaN(taken))
+      return { growth: NaN, message: `at the size ${sizes[0]} it ended by ${describeEnd(output)}`, output };
+    if (taken >= leastMsOfSmallestRun) break;
+    passes *= Math.ceil((1.2 * leastMsOfSmallestRun) / Math.max(taken, 5));
+  }
+  const least = sizes.map(() => Infinity);
+  let grows = Infinity;
+  for (let round = 0; round < 3 && !(grows <= mostThatIsLinear); round++) {
+    for (const [index, size] of sizes.entries()) {
+      const { output, taken } = await take(size);
+      if (Number.isNaN(taken))
+        return {
+          growth: NaN,
+          message: `at the size ${size} it ended by ${describeEnd(output)}, or nothing was counted`,
+          output,
+        };
+      least[index] = Math.min(least[index], taken);
+    }
+    grows = (least[2] - least[1]) / Math.max(least[1] - least[0], Number.MIN_VALUE);
+    if (countsInstructions) break;
+  }
+  const rounded = Math.round(grows * 100) / 100;
+  if (grows <= mostThatIsLinear) return { growth: rounded };
+  return {
+    growth: rounded,
+    message:
+      `what it takes grows faster than its data: ${rounded}, and at most ${mostThatIsLinear} is linear (4 is, 16 is a square): ` +
+      `${least.map(taken => Math.round(taken)).join(" | ")} ${unit} at the sizes ${sizes.join(" | ")}, ${passes} passes`,
+  };
+}
+
+const roomOfPeakMB = 32;
+const bytesOfPeakForAByteOfProgram = 200;
+const mostThatGrowsAsProgram = 1.5;
+/** How what a build takes grows with the program: the program at hand writes the programs that are built. */
+async function measureGrowthOfBuild(
+  { growth, path }: Program,
+  executable: string,
+  cwd: string,
+  env: Record<string, string | undefined>,
+  command: (entry: string, outfile: string) => string[],
+): Promise<{ growth?: number; message?: string; output?: Output }> {
+  const { sizes, passes, power } = growth!;
+  const counted = `${executable}.instructions`;
+  const taken: number[] = [];
+  const peaks: number[] = [];
+  const bytes: number[] = [];
+  for (const size of sizes) {
+    const written = await withSlot(() =>
+      start([process.execPath, path], cwd, { ...env, SIZE: String(size), PASSES: String(passes) }),
+    );
+    if (written.output.overLimit || written.output.exitCode !== 0)
+      return { message: `it writes no program of the size ${size}`, output: written.output };
+    const entry = `${executable}-of-the-size-${size}.ts`;
+    const outfile = nextExecutable("written");
+    writeFileSync(entry, written.output.stdout);
+    let remove = () => {};
+    try {
+      const cmd = command(entry, outfile);
+      const build = await withSlot(() =>
+        start(
+          countsInstructions ? ["perf", "stat", "-x,", "-e", "instructions:u", "-o", counted, "--", ...cmd] : cmd,
+          folder,
+          environmentOfBuilds,
+          timeLimit(cmd, 8),
+        ),
+      );
+      remove = noteExecutable(outfile);
+      if (build.output.overLimit || build.output.exitCode !== 0)
+        return {
+          message: `the build of its program of the size ${size} ended with ${describeEnd(build.output)}`,
+          output: build.output,
+        };
+      const compiled = await withSlot(() => start([outfile], folder, env));
+      const plain = await withSlot(() => start([process.execPath, entry], folder, env));
+      if (compiled.output.stdout !== plain.output.stdout || compiled.output.exitCode !== plain.output.exitCode)
+        return { message: `its program of the size ${size} does not print as plain Bun does`, output: compiled.output };
+      peaks.push(build.peakMB);
+      bytes.push(written.output.stdout.length);
+      if (!countsInstructions) continue;
+      const text = await Bun.file(counted)
+        .text()
+        .catch(() => "");
+      rmSync(counted, { force: true });
+      const [, instructions] = /^(\d+),,instructions/m.exec(text) ?? [];
+      if (instructions === undefined) return { message: "nothing was counted", output: build.output };
+      taken.push(Number(instructions) / 1e6);
+    } finally {
+      remove();
+      rmSync(entry, { force: true });
+    }
+  }
+  const said = `at the sizes ${sizes.join(" | ")}, ${passes} copies`;
+  const mayHold = peaks[0] + roomOfPeakMB + (bytesOfPeakForAByteOfProgram * (bytes[2] - bytes[0])) / 2 ** 20;
+  if (peaks[2] > mayHold)
+    return {
+      message: `what the build holds at its peak grows faster than its program: ${peaks.join(" | ")} MB ${said}, and at most ${Math.round(mayHold)} MB at the last`,
+    };
+  if (!countsInstructions) return {};
+  const asTheSizes = (sizes[2] ** power - sizes[1] ** power) / (sizes[1] ** power - sizes[0] ** power);
+  const grows = (taken[2] - taken[1]) / Math.max(taken[1] - taken[0], Number.MIN_VALUE) / asTheSizes;
+  const rounded = Math.round(grows * 100) / 100;
+  if (grows <= mostThatGrowsAsProgram) return { growth: rounded };
+  return {
+    growth: rounded,
+    message:
+      `what the build takes grows faster than ${power === 2 ? "the square of " : ""}its program: ${rounded} times as fast, and at most ${mostThatGrowsAsProgram}: ` +
+      `${taken.map(count => Math.round(count)).join(" | ")} M instructions ${said}`,
+  };
+}
+
 /** Every way to build a file is held to one run of the reference. */
 const references = new Map<string, ReturnType<typeof start>>();
 
@@ -829,6 +1035,9 @@ async function run(program: Program): Promise<void> {
       "read",
       `not of the form \`// STATISTIC | COUNT | COUNTER: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
     );
+  if (program.growthNotRead) return fail(program, "read", program.growthNotRead);
+  if ("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER" in { ...program.env, ...program.envOfExecutable })
+    return fail(program, "read", "no user sets BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: what is run runs without it");
   const cwd = dirname(program.path);
   const executable = nextExecutable(basename(program.path).replace(/\.[a-z]+$/, ""));
   const command = (threads: number, entry = "./" + basename(program.path), outfile = executable) => [
@@ -891,8 +1100,7 @@ async function run(program: Program): Promise<void> {
     }
     if (unmet.length) return fail(program, "compile", unmet.join("; "), build.output);
     const env = { ...environment, ...program.env };
-    const { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: _, ...asUsersRunIt } = env;
-    const envOfRuns = "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER" in program.env ? env : asUsersRunIt;
+    const { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: _, ...envOfRuns } = env;
     const stored = program.output;
     const withSlotOfRun = program.runsByItself ? withEverySlot : withSlot;
     const runReference = async (entry = program.path) => {
@@ -935,7 +1143,7 @@ async function run(program: Program): Promise<void> {
     // One behind the other: what holds much in one holds much in the other.
     // A file for each process: the program may start itself again.
     const counts =
-      program.way === "compiled" && program.counts.length && !moreFlags.length
+      program.way === "compiled" && program.counts.length && !moreFlags.length && runsAreAsUsersRunThem
         ? `${basename(executable)}.counts-`
         : undefined;
     const compiled = await withSlotOfRun(() =>
@@ -959,14 +1167,24 @@ async function run(program: Program): Promise<void> {
     compiled.output.stderr = withoutLinesOfImage(compiled.output.stderr);
     const unmetByRun = counts ? unmetBounds(counted, program.counts, "executable") : [];
     if (unmetByRun.length) return fail(program, "count", unmetByRun.join("; "), compiled.output, plain?.output);
+    const grown =
+      program.way === "compiled" && program.growth && !moreFlags.length && runsAreAsUsersRunThem && !isASAN
+        ? program.growth.of === "the build"
+          ? await measureGrowthOfBuild(program, executable, cwd, envOfRuns, (entry, outfile) =>
+              command(1, entry, outfile),
+            )
+          : await measureGrowth(program, executable, cwd, { ...envOfRuns, ...program.envOfExecutable })
+        : undefined;
+    if (grown?.message) return fail(program, "growth", grown.message, grown.output ?? compiled.output);
     const passes = {
       state: "pass",
+      ...(grown && { growth: grown.growth }),
       compileMs: build.ms,
       runMs: compiled.ms,
       buildMB: build.peakMB,
       runMB: Math.max(compiled.peakMB, plain?.peakMB ?? 0),
     };
-    if ((moreFlags.length || program.way !== "compiled") && program.printsWhatIsSaved)
+    if ((moreFlags.length || !runsAreAsUsersRunThem || program.way !== "compiled") && program.printsWhatIsSaved)
       return settle(program, { ...passes, isCompared: false });
     const passesButForFrames = () => (programsWhoseFramesDiffer++, settle(program, { ...passes, framesDiffer: true }));
     if (stored !== undefined) {
@@ -1054,6 +1272,8 @@ const all = [
         statistics: [],
         counts: [],
         boundsNotRead: [],
+        growth: undefined,
+        growthNotRead: undefined,
         buildPrints: [],
       };
     }),

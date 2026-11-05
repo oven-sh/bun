@@ -12,16 +12,11 @@ pub(super) struct DefinitionSite {
     pub index: u32,
 }
 
-/// Who stores a variable that link defines.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ExportWriter {
-    /// The loader, when it links the module, which lists the variable among its synthetic exports.
     Loader,
-    /// The body of a CommonJS module of the program. Until it does, the name reads `undefined`.
     Body,
-    /// The body of the face of a CommonJS file, which takes the copy that ES importers hold.
     Face,
-    /// The run time, behind the body of a face that captures: it leaves the copy of a name that the object lacks empty.
     Capture,
 }
 
@@ -29,14 +24,12 @@ pub(super) enum ExportWriter {
 pub(super) enum VariableDefinition {
     Unit(DefinitionSite),
     SyntheticExport {
-        /// The record that stores the variable.
         module: u32,
         name: Atom,
         is_known_member: bool,
         is_replaceable: bool,
         writer: ExportWriter,
     },
-    /// `VariableKey::MockOfRuntimeModule`
     MockOfRuntimeModule {
         module: u32,
     },
@@ -57,24 +50,18 @@ impl SupertypeEdges {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct RuntimeFunctionRoot {
-    /// The merged index of `entry.function`, which is a number of the tables of `file`.
     pub function: u32,
     pub entry: RuntimeFunctionEntry,
     pub file: ProgramFile,
 }
 
-/// Functions, layouts and variables go by merged index here: the place of the key in `MergedKeys::keys`, not a number of any tables and not an id of the program.
 pub(super) struct Definitions {
     pub functions: Vec<Option<DefinitionSite>>,
     pub layouts: Vec<Option<DefinitionSite>>,
-    /// What the chosen definition of each layout names as its base.
     pub bases_of_layouts: Vec<Option<u32>>,
-    // By layout and then by site: see `LayoutKey::has_united_definitions`.
     pub other_layout_definitions: Vec<(u32, DefinitionSite)>,
     pub variables: Vec<Option<VariableDefinition>>,
     pub runtime_functions: Vec<RuntimeFunctionRoot>,
-    /// No number of the program hangs on this or on what follows: only the records are written with them.
-    /// Empty until `Definitions::add_related_layouts` and `Definitions::add_related_functions`.
     pub supertypes: SupertypeEdges,
     pub has_members_without_layout: Vec<bool>,
     pub function_types: SupertypeEdges,
@@ -99,7 +86,6 @@ impl Definitions {
 
 pub(super) struct ModuleRecords {
     pub modules: Vec<Module>,
-    /// The index of a record among `modules`, and the unit that still holds the positions of its file.
     pub units_with_positions: Vec<(u32, u32)>,
     pub module_failures: Vec<ModuleFailure>,
     pub ambiguous_exports: Vec<AmbiguousExport>,

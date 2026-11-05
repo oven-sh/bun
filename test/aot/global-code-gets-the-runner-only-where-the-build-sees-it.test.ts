@@ -61,11 +61,11 @@ const ways: Record<string, { text: string; plain: string; anyName: boolean; isRe
     plain: "spied,4",
     anyName: true,
   },
-  // A text that the test file spells is read as code, whoever evaluates it.
+  // A text that the test file spells is read as code, whoever evaluates it. What `Bun.jest(path)` answers there is followed, so the spy is one under the name that the text spells.
   "a text that the file spells reaches the runner through Bun": {
     text: `new Function("ns", "path", made(${JSON.stringify(lay)}))(math, import.meta.path); say(read());`,
     plain: "spied,4",
-    anyName: true,
+    anyName: false,
   },
   // From an answer to a refusal: a text that no build has read reaches the runner through Bun.
   "new Function of a text from a file": {

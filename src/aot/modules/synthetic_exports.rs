@@ -32,7 +32,6 @@ impl SyntheticExports {
     }
 }
 
-/// What the test runner may store another value under: single names, and every name of a module that it mocks.
 #[derive(Copy, Clone)]
 pub(super) struct ReplacedNames<'a> {
     pub names: &'a [SyntheticExportKey],
@@ -67,7 +66,6 @@ pub(super) fn number_synthetic_exports(
             !modules.is_uncompiled_code(module),
             "a binding of uncompiled code is live and is never captured"
         );
-        // `ns.x` is `undefined` where the module has no `x`. Only a name that is imported or exported must be there.
         let can_be_absent = !required.contains(&(module, name));
         SyntheticExport {
             module,
@@ -121,7 +119,6 @@ fn collect_synthetic_export_keys(
         let symbols = file_imports.bindings.iter().map(|it| (it.1, true));
         let members = file_imports.members.iter().map(|it| (it.1, false));
         let jsx = file_imports.jsx.iter().map(|it| (it.binding, true));
-        // A key of `const { n } = require(K)` reads `undefined` where the module has no `n`.
         let named = file_imports.named_members.iter();
         let named = named.filter_map(|it| match it.1 {
             NamedMember::Binding(binding) => Some((binding, false)),
@@ -154,11 +151,14 @@ fn collect_synthetic_export_keys(
             }
         }
     }
-    // A name of a CommonJS module has a variable where somebody reads it. A store asks for none.
+    for named in tables.statements_ahead_of_stars() {
+        if let Resolution::Synthetic { module, name } = named {
+            keys.add((module, name), true);
+        }
+    }
     for (module, name) in commonjs.names_read_by_own_text() {
         keys.add_resolution(tables.resolve_required(modules, module, name).resolution);
     }
-    // A namespace object shows every name.
     for file in collect_seen_namespaces(modules, tables, imports) {
         let module = ModuleRef::File(file);
         let names = tables.commonjs.names_of(module);
@@ -166,7 +166,6 @@ fn collect_synthetic_export_keys(
             keys.add_resolution(tables.resolve_in(modules, module, name).resolution);
         }
     }
-    // The copy of a name that a getter answers for is taken of what the getter returns.
     for position in 0..keys.keys.len() {
         let (module, name) = keys.keys[position];
         if tables.commonjs.is_copied(module, name) {
@@ -176,7 +175,6 @@ fn collect_synthetic_export_keys(
     keys
 }
 
-/// The names that the table of built-ins says a module of the library has.
 #[derive(Copy, Clone)]
 pub(super) struct KnownMembers<'a> {
     sources: &'a Sources,

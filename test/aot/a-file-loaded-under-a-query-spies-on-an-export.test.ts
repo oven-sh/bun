@@ -22,7 +22,9 @@ test("a spy", async () => {
 });
 `;
 
-test("the spy of a file that is loaded under a query is applied as in plain bun test", async () => {
+// The build reads a file once, under its path. What `import("./named.js?again")` loads is one more instance, read from disk when the test runs, and its spy is one that the build never saw:
+// docs/compiler/debugging.mdx: "A spy that the build never saw .. throws a `TypeError` that names the export."
+test("the spy of a file that is loaded under a query is refused by the name of the export", async () => {
   using dir = tempDir("aot-spy-in-a-file-loaded-under-a-query", {
     "package.json": `{ "name": "spy-under-a-query", "type": "module" }`,
     "helpers/hidden.js": `export function sumOf(pair) { return pair.x + pair.y; }\nexport function total(list) { let sum = 0; for (const item of list) sum += item; return sum; }\n`,
@@ -51,5 +53,11 @@ test("the spy of a file that is loaded under a query is applied as in plain bun 
   };
   const [plain, oneProgram] = await Promise.all([seenWith("TestRunLayers:0"), seenWith("TestRunLayers:0", "--aot")]);
   expect(plain.seen).toEqual([`SEEN computed | [[3,6],["spied",6],[3,6]]`, `SEEN named | [[3,6],[3,"spied"],[3,6]]`]);
-  expect(oneProgram).toEqual(plain);
+  expect(oneProgram).toEqual({
+    seen: [
+      expect.stringMatching(/^SEEN computed \| "TypeError: Cannot spy on 'sumOf' of /),
+      expect.stringMatching(/^SEEN named \| "TypeError: Cannot spy on 'total' of /),
+    ],
+    exitCode: plain.exitCode,
+  });
 }, 120_000);

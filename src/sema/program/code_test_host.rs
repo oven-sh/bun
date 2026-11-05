@@ -61,7 +61,6 @@ pub(super) struct StatementsHost {
     pub(super) loader_requests: Guarded<Vec<RecordedLoaderRequest>>,
     pub(super) plugin_sources: &'static [&'static str],
     pub(super) implied: Vec<(&'static str, Vec<HostResolution>)>,
-    /// `Some`: `CodeHost::follows_imports_on_request`. Each file with a file that it imports and that is followed once both the importer is parsed and the file in front is.
     pub(super) followed_on_request: Option<&'static [(&'static str, &'static str, &'static str)]>,
     pub(super) max_macro_values: usize,
     pub(super) macro_round_count: AtomicUsize,
@@ -958,7 +957,6 @@ fn with_compile_inputs<'s, R>(
     then(&CompileInputs {
         entry_points: &entry_points,
         finds_entry_points: None,
-        main_module: MainModule::EntryPoint,
         code: &build.code,
         fold: &fold,
         atoms: Interner::new_in(session),

@@ -8,56 +8,35 @@ use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, AtomicUsize};
 
 const WORDS: usize = 4;
-/// A word of `ModuleCell::readers` and a bit in it.
 type Bit = (usize, u64);
-/// In place of the bit of a thread that runs no task. Nobody knows when it stops reading.
 const OUTSIDER: Bit = (0, 0);
-/// In place of the bit of `ReadingNoTrees`.
 const NO_TREES: Bit = (1, 0);
 
 const HERE: u8 = 0;
 const LEAVING: u8 = 1;
-/// Freed. A freed list reads as empty, so the module stays watched, and whoever comes to read a tree of it is stopped.
 const GONE: u8 = 2;
-/// Here for good.
 const KEPT: u8 = 3;
 
-/// In `ModuleCell::awaited`: a task can read a file of the component though no file that it checks reaches one. No commit
-/// takes it away.
 const READ_WITHOUT_REFERENCE: u32 = 1 << 31;
 
-/// In place of an index into `Files::modules`.
 const NO_CELL: u32 = u32::MAX;
 
-/// Entry in the list of all modules. A `Module` is thousands of bytes, so it's boxed in the arena of the thread that
-/// loaded it and never moved. The `UnsafeCell` lets `Files::free_tree` and this file mutate it through `&Files`.
 pub struct ModuleCell<'s> {
     pub(super) module: UnsafeCell<ArenaBox<'s, Module<'s>>>,
-    /// The module. Null while it is watched: whoever reads it then says so first.
     unwatched: AtomicPtr<Module<'s>>,
-    /// The tasks that ran when the watch began have ended.
     is_ripe: AtomicBool,
     state: AtomicU8,
-    /// `let_trees_go_behind` has listed it, and `note_commit` has not come.
     awaits_commit: AtomicBool,
-    /// Index in `Files::modules` of the first file of its strongly connected component: the files that it reaches and that
-    /// reach it. Each would wait for the others forever, so they become done together.
     component: AtomicU32,
-    /// The next file of the component, or `NO_CELL`.
     next_in_component: AtomicU32,
-    /// In the first file of a component: how many of its files await their commit, and how many references lead to it from
-    /// components that are not done. At zero it is done: no file that awaits its commit can reach it.
     awaited: AtomicU32,
-    /// The tasks that have read the module since it is watched and still run.
     readers: [AtomicU64; WORDS],
-    /// Held by whoever begins the watch, lets the trees go or makes them stay.
     settling: Guarded<()>,
 }
 
 // SAFETY: a module is only mutated through `&mut Files`, by `Files::free_tree`, or here while nothing reads it.
 unsafe impl Sync for ModuleCell<'_> {}
 
-/// The bit of the task that the thread runs. A bare slot, not `thread_local!`.
 #[thread_local]
 static TASK: Cell<Bit> = Cell::new(OUTSIDER);
 
@@ -78,18 +57,13 @@ impl Pin {
 }
 
 thread_local! {
-    /// The cells that hold the bit of the task.
     static READ: RefCell<Vec<*const ModuleCell<'static>>> = const { RefCell::new(Vec::new()) };
 }
 
 struct Tasks {
-    /// Counts the watches.
     time: u64,
-    /// The `time` at which each task that runs began.
     running: Vec<u64>,
-    /// The bits that tasks hold.
     taken: [u64; WORDS],
-    /// The watched cells that are not ripe, each with the `time` of its watch.
     unripe: Vec<(u64, *const ModuleCell<'static>)>,
 }
 
@@ -114,13 +88,8 @@ static TASKS: Guarded<Tasks> = Guarded::new(Tasks {
 
 static TASKS_ENDED: AtomicU64 = AtomicU64::new(0);
 
-/// The files that `let_trees_go_behind` has listed and that are not committed yet, of all programs. At zero nothing is left to lower,
-/// and all threads are about to free the trees together: a task that let them go at its end would do so alone.
 static AWAITED_COMMITS: AtomicUsize = AtomicUsize::new(0);
 
-/// Held, with others, by a thread that has taken ripe cells out of `Tasks::unripe`, until it has let their trees go. The list is that
-/// of the process, so they may be cells of another program. That program holds it alone when it takes its cells out of the list:
-/// from then on nobody else has one, and it may end.
 static RELEASING_RIPE_CELLS: bun_threading::RwLock<()> = bun_threading::RwLock::new(());
 
 impl<'s> std::ops::Deref for ModuleCell<'s> {
@@ -165,7 +134,6 @@ impl<'s> ModuleCell<'s> {
         std::ptr::from_ref(self).cast()
     }
 
-    /// Whether it awaited one.
     fn stop_awaiting_commit(&self) -> bool {
         let did = self.awaits_commit.swap(false, SeqCst);
         if did {
@@ -174,12 +142,10 @@ impl<'s> ModuleCell<'s> {
         did
     }
 
-    /// Of the first file of a component. Whether the component is done now.
     fn decrement_awaited(&self) -> bool {
         self.awaited.fetch_sub(1, SeqCst) == 1
     }
 
-    /// Trees that stay for good can never go, so their readers say nothing.
     fn begin_watch(&self) {
         let _settling = self.settling.lock();
         if self.state.load(Relaxed) != HERE {
@@ -221,7 +187,6 @@ impl<'s> ModuleCell<'s> {
         }
         self.readers[word].fetch_or(bit, SeqCst);
         READ.with_borrow_mut(|read| read.push(self.erased()));
-        // Whoever lets the trees go says so first, and then looks for bits.
         if matches!(self.state.load(SeqCst), LEAVING | GONE) {
             let is_gone = {
                 let _settling = self.settling.lock();
@@ -244,7 +209,6 @@ impl<'s> ModuleCell<'s> {
         );
     }
 
-    /// The trees stay for good, unless they are gone. Whether they stay.
     fn keep_what_is_here(&self) -> bool {
         let _settling = self.settling.lock();
         let is_here = self.state.load(Relaxed) != GONE;
@@ -255,7 +219,6 @@ impl<'s> ModuleCell<'s> {
         is_here
     }
 
-    /// For a reader of whom nobody knows when it stops reading.
     fn keep_for_reader(&self) {
         if self.state.load(SeqCst) == KEPT {
             return;
@@ -272,14 +235,12 @@ impl<'s> ModuleCell<'s> {
         }
         self.state.store(LEAVING, SeqCst);
         if self.readers.iter().any(|word| word.load(SeqCst) != 0) {
-            // The last of them tries again.
             self.state.store(HERE, SeqCst);
             return;
         }
         // SAFETY: no task has a reference, and one that wants one from now on waits for the lock.
         let module = unsafe { &mut **self.module.get() };
         let mut blocks = module.list_blocks();
-        // Other programs share its lists, or `Files::free_tree` has come first.
         if blocks.iter_mut().all(|block| block.bytes().is_empty()) {
             self.state.store(KEPT, SeqCst);
             self.end_watch();
@@ -305,10 +266,6 @@ impl<'s> Module<'s> {
         [&mut self.hir.lazy.block, &mut self.bound.block]
     }
 
-    /// Every file sees what a file that is not closed declares, the check of any later file looks through the exports of a
-    /// file with an `export *` (`Checker::is_export_of_file_checked_before`), and lowering any file can ask about the
-    /// declarations that `BuiltinTypeSymbols` lists: those of a file that the program reads for its types alone too, `import type { Later } from "./types"` with
-    /// `interface Later extends Promise<T>` there. From there a task goes on to whatever the file refers to.
     fn is_read_without_reference(&self) -> bool {
         self.is_read_by_every_task
             || !self.is_closed
@@ -317,17 +274,12 @@ impl<'s> Module<'s> {
     }
 }
 
-/// Tarjan's algorithm. `file` refers to `targets[starts[file]..starts[file + 1]]`. Returns the number of the component of each file,
-/// which is higher than that of every other component that the file refers to, and how many components there are.
 fn number_components(starts: &[u32], targets: &[u32]) -> (Vec<u32>, usize) {
     const NONE: u32 = u32::MAX;
     let count = starts.len() - 1;
-    // When the search came to the file, and the earliest of `open` that it is known to lead back to.
     let (mut found_at, mut leads_back_to) = (vec![NONE; count], vec![0u32; count]);
     let mut component_of = vec![NONE; count];
-    // The files that the search has come to and that have no number yet.
     let mut open: Vec<u32> = Vec::new();
-    // The way from the root, and for each file on it where in `targets` the search goes on.
     let mut path: Vec<(u32, u32)> = Vec::new();
     let (mut found, mut components) = (0u32, 0u32);
     for root in 0..count {
@@ -372,7 +324,6 @@ fn number_components(starts: &[u32], targets: &[u32]) -> (Vec<u32>, usize) {
 }
 
 impl Files<'_> {
-    /// With repeats, the same at every call: `ModuleCell::awaited` goes up and down by them.
     fn for_each_file_referred_to(&self, file: usize, each: &mut dyn FnMut(u32)) {
         let _reading = ReadingNoTrees::begin();
         let module: &Module<'_> = &self.modules[file];
@@ -382,17 +333,12 @@ impl Files<'_> {
         }
     }
 
-    /// `file` is done.
     fn begin_watch_of(&self, file: u32) {
-        // `Files::new_symbol` adds the symbols that no file declares to those of the first file, and every task reads them there.
         if file != 0 {
             self.modules[file as usize].begin_watch();
         }
     }
 
-    /// From now on a file's trees are freed once no file of `files` that still awaits `note_commit` can reach it through
-    /// references. Reach, not direct references: a task follows a type of a file it checks into files that file never names.
-    /// No task of this program runs.
     pub fn let_trees_go_behind(&self, files: &[FileId]) {
         let count = self.modules.len();
         let mut starts: Vec<u32> = Vec::with_capacity(count + 1);
@@ -423,7 +369,6 @@ impl Files<'_> {
                 awaited[other as usize] += u32::from(other != component);
             }
         }
-        // The check of any file with two `export *` reads their declarations.
         for module in self.modules_with_nested_export_collisions {
             awaited[component_of[module.file.idx()] as usize] |= READ_WITHOUT_REFERENCE;
         }
@@ -435,7 +380,6 @@ impl Files<'_> {
             }
         }
         AWAITED_COMMITS.fetch_add(listed, SeqCst);
-        // Each component comes behind all that refer to it.
         for component in (0..component_count).rev() {
             let first = first_of[component];
             self.modules[first as usize]
@@ -489,27 +433,20 @@ impl Files<'_> {
         self.modules[file.idx()].state.load(SeqCst) == GONE
     }
 
-    /// The trees stay for good, or the file owns none. `Files::free_tree` does not ask: that is up to its caller.
     pub fn is_tree_kept(&self, file: FileId) -> bool {
         self.modules[file.idx()].state.load(SeqCst) == KEPT
     }
 
-    /// The trees of `file` stay for good, for a reader that the count by reach leaves out: a task of another program, or a
-    /// thread that reads once the tasks have ended. The trees of the files that `file` refers to go as before. The caller can
-    /// still read `file`: no task runs yet, or a file that its task checks reaches it.
     pub fn keep_tree(&self, file: FileId) {
         self.modules[file.idx()].keep_for_reader();
     }
 
-    /// No tree goes from now on, not even one that a thread is about to let go, nor behind a later `let_trees_go_behind`. It
-    /// waits for no such thread, and tasks of this program may run. `watch_no_more` still follows.
     pub fn let_no_more_trees_go(&self) {
         for cell in self.modules.iter() {
             cell.keep_what_is_here();
         }
     }
 
-    /// The end of `let_trees_go_behind`: no tree goes anymore. What is gone stays gone, and watched. No task of this program runs.
     pub fn watch_no_more(&self) {
         let cells = self.modules.as_ptr_range();
         let cells = cells.start.cast::<ModuleCell<'static>>()..cells.end.cast();
@@ -529,7 +466,6 @@ impl Files<'_> {
         }
     }
 
-    /// `free_long_lists` of a module whose trees may be gone. Nothing reads a tree again, so nobody is left to stop.
     pub(super) fn forget_what_went(&self, index: usize) {
         let cell = &self.modules[index];
         cell.state.store(KEPT, SeqCst);
@@ -537,8 +473,6 @@ impl Files<'_> {
     }
 }
 
-/// While it lives, the thread reads of modules only what stays when their trees go: no long list of `hir` or `bound`, and
-/// nothing that is computed from one.
 pub struct ReadingNoTrees(Bit);
 
 impl ReadingNoTrees {
@@ -553,9 +487,7 @@ impl Drop for ReadingNoTrees {
     }
 }
 
-/// While it lives, what the thread reads of a module stays. A thread can begin a task in the middle of another.
 pub struct ReadingTask {
-    /// `OUTSIDER`: all bits are taken, so it reads like a thread without a task.
     bit: Bit,
     outer: Bit,
     outer_pin: Pin,

@@ -5,7 +5,7 @@ use super::{BindInput, ModuleRef, compare_modules};
 use crate::load::loaders::{HostLoaderKind, host_loader_kind};
 use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind};
-use crate::module_keys::parses_text_as_data;
+use crate::module_keys::{DEFAULT_LOADERS, loader_named_by_path, parses_text_as_data};
 use bun_ast::Loader;
 use bun_core::strings;
 use bun_sema::atom::Atom;
@@ -15,7 +15,6 @@ use bun_sema::program::{CodeAnswer, FileId, FileRole};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::SharedSort;
 
-/// The module map holds one module per path and kind, as `ScriptFetchParameters::Type` does: every `type` but "json" is `HostDefined`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ImportTypeKind {
     None,
@@ -28,19 +27,13 @@ pub(super) struct ModuleSet {
     pub record_files: Vec<FileId>,
     pub other_modules: Vec<ModuleRef>,
     pub external_kinds: Vec<((FileId, Atom), ExternalKind)>,
-    /// By `statement_key`: an external module that `leave_imports_of_test_files_to_loader` has put at a site, and the file that the build found for that site.
     pub(super) left_to_loader: Vec<((FileId, Atom, Option<Loader>), FileId)>,
-    /// The callbacks of `__commonJS(cb)` and `__esm(fn)` that are modules of their own.
     pub wrapped: WrappedModules,
     inner_modules: Vec<(FileId, FnId)>,
-    /// By file: `find_inner_modules` is told that the body may run a second time.
     runs_again: Vec<bool>,
     interops: Vec<Option<Interop>>,
-    /// By file: `a.txt?text` is a form of `a.txt`.
     forms: Vec<(FileId, FileId)>,
-    /// By file, in the order in which `require` looks for them: what an import may have made of the path by then. The file itself is the form without a type.
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
-    /// Sorted by file: each other data module made from the same file on disk, and its kind.
     sibling_forms: Vec<(FileId, FileId, ImportTypeKind)>,
 }
 
@@ -70,7 +63,6 @@ impl ModuleSet {
         }
     }
 
-    /// What import attributes make of the file. The loader of `bun run` keeps them under the path of the file, where a mock finds them.
     pub(super) fn forms_of(&self, module: ModuleRef) -> impl Iterator<Item = ModuleRef> + '_ {
         let forms = match module {
             ModuleRef::File(file) => {
@@ -87,7 +79,11 @@ impl ModuleSet {
         !self.sibling_forms.is_empty()
     }
 
-    /// `None` matches every kind.
+    pub(super) fn looks_for_forms_first(&self, module: ModuleRef) -> bool {
+        let forms = &self.forms_require_checks_first;
+        matches!(module, ModuleRef::File(file) if forms.binary_search_by_key(&file, |entry| entry.0).is_ok())
+    }
+
     pub(super) fn sibling_forms_of_kind(
         &self,
         module: ModuleRef,
@@ -114,7 +110,6 @@ impl ModuleSet {
         }
     }
 
-    /// Once, behind `collect_modules`. `run_again`: `find_files_that_run_again`, and the entry points that the host starts several times.
     pub(super) fn find_inner_modules(
         &mut self,
         input: &BindInput<'_, '_>,
@@ -126,7 +121,6 @@ impl ModuleSet {
             }
         }
         let mut keeps_holders = self.runs_again.clone();
-        // No site evaluates a module of a file that is no code of the program: `find_program_code`.
         let sources = input.sources;
         for entry_point in sources.entry_points() {
             keeps_holders[entry_point.file.idx()] |= entry_point.kind == EntryPointKind::Library;
@@ -147,12 +141,10 @@ impl ModuleSet {
         self.inner_modules = inner_modules;
     }
 
-    /// Whatever a run of the body makes belongs to that run.
     pub(super) fn runs_again(&self, file: FileId) -> bool {
         self.runs_again[file.idx()]
     }
 
-    /// By file and callback, in ascending order.
     pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
         &self.inner_modules
     }
@@ -175,8 +167,6 @@ impl ModuleSet {
         }
     }
 
-    /// The compiled file that a test file names in a statement that the loader of the run time links. What the test file does to the namespace object it does to that
-    /// of the file. Any other module stands for itself.
     pub(super) fn module_behind(&self, module: ModuleRef) -> ModuleRef {
         let ModuleRef::External {
             importer,
@@ -210,7 +200,6 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
     for &file in &compiled_files {
         interops[file.idx()] = Some(scans.of(file).interop);
     }
-    // `bun run` answers `require()` of a file that stands for a string with its namespace, `{ default }`. `bun build --compile` answers the string where it links the call.
     let required_from_loader = match input.runs_in_place {
         true => compiled_files.clone(),
         false => find_files_required_from_loader(input, scans, &compiled_files),
@@ -223,7 +212,6 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
             interop.require_result = RequireResult::Namespace;
         }
     }
-    // `require("./data.sqlite")` answers `{ __esModule, db, default }`, in `bun run` and where `bun build --compile` leaves the call to the loader.
     let holds_database = |file: FileId| {
         parsed_source(files, file)
             .is_some_and(|it| matches!(it.loader, Loader::Sqlite | Loader::SqliteEmbedded))
@@ -245,7 +233,6 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         &forms,
         &mut interops,
     );
-    // A path that shows when the program runs may name any of the others. It goes to the loader, and changes nothing for the calls that are linked.
     for &file in &compiled_files {
         if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
             it.kind == ModuleKind::Data && it.require_result != RequireResult::Namespace
@@ -258,7 +245,6 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
     let mut left_to_loader: Vec<((FileId, Atom, Option<Loader>), FileId)> = Vec::new();
     for &importer in &compiled_files {
         let scan = scans.of(importer);
-        // Only `leave_imports_of_test_files_to_loader` puts an external module at a site for which the build has found a file.
         let answers = files
             .compiled(importer)
             .map_or(&[][..], |it| it.code_answers);
@@ -382,7 +368,6 @@ fn find_sibling_forms(
         return Vec::new();
     }
     typed_paths.shared_sort_unstable();
-    // A form that failed to parse is a code module that throws, and a call that names it still gets a sibling.
     let forms = compiled_files.iter();
     let forms = forms.filter(|&&file| typed_paths.binary_search(&path_of(file)).is_ok());
     let mut forms: Vec<(&[u8], FileId)> = forms.map(|&file| (path_of(file), file)).collect();
@@ -404,12 +389,6 @@ fn stands_for_string(input: &BindInput<'_, '_>, file: FileId) -> bool {
         .is_some_and(|it| matches!(it.loader, Loader::Text | Loader::Md))
 }
 
-// `require()` answers the namespace object of a file of data that the loader of ES modules holds, and the value of the file until an import has loaded it.
-// Which of the two comes first shows when the program runs: `Modules::isHeldForImport` of the run time. A file that only one of them can name has one answer.
-// Held or not, `bun run` answers `{ default }` for a file that stands for a string, and so does an executable where an import names the file.
-// An import that nobody has read changes the answer of no call that `bun build` links before it has loaded the file.
-// The loader keeps what it has made of a path under each kind of `type`, and `require()` looks in all of them before it reads the file itself: for what an import without a type
-// has made, then under every type but "json", then under "json". Returns `ModuleSet::forms_require_checks_first`. Which of them is there by then shows when the program runs too.
 fn answer_require_with_what_the_loader_holds(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -417,7 +396,6 @@ fn answer_require_with_what_the_loader_holds(
     forms: &[(FileId, FileId)],
     interops: &mut [Option<Interop>],
 ) -> Vec<(FileId, FileId)> {
-    // Code that the build has not read names any file, either way, unless it is refused all of them. A loader that goes out of sight is a `require`.
     let mut is_any_imported = input.code_from_disk_names_files;
     let mut is_any_required = input.code_from_disk_names_files || input.hands_on_any_module;
     let mut is_imported = vec![false; interops.len()];
@@ -465,7 +443,6 @@ fn answer_require_with_what_the_loader_holds(
         let is_named_both_ways = (is_any_imported || is_imported[file.idx()])
             && (is_any_required || is_required[file.idx()]);
         let is_text = stands_for_string(input, file);
-        // Any other file stands for something in an executable, which `require()` answers as `bun build --compile` does: its path, an addon.
         let is_value = is_text
             || parsed_source(input.files, file)
                 .is_some_and(|it| parses_text_as_data(it.loader) || it.loader == Loader::Css);
@@ -497,6 +474,11 @@ fn answer_require_with_what_the_loader_holds(
         }
         checked_first.push((file, form));
     }
+    checked_first.extend(find_paths_that_answer_in_place_of_code(
+        input,
+        compiled_files,
+        interops,
+    ));
     for &(_, form) in &checked_first {
         if let Some(interop) = &mut interops[form.idx()] {
             interop.require_result = RequireResult::NamespaceIfImported;
@@ -510,9 +492,39 @@ fn answer_require_with_what_the_loader_holds(
     checked_first
 }
 
-// In an executable of `bun build --compile` the loader of `bun run` answers every other call: what `createRequire` made, `import.meta.require`,
-// `require` under another name, a computed path. A path that nothing is known about names no file here: it would change the answer of calls far from it.
-// `Interop::answers_loader_with_namespace` is for that path.
+fn find_paths_that_answer_in_place_of_code(
+    input: &BindInput<'_, '_>,
+    compiled_files: &[FileId],
+    interops: &mut [Option<Interop>],
+) -> Vec<(FileId, FileId)> {
+    if !input.runs_in_place {
+        return Vec::new();
+    }
+    let path_of = |file: FileId| input.sources.public_path(file);
+    let mut paths: Vec<(&[u8], FileId)> = Vec::new();
+    for &file in compiled_files {
+        let is_path = parsed_source(input.files, file).is_some_and(|it| it.loader == Loader::File)
+            && loader_named_by_path(DEFAULT_LOADERS, path_of(file)).is_none();
+        if let Some(interop) = interops[file.idx()]
+            .as_mut()
+            .filter(|it| is_path && it.kind == ModuleKind::Data)
+        {
+            interop.require_result = RequireResult::NamespaceIfImported;
+            paths.push((path_of(file), file));
+        }
+    }
+    paths.shared_sort_unstable();
+    let is_code =
+        |file: &&FileId| interops[file.idx()].is_some_and(|it| it.kind != ModuleKind::Data);
+    let answered = compiled_files.iter().filter(is_code).filter_map(|&code| {
+        let path = path_of(code);
+        let mark = strings::last_index_of_char(path, b'?')?;
+        let at = paths.binary_search_by(|entry| entry.0.cmp(&path[..mark]));
+        Some((code, paths[at.ok()?].1))
+    });
+    answered.collect()
+}
+
 fn find_files_required_from_loader(
     input: &BindInput<'_, '_>,
     scans: &Scans,

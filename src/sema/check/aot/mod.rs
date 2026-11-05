@@ -55,7 +55,7 @@ pub use enum_constants::{
 pub(crate) use kept_answers::KeptAnswers;
 pub use kept_answers::{KeptFact, RowsCarriedOver};
 pub use left_out_bodies::LeftOutBodies;
-pub use program_symbols::{COMPILER_DECLARATIONS_PATH, MODULES_IN_OTHER_IMAGES_PATH};
+pub use program_symbols::COMPILER_DECLARATIONS_PATH;
 pub use prototype_links::{NamedValue, NamedValues, PrototypeOperation};
 pub use queries::{Queries, QueryInputs};
 pub use query_writer::write_queries;

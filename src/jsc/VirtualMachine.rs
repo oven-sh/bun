@@ -2723,7 +2723,10 @@ impl VirtualMachine {
         }
         match kind {
             Teardown::Worker => WebWorker__teardownJSCVM(vm.global()),
-            Teardown::MainThreadExit => Zig__GlobalObject__destructOnExit(vm.global()),
+            Teardown::MainThreadExit => {
+                Zig__GlobalObject__destructOnExit(vm.global());
+                VMHolder::set_cached_global_object(Some(core::ptr::null_mut()));
+            }
         }
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.

@@ -23,11 +23,9 @@ struct Context<'x, 's> {
     walk: &'x ScopeWalk,
     file_scope: ScopeId,
     scope_functions: Vec<Option<WalkedFunctionId>>,
-    // By function: the body of the module that creates it, directly or through other functions.
     module_bodies: Vec<WalkedFunctionId>,
     is_module_level_scope: Vec<bool>,
     loop_updates: Vec<(ScopeId, ExprId)>,
-    // The names that hold a required module of which only members are read, in order.
     holders_without_value: Vec<SymbolId>,
 }
 
@@ -46,6 +44,7 @@ struct BindingSharing {
     shared: Vec<BindingRef>,
     fields_for_eval: Vec<BindingRef>,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
+    registries: Vec<BindingRef>,
 }
 
 struct Placements {
@@ -62,6 +61,7 @@ struct Parts {
     placements: Placements,
     captures: CapturePlan,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
+    registries: Vec<BindingRef>,
 }
 
 impl<'x, 's> Context<'x, 's> {
@@ -79,10 +79,8 @@ impl<'x, 's> Context<'x, 's> {
             holders_without_value: collect_holders_without_value(input),
         };
         let has_module_variables = match input.modules.kind(input.file) {
-            // A variable of the program is there once. What a closure of an earlier run names is what that run declared.
             ModuleKind::SourceText if input.modules.runs_again(input.file) => false,
             ModuleKind::SourceText | ModuleKind::Data | ModuleKind::RuntimeSource => true,
-            // A file that `require.cache` can let go, a mock can stand for or a test run loads anew has a run of its own each time.
             ModuleKind::CommonJs => input.modules.runs_body_once(ModuleRef::File(input.file)),
             ModuleKind::Runtime | ModuleKind::External => false,
         };
@@ -123,7 +121,6 @@ impl<'x, 's> Context<'x, 's> {
         self.scope_functions[self.scope_of(binding).idx()]
     }
 
-    // Every store to the name is dead code or one that `is_ignored` names.
     fn is_stable_ignoring(&self, symbol: SymbolId, is_ignored: impl Fn(ExprId) -> bool) -> bool {
         let (bound, decisions) = (self.input.bound, &self.input.compiled.analysis.decisions);
         let is_ignored = |target: ExprId| decisions.is_dead_expr(target) || is_ignored(target);
@@ -177,6 +174,7 @@ pub(super) fn analyze(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
         placements,
         captures,
         initialized_holders: sharing.initialized_holders,
+        registries: sharing.registries,
     };
     tables::build_analysis(&context, parts)
 }

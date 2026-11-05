@@ -66,7 +66,6 @@ impl<'s> Projects<'s> {
         in_order_of_paths(&self.naming_types)
     }
 
-    /// `files` and `include` of the projects that `governing_checked_code` has answered with.
     pub(super) fn list_files(&self, host: &dyn Host) -> Vec<Vec<u8>> {
         let projects = in_order_of_paths(&self.listing_files).into_iter();
         let listed = projects.filter_map(|project| {
@@ -83,8 +82,6 @@ impl<'s> Projects<'s> {
         Some(self.note_types(self.governing(context, path)?))
     }
 
-    /// `governing_code` of a file that is held to its type errors. A file of an installed package is not, and neither is
-    /// one that needs another program.
     pub(super) fn governing_checked_code(
         &self,
         context: &CodeLoadContext<'_, 's, '_>,
@@ -147,7 +144,6 @@ impl<'s> Projects<'s> {
                 let scratch = Session::new();
                 let project = config::load_for_aot_package(context.host, &scratch, &manifest_path);
                 let mut options = governing_options(context, project.options);
-                // A package that writes no `lib` has the libraries of the program.
                 if !options.specifies_lib && !options.no_lib {
                     options.libs.clone_from(&context.options.libs);
                     options.no_lib = context.options.no_lib;
@@ -374,8 +370,6 @@ pub(super) fn lenient_options(program: &Options, package_directory: &[u8]) -> Op
     }
 }
 
-/// A program has one answer to how it makes its types, which globals it has and which files it reads. Every other option is asked of
-/// the `tsconfig.json` nearest to the file at hand.
 fn make_the_same_program(a: &Options, b: &Options) -> bool {
     let names_libraries_of =
         |a: &Options, b: &Options| b.libs.iter().all(|library| a.libs.contains(library));
@@ -401,7 +395,6 @@ impl<'s> Files<'s> {
         }
     }
 
-    /// What this program says of such a file is not what its project says of it.
     pub fn needs_another_program(&self, file: FileId) -> bool {
         let (program, project) = (self.options, self.module_options(file));
         !std::ptr::eq(program, project)

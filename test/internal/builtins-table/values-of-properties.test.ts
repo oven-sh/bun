@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
@@ -151,5 +151,5 @@ test.skipIf(generated === undefined)(
     const count = /(\d+) properties that native code fills hold a value that is not described/.exec(stderr)?.[1];
     expect(Number(count)).toBeLessThanOrEqual(mostUndescribedProperties);
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );

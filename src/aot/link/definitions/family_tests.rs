@@ -102,7 +102,6 @@ fn conversion_outside_the_family_widens_it() {
     });
 }
 
-// Whether a conversion adds an edge hangs on those before it.
 #[test]
 fn conversions_are_followed_in_the_order_of_the_units_whichever_task_lists_them() {
     with_test_files(|projects, mut files| {

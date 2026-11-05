@@ -10,7 +10,7 @@ use crate::diagnostic_codes::Code;
 use crate::engine::{EngineModuleId, EngineResult, RejectedOptionWord};
 use crate::load::source_provider::SourceProvider;
 use crate::options::Options;
-use crate::report::{ReportEntry, ReportInput, ReportMessage, SourceTexts};
+use crate::report::{ReportEntry, ReportInput, ReportMessage, SourceChanged, SourceTexts};
 use crate::statistics::{StatisticId, Statistics};
 
 macro_rules! linked_functions {
@@ -57,7 +57,7 @@ linked_functions! {
     pub fn bun_aot_write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>);
     pub fn bun_aot_collect_report_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<ReportEntry>;
     pub fn bun_aot_report_entries_to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMessage>;
-    pub fn bun_aot_write_obfuscation_map(engine: &EngineResult, texts: &SourceTexts, file_name: &[u8], debug_id: Option<&[u8]>) -> Vec<u8>;
+    pub fn bun_aot_write_obfuscation_map(engine: &EngineResult, texts: &SourceTexts, file_name: &[u8], debug_id: Option<&[u8]>) -> Result<Vec<u8>, SourceChanged>;
     pub fn bun_aot_globals_that_a_window_replaces() -> Vec<u32>;
     pub fn bun_aot_lists_laid_anew_between_test_files() -> Vec<u32>;
     pub fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool;

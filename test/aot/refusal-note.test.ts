@@ -100,6 +100,57 @@ test("nothing is refused and nothing is said with --aot-allow-code-from-disk, no
   }
 }, 300000);
 
+test("a compiled file that the loader links for the sake of a plugin is named at the end of the run", async () => {
+  using dir = tempDir("aot-refusal-note", {
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "node_modules/dep/package.json": `{ "name": "dep", "type": "module", "main": "index.js" }`,
+    "node_modules/dep/index.js": `export default "the real dep";`,
+    "src/user.js": `import dep from "dep";\nexport const seen = () => dep;`,
+    "src/other.js": `import { leaf } from "./leaf.js";\nexport const seen = () => leaf;`,
+    "src/leaf.js": `export const leaf = "leaf";`,
+    "tests/a.test.js": `import { plugin } from "bun";
+import { expect, test } from "bun:test";
+test("the plugin answers for a package that exists", async () => {
+  plugin({
+    name: "swap",
+    setup(build) {
+      build.onResolve({ filter: /^dep$/ }, () => ({ path: "dep", namespace: "swapped" }));
+      build.onLoad({ filter: /.*/, namespace: "swapped" }, () => ({ contents: 'export default "dep of the plugin";', loader: "js" }));
+    },
+  });
+  expect((await import("../src/user.js")).seen()).toBe("dep of the plugin");
+  expect((await import("../src/other.js")).seen()).toBe("leaf");
+});`,
+  });
+  const { shown, all } = await linesOfTests(String(dir), ["--aot"]);
+  expect(shown).toEqual({ a: ["(pass) the plugin answers for a package that exists"] });
+  expect(all).toContain("1 compiled file ran from source in the interpreter during this run");
+  expect(all).toMatch(/^  src\/user\.js: a plugin answers for a name that it imports, while tests\/a\.test\.js ran$/m);
+}, 300000);
+
+test("a plugin whose filter takes a name and whose callback declines leaves the file compiled, and is asked as often as without --aot", async () => {
+  using dir = tempDir("aot-refusal-note", {
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/work.js": `import { step } from "./step.js";\nexport const sum = () => step(1);`,
+    "src/step.js": `export const step = n => n + 1;`,
+    "tests/a.test.js": `import { plugin } from "bun";
+import { expect, test } from "bun:test";
+test("the callback declines", async () => {
+  const asked = [];
+  plugin({ name: "declines", setup(build) { build.onResolve({ filter: /^\\.\\.?\\/.*\\.js$/ }, args => void asked.push(args.path)); } });
+  expect((await import("../src/work.js")).sum()).toBe(2);
+  console.log("asked", asked.join(" "));
+});`,
+  });
+  const asked = (all: string) => all.split("\n").filter(line => line.startsWith("asked"));
+  const plain = await linesOfTests(String(dir), []);
+  expect(asked(plain.all)).toEqual(["asked ../src/work.js ./step.js"]);
+  const compiled = await linesOfTests(String(dir), ["--aot"]);
+  expect(compiled.shown).toEqual({ a: ["(pass) the callback declines"] });
+  expect(asked(compiled.all)).toEqual(asked(plain.all));
+  expect(compiled.all).not.toContain("ran from source");
+}, 300000);
+
 const underFailingTest = (name: string, said: string) => [
   `(pass) passes ahead of ${name}`,
   `(fail) fails behind ${name}`,

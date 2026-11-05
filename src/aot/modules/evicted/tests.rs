@@ -1,6 +1,5 @@
 use crate::modules::testing::{file_named, with_graph};
 
-/// The first file is the entry point. Answers the files that run again, in the order in which they are given.
 fn files_that_run_again<'a>(files: &[(&'a str, &str)]) -> Vec<&'a str> {
     with_graph(files, |graph, input| {
         let names = files.iter().map(|&(name, _)| name);
@@ -96,7 +95,6 @@ fn the_job_of_an_import_call_may_ask_for_the_running_file_behind_its_throw() {
         files_that_run_again(&[main, ("flaky.cjs", calls_import)]),
         ["flaky.cjs"]
     );
-    // It gets what the file has exported so far, at once.
     let requires = "try { require('./flaky.cjs'); } catch {}\nif (globalThis.first) throw 0;";
     assert!(files_that_run_again(&[main, ("flaky.cjs", requires)]).is_empty());
 }

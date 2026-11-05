@@ -27,8 +27,6 @@ fn count_lines(text: &[u8]) -> u64 {
     }
 }
 
-/// Where the bytes and the lines of a file's text are counted. What is compiled of the program and of its packages is the program's size;
-/// of that, the packages' share once more by itself. Declaration files and Bun's own library are read too, and count beside it.
 fn sizes_of(statistic: StatisticId, origin: FileOrigin) -> &'static [(StatisticId, StatisticId)] {
     const PROGRAM: (StatisticId, StatisticId) =
         (StatisticId::SourceBytes, StatisticId::SourceLines);

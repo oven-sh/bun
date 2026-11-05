@@ -34,7 +34,6 @@ const DATA: (&str, &str) = (
     r#"{ "version": "1.2.3", "nested": { "port": 80 }, "list": [1, 2] }"#,
 );
 
-// `reader.ts` reads the file by names alone, whatever else the program does with it.
 const DATA_READER: (&str, &str) = (
     "reader.ts",
     "import data from './data.json'; export const read = () => [data.version, data.nested.port];",
@@ -156,7 +155,6 @@ fn helper_that_wraps_require_gets_the_object_of_a_json_file() {
     ]));
 }
 
-// `bun build` has `Red` and `Blue` in the place of a read. Only this build knows `Green`, as long as nothing stores to the object.
 const COLOR: (&str, &str) = (
     "color.ts",
     "export enum Color { Red, Green = 'green'.length, Blue = 'blue' }",
@@ -167,7 +165,6 @@ const COLOR_READER: (&str, &str) = (
     "import { Color } from './color'; export const read = () => [Color.Red, Color.Green, Color['Blue']];",
 );
 
-// Whether something that the program can run may store to a member of `Color`, so that `reader.ts` reads the object.
 fn hands_on_enum(files: &[(&str, &str)]) -> bool {
     let mut all = files.to_vec();
     all.push(COLOR_READER);
@@ -282,7 +279,6 @@ fn function_of_the_file_of_an_enum_that_nobody_calls_hands_nothing_on() {
     assert!(!hands_on_enum(&files));
 }
 
-// Whether the executable makes the object of the first enum of a file. A file that nothing imports is no file of the program.
 fn makes_object_of_enum(files: &[(&str, &str)], path: &str) -> bool {
     with_left_out_declarations(files, |files, left_out| {
         find_file_if_loaded(files, path).is_some_and(|file| {
@@ -305,7 +301,6 @@ fn member_that_is_the_length_of_a_text_is_known_to_another_file() {
     }
 }
 
-// An executable reads the object there: the read throws before the enum has run, and finds what the program has stored.
 #[test]
 fn member_that_is_the_length_of_a_text_is_read_from_the_object_in_the_file_of_the_enum() {
     for read in [
@@ -348,7 +343,6 @@ const ENUMS_MADE_OF_ENUMS: [(&str, &str); 3] = [
     ),
 ];
 
-// Which of the three objects the executable makes: that of `Base`, of `Made`, of `Third`.
 fn makes_objects_of_enums_made_of_enums(main: &str) -> [bool; 3] {
     let mut files = vec![("main.ts", main)];
     files.extend(ENUMS_MADE_OF_ENUMS);
@@ -371,7 +365,6 @@ fn enum_made_of_enums_of_other_files_is_known_over_any_number_of_steps() {
     }
 }
 
-// `bun build` has the members of `Base` in place in the initializers of `Made`, so `Made` rests on nothing that `Base` holds. `Third` rests on the object of `Made`.
 #[test]
 fn whoever_gets_hold_of_an_enum_spoils_the_enums_that_are_made_of_it() {
     for (main, expected) in [
@@ -404,7 +397,6 @@ fn whoever_gets_hold_of_an_enum_spoils_the_enums_that_are_made_of_it() {
     }
 }
 
-// A transpiler knows nothing of another file, so the file of such an enum reads the object.
 #[test]
 fn member_made_of_an_enum_of_another_file_is_read_from_the_object_in_its_own_file() {
     let main = "import { Base } from './base'; enum Made { Three = Base.One + Base.Two } console.log(Made.Three);";
@@ -413,7 +405,6 @@ fn member_made_of_an_enum_of_another_file_is_read_from_the_object_in_its_own_fil
     assert!(!makes_object_of_enum(&files, "/project/base.ts"));
 }
 
-// `VALUE` is what the member that is read holds.
 const MEMBERS_THAT_ANOTHER_STORE_MAY_LAND_ON: [(&str, &str); 5] = [
     ("NaN = VALUE, X = 0 / 0", "E.NaN"),
     ("Infinity = VALUE, Big = 1 / 0", "E.Infinity"),
@@ -442,7 +433,6 @@ fn member_that_another_store_of_the_enum_may_land_on_is_read_from_the_object() {
     }
 }
 
-// `bun build` has the value in place of the read, whatever the object comes to hold.
 #[test]
 fn member_that_the_transpiler_knows_is_read_from_no_object() {
     for (members, read) in &MEMBERS_THAT_ANOTHER_STORE_MAY_LAND_ON[..4] {
@@ -451,7 +441,6 @@ fn member_that_the_transpiler_knows_is_read_from_no_object() {
     }
 }
 
-// `E[E["X"] = -1] = "X"` stores over the member `-1`.
 #[test]
 fn member_named_as_a_number_prints_is_read_from_the_object() {
     for (members, read) in [
@@ -465,7 +454,6 @@ fn member_named_as_a_number_prints_is_read_from_the_object() {
     }
 }
 
-// No number prints so, and no store of the enum lands on the member.
 #[test]
 fn member_whose_name_only_begins_like_a_number_is_known_to_another_file() {
     for (members, read) in [
@@ -514,7 +502,6 @@ fn enum_whose_members_are_templates_over_its_members_is_known() {
         ("text.ts", texts),
     ];
     assert!(!makes_object_of_enum(&files, "/project/text.ts"));
-    // A transpiler works these out too, so that the values stand in the place of the reads in the file of the enum as well.
     let main = format!(
         "{} console.log(Text.C, Text.D, Text.E, Text.F);",
         texts.trim_start_matches("export ")

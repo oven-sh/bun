@@ -29,6 +29,7 @@ use crate::modules::{
 use bun_ast::Loader;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_sema::atom::{Atom, Interner, known};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::SharedSort;
@@ -99,7 +100,6 @@ pub(super) fn exported_variable_key(
         ExportBinding::Synthetic(_) if graph.lazy_export(binding).is_some() => None,
         ExportBinding::Synthetic(id) => {
             let export = graph.synthetic_export(id);
-            // An ES module holds a copy of a name of a CommonJS file, unless nobody can tell the copy from the variable.
             let is_copy =
                 graph.face(export.module).is_some() && !graph.settled(export.module, export.name);
             let behind = graph
@@ -120,7 +120,6 @@ pub(super) fn exported_variable_key(
 pub(super) fn holds_exports_in_variable(graph: &ModuleGraph, module: ModuleRef) -> bool {
     match graph.shape(module) {
         Shape::Value => true,
-        // The face has the loader capture what the file exports.
         Shape::AsToday => match module {
             ModuleRef::File(file) => graph.commonjs().face_captures(file),
             _ => false,
@@ -129,12 +128,10 @@ pub(super) fn holds_exports_in_variable(graph: &ModuleGraph, module: ModuleRef) 
     }
 }
 
-/// The loader takes the names from the object that the CommonJS file exports, as it does for a module of the library.
 pub(super) fn is_filled_by_loader(graph: &ModuleGraph, face: ModuleRef) -> bool {
     !matches!(graph.interop(face).export_rule, SyntheticExportRule::None)
 }
 
-// A name of an ES module of the other project is bound here, where both export tables are at hand.
 fn find_binding_in_other_project(
     projects: &PerProject<LinkProject<'_, '_>>,
     atoms: &Interner<'_>,
@@ -150,13 +147,11 @@ fn find_binding_in_other_project(
     let graph = projects.get(target.project).graph;
     match graph.find_export(ModuleRef::File(target.file), name, atoms) {
         ExportLookup::Found(found) => Some((target.project, found)),
-        // The run looks behind the stars of a file of the same project.
         ExportLookup::Unknown if matches!(module, ModuleRef::File(_)) => Some((project, binding)),
         ExportLookup::Unknown | ExportLookup::Absent => None,
     }
 }
 
-// What the table of a record binds an export to, and the project whose graph knows the binding.
 fn find_listed_binding(
     projects: &PerProject<LinkProject<'_, '_>>,
     atoms: &Interner<'_>,
@@ -171,7 +166,6 @@ fn find_listed_binding(
     Some((project, binding))
 }
 
-/// The variables that link defines and that an export table names. The object of the module reads them, so each needs an id, whether or not code names it.
 pub(super) fn variables_shown_by_export_tables(
     projects: &PerProject<LinkProject<'_, '_>>,
     atoms: &Interner<'_>,
@@ -215,15 +209,11 @@ pub(super) fn variables_shown_by_export_tables(
     keys
 }
 
-// This cuts the work into tasks. No answer depends on it.
 const MODULES_IN_A_TASK: u32 = if cfg!(test) { 2 } else { 64 };
 
-/// The records of modules that follow each other. The strings that they name are numbers of `strings`.
 struct BuiltRecords {
-    /// Of the first record.
     first_id: Option<ModuleId>,
     modules: Vec<generated::Module>,
-    /// The place of a record among `modules`, and the unit that holds the positions of its file.
     units_with_positions: Vec<(u32, u32)>,
     ambiguous_exports: Vec<generated::AmbiguousExport>,
     strings: StringTable,
@@ -233,8 +223,6 @@ fn list_ids_as_they_are<I: Id>(count: usize) -> Vec<Option<I>> {
     (0..count).map(|index| Some(I::new(index))).collect()
 }
 
-// What a record holds depends on no other record, but for the numbers of the strings that no file has spelled.
-// The third result: `ModuleRecords::units_with_positions`.
 fn build_records_of_modules(
     units: &[LinkUnit],
     input: &RecordInput<'_, '_>,
@@ -277,7 +265,6 @@ fn build_records_of_modules(
         }
     });
 
-    // Some file spells most of these strings, so the program has them, and to look for them changes nothing.
     let known_strings = &*strings;
     let tables: Vec<&StringTable> = built.iter().map(|records| &records.strings).collect();
     let mut program_ids: Vec<Vec<Option<StringId>>> =
@@ -286,7 +273,6 @@ fn build_records_of_modules(
             ids.map(|id| known_strings.find_string_of(table, id))
                 .collect()
         });
-    // Any other gets its number where the first record names it, as if one thread had built the records in their order.
     for (records, program_ids) in built.iter().zip(&mut program_ids) {
         for (id, program_id) in records.strings.ids().zip(program_ids) {
             if program_id.is_none() {
@@ -302,7 +288,6 @@ fn build_records_of_modules(
     let mut tasks: Vec<(&mut BuiltRecords, Vec<Option<StringId>>)> =
         built.iter_mut().zip(program_ids).collect();
     for_each_mut(&mut tasks, input.in_parallel, &|(records, strings)| {
-        // All but the strings are ids of the program already.
         let map = IdMap {
             strings,
             property_keys: &[],
@@ -350,7 +335,6 @@ fn build_records_of_modules(
 }
 
 impl ModuleRecords {
-    /// The positions of a file are long lists, and its unit has read them for the last time.
     pub(super) fn take_positions_from(&mut self, units: &mut [LinkUnit]) {
         for (module, unit) in core::mem::take(&mut self.units_with_positions) {
             let fragment = &mut units[unit as usize].module;
@@ -359,7 +343,6 @@ impl ModuleRecords {
     }
 }
 
-/// The units are only read, so that whoever else reads them runs beside this. `ModuleRecords::take_positions_from` finishes the records.
 pub(super) fn build_module_records(
     units: &[LinkUnit],
     input: &RecordInput<'_, '_>,
@@ -396,8 +379,6 @@ pub(super) fn build_module_records(
     }
 }
 
-/// A load of `module` follows the import of `way` and no other request. What else the module imports stays as what its code may ask for, which no load follows:
-/// the module still leads to all that its tables and its code name.
 fn follow_only(module: &mut generated::Module, way: Option<ModuleId>) {
     let written = core::mem::take(&mut module.requests);
     let followed = way.map(|target| generated::ModuleRequest {
@@ -429,10 +410,6 @@ fn follow_only(module: &mut generated::Module, way: Option<ModuleId>) {
     module.required_names.clear();
 }
 
-/// JavaScript finds a mistake in the text of a module while it loads the graph, before any module of the graph runs. Here the body of such a module throws it.
-/// So a load follows none of its requests, and of whoever imports it by statements, through however many modules, only the one to the next module on the way:
-/// the first body that a load of the graph runs is the one that throws. `find_unloadable_modules` does the same for what the parser finds.
-/// A mock in place of a module on the way lets the load pass, so the way ends below such a module.
 fn end_loads_at_modules_that_throw(modules: &mut [generated::Module]) {
     let throws = |module: &generated::Module| module.flags.contains(ModuleFlags::THROWS_AT_LOAD);
     let mut on_the_way: Vec<usize> = (0..modules.len())
@@ -533,7 +510,6 @@ struct RecordBuilder<'b, 'a, 's> {
     names: FxHashMap<Atom, StringId>,
     synthetic_exports: &'b [Vec<MergedSyntheticExport>],
     is_named_at_run_time: &'b [bool],
-    /// `BuiltRecords::units_with_positions`
     units_with_positions: Vec<(u32, u32)>,
     ambiguous_exports: Vec<generated::AmbiguousExport>,
 }
@@ -550,8 +526,6 @@ fn mock_may_answer_ahead_of_declaration(
         return false;
     }
     path.push(file);
-    // The run follows some stars of a file and not others: `export * from "./over-commonjs.js"; export * from "./lib.js"`. A name that comes by a star which it
-    // does not follow is found in the table alone.
     let followed = graph.requests(file).iter();
     let mut followed = followed.filter(|request| request.is_dynamic_star_export);
     let is_found_by_run = followed.any(|request| {
@@ -570,23 +544,19 @@ fn mock_may_answer_ahead_of_declaration(
             }
             continue;
         };
-        // `import { helper } from "./lib.js"` is no star: it brings the file no name.
         if !request.is_star_export {
             continue;
         }
-        // The mock of the file that declares the name answers for the variable wherever it is handed on.
         if target == declaring_file {
             break;
         }
         let has_name = || graph.lists_export(request.target, name, atoms);
-        // The stars count in the order of the text, whoever follows them: what a star that the build has settled brings comes ahead of the stars behind it.
         if !request.is_dynamic_star_export {
             if has_name() {
                 break;
             }
             continue;
         }
-        // `export * from "./b.js"` in a.js, `export * from "./a.js"` in b.js: the stars lead back to a file on the way, whose mock stands in place of all of this.
         if path.contains(&target) {
             continue;
         }
@@ -613,7 +583,6 @@ impl RecordBuilder<'_, '_, '_> {
             .or_insert_with(|| strings.intern(atoms.bytes(atom)))
     }
 
-    /// The records of the modules at `indexes` of the table, and the id of the first.
     fn build_modules(
         &mut self,
         units: &[LinkUnit],
@@ -699,7 +668,6 @@ impl RecordBuilder<'_, '_, '_> {
         record
     }
 
-    /// `unit`: that of the file. The positions of the file stay there.
     fn build_file_record(
         &mut self,
         units: &[LinkUnit],
@@ -737,7 +705,6 @@ impl RecordBuilder<'_, '_, '_> {
         let fragment = &unit.module;
         let ids = &input.numbering.tables[unit.tables as usize];
         record.body = find_program_id(fragment.body, &ids.functions);
-        // What a CommonJS file requires is loaded by its body, and the body of such a unit only throws.
         if fragment.throws_at_load && interop.has_export_table() {
             record.flags |= ModuleFlags::THROWS_AT_LOAD;
         }
@@ -751,7 +718,6 @@ impl RecordBuilder<'_, '_, '_> {
                 if graph.may_be_mocked(ModuleRef::File(file.file)) {
                     record.flags |= ModuleFlags::MAY_BE_MOCKED;
                 }
-                // Taken out of `require.cache`, the file is read again by the loader of the host.
                 if graph.may_be_evicted(ModuleRef::File(file.file)) {
                     record.flags |= ModuleFlags::MAY_BE_EVICTED;
                 }
@@ -766,7 +732,6 @@ impl RecordBuilder<'_, '_, '_> {
                 record.data = find_program_id(fragment.data, &ids.data);
                 self.fill_export_table_record(file, &mut record);
             }
-            // The body stores the names that somebody reads, so the loader has nothing to fill.
             ModuleKind::CommonJs => {
                 let own = ModuleRef::File(file.file);
                 record.flags |= self.planned_flags(file.project, own);
@@ -779,7 +744,6 @@ impl RecordBuilder<'_, '_, '_> {
                 record.flags |= self.flags_of_runtime_module(record.runtime_module);
                 record.synthetic_exports = self.build_synthetic_exports(index);
                 let application = input.projects.get(ProjectId::Application).graph;
-                // Native code asks for a module by its number. Only a name that the build does not know is looked up among the modules.
                 let is_named_to_test_runner = (record.runtime_module)
                     .is_some_and(|module| application.is_named_to_test_runner(module));
                 if !self.is_named_at_run_time[index as usize] && !is_named_to_test_runner {
@@ -793,7 +757,6 @@ impl RecordBuilder<'_, '_, '_> {
         record
     }
 
-    // A record that a file has beside its own: an inner module, the face, the check.
     fn build_further_record(
         &mut self,
         index: u32,
@@ -834,7 +797,6 @@ impl RecordBuilder<'_, '_, '_> {
         record
     }
 
-    // "sys" finds node:util. The engine knows the path of a module and not how else the resolver spells it.
     fn other_names_of(&mut self, module: Option<RuntimeModule>) -> Vec<StringId> {
         let Some(module) = module else {
             return Vec::new();
@@ -849,7 +811,6 @@ impl RecordBuilder<'_, '_, '_> {
         names.map(|(name, _)| self.strings.intern(name)).collect()
     }
 
-    // The application says what it does to a module of the library.
     fn flags_of_runtime_module(&self, module: Option<RuntimeModule>) -> ModuleFlags {
         let graph = self.input.projects.get(ProjectId::Application).graph;
         let mut flags = ModuleFlags::default();
@@ -892,7 +853,6 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.may_be_mocked(module) {
             flags |= ModuleFlags::MAY_BE_MOCKED;
         }
-        // In a test run `require.cache` lists the files of the program that have run.
         if graph.runs_tests() && graph.is_code_of_program(module) {
             flags |= ModuleFlags::IS_LISTED_IN_CACHE;
             if graph.reaches_entries_of_cache() {
@@ -918,7 +878,6 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.names_way_to_module_objects(module) {
             flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
         }
-        // A copy from disk names the file to the loader of the host, which begins it where nothing has run it yet.
         let is_named_by_copies =
             graph.is_named_by_copies(module) && graph.is_code_of_program(module);
         if graph.is_found_by_name(module) || is_named_by_copies {
@@ -966,8 +925,22 @@ impl RecordBuilder<'_, '_, '_> {
             record.flags |= ModuleFlags::HAS_TOP_LEVEL_AWAIT;
         }
         record.requests = self.build_requests(project, ModuleRef::File(file));
-        // Of several stars the first that has a name hands it on, and a mock that stands in place of a file has what its factory gave. A name that such a
-        // file may answer for ahead of the file that declares it is in no table: the run follows the stars, in their order.
+        if graph.lists_names_of_statements() {
+            let files = input.projects.get(project).loaded.files();
+            let sites = files.analysis(file).import_sites.iter();
+            let written = sites.filter_map(|site| match (site.kind, site.specifier) {
+                (
+                    ImportSiteKind::JsxRuntime
+                    | ImportSiteKind::JsxPackage
+                    | ImportSiteKind::Import(_)
+                    | ImportSiteKind::ExportFrom(_)
+                    | ImportSiteKind::ExportStar(_),
+                    ImportSpecifier::Constant(name),
+                ) => Some(name),
+                _ => None,
+            });
+            record.names_of_statements = written.map(|name| self.intern_atom(name)).collect();
+        }
         let is_settled = |export: &&modules::ModuleExport| {
             let mut path = Vec::new();
             let ExportBinding::Variable(declared) = export.binding else {
@@ -993,12 +966,10 @@ impl RecordBuilder<'_, '_, '_> {
         }
         let requests = graph.requests_of(ModuleRef::File(file));
         let is_requested = |module: ModuleRef| requests.iter().any(|it| it.target == module);
-        // ES modules import a CommonJS file through its face, which has the names of a mock.
         let exporter_of = |required: &modules::RequiredName| match required.is_found_unless_mocked {
             true => graph.face(required.module).unwrap_or(required.module),
             false => required.module,
         };
-        // Tree shaking drops an unused import of a file without side effects, and the file may go with it.
         let may_be_gone = |required: &modules::RequiredName| {
             let rule = graph.interop(required.module).export_rule;
             required.is_found_unless_mocked && rule != generated::SyntheticExportRule::RuntimeModule
@@ -1016,7 +987,6 @@ impl RecordBuilder<'_, '_, '_> {
                 drops_export_if_absent: required.drops_export_if_absent,
             })
             .collect();
-        // The loader may be left with an empty record of such a file, which lacks even `default`. A link asks for what the module hands on before what it imports.
         let default_of = |export: modules::SyntheticExportId| {
             let export = graph.synthetic_export(export);
             (export.name == known::default).then_some(export.module)
@@ -1048,12 +1018,10 @@ impl RecordBuilder<'_, '_, '_> {
         }
         let written = graph.requests(file);
         for (file, export_name) in asked_for_default {
-            // The name comes through an export statement of another module, whose link fails first.
             let is_written = written.iter().any(|it| it.target == ModuleRef::File(file));
             let export_name = export_name.or_else(|| (!is_written).then_some(known::default));
             let exporter = graph.face(ModuleRef::File(file));
             let exporter = exporter.unwrap_or(ModuleRef::File(file));
-            // Tree shaking drops an unused import of a file without side effects, and the file may go with it.
             if !is_requested(exporter) {
                 continue;
             }
@@ -1113,8 +1081,6 @@ impl RecordBuilder<'_, '_, '_> {
         })
     }
 
-    // The loader fills what has a variable, and a variable without an id is one that nothing reads. Such a name is still listed where the test runner may
-    // replace it: the run time refuses a spy on a name that is not listed, unless the whole module may be mocked.
     fn build_synthetic_exports(&mut self, index: u32) -> Vec<generated::SyntheticExport> {
         let exports_of_modules = self.synthetic_exports;
         let exports = &exports_of_modules[index as usize];
@@ -1151,7 +1117,6 @@ impl RecordBuilder<'_, '_, '_> {
                 records.push(self.build_failure(project, failure));
             }
         }
-        // No code names these. Code outside the image that imports a module which cannot load is told what the load ends with.
         for (project, linked) in input.projects.iter() {
             let ids = input.numbering.module_failures.get(project);
             for file in linked.graph.unloadable_files() {
@@ -1165,7 +1130,6 @@ impl RecordBuilder<'_, '_, '_> {
                     continue;
                 };
                 let failure = &records[id.index()];
-                // The name of an export stands in the place of the specifier, and a copy would pass for an import statement that finds no module. The link of the module throws for the name.
                 if failure.exporter.is_some() {
                     continue;
                 }
@@ -1187,7 +1151,6 @@ impl RecordBuilder<'_, '_, '_> {
         project: ProjectId,
         failure: &modules::ModuleFailure,
     ) -> generated::ModuleFailure {
-        // Where a module lacks a name, the name stands in the place of the specifier.
         let mut export_specifier = None;
         let (specifier, exporter) = match failure.kind {
             ModuleFailureKind::NotAProgram { .. } => {
@@ -1204,7 +1167,6 @@ impl RecordBuilder<'_, '_, '_> {
                 name,
                 asked_by,
             } => {
-                // An export statement is quoted: the name that it exports, and what it is written from.
                 export_specifier = asked_by.map(|it| self.intern_atom(it.specifier));
                 let name = asked_by.map_or(name, |it| it.export_name);
                 (self.intern_atom(name), Some(exporter))
@@ -1235,7 +1197,6 @@ fn create_record(interop: Interop, path: StringId, display_path: StringId) -> ge
     }
 }
 
-// Code of Bun's that is loaded like a file of the program: what the bundler imports for the constructs it lowers, as "bun:wrap" is.
 fn is_bundler_helper(source: SourceKind, kind: ModuleKind) -> bool {
     match source {
         SourceKind::RuntimeModule(_) => {
@@ -1245,7 +1206,6 @@ fn is_bundler_helper(source: SourceKind, kind: ModuleKind) -> bool {
     }
 }
 
-// `local` is a number of the tables that the unit was written under, and `ids` leads from those numbers to the program's.
 fn find_program_id<I: Id>(local: Option<I>, ids: &[Option<I>]) -> Option<I> {
     let id = ids[local?.index()];
     Some(id.expect("link dropped the body or the data of an evaluated module"))

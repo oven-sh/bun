@@ -1,8 +1,8 @@
 use super::support::{
     ClaimsNodeFs, DEPENDENCY_MANIFEST, GLOBAL_TYPES, HostScript, PROJECT, ScriptedHost,
     SlowToQueueAgain, check_whole_files, codes, from_bun_check,
-    from_bun_check_without_configuration, load, load_with_host, load_with_tsconfig_override,
-    project_disk, with_host, with_program, with_runtime_project,
+    from_bun_check_without_configuration, load, load_in_place, load_with_host,
+    load_with_tsconfig_override, project_disk, with_host, with_program, with_runtime_project,
 };
 use crate::compile::BunTypes;
 use crate::{EntryPointFailure, Locator, global};
@@ -137,6 +137,24 @@ fn configuration_error_of_runtime_project_is_internal() {
 }
 
 #[test]
+fn run_in_place_is_checked_by_configuration_in_working_directory() {
+    let legacy =
+        r#"{ "compilerOptions": { "noLib": true, "types": [], "experimentalDecorators": true } }"#;
+    let files = [
+        ("tsconfig.json", legacy),
+        ("main.ts", ""),
+        ("below/main.ts", ""),
+    ];
+    for (working_directory, is_legacy) in [(PROJECT, true), (&b"/project/below"[..], false)] {
+        load_in_place(&files, working_directory, |loaded| {
+            let program = loaded.expect("load_program failed");
+            let options = program.files().options;
+            assert_eq!(options.experimental_decorators, is_legacy);
+        });
+    }
+}
+
+#[test]
 fn tsconfig_override_replaces_nearest_configuration() {
     let no_roots = r#"{ "compilerOptions": { "noLib": true, "types": [] }, "files": [] }"#;
     let files = [("main.ts", ""), ("configs/tsconfig.json", no_roots)];
@@ -151,7 +169,6 @@ fn tsconfig_override_replaces_nearest_configuration() {
             });
         }
     }
-    // `bun run` and `bun test` go on without a configuration, not with the nearest one.
     let nearest = [("main.ts", ""), ("tsconfig.json", no_roots)];
     load_with_tsconfig_override(&nearest, "./main.ts", "missing.json", false, |loaded| {
         let program = loaded.expect("load_program failed");
@@ -220,8 +237,6 @@ fn tree_of_leaf_that_no_task_reads_is_freed() {
     });
 }
 
-// A project lists more than a build compiles. A listed file that exports all of another is as unread as any other that no file
-// that is read refers to, and so is what only it refers to.
 #[test]
 fn tree_of_file_with_export_star_that_no_task_reads_is_freed() {
     let files = [
@@ -264,9 +279,6 @@ fn tree_of_file_with_export_star_that_no_task_reads_is_freed() {
     });
 }
 
-// `checkExternalModuleExports` for a file with an `export *` reports at the declarations of what it exports again, so a file's
-// visit looks for such a file before it in program order. What a file imports comes before the file. So one that comes before what
-// it exports again is reached from there, and is read wherever that is.
 #[test]
 fn build_reports_the_same_beside_a_file_with_export_star_that_no_task_reads() {
     let first = ("a-first.ts", "export {};\n");
@@ -793,7 +805,6 @@ fn locator_names_file() {
     });
 }
 
-// The text of first.cjs does not say what it is. It is read as its name says, and read again as the package says once it shows that imports alone load it.
 #[test]
 fn file_queued_again_is_read_and_parsed_again() {
     const FILES: [(&str, &str); 3] = [

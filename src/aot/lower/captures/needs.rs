@@ -7,7 +7,6 @@ use crate::lower::scope::{BindingRef, Initialization, WalkedFunction, WalkedFunc
 
 type OwnedEnvironment = (ScopeId, WalkedFunctionId);
 
-// What a call hands over in registers beside the arguments.
 const MOST_CAPTURES_HANDED_OVER_AT_A_CALL: usize = 4;
 
 #[derive(Default, Clone)]
@@ -55,8 +54,6 @@ pub(in crate::lower) fn compute_captures(input: &CaptureInput<'_>) -> CapturePla
     }
 }
 
-// A closure that holds a scope reads there what the scope holds anyway, and the declared functions that are instantiated with the scope.
-// None: no closure holds a scope beside a copy of one of those.
 fn find_bindings_read_in_held_scopes(
     input: &CaptureInput<'_>,
     plan: &CapturePlan,
@@ -155,7 +152,6 @@ pub(in crate::lower) fn is_initialized_before(
     if time <= initialization.time {
         return false;
     }
-    // Whatever stands below a function that is made late is made when that function has started, wherever its text stands.
     let mut below_owner = function;
     while let Some(creator) = functions[below_owner.index()].creator
         && creator != binding.owner

@@ -29,7 +29,6 @@ const TYPES_OF_VARIABLES: [&str; 6] = [
     "Map<string, G<number>>",
 ];
 
-/// A lowered file and the tables that its ids index.
 struct Lowered {
     fragment: Fragment,
     tables: Rc<UnitTables>,
@@ -51,7 +50,6 @@ struct PositionTree {
     is_expected: bool,
 }
 
-/// For the types of a file's first two variables: what the task's memo held before the file mapped them, and what the file mapped them to.
 struct Probe {
     prefix: &'static str,
     visit: u32,
@@ -70,7 +68,6 @@ impl TypeTree {
         matches!(self.classes[..], [(BuiltinClass::Map, _)])
     }
 
-    // A variable that has a dead zone also holds `absent`.
     fn value_primitives(&self) -> Primitives {
         self.primitives.without(Primitives::ABSENT)
     }
@@ -108,7 +105,6 @@ fn expand_type(tables: &UnitTables, id: TypeId) -> TypeTree {
     }
 }
 
-// The files of one task share their tables, and shared tables can be taken only once.
 fn take_tables(lowered: Vec<(FileId, LoweredFile)>) -> Vec<Lowered> {
     let mut taken: Vec<(Arc<SharedTables>, Rc<UnitTables>)> = Vec::new();
     let files = lowered.into_iter().map(|(_, file)| {
@@ -181,7 +177,6 @@ fn find_file<'l>(lowered: &'l [Lowered], variable: &str) -> &'l Lowered {
     file.expect("a file defines the variable")
 }
 
-/// The fields called `name`, in every definition of a layout of the file: the layout and the declared type of each.
 fn fields_named(lowered: &Lowered, name: &str) -> Vec<(LayoutId, DeclaredType)> {
     let tables = &lowered.tables;
     let layouts = lowered.fragment.layouts.iter();
@@ -218,7 +213,6 @@ fn collect_array_literal_contents(source: &str) -> Vec<TypeId> {
     let created = values
         .filter(|value| value.opcode == Opcode::NewArray)
         .map(|value| TypeId::from_word(value.fields[0]));
-    // A literal of constants alone is data.
     let constant = fragment
         .data
         .iter()
@@ -287,8 +281,6 @@ fn declare_variables(prefix: &str) -> String {
     source
 }
 
-/// `first.ts` declares types and variables that have them, `second.ts` variables of the same types, and the entry point reads them all.
-// A checker task ends once it has covered 1/128 of the program's identifiers and type nodes, so the two files share a task only when the entry point is long.
 fn files_that_share_types(has_long_entry_point: bool) -> [(&'static str, String); 3] {
     let mut main = String::new();
     for prefix in ["first", "second"] {
@@ -326,7 +318,6 @@ fn as_texts<'f>(files: &'f [(&'static str, String); 3]) -> [(&'f str, &'f str); 
     files.each_ref().map(|(name, text)| (*name, &text[..]))
 }
 
-/// Runs `look` on each file of the application instead of lowering it, in the same checker tasks as a build.
 fn look_at_files<R: Send>(
     files: &[(&str, &str)],
     look: &(dyn Fn(&mut FileLowering<'_, '_, '_, '_>) -> R + Sync),
@@ -373,7 +364,6 @@ fn written_type_of(file: &mut FileLowering<'_, '_, '_, '_>, name: &str) -> Check
     written.expect("the variable has an annotation")
 }
 
-// None for the entry point.
 fn probe_memo(file: &mut FileLowering<'_, '_, '_, '_>) -> Option<Probe> {
     let path = file.queries.files().module(file.file).file_name();
     let mut prefixes = ["first", "second"].into_iter();
@@ -417,7 +407,6 @@ fn recursive_alias_is_cut_to_shallow_form() {
 
 #[test]
 fn dense_cycle_is_one_component_and_below_limit() {
-    // Whether a type is over the limit shows only where another type holds it.
     let source = format!(
         "{}export let v: F0[];\n",
         mutually_recursive_tuple_aliases(12)
@@ -515,7 +504,6 @@ fn part_beside_oversized_part_stays() {
 
 #[test]
 fn shared_union_is_counted_once() {
-    // `H[]` reaches 59 types. With the union counted once for each alias, `H` would weigh 345.
     let source = format!("{}export let v: H[];\n", map_aliases_sharing_union(40, 8));
     let lowered = lower(&source, LOWERED_LIMIT);
     let ty = expand_variable(&lowered, "v").ty;
@@ -527,7 +515,6 @@ fn shared_union_is_counted_once() {
 
 #[test]
 fn limit_counts_distinct_types() {
-    // The tuple and its four elements are five types.
     for (max_type_nodes, integers) in [(4, None), (5, Some((1, 4)))] {
         let lowered = lower("export let v: [1, 2, 3, 4][];\n", Some(max_type_nodes));
         let ty = expand_variable(&lowered, "v").ty;
@@ -819,7 +806,6 @@ fn of_the_files_of_a_task_the_first_says_what_the_fields_of_an_interface_hold() 
         find_variable(first, "first1"),
         find_variable(second, "second1")
     );
-    // The link takes what the file with the least number says of a type. The second imports the first, so it is lowered behind it.
     assert!(first.fragment.file < second.fragment.file);
     let [of_first, of_second] = [first, second].map(|file| fields_named(file, "side"));
     assert!(!of_first.is_empty() && of_second.is_empty());

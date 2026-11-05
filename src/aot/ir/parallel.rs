@@ -32,7 +32,6 @@ pub fn map_each<T: Send, R: Send>(
     slots.into_iter().map(take).collect()
 }
 
-/// Moves what the boxes hold to the end of `list`, on all threads. For records that are large enough for the copy to count.
 pub fn extend_from_boxes<T: Send>(
     list: &mut Vec<T>,
     boxes: Vec<Box<T>>,
@@ -51,7 +50,6 @@ pub fn extend_from_boxes<T: Send>(
     unsafe { list.set_len(list.len() + count) };
 }
 
-/// Appends what `make` gives for each item of the lists, in their order.
 pub fn extend_from_each<S: Sync, T: Send>(
     list: &mut Vec<T>,
     lists: &[Vec<S>],
@@ -77,7 +75,6 @@ pub fn extend_from_each<S: Sync, T: Send>(
     unsafe { list.set_len(list.len() + count) };
 }
 
-/// Moves what the lists hold to the end of `list`, one list behind the other, on all threads: where each list goes follows from the lengths of those before it.
 pub fn extend_from_lists<T: Send>(
     list: &mut Vec<T>,
     lists: Vec<Vec<T>>,
@@ -102,7 +99,6 @@ pub fn extend_from_lists<T: Send>(
     unsafe { list.set_len(list.len() + count) };
 }
 
-/// Frees what the items own on all threads.
 pub fn drop_each<T: Send>(items: Vec<T>, in_parallel: InParallel<'_>) {
     let items = items.into_iter().map(|item| Guarded::new(Some(item)));
     let items: Vec<Guarded<Option<T>>> = items.collect();

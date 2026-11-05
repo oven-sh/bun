@@ -26,7 +26,6 @@ pub enum DirectiveKind {
     NakedConstructor,
 }
 
-/// How a stack trace lists a function of the library.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FramesMark {
     NativeCode,
@@ -147,7 +146,6 @@ pub fn native_binding(
     Some(NATIVE_BINDINGS[index].3)
 }
 
-/// The mark that a text is as the first statement of a function of the library: src/js/README.md.
 pub fn frames_mark_of(text: &[u8]) -> Option<FramesMark> {
     match text {
         b"frames are native code" => Some(FramesMark::NativeCode),

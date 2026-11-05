@@ -9,10 +9,10 @@ use bun_sema::hir::{
 };
 use bun_sema::program::Sym;
 
-use super::FunctionLowering;
+use super::{FunctionLowering, parameters};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::ir::{BlockId, PropertyKeyId, TypeTable, ValueId, VariableKey};
+use crate::ir::{BlockId, FunctionKey, PropertyKeyId, TypeTable, ValueId, VariableKey};
 
 pub(in crate::lower) use self::key::find_function_name;
 pub(in crate::lower) use self::reference::{Holder, KeyConversion, Reference};
@@ -32,12 +32,10 @@ impl PropertyName {
     }
 }
 
-/// The name that a function or a class takes from the place where it stands.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct GivenName {
     pub(crate) name: PropertyName,
     pub(crate) is_under_computed_key: bool,
-    /// Where a binding gives the name: how it is written. `name` is how it is shown.
     pub(crate) written_name: Option<Atom>,
 }
 
@@ -111,7 +109,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_define_inside(object, name, value, None);
     }
 
-    // The conversion of the key runs inside the built-in function that the definition stands for.
     pub(crate) fn emit_define_inside(
         &mut self,
         object: ValueId,
@@ -189,14 +186,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(value)
     }
 
-    // `a.default` and `a.n`, where `a` stands for the copy that a helper makes of what `require` answered and a variable of its own holds the answer: `default` is the answer, and the getter of a name reads the name there. Where that variable is empty the access is what it is written as.
     fn lower_member_of_answer(&mut self, access: ExprId) -> Option<ValueId> {
         let modules = self.file.inputs.modules;
         modules.answer_member(self.file.file, access)?;
         Some(self.lower_member_of_answer_below(access, None).0)
     }
 
-    /// `base`: what `a` holds, where it is already read. The member, and once more what was read on the answer alone: nothing where the access ran as it is written.
     pub(in crate::lower) fn lower_member_of_answer_below(
         &mut self,
         access: ExprId,
@@ -257,6 +252,14 @@ pub(in crate::lower) fn lower_member(
     let Some((object, member)) = hir.member_key(access) else {
         unreachable!("lower_member takes a Dot or an Index expression");
     };
+    let counted =
+        parameters::find_function_whose_arguments_are_counted(hir, lowering.file.bound, access);
+    if let Some(function) = counted
+        && matches!(lowering.key, FunctionKey::Source(source) if source.function == function)
+        && let Some(count) = lowering.builder.argument_count()
+    {
+        return count;
+    }
     if matches!(member, MemberKey::PrivateName(_)) {
         let base = lowering.lower_member_base(access, object, exit);
         return lowering.emit_private_get(base, access);
@@ -287,8 +290,6 @@ pub(in crate::lower) fn lower_member_operands(
     (base, name)
 }
 
-/// A read reports at the end of its object.
-// Plain Bun answers these of a sloppy function that is running.
 fn warn_of_function_introspection(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
@@ -335,7 +336,6 @@ mod tests {
     use crate::compile::testing::{default_settings, lower_program_with_settings};
     use crate::ir::Opcode;
 
-    // Where the reads of members report, in the order of the code.
     fn positions_of_member_reads(source: &str) -> Vec<u32> {
         let lowered = lower_program_with_settings(&[("main.ts", source)], &default_settings());
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);
@@ -366,7 +366,6 @@ mod tests {
         assert_eq!(positions_of_member_reads(source), expected);
     }
 
-    // These builds have no `--minify-syntax`, as `bun build --compile --aot <file>` has none.
     fn count_tests_of_updated_objects(source: &str) -> usize {
         let lowered = lower_program_with_settings(&[("main.js", source)], &default_settings());
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);
@@ -379,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn update_under_a_key_that_bun_run_folds_has_the_error_of_its_read() {
+    fn update_under_a_key_that_only_minified_syntax_folds_tests_its_object() {
         let source = r#"export function written(holder) {
   holder[`name`]++;
   holder[`na${"me"}`]++;
@@ -405,11 +404,11 @@ export function constant(holder) {
   holder[text + ""]--;
 }
 "#;
-        assert_eq!(count_tests_of_updated_objects(source), 0);
+        assert_eq!(count_tests_of_updated_objects(source), 15);
     }
 
     #[test]
-    fn update_under_a_key_that_bun_run_leaves_alone_tests_its_object() {
+    fn update_under_a_key_that_no_build_folds_tests_its_object() {
         let source = r#"export function written(holder, free) {
   holder[`${free}`]++;
   holder[`n${free}`] += 1;
@@ -428,6 +427,6 @@ export function inTwoPieces(holder) {
   holder[text]++;
 }
 "#;
-        assert_eq!(count_tests_of_updated_objects(source), 8);
+        assert_eq!(count_tests_of_updated_objects(source), 7);
     }
 }

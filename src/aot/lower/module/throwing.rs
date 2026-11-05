@@ -21,9 +21,6 @@ use crate::lower::{
 };
 use crate::modules::{ExportBinding, ModuleKind, ModuleRef, Shape};
 
-/// The unit of a file that cannot be compiled: whoever loads the file gets a SyntaxError with `message`.
-/// The other files are lowered as if this one were sound, so the unit defines whatever they may name of it.
-/// `None`: as `lower_file`.
 pub fn lower_file_that_throws(
     inputs: &LoweringInputs<'_>,
     checker: &mut Checker<'_, '_>,
@@ -32,7 +29,6 @@ pub fn lower_file_that_throws(
 ) -> Option<LoweredFile> {
     let mut task = take_task_state(checker);
     let lowered = checker.with_queries(file, &inputs.query_inputs(), |queries| {
-        // The checker may have refused the tree.
         queries.answer_nothing_from_now_on();
         lower_with_queries(inputs, queries, file, &mut task, |lowering, function| {
             lower_function_of_throwing_file(lowering, function, message);
@@ -40,7 +36,6 @@ pub fn lower_file_that_throws(
     });
     put_back_task_state(checker, task);
     let mut lowered = lowered?;
-    // `declare_module_body` has named the value that a file of data exports by default. This file exports nothing: every load of it has to run the body.
     lowered.fragment.module.data = None;
     lowered.fragment.module.throws_at_load = true;
     Some(lowered)
@@ -56,10 +51,8 @@ fn lower_function_of_throwing_file(
             declare_what_other_files_may_name(file);
             lower_function_that_throws(file, function, message);
         }
-        // Both are made from the graph of modules and read nothing of the tree. The face evaluates the file first, so it throws what the body throws.
         FunctionKey::FaceBody(_) => file.lower_face_body(function),
         FunctionKey::CheckBody(_) => file.lower_check_body(function),
-        // The link of a graph throws nothing for the text of a file: its body does, ahead of every other body of the graph (`end_loads_at_modules_that_throw`).
         FunctionKey::Instantiation(_) => {
             super::finish_body(FunctionLowering::begin(file, function), None);
         }
@@ -79,7 +72,6 @@ fn lower_function_of_throwing_file(
     }
 }
 
-// A file that imports this one in a cycle can call a function declaration before the body of the module runs, so no function here is unreachable.
 fn lower_function_that_throws(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,
@@ -105,13 +97,11 @@ fn declare_what_other_files_may_name(file: &mut FileLowering<'_, '_, '_, '_>) {
 }
 
 fn is_live_function(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> bool {
-    // The parser can leave a function that nothing refers to, and the binder gives such a function no scope.
     file.bound.fns[function.idx()].scope.is_some()
         && !matches!(file.hir[function].body, FnBody::None)
         && !file.decisions().is_dead_function(function)
 }
 
-// The function whose header `create_header` reads for the header of what is written in `scope`.
 fn find_function_around(file: &FileLowering<'_, '_, '_, '_>, mut scope: ScopeId) -> Option<FnId> {
     let bound = file.bound;
     loop {
@@ -125,8 +115,6 @@ fn find_function_around(file: &FileLowering<'_, '_, '_, '_>, mut scope: ScopeId)
     }
 }
 
-// `create_header` reads the header of the enclosing function, so the outermost function is declared first.
-// What encloses live code need not be live: `function f(a = () => 1);` has no body.
 fn declare_with_enclosing_functions(
     file: &mut FileLowering<'_, '_, '_, '_>,
     is_declared: &mut [bool],
@@ -147,8 +135,6 @@ fn declare_with_enclosing_functions(
     }
 }
 
-// A key that is named and not defined stops the link, and a function is named wherever it is written: by the type of a variable that holds it,
-// by the layout of what it constructs, by the guard of a helper, by the signature of an overload.
 fn declare_written_functions(file: &mut FileLowering<'_, '_, '_, '_>, is_declared: &mut [bool]) {
     for function in (0..is_declared.len() as u32).map(FnId) {
         if is_live_function(file, function) {
@@ -165,7 +151,6 @@ fn is_dead_class(file: &FileLowering<'_, '_, '_, '_>, class: ClassId) -> bool {
     }
 }
 
-// The type of a variable that holds a class names the constructor.
 fn declare_constructors(file: &mut FileLowering<'_, '_, '_, '_>, is_declared: &mut [bool]) {
     let (hir, bound) = (file.hir, file.bound);
     for class in (0..hir.classes.len() as u32).map(ClassId) {
@@ -192,7 +177,6 @@ fn declare_constructors(file: &mut FileLowering<'_, '_, '_, '_>, is_declared: &m
     }
 }
 
-// `declare_module_body` has defined the variable of each export of an ES module. No store follows: what has a dead zone stays in it.
 fn define_variables_that_other_files_read(file: &mut FileLowering<'_, '_, '_, '_>) {
     let (modules, own_file) = (file.inputs.modules, file.file);
     if holds_mock_in_variable(modules, own_file) {
@@ -225,7 +209,6 @@ fn makes_container(file: &FileLowering<'_, '_, '_, '_>, symbol: SymbolId) -> boo
     declarations.any(|&declaration| bound.makes_container_object(hir, declaration))
 }
 
-// `define_remaining_layouts` defines each class, each constructor function, and each container that the file has named.
 fn name_exported_containers(file: &mut FileLowering<'_, '_, '_, '_>) {
     let modules = file.inputs.modules;
     for export in modules.exports(file.file) {

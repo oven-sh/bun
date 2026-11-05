@@ -63,6 +63,10 @@ impl CompileFailure {
                 out.extend_from_slice(path);
                 let _ = write!(out, ": {error}");
             }
+            CompileFailure::SourceChanged { path } => {
+                out.extend_from_slice(path);
+                out.extend_from_slice(b" changed while the build was running, so a source map would show code that the executable doesn't run\nnote: run the build again");
+            }
         }
     }
 }

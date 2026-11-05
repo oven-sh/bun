@@ -341,6 +341,24 @@ export const shapes: Shape[] = [
       return files;
     },
   },
+  // A name that a test may have laid on Object.prototype is not absent above the classes. Each such name that was read off an object out of many layouts walked every one of those layouts, and said
+  // the same of each that does not have the name: names x layouts. On a suite of 4,444 test files 1,072 names more took Link 48.8 G instructions more.
+  {
+    name: "names that a test stores on an object from somewhere, read off objects of as many layouts that meet",
+    counted: "names, and layouts",
+    size: 1200,
+    entry: "a.test.js",
+    isTestRun: true,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "a.test.js":
+        `import { expect, test } from "bun:test";\n` +
+        `const put = object => {\n${lines(size, index => `  object.n${index} = ${index};`)}};\n` +
+        `const made = [\n${lines(size, index => `  { f${index}: ${index} },`)}];\n` +
+        `const read = object => {\n  let sum = 0;\n${lines(size, index => `  sum += object.n${index} ?? 1;`)}  return sum;\n};\n` +
+        `test("it reads", () => {\n  if (made.length < 0) put(Object.prototype);\n  expect(read(made[made.length >> 1] ?? {})).toBe(${size});\n});\n`,
+    }),
+  },
   // A test run reads every file in front of its build, to find what the tests replace. `p.mark = 1` asks there what `p` is: some built-in object, perhaps. The way back runs through what a constant
   // is made of and what the callers pass for a parameter, and through `a.b`, `||` and `&&` there. Each write walked that way anew, through every name in front of it: writes x names.
   // It took two minutes over six large package files.
@@ -561,6 +579,42 @@ export const shapes: Shape[] = [
             `interface Item${index} { id: number; name: string; own${index}?: number }\n` +
             `function weigh${index}(item: Item${index}): number { return item.id + item.name.length + (item.own${index} ?? 0); }\n` +
             `total += weigh${index}({ id: ${index}, name: "n", own${index}: 1 });`,
+        ) +
+        "console.log(total);\n",
+    }),
+  },
+  {
+    name: "written types of the same names that a tag tells apart, each with a literal of constants",
+    counted: "types, each with a literal and a function",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        "let total = 0;\n" +
+        lines(
+          size,
+          index =>
+            `interface Item${index} { kind: "k${index}"; id: number; name: string }\n` +
+            `function weigh${index}(item: Item${index}): number { return item.id + item.name.length + item.kind.length; }\n` +
+            `total += weigh${index}({ kind: "k${index}", id: ${index}, name: "n" });`,
+        ) +
+        "console.log(total);\n",
+    }),
+  },
+  {
+    name: "written types of the same names that a tag tells apart, each with a literal made at run time",
+    counted: "types, each with a literal and a function",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        "let total = 0;\n" +
+        lines(
+          size,
+          index =>
+            `interface Item${index} { kind: "k${index}"; id: number; name: string }\n` +
+            `function weigh${index}(item: Item${index}): number { return (item.id + item.name.length + item.kind.length) % 1000; }\n` +
+            `total += weigh${index}({ kind: "k${index}", id: total, name: String(total) });`,
         ) +
         "console.log(total);\n",
     }),
@@ -2230,6 +2284,18 @@ console.log(typeof outmost.inner);
         "function f0(n) { let s = 0; for (let i = 0; i < n; i++) s += i; return s; }\n" +
         lines(size, index => `function f${index + 1}(n) { let s = 0; for (let i = 0; i < n; i++) s += f${index}(8); return s; }`) +
         `console.log(f${size}(0));\n`,
+    }),
+  },
+  {
+    name: "functions that each call the next for each of the arguments that the caller writes",
+    counted: "functions",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "function f0(...v) { let s = 0; for (const x of v) s += x; return s; }\n" +
+        lines(size, index => `function f${index + 1}(...v) { let s = 0; for (const x of v) s += f${index}(x, 1, 2, 3, 4, 5, 6, 7); return s; }`) +
+        `console.log(f${size}());\n`,
     }),
   },
   {

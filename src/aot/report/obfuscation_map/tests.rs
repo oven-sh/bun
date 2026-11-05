@@ -1,5 +1,6 @@
 use bstr::{BString, ByteSlice};
 use bun_base64::vlq::decode;
+use bun_sema_driver::host::from_native;
 
 use super::*;
 use crate::engine::testing::ResultRecords;
@@ -10,7 +11,6 @@ use crate::report::testing::{
     DEPENDENCY, LINE_1_COLUMN_5, LINE_2_COLUMN_14, PROGRAM, RUNTIME, ReportFixture,
 };
 
-// The fixture has fewer modules.
 const MODULE_WITHOUT_SOURCE: u32 = 9;
 
 fn unlocated(function: u32, site: u32) -> Site {
@@ -58,7 +58,6 @@ fn decode_fields(segment: &[u8]) -> Vec<i32> {
     fields
 }
 
-// Per segment: the function, then as many of site, source, line, column and name as it has fields.
 fn decode_sites(mappings: &[u8]) -> Vec<(usize, Vec<i32>)> {
     let mut original = [0; 4];
     let mut sites = Vec::new();
@@ -109,7 +108,7 @@ fn map_of(records: &[ObfuscatedSiteRecord], text: &[u8]) -> BString {
         debug_id: None,
     };
     let map = fixture.with_input(|input| write(input.engine, input.texts, executable));
-    BString::from(map)
+    BString::from(map.expect("no file has changed"))
 }
 
 fn texts() -> SourceTexts {
@@ -273,6 +272,41 @@ fn record_without_text_is_not_located() {
 }
 
 #[test]
+fn map_of_a_file_edited_since_it_was_compiled_is_refused() {
+    let name = format!("bun-aot-obfuscation-map-{}.ts", std::process::id());
+    let path = std::env::temp_dir().join(name);
+    let path_on_disk = from_native(path.to_str().expect("the path is text").as_bytes());
+    let compiled = b"first;\nsecond;\n";
+    let records = [record(0, 0, 0, 7)];
+    let fixture = ReportFixture::new(ResultRecords {
+        obfuscated_sites: &records,
+        ..ResultRecords::default()
+    });
+    let executable = Executable {
+        file_name: b"app",
+        debug_id: None,
+    };
+    let write_map = |on_disk: &str| {
+        std::fs::write(&path, on_disk).expect("the folder for temporary files takes a file");
+        let source = ModuleSource::new_on_disk(b"/p/a.ts", &path_on_disk, compiled);
+        let texts = SourceTexts::new(vec![Some(source)]);
+        let map = fixture.with_input(|input| write(input.engine, &texts, executable));
+        map.map(BString::from)
+            .map_err(|changed| BString::from(changed.path))
+    };
+    let as_compiled = write_map("first;\nsecond;\n").expect("the file is as it was compiled");
+    assert!(
+        as_compiled.contains_str(r#""sourcesContent":["first;\nsecond;\n"]"#),
+        "{as_compiled}"
+    );
+    for edited in ["first;\nthird!;\n", "first;\n"] {
+        let refused = write_map(edited).expect_err("the file is not what was compiled");
+        assert!(refused.ends_with(b"p/a.ts"), "{refused}");
+    }
+    std::fs::remove_file(&path).expect("the file is there");
+}
+
+#[test]
 fn map_without_sites_has_empty_lists() {
     assert_eq!(
         map_of(&[], b""),
@@ -353,7 +387,7 @@ fn map_has_the_debug_id_in_both_spellings() {
     };
     let map = fixture.with_input(|input| write(input.engine, input.texts, executable));
     assert!(
-        BString::from(map).starts_with(
+        BString::from(map.expect("no file has changed")).starts_with(
             concat!(
                 r#"{"version":3,"file":"app","debugId":"5f0c2a9e-41d7-b386-0e9d-4c17a2f3b658","#,
                 r#""debug_id":"5f0c2a9e-41d7-b386-0e9d-4c17a2f3b658","sources":"#,
@@ -373,7 +407,6 @@ fn function_mappings(starts: &[FunctionStart]) -> BString {
     BString::from(out)
 }
 
-// As Metro's reader does it: lines count from one, and a `;` sets the column back to zero.
 fn decode_function_mappings(mappings: &[u8]) -> Vec<[i32; 3]> {
     let (mut line, mut name) = (1, 0);
     let mut starts = Vec::new();

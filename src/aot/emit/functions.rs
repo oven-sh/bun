@@ -7,8 +7,6 @@ use std::sync::Arc;
 
 const FUNCTIONS_PER_SLICE: usize = 256;
 
-// The lists, concatenated in order, hold the functions in program id order. `ExternalBodies::take_from` lays out the bodies
-// in the same order, and the engine pairs record i with body i.
 pub(super) fn create_tasks_for_shared_functions<'p, 'o>(
     lists: Vec<FunctionsOfUnit>,
 ) -> Vec<Task<'p, 'o>> {
@@ -33,8 +31,6 @@ pub(super) fn measure<'a>(
     }
 }
 
-// Ids are written as the record holds them. Where the link left them local to a unit's tables, the engine maps them to
-// program ids through the `unit_index` of the function's body.
 pub(super) fn write<'a>(
     functions: impl ExactSizeIterator<Item = &'a Function>,
     sections: &mut SectionWriter<'a>,

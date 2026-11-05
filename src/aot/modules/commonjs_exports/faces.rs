@@ -1,5 +1,3 @@
-//! What an ES module sees of a CommonJS file: the face that it requests in place of the file, and the check that throws for a name that is missing.
-
 use super::{CommonJsExports, CommonJsImport, CommonJsInput, Target};
 use crate::ir::for_each_mut;
 use crate::modules::bindings::{ExportBinding, ImportBinding, ModuleExport, SyntheticExportId};
@@ -22,7 +20,6 @@ const NO_FACE: u32 = u32::MAX;
 struct Face {
     file: FileId,
     copies: Vec<SyntheticExportId>,
-    /// The rank of each of `copies`, ascending.
     ranks: Vec<u32>,
     exports: Vec<ModuleExport>,
     captures: bool,
@@ -30,15 +27,12 @@ struct Face {
 
 type CheckedCopies = Vec<(SyntheticExportId, ModuleFailureId)>;
 
-/// A name that an ES module imports and that the CommonJS module may end without.
 #[derive(Copy, Clone)]
 struct AbsentName {
     imported: CommonJsImport,
-    /// The place of what is thrown among the failures of the importer.
     order: FailureOrder,
 }
 
-/// A copy that may be empty, and what is thrown if it is: a failure of `importer`, which has no number until every failure of the program is known.
 #[derive(Copy, Clone)]
 struct UnnumberedCheck {
     copy: SyntheticExportId,
@@ -46,18 +40,14 @@ struct UnnumberedCheck {
     order: FailureOrder,
 }
 
-/// A name of a CommonJS module that an ES module is bound to.
 #[derive(Copy, Clone)]
 struct RequestedName {
     importer: FileId,
-    /// The file that shows the name to the importer, whose face takes the copy.
     exporter: FileId,
-    /// The module that has the variable, and the name there.
     owner: ModuleRef,
     name: Atom,
 }
 
-/// A requested name whose variable has a number.
 #[derive(Copy, Clone)]
 struct ImportedName {
     exporter: FileId,
@@ -68,48 +58,32 @@ struct ImportedName {
 
 struct SeenNamespace {
     file: FileId,
-    /// In the order of code units, with `default`. `None`: the text of the file does not say all of them.
     names: Option<Vec<Atom>>,
 }
 
-/// What `Faces::decide` reads once.
 #[derive(Default)]
 struct DecisionInputs {
-    /// What import statements and `export { .. } from` name.
     written_imports: Vec<CommonJsImport>,
-    /// `ns.name`, and what JSX imports.
     names_read: Vec<RequestedName>,
-    /// The CommonJS files that an import statement of an ES module loads.
     imported_files: Vec<FileId>,
-    /// By importer, and for each importer in the order in which a link looks for them.
     absent_names: Vec<AbsentName>,
-    /// By root: the ES modules that are linked with it and import a name that may be absent, in link order.
     linked_importers: Vec<(FileId, Vec<FileId>)>,
-    /// `ExportTables::dropped_commonjs_names`
     dropped_names: Vec<CommonJsImport>,
 }
 
 #[derive(Default)]
 pub(super) struct Faces {
     inputs: DecisionInputs,
-    /// By (importer, site), each pair of exporter and copy once. The place of a name is the rank of its copy.
     imported_names: Vec<ImportedName>,
-    /// Sorted: the file that has the variable, and the place in `imported_names`.
     places_by_owner: Vec<(FileId, u32)>,
-    /// By file.
     seen_namespaces: Vec<SeenNamespace>,
-    /// Sorted. Such a copy, where it is empty after the link, stands for an export that nobody sees.
     copies_that_stay_empty: Vec<SyntheticExportId>,
-    /// By file: the place in `faces`, or `NO_FACE`.
     face_of: Vec<u32>,
     faces: Vec<Face>,
-    /// By root. `number_checks` takes them.
     unnumbered_checks: Vec<(FileId, Vec<UnnumberedCheck>)>,
-    /// By root.
     checks: Vec<(FileId, CheckedCopies)>,
 }
 
-/// The CommonJS files whose namespace object something may look at: `ns` as a value, `import()`, `export *`, an exported namespace, a mock.
 pub(in crate::modules) fn collect_seen_namespaces(
     modules: &ModuleSet,
     tables: &ExportTables,
@@ -154,7 +128,6 @@ fn collect_imported_files(scans: &Scans, modules: &ModuleSet) -> Vec<FileId> {
     imported
 }
 
-// `ns.name`, where `ns` is the namespace of a CommonJS file or of an ES module that hands its names on, and the names that JSX imports without a statement.
 fn collect_names_read(
     input: &CommonJsInput<'_, '_, '_>,
     tables: &ExportTables,
@@ -194,7 +167,6 @@ fn collect_names_read(
     names
 }
 
-// The importer and the imported module of each import between ES modules: by importer, and for each importer in the order of its text.
 fn collect_imports_between_es_modules(scans: &Scans, modules: &ModuleSet) -> Vec<(FileId, FileId)> {
     let mut imports = Vec::new();
     for &importer in &modules.compiled_files {
@@ -214,7 +186,6 @@ fn collect_imports_between_es_modules(scans: &Scans, modules: &ModuleSet) -> Vec
     imports
 }
 
-// By file: the imports lead from it to one of `targets`, or it is one.
 fn find_modules_that_lead_to(
     targets: Vec<FileId>,
     imports: &[(FileId, FileId)],
@@ -239,7 +210,6 @@ fn find_modules_that_lead_to(
     leads_there
 }
 
-// A module is linked after everything that it imports. `imports` is sorted by importer.
 fn list_importers_in_link_order(
     root: FileId,
     imports: &[(FileId, FileId)],
@@ -304,14 +274,12 @@ impl DecisionInputs {
     }
 }
 
-// The text of the file does not say whether an import statement finds the name when the face runs.
 fn is_known_only_at_run_time(exports: &CommonJsExports, owner: ModuleRef, name: Atom) -> bool {
     let Some(text) = exports.text_of(owner) else {
         return false;
     };
     !exports.has_names(owner)
         && (!text.has_names
-            // The face may run while the body of the file does.
             || text.is_half
             || match name == known::default {
                 true => {
@@ -379,7 +347,6 @@ impl Faces {
         seen.binary_search_by_key(&file, |namespace| namespace.file)
     }
 
-    // The copies of a face are kept in rank order, whatever the order in which the modules lose their names.
     fn add_copy(&mut self, exporter: FileId, owner: FileId, copy: SyntheticExportId, rank: u32) {
         let face = self.ensure_face(exporter);
         if !face.copies.contains(&copy) {
@@ -387,7 +354,6 @@ impl Faces {
             face.copies.insert(place, copy);
             face.ranks.insert(place, rank);
         }
-        // The copy is a variable of the face of the file that has the name.
         self.ensure_face(owner);
     }
 
@@ -411,7 +377,6 @@ impl Faces {
                 name,
             })
         });
-        // A link binds what the statements of a module name before the body of the module reads anything.
         let mut requested: Vec<(RequestedName, u32)> = written.chain(read).zip(0..).collect();
         requested.shared_sort_unstable_by_key(|&(requested, site)| (requested.importer, site));
         let mut listed = FxHashSet::default();
@@ -446,7 +411,6 @@ impl Faces {
             return;
         }
         self.add_copy(exporter, owner, copy, place);
-        // The run time fills the copies of a face from the object of the file behind it.
         if is_known_only_at_run_time(exports, module, name) {
             self.ensure_face(owner).captures = true;
         }
@@ -487,7 +451,6 @@ impl Faces {
         let is_said_by_text =
             exports.shape(module) == Shape::Names && exports.marker(module).is_some();
         let names = self.seen_namespaces[place].names.take();
-        // A name that only the export table asks for gets a rank above every name that an importer asks for.
         let first_rank = self.imported_names.len() as u32;
         let table = names.as_ref().filter(|_| is_said_by_text).map(|names| {
             let mut table = Vec::with_capacity(names.len());
@@ -507,8 +470,6 @@ impl Faces {
         }
     }
 
-    // `bun run` copies the exports of an imported CommonJS file into a namespace even if the importer names none of them, and the copy runs their getters.
-    // A file whose text only stores to its exports has no getter to run.
     fn add_imported_file(&mut self, exports: &CommonJsExports, file: FileId) {
         let text = exports.text_of(ModuleRef::File(file));
         if text.is_none_or(|text| !text.has_names) {
@@ -552,7 +513,6 @@ impl Faces {
         self.copies_that_stay_empty.dedup();
     }
 
-    /// Which files have a face, what it copies, and which graphs of imports have a check.
     pub(super) fn decide(&mut self, exports: &CommonJsExports) {
         let inputs = core::mem::take(&mut self.inputs);
         self.list_imported_names(exports, inputs.written_imports, inputs.names_read);
@@ -573,7 +533,6 @@ impl Faces {
         );
     }
 
-    /// Something looks at the namespace object of the file, which has lost its names.
     pub(super) fn see_namespace(&mut self, exports: &CommonJsExports, file: FileId) {
         if let Err(place) = self.find_seen_namespace(file) {
             let namespace = SeenNamespace { file, names: None };
@@ -582,7 +541,6 @@ impl Faces {
         }
     }
 
-    /// The module has lost its names, so no import is bound to a variable of it any more.
     pub(super) fn decide_behind(&mut self, exports: &CommonJsExports, module: ModuleRef) {
         let ModuleRef::File(file) = module else {
             return;
@@ -599,7 +557,6 @@ impl Faces {
 }
 
 impl CommonJsExports {
-    /// What ES modules request in place of the file. `None`: they request the file itself.
     pub fn face(&self, module: ModuleRef) -> Option<ModuleRef> {
         match module {
             ModuleRef::File(file) if self.faces.find(file).is_some() => Some(ModuleRef::Face(file)),
@@ -607,19 +564,16 @@ impl CommonJsExports {
         }
     }
 
-    /// The module that throws for the first name that the graph of imports below `root` imports and no CommonJS module has.
     #[cfg(test)]
     pub fn check(&self, root: FileId) -> Option<ModuleRef> {
         (!self.checked_copies(root).is_empty()).then_some(ModuleRef::Check(root))
     }
 
-    /// The names whose copies the body of the face takes, after the evaluation of the file. In the order in which the importers ask for them.
     pub fn copies(&self, face: FileId) -> &[SyntheticExportId] {
         let face = self.faces.find(face);
         face.map_or(&[], |face| &face.copies[..])
     }
 
-    /// The export table of the face, in the order of code units, with `default`.
     pub fn exports_of_face(&self, face: FileId) -> &[ModuleExport] {
         let face = self.faces.find(face);
         face.map_or(&[], |face| &face.exports[..])
@@ -631,13 +585,11 @@ impl CommonJsExports {
         }
     }
 
-    /// The text of the file does not say what it exports, so the run time lists the names of the object when the face runs.
     pub fn face_captures(&self, face: FileId) -> bool {
         let face = self.faces.find(face);
         face.is_some_and(|face| face.captures)
     }
 
-    /// Called once, with the final numbering of the failures. No earlier one will do: an error of the build that is turned into a failure that throws takes a number, and every later number moves up.
     pub(in crate::modules) fn number_checks(&mut self, failures: &NumberedFailures) {
         let number =
             |check: UnnumberedCheck| (check.copy, failures.id_of(check.importer, check.order));
@@ -647,7 +599,6 @@ impl CommonJsExports {
         self.faces.checks = numbered.collect();
     }
 
-    /// In the order in which the link of the graph gets to them: the copy that may be empty, and what is thrown if it is.
     pub fn checked_copies(&self, check: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
         debug_assert!(
             self.faces.unnumbered_checks.is_empty(),
@@ -658,7 +609,6 @@ impl CommonJsExports {
         found.map_or(&[], |place| &checks[place].1[..])
     }
 
-    /// No link throws for the name alone: a TypeScript module exports it, and is linked without the export where the file lacks the name.
     pub fn may_stay_empty(&self, copy: SyntheticExportId) -> bool {
         let copies = &self.faces.copies_that_stay_empty;
         copies.binary_search(&copy).is_ok()
@@ -727,7 +677,6 @@ mod tests {
 
     #[test]
     fn a_check_throws_the_failure_of_its_own_name() {
-        // In a test run the name that `fine.mjs` lacks is thrown where the file loads, so it takes the number in front of `nope`.
         let above = "import { absent } from './fine.mjs'; import { nope } from './lib.cjs';\n\
                      console.log(absent, nope);";
         let files = [

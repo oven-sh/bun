@@ -31,7 +31,9 @@ fn find_jsx_reference(
 ) -> ImplicitReference {
     let found = references.binary_search_by(|reference| {
         let recorded_root = match reference.kind {
-            ImplicitReferenceKind::JsxFactory => JsxRoot::Factory,
+            ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::DefinedPath => {
+                JsxRoot::Factory
+            }
             ImplicitReferenceKind::JsxFragment => JsxRoot::Fragment,
             ImplicitReferenceKind::DecoratorMetadata(_) => return Ordering::Greater,
         };
@@ -58,7 +60,6 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // The element has no spread attribute.
     pub(crate) fn lower_element_parts_for_effect(&mut self, expression: ExprId) {
         let hir = self.file.hir;
         let ExprKind::Jsx(jsx) = hir[expression].kind else {
@@ -79,7 +80,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // An element is a call of the factory, which may stand in tail position.
     pub(in crate::lower) fn lower_jsx(&mut self, expression: ExprId, tail: Tail<'_>) -> ValueId {
         let hir = self.file.hir;
         let ExprKind::Jsx(jsx) = hir[expression].kind else {
@@ -154,7 +154,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let root_name = self
             .file
             .intern_binding_name(reference.binding, reference.name);
-        // Bun's transpiler prints the first name of a pragma as it is written there, so a quoted text is a string.
         let function = match find_quoted_text(&path[0]) {
             Some(text) => {
                 let text = self.file.intern_bytes(text);

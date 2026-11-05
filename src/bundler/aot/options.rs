@@ -216,6 +216,9 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     // As `bun run` and `bun test` transpile the same files.
     code.transpiles_by_working_directory = input.aot.runs_in_place;
     code.allows_es_module_mark = input.aot.checks_only || input.aot.runs_tests;
+    code.entry_points_that_run_first = (paths_of_preloads(input).iter())
+        .map(|path| from_argument(&code.working_directory, path))
+        .collect();
     let tsconfig_override = options.tsconfig_override.as_ref();
     code.tsconfig_override = tsconfig_override
         .or(input.aot.missing_tsconfig_override.as_ref())
@@ -281,13 +284,17 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         entry_point_imports_vitest: input.aot.runs_tests,
         replaced_builtins: sorted_unique(input.aot.replaced_by_tests.builtins.iter().copied()),
         test_files: follow_links(input, input.aot.replaced_by_tests.test_files.clone()),
-        paths_of_preloads: (input.aot.replaced_by_tests.preloads.iter())
-            .flat_map(|preload| {
-                let absolute = absolute_path(input.working_directory, preload);
-                real_file_path(&absolute).into_iter().chain([absolute])
-            })
-            .collect(),
+        paths_of_preloads: paths_of_preloads(input),
     }
+}
+
+fn paths_of_preloads(input: &OptionsInput<'_, '_, '_>) -> Vec<Vec<u8>> {
+    (input.aot.replaced_by_tests.preloads.iter())
+        .flat_map(|preload| {
+            let absolute = absolute_path(input.working_directory, preload);
+            real_file_path(&absolute).into_iter().chain([absolute])
+        })
+        .collect()
 }
 
 fn in_memory_files(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> {

@@ -24,17 +24,12 @@ const MARKS: u32 =
 pub(super) struct FinishScratch {
     is_reached: Vec<bool>,
     block_numbers: Vec<Option<BlockId>>,
-    /// By pending id. `NO_VALUE` until the value is encoded.
     numbers: Vec<u32>,
     order: Vec<BlockId>,
     stack: Vec<(BlockId, u32)>,
-    /// By block: how many edges of reached blocks lead to it. None once it is joined to the block in front of it.
     incoming: Vec<u32>,
-    /// By block: the block that its `Jump` leads to is joined to it.
     goes_on_in_target: Vec<bool>,
-    /// By block: its place in `order`.
     places: Vec<u32>,
-    /// By block: an edge that leads there may lead on to where its `Jump` leads.
     is_passed_by: Vec<bool>,
 }
 
@@ -202,7 +197,6 @@ fn block_length(block: &PendingBlock) -> usize {
         + targets_length
 }
 
-// A definition dominates its uses and blocks are encoded in reverse postorder, so a value has its number when a use of it is encoded.
 fn number_of(numbers: &[u32], value_count: u32, pending: ValueId) -> u32 {
     let number = numbers.get(pending.index()).copied();
     let number = number.filter(|&number| number != NO_VALUE);
@@ -214,7 +208,6 @@ fn number_of(numbers: &[u32], value_count: u32, pending: ValueId) -> u32 {
 }
 
 impl BodySize {
-    /// Terminates `block` with `Unreachable` if it is still open. Returns its successor count.
     fn add_block(&mut self, block: &mut PendingBlock) -> u32 {
         let terminator = &mut block.terminator;
         let terminator = terminator.get_or_insert_with(PendingTerminator::unreachable);
@@ -249,7 +242,6 @@ impl FinishScratch {
         size
     }
 
-    /// `order`: what is reached, in reverse postorder.
     fn reach_blocks(&mut self, blocks: &mut [PendingBlock]) -> BodySize {
         let mut size = BodySize::default();
         self.order.clear();
@@ -275,11 +267,6 @@ impl FinishScratch {
         size
     }
 
-    /// `if (a) b();`: the arm that is not written is a block that holds nothing and jumps to where the arms meet. An edge that leads to such a block leads on to where it jumps.
-    /// Nobody reads a parameter of it: it hands none on, and it stands above nothing but itself, because another edge leads down to its target.
-    /// The block in front of a loop stays, and so do two arms of one test that meet at once: a block leads to another by one edge.
-    /// So does a block that jumps into the region of a handler or out of one: what the engine lays on the edge that leads to it stands under the handler of the block.
-    /// Returns whether an edge was moved.
     fn pass_by_blocks(&mut self, blocks: &mut [PendingBlock], pending_words: &[u32]) -> bool {
         self.places.clear();
         self.places.resize(blocks.len(), 0);
@@ -301,7 +288,6 @@ impl FinishScratch {
         self.is_passed_by.clear();
         self.is_passed_by.resize(blocks.len(), false);
         let mut is_any_passed_by = false;
-        // From the last block up: where a block jumps to one that is passed by, it leads on with it.
         for id in self.order.iter().rev().filter(|&&id| id != ENTRY_BLOCK) {
             let block = &blocks[id.index()];
             let terminator = terminator_of(block);
@@ -369,7 +355,6 @@ impl FinishScratch {
         is_any_moved
     }
 
-    /// The last of the blocks that an edge to `block` passes by.
     fn find_last_passed_by(&self, blocks: &[PendingBlock], block: BlockId) -> Option<BlockId> {
         let next = |passed: &BlockId| {
             let target = terminator_of(&blocks[passed.index()]).targets[0].block;
@@ -379,7 +364,6 @@ impl FinishScratch {
         core::iter::successors(first, next).last()
     }
 
-    /// A block that ends in a `Jump` and the target, where nothing else leads there, are one block: whoever reads the body pays for each.
     fn join_blocks(
         &mut self,
         blocks: &[PendingBlock],
@@ -482,7 +466,6 @@ impl Encoder<'_> {
             let ty = declared_type_of(&self.values[parameter.index()]);
             ParameterHead { ty }.append_to(&mut self.words);
         }
-        // The handler's arguments may be parameters of `block`, so the parameters are numbered first.
         if let Some(handler) = &block.handler {
             self.encode_target(handler);
         }
@@ -496,7 +479,6 @@ impl Encoder<'_> {
             let Some(following) = joined else {
                 break;
             };
-            // A parameter of the joined block is what the `Jump` hands over for it.
             let arguments = arguments_of(&terminator_of(part).targets[0], self.pending_words);
             part = &self.blocks[following.index()];
             for (parameter, argument) in parameters_of(part).zip(arguments) {
@@ -515,7 +497,6 @@ impl Encoder<'_> {
         self.next_number += 1;
     }
 
-    /// Returns the id of the next operation in the block, or `NO_VALUE` if `id` is the last.
     fn encode_value(&mut self, id: ValueId) -> u32 {
         let value = self.values[id.index()];
         debug_assert!(
@@ -575,7 +556,6 @@ impl Encoder<'_> {
         self.words.extend_from_slice(proofs);
     }
 
-    /// Appends the words of `range` as they are. Returns `numbers`, and the words that it has appended.
     fn append_pending_words(&mut self, range: &Range<u32>) -> (&[u32], &[Cell<u32>]) {
         let start = self.words.len();
         let copied = words_in(self.pending_words, range);

@@ -46,7 +46,6 @@ impl<'s> AcceptedTree<'s, '_> {
     }
 }
 
-/// What the rest of the program says about a file.
 #[derive(Copy, Clone, Default)]
 pub(super) struct LoadInputs<'a, 's> {
     pub(super) stored_by_mocks: StoredByMocks<'s>,
@@ -188,12 +187,10 @@ fn summarize_resolved_file<'s, 'r>(
     }
 }
 
-/// What the names hold that a file reads of other files may fold it once more. The host looks at such a file when they have been looked up.
 pub(super) fn is_finished_later(analysis: &FileAnalysis<'_>) -> bool {
     analysis.module_format == ModuleFormat::Esm && !analysis.imported_names.is_empty()
 }
 
-/// Returns whether the host implied more files to load.
 pub(super) fn finish_code_file<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     target: CodeTarget<'r>,
@@ -211,7 +208,6 @@ pub(super) fn finish_code_file<'s, 'r>(
     true
 }
 
-/// The tree and its bindings stay. `None`: the file is to be loaded anew.
 pub(super) fn analyze_code_file_again<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     arena: &'s Arena,
@@ -251,7 +247,6 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
         arena,
     )?;
     code.analyzed.analysis = analysis;
-    // The same sites lead where they led. What the host implied comes again when it looks at the file.
     match has_same_import_sites {
         true => code.forget_implied(),
         false => {
@@ -324,7 +319,6 @@ fn accept_tree<'s, 'r>(
     }
 }
 
-/// `bun run` reads the type off the extension where `require` loads the file and where the file is an entry point. Where an `import` loads it, it asks the package alone.
 fn declared_module_type_of(
     context: &CodeLoadContext<'_, '_, '_>,
     path: &[u8],
@@ -536,15 +530,12 @@ pub(super) fn import_meta_main(
         ..key
     };
     let (is_entry_point, count) = (context.is_entry_point(file), context.entry_point_count());
-    match (is_entry_point, context.inputs.main_module, count) {
-        (_, MainModule::AnyFile, _) => None,
+    match (is_entry_point, count) {
         _ if context.host.may_any_file_become_main_module() => None,
-        (false, ..) if context.is_main_module_beside_entry_points(file) => None,
-        (false, ..) | (true, MainModule::Elsewhere, _) => Some(false),
-        // `./main.mjs?again`: `bun run` asks an ES module whether its file is the one that it was started with, and a CommonJS module whether it is `require.main`.
-        (true, MainModule::EntryPoint, 1) if file.path.len() != key.path.len() => None,
-        (true, MainModule::EntryPoint, 1) => Some(true),
-        (true, MainModule::EntryPoint | MainModule::EntryPointOfProcessOrWorker, _) => None,
+        (false, _) => Some(false),
+        (true, 1) if file.path.len() != key.path.len() => None,
+        (true, 1) => Some(true),
+        (true, _) => None,
     }
 }
 

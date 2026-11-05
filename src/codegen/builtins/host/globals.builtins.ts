@@ -787,7 +787,6 @@ const bundlerOptionNames = [
   "aotHarden",
   "aotOut",
   "aotTesting",
-  "aotTypeErrors",
   "asset",
   "assets",
   "auto",

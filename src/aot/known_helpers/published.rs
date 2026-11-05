@@ -1,5 +1,3 @@
-// The helpers of TypeScript, Babel, SWC, esbuild, rolldown and Bun that the compiler reads, in every form that was published.
-
 use super::{PublishedFunction, Reference};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

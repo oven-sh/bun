@@ -20,7 +20,6 @@ fn with_program(files: &[(&str, &str)], check: impl FnOnce(&BoundProgram<'_, '_,
     with_graph(files, |graph, input| check(&BoundProgram { graph, input }));
 }
 
-/// The first file is the test file that the runner starts.
 fn with_test_run(files: &[(&str, &str)], check: impl FnOnce(&BoundProgram<'_, '_, '_>)) {
     with_test_run_graph(files, |graph, input| check(&BoundProgram { graph, input }));
 }
@@ -92,7 +91,6 @@ impl BoundProgram<'_, '_, '_> {
         self.graph.required_names(self.file(file))
     }
 
-    /// `export { name as export_name } from "specifier"` asks for the name.
     fn exported(&self, name: RequiredName, export_name: &str, specifier: &str) -> RequiredName {
         RequiredName {
             asked_by: Some(ExportStatement {
@@ -189,7 +187,6 @@ fn commonjs_names_are_synthetic_exports() {
         assert_eq!(program.synthetic_id("second.js", "x"), x);
         assert_ne!(other, x);
 
-        // The module has no `__esModule`, so its default export is what it exports as a whole, which needs no name.
         let module = program.module("c.cjs");
         assert_eq!(
             program.binding("main.js", "d"),
@@ -921,7 +918,6 @@ impl BoundProgram<'_, '_, '_> {
         variable.expect("no binding asks for the name")
     }
 
-    /// The one call of `require` in the file.
     fn call_of_require(&self, file: &str) -> ExprId {
         let sites = self
             .input
@@ -1166,7 +1162,6 @@ fn member_of_uncompiled_code_is_not_bound() {
     assert_no_member_is_bound(&[("main.js", main.as_str())]);
 }
 
-// No loop over the object sees such a name, so the namespace object, which is made by such a loop, lacks it.
 #[test]
 fn getter_that_is_not_enumerable_is_hidden_from_the_namespace() {
     let main = "import * as ns from './outer.cjs'; console.log(ns.x);";
@@ -1306,7 +1301,6 @@ fn members_of_a_holder_are_names_of_the_module_that_it_requires() {
             let variable = Member::Variable(program.variable("c.cjs", name));
             assert_eq!(program.member("main.cjs", name), Some(variable), "{name}");
         }
-        // A holder reads what the module has now. Only `import * as` shows what it had when it was linked.
         assert!(program.member_bindings("main.cjs").is_empty());
     });
 }
@@ -1358,7 +1352,6 @@ var __importStar = (this && this.__importStar) || function (mod) {
 fn import_helper_of_typescript_leaves_a_holder_only_where_the_module_has_the_marker() {
     let reads = "const held = __importStar(require('./c.cjs')); console.log(held.x);";
     let main = format!("{TYPESCRIPT_IMPORT_HELPERS}{reads}");
-    // The helper answers what it is handed.
     let marked = "Object.defineProperty(exports, '__esModule', { value: true }); exports.x = 1;";
     with_program(
         &[("main.cjs", main.as_str()), ("c.cjs", marked)],
@@ -1374,7 +1367,6 @@ fn import_helper_of_typescript_leaves_a_holder_only_where_the_module_has_the_mar
             assert_eq!(program.member("main.cjs", "x"), Some(x));
         },
     );
-    // The helper makes another object of the one that it is handed, so the initializer runs as it is written.
     let unmarked = "exports.x = 1;";
     with_program(
         &[("main.cjs", main.as_str()), ("c.cjs", unmarked)],

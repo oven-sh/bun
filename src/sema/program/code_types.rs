@@ -38,7 +38,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         (Box::new(loaded), code, payload)
     }
 
-    // Other files take their types from a file of the types program, so it imports what the type checker finds.
     pub(super) fn answer_types_question_in_types_program(
         &self,
         arena: &'s Arena,

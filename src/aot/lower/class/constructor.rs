@@ -62,7 +62,6 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         } else {
             let this = lowering.emit_allocation(class);
-            // JSC reports what the field initializers do at the parameter list of the constructor.
             lowering.set_position(lowering.file.hir[source].anchor);
             lowering.emit_this_binding_steps(class, &plan, this);
             lowering.lower_parameters(source);
@@ -108,7 +107,6 @@ pub(super) fn declare_constructor(
     }
     let key = FunctionKey::ImplicitConstructor(file.own_class(class));
     file.declare_function(key, |file| {
-        // The engine recognizes an implicit constructor by its position, which must equal the position of its class's layout.
         let position = class_position(&file.hir[class]);
         let mut header =
             function::create_header(file, key, FunctionKind::BaseConstructor, position);
@@ -169,7 +167,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         this
     }
 
-    // The constructor, and the function that initializes an instance, for a super call in evaluated text.
     pub(in crate::lower) fn get_super_call_parts(
         &mut self,
         class: ClassId,
@@ -251,7 +248,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.bind_constructed_object(class, this)
     }
 
-    // The constructor of the parent can return any object, and the prototype of new.target can select the layout of another class.
     fn bind_constructed_object(&mut self, class: ClassId, constructed: ValueId) -> ValueId {
         let class = self.file.own_class(class);
         let position = self.file.class_this_type(class, None);
@@ -284,7 +280,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_injected_steps(&mut self, class: ClassId, plan: &ClassPlan, this: ValueId) {
-        // `bun run` writes the fields that legacy decorators move in front of what stands there for the parameter properties.
         let (first, last): (&[ClassElement], &[ClassElement]) = match plan.field_semantics {
             FieldSemantics::Define if plan.transform == ClassTransform::Legacy => {
                 (&plan.injected_elements, &[])

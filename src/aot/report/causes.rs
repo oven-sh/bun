@@ -13,8 +13,8 @@ use super::positions::{PathStyle, Positions, write_position_members, write_shown
 use super::source_texts::ModuleOrigin;
 use super::summary::{write_access_counts, write_level_counts};
 use super::wording::{DOCUMENTATION_URL, cause_code, cause_wording, ill_typed_cause_wording};
-use super::{EntryNote, ReportEntry, ReportInput};
-use crate::engine::{AccessRecord, OtherOriginsRecord, Position, position_of};
+use super::{ReportEntry, ReportInput};
+use crate::engine::{AccessRecord, Position, position_of};
 use crate::ir::generated::{
     AccessCost, AccessKind, IllTypedCause, UnprovenCause, UnprovenCauseFamily,
 };
@@ -22,7 +22,6 @@ use crate::ir::ids::{FunctionId, LayoutId, ModuleId};
 
 const MAX_SHOWN_CAUSES: usize = 20;
 const MAX_NAMED_TYPES: usize = 8;
-const MAX_SHOWN_OTHER_ORIGINS: usize = 3;
 
 #[derive(PartialEq, Eq, Debug)]
 pub(super) struct Cause {
@@ -34,15 +33,8 @@ pub(super) struct Cause {
     pub accesses: OriginCounts,
     pub calls: OriginCounts,
     pub operators: OriginCounts,
-    /// The operations that have no other root: the fix types them.
-    pub alone: u64,
-    /// The operations inside a loop of the function they were compiled into.
     pub in_loops: u64,
-    /// Where the other operations start too, each independently of `position`. Ascending.
-    pub other_origins: Vec<Position>,
-    /// Instructions that types would save if every operation ran once.
     pub cost: OriginCounts,
-    /// The part of `cost` that the operations in loops make up.
     pub cost_in_loops: OriginCounts,
     pub is_in_runtime: bool,
 }
@@ -86,7 +78,6 @@ pub(super) fn operation_class(kind: AccessKind) -> Option<OperationClass> {
     }
 }
 
-/// About how many instructions the operation executes beyond what it would with types. From test/aot/perf/operations.
 fn instructions_saved_by_types(record: &AccessRecord) -> u32 {
     match (record.kind, record.cost) {
         (_, AccessCost::Free) | (AccessKind::Unknown, _) => 0,
@@ -122,7 +113,6 @@ fn family_bit(family: UnprovenCauseFamily) -> ExplainSet {
 
 pub(super) fn collect_causes(
     records: &[AccessRecord],
-    other_origins: &[OtherOriginsRecord],
     origin_of: &dyn Fn(ModuleId) -> ModuleOrigin,
     families: ExplainSet,
 ) -> Vec<Cause> {
@@ -145,7 +135,7 @@ pub(super) fn collect_causes(
         }
         let position = position_of(record.witness.location);
         let key = (record.cause, record.ill_typed_cause, position);
-        let (group, layouts, origins) = groups.entry(key).or_insert_with(|| {
+        let (group, layouts) = groups.entry(key).or_insert_with(|| {
             let cause = Cause {
                 cause: record.cause,
                 ill_typed_cause: record.ill_typed_cause,
@@ -155,15 +145,13 @@ pub(super) fn collect_causes(
                 accesses: OriginCounts::default(),
                 calls: OriginCounts::default(),
                 operators: OriginCounts::default(),
-                alone: 0,
                 in_loops: 0,
-                other_origins: Vec::new(),
                 cost: OriginCounts::default(),
                 cost_in_loops: OriginCounts::default(),
                 is_in_runtime: position
                     .is_some_and(|position| origin_of(position.module) == ModuleOrigin::Runtime),
             };
-            (cause, BTreeSet::new(), BTreeSet::new())
+            (cause, BTreeSet::new())
         });
         let counts = match class {
             OperationClass::PropertyAccess => &mut group.accesses,
@@ -171,7 +159,6 @@ pub(super) fn collect_causes(
             OperationClass::Operator => &mut group.operators,
         };
         counts.add_for_origin(origin, 1);
-        group.alone += u64::from(record.has_other_roots == 0);
         let saved = u64::from(saved);
         group.cost.add_for_origin(origin, saved);
         if record.loop_depth > 0 {
@@ -179,33 +166,21 @@ pub(super) fn collect_causes(
             group.cost_in_loops.add_for_origin(origin, saved);
         }
         layouts.extend(record.layout_id());
-        let listed = (record.other_origins as usize).checked_sub(1);
-        if let Some(listed) = listed.and_then(|index| other_origins.get(index)) {
-            let listed = listed.locations.iter().filter_map(|&at| position_of(at));
-            // Nothing in the program's text changes a line of the runtime.
-            origins.extend(listed.filter(|at| origin_of(at.module) != ModuleOrigin::Runtime));
-        }
     }
 
     let mut causes: Vec<Cause> = groups
         .into_values()
-        .map(|(cause, layouts, origins)| Cause {
+        .map(|(cause, layouts)| Cause {
             layouts: layouts.into_iter().collect(),
-            other_origins: origins
-                .into_iter()
-                .filter(|&origin| Some(origin) != cause.position)
-                .collect(),
             ..cause
         })
         .collect();
     causes.shared_sort_unstable_by_key(|cause| {
-        // Nothing in the program's text changes these.
         let is_fixed_in_the_compiler = matches!(
             cause.cause,
             UnprovenCause::Unknown | UnprovenCause::ResultDisabled
         );
         let operations = cause.operations();
-        // The last three are the key of a group, so no two causes compare equal.
         (
             is_fixed_in_the_compiler || cause.is_in_runtime,
             Reverse(cause.cost_in_loops.program),
@@ -227,12 +202,7 @@ pub(super) fn collect_causes(
 fn causes_of(input: &ReportInput<'_>, families: ExplainSet) -> Vec<Cause> {
     let origin_of = |module: ModuleId| input.texts.origin(module);
     let engine = input.engine;
-    collect_causes(
-        engine.accesses(),
-        engine.other_origins(),
-        &origin_of,
-        families,
-    )
+    collect_causes(engine.accesses(), &origin_of, families)
 }
 
 fn function_name<'a>(cause: &Cause, names: Names<'a>) -> &'a [u8] {
@@ -254,7 +224,6 @@ fn documentation_url(code: &[u8]) -> Vec<u8> {
     [DOCUMENTATION_URL, code].concat()
 }
 
-/// `None` where its code is the entry's own: the 'why' would repeat the first line.
 fn shown_ill_typed_cause(cause: &Cause) -> IllTypedCause {
     match ill_typed_cause_wording(cause.ill_typed_cause) {
         Some(why) if why.code != cause_code(cause.cause) => cause.ill_typed_cause,
@@ -279,15 +248,6 @@ fn write_operations_in_loops(out: &mut Vec<u8>, cause: &Cause) {
     if cause.in_loops > 0 {
         let (one, many) = ("of these runs in a loop", "of these run in a loop");
         write_counted(out, cause.in_loops, one, many);
-    }
-}
-
-fn write_other_roots(out: &mut Vec<u8>, cause: &Cause) {
-    let others = cause.operations().total() - cause.alone;
-    if others > 0 {
-        let one = "of these stays untyped until other entries are fixed too";
-        let many = "of these stay untyped until other entries are fixed too";
-        write_counted(out, others, one, many);
     }
 }
 
@@ -375,15 +335,8 @@ fn text_entry(cause: &Cause, rank: usize, totals: &ProgramTotals, names: Names<'
             &|out| write_share(out, cause, totals),
             &|out| write_other_operations(out, cause),
             &|out| write_operations_in_loops(out, cause),
-            &|out| write_other_roots(out, cause),
         ],
     );
-    for &origin in cause.other_origins.iter().take(MAX_SHOWN_OTHER_ORIGINS) {
-        entry.notes.push(EntryNote {
-            text: b"fix this too: the same operations also start here".to_vec(),
-            position: Some(origin),
-        });
-    }
     add_notes(
         &mut entry,
         &[
@@ -434,12 +387,6 @@ fn json_entry(
     json.number("dependencyAccesses", cause.accesses.dependencies);
     json.number("calls", cause.calls.total());
     json.number("operators", cause.operators.total());
-    json.number("fixedByThisAlone", cause.alone);
-    let other_origins = cause.other_origins.iter();
-    let other_origins: Vec<_> = other_origins.map(|&at| positions.resolve(at)).collect();
-    json.objects("otherOrigins", other_origins, |json, shown| {
-        write_position_members(json, shown.as_ref(), "column");
-    });
     json.number("inLoops", cause.in_loops);
     json.string("function", function_name(cause, names));
     json.strings("types", type_names(cause, names).into_iter());
@@ -488,7 +435,6 @@ fn collect_ranked_entries(
     let mut by_position: Vec<usize> = (0..causes.len()).collect();
     by_position.shared_sort_unstable_by_key(|&index| causes[index].position);
     let mut entries: Vec<Option<ReportEntry>> = vec![None; causes.len()];
-    // Ascending, so the locator scans the text of each module once.
     for index in by_position {
         entries[index] = Some(entry_of(&causes[index], index + 1));
     }

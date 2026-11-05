@@ -230,12 +230,13 @@ describe.concurrent("compile/aot/workers from texts that the build knows", () =>
   );
 
   test.each([
-    ["a syntax error", "postMessage((", "SyntaxError: Unexpected end of file"],
-    ["words that are no program", "this is no program", "undefined"],
-    ["an import that is not found", `import "./no-such-file.js"; postMessage(1)`, "Cannot find module"],
+    ["a syntax error", "postMessage((", "TS100084", "SyntaxError: Unexpected end of file"],
+    ["words that are no program", "this is no program", "TS100084", "undefined"],
+    // It is a program. It is compiled, and its body throws what the loader says.
+    ["an import that is not found", `import "./no-such-file.js"; postMessage(1)`, "TS100150", "Cannot find module"],
   ])(
     "a text with %s is left to the run time, and the build says so",
-    (_, text, said) =>
+    (_, text, code, said) =>
       slot(async () => {
         using dir = tempDir("aot-workers-from-texts", {
           "main.js": `
@@ -249,7 +250,7 @@ describe.concurrent("compile/aot/workers from texts that the build knows", () =>
         });
         const compiled = await build(String(dir), "main.js");
         built(compiled);
-        expect(compiled.stderr).toContain("warn: TS100084");
+        expect(compiled.stderr).toContain(`warn: ${code}`);
         const ran = await spawned([compiled.executable], String(dir), bunEnv);
         expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
           stdout: `message sound\nerror ${said}\n`,

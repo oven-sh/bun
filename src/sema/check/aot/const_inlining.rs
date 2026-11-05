@@ -1,3 +1,4 @@
+use crate::atom::known;
 use crate::bind::{Bound, Parent};
 use crate::hir::{File, Flags, FnBody, IdList, PatKind, StmtId, StmtKind, VarKind, has_body};
 use crate::util::FxHashMap;
@@ -93,7 +94,9 @@ fn ends_const_local_prefix(hir: &File<'_>, bound: &Bound<'_>, statement: StmtId)
         }
         StmtKind::Class(class) => !hir[class].flags.contains(Flags::AMBIENT),
         StmtKind::Module(module) => bound.makes_namespace_object(hir, module),
-        StmtKind::Import(import) => !hir.is_type_only_import(import),
+        StmtKind::Import(import) => {
+            !hir.is_type_only_import(import) && hir[import].spec != known::bun_bundle
+        }
         StmtKind::ExportNamed(export) => !hir.is_type_only_export(export),
         StmtKind::ExportStar { type_only, .. } => !type_only,
         _ => true,

@@ -41,7 +41,6 @@ impl Checker<'_, '_> {
     }
 }
 
-/// `async await => 1`
 fn is_parameter_of_async_arrow_function(hir: &File<'_>, name: Node) -> bool {
     let parameter = hir.parent(name);
     let function = hir.parent(parameter);
@@ -50,7 +49,6 @@ fn is_parameter_of_async_arrow_function(hir: &File<'_>, name: Node) -> bool {
         && hir.is_parameter_without_parentheses(function, parameter)
 }
 
-/// `function* f() { (a = yield) => 1; }`: the language reads the operator there, which no parameter may hold.
 fn is_in_arrow_parameters_in_generator(hir: &File<'_>, node: Node) -> bool {
     let (mut below, mut above) = (node, hir.parent(node));
     while above.is_some() && !hir.kind(above).is_function_like() {

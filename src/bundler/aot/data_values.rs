@@ -1,8 +1,6 @@
 use std::borrow::Cow;
 
 use bun_alloc::Arena;
-use bun_aot::diagnostic_codes::Code;
-use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::statistics::{LimitId, LimitValues};
 use bun_ast::expr::Data;
 use bun_ast::{E, Expr, G, Loc, Log, StoreRef};
@@ -18,6 +16,7 @@ pub(crate) trait ValueSink {
     fn number(&mut self, value: f64);
     fn string(&mut self, text: &[u8]);
     fn big_int(&mut self, digits: &[u8]);
+    fn temporal(&mut self, class: &[u8], text: &[u8]);
     fn array(&mut self, length: usize);
     fn key(&mut self, text: &[u8]);
     fn object(&mut self, length: usize);
@@ -27,7 +26,6 @@ pub(crate) trait ValueSink {
 pub(crate) enum NotData {
     Expression,
     Cyclic,
-    TomlDateTime,
     TooLarge,
 }
 
@@ -130,10 +128,16 @@ impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
                 self.sink.boolean(boolean.value);
             }
             Data::ENumber(number) => self.sink.number(number.value()),
-            Data::EString(text) => {
-                let text = string_text(text.get(), self.scratch)?;
-                self.sink.string(&text);
-            }
+            Data::EString(text) => match text.get().toml_datetime {
+                Some(kind) => {
+                    let text = text.get().slice8();
+                    self.sink.temporal(kind.temporal_class(), text);
+                }
+                None => {
+                    let text = string_text(text.get(), self.scratch)?;
+                    self.sink.string(&text);
+                }
+            },
             Data::EBigInt(big_int) => {
                 let digits = big_int.get().value.slice();
                 if !digits.iter().all(u8::is_ascii_digit) {
@@ -262,9 +266,6 @@ fn property_key_text<'t>(
 }
 
 fn string_text<'t>(string: &'t E::EString, scratch: &'t Arena) -> Result<Cow<'t, [u8]>, NotData> {
-    if string.toml_datetime.is_some() {
-        return Err(NotData::TomlDateTime);
-    }
     if string.is_utf16 {
         return Ok(Cow::Owned(wtf16_to_wtf8(string.slice16())));
     }
@@ -301,10 +302,6 @@ pub(crate) fn report_not_data(log: &mut Log, path: &[u8], subject: &str, error: 
                 LimitId::MaxDataNodes.name(),
             ),
         ),
-        NotData::TomlDateTime => {
-            let feature = format!("a date or time in the TOML file \"{path}\"");
-            log_diagnostic(log, Code::UnsupportedOption, &[feature.as_bytes()]);
-        }
     }
 }
 
@@ -386,6 +383,13 @@ impl ValueSink for DataValueBuilder<'_, '_> {
     fn big_int(&mut self, digits: &[u8]) {
         self.values
             .push(DataValue::BigInt(self.atoms.intern(digits)));
+    }
+
+    fn temporal(&mut self, class: &[u8], text: &[u8]) {
+        self.values.push(DataValue::Temporal {
+            class: self.atoms.intern(class),
+            text: self.atoms.intern(text),
+        });
     }
 
     fn array(&mut self, length: usize) {

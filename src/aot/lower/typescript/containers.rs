@@ -18,30 +18,30 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn find_container(&self, declaration: Decl, name: Atom) -> Container {
         let bound = self.file.bound;
         let binding = bound.declared_symbol(declaration);
-        // Each block of a namespace has a binding of its own for what it exports, and a class or a function that a namespace merges with is the binding.
         let has_dead_zone = bound.binding_kind(binding) == BindingKind::TypeScriptContainer
             && bound.initial_state(binding) == InitialState::Uninitialized;
-        // The local symbol lists what is declared under the name, with `export` and without.
         let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
         let local = bound.lookup(locals, name).unwrap_or(binding);
         let declarations = &bound.symbol(local).decls;
         let first = declarations.iter().find(|&&it| self.produces_code(it));
-        // `namespace K` beside `export class K` is not exported itself.
         let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
         let is_exported = bound.symbol(exported).decls.contains(&declaration);
+        let merged = if is_exported { exported } else { binding };
+        let is_stored_by_code = [binding, merged].into_iter().any(|variable| {
+            !bound.stores_to(variable).is_empty() || bound.is_visible_to_eval(variable)
+        });
         Container {
             binding,
-            merged: if is_exported { exported } else { binding },
+            merged,
             name,
-            // The blocks of a namespace have a local symbol each, and the exported symbol lists what all of them export.
             is_single_declaration: declarations.len() == 1
                 && bound.symbol(exported).decls.len() == 1
+                && !is_stored_by_code
                 && !self.is_inside_name_with_two_tables(bound.symbol_scope(binding)),
             ends_dead_zone: has_dead_zone && first == Some(&declaration),
         }
     }
 
-    // `export namespace A.B` beside `namespace A.B`: what the blocks of `A` with `export` declare lies in one table and what the others declare in another, and neither lists both `B`.
     fn is_inside_name_with_two_tables(&self, scope: ScopeId) -> bool {
         let (hir, bound) = (self.file.hir, self.file.bound);
         let parent_of = |scope: &ScopeId| bound.scopes[scope.idx()].parent.some();
@@ -126,9 +126,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ModuleName::Ident(_) | ModuleName::String(_) | ModuleName::Global => return,
         };
         let container = self.find_container(Decl::Module(declaration), name);
-        self.ensure_container(container);
+        let object = self.ensure_container(container);
         let scope = bound.module_scope[declaration.idx()];
-        self.enter_scope(scope);
+        self.enter_container_scope(scope, object);
         self.lower_statements(data.body);
         self.leave_scope(scope);
     }

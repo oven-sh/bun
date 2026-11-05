@@ -3058,6 +3058,7 @@ Socket.prototype.resume = function resume(this: $Node.Socket) {
   restorePausedHold(this, this._handle);
   return ret;
 };
+netSymbols.resumeOfSocket = Socket.prototype.resume;
 
 // Only a connected onread socket stops reading here: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
 Socket.prototype.pause = function pause(this: $Node.Socket) {

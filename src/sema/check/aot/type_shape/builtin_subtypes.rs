@@ -115,7 +115,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(self.list(&accepted))
     }
 
-    /// Whether `ty` is written for instances of the built-in class: the class, a class that extends it, or an object type that they fit. A type that every object fits says nothing.
     pub fn is_type_of_builtin(
         &mut self,
         ty: TypeId,
@@ -148,7 +147,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     let Some(instance_members) = self.c.members(instance) else {
                         continue;
                     };
-                    // Nearly every type names a member that the other lacks, and is told apart without a type being made.
                     let fits = self.has_required_properties(instance, members.shape());
                     let extends = self.has_required_properties(ty, instance_members.shape());
                     if !fits && !extends {
@@ -168,7 +166,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `{ a?: number }`, `{ toString(): string }`.
     fn requires_only_what_every_object_has(&mut self, ty: TypeId) -> bool {
         let Some(members) = self.c.members(ty) else {
             return true;
@@ -182,7 +179,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    /// `any`, `unknown`, `object`, `{}`, `Object`, a type variable without a constraint, a type that requires only what every object has, and a union with one of them.
     pub(in crate::check::aot) fn is_type_of_every_object(
         &mut self,
         ty: TypeId,

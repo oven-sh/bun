@@ -6,8 +6,6 @@ use crate::ir::TypeTable;
 use crate::lower::FunctionLowering;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    /// `{ a, ...(given ?? { b }) }`, `{ a, ...(given || { b }) }`: where the left side decides, its value is spread.
-    /// Where it does not, the members of the literal are defined one by one, and no object is made for them.
     pub(super) fn lower_spread_with_default(
         &mut self,
         object: &mut ObjectBuilder,

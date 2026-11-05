@@ -24,7 +24,7 @@ impl Printer<'_> {
         self.out.push('}');
     }
 
-    #[allow(clippy::large_types_passed_by_value)] // made for this call
+    #[allow(clippy::large_types_passed_by_value)]
     fn print_block(&mut self, block: BlockView<'_>) {
         let _ = write!(self.out, "  {}(", block.id);
         self.print_separated(

@@ -25,7 +25,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.read_identifier(identifier, BindingRead::TypeOf)
     }
 
-    // What a store has just left in a variable. The source text has no read there.
     pub(crate) fn read_stored_identifier(&mut self, identifier: ExprId) -> ValueId {
         self.read_identifier(identifier, BindingRead::Value)
     }
@@ -144,7 +143,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.write_variable(local.variable, value);
     }
 
-    /// `narrowed` is what a test has left of `value`, which the local holds.
     pub(crate) fn rebind_narrowed_local(
         &mut self,
         symbol: SymbolId,
@@ -173,7 +171,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `delete size` in `namespace Box` is `delete Box.size` in what runs.
     pub(super) fn delete_binding(&mut self, binding: Binding, name: Atom) -> ValueId {
         match bindings::normalize_binding(self.file, binding) {
             Binding::Free => self.emit_free_name_delete(name),
@@ -210,8 +207,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let value = self.read_binding(binding, name, read);
                 self.expect_resolved_path(identifier, value)
             }
-            // The type of `const zero = 0` is `number`, since TypeScript's `0` is also the type of `-0`. The read stays for
-            // its dead zone.
             Binding::Symbol(symbol)
                 if read == BindingRead::Value
                     && self.file.is_constant_zero(symbol)

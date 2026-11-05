@@ -37,12 +37,10 @@ pub struct StringTable {
 }
 
 impl StringTable {
-    /// A function of the bytes alone, the same in every run: the program's strings are ordered by hash.
     pub fn hash_of(bytes: &[u8]) -> u64 {
         std::hash::BuildHasher::hash_one(&rustc_hash::FxBuildHasher, bytes)
     }
 
-    /// A table of `count` strings of other tables in the given order. No two of them are the same string.
     pub fn of_distinct_strings<'a>(
         count: usize,
         string_at: &(dyn Fn(usize) -> (&'a StringTable, StringId) + Sync),
@@ -63,7 +61,6 @@ impl StringTable {
         let builtin_names = table.builtin_names.chunks_mut(STRINGS_IN_A_TASK);
         let lists = ends.zip(hashes).zip(name_classes.zip(builtin_names));
         let mut tasks: Vec<_> = lists.enumerate().collect();
-        // `ends` holds lengths until all are known.
         for_each_mut(&mut tasks, in_parallel, &|(task, lists)| {
             let ((ends, hashes), (name_classes, builtin_names)) = lists;
             let first = *task * STRINGS_IN_A_TASK;
@@ -132,7 +129,6 @@ impl StringTable {
         id
     }
 
-    /// `intern` for a string of another table, which has hashed and classified it.
     pub fn intern_string_of(&mut self, other: &StringTable, string: StringId) -> StringId {
         let (hash, bytes) = (other.hash(string), other.get(string));
         if let Some(id) = self.find_hashed(hash, bytes) {
@@ -149,12 +145,10 @@ impl StringTable {
         id
     }
 
-    /// `find` for a string of another table, which has hashed it.
     pub fn find_string_of(&self, other: &StringTable, string: StringId) -> Option<StringId> {
         self.find_hashed(other.hash(string), other.get(string))
     }
 
-    /// The strings interned next take the ids from `length` on: whoever holds one of those has to forget it.
     pub fn truncate(&mut self, length: usize) {
         if self.len() <= length {
             return;
@@ -214,7 +208,6 @@ impl StringTable {
         &self.bytes
     }
 
-    /// The bytes of the strings whose indexes are in `strings`, one string behind the other.
     pub fn bytes_of(&self, strings: Range<usize>) -> &[u8] {
         let start_of = |index: usize| index.checked_sub(1).map_or(0, |before| self.ends[before]);
         &self.bytes[start_of(strings.start)..start_of(strings.end)]

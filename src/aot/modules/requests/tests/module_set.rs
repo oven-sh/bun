@@ -39,7 +39,6 @@ fn every_compiled_file_has_a_record() {
     with_module_set(&files, |modules, program| {
         let mut loaded_files = program.input.files.compiled_files().to_vec();
         loaded_files.sort_unstable();
-        // Text passed to `new Function` does not become a file of the program.
         assert_eq!(loaded_files.len(), files.len());
         assert_eq!(modules.compiled_files, loaded_files);
         assert_eq!(modules.record_files, loaded_files);
@@ -232,7 +231,6 @@ fn form_stands_under_the_file_at_its_path() {
         let text = file_at(b"/$bunfs/root/dep.ts?text");
         let forms: Vec<ModuleRef> = modules.forms_of(ModuleRef::File(dep)).collect();
         assert_eq!(forms, [ModuleRef::File(text)]);
-        // Nothing compiled stands at `note.ts`.
         for file in [text, file_at(b"/$bunfs/root/note.ts?text")] {
             assert_eq!(modules.forms_of(ModuleRef::File(file)).count(), 0);
         }

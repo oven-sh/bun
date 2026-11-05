@@ -1,5 +1,3 @@
-//! The calls through which compilers and bundlers store names on the exports of a CommonJS file.
-
 use super::summary::{StoredName, SummaryWalk, names_exports_of_inner_module};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Mutability, Resolved, ResolvedBuiltins};
@@ -33,19 +31,13 @@ struct CallReader<'a, 's> {
     bind: &'a BindInput<'a, 's>,
     helpers: &'a KnownHelpers,
     wrapped: &'a WrappedModules,
-    /// The callback whose parameters name the exports. `None`: the file is the module.
     inner: Option<&'a InnerModule>,
-    /// The statement that holds the call. Every run of the body reaches it.
     statement: StmtId,
     names: &'a mut Vec<StoredName>,
     marker: &'a mut Option<bool>,
 }
 
 impl SummaryWalk<'_, '_, '_> {
-    /// `call` has `exports`, `module.exports` or `require(K)` among its arguments, or `module.exports = call` stores its result.
-    /// True: the call is one of the known forms, its names are in `summary.names`, and the object does not escape through it.
-    /// A call that defines `__esModule` does not list that name. It sets `summary.marker` to `Some(true)`, or to `None` if the value is known only at run time, and the caller lists the name.
-    /// False leaves the summary unchanged.
     pub(super) fn look_at_call(&mut self, statement: StmtId, call: ExprId) -> bool {
         let (bind, file) = (self.input.bind, self.file);
         if self.summary.object_escapes {
@@ -82,7 +74,6 @@ impl SummaryWalk<'_, '_, '_> {
 impl<'a> CallReader<'a, '_> {
     fn read_call(&mut self, node: ExprId) -> Option<()> {
         let (callee, arguments) = self.find_plain_call(node)?;
-        // Most of these calls return the object, so only a call whose result is dropped defines names on it.
         if self.find_expression_statement(node) != Some(self.statement) {
             return self.read_to_common_js(node, callee, &arguments);
         }
@@ -124,7 +115,6 @@ impl<'a> CallReader<'a, '_> {
         }
     }
 
-    /// The parent of an expression, past the type assertions around it.
     fn parent(&self, expression: ExprId) -> (ExprId, Parent) {
         let mut outermost = expression;
         loop {
@@ -137,7 +127,6 @@ impl<'a> CallReader<'a, '_> {
         }
     }
 
-    /// The expression statement that consists of this expression alone.
     fn find_expression_statement(&self, expression: ExprId) -> Option<StmtId> {
         match self.parent(expression).1 {
             Parent::Stmt(holder)
@@ -149,13 +138,11 @@ impl<'a> CallReader<'a, '_> {
         }
     }
 
-    // Every run that reaches `self.statement` has already run each top-level statement before it.
     fn is_top_level_statement(&self, expression: ExprId) -> bool {
         let statement = self.find_expression_statement(expression);
         statement.is_some_and(|statement| self.bound.parent_of_stmt(statement) == Parent::File)
     }
 
-    /// The callee and the arguments of a call that has no `?.` and no spread argument.
     fn find_plain_call(&self, node: ExprId) -> Option<(ExprId, Arguments)> {
         let hir = self.hir;
         let ExprKind::Call(call) = hir[node.some()?].kind else {
@@ -168,7 +155,6 @@ impl<'a> CallReader<'a, '_> {
         (call.chain == Chain::No && !has_spread).then_some((call.callee, arguments))
     }
 
-    // The built-in that the callee is on every run: it is locked at startup, no test replaces it, and evaluating the callee runs no code.
     fn find_locked_builtin(&self, callee: ExprId) -> Option<BuiltinId> {
         let callee = self.hir.skip_type_assertions(callee);
         match self.builtins.of_pure_expr(callee)? {
@@ -181,7 +167,6 @@ impl<'a> CallReader<'a, '_> {
         self.helpers.certain_callee(self.files, self.file, callee)
     }
 
-    /// `exports`, `module.exports`, or another spelling of either.
     fn is_exports_object(&self, expression: ExprId) -> bool {
         let expression = self.hir.skip_type_assertions(expression);
         if let Some(inner) = self.inner {
@@ -223,14 +208,11 @@ impl<'a> CallReader<'a, '_> {
         }
     }
 
-    // `super` in a method refers to the prototype of the literal that the method is written in, no matter how the method is called.
     fn is_method(&self, value: ExprId) -> bool {
         matches!(self.hir[value].kind, ExprKind::Fn(function)
             if self.hir[function].kind == FnKind::Method)
     }
 
-    // The walk visits top-level statements in source order, so every store before this call is already listed. An AllOf may hold any name.
-    // The names of `module.exports = v` are listed only after the walk. The summary lets the object escape where a call defines one of them again.
     fn may_already_exist(&self, name: Atom) -> bool {
         let mut entries = self.names.iter();
         entries.any(|entry| entry.name().is_none_or(|stored| stored == name))
@@ -250,7 +232,6 @@ impl<'a> CallReader<'a, '_> {
         Some(())
     }
 
-    // `{ name: function () { return e; }, .. }`: the helper defines an enumerable getter for each name, in source order.
     fn add_getters_of_literal(&mut self, literal: ExprId) -> Option<()> {
         let hir = self.hir;
         let ExprKind::Object(properties) = hir[hir.skip_type_assertions(literal)].kind else {
@@ -286,7 +267,6 @@ impl<'a> CallReader<'a, '_> {
         Some(())
     }
 
-    // Only a plain call of the name `require` is sure to return the module, and only in a file that cannot rebind the name.
     fn find_site_of_require(&self, source: ExprId) -> Option<u32> {
         let hir = self.hir;
         let source = hir.skip_type_assertions(source);
@@ -318,7 +298,6 @@ impl<'a> CallReader<'a, '_> {
         Some(())
     }
 
-    // `Object.defineProperty(exports, "name", { .. })`
     fn read_define_property(&mut self, arguments: &[ExprId]) -> Option<()> {
         let &[object, key, descriptor] = arguments else {
             return None;
@@ -334,7 +313,6 @@ impl<'a> CallReader<'a, '_> {
                 getter: Some(getter),
                 setter: None,
             } => {
-                // An attribute that the descriptor omits keeps its value on a property that already exists.
                 let is_enumerable = match written.is_enumerable {
                     Some(is_enumerable) => is_enumerable,
                     None if self.may_already_exist(name) => return None,
@@ -362,7 +340,6 @@ impl<'a> CallReader<'a, '_> {
         }
     }
 
-    // `Object.assign(exports, { a, b: e }, require(K))`
     fn read_object_assign(&mut self, arguments: &[ExprId]) -> Option<()> {
         let (&object, sources) = arguments.split_first()?;
         if !self.is_exports_object(object) {
@@ -373,7 +350,6 @@ impl<'a> CallReader<'a, '_> {
                 ExprKind::Object(properties) => self.add_values_of_literal(properties)?,
                 _ => {
                     self.add_all_of(source)?;
-                    // Unlike the helpers, it overwrites existing properties.
                     *self.marker = None;
                 }
             }
@@ -381,7 +357,6 @@ impl<'a> CallReader<'a, '_> {
         Some(())
     }
 
-    // `__export(exports, { name: () => e, .. })`
     fn read_export(&mut self, shape: Shape, arguments: &[ExprId]) -> Option<()> {
         let &[object, getters] = arguments else {
             return None;
@@ -396,7 +371,6 @@ impl<'a> CallReader<'a, '_> {
         Some(())
     }
 
-    // `__exportStar(require(K), exports)`
     fn read_export_star(&mut self, arguments: &[ExprId]) -> Option<()> {
         let &[source, object] = arguments else {
             return None;
@@ -407,7 +381,6 @@ impl<'a> CallReader<'a, '_> {
         self.add_all_of(source)
     }
 
-    // `__reExport(exports, require(K))`, `__reExport(all, require(K), module.exports)`: each target receives the names independently.
     fn read_re_export(&mut self, arguments: &[ExprId]) -> Option<()> {
         let (&[target, source] | &[target, source, _]) = arguments else {
             return None;
@@ -421,12 +394,10 @@ impl<'a> CallReader<'a, '_> {
         self.add_all_of(source)
     }
 
-    // `__createBinding(exports, m, "k", "name")`. The getter is the function that the helper creates, which closes over `m`.
     fn read_create_binding(&mut self, known: &KnownFunction, arguments: &[ExprId]) -> Option<()> {
         let (&[object, source, key] | &[object, source, key, _]) = arguments else {
             return None;
         };
-        // The other shapes reuse the descriptor that the property has on `m`, or copy its value. Both are known only at run time.
         let (Shape::CreateBindingDefinesGetter, &[_, getter]) = (known.shape, &known.functions[..])
         else {
             return None;
@@ -443,7 +414,6 @@ impl<'a> CallReader<'a, '_> {
         self.add_getter(name, getter, true)
     }
 
-    // `__markAsModule(exports)`
     fn read_mark_as_module(&mut self, arguments: &[ExprId]) -> Option<()> {
         let &[object] = arguments else {
             return None;
@@ -455,7 +425,6 @@ impl<'a> CallReader<'a, '_> {
         Some(())
     }
 
-    // `module.exports = call`, `export = call`
     fn is_stored_as_exports(&self, call: ExprId) -> bool {
         match self.parent(call) {
             (stored, Parent::Expr(user)) if user.is_some() => matches!(
@@ -470,7 +439,6 @@ impl<'a> CallReader<'a, '_> {
         }
     }
 
-    // `var all = {}` as a top-level statement, where `all` is never assigned again: the symbol, and the position from which the object exists.
     fn find_new_empty_object(&self, name: ExprId) -> Option<(SymbolId, u32)> {
         let (hir, bound) = (self.hir, self.bound);
         let name = hir.skip_type_assertions(name);
@@ -494,8 +462,6 @@ impl<'a> CallReader<'a, '_> {
         is_known.then_some((symbol, hir[value].end))
     }
 
-    // `__export(all, { name: () => e, .. }); module.exports = __toCommonJS(all);`: a new object with a true `__esModule` and, for each name that `all` has by then, an enumerable getter that reads it from `all`.
-    // Only the helpers receive `all`, so each name reads as what its function in the literal returns.
     fn read_to_common_js(
         &mut self,
         node: ExprId,
@@ -506,7 +472,6 @@ impl<'a> CallReader<'a, '_> {
         let &[copied] = arguments else {
             return None;
         };
-        // The order of the text says nothing of when a callback runs among the statements of its file.
         if self.inner.is_some() {
             return None;
         }
@@ -546,7 +511,6 @@ impl<'a> CallReader<'a, '_> {
                 (Helper::Export, &[_, literal]) if hir[user].end <= copy.start => {
                     literals.push((hir[user].pos, literal));
                 }
-                // It adds only names that `all` lacks, and the copy is already made.
                 (Helper::ReExport, _) if hir[user].pos >= copy.loc.end => {}
                 _ => return None,
             }
@@ -556,7 +520,6 @@ impl<'a> CallReader<'a, '_> {
         for &(_, literal) in &literals {
             self.add_getters_of_literal(literal)?;
         }
-        // The new object already has that name, so the copy skips it.
         let mut copies = self.names[first..].iter();
         if copies.any(|stored| stored.name() == Some(known::__esModule)) {
             return None;

@@ -45,7 +45,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.data(data)
     }
 
-    // No `import` or `require()` names the page, so the build did not bundle it. A load of a computed path can still reach it.
     fn emit_refusal_of_unbundled_page(&mut self) -> ValueId {
         let path = self.file.inputs.sources.diagnostic_path(self.file.file);
         let reason = b"': the page isn't bundled into this executable, because no import or require() names it";

@@ -66,7 +66,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let function = self.lower_member_base(site.callee, function, site.exit);
         let apply = self.emit_builtin_itself(BuiltinId::FunctionPrototypeApply);
         let callee = Callee::without_key(apply, Some(function), None);
-        // The engine calls `function` here. No frame of Function.prototype.apply stands in between.
         let options = CallOptions {
             is_done_in_place: true,
             ..site.options
@@ -276,7 +275,6 @@ pub(super) fn lower_if_abrupt_close_iterator(
 
     lowering.begin_cleanup(BlockRole::CleanupHandler, None);
     lowering.lower_expression_for_effect(expression);
-    // A normal completion closes nothing, so it leaves without an exit of the cleanup.
     lowering.jump(after);
 
     lowering.set_position(position);
@@ -288,7 +286,6 @@ pub(super) fn lower_if_abrupt_close_iterator(
     Ok(lowering.builder.undefined())
 }
 
-// The engine emits these two in line.
 pub(super) fn lower_iterator_generic_close(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     site: IntrinsicCall<'_>,

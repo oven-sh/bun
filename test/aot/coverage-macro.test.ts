@@ -1,11 +1,10 @@
-// `bun test --aot --coverage` reports on a file that imports a macro as `bun test --coverage` does: its lines are listed by what the macro gave the build, no macro runs
-// again at the end of the run, and the macro's own file is not in the report.
+// `bun test --aot` refuses a file that imports a macro, with --coverage as without it: docs/compiler/compatibility.mdx, "Not supported". No test runs and no report is written.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { describe, test } from "./supported";
+import { test } from "./supported";
 
 const files = {
   "macro.ts": `
@@ -36,25 +35,28 @@ test("lib", () => { console.log("ANSWER", chosen()); });
 `,
 };
 
-async function report(flags: string[], env: Record<string, string>) {
+async function report(flags: string[]) {
   using directory = tempDir("aot-coverage-macro", files);
-  const { stdout, exitCode } = await run(
+  const { stdout, stderr, exitCode } = await run(
     [bunExe(), "test", ...flags, "--coverage", "--coverage-reporter=lcov"],
     String(directory),
-    { ...bunEnv, ...env },
+    bunEnv,
   );
-  const lcov = readFileSync(join(String(directory), "coverage", "lcov.info"), "utf8");
-  const records = lcov
-    .split("end_of_record")
-    .filter(record => record.includes("SF:"))
-    .map(record => [/SF:(.*)/.exec(record)![1], ...(record.match(/^DA:.*$/gm) ?? [])].join(" "));
-  return { answer: /ANSWER.*/.exec(stdout)?.[0], exitCode, records };
+  const path = join(String(directory), "coverage", "lcov.info");
+  const reported = existsSync(path)
+    ? [...readFileSync(path, "utf8").matchAll(/SF:(.*)/g)].map(match => match[1])
+    : null;
+  const errors = [...new Set(stderr.split("\n").filter(line => line.startsWith("error: TS")))];
+  return { answer: /ANSWER.*/.exec(stdout)?.[0], errors, exitCode, reported };
 }
 
-describe.concurrent("coverage of a file that imports a macro", () => {
-  test.each([["one program", {}]] as [string, Record<string, string>][])("%s", async (_, env) => {
-    const [plain, compiled] = await Promise.all([report([], {}), report(["--aot"], env)]);
-    expect(plain.records.map(record => record.split(" ")[0])).toEqual(["lib.ts"]);
-    expect(compiled).toEqual(plain);
+test("coverage of a file that imports a macro: the run is refused", async () => {
+  const [plain, compiled] = await Promise.all([report([]), report(["--aot"])]);
+  expect(plain).toEqual({ answer: "ANSWER 4", errors: [], exitCode: 0, reported: ["lib.ts"] });
+  expect(compiled).toEqual({
+    answer: undefined,
+    errors: [expect.stringMatching(/^error: TS100053: Macros are disabled/)],
+    exitCode: 1,
+    reported: null,
   });
 });

@@ -14,7 +14,6 @@ pub struct Printer<'a> {
     pub(super) hides_rewritten_types: bool,
 }
 
-/// No text has it: `print_quoted` escapes whatever is not ASCII.
 pub const REWRITTEN_TYPE: char = '\u{2026}';
 
 impl<'a> Printer<'a> {
@@ -140,7 +139,6 @@ pub fn print_program(program: &Program) -> String {
     out
 }
 
-/// The engine keeps the family of a layout or a function that a type names, and not the name. Such a type prints as `REWRITTEN_TYPE`.
 pub fn print_program_held_to_engine(program: &Program) -> String {
     let mut out = String::new();
     let mut printer = Printer {

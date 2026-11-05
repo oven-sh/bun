@@ -22,6 +22,11 @@ const loads: Record<string, (name: string) => string> = {
   "path-to-text.cjs": name =>
     `require("module").createRequire(require("url").pathToFileURL(__filename).href)("${name}")`,
   "meta.mjs": name => `import { createRequire } from "module"; createRequire(new URL(import.meta.url).href)("${name}")`,
+  "resolve.cjs": name => `require(require.resolve("${name}"))`,
+};
+
+// With a second argument the build does not follow the name, whatever the argument holds: the package is not in the executable, as it is not in one that is built without --aot.
+const notFollowed: Record<string, (name: string) => string> = {
   "resolve-symbol.cjs": name => `require(require.resolve("${name}", { [Symbol.for("outside")]: true }))`,
   "resolve-jest.cjs": name =>
     `require(require.resolve("${name}", { [(globalThis["no-such-name"] || globalThis.Symbol).for("outside")]: true }))`,
@@ -36,9 +41,51 @@ async function build(project: string, entry: string, executable: string) {
   expect({ errors, exitCode: built.exitCode }).toEqual({ errors: [], exitCode: 0 });
 }
 
+const packageOf = (file: string) => "dep-" + file.replace(".", "-");
+
+test("require.resolve() with a second argument brings no package into the executable", async () => {
+  const files = Object.keys(notFollowed);
+  using dir = tempDir("aot-made-requires-not-followed", {
+    "project/package.json": `{ "name": "project" }`,
+    "project/entry.cjs": files
+      .map(file => `try { require("./${file}"); } catch (error) { console.log("${file}", error.code); }\n`)
+      .join(""),
+    ...Object.fromEntries(
+      files.map(file => {
+        const statements = notFollowed[file](packageOf(file) + "/sub").split("; ");
+        const last = statements.pop();
+        return [`project/${file}`, [...statements, `console.log(${last}.name)`].join(";\n") + ";\n"];
+      }),
+    ),
+    ...Object.fromEntries(
+      files.flatMap(file => [
+        [
+          `project/node_modules/${packageOf(file)}/package.json`,
+          JSON.stringify({ name: packageOf(file), version: "1.0.0", exports: { "./sub": "./lib/sub.js" } }),
+        ],
+        [`project/node_modules/${packageOf(file)}/lib/sub.js`, `exports.name = "sub for ${file}";\n`],
+      ]),
+    ),
+    "elsewhere/empty.txt": "",
+  });
+  const project = join(String(dir), "project");
+  const plain = await run([bunExe(), "entry.cjs"], project, bunEnv);
+  expect(plain.stdout.trim().split("\n")).toEqual(files.map(file => `sub for ${file}`));
+  const refused = { stdout: files.map(file => `${file} MODULE_NOT_FOUND`), exitCode: 0 };
+  for (const flags of [["--aot"], []]) {
+    const executable = join(String(dir), "program" + flags.join(""));
+    const built = await run(
+      [bunExe(), "build", "--compile", ...flags, "./entry.cjs", "--outfile", executable],
+      project,
+    );
+    expect({ flags, exitCode: built.exitCode }).toEqual({ flags, exitCode: 0 });
+    const ran = await run([executable], join(String(dir), "elsewhere"), bunEnv);
+    expect({ stdout: ran.stdout.trim().split("\n"), exitCode: ran.exitCode }).toEqual(refused);
+  }
+}, 180_000);
+
 test("a package that a made require names is in the executable", async () => {
   const files = Object.keys(loads);
-  const packageOf = (file: string) => "dep-" + file.replace(".", "-");
   using dir = tempDir("aot-made-requires", {
     "project/package.json": `{ "name": "project" }`,
     "project/entry.mjs": files.map(file => `import "./${file}";\n`).join(""),

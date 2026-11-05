@@ -18,7 +18,7 @@ pub(super) fn lower_delete(
         Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {
             return lowering.builder.boolean(true);
         }
-        Decision::GlobalPath(path) => return lowering.delete_global_path(path),
+        Decision::GlobalPath(path) => return lowering.delete_global_path(target, path),
         Decision::Unknown => {}
     }
     if matches!(hir[target].kind, ExprKind::Ident(_)) {
@@ -43,8 +43,8 @@ pub(super) fn lower_delete(
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn delete_global_path(&mut self, path: &[Atom]) -> ValueId {
-        let last = self.lower_global_path_holder(path);
+    fn delete_global_path(&mut self, target: ExprId, path: &[Atom]) -> ValueId {
+        let last = self.lower_global_path_holder(target, path);
         let Some(holder) = last.holder else {
             return self.emit_free_name_delete(last.name);
         };

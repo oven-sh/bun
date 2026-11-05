@@ -737,10 +737,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot-allow-code-from-disk       With --aot: let import(), require() and new Worker() load code that isn't in the executable from disk at run time. Makes it larger and slower"
         ),
         parse_param!(
+            "--aot-harden <STR>...            With --aot: make a bug in the compiler harder to turn into a memory bug. Takes proof-checks, ignore-told-ranges. Runs slower"
+        ),
+        parse_param!(
             "--disallow-code-generation-from-strings <STR>?  In the executable, eval() and new Function() throw an EvalError. \"strict\" also blocks every other way to run code from a string. Requires --compile"
         ),
         parse_param!("--aot-check <STR>..."),
-        parse_param!("--aot-harden <STR>..."),
         parse_param!("--aot-testing <STR>..."),
         parse_param!("--aot-references <STR>"),
         parse_param!("--aot-cpu <STR>"),

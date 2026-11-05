@@ -11,11 +11,6 @@ use super::edges::find_function_shape;
 use crate::ir::{FunctionId, Type, TypeFlags, TypeId};
 use crate::lower::{CheckerTypeId, FileLowering};
 
-// A family is what the program declares: what a class extends and implements, what an interface extends, what is written in the place of a type parameter with a bound.
-// So is a cast: what has the type of its operand carries objects of the type that is written. No other flow of a value adds to one.
-// A value that only fits a type fails the test for it, and the closed arm takes it.
-
-// Only a layout and a function type have a family. A container has none, and what it holds may have one.
 #[derive(Copy, Clone)]
 struct FlowTarget {
     ty: CheckerTypeId,
@@ -24,13 +19,10 @@ struct FlowTarget {
     names_function_types: bool,
 }
 
-/// The source and the target.
 type Flow = (CheckerTypeId, CheckerTypeId);
 
-/// What a flow records follows from these and from how far its parts are followed, so a file looks at each flow once, however many places write it.
 #[derive(Default)]
 pub(super) struct RecordedFlows {
-    /// One more than the levels that were followed below the flow.
     levels_followed: FxHashMap<Flow, u8>,
 }
 
@@ -70,7 +62,6 @@ fn find_flow_target(
     is_target.then_some(target)
 }
 
-// Goes by the checker's type, not the mapped one. The mapped type of an object type also lists the class constructors that fit it, and a value that flows through such a type joins none of their families.
 fn collect_function_types(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
@@ -138,7 +129,6 @@ fn record_function_type_edges(
 ) {
     let targets = collect_function_types(file, target);
     for function_type in collect_function_types(file, source) {
-        // The type of a position is the union of the families of its members, so one member that takes the value is enough.
         if targets.contains(&function_type) {
             continue;
         }
@@ -156,7 +146,6 @@ fn record_value_flow(
     if !target.names_layouts && !target.names_function_types {
         return;
     }
-    // Nobody would name the function type of a function that joins no family.
     if !target.names_function_types && find_function_shape(file, source).is_some() {
         return;
     }
@@ -164,7 +153,6 @@ fn record_value_flow(
     let named = file.fragment.types.get(mapped);
     let brings_layouts = target.names_layouts && !named.layouts.is_empty();
     let brings_functions = target.names_function_types && !named.functions.is_empty();
-    // What nothing is known of may be an object that somebody has made.
     if target.names_layouts && named.flags.contains(TypeFlags::ANY_OBJECT) {
         file.note_layouts_of_objects(target.mapped);
     }
@@ -176,7 +164,6 @@ fn record_value_flow(
     }
 }
 
-// A pair that was met far down was not followed as far as one that is met at the top.
 fn begins_following_parts(
     file: &mut FileLowering<'_, '_, '_, '_>,
     source: CheckerTypeId,
@@ -208,7 +195,6 @@ fn record_flow_at(
     if levels > 0 && begins_following_parts(file, source, target.ty, levels) {
         parts::record_flows_of_parts(file, source, target.ty, levels - 1);
     }
-    // Behind an unstable answer the same flow may record more the next time.
     if file.queries.count_unstable_answers() == unstable_answers {
         file.types.conversions.recorded_flows.note(flow, levels);
     }
@@ -231,7 +217,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // `symbol as TransientSymbol`: nothing is ever made as a TransientSymbol, so without this the type names no layout that holds an object, and the engine reads it as anything.
     pub(in crate::lower) fn record_flow_into_written_type(
         &mut self,
         source: ExprId,
@@ -245,7 +230,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // A position that is written `T extends Shape` has the type of Shape, so that is what the argument flows into. All type parameters with one bound share what is known of the pair.
     pub(in crate::lower) fn record_type_arguments(&mut self, pairs: &[TypeArgument]) {
         for pair in pairs {
             if let Some((bound, _)) = find_value_type(self, pair.parameter) {
@@ -263,14 +247,12 @@ impl FileLowering<'_, '_, '_, '_> {
         self.record_base_class_flow(instance, inherited);
     }
 
-    // What a class declares under a name of a type that it extends or implements is read through the type that the name has there. The layout of a class names that of its base class where it is defined, so of a base class only this is left to say.
     pub(crate) fn record_base_class_flow(&mut self, instance: CheckerTypeId, base: CheckerTypeId) {
         if begins_following_parts(self, instance, base, 1) {
             parts::record_member_flows(self, instance, base);
         }
     }
 
-    // `class Streams extends Set<Stream>` into `Stream | Set<Stream>`: the object is a Set, and belongs to the family of no other member.
     fn flows_into_container(&mut self, source: CheckerTypeId, target: CheckerTypeId) -> bool {
         let shapes = (
             self.queries.type_shape(source),
@@ -331,7 +313,6 @@ mod tests {
 
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     enum Member {
-        /// By its place among the classes of the file.
         Class(u32),
         ObjectType,
     }

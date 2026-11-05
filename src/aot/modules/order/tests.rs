@@ -17,7 +17,6 @@ fn with_order<R>(
     })
 }
 
-// What `read` says of each site of the first file.
 fn sites_of_first<T>(files: &Sources<'_>, read: impl Fn(&PlannedSite) -> T) -> Vec<T> {
     with_order(files, |input, _, sites| {
         let sites = sites.of(file_named(input, files[0].0)).iter();
@@ -192,7 +191,6 @@ fn a_cycle_of_imports_and_requires_counts() {
     assert_eq!(half(&files), ["a.mjs", "b.cjs"]);
 }
 
-// A callback may run the function while the body of any module runs, also of one that the target asks for.
 #[test]
 fn what_a_late_site_may_run_is_exposed() {
     let files = [
@@ -230,6 +228,36 @@ fn what_a_computed_require_may_name_is_exposed() {
 }
 
 #[test]
+fn what_a_load_by_an_unknown_name_may_find_is_exposed() {
+    let main = (
+        "main.cjs",
+        "require('./served.cjs'); require('./asker.cjs');",
+    );
+    let asker = (
+        "asker.cjs",
+        "exports.seen = typeof require('./served.cjs');",
+    );
+    let loads_by_unknown_name = [
+        main,
+        (
+            "served.cjs",
+            "require(process.env.PLUG || './asker.cjs'); module.exports = function () {};",
+        ),
+        asker,
+    ];
+    assert_eq!(half(&loads_by_unknown_name), ["served.cjs", "asker.cjs"]);
+    let only_spells = [
+        main,
+        (
+            "served.cjs",
+            "console.log('./asker.cjs'); module.exports = function () {};",
+        ),
+        asker,
+    ];
+    assert!(half(&only_spells).is_empty());
+}
+
+#[test]
 fn a_site_in_a_branch_exposes_nothing() {
     let files = [
         ("main.cjs", "if (exports.y) require('./a.cjs');"),
@@ -262,7 +290,6 @@ fn the_loader_keeps_what_it_alone_can_load() {
     assert_eq!(evaluates(&plain), [true, true]);
 }
 
-// Whoever requires an ES module while its body runs gets an object without keys. The requests say where that happens, late ones too.
 #[test]
 fn the_loader_keeps_an_es_module_that_may_be_seen_half_done() {
     let cycle = [

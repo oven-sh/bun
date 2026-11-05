@@ -7,8 +7,6 @@ use crate::hir::{
 };
 use bun_core::strings;
 
-/// `bun run` writes the value in place of a read out of what the text spells out: `"abc".length`, `"abc"[1]`, `["a", "b"][1]`, `{ a: 1 }.a`.
-/// `bun build` does under `--minify-syntax` alone.
 impl Folder<'_, '_> {
     pub(super) fn fold_read_out_of_literal(&mut self, access: ExprId, chain: Chain) -> Folded {
         let hir = self.hir;
@@ -52,7 +50,6 @@ impl Folder<'_, '_> {
         }
     }
 
-    /// `[x][0]`, and `["a", "b"][1]` where nothing is lost with the rest of the list.
     fn fold_item_read(
         &mut self,
         access: ExprId,
@@ -74,7 +71,6 @@ impl Folder<'_, '_> {
         }
     }
 
-    /// `{ a: 1 }.a`
     fn fold_only_property_read(
         &mut self,
         access: ExprId,
@@ -129,7 +125,6 @@ impl Folder<'_, '_> {
         }
     }
 
-    /// `[x || "a"][0]` is `x || "a"`, which is true whatever `x` is.
     fn note_condition_told_in_place(
         &mut self,
         access: ExprId,
@@ -150,7 +145,6 @@ impl Folder<'_, '_> {
         }
     }
 
-    /// `"abc".length` and `"abc"[1]`. `bun run` looks for a character in the first piece of an ASCII text.
     fn fold_member_of_text(&mut self, access: ExprId, object: ExprId, key: MemberKey) -> Folded {
         let atoms = self.atoms;
         let Folded {

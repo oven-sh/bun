@@ -9,9 +9,6 @@ use bun_sema::hir::{
 use bun_sema::hir_from_data::DataValue;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// What `bun build` prints differently from the source because its parser knows a value: branches that never run, and names that a define replaces.
-/// This build knows more, such as the constants of other files. What only it removes stays in the text, as it stays in a bundle.
-/// It starts at what folding has decided and at what is dead, and goes up from there: a file without either is not looked at.
 pub(super) fn find_text_replaced_by_bundling<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
@@ -45,13 +42,9 @@ struct Finder<'a, 's> {
     decisions: &'a Decisions<'s>,
     atoms: &'a Interner<'s>,
     replaced: Vec<ReplacedText>,
-    // `true ? a : b`, `true && a`, `false || a` and `null ?? a`, each with the operand that is printed in place of all of it.
     kept_alone: FxHashMap<ExprId, ExprId>,
-    // The operators in whose place a constant is printed: `true && false`, `false && f()`.
     printed_as_constants: FxHashMap<ExprId, Constant>,
-    // Of these only an operand is kept, and `(` is printed in front of it.
     opened: FxHashSet<ExprId>,
-    // Names that a define replaces, with which a statement or the body of an arrow function starts.
     defined_at_heads: FxHashSet<ExprId>,
 }
 
@@ -70,7 +63,6 @@ impl Finder<'_, '_> {
         self.hir.text.get(offset as usize).copied()
     }
 
-    // `if (false) f();` stays `if (false) ;`, `if (false) { f(); }` stays `if (false) {}`, and an `else` that never runs goes.
     fn add_branches_of_statements(&mut self) {
         let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
         for branch in decisions.dead_stmts() {
@@ -80,7 +72,6 @@ impl Finder<'_, '_> {
             let StmtKind::If { yes, no, .. } = hir[statement].kind else {
                 continue;
             };
-            // What stands in a dead branch goes with it.
             if decisions.is_dead_stmt(statement) {
                 continue;
             }
@@ -99,7 +90,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    /// The operators of which `bun build` prints one operand alone, an operand before the operator around it. What is asked about one of them later is answered out of two tables.
     fn find_operators_printed_as_one_operand(&mut self) -> Vec<ExprId> {
         let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
         let dead = decisions.dead_exprs();
@@ -108,7 +98,6 @@ impl Finder<'_, '_> {
             _ => None,
         });
         let goes_on = decisions.operators_that_go_on_to_the_right();
-        // What stands in a dead operand goes with it.
         let mut folded: Vec<ExprId> = above_dead_operands
             .chain(goes_on.iter().copied())
             .filter(|&expression| !decisions.is_dead_expr(expression))
@@ -149,7 +138,6 @@ impl Finder<'_, '_> {
         folded
     }
 
-    // The operand that is printed in place of all of `true ? a : b`, `true && a`, `false || a` and `null ?? a`.
     fn find_operand_kept(&self, expression: ExprId) -> Option<ExprId> {
         self.kept_alone.get(&expression).copied()
     }
@@ -157,7 +145,6 @@ impl Finder<'_, '_> {
     fn add_operator_printed_as_one_operand(&mut self, expression: ExprId) {
         let hir = self.hir;
         let Some(kept) = self.find_operand_kept(expression) else {
-            // `false && f()` stays `false`.
             if let ExprKind::Binary { left, right, .. } = hir[expression].kind {
                 self.leave_out(end_of_expr(hir, left), end_of_expr(hir, right));
             }
@@ -180,8 +167,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    // At the head of a statement or of the body of an arrow function `{ a }` alone is a block, and at the head of a statement `function` and `class` start a declaration. `bun build` prints `({ a })`.
-    // Only what has lost an operator in front of it, or stands where a name stood, has come to stand at a head.
     fn add_parentheses_at_heads(&mut self, folded: &[ExprId]) {
         let decided = self.decisions.decided().iter();
         let defined = decided.filter(|entry| matches!(entry.1, Decision::Data(_)));
@@ -195,8 +180,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    /// The expression that is a whole statement, or the whole body of an arrow function, and whose printed text starts with that of `first`. With it: whether it is a statement.
-    /// `passed`: where an earlier search has come by. What lies above has been answered.
     fn find_head_that_starts_with(
         &self,
         mut first: ExprId,
@@ -229,7 +212,6 @@ impl Finder<'_, '_> {
         None
     }
 
-    // The first part of `for (;;)`.
     fn is_head_of_loop(&self, statement: StmtId) -> bool {
         matches!(
             self.bound.parent_of_stmt(statement),
@@ -262,7 +244,6 @@ impl Finder<'_, '_> {
                 self.replace(end, end, Box::new(*b")"));
                 return;
             }
-            // `({ a } = b)`
             assignment = match hir[first].kind {
                 ExprKind::Assign { .. } => Some(first),
                 _ => None,
@@ -274,7 +255,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    // `(true ? o.m : 0)()` calls the function without `o`, and `(o.m)()` would call it on `o`. `bun build` prints `(0, o.m)()`.
     fn would_be_reference(&self, expression: ExprId, mut kept: ExprId) -> bool {
         let hir = self.hir;
         let Parent::Expr(parent) = self.bound.parent_of_expr(expression) else {
@@ -293,7 +273,6 @@ impl Finder<'_, '_> {
                 op == UnOp::Delete
             }
             (ExprKind::Dot { .. } | ExprKind::Index { .. }, _) => is_callee,
-            // `eval(..)` sees the variables around the call, and `typeof` of a name that nothing declares does not throw.
             (ExprKind::Ident(name), ExprKind::Call(_)) => is_callee && name == known::eval,
             (ExprKind::Ident(_), ExprKind::Unary { op, .. }) => {
                 op == UnOp::Typeof && self.bound.binding(kept) == Binding::Free
@@ -302,7 +281,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    // `for (let i = true ? "a" in o : 0; ..)`: between `?` and `:` an `in` is an operator, and without them it would make this a `for (.. in ..)`. `bun build` prints `("a" in o)`.
     fn find_operators_that_would_end_head_of_loop(
         &self,
         expression: ExprId,
@@ -320,7 +298,6 @@ impl Finder<'_, '_> {
             }
             match hir[operand].kind {
                 ExprKind::Binary { op: BinOp::In, .. } => found.push(operand),
-                // It looks into its own operand.
                 ExprKind::Cond { .. } if self.kept_alone.contains_key(&operand) => {}
                 ExprKind::Binary { left, right, .. } => operands.extend([left, right]),
                 ExprKind::Assign { value, .. } => operands.push(value),
@@ -345,7 +322,6 @@ impl Finder<'_, '_> {
         found
     }
 
-    // Nothing that closes lies between the expression and the head: no parentheses, brackets or braces, and no `?` with its `:`.
     fn stands_open_in_head_of_loop(&self, mut expression: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         while !is_parenthesized(hir, expression) {
@@ -379,7 +355,6 @@ impl Finder<'_, '_> {
         false
     }
 
-    // `true && f()` is printed as `f()`.
     fn is_always_right_operand(&self, op: BinOp, left: ExprId) -> bool {
         let Some(left) = self.find_written_or_defined(left) else {
             return false;
@@ -419,10 +394,12 @@ impl Finder<'_, '_> {
     fn add_defined_names(&mut self) {
         let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
         for &(expression, decision) in decisions.decided() {
-            if !matches!(
-                hir[expression].kind,
-                ExprKind::Ident(_) | ExprKind::Dot { .. }
-            ) {
+            let is_printed = match hir[expression].kind {
+                ExprKind::Ident(_) | ExprKind::Dot { .. } => true,
+                ExprKind::Call(_) => decisions.is_constant_in_bun_run(hir, expression),
+                _ => false,
+            };
+            if !is_printed {
                 continue;
             }
             let is_shorthand = matches!(
@@ -432,14 +409,12 @@ impl Finder<'_, '_> {
             if !is_shorthand {
                 self.add_defined(expression, decision);
             } else if let Some(printed) = self.print(decision) {
-                // `{ DEFINED }` is printed as `{ DEFINED: false }`.
                 let end = hir[expression].end;
                 self.replace(end, end, [b": ", &printed[..]].concat().into_boxed_slice());
             }
         }
     }
 
-    // `!DEFINED` is printed as its value too.
     fn add_defined(&mut self, mut expression: ExprId, mut decision: Decision<'_>) {
         while let Decision::Constant(constant) = decision
             && let Parent::Expr(parent) = self.bound.parent_of_expr(expression)
@@ -459,17 +434,14 @@ impl Finder<'_, '_> {
             if self.needs_parentheses(expression, &printed) {
                 printed = [b"(", &printed[..], b")"].concat();
             } else if printed.starts_with(b"-") && in_front == Some(b'-') {
-                // `1-NEGATIVE`: `--` is another operator.
                 printed.insert(0, b' ');
             } else if printed.iter().all(u8::is_ascii_digit) && self.byte_at(end) == Some(b'.') {
-                // `WHOLE.toFixed()`: `5.` is all of a number.
                 printed.push(b' ');
             }
             self.replace(start, end, printed.into_boxed_slice());
         }
     }
 
-    // Where a name stood: `{ a: 1 }` at a head is a block, `-1 ** 2` is no expression, and `-1.toFixed()` negates the text.
     fn needs_parentheses(&self, expression: ExprId, printed: &[u8]) -> bool {
         let hir = self.hir;
         if is_parenthesized(hir, expression) {
@@ -500,7 +472,6 @@ impl Finder<'_, '_> {
         })
     }
 
-    // As `bun build` prints it. None: it stays as it is written.
     fn print(&self, decision: Decision<'_>) -> Option<Vec<u8>> {
         let mut printed = Vec::new();
         match decision {
@@ -522,14 +493,15 @@ impl Finder<'_, '_> {
             DataValue::Undefined => printed.extend_from_slice(b"undefined"),
             DataValue::Null => printed.extend_from_slice(b"null"),
             DataValue::Boolean(value) => printed.extend_from_slice(value.to_string().as_bytes()),
-            // Where JavaScript writes a number without an exponent, as Rust does.
             DataValue::Number(number)
                 if (1e-6..1e15).contains(&number.abs())
                     || (number == 0.0 && number.is_sign_positive()) =>
             {
                 printed.extend_from_slice(number.to_string().as_bytes());
             }
-            DataValue::Number(_) | DataValue::BigInt(_) => return None,
+            DataValue::Number(_) | DataValue::BigInt(_) | DataValue::Temporal { .. } => {
+                return None;
+            }
             DataValue::String(text) => print_string(self.atoms.bytes(text), true, printed)?,
             DataValue::Array(elements) => {
                 printed.push(b'[');
@@ -563,7 +535,6 @@ impl Finder<'_, '_> {
     }
 }
 
-// The operand with whose first token the expression starts.
 fn find_first_operand(hir: &File<'_>, expression: ExprId) -> Option<ExprId> {
     match hir[expression].kind {
         ExprKind::Dot { obj: first, .. }
@@ -598,7 +569,6 @@ fn is_plain_identifier(name: &[u8]) -> bool {
     }
 }
 
-// `best_quote_char_for_string` of the printer, and its escapes. None: a control character, or no UTF-8.
 fn print_string(text: &[u8], allows_backtick: bool, printed: &mut Vec<u8>) -> Option<()> {
     let text = core::str::from_utf8(text).ok()?;
     let count = |wanted: u8| text.bytes().filter(|&byte| byte == wanted).count();

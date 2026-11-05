@@ -71,7 +71,6 @@ fn file_named_from_two_folders_has_one_resolution_key() {
     assert_ne!(key, code_resolution_key(b"/p/b", Require, b"./c.js"));
     assert_ne!(key, code_resolution_key(b"/p/b", EntryPoint, b"./c.js"));
     assert_ne!(key, code_resolution_key(b"/p/b", Import, b"./c"));
-    // The order of the extensions for `require` goes by who asks.
     let required = code_resolution_key(b"/p/b", Require, b"./c.js");
     let packages: [(&[u8], &[u8]); 2] = [
         (b"/p/node_modules/x", b"../../b/c.js"),
@@ -80,7 +79,6 @@ fn file_named_from_two_folders_has_one_resolution_key() {
     for (directory, specifier) in packages {
         assert_ne!(required, code_resolution_key(directory, Require, specifier));
     }
-    // A folder, and a name that holds a `\`, are looked for as they are written.
     let as_written: [&[u8]; 5] = [b"./b/", b"./b/.", b"..", b".", b"./b\\c.js"];
     for specifier in as_written {
         let key = code_resolution_key(b"/p", Import, specifier);

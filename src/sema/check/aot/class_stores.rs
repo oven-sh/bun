@@ -107,8 +107,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         ))
     }
 
-    /// An index that asked the checker about a key stays with this checker. Asking runs queries, and a task that skips
-    /// them because another task has the answer enters resolution cycles elsewhere, so the program would get other types.
     pub(super) fn store_index(&mut self, file: FileId) -> StoreIndex<'c> {
         let of_file = self.c.p.aot_store_index(file);
         if let Some(&index) = of_file.get() {

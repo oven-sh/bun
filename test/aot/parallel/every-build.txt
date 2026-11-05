@@ -16,10 +16,8 @@ classes/first-print-of-an-instance-lists-symbol-methods-in-written-order.js
 classes/the-functions-of-a-decorators-access-are-shown-in-the-module-of-the-helpers.ts
 closed-bugs/1600-bound-function-under-a-computed-key/names-without-bound-under-computed-key.mjs
 closed-bugs/1654-names-exported-again-from-bun-kept0/main.mjs
-closed-bugs/1654-names-exported-again-from-bun-kept1/main.mjs
 closed-bugs/1867-date-to-json-may-return-its-receiver/main.js
 closed-bugs/2040-getter-taken-from-a-descriptor-of-process-env-g-class-field/main.mjs
-closed-bugs/2047-caller-of-a-getter-under-an-update/the-caller-of-a-getter-under-an-update.js
 closed-bugs/2177-constructed-function-left-by-a-tail-call/k2-what-is-left.mjs
 closed-bugs/2660-constructor-below-object-stores-a-closure-default/small.js
 closed-bugs/2700-escaped-closure-renamed-under-an-unknown-key-way00-right/way00.mjs

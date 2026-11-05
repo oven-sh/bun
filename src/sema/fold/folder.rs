@@ -9,8 +9,8 @@ use super::known_sets::ListHolders;
 use super::known_to_bun_run::ExcludedOperand;
 use super::run_order::RunOrder;
 use super::{
-    Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, NodeBits,
-    literal_constant, slice_in,
+    Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, MadeByCall,
+    NodeBits, literal_constant, slice_in,
 };
 use crate::atom::Interner;
 use crate::bind::{Bound, Parent, SymbolId};
@@ -27,12 +27,9 @@ use std::cell::{Cell, OnceCell, RefCell};
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Effects {
     Unknown,
-    /// Unknown to the build, which runs the expression. `bun run` writes nothing for the parts that may do something: a list that nobody takes, a name that is only tested.
     LeftOutByBunRun,
-    /// A cast asks whether its operand has the type.
     TypeTest,
     DeadZoneCheck,
-    /// The host may add a member to a built-in object when the member is first read.
     MemberRead,
     None,
 }
@@ -74,7 +71,6 @@ pub(super) struct Folder<'a, 's> {
     pub(super) this_of_file: OnceCell<PositionSet>,
     pub(super) run_order: OnceCell<RunOrder>,
     pub(super) constant_prefixes: RefCell<ConstLocalPrefixes>,
-    /// What `bun run` writes in place of a read out of a literal, such as `a` for `[a][0]`.
     pub(super) written_in_place: FxHashMap<ExprId, ExprId>,
     pub(super) process_imports: OnceCell<Vec<SymbolId>>,
     pub(super) exported_variables: OnceCell<Vec<SymbolId>>,
@@ -90,10 +86,10 @@ pub(super) struct Folder<'a, 's> {
     pub(super) specifiers: Vec<(ExprId, ImportSpecifier)>,
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) paths_made_by_calls: Vec<ExprId>,
+    pub(super) names_made_by_calls: Vec<(ExprId, MadeByCall)>,
     pub(super) has_followed_path_call: Cell<bool>,
     pub(super) excluded_operands: Vec<ExcludedOperand>,
     pub(super) folded_by_build_alone: PositionSet,
-    /// Of `folded_by_build_alone`, in a build without `--minify-syntax`: what `bun build` folds once it has the flag, and so what `bun run` folds.
     pub(super) folded_under_minify_syntax: PositionSet,
     pub(super) conditions_told_under_minify_syntax: PositionSet,
     pub(super) assumes_minify_syntax: Cell<bool>,
@@ -103,7 +99,6 @@ pub(super) struct Folder<'a, 's> {
     pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
     pub(super) conditions: FxHashMap<ExprId, bool>,
     pub(super) short_circuited_links: PositionSet,
-    /// `Decisions::operators_that_go_on_to_the_right`
     pub(super) goes_on_to_the_right: Vec<ExprId>,
     pub(super) is_main_of_import_meta_written: OnceCell<bool>,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
@@ -149,6 +144,7 @@ pub(super) fn run<'s>(
         specifiers: Vec::new(),
         paths_from_own_directory: Vec::new(),
         paths_made_by_calls: Vec::new(),
+        names_made_by_calls: Vec::new(),
         has_followed_path_call: Cell::new(false),
         excluded_operands: Vec::new(),
         folded_by_build_alone: PositionSet::new(hir.exprs.len()),
@@ -221,7 +217,6 @@ impl<'s> Folder<'_, 's> {
         if is_number_of_parser {
             self.numbers_of_parser.insert(index);
         }
-        // Plain Bun has one NaN for what it folds. Any other NaN has the sign that its operation gives where it runs.
         if is_nan && is_folded_by_build_alone && !is_number_of_parser {
             self.conditions.insert(e, false);
             self.effects[index] = folded.effects;
@@ -324,7 +319,6 @@ impl<'s> Folder<'_, 's> {
             if effects != Effects::LeftOutByBunRun || dead.exprs.contains(index) {
                 continue;
             }
-            // It keeps the name of the member beside the value, which is no string and no number to whoever asks for one of the two.
             if self.is_enum_member_written_in_place(ExprId(index as u32)) {
                 continue;
             }
@@ -362,14 +356,13 @@ impl<'s> Folder<'_, 's> {
     }
 
     fn finish(mut self, mut errors: Vec<FoldError>, arena: &'s Arena) -> FoldResult<'s> {
-        // What stands in an enum was decided ahead of the rest.
         self.decided.shared_sort_unstable_by_key(|entry| entry.0);
         self.strings_over_limit.shared_sort_unstable();
         self.specifiers.shared_sort_unstable_by_key(|entry| entry.0);
         self.paths_from_own_directory.shared_sort_unstable();
         self.paths_made_by_calls.shared_sort_unstable();
+        (self.names_made_by_calls).shared_sort_unstable_by_key(|entry| entry.0);
         let DeadRoots { all, in_bun_run } = self.find_dead_roots();
-        // In most files nothing is folded under the flag alone.
         let folds_more_under_minify_syntax =
             self.folded_under_minify_syntax.iter().next().is_some()
                 || (self.conditions_told_under_minify_syntax.iter().next()).is_some();
@@ -410,6 +403,7 @@ impl<'s> Folder<'_, 's> {
             specifiers: slice_in(&self.specifiers, arena),
             paths_from_own_directory: slice_in(&self.paths_from_own_directory, arena),
             paths_made_by_calls: slice_in(&self.paths_made_by_calls, arena),
+            names_made_by_calls: slice_in(&self.names_made_by_calls, arena),
             data_literals: NodeBits::freeze(&self.data_literals, arena),
             dead_exprs,
             dead_stmts,

@@ -17,8 +17,6 @@ use crate::lower::{FileLowering, FunctionLowering, object};
 mod tests;
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// `const made = Object.create(parent); made.name = ..;`, `const made = (other.name = Object.create(parent)); made.name = ..;`: the call, where a statement behind the declaration stores under a written name on what the variable holds.
-    /// There a layout pays: what the maker stores lies in slots. An object that gets its properties by descriptors, under computed keys or from strangers is better off plain.
     pub(in crate::lower) fn find_object_created_for_maker(
         &self,
         pattern: PatId,
@@ -49,7 +47,6 @@ impl FileLowering<'_, '_, '_, '_> {
         while let Some(node) = pending.pop() {
             if let TreeNode::Expr(expression) = node {
                 match hir[expression].kind {
-                    // Another body: the engine goes by what the body that makes the object stores.
                     ExprKind::Fn(_) | ExprKind::Class(_) => continue,
                     ExprKind::Assign {
                         op: None, target, ..
@@ -71,9 +68,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-// A call of a built-in that writes out the structure of what it takes makes what the text says.
-// It is done in front of the whole-program stage: that stage then sees no list handed to native code, keys apart from values, and an object with a layout of its own.
-
 pub(super) fn find_locked_builtin(
     file: &FileLowering<'_, '_, '_, '_>,
     callee: ExprId,
@@ -85,7 +79,6 @@ pub(super) fn find_locked_builtin(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// A method that is called in the place of a lookup which no expression spells: the `add` that `new Set(list)` asks the new set for. Nobody has resolved it, and a test run may have listed it as replaced.
     pub(super) fn is_fixed_method(&self, method: BuiltinId) -> bool {
         let replaced = self.inputs.replaced_builtins;
         let is_replaced = |place: BuiltinId| replaced.binary_search(&(place as u32)).is_ok();
@@ -94,13 +87,11 @@ impl FileLowering<'_, '_, '_, '_> {
             && !is_replaced(table::canonical_id(method))
     }
 
-    // A built-in goes through the list that it is handed by the iterator of lists, and so does a spread.
     pub(in crate::lower) fn is_array_iterator_protocol_intact(&self) -> bool {
         self.is_fixed_method(BuiltinId::ArrayPrototypeSymbolIterator)
             && self.is_fixed_method(BuiltinId::ArrayIteratorPrototypeNext)
     }
 
-    // An `as` is a conversion of the list, which is then made.
     fn find_array_literal(&self, list: ExprId) -> Option<ExprId> {
         let hir = self.hir;
         let mut current = list;
@@ -129,7 +120,6 @@ impl FileLowering<'_, '_, '_, '_> {
         elements.iter().all(is_value).then_some(elements)
     }
 
-    // A pair that is shorter than two is read beyond its end.
     fn find_written_pairs(&self, list: ExprId) -> Option<SmallVec<[SmallVec<[ExprId; 8]>; 8]>> {
         let mut pairs = SmallVec::new();
         for pair in self.find_written_elements(list)? {
@@ -172,7 +162,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `Object.fromEntries([[key, value], ..])`. A key is converted when its property is defined, behind every expression of the list.
     fn lower_object_from_entries(
         &mut self,
         call: ExprId,
@@ -181,7 +170,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> Option<ValueId> {
         let list = self.file.find_only_argument(site)?;
         let pairs = self.file.find_written_pairs(list)?;
-        // Every key is converted behind every expression of the list, so all of them wait.
         if pairs.is_empty()
             || !self.may_wait_with(pairs.len())
             || !self.file.is_array_iterator_protocol_intact()
@@ -227,7 +215,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(self.claim_call_result(call, made))
     }
 
-    // `Object.defineProperties(target, Object.getOwnPropertyDescriptors(source))`: nobody but the outer call has the descriptors.
     fn lower_definition_by_descriptors(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
         let hir = self.file.hir;
         let arguments: SmallVec<[ExprId; 4]> = hir.ids(site.args).collect();
@@ -292,8 +279,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// `Object.create(parent)`: an allocation of a layout of the call's own, the link, which refuses what is neither an object nor null, and the end of the birth.
-    /// The layout lists nothing: the engine appends what the maker stores on the object. Only for a maker: `find_object_created_for_maker()`. `Object.create(null)` makes a table of names that nobody knows, and stays a call.
     fn lower_object_created_below(
         &mut self,
         call: ExprId,
@@ -308,7 +293,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         };
         let written = self.file.skip_type_syntax(parent);
-        // `Below.prototype = Object.create(Above.prototype)` makes the one prototype object of a hand-made class, which the engine follows by the call.
         let is_prototype_of_function = match self.file.hir[written].kind {
             ExprKind::Dot { name, .. } => self.file.queries.atom_bytes(name) == b"prototype",
             _ => false,
@@ -335,7 +319,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         self.file.fragment.note_allocation(layout);
         let head = self.builder.new_object(layout, &[], None, &[]);
-        // The link is what refuses a parent, as the call would.
         let outer = self
             .builder
             .set_tail_position(matches!(tail, Tail::Yes { .. }));
@@ -358,8 +341,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_construct(function, Arguments::Values(SmallVec::new()), name)
     }
 
-    // `new Map([[key, value], ..])`. A list of constants stays: the whole map is laid into the image.
-    // Nobody else has the map, and `set` runs no code of the program: a pair goes in as it is made, so that none waits for the last.
     fn lower_map_of_entries(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {
         let list = self.file.find_only_argument(site)?;
         if self.file.is_made_of_constants(list)
@@ -414,7 +395,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// `new Array()` is `[]`: the same storage, capacity planning and proofs.
     fn lower_empty_array(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {
         if !site.args.is_empty() {
             return None;

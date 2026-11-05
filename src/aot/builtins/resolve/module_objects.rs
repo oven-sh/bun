@@ -36,7 +36,6 @@ fn field_of(member: BuiltinId) -> Option<ModuleField> {
     }
 }
 
-// The value may be the module object of some file: nothing is concluded from it but what is done with such an object.
 fn some_module_object() -> ResolvedValue {
     ResolvedValue::object(BuiltinPath {
         id: BuiltinId::ModuleObject,
@@ -44,7 +43,6 @@ fn some_module_object() -> ResolvedValue {
     })
 }
 
-/// `require.main`, `process.mainModule` and `module.parent` hold a module object, so a member of what they hold is a member of one.
 pub(super) fn find_module_object_in(location: ResolvedValue) -> Option<ResolvedValue> {
     match table::canonical_id(location.path.id) {
         BuiltinId::ModuleRequireMain
@@ -54,7 +52,6 @@ pub(super) fn find_module_object_in(location: ResolvedValue) -> Option<ResolvedV
     }
 }
 
-/// `module.children[0]`.
 pub(super) fn find_child_module(holder: ResolvedValue, key: MemberKey) -> Option<ResolvedValue> {
     let is_list = table::canonical_id(holder.path.id) == BuiltinId::ModuleObjectChildren;
     match key {
@@ -75,7 +72,6 @@ fn is_test_or_dropped(hir: &hir::File<'_>, node: ExprId, statement: StmtId) -> b
 }
 
 impl Resolver<'_, '_> {
-    /// What `createRequire` has made has the members of a `require`, and is the `require` of no file.
     pub(super) fn find_made_require(&self, object: ExprId) -> Option<ResolvedValue> {
         let input = self.input;
         let is_made = self.loads_node_module
@@ -108,7 +104,6 @@ impl Resolver<'_, '_> {
             )
     }
 
-    // Whoever reads the result learns whether there is an object, and does not get the object.
     pub(super) fn is_only_tested(&self, e: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut node = e;
@@ -128,7 +123,6 @@ impl Resolver<'_, '_> {
                     op: UnOp::Not | UnOp::Typeof | UnOp::Void,
                     ..
                 } => return true,
-                // `a && b` answers `a` only where `a` is no object.
                 ExprKind::Binary {
                     op: BinOp::And | BinOp::Comma,
                     left,
@@ -166,7 +160,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // Whoever gets the value reads members of it that no expression names. A test and a deletion hand it to nobody.
     fn goes_out_of_sight(&self, e: ExprId) -> bool {
         let is_handed_on = matches!(
             self.classify_use(e),
@@ -204,7 +197,6 @@ impl Resolver<'_, '_> {
         path.is_some_and(|path| path.mutability == Mutability::AlwaysLocked)
     }
 
-    // Whether `object` is the module object of that file in every run. `process` is a global that another file may replace.
     fn is_certainly_of(&self, object: ExprId, owner: ModuleObjectOwner) -> bool {
         let ExprState::Builtin(value) = self.state(self.input.hir.skip_type_assertions(object))
         else {
@@ -234,7 +226,6 @@ impl Resolver<'_, '_> {
             BuiltinId::ModuleObjectPaths | BuiltinId::ModuleRequire => {
                 is_of_own_file && self.is_plain_read(member)
             }
-            // They have a mention of their own.
             BuiltinId::ModuleObjectParent | BuiltinId::ModuleObjectChildren => {
                 self.is_plain_read(member)
             }
@@ -242,8 +233,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // `Object.defineProperty(module, "exports", { get() { .. } });`: a store into the object. The function writes on what it is handed first and hands it to nobody but its caller, who drops it.
-    // What it lays there is called on the object, so no `this` is written in the statement.
     fn is_given_exports_by_descriptor(&self, e: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let operand = self.outermost_assertion_of(e);
@@ -273,7 +262,6 @@ impl Resolver<'_, '_> {
         let names_exports = operands.next().is_some_and(|key| {
             matches!(hir[hir.skip_type_assertions(key)].kind, ExprKind::String(name) if name == known::exports)
         });
-        // The functions that it lays there are written in the statement.
         let descriptor = operands
             .next()
             .map(|it| hir[hir.skip_type_assertions(it)].kind);
@@ -330,7 +318,6 @@ impl Resolver<'_, '_> {
         let (object, _) = self.input.hir.member_key(member)?;
         let owner = self.find_owner(object)?;
         let member_use = match id {
-            // What a store puts in the place of the list is handed the same objects.
             BuiltinId::ModuleObjectChildren
                 if !self.is_plain_read(member) || self.goes_out_of_sight(member) =>
             {
@@ -351,7 +338,6 @@ impl Resolver<'_, '_> {
         Some((owner, member_use))
     }
 
-    // `const { ...members } = process`, `const { [key]: member } = process`, `const { __proto__: above } = process`
     fn reads_member_that_it_does_not_name(&self, holder: BuiltinId, pattern: PatId) -> bool {
         let hir = self.input.hir;
         let PatKind::Object(props) = hir[pattern].kind else {
@@ -382,8 +368,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // `var mo = module`: what is done with `mo` is done with whatever it holds, and from its line on that is the object.
-    // `var mo = a && module`: the same, and until its line has run and where a test has failed it holds no object.
     fn is_kept_in_var(&self, e: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut whole = self.outermost_assertion_of(e);
@@ -424,7 +408,6 @@ impl Resolver<'_, '_> {
         };
         let handed_on = (ModuleObjectOwner::Related, ModuleObjectUse::HandedOn);
         let owner = match table::canonical_id(value.path.id) {
-            // Whoever has let it into the list has been counted.
             BuiltinId::ModuleObject if is_held => {
                 return self.goes_out_of_sight(e).then_some(handed_on);
             }
@@ -437,7 +420,6 @@ impl Resolver<'_, '_> {
             BuiltinId::ModuleRequireMain | BuiltinId::ProcessMainModule => {
                 ModuleObjectOwner::EntryPoint
             }
-            // Whoever is handed a `require` reads any member of it, `main` among them.
             BuiltinId::ModuleRequire => {
                 return self
                     .is_holder_handed_on(e, BuiltinId::ModuleRequire)
@@ -448,7 +430,6 @@ impl Resolver<'_, '_> {
                     .is_holder_handed_on(e, BuiltinId::Process)
                     .then_some(HOLDER_HANDED_ON);
             }
-            // Whoever is handed the global object reads `process` off it.
             id if table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT) => {
                 let is_handed_on = self.is_holder_handed_on(e, BuiltinId::GlobalThis)
                     || matches!(self.classify_use(e), MentionUse::ReadByComputedKey);
@@ -467,7 +448,6 @@ impl Resolver<'_, '_> {
         Some((owner, object_use))
     }
 
-    // `const { parent } = module`: a pattern reads the members that it names, and a rest element or a computed key reads any.
     fn find_ways_that_pattern_reads(
         &self,
         object: ExprId,
@@ -515,7 +495,6 @@ impl Resolver<'_, '_> {
         ways
     }
 
-    // `require[key]`, `process[key]`: a computed key reads any member, `main` and `mainModule` among them.
     fn find_way_that_computed_key_reads(
         &self,
         member: ExprId,
@@ -537,10 +516,8 @@ impl Resolver<'_, '_> {
             .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn))
     }
 
-    // Whoever is handed what `createRequire` has made reads any member of it, `main` among them. Whoever is handed `createRequire` makes such a function where nobody follows it.
     fn find_require_out_of_sight(&self, e: ExprId) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
         let is_out_of_sight = match self.state(e) {
-            // A variable that is initialized with it is followed: `is_made_require`.
             ExprState::Unresolved => {
                 self.find_made_require(e).is_some()
                     && matches!(self.classify_use(e), MentionUse::Exposed)
@@ -561,8 +538,6 @@ impl Resolver<'_, '_> {
         is_out_of_sight.then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn))
     }
 
-    // `Bun.main = path`: from there on `require.main`, `process.mainModule` and `import.meta.main` go by that path.
-    // Whoever is handed `Bun` may store there, and so may a store into `Bun` under a key that folding does not know.
     fn may_store_path_of_main_module(&self, e: ExprId, holds_path: Option<BuiltinId>) -> bool {
         let id = mentioned_id(self.state(e)).map(table::canonical_id);
         if id.is_some() && id == holds_path {
@@ -608,7 +583,6 @@ impl Resolver<'_, '_> {
                 }
                 continue;
             }
-            // Each of the three begins at an expression that stands for a built-in: this one, the one below its casts, or the object that it reads by a key.
             let stands_for_builtin =
                 matches!(self.state(expr), ExprState::Builtin(_) | ExprState::Held(_));
             if !stands_for_builtin
@@ -627,7 +601,6 @@ impl Resolver<'_, '_> {
                 });
             }
         }
-        // A direct `eval`, `arguments`, `with` and `var module` come to the object where no expression names it.
         if self.exposes_own_module_object {
             mentions.push(ModuleObjectMention {
                 expr: ExprId::NONE,
@@ -635,7 +608,6 @@ impl Resolver<'_, '_> {
                 object_use: ModuleObjectUse::Object,
             });
         }
-        // They come to `require` in the same way, and whoever has it reads any member of it, `main` among them.
         if self.exposes_own_require {
             mentions.push(ModuleObjectMention {
                 expr: ExprId::NONE,

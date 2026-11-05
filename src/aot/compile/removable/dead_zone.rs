@@ -3,7 +3,6 @@ use bun_sema::hir::is_moved_to_file_start;
 
 use super::*;
 
-// Reading a `let`, `const` or class binding in its temporal dead zone throws, so the read is only removable once the binding is known to be initialized.
 impl Removable<'_, '_> {
     fn pattern_owner(&self, mut pattern: PatId) -> Parent {
         loop {
@@ -16,7 +15,6 @@ impl Removable<'_, '_> {
         }
     }
 
-    // The nearest ancestor that is not an expression. Every name in a long operator chain asks for it, so the answer is cached along the chain to keep the total cost linear.
     fn parent_above_expressions(&self, expression: ExprId) -> Parent {
         const LONG: usize = 32;
         let mut kept = self.parents_above_long_chains.borrow_mut();
@@ -43,7 +41,6 @@ impl Removable<'_, '_> {
         above
     }
 
-    // The enclosing node that evaluates `node` inline, or `Parent::None` at a function boundary. Static fields and static blocks run inline with their class. From an expression, all enclosing expressions are skipped because no caller looks for one.
     fn inline_parent(&self, node: Parent) -> Parent {
         let (hir, bound) = (self.hir, self.bound);
         let class_parent = |class: ClassId| bound.class_owner[class.idx()].to_parent();
@@ -97,7 +94,6 @@ impl Removable<'_, '_> {
         node != Parent::None
     }
 
-    // A class's inner name is initialized after its `extends` clause and computed keys, before its static fields and blocks.
     fn runs_in_static_initializer(&self, read: ExprId, class: ClassId) -> bool {
         let bound = self.bound;
         let mut node = self.parent_above_expressions(read);
@@ -168,7 +164,6 @@ impl Removable<'_, '_> {
             return false;
         };
         let container = bound.parent_of_stmt(statement);
-        // `for (const a of [a])` evaluates `[a]` first.
         let is_loop_variable = match container {
             Parent::Stmt(owner) => match hir[owner].kind {
                 StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => left == statement,

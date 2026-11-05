@@ -51,7 +51,6 @@ pub(in crate::lower) fn is_derived_class(hir: &hir::File<'_>, class: ClassId) ->
     hir[class].extends.is_some()
 }
 
-// No property of the class object holds this value, so each evaluation of the class needs a location of its own for it.
 pub(in crate::lower) fn has_private_static_storage(hir: &hir::File<'_>, member: MemberId) -> bool {
     let node = hir[member];
     node.kind == MemberKind::Property
@@ -61,7 +60,6 @@ pub(in crate::lower) fn has_private_static_storage(hir: &hir::File<'_>, member: 
             || matches!(hir.runtime_member_key(member), PropKey::Private(_)))
 }
 
-/// A private field says by itself whether an object has it. A private method has no place in the object, so its brand is all that says so.
 pub(in crate::lower) fn brand_is_of_methods(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -159,7 +157,6 @@ fn has_computed_field_key(hir: &hir::File<'_>, member: MemberId) -> bool {
         && matches!(hir.runtime_member_key(member), PropKey::Computed(_))
 }
 
-/// The fields of the classes of a file under a key such as `[-Level.Low]`.
 pub(in crate::lower) fn find_fields_under_signed_members(
     members: KnownObjects<'_, '_>,
     file: FileId,
@@ -178,7 +175,6 @@ pub(in crate::lower) fn find_fields_under_signed_members(
         .collect()
 }
 
-/// Where its transpiler finds a string or a number in the brackets, `bun run` assigns to `this[key]` as it does under a name.
 fn has_key_folded_by_bun_run(
     hir: &hir::File<'_>,
     decisions: &Decisions<'_>,
@@ -305,7 +301,6 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
     let is_at_injection_point = plan.field_semantics == FieldSemantics::Assign
         || (transform == ClassTransform::Standard && !has_defined_field);
     if !is_at_injection_point {
-        // The extra initializers of a decorated field run with the field behind it, and those of the last field in the constructor.
         if let Some(&last @ ClassElement::RunInitializers { .. }) = plan.instance_elements.last() {
             plan.instance_elements.pop();
             plan.injected_elements.push(last);
@@ -317,7 +312,6 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
         plan.instance_elements.remove(0);
         plan.this_binding_elements.insert(0, ClassElement::Brand);
     }
-    // The values of fields that are assigned are code of the constructor, as they are in what `bun run` prints.
     let is_assigned =
         |element: &ClassElement| matches!(element, ClassElement::AssignedField { .. });
     if plan.field_semantics == FieldSemantics::Assign
@@ -346,7 +340,6 @@ pub(super) fn plan_class(
         && compiled.settings.use_define_for_class_fields == Some(false)
         && transform != ClassTransform::Standard;
     let decisions = &compiled.analysis.decisions;
-    // A parameter property is no field.
     let keeps_fields = runtime_members(hir, class).any(|member| {
         has_computed_field_key(hir, member)
             && !hir[member].flags.contains(Flags::STATIC)
@@ -422,7 +415,6 @@ fn find_member_slot(
     }
 }
 
-/// The instance fields whose values the constructor evaluates itself, in the order of the text.
 pub(in crate::lower) fn fields_evaluated_in_constructor(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -439,7 +431,6 @@ pub(in crate::lower) fn fields_evaluated_in_constructor(
     fields.collect()
 }
 
-/// The constructor evaluates the value of this field itself.
 pub(in crate::lower) fn is_evaluated_in_constructor(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,

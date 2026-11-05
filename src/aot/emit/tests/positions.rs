@@ -33,7 +33,6 @@ fn line_starts_are_kept() {
 #[test]
 fn other_spans_are_empty() {
     let text = "a\u{e9}\n";
-    // Names every field, so a field added to the schema stops the build here.
     let expected = SourcePositions {
         line_starts: vec![0, 4],
         column_adjustments: vec![adjustment(3, 0, 2)],

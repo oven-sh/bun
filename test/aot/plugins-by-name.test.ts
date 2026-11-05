@@ -156,6 +156,66 @@ test("a plugin in one entry point takes no file from another entry point", async
   });
 }, 120_000);
 
+// No name stays linked for want of a way to find its file: the build writes down what it found under each name that it leaves to the loader, also where the `imports` of a package.json, the main file
+// of a folder or a way up out of the root directory lead there. `bun build --compile` follows no such name and finds no file where the plugin declines: the reference is `bun <file>`.
+test("a plugin is asked about every kind of name behind a choice, and the executable finds the file where the plugin declines", async () => {
+  using dir = tempDir("aot-plugins-by-name-kinds", {
+    "app/package.json": `{ "name": "program", "type": "module", "imports": { "#inner": "./src/part.mjs", "#data": "./src/data.json" } }`,
+    "app/src/part.mjs": `export default "the file behind the imports";`,
+    "app/src/data.json": `{ "kind": "the data behind the imports" }`,
+    "app/tool/package.json": `{ "main": "./start.mjs" }`,
+    "app/tool/start.mjs": `export default "the main file of the folder";`,
+    "app/other.mjs": `export default "other";`,
+    "outside/far.mjs": `export default "the file above the root";`,
+    "app/node_modules/kit-dual/package.json": `{ "name": "kit-dual", "exports": { "import": "./esm.mjs", "require": "./cjs.cjs" } }`,
+    "app/node_modules/kit-dual/esm.mjs": `export default "the file for import";`,
+    "app/node_modules/kit-dual/cjs.cjs": `module.exports = "the file for require";`,
+    "app/main.mjs": `Bun.plugin({
+        name: "swap",
+        setup(build) {
+          build.onResolve({ filter: /^#|tool$|far\\.mjs$|^kit-dual$/ }, args => (process.argv[2] === "answer" ? { path: args.path, namespace: "swapped" } : undefined));
+          build.onLoad({ filter: /.*/, namespace: "swapped" }, args => ({ contents: "export default " + JSON.stringify("THE PLUGIN for " + args.path), loader: "js" }));
+        },
+      });
+      const many = process.argv.length > 5;
+      const inner = many ? "./other.mjs" : "#inner";
+      const data = many ? "./other.mjs" : "#data";
+      const folder = many ? "./other.mjs" : "./tool";
+      const above = many ? "./other.mjs" : "../outside/far.mjs";
+      const dual = many ? "./other.mjs" : "kit-dual";
+      const text = module => JSON.stringify(module.default ?? module);
+      console.log("imported:", text(await import(inner)), text(await import(data)), text(await import(folder)), text(await import(above)), text(await import(dual)));
+      console.log("required:", text(require(inner)), text(require(data)), text(require(folder)), text(require(above)), text(require(dual)));`,
+  });
+  using elsewhere = tempDir("aot-plugins-by-name-kinds-elsewhere", {});
+  const directory = join(String(dir), "app");
+  const executable = join(String(elsewhere), "program");
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    directory,
+    bunEnv,
+  );
+  expect(built.exitCode).toBe(0);
+  const ofPlugin = ["#inner", "#data", "./tool", "../outside/far.mjs", "kit-dual"]
+    .map(name => JSON.stringify("THE PLUGIN for " + name))
+    .join(" ");
+  const files = `"the file behind the imports" {"kind":"the data behind the imports"} "the main file of the folder" "the file above the root"`;
+  const answers = {
+    answer: [ofPlugin, ofPlugin],
+    decline: [files + ` "the file for import"`, files + ` "the file for require"`],
+  };
+  for (const [word, [imported, required]] of Object.entries(answers)) {
+    const plain = await run([bunExe(), "main.mjs", word], directory, bunEnv);
+    expect(plain.stdout).toBe(`imported: ${imported}\nrequired: ${required}\n`);
+    const ran = await run([executable, word], String(elsewhere), bunEnv);
+    expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({
+      stdout: plain.stdout,
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+}, 120_000);
+
 // What a package.json or a tsconfig.json makes of a name is written down in the executable for the files that a name behind a choice may lead to, so such a name is left
 // to the loader too. `bun build --compile` follows no such name and its executable finds no package where no plugin answers: the reference is `bun <file>`.
 test("a plugin is asked about the name of a package behind a choice, and the executable finds the package where none answers", async () => {

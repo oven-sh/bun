@@ -99,7 +99,6 @@ pub(crate) fn lower_program_without(
     })
 }
 
-/// `replaced_builtins`: `LoweringInputs::replaced_builtins`, ascending. The names that the files spell are resolved as in a build that replaces nothing.
 pub(crate) fn lower_program_replacing(
     files: &[(&str, &str)],
     replaced_builtins: &[u32],
@@ -130,7 +129,6 @@ pub(crate) fn lower_program_replacing(
     })
 }
 
-/// `names`: what the files of a test run add to `Object.prototype`, as `LoweringInputs::names_added_to_builtins` has it.
 pub(crate) fn lower_program_below_object_prototype(
     files: &[(&str, &str)],
     names: &[&str],
@@ -191,7 +189,6 @@ pub fn lower_program_with_limits(
     lower_application(&TestProject { limits, ..project })
 }
 
-/// The first file is the test file that the runner starts.
 pub(crate) fn lower_test_run(files: &[(&str, &str)]) -> Vec<(FileId, LoweredFile)> {
     let mut project = TestProject::new(files, &default_settings());
     project.runs_tests = true;
@@ -256,7 +253,6 @@ pub fn with_runtime_bind_input<R>(
     })
 }
 
-/// The first `test_files` files are the test files that the runner starts, and the next `preloads` its preloads.
 pub fn with_bind_input_of_test_files<R>(
     files: &[(&str, &str)],
     test_files: usize,
@@ -272,7 +268,6 @@ pub fn with_bind_input_of_test_files<R>(
     })
 }
 
-/// The first file is the test file that the runner starts.
 pub fn with_test_run_bind_input<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&BindInput<'_, '_>) -> R,
@@ -312,7 +307,6 @@ pub(crate) fn with_loaded_test_run<R>(
     with_loaded_project(&project, then)
 }
 
-/// A test run in which a test file or a preload imports "vitest". The first file is the test file.
 pub(crate) fn with_loaded_test_run_of_vitest<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -359,7 +353,6 @@ pub(crate) fn with_lowering_inputs<R>(
     with_lowering_inputs_of(&TestProject::new(files, &default_settings()), then)
 }
 
-/// The first file is the test file that the runner starts.
 pub(crate) fn with_lowering_inputs_of_test_run<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&Files<'_>, &LoweringInputs<'_>, FileId) -> R,
@@ -369,7 +362,6 @@ pub(crate) fn with_lowering_inputs_of_test_run<R>(
     with_lowering_inputs_of(&project, then)
 }
 
-/// The host starts the entry point several times in one realm, so each run of its body has names of its own.
 pub(crate) fn with_lowering_inputs_of_entry_that_runs_again<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&Files<'_>, &LoweringInputs<'_>, FileId) -> R,
@@ -426,7 +418,6 @@ fn find_replaced_runtime_sources(runtime: &Files<'_>, files: &[(&str, &str)]) ->
     replaced_sources
 }
 
-// `lower_file` has no inputs for a file with an early error.
 fn find_files_without_early_errors(files: &[FileId], roles: &RoleDecision) -> Vec<FileId> {
     let files = files.iter().copied();
     files.filter(|&file| !roles.has_early_error(file)).collect()
@@ -526,6 +517,7 @@ fn with_loaded_bind_input<R>(
             typescript_drops_absent_exports: false,
             runs_in_several_realms: false,
             code_from_disk_names_files: false,
+            helpers_of_tests_name_files: false,
             run: &contents.run,
             in_parallel: &in_parallel,
             beside: &beside,
@@ -561,7 +553,6 @@ fn with_build<R>(
     run_build(&TestProject::new(files, settings), libs, provider, run)
 }
 
-/// For tests that look at Bun's own code behind a program that names none of it.
 fn with_build_that_keeps_library_code<R>(
     files: &[(&str, &str)],
     run: impl FnOnce(&mut Build<'_>) -> Result<R, Stage>,
@@ -573,7 +564,6 @@ fn with_build_that_keeps_library_code<R>(
 
 pub(crate) fn set_up_output() {
     static OUTPUT: Once = Once::new();
-    // A thread of Bun's pool asserts that Bun's `main` has set up the output.
     OUTPUT.call_once(bun_core::output::stdio::init);
 }
 
@@ -651,14 +641,11 @@ pub(crate) struct TestProject {
     in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
     limits: LimitValues,
     paths: PathOptions,
-    /// `PathOptions::root_directory`, where it is not the working directory. Every entry point lies below it.
     pub(crate) root_directory: Option<&'static [u8]>,
     react_compiler: ReactCompilerMode,
     pub(crate) runs_tests: bool,
     entry_point_imports_vitest: bool,
-    /// In a test run: how many of `entry_points`, the last of them, the runner starts as preloads.
     pub(crate) preload_count: usize,
-    /// `run_build` sets `Build::keeps_library_code_without_names` from it. No option carries it, so `link_program` never sees it.
     pub(crate) keeps_library_code_without_names: bool,
     pub(crate) builds_executable: bool,
 }
@@ -760,7 +747,6 @@ impl TestProject {
         }
     }
 
-    /// `LoadOptions::test_files` and `paths_of_preloads`
     fn paths_listed_by_runner(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
         if !self.runs_tests {
             return (Vec::new(), Vec::new());
@@ -780,6 +766,9 @@ impl TestProject {
             entry_points: self.entry_points.clone(),
             code: CodeOptions {
                 builds_executable: self.builds_executable,
+                entry_points_that_run_first: (paths_of_preloads.iter())
+                    .map(|path| from_native(path))
+                    .collect(),
                 ..CodeOptions::bun_run(&from_native(&self.directory))
             },
             typescript_libs: libs,

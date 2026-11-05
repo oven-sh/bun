@@ -33,49 +33,28 @@ pub(super) enum Subject {
 }
 
 pub(super) enum UsageState {
-    /// `assumed`: what it answers with when it is run into.
     InProgress {
         index: usize,
         assumed: Option<Rc<Usage>>,
     },
-    /// It is walked, and leads back to a subject that is in progress.
     InCycle {
         index: usize,
         found: Rc<Usage>,
     },
-    /// What the round before found. This round has not come to it.
     Assumed(Rc<Usage>),
     Known(Rc<Usage>),
-    /// It was walked, and rested on an answer of the checker that may be another next time.
     NotKept,
 }
 
 #[derive(Copy, Clone)]
 pub(super) enum TypeState {
-    /// The search for cycles has come to it and does not know yet what it leads back to. `index`: in the order of the search.
-    Searched {
-        index: u32,
-    },
-    /// It has not been computed, and is in no cycle.
+    Searched { index: u32 },
     Alone,
-    /// It has not been computed. `cycle`: in `TypesInProgress::cycles`.
-    Member {
-        cycle: u32,
-    },
-    /// `assumed`: what it answers with when it is run into. `None`: nothing, and whoever asked leads back to it.
-    InProgress {
-        depth: u32,
-        assumed: Option<TypeId>,
-    },
-    /// It is computed, and leads back to a subject that is in progress. `position`: in `TypesInProgress::in_cycles`.
-    InCycle {
-        found: TypeId,
-        position: u32,
-    },
-    /// What the first round found. The second has not come to it.
+    Member { cycle: u32 },
+    InProgress { depth: u32, assumed: Option<TypeId> },
+    InCycle { found: TypeId, position: u32 },
     Assumed(TypeId),
     Known(TypeId),
-    /// It was computed, and rested on an answer of the checker that may be another next time.
     NotKept,
 }
 
@@ -84,7 +63,6 @@ type Subjects = SmallVec<[Subject; 4]>;
 struct SubjectSearched {
     subject: Subject,
     index: u32,
-    /// The least index of an open subject that it leads to, its own at first.
     lowest_index: u32,
     asks_for: Subjects,
     next: usize,
@@ -127,7 +105,7 @@ impl SubjectStack {
         self.outermost_revisited = Some(outermost);
     }
 
-    #[allow(clippy::needless_pass_by_value)] // what `enter` gave is used up
+    #[allow(clippy::needless_pass_by_value)]
     fn leave(&mut self, entered: EnteredSubject) -> bool {
         self.depth = entered.depth;
         let outer = self
@@ -143,20 +121,14 @@ impl SubjectStack {
 
 #[derive(Default)]
 pub(super) struct TypesInProgress {
-    /// Depth 0 is the question. What the allowance does not reach leads back to it.
     subjects: SubjectStack,
     remaining_types: u64,
-    /// The subjects that were left as `InCycle`, in that order.
     in_cycles: Vec<Subject>,
-    /// By depth: how long `in_cycles` was when the subject was entered.
     first_in_cycle: Vec<usize>,
-    /// The subjects that the allowance did not reach and that have never been computed.
     out_of_reach: Vec<Subject>,
-    /// What led out of reach is being computed again. What that does not reach says nothing, and nobody waits for it.
     is_computing_again: bool,
     subjects_not_kept: u64,
     next_usage_index: usize,
-    /// The subjects of each cycle, the least first. `None`: they have been asked for.
     cycles: Vec<Option<Box<[Subject]>>>,
 }
 
@@ -171,7 +143,6 @@ impl TypesInProgress {
         self.subjects.leave(entered)
     }
 
-    /// Whoever asks a subject that was left as `InCycle` leads back to the innermost subject in progress that it was computed under.
     fn revisit_in_cycle(&mut self, position: u32) {
         let entered_earlier = self
             .first_in_cycle
@@ -205,9 +176,7 @@ bitflags::bitflags! {
         const REQUIRED = 1 << 7;
         const INCOMPLETE = 1 << 8;
         const NUMBER_AT_EVERY_VALUE = 1 << 9 | Self::NUMBER.bits();
-        /// An object literal is stored: the value is neither an array nor a string.
         const OBJECT_LITERAL_STORED = 1 << 10;
-        /// `>>>=` stores a number that may lie above every `int32`, whatever else is done with the value.
         const UINT32_STORED = 1 << 11;
     }
 }
@@ -238,11 +207,6 @@ impl Member {
     }
 }
 
-/// The members of a tree, in the order of first use.
-///
-/// What a parameter is used as holds what the next function uses it as. In a chain of n functions that each name a member of their own, the first tree has n
-/// members, the second all of them but one, and so on. So many members are kept in a form that trees share: what a merge takes over from another tree it takes
-/// as it lies there, and goes only where the two differ.
 #[derive(Clone)]
 enum Members {
     Few(Vec<Member>),
@@ -255,23 +219,18 @@ struct ManyMembers {
     order: Rc<OrderOfNames>,
 }
 
-/// The names in the order of the pieces. Only the first mention of a name counts.
 #[derive(Clone, Default)]
 struct OrderOfNames {
     pieces: Vec<PieceOfOrder>,
-    /// How many pieces there are, with those of the orders among them, each as often as it is mentioned: no walk over the
-    /// order takes more steps.
     weight: u64,
 }
 
 #[derive(Clone)]
 enum PieceOfOrder {
     Name(Atom),
-    /// The names of a tree that was merged into this one.
     All(Rc<OrderOfNames>),
 }
 
-/// A chain of functions is a chain of these, which is not to be let go by recursion.
 impl Drop for OrderOfNames {
     fn drop(&mut self) {
         let mut pending = std::mem::take(&mut self.pieces);
@@ -303,12 +262,10 @@ impl OrderOfNames {
         self.pieces.push(piece);
     }
 
-    /// Every piece is a name. A name is added where the tree has no member of that name, so none comes twice.
     fn is_list_of_names(&self) -> bool {
         self.weight == self.pieces.len() as u64
     }
 
-    /// Piece for piece. Orders that differ in this may still hold the same names in the same order.
     fn has_the_pieces_of(&self, other: &OrderOfNames) -> bool {
         if self.weight != other.weight {
             return false;
@@ -335,23 +292,18 @@ impl OrderOfNames {
     }
 }
 
-/// The members by the bits of their names, the highest bit first. Two of these with the same names have the same form, so what they share lies at the same place in both.
 #[derive(Clone)]
 pub(super) enum MembersByName {
     One {
         member: Member,
-        /// `Usage::count_nodes` of the member. 0: it has not been counted since it was handed out to be changed.
         nodes: Cell<u64>,
     },
     Both {
-        /// The highest bit in which two of the names differ.
         bit: u32,
-        /// The bits above it, which all the names share.
         prefix: u32,
         without_bit: Rc<MembersByName>,
         with_bit: Rc<MembersByName>,
         count: u32,
-        /// The sum over the members, or 0.
         nodes: Cell<u64>,
     },
 }
@@ -381,7 +333,6 @@ impl MembersByName {
         })
     }
 
-    /// Of two of which neither has a place for the other. Each with its `prefix`: they differ above both `bit`s.
     fn beside(
         (name, members): (u32, Rc<MembersByName>),
         (other_name, others): (u32, Rc<MembersByName>),
@@ -402,7 +353,6 @@ impl MembersByName {
         }
     }
 
-    /// `bit` and `prefix`. Of one member: no bit, and the name.
     fn place(&self) -> (u32, u32) {
         match self {
             MembersByName::One { member, .. } => (0, member.name.0),
@@ -450,7 +400,6 @@ impl MembersByName {
         }
     }
 
-    /// The member is there. What other trees share on the way to it is copied.
     fn member_mut(mut at: &mut Rc<MembersByName>, name: Atom) -> &mut Member {
         loop {
             match Rc::make_mut(at) {
@@ -476,7 +425,6 @@ impl MembersByName {
         }
     }
 
-    /// No member of that name is there.
     fn insert(at: &mut Rc<MembersByName>, member: Member) {
         let name = member.name.0;
         let (bit, prefix) = at.place();
@@ -518,7 +466,6 @@ impl MembersByName {
 }
 
 impl MembersByName {
-    /// The same names with the same trees. Two with the same names have the same form.
     fn has_the_members_of(own: &Rc<MembersByName>, other: &Rc<MembersByName>) -> bool {
         if Rc::ptr_eq(own, other) {
             return true;
@@ -551,10 +498,8 @@ impl MembersByName {
     }
 }
 
-/// `Usage::merge` for many members at once. It pays as a merge of one member after the other pays, which comes to the same as long as the budget does not end.
 struct MergeOfMany<'w> {
     walk: &'w mut Walk,
-    /// How many members the tree had not.
     added: u32,
 }
 
@@ -583,7 +528,6 @@ impl MergeOfMany<'_> {
         }
     }
 
-    /// `own` itself where nothing is added to it.
     fn merge(&mut self, own: &Rc<MembersByName>, other: &Rc<MembersByName>) -> Rc<MembersByName> {
         if Rc::ptr_eq(own, other) || self.walk.is_out_of_budget() {
             return Rc::clone(own);
@@ -619,7 +563,6 @@ impl MergeOfMany<'_> {
                     MembersByName::both(place, without, with)
                 }
             }
-            // The other members lie in one half of these.
             (
                 MembersByName::Both {
                     without_bit,
@@ -642,7 +585,6 @@ impl MergeOfMany<'_> {
                     false => MembersByName::both(place, Rc::clone(without_bit), merged),
                 }
             }
-            // These lie in one half of the other members.
             (
                 _,
                 MembersByName::Both {
@@ -680,7 +622,6 @@ impl PartialEq for Members {
     fn eq(&self, other: &Members) -> bool {
         match (self, other) {
             (Members::Few(members), Members::Few(others)) => members == others,
-            // A round of a cycle ends with the question whether the tree is that of the round before.
             (Members::Many(members), Members::Many(others)) => {
                 MembersByName::has_the_members_of(&members.by_name, &others.by_name)
                     && (Rc::ptr_eq(&members.order, &others.order)
@@ -712,7 +653,6 @@ impl ManyMembers {
         MembersByName::insert(&mut self.by_name, member);
     }
 
-    /// An order that other trees share stays as it is, and is not copied: it is the first piece of a new one.
     fn push_to_order(&mut self, piece: PieceOfOrder) {
         if let Some(order) = Rc::get_mut(&mut self.order) {
             return order.push(piece);
@@ -723,9 +663,6 @@ impl ManyMembers {
         self.order = Rc::new(order);
     }
 
-    /// The names of `others` come behind those that are there. A ring of functions that hand one value round is a ring of
-    /// trees with the same few names, each with the order of the next in its own: an order that weighs much more than its
-    /// names is written out, so that a walk over an order takes as long as there are names.
     fn push_order_of(&mut self, others: &ManyMembers) {
         self.push_to_order(PieceOfOrder::All(Rc::clone(&others.order)));
         if self.order.weight > 4 * u64::from(self.by_name.count()) + 16 {
@@ -758,7 +695,6 @@ impl ManyMembers {
                         names.push(name);
                     }
                 }
-                // An order that comes again is gone through again: the weight counts it as often as it comes.
                 Some(PieceOfOrder::All(names)) => open.push(names.pieces.iter()),
             }
         }
@@ -779,8 +715,6 @@ impl ManyMembers {
 }
 
 impl Members {
-    /// Up to here a list is the cheaper of the two: what most values are used as has fewer names. The tests have more of
-    /// the other.
     const FEW: usize = if cfg!(test) { 8 } else { 64 };
 
     fn is_empty(&self) -> bool {
@@ -811,7 +745,6 @@ impl Members {
         }
     }
 
-    /// No member of that name is there.
     fn push(&mut self, member: Member) {
         if let Members::Few(few) = self
             && few.len() >= Members::FEW
@@ -845,7 +778,6 @@ impl Members {
         }
     }
 
-    /// `Usage::merge` for one member of the other tree. Returns whether a member that other trees share, or the list, is another than before.
     fn merge_member(&mut self, walk: &mut Walk, member: &Member) -> bool {
         match self {
             Members::Few(few) => {
@@ -855,7 +787,6 @@ impl Members {
                     return before != Rc::as_ptr(&own.usage);
                 }
             }
-            // The way to a member is copied where something is added to the member, and not before.
             Members::Many(many) => {
                 if let Some(own) = many.by_name.get(member.name) {
                     let mut usage = Rc::clone(&own.usage);
@@ -884,7 +815,6 @@ impl Members {
         true
     }
 
-    /// `Usage::merge` for the members, where the other tree has many. `None`: nothing is added.
     fn merged_with_many(&self, walk: &mut Walk, others: &ManyMembers) -> Option<Members> {
         if !walk.merges_member_by_member {
             let nodes_before = walk.remaining_nodes;
@@ -894,8 +824,6 @@ impl Members {
             }
             walk.remaining_nodes = nodes_before;
         }
-        // Where the budget ends, what the tree has got by then hangs on the order. It ends somewhere below here, and the
-        // merges on the way there do not each try at once first: that would be a try for each depth.
         let was_member_by_member = std::mem::replace(&mut walk.merges_member_by_member, true);
         let mut merged = self.clone();
         let mut is_changed = false;
@@ -906,7 +834,6 @@ impl Members {
         is_changed.then_some(merged)
     }
 
-    /// What it returns counts only if the budget has not ended.
     fn merged_at_once_with_many(&self, walk: &mut Walk, others: &ManyMembers) -> Option<Members> {
         let few;
         let own = match self {
@@ -939,11 +866,9 @@ impl Members {
     }
 }
 
-/// The types that a value is seen to have, each once, in the order in which they were seen.
 #[derive(Default, Clone)]
 struct Arms {
     list: SmallVec<[TypeId; 2]>,
-    /// Those of `list`, once there are more than a few: a variable that n statements store another object in has n of them.
     listed: Option<Box<FxHashSet<TypeId>>>,
 }
 
@@ -980,7 +905,6 @@ impl PartialEq for Arms {
 
 impl Eq for Arms {}
 
-/// A merge into a part that says nothing yet shares the other tree's part, so a part may belong to many trees: it is copied when one of them changes it.
 #[derive(Default, Clone, PartialEq, Eq)]
 pub(super) struct Usage {
     facts: Facts,
@@ -1005,7 +929,6 @@ impl Usage {
         Rc::make_mut(self.elements.get_or_insert_default())
     }
 
-    /// `None`: more than `most`.
     #[inline]
     fn count_nodes(&self, most: u64) -> Option<u64> {
         match self.members.is_empty() && self.elements.is_none() {
@@ -1034,7 +957,6 @@ impl Usage {
         self.arms.add(arm);
     }
 
-    /// What the tree gets is paid for, not what it has: the subjects of a cycle merge what the others found, which is the same.
     fn merge(&mut self, walk: &mut Walk, other: &Usage) {
         if walk.is_out_of_budget() && !walk.looks_at_every_use_of(self) {
             return;
@@ -1092,8 +1014,6 @@ impl Usage {
     }
 }
 
-/// `Usage::merge()` for a part. A part that many trees share is copied where the merge adds something to it, and not before. The merge finds that out itself, in its
-/// one walk over the two trees: to compare them first, at every level again, takes the square of the height of a tree.
 fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
     if Rc::ptr_eq(own, other) || (walk.is_out_of_budget() && !walk.looks_at_every_use_of(own)) {
         return;
@@ -1160,46 +1080,20 @@ fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
     }
 }
 
-/// What a subject is used as is the least answer that holds for all subjects at once, whoever is asked for first:
-/// - Each subject has the whole budget, for its own uses and for what its tree gets from others. The budget is for the
-///   parts of the tree. Which of them a walk had found when it ended hangs on what the others had found by then, so a
-///   tree that is not all there has no parts. What the subject itself is used as is a few facts and types: every use of
-///   it is looked at, however many there are.
-/// - In a cycle, a subject in progress that is run into answers with what the round before found, nothing in the first.
-///   The subject that the cycle was entered by is walked again until no subject of the cycle finds anything new. A round
-///   only adds to what the round before found, so the rounds end. Then all of them are kept: a cycle is walked once,
-///   not once for each of its subjects.
-/// - What goes into a part of a tree (`visit(node.left)`) counts only when it is kept, that is when it does not lead
-///   back: a shape that holds itself would grow with every round.
-/// - Nothing that rests on an answer of the checker that may be another next time is kept. What is thrown away has one
-///   budget: see `shares_budget`.
-/// - A chain of calls and a cycle of them are as long as they like: see `set_aside`.
 struct Walk {
     max_nodes: u64,
     remaining_nodes: u64,
-    /// The least index of a subject that the one being walked leads back to, its own at first.
     lowest_index: usize,
-    /// The subjects that were left as `InCycle`, in that order, once for each round.
     in_cycles: Vec<Subject>,
     found_something_new: bool,
-    /// The tree of the subject being walked.
     root: *const Usage,
     subjects_not_kept: u64,
     unstable_answers_at_start: u64,
-    /// What is in progress will not be kept, so from here on all subjects together have what is left of one budget, and
-    /// a cycle has one round.
     shares_budget: bool,
-    /// How many subjects are being walked on the stack of the thread.
     subjects_on_stack: usize,
-    /// A subject was asked for while half of the stack was in use. Until the stack is free nothing is walked.
     is_freeing_stack: bool,
-    /// The subjects that were on the stack then, the outermost first. They stay in progress. Where the stack is free the
-    /// innermost is walked again, with what it had found of where it leads: what it asked for before answers at once,
-    /// and what it asked for last has the stack to itself. When it is done, the one that asked for it is walked again.
     set_aside: Vec<SubjectInProgress>,
-    /// `Some`: no number is asked whether it is an integer. Each is listed here and taken for one.
     numbers_listed: Option<Subjects>,
-    /// A merge of many members at once has run out of the budget and is done again, one member after the other.
     merges_member_by_member: bool,
 }
 
@@ -1211,10 +1105,8 @@ struct SubjectInProgress {
     index: usize,
     first_in_cycle: usize,
     first_in_round: usize,
-    /// What the walk held for the subject when it was set aside.
     lowest_index: usize,
     found_something_new: bool,
-    /// What the walk held for the subject that asked for it.
     outer_lowest: usize,
     outer_nodes: u64,
     outer_root: *const Usage,
@@ -1247,7 +1139,6 @@ impl Walk {
         has_budget
     }
 
-    /// Pays for every node of the tree at once, as a merge into an empty tree pays for them one by one. `false`: the budget ends inside the tree, and nothing is paid.
     fn enter_all_nodes_of(&mut self, usage: &Usage) -> bool {
         let Some(count) = usage.count_nodes(self.remaining_nodes) else {
             return false;
@@ -1720,7 +1611,6 @@ fn is_sum_with_product(hir: &hir::File<'_>, value: ExprId, read: &TermsRead) -> 
     false
 }
 
-/// `var v = x * digit + carry; low = v & mask`: a bit operation takes any number, and cuts one that has left the range.
 fn is_given_product(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -1770,8 +1660,6 @@ fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -
     is_sum.then_some(parent)
 }
 
-// `answers`: those for the sums that earlier questions went through. In `a + b + c + ..` each name stands one sum further out, so
-// without them the names of one long sum would walk it once each.
 fn is_used_as_int32(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -1854,7 +1742,6 @@ fn find_argument_of_call(
     if first_spread as usize <= index {
         return None;
     }
-    // `nth` would visit every argument in front of this one.
     match index < node.args.len() {
         true => Some(hir.id_at(node.args, index)),
         false => Some(ExprId::NONE),
@@ -1925,8 +1812,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Whether the name is one for instances of the built-in class: by its type, and where every object fits that type by the types of what is stored in it and of what the calls in sight pass for it.
-    /// What is inferred depends on what was asked before. This asks none of it, so it may be asked at any time.
     pub fn is_binding_of_builtin(
         &mut self,
         pattern: PatId,
@@ -1936,7 +1821,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let ty = queries.c.type_of_pat(queries.file, pattern);
             queries.resolved(ty)
         });
-        // The type of a mistake, which a member that nothing declares has in JavaScript, says as little as `any`.
         if checked != Err(GaveUp::ErrorType) {
             let checked = checked?;
             if self.is_type_of_builtin(checked, class)? {
@@ -1970,7 +1854,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         for value in stored {
             let ty = match self.expression_type(value) {
-                // Code that never runs stores nothing.
                 Err(GaveUp::UnreachedNode | GaveUp::ErrorType) => continue,
                 ty => ty?,
             };
@@ -1981,7 +1864,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(false)
     }
 
-    /// Of the call that the function stands in as the callee, and of the calls of its name. Other calls may pass more.
     fn find_arguments_in_sight(&mut self, parameter: ParamId) -> SmallVec<[ExprId; 2]> {
         let (hir, bound) = (self.hir(), self.bound());
         let function = bound.param_fn[parameter.idx()];
@@ -2177,12 +2059,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// - A walk may compute `max_inference_nodes` subjects. What it does not reach is walked next, with an allowance of
-    ///   its own, and then what led there is computed again, the last walk first: a chain of calls is as long as it likes.
-    /// - A cycle has two rounds. In the first a subject in progress says nothing, and the subject that the cycle was
-    ///   entered by is kept. In the second the others are computed again, and one in progress says what the first round
-    ///   found. Then all of them are kept: a cycle is computed twice, not once for each of its subjects.
-    /// - Whichever subject of a cycle is asked for first, the cycle is entered by the least of them: see `take_cycle_of`.
     fn inferred_type(&mut self, subject: Subject) -> TypeId {
         if self.memo.types_in_progress.subjects.depth != 0 {
             return self.inferred_type_within_allowance(subject);
@@ -2314,6 +2190,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let was_computed = state.is_some_and(TypeState::was_computed);
         if in_progress.remaining_types == 0 {
             if let Some(found) = assumed {
+                if !in_progress.is_computing_again {
+                    in_progress.subjects.revisit(0);
+                }
                 return found;
             }
             match was_computed {
@@ -2372,7 +2251,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         inferred
     }
 
-    /// `false`: it is in no cycle, or in one that has been entered.
     #[inline(never)]
     fn infer_types_of_cycle_around(&mut self, subject: Subject) -> bool {
         let Some(cycle) = self.take_cycle_of(subject) else {
@@ -2384,9 +2262,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         true
     }
 
-    /// The cycle that nothing has been asked of yet and that the subject is in. What a subject of a cycle turns out as
-    /// hangs on where the cycle is entered, so which subjects are in one is found before any of them is computed, from
-    /// what each may ask for whatever the answers are.
     fn take_cycle_of(&mut self, subject: Subject) -> Option<Box<[Subject]>> {
         if matches!(subject, Subject::Pattern(_) | Subject::This(_)) {
             return None;
@@ -2404,7 +2279,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Whatever was found earlier leads to nothing that is found now, or that would have been found then.
     fn find_cycles_from(&mut self, start: Subject) {
         let mut path: SmallVec<[SubjectSearched; 4]> = SmallVec::new();
         let mut open: SmallVec<[Subject; 8]> = SmallVec::new();
@@ -2475,7 +2349,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// The subjects that the type of this one may be made from, whatever their types are.
     fn find_subjects_asked_for(&mut self, subject: Subject) -> Subjects {
         let mut asked_for = Subjects::new();
         match subject {
@@ -2544,7 +2417,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn compute_binding_type(&mut self, symbol: SymbolId) -> TypeId {
         let &[Decl::Param(name)] = self.bound().symbol(symbol).decls else {
-            // Uses only guess: what a constant is made from knows.
             return match self.find_type_a_constant_is_made_with(symbol) {
                 Some(made) => made,
                 None => self.compute_type_from_uses(Subject::Binding(symbol)),
@@ -2565,8 +2437,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 false => used_as,
             };
         }
-        // Uses only guess what a member holds: `a.codes[i]` reads as an array whatever `a.codes` is. What every caller
-        // passes knows, so it wins when it has each member the uses name.
         let given = self.compute_type_from_arguments(name);
         if !self.c.is_any(given) && self.has_every_member(given, &usage.members) {
             return given;
@@ -2578,11 +2448,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `const kept = list.filter(..)`. It asks nothing of the uses of the initializer, which are the uses of the constant.
     fn find_type_a_constant_is_made_with(&mut self, symbol: SymbolId) -> Option<TypeId> {
         let initializer = self.find_initializer_of_constant(symbol)?;
         let made = self.find_result_of_inferred_method(initializer)?;
-        // A list of anything says less than the uses of its elements may.
         match self.c.array_element(made) {
             Some(element) if self.c.is_any(element) => None,
             Some(_) | None => Some(made),
@@ -2603,7 +2471,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// What each call passes for the parameter, `ExprId::NONE` where it passes nothing. `None`: not every call is known.
     fn find_arguments_given(&mut self, name: PatId) -> Option<SmallVec<[ExprId; 4]>> {
         let (hir, bound) = (self.hir(), self.bound());
         let PatParent::Param(parameter) = bound.pat_parent[name.idx()] else {
@@ -2633,8 +2500,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let is_called_once = arguments.len() == 1;
         let mut parts = TypeParts::new();
         let mut literals_listed = FxHashMap::default();
-        // Calls that all hand on what one function returns give one type, which may be a union of as many types as there
-        // are calls.
         let (mut all_given, mut given_listed) = (TypeParts::new(), FxHashSet::default());
         for argument in arguments {
             let given = match argument.some() {
@@ -2659,8 +2524,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Each literal is a type of its own to the checker. Those with the same names that hold the same types are one to whoever reads the parameter, and the one that is written
-    /// first stands for all. Else a parameter that hands on what it is given lists once more every literal that arrives further down.
     fn add_parts_that_differ(
         &mut self,
         given: TypeId,
@@ -2688,8 +2551,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// The file of a literal, its names and what each holds, where nothing else tells it from another literal: a layout lists each of its names, so it has the layout of
-    /// those names wherever it is born.
     fn find_contents_of_literal(&mut self, ty: TypeId) -> Option<ContentsOfLiteral> {
         if !self.c.is_closed_object_literal_type(ty) {
             return None;
@@ -2744,7 +2605,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.type_of_usage(&result)
     }
 
-    /// Each with its checked type.
     fn find_returned_expressions(&mut self, function: FnId) -> ReturnedExpressions {
         let (hir, bound) = (self.hir(), self.bound());
         let mut found = ReturnedExpressions::new();
@@ -2764,13 +2624,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         found
     }
 
-    /// The checked type of an expression that evidence is taken from. `None`: it gives none.
     fn type_for_evidence(&mut self, expression: ExprId) -> Option<TypeId> {
         match self.expression_type(expression) {
             Ok(checked) => Some(checked),
-            // Code that never runs, or that has no type, says nothing.
             Err(GaveUp::UnreachedNode | GaveUp::ErrorType) => None,
-            // `note_gave_up` has counted it, so nobody keeps what is gathered around it.
             Err(GaveUp::Unresolved | GaveUp::FlowAnalysisDisabled | GaveUp::OutOfStack) => None,
         }
     }
@@ -3004,7 +2861,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let callee = hir[site].callee;
         hir.member_key(callee)?;
         let method = self.find_type_in_inferred_receiver(callee)?;
-        // `filter<S extends T>(..): S[]` beside `filter(..): T[]`: a result that hangs on the call says nothing here.
         let mut result = None;
         for &signature in self.c.signatures(method, false).iter() {
             let returned = self.c.sig_return(signature);
@@ -3071,7 +2927,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Some(Ok(_) | Err(_)) | None => {}
             }
         }
-        // Both lists are in the order of the expressions' ids, and the sort keeps it among equals.
         let number_of = |owner: u32, reference: ExprId| number_of_pair(owner, hir[reference].pos);
         to_bindings.sort_by_u64(|&(symbol, reference)| number_of(symbol.0, reference));
         to_this.sort_by_u64(|&(function, reference)| number_of(function.0, reference));
@@ -3094,7 +2949,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn walk_subjects_set_aside(&mut self, walk: &mut Walk) -> Option<Rc<Usage>> {
         let mut first_set_aside = 0;
         loop {
-            // The innermost left the stack first.
             walk.set_aside[first_set_aside..].reverse();
             walk.is_freeing_stack = false;
             let mut usage = None;
@@ -3140,7 +2994,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             None => None,
         };
-        // What a subject that is walked again asks for is walked, so each time the stack is freed the walk gets further.
         if walk.subjects_on_stack > 1 && self.c.is_half_of_stack_in_use() {
             walk.is_freeing_stack = true;
             return None;
@@ -3181,7 +3034,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 walk.found_something_new = entered.found_something_new;
                 was_set_aside = false;
             } else {
-                // A walk that begins inside another goes on counting, so what it runs into of the other is further out.
                 entered.index = self.memo.types_in_progress.next_usage_index;
                 self.memo.types_in_progress.next_usage_index += 1;
                 let state = UsageState::InProgress {
@@ -3208,8 +3060,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 walk.set_aside.push(entered);
                 return None;
             }
-            // The trees of a cycle are compared round for round, and each holds the names of the next: with their orders
-            // written out that is one list against another.
             let mut is_as_assumed = false;
             if let (Ok(found), Some(assumed)) = (&mut found, &entered.assumed) {
                 found.members.write_out_order();
@@ -3304,8 +3154,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         usage
     }
 
-    /// With the stack free the checker answers what it gave up on, so they are walked as if for the first time. As
-    /// `NotKept` they would never be kept where a cycle is longer than one budget, nor would whatever leads to them.
     pub(super) fn forget_usages_that_lacked_stack(&mut self) {
         for subject in self.memo.usages_that_lacked_stack.drain(..) {
             if let Some(UsageState::NotKept) = self.memo.usages.get(&subject) {
@@ -3461,8 +3309,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `list.filter(x => x > 2)`: a list hands its elements to the callback, so what the callback does with them says
-    /// what the list holds.
     fn add_uses_of_elements_in_callbacks(
         &mut self,
         walk: &mut Walk,
@@ -3514,12 +3360,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Which parameters of the callback that a list's method takes at `index` are elements of the list: a bit each.
     fn find_parameters_taking_elements(&mut self, method: Atom, index: usize) -> u8 {
         if let Some(&known) = self.memo.parameters_taking_elements.get(&(method, index)) {
             return known;
         }
-        // No method of a list names `never` by itself, so a parameter of that type has the type of the elements.
         let list = self.c.array_of(TypeId::NEVER);
         let mut taking_elements = 0;
         let signatures = match self.c.type_of_property(list, method) {
@@ -3587,7 +3431,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    /// `list[i++]`, `--n >= 0`: what the update hands on is the variable a step ago or a step on.
     fn add_use_of_update(&mut self, updated: ExprId, usage: &mut Usage) {
         let (hir, bound) = (self.hir(), self.bound());
         let Parent::Expr(update) = bound.parent_of_expr(updated) else {
@@ -3872,8 +3715,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `x = new A(); x.m(); .. x = new B(); x.m(); ..`: the n arms are unions that each have one member more than the one before, n * n / 2 members in all, and
-    /// their union is the last of them.
     fn drop_arms_that_others_have_grown_from(&self, arms: &mut TypeParts) {
         if arms.len() <= Arms::FEW {
             return;
@@ -3891,8 +3732,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         arms.retain(|arm| !grown_from.contains(&*arm));
     }
 
-    /// A part belongs to the trees of many subjects, and its type is worked out once. What was cut short for lack of stack, or rests on an answer that may be
-    /// another next time, is not kept.
     fn type_of_part(&mut self, part: &Rc<Usage>) -> TypeId {
         if part.members.is_empty() && part.elements.is_none() {
             return self.type_of_usage(part);
@@ -3903,7 +3742,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let not_kept = (self.count_answers_not_kept(), self.c.times_cut_short.get());
         let ty = self.type_of_usage(part);
         if not_kept == (self.count_answers_not_kept(), self.c.times_cut_short.get()) {
-            // The table holds the part, so it stays where it is and what it is: whoever adds to it copies it.
             let kept = (Rc::clone(part), ty);
             self.memo.types_of_parts.insert(Rc::as_ptr(part), kept);
         }
@@ -3997,7 +3835,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Some(holder) => self.c.property_of_holder(holder, member.name, false),
             None => self.c.get_property_of_type(receiver, member.name),
         };
-        // With the names of the others each literal of a union had the member.
         let found = found.or_else(|| {
             self.c
                 .property_that_some_literals_have(receiver, member.name)
@@ -4007,8 +3844,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    /// The trees of many subjects share their members, and what is shared is asked about once. What was cut short for lack of stack, or rests on an answer that may
-    /// be another next time, is not kept.
     fn has_all_of_many(
         &mut self,
         receiver: TypeId,
@@ -4031,7 +3866,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let has_all = self.has_all_of_many(receiver, holder, without_bit)
             && self.has_all_of_many(receiver, holder, with_bit);
         if not_kept == (self.count_answers_not_kept(), self.c.times_cut_short.get()) {
-            // The table holds the members, so they stay where they are and what they are: whoever adds to them copies them.
             let kept = (Rc::clone(members), has_all);
             self.memo.members_found.insert(key, kept);
         }
@@ -4175,7 +4009,6 @@ mod tests {
         assert!(*holder.members.in_order()[0].usage == usage);
     }
 
-    /// A tree whose members are a list, however many they are, and the merge of one member after the other.
     #[derive(Clone, Default, PartialEq, Debug)]
     struct PlainUsage {
         facts: Facts,
@@ -4259,7 +4092,6 @@ mod tests {
                     continue;
                 }
                 let other = &trees[next(trees.len() as u64) as usize];
-                // Now and then into a part, and now and then with a budget that ends on the way.
                 let most = other.1.count_nodes() + 2;
                 let budget = if next(4) == 0 { next(most) } else { 1 << 40 };
                 let (mut walk, mut remaining_nodes) = (Walk::new(budget), budget);
@@ -4304,7 +4136,6 @@ mod tests {
         }
     }
 
-    /// How many orders hang together below that of `usage`.
     fn count_orders(usage: &Usage) -> usize {
         let Members::Many(members) = &usage.members else {
             return 0;

@@ -14,10 +14,10 @@ if (Stream !== StreamOfLibrary) Object.setPrototypeOf(PlainStream.prototype, Str
 const plainStream: any = new PlainStream();
 const DuplexPrototype = Stream.Duplex.prototype;
 const ReadablePrototype = Stream.Readable.prototype;
-const duplexRemoveListener = DuplexPrototype.removeListener;
 const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require("internal/streams/state");
 // As the streams defined it: the program may have stored another before this file was loaded.
 const duplexResume = streamInternals.readableMethods!.resume;
+const duplexRemoveListener = streamInternals.readableMethods!.removeListener;
 const { queueTick1, queueTick2, ticksAreUnseen, ring, asyncContext } = require("internal/process/next_tick_queue");
 let statusMessageLastChecked = "";
 const kFlowing = 1 << 24;
@@ -638,8 +638,6 @@ declare global {
       $isPrepared: boolean;
       $heldChunk: HttpHeldChunk | null;
       $hasWaitingResponses: boolean;
-      $writableMark: number;
-      $readableMark: number;
       $ownReadableState: ReadableState;
       $ownWritableState: WritableState;
       [kKeepAliveTimeoutSet]: boolean | undefined;
@@ -1613,13 +1611,14 @@ Server.prototype[kRealListen] = function (
         connectHead?: Buffer,
         isPipelinedDispatch?: boolean,
       ) {
+        const ownReadableState = socket != null ? socket.$ownReadableState : undefined;
         if (
           socket != null &&
           usesOwnClasses &&
           !isAncientHTTP &&
           !isSocketNew &&
           !socket._httpMessage &&
-          socket._readableState === socket.$ownReadableState &&
+          socket._readableState === ownReadableState &&
           readsHighWaterMarksUnseen(socket) &&
           isPipelinedDispatch !== true &&
           (dispatchBits & DISPATCH_USUAL_MASK) === DISPATCH_HAS_HOST &&
@@ -1630,7 +1629,12 @@ Server.prototype[kRealListen] = function (
           !traceEvents.isCategoryGroupEnabled(kHttpTraceCat) &&
           (socket.$isPrepared || prepareSocket(socket))
         ) {
-          return onNodeHTTPRequest(server, url, method, handle, socket, hasBody);
+          // The marks as they are now. The full road refuses what is no mark, and takes the default where there is none.
+          const readableMark = ownReadableState!.highWaterMark;
+          const writableMark = socket.$ownWritableState.highWaterMark;
+          if (isMarkOfReadable(readableMark) && typeof writableMark === "number") {
+            return onNodeHTTPRequest(server, url, method, handle, socket, hasBody, readableMark, writableMark);
+          }
         }
         return dispatchInFull(
           bunServer,
@@ -1677,9 +1681,6 @@ function prepareSocket(socket: $Node.HttpServerSocket): boolean {
     socket[kStopParsingOnCloseListener] = true;
     socket.on("close", onSocketCloseStopParsing);
   }
-  // The listeners of 'connection' have run, and may have written the marks.
-  socket.$writableMark = +socket.$ownWritableState.highWaterMark;
-  socket.$readableMark = +socket.$ownReadableState.highWaterMark;
   socket.$isPrepared = true;
   return true;
 }
@@ -1692,6 +1693,8 @@ function onNodeHTTPRequest(
   handle: $Node.NodeHTTPResponse,
   socket: $Node.HttpServerSocket,
   hasBody: boolean,
+  readableMark: number,
+  writableMark: number,
 ): Promise<void> | undefined {
   if (socket[kKeepAliveTimeoutSet]) {
     socket[kKeepAliveTimeoutSet] = false;
@@ -1707,15 +1710,7 @@ function onNodeHTTPRequest(
     socket[kSocketTimeoutTimer]?.refresh();
   }
 
-  const req: $Node.IncomingMessage = new IncomingMessage(
-    kHandle,
-    url,
-    method,
-    handle,
-    hasBody,
-    socket,
-    socket.$readableMark,
-  );
+  const req: $Node.IncomingMessage = new IncomingMessage(kHandle, url, method, handle, hasBody, socket, readableMark);
   let parser = socket.parser;
   if (parser == null) parser = socket.parser = createServerParserShim(socket);
   parser.incoming = req;
@@ -1725,7 +1720,7 @@ function onNodeHTTPRequest(
     kHandle,
     handle,
     socket,
-    socket.$writableMark,
+    writableMark,
     server.rejectNonStandardBodyWrites,
     server.keepAliveTimeout,
     method !== "HEAD",
@@ -2304,7 +2299,7 @@ interface RememberedPeer {
 }
 let serverSocketResume: (() => $Node.HttpServerSocket) | undefined;
 let serverSocketSetTimeout: $Node.HttpServerSocket["setTimeout"] | undefined;
-let netSocketResume: (() => NetSocketBase) | undefined;
+let netSocketResume: unknown;
 let netSocketPrototype: { resume: unknown } | undefined;
 let serverSocketPrototype: object | undefined;
 // The class extends what `net.Socket` holds when it is made. Where a program has stored another class there, no short road is taken.
@@ -2355,8 +2350,6 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     $isPrepared = false;
     $heldChunk: $Node.HttpHeldChunk | null = null;
     $hasWaitingResponses = false;
-    $writableMark = 0;
-    $readableMark = 0;
     $ownReadableState: $Node.ReadableState;
     $ownWritableState: $Node.WritableState;
     declare $resumeUnlessFlowing?: (this: $Node.HttpServerSocket, asksWhetherReadable: boolean) => void;
@@ -2990,7 +2983,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
   serverSocketResume = NodeHTTPServerSocket.prototype.resume;
   serverSocketSetTimeout = NodeHTTPServerSocket.prototype.setTimeout;
-  netSocketResume = NetSocket.prototype.resume;
+  netSocketResume = require("internal/net/symbols").resumeOfSocket;
   netSocketPrototype = NetSocket.prototype;
   serverSocketPrototype = NodeHTTPServerSocket.prototype;
   if (StoredNetSocket !== NetSocket) {
@@ -3174,6 +3167,24 @@ const EXCHANGE_ENDED_IN_STEPS = 1 << 13;
 const noResponseEvents: $Node.HttpResponseEvents = { __proto__: null, finish: undefined };
 const noChunks: (string | $Node.HttpChunk | $Node.HttpWriteCallback | null | undefined)[] = [];
 const noCallbacks: $Node.HttpWriteCallback[] = [];
+// Every response begins with those two, and the library puts nothing into either. Whoever looks under the symbol of one with a key that is a value may: the response gets lists of its own first.
+function showListsOfItsOwn(this: $Node.ServerResponse): void {
+  if (this[kChunkedBuffer] === noChunks) this[kChunkedBuffer] = [];
+  if (this[kPendingCallbacks] !== noCallbacks) return;
+  this[kPendingCallbacks] = [];
+  const exchange = this.$exchange;
+  if (exchange !== undefined && exchange.response === this) exchange.flags |= EXCHANGE_HAS_PENDING_CALLBACKS;
+}
+
+if (IS_COMPILED_AHEAD_OF_TIME) {
+  const prepareHoldersBeforeLookupsUnder = $newCppFunction(
+    "BunCompiledModules.cpp",
+    "jsFunctionPrepareHoldersBeforeLookupsUnder",
+    2,
+  );
+  prepareHoldersBeforeLookupsUnder(kChunkedBuffer, showListsOfItsOwn);
+  prepareHoldersBeforeLookupsUnder(kPendingCallbacks, showListsOfItsOwn);
+}
 const nop = () => {};
 const {
   addListener: eventEmitterOn,
@@ -5070,6 +5081,11 @@ function readsHighWaterMarksUnseen(socket: $Node.HttpServerSocket): boolean {
   return true;
 }
 
+// What a Readable takes for its mark as it is. One of 2 ** 31 or more is a mark too, and goes the full road.
+function isMarkOfReadable(mark: unknown): mark is number {
+  return typeof mark === "number" && (mark | 0) === mark && mark >= 0;
+}
+
 function walksToHighWaterMarks(socket: $Node.HttpServerSocket): boolean {
   return (
     hasThePrototypesOfItsClass(socket) &&
@@ -5529,14 +5545,18 @@ ServerResponse.prototype.write = function (
     !this.strictContentLength &&
     // Native code refuses some status messages, and this call is the one to throw. writeHead() has looked at its own.
     (this.statusMessage === undefined || (flags & EXCHANGE_HAS_SNAPSHOT) !== 0) &&
-    chunk.length * 3 < this[kHighWaterMark] &&
     this.getHeader === outgoingGetHeader &&
     reachesWritableHighWaterMark(this) &&
     ticksAreUnseen() &&
     callsPendingCallbacksUnseen(this)
   ) {
     const socket = exchange.connection;
-    if (socket !== null && socket.$isOpen) {
+    if (
+      socket !== null &&
+      socket.$isOpen &&
+      this[kSocket] === socket &&
+      chunk.length * 3 < socket.$ownWritableState.highWaterMark
+    ) {
       const renderedHeaders = renderNativeHeaders(this, exchange, true);
       socket.$heldChunk = new HeldChunk(exchange, chunk, renderedHeaders, renderedAutoHeaders, renderedKeepAliveSecs);
       this[kBytesBuffered] = exchange.bytesBuffered += Buffer.byteLength(chunk);
@@ -5619,7 +5639,7 @@ ServerResponse.prototype.write = function (
   if (buffered === 0) return true;
   const connection = exchange.connection;
   if (connection !== null && this[kSocket] === connection && reachesWritableHighWaterMark(this)) {
-    return buffered < connection.$ownWritableState.highWaterMark;
+    return buffered < (connection.$ownWritableState.highWaterMark ?? this[kHighWaterMark] ?? 64 * 1024);
   }
   return buffered < this.writableHighWaterMark;
 };

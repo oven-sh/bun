@@ -9,8 +9,6 @@ use crate::ir::generated::SourceRange;
 use crate::lower::FileLowering;
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// Until here the text of each function is a range of the source. From here on it is a range of the text that is kept: the source without its types,
-    /// with the values that `bun build` writes in place of reads, and with what else TypeScript turns into code. Evaluated elsewhere, the text finds no enum.
     pub(in crate::lower) fn finish_function_texts(&mut self) -> PackedTypeRanges {
         let hir = self.hir;
         let atoms = &self.queries.files().atoms;
@@ -53,7 +51,6 @@ impl FileLowering<'_, '_, '_, '_> {
         ranges.pack()
     }
 
-    // `side` where `namespace Box` exports the variable, `A` among the members of `enum E`: no variable has that name in what runs. It is `Box.side`, `E.A`.
     fn add_names_of_containers(&self, replaced: &mut Vec<ReplacedText>) {
         let (hir, bound) = (self.hir, self.bound);
         let atoms = &self.queries.files().atoms;
@@ -83,7 +80,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-// A sign would join an operator in front of it, and `.name` behind whole digits would be read as their fraction.
 pub(in crate::lower) fn print_number(number: f64, is_followed_by_dot: bool) -> Vec<u8> {
     if number.is_nan() {
         return b"(0/0)".to_vec();
@@ -100,7 +96,6 @@ pub(in crate::lower) fn print_number(number: f64, is_followed_by_dot: bool) -> V
     }
 }
 
-// None: half of a surrogate pair, which no text of a file holds.
 pub(in crate::lower) fn print_string(text: &[u8]) -> Option<Vec<u8>> {
     let mut printed = vec![b'"'];
     for unit in core::str::from_utf8(text).ok()?.encode_utf16() {

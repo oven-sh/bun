@@ -9,14 +9,11 @@ use crate::statistics::{Stage, StepClock};
 use bun_sema::util::SharedSort;
 use rustc_hash::FxHashMap;
 
-// `ty` holds what either holds.
 fn unite_positions(first: DeclaredType, other: DeclaredType, ty: TypeId) -> DeclaredType {
-    // Nothing tests a store into a position that is only expected, so its slot proves nothing.
     let mapped = match first.is_expected() || other.is_expected() {
         true => Mapped::expected(ty),
         false => Mapped::checked(ty),
     };
-    // The field is shown where the first declares it, and that says who can mend it.
     let of_first = first.flags & PositionFlags::IS_DECLARED_BY_DEPENDENCY;
     let mut flags = (first.flags & other.flags).without(PositionFlags::IS_EXPECTED) | of_first;
     if !mapped.is_checked {
@@ -25,7 +22,6 @@ fn unite_positions(first: DeclaredType, other: DeclaredType, ty: TypeId) -> Decl
     DeclaredType::new(mapped, None, flags)
 }
 
-// `first` and `others` are what the definitions say that one field holds, in their order. `ty` holds what any of them names.
 fn unite_said_positions(first: DeclaredType, others: &[DeclaredType], ty: TypeId) -> DeclaredType {
     let mut united = first;
     for &other in others {
@@ -37,17 +33,12 @@ fn unite_said_positions(first: DeclaredType, others: &[DeclaredType], ty: TypeId
 #[derive(Copy, Clone)]
 enum UnitedLayout {
     OfProgram(LayoutId),
-    /// By its place among the views of its task.
     View(u32),
 }
 
-/// What definitions that name more than one type say that a field holds, but for the type that holds all of those: where the table lacks it, one thread adds it.
 struct OpenPosition {
-    /// The types that the definitions name, ascending, each once.
     members: Vec<TypeId>,
-    /// What the field declares if that type says nothing.
     if_anything: DeclaredType,
-    /// What it declares if the type says something. The type itself is still to be filled in.
     otherwise: DeclaredType,
 }
 
@@ -57,7 +48,6 @@ impl OpenPosition {
         let mut members: Vec<TypeId> = said.map(|declared| declared.ty).collect();
         members.sort_unstable();
         members.dedup();
-        // Of the type, `unite_positions` asks only whether it says anything.
         OpenPosition {
             members,
             if_anything: unite_said_positions(first, others, TypeTable::ANYTHING),
@@ -65,7 +55,6 @@ impl OpenPosition {
         }
     }
 
-    /// `ty` holds what any of the members holds.
     fn close(&self, ty: TypeId) -> DeclaredType {
         match ty == TypeTable::ANYTHING {
             true => self.if_anything,
@@ -83,15 +72,12 @@ struct OpenField {
     position: OpenPosition,
 }
 
-/// Asks the table for what holds all of some types. Many fields hold the same few.
 struct Unions<'a> {
     types: &'a mut TypeTable,
-    /// By `OpenPosition::members`.
     known: FxHashMap<Vec<TypeId>, TypeId>,
 }
 
 impl Unions<'_> {
-    // The types are united in one step: thousands of definitions that each name another function would leave a type for each of them in the table.
     fn unite(&mut self, members: &[TypeId]) -> TypeId {
         if let Some(&ty) = self.known.get(members) {
             return ty;
@@ -118,8 +104,6 @@ fn find_twin<'a>(other: &'a Layout, index: usize, field: &Field) -> Option<&'a F
     at_same_place.or_else(|| other.fields.iter().find(is_twin))
 }
 
-// The layout is shown under the name, and at the place, of its first definition.
-// `leave_open` gets the index of a field whose definitions name types that `types` has no union of, and what they say.
 fn unite_layouts<'a>(
     united: &mut Layout,
     others: &(impl Iterator<Item = &'a Layout> + Clone),
@@ -148,12 +132,10 @@ fn unite_layouts<'a>(
         let Some((&first, rest)) = said.split_first() else {
             continue;
         };
-        // Many files define a layout with the same few types.
         if rest.iter().all(|other| other.ty == first.ty) {
             field.declared = unite_said_positions(first, rest, first.ty);
             continue;
         }
-        // Some file has written most of these unions too.
         let position = OpenPosition::new(first, rest);
         match types.find_union(position.members.iter().copied()) {
             Some(ty) => field.declared = position.close(ty),
@@ -168,7 +150,6 @@ enum Literal {
     String(StringId),
 }
 
-// `undefined` and `null` are members of every type that holds a reference, so also of the type of one string.
 fn find_only_literal(ty: &Type) -> Option<Literal> {
     let nullish = Primitives::UNDEFINED | Primitives::NULL;
     let has_objects = !(ty.layouts.is_empty()
@@ -214,15 +195,12 @@ fn create_view(above: LayoutId, definition: &Layout) -> Layout {
     }
 }
 
-/// What a task has made of the definitions of some layouts, in the order of the layouts.
 #[derive(Default)]
 struct UnitedDefinitions {
     views: Vec<Layout>,
-    /// Of a layout: those of its views first, then its own.
     open_fields: Vec<OpenField>,
 }
 
-// What `{ kind: 1; a: A }` and `{ kind: 5; a: A }` declare together is `kind: 1..5`: which literals were written is lost, and with them which names an object with a given literal has.
 fn collect_views_of_literals(
     id: LayoutId,
     first: &Layout,
@@ -261,14 +239,11 @@ fn collect_views_of_literals(
     }
 }
 
-// The list, and the index in it.
 type Place = (u32, u32);
 
-// These cut the work into tasks. No answer depends on them.
 const LAYOUTS_IN_A_TASK: usize = 1024;
 const UNITED_LAYOUTS_IN_A_TASK: usize = if cfg!(test) { 2 } else { 64 };
 
-// `others` has a list for each unit, in the order of the units.
 pub(super) fn unite_layout_definitions(
     layouts: &mut [Layout],
     others: Vec<Vec<(LayoutId, Layout)>>,
@@ -276,7 +251,6 @@ pub(super) fn unite_layout_definitions(
     in_parallel: InParallel<'_>,
 ) -> Vec<Layout> {
     let mut steps = StepClock::new(Stage::LinkAndEmit);
-    // A layout is a large record to move, so what is put in order is its place: by layout, then as the lists have them.
     let count: usize = others.iter().map(Vec::len).sum();
     let mut places: Vec<Place> = Vec::with_capacity(count);
     let mut defined_layouts: Vec<u32> = Vec::with_capacity(count);
@@ -290,7 +264,6 @@ pub(super) fn unite_layout_definitions(
     if steps.logs() {
         steps.end(&format!("unite: order {count} other definitions"));
     }
-    // What the definitions of a layout come to depends on no other layout, but for the numbers of the types that they add to the table.
     let mut united_layouts: Vec<(LayoutId, &mut Layout, &[Place])> = Vec::new();
     for (index, layout) in layouts.iter_mut().enumerate() {
         let places = places_by_layout.in_group(index);
@@ -309,7 +282,6 @@ pub(super) fn unite_layout_definitions(
                 .iter()
                 .map(|&(list, index)| &others[list as usize][index as usize].1)
                 .collect();
-            // A view is of definitions as they were written.
             collect_views_of_literals(id, layout, &definitions, known_types, &mut united);
             let open_fields = &mut united.open_fields;
             let others = definitions.iter().copied();
@@ -326,7 +298,6 @@ pub(super) fn unite_layout_definitions(
     drop(united_layouts);
     steps.end("unite: definitions");
 
-    // One thread writes the table, in the order of the layouts: the numbers of the types that it adds follow from the program alone.
     let (type_count, mut open_field_count) = (types.len(), 0);
     let mut views = Vec::new();
     let mut unions = Unions {
@@ -369,16 +340,13 @@ pub(super) fn unite_layout_definitions(
     views
 }
 
-// A constructor function, or a class without heritage: its constructor allocates the objects, with names that are stored later.
 fn is_maker(layout: &Layout) -> bool {
     layout.kind == LayoutKind::Instance
         && layout.constructor.is_some()
         && !layout.flags.contains(LayoutFlags::HAS_HERITAGE)
 }
 
-// The layouts that the program converts, in any number of steps, to a type that it converts the objects of a maker to.
 fn find_types_of_made_objects(layouts: &[Layout]) -> Vec<bool> {
-    // The layouts below layout `i` lie in `below` from `starts[i]` to `starts[i + 1]`.
     let mut starts = vec![0u32; layouts.len() + 2];
     for supertype in layouts.iter().flat_map(|layout| &layout.supertypes) {
         starts[supertype.index() + 2] += 1;
@@ -408,7 +376,6 @@ fn find_types_of_made_objects(layouts: &[Layout]) -> Vec<bool> {
     is_found
 }
 
-// The units name no view, so the views come behind every layout that has a number, and behind the steps that go by those numbers.
 pub(super) fn add_views_of_literals(layouts: &mut Vec<Layout>, views: Vec<Layout>) {
     if views.is_empty() {
         return;
@@ -478,7 +445,6 @@ mod tests {
         }
     }
 
-    // The layout, then its views.
     fn unite_with_views(first: Layout, others: Vec<Layout>, types: &mut TypeTable) -> Vec<Layout> {
         let mut layouts = vec![first, maker_of(0)];
         let others = others.into_iter().map(|other| (LayoutId::new(0), other));
@@ -644,7 +610,6 @@ mod tests {
         ];
         unite_layout_definitions(&mut layouts, vec![others], &mut types, &reverse);
         assert_eq!(layouts[0].fields[0].declared, checked(either));
-        // The other union is new, and it is the first type that is added.
         assert_eq!(layouts[1].fields[0].declared.ty.index(), count);
         assert_eq!(types.len(), count + 1);
     }
@@ -694,7 +659,6 @@ mod tests {
         assert!(first < second);
     }
 
-    // More layouts than one task takes.
     #[test]
     fn table_does_not_depend_on_the_order_of_the_tasks() {
         let count = UNITED_LAYOUTS_IN_A_TASK * 3 + 1;
@@ -705,7 +669,6 @@ mod tests {
                 .collect();
             let holders = functions.iter().map(|&ty| holder_of(checked(ty)));
             let mut layouts: Vec<Layout> = holders.collect();
-            // Every second layout has one type. The others get a type that the table lacks.
             let others = (0..count).rev().map(|index| {
                 let ty = functions[index - index % 2];
                 (LayoutId::new(index), holder_of(checked(ty)))

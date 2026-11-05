@@ -12,7 +12,6 @@ fn is_locked_constructor(path: BuiltinPath) -> bool {
         && table::members(constructor).iter().any(is_prototype)
 }
 
-// Defining a class throws unless it extends `null` or a constructor whose `prototype` is an object or `null`.
 impl Removable<'_, '_> {
     pub(crate) fn has_valid_heritage(&self, class: ClassId) -> bool {
         let node = &self.hir[class];
@@ -57,7 +56,6 @@ impl Removable<'_, '_> {
                     export.is_some_and(|export| self.imports_class(export))
                 })
             }
-            // `/* @__PURE__ */` promises that the call can go when nothing uses the class.
             ExprKind::Call(call) => hir[call].is_pure && !self.options.ignores_pure_annotations,
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
@@ -74,7 +72,6 @@ impl Removable<'_, '_> {
         }
     }
 
-    // A function's `prototype` can be assigned, a class's can't.
     fn is_bound_to_class(&self, symbol: SymbolId) -> bool {
         let hir = self.hir;
         let class = match self.bound.binding_initializer(hir, symbol) {

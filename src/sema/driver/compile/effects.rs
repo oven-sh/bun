@@ -52,8 +52,6 @@ fn origin_of(
     }
 }
 
-// A type is a guess that the engine tests, so no build computes one to find fault with it: a file is looked through for early errors
-// alone, and a type is computed when lowering asks for it.
 pub(super) fn can_lose_trust(origin: FileOrigin) -> bool {
     effect_of(origin, DiagnosticClass::EarlyError, Category::Error) == Effect::WithdrawsTrust
 }
@@ -66,7 +64,6 @@ pub(super) fn requested_diagnostics(origin: FileOrigin, looks_for_type_errors: b
     }
     match effect_of(origin, DiagnosticClass::EarlyError, Category::Error) {
         Effect::StopsBuild | Effect::Warns | Effect::WithdrawsTrust => Requested::EarlyErrors,
-        // No build looks for mistakes in Bun's own modules.
         Effect::Dropped | Effect::InternalError => Requested::Types,
     }
 }
@@ -90,13 +87,11 @@ const EXACT_OPTIONAL_PROPERTY_CODES: [u32; 3] = [2375, 2379, 2412];
 
 const UNKNOWN_MEMBER_CODES: [u32; 6] = [2305, 2339, 2551, 2614, 2694, 2724];
 
-// The rest of `DiagnosticClass::MissingDeclaration` is about a module or a file.
 const UNKNOWN_NAME_CODES: [u32; 25] = [
     2304, 2311, 2318, 2468, 2503, 2550, 2552, 2580, 2581, 2582, 2583, 2584, 2585, 2591, 2592, 2593,
     2662, 2663, 2812, 2833, 2867, 2868, 2874, 2879, 18004,
 ];
 
-// What stands in for Bun's types declares the name, as a variable where they have a type too, or as `any` where their type is generic.
 const DECLARATION_OF_ANOTHER_KIND_CODES: [u32; 2] = [2315, 2749];
 
 fn is_about_exact_optional_property(code: u32, chain: &[MessageChain]) -> bool {
@@ -106,10 +101,6 @@ fn is_about_exact_optional_property(code: u32, chain: &[MessageChain]) -> bool {
             .any(|link| is_about_exact_optional_property(link.code, &link.message_chain))
 }
 
-/// With Bun's types the build had every declaration that it has without them. So a name that had a declaration then and has none
-/// now is theirs: `BufferEncoding`, which is a type alone and in no table of the run time. The checker takes it as `any`.
-/// A module is not asked here. `declare module "*.txt"` of theirs stands for files of the program, so with them the build says
-/// nothing of `import text from "./note.txt"`, whatever the project's own files and options have to say of it.
 fn had_declaration_with_bun_types(missing: &WithoutBunTypes, diagnostic: &Diagnostic) -> bool {
     let Some(errors) = &missing.errors_with_bun_types else {
         return false;
@@ -134,7 +125,6 @@ impl ProgramOrigins<'_, '_> {
         }
     }
 
-    /// The declarations that a build brings along hold no program to what its project has not installed.
     fn is_for_lack_of_bun_types(&self, origin: FileOrigin, diagnostic: &Diagnostic) -> bool {
         let missing = match self.bun_types {
             BunTypes::Installed => return false,
@@ -172,8 +162,6 @@ impl ProgramOrigins<'_, '_> {
         }
     }
 
-    /// `module.exports = f; module.exports.used = ..` of a JavaScript file. The checker lists what `f` has by its type. When
-    /// the program runs `require` answers `f`, which has `used` by then.
     fn is_about_name_stored_beside_module_exports(&self, diagnostic: &Diagnostic) -> bool {
         let (Some(files), DiagnosticSubject::MemberContainer(container)) =
             (self.files, diagnostic.subject)
@@ -197,7 +185,6 @@ impl ProgramOrigins<'_, '_> {
             && files.export(module, name).is_some()
     }
 
-    /// `/** @param {(this: @f() number) => void} a */`: TS1206. A mistake in a comment of a .js file stops no build.
     fn is_in_jsdoc_comment(&self, diagnostic: &Diagnostic) -> bool {
         let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
             return false;
@@ -205,8 +192,6 @@ impl ProgramOrigins<'_, '_> {
         !diagnostic.has_undefined_range && files.hir(file).is_in_jsdoc(diagnostic.start)
     }
 
-    /// `declare module "node:fs";` says that the module is there and nothing of what it has: `fs.Stats` is `any`, as
-    /// `Stats` of `import { Stats } from "node:fs"` is.
     fn is_declared_in_place_of_bun_types(&self, container: Sym) -> bool {
         (self.files).is_some_and(|files| files.is_of_last_resort(container.file))
     }
@@ -252,7 +237,6 @@ impl ProgramOrigins<'_, '_> {
     }
 
     pub(super) fn apply_effects(&self, mut diagnostics: Vec<Diagnostic>) -> Vec<BuildDiagnostic> {
-        // The trees of a diagnostic's file may be gone. Those of a container's file stay: `Checker::member_container`.
         let _reading = ReadingNoTrees::begin();
         crate::sort_and_deduplicate(&mut diagnostics);
         let with_effects = diagnostics.into_iter().filter_map(|mut diagnostic| {
@@ -290,7 +274,6 @@ impl ProgramOrigins<'_, '_> {
                     Effect::Warns
                 }
                 Effect::StopsBuild if names_missing_type_library => Effect::Warns,
-                // `bun test` takes of tsconfig.json what it can read and runs the tests.
                 Effect::StopsBuild
                     if diagnostic.file.is_none()
                         && self.project_origin == FileOrigin::TestedSource
@@ -299,7 +282,6 @@ impl ProgramOrigins<'_, '_> {
                     Effect::Warns
                 }
                 Effect::WithdrawsTrust if diagnostic.file.is_none() => Effect::InternalError,
-                // Nobody has looked for the type errors of the file, so one that came to light takes no types away.
                 Effect::WithdrawsTrust if diagnostic.class != DiagnosticClass::EarlyError => {
                     return None;
                 }
@@ -543,7 +525,6 @@ mod tests {
                 );
                 assert!(stops_build(true, has_configuration_file, code), "{code}");
             }
-            // What the brought declarations do declare, and a module that no subject names.
             for code in [2304, 2322, 2339, 2345, 2584, 2694, 2307, 7016] {
                 assert!(stops_build(false, has_configuration_file, code), "{code}");
                 assert!(stops_build(true, has_configuration_file, code), "{code}");

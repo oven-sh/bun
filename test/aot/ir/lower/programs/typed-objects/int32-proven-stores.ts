@@ -169,10 +169,11 @@ console.log(read());
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: [[L_1]]):
 // CHECK-NEXT: v1 = PropGet v0 key="line"
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = LShift v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=i32 flags=[IsInt32Promise]}
-// CHECK-NEXT: Return v4
+// CHECK-NEXT: v2 = Convert v1 declared={type=i32}
+// CHECK-NEXT: v3 = Integer integer=1
+// CHECK-NEXT: v4 = LShift v2, v3
+// CHECK-NEXT: v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]}
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=i32 flags=[IsInt32Promise]}] {

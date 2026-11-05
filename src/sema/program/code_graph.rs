@@ -69,26 +69,21 @@ pub struct CompiledModule<'s> {
     pub jsx: &'s JsxSettings,
     pub jsx_mode: JsxMode,
     pub declared_module_type: DeclaredModuleType,
-    /// What `declared_module_type` would be if `import` alone loaded the file.
     pub type_where_imported: DeclaredModuleType,
-    /// Of a file that the two loaders read differently: it may be imported while an ES module is being required, in this build or from a layer above it.
     pub runs_inside_require: bool,
     pub is_package_type_module: bool,
     pub package: Option<EnclosingPackage<'s>>,
     pub side_effects: DeclaredSideEffects<'s>,
     pub host_module: Option<HostModuleId>,
     pub loader: HostLoader,
-    /// TypeScript of a package whose `exports` name the "aot" condition.
     pub is_aot_source: bool,
 }
 
-/// The code files of a program: as a load that has ended holds them, or as a load that still finds files has parsed them so far.
 pub trait CodeView<'s>: Sync {
     fn atoms(&self) -> &Interner<'s>;
     fn hir(&self, file: FileId) -> &hir::File<'s>;
     fn bound(&self, file: FileId) -> &Bound<'s>;
     fn analysis(&self, file: FileId) -> &FileAnalysis<'s>;
-    /// `CompiledModule::code_answers` and `CompiledModule::implied_answers`. `None`: the file is not compiled.
     fn answers(&self, file: FileId) -> Option<(&[CodeAnswer<'s>], &[CodeAnswer<'s>])>;
     fn file_name(&self, file: FileId) -> &[u8];
     fn entry_points(&self) -> &[FileId];
@@ -135,54 +130,26 @@ impl<'s> CodeView<'s> for Files<'s> {
     }
 }
 
-/// Looks at the code of a program whose files are all parsed, and answers with the paths of further files that the program begins at.
 pub type FindsEntryPoints<'a> = dyn Fn(&dyn CodeView<'_>) -> Vec<Vec<u8>> + Sync + 'a;
 
-#[derive(Copy, Clone)]
-pub(super) struct ProgramFiles<'s> {
+pub(super) struct CodeGraph<'s> {
+    pub(super) is_compile_build: bool,
     pub(super) entry_points: &'s [FileId],
     pub(super) compiled_files: &'s [FileId],
     pub(super) is_compiled: &'s [bool],
     pub(super) host_modules: &'s [HostModuleId],
-}
-
-impl ProgramFiles<'_> {
-    const EMPTY: ProgramFiles<'static> = ProgramFiles {
-        entry_points: &[],
-        compiled_files: &[],
-        is_compiled: &[],
-        host_modules: &[],
-    };
-}
-
-pub(super) struct CodeGraph<'s> {
-    pub(super) is_compile_build: bool,
-    loaded: ProgramFiles<'s>,
     pub(super) host_payloads: &'s [Option<HostPayload>],
 }
 
 impl<'s> CodeGraph<'s> {
     pub(super) const EMPTY: CodeGraph<'s> = CodeGraph {
         is_compile_build: false,
-        loaded: ProgramFiles::EMPTY,
+        entry_points: &[],
+        compiled_files: &[],
+        is_compiled: &[],
+        host_modules: &[],
         host_payloads: &[],
     };
-
-    pub(super) fn new(
-        loaded: ProgramFiles<'s>,
-        host_payloads: &'s [Option<HostPayload>],
-    ) -> CodeGraph<'s> {
-        CodeGraph {
-            is_compile_build: true,
-            loaded,
-            host_payloads,
-        }
-    }
-
-    #[inline]
-    pub(super) fn viewed(&self) -> ProgramFiles<'s> {
-        self.loaded
-    }
 }
 
 impl<'s> Files<'s> {
@@ -237,8 +204,6 @@ impl<'s> Files<'s> {
         }
     }
 
-    /// `require` loads the file too and reads it as CommonJS by its name. Its text does not say what it is, and to the loader behind `import` it is an ES module.
-    /// Not where a statement may import it while an ES module is being required: the loader behind `require` reads all of that graph.
     pub fn is_es_module_to_imports(&self, file: FileId) -> bool {
         self.compiled(file).is_some_and(|compiled| {
             let analysis = &compiled.analysis;
@@ -265,23 +230,23 @@ impl<'s> Files<'s> {
 
     #[inline]
     pub fn entry_points(&self) -> &'s [FileId] {
-        self.code_graph.viewed().entry_points
+        self.code_graph.entry_points
     }
 
     #[inline]
     pub fn compiled_files(&self) -> &'s [FileId] {
-        self.code_graph.viewed().compiled_files
+        self.code_graph.compiled_files
     }
 
     #[inline]
     pub fn is_compiled(&self, file: FileId) -> bool {
-        let is_compiled = self.code_graph.viewed().is_compiled;
+        let is_compiled = self.code_graph.is_compiled;
         is_compiled.get(file.idx()).copied().unwrap_or(false)
     }
 
     #[inline]
     pub fn host_modules(&self) -> &'s [HostModuleId] {
-        self.code_graph.viewed().host_modules
+        self.code_graph.host_modules
     }
 
     #[inline]
@@ -323,11 +288,10 @@ mod tests {
     fn empty_graph_has_no_files() {
         let graph = CodeGraph::EMPTY;
         assert!(!graph.is_compile_build);
-        let files = graph.viewed();
-        assert!(files.entry_points.is_empty());
-        assert!(files.compiled_files.is_empty());
-        assert!(files.is_compiled.is_empty());
-        assert!(files.host_modules.is_empty());
+        assert!(graph.entry_points.is_empty());
+        assert!(graph.compiled_files.is_empty());
+        assert!(graph.is_compiled.is_empty());
+        assert!(graph.host_modules.is_empty());
         assert!(graph.host_payloads.is_empty());
     }
 }

@@ -24,8 +24,6 @@ const FILE_INPUTS: FileInputs<'static> = FileInputs {
     own_name: b"",
 };
 
-/// This crate has no parser, so each test builds its tree by hand. The parser numbers expressions in source order, operands before the expression
-/// that contains them, and known sets compare those numbers. So call each method in the order its node appears in the source.
 struct Tree<'s> {
     atoms: Interner<'s>,
     file: RefCell<FileBuilder>,
@@ -67,7 +65,6 @@ impl Tree<'_> {
         self.expr(ExprKind::Cond { test, branches })
     }
 
-    /// `c ? "yes" : "no"`
     fn either(&self, yes: &str, no: &str) -> ExprId {
         self.cond(self.name("c"), self.text(yes), self.text(no))
     }
@@ -77,7 +74,6 @@ impl Tree<'_> {
         self.expr(ExprKind::Array(items))
     }
 
-    /// `["a", "b"]`
     fn letters(&self) -> ExprId {
         self.array(&[self.text("a"), self.text("b")])
     }
@@ -90,7 +86,6 @@ impl Tree<'_> {
         file.expr(ExprKind::Template { exprs }, 0, 0)
     }
 
-    /// `list.push(d);`
     fn push_to(&self, list: &str) -> StmtId {
         let object = self.name(list);
         let member = (self.file.borrow_mut()).dot((object, Chain::No), (self.atom("push"), 0), 0);
@@ -110,7 +105,6 @@ impl Tree<'_> {
         file.stmt(StmtKind::Expr(call), 0)
     }
 
-    /// `e;`. `sets_of` returns the values of `e`.
     fn mark(&self, e: ExprId) -> StmtId {
         self.marked.borrow_mut().push(e);
         self.stmt(StmtKind::Expr(e))
@@ -130,7 +124,6 @@ impl Tree<'_> {
         file.stmt(StmtKind::Var(declarations), 0)
     }
 
-    /// `for (const n of walked) n;`, with the read marked.
     fn for_of(&self, walked: ExprId) -> StmtId {
         let left = self.declare(VarKind::Const, "n", ExprId::NONE);
         let body = self.mark(self.name("n"));
@@ -142,7 +135,6 @@ impl Tree<'_> {
         })
     }
 
-    /// `function f() { body }`
     fn function(&self, body: StmtId) -> StmtId {
         let mut file = self.file.borrow_mut();
         let function = Func {
@@ -178,8 +170,6 @@ fn text_of(atoms: &Interner<'_>, value: Constant) -> String {
     }
 }
 
-/// `build` returns the statements of the file. The result has one string per marked expression, in marking order: its values joined by ` | `, or
-/// an empty string if they are unknown.
 fn sets_of(build: impl FnOnce(&Tree<'_>) -> Vec<StmtId>) -> Vec<String> {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));

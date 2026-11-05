@@ -21,22 +21,17 @@ pub(super) struct UnitRecords {
     pub expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
 }
 
-/// Every id in a unit, in its records and in its code is a number of the tables that the file was written under, never the program's.
 #[derive(Clone)]
 pub struct LinkUnit {
     pub(super) file: ProgramFile,
     pub(super) is_checked: bool,
-    /// The files that one task of the checker has visited hold the same tables, and so does a clone. `collect_tables` takes them out, once.
     pub(super) shared: Arc<SharedTables>,
-    /// How long the tables were when the file was done. The unit names nothing at or behind them.
     pub(super) lengths: TableLengths,
-    /// The index of the tables in what `collect_tables` returns. `u32::MAX` until then.
     pub(super) tables: u32,
     pub(super) function_definitions: Vec<(FunctionId, Arc<Function>)>,
     pub(super) layout_definitions: Vec<(LayoutId, Layout)>,
     pub(super) object_types: Vec<(u32, ObjectTypeKey)>,
     said_types: Vec<CheckerTypeId>,
-    /// Ascending.
     pub(super) layouts_named_by_code: Vec<LayoutId>,
     pub(super) allocated_layouts: Vec<LayoutId>,
     pub(super) written_keys: Vec<PropertyKeyId>,
@@ -60,13 +55,11 @@ impl LinkUnit {
         Some((self.file, types))
     }
 
-    /// `SharedTables::note_commit`
     pub fn note_commit(&self, said_types: &SaidTypes) {
         self.shared.note_commit(self.lengths);
         said_types.note_commit(self.file.file, self.is_checked, &self.said_types);
     }
 
-    /// Called while the task of the checker goes on, whose next visit takes the tables: they are handed on and not looked into.
     pub fn new(context: &KeyContext<'_>, fragment: Fragment) -> LinkUnit {
         debug_assert!(fragment.layouts_named_by_code.is_sorted());
         LinkUnit {

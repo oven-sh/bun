@@ -1399,6 +1399,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(panic = "unwind")]
     fn panic_during_drain_leaks_but_never_double_frees() {
         let alive = AtomicUsize::new(0);
         let mut vec = LocalVec::<Counted>::new();

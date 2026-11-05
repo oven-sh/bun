@@ -10,8 +10,6 @@ use crate::load::source_provider::WithoutServices;
 use crate::load::sources::parsed_source;
 use crate::modules::{ModuleGraph, ModuleRef};
 
-/// `bun test --aot`: the first `entry_points` files are what the runner starts, the last `preloads` of them as preloads.
-/// A file that nothing loads lies on disk all the same.
 fn project_of_run(files: &[(&str, &str)], (entry_points, preloads): (usize, usize)) -> TestProject {
     let mut project = TestProject::with_entry_points(files, entry_points, &default_settings());
     project.runs_tests = true;
@@ -35,7 +33,6 @@ fn with_run<R>(
     })
 }
 
-/// The same run, bound.
 fn with_bound_run<R>(
     files: &[(&str, &str)],
     listed: (usize, usize),
@@ -61,7 +58,6 @@ fn whose(files: &Files<'_>, run: &RunContents, name: &str) -> WhoseFile {
     run.whose[file_at(files, name).idx()]
 }
 
-/// Whether a test may replace what the file exports under the name.
 fn is_replaceable(files: &Files<'_>, graph: &ModuleGraph, file: &str, name: &str) -> bool {
     let file = file_at(files, file);
     let bound = files.bound(file);
@@ -80,7 +76,6 @@ fn texts_of(files: &Files<'_>, texts: &[bun_sema::atom::Atom]) -> Vec<String> {
 
 const MANIFEST: (&str, &str) = ("package.json", r#"{ "name": "project", "type": "module" }"#);
 
-// No name and no folder here says what the runner starts.
 const PROJECT: [(&str, &str); 12] = [
     (
         "checks/latest.ts",
@@ -172,15 +167,20 @@ fn a_file_that_the_runner_starts_is_of_the_tests_whoever_else_imports_it() {
 }
 
 #[test]
-fn what_the_preloads_alone_load_is_of_the_tests_however_deep() {
+fn what_a_preload_imports_goes_by_the_rule_for_every_file_of_the_tests() {
     let files = [
         (
             "a.test.ts",
             "import { test } from 'bun:test';\nimport { shared } from './shared';\ntest('a', () => { shared(); });\n",
         ),
         ("boot.ts", "import './patch';\n"),
-        ("patch.ts", "import './deeper';\nimport './shared';\n"),
-        ("deeper.ts", "export {};\n"),
+        (
+            "patch.ts",
+            "import './deeper';\nimport './writes';\nimport './shared';\n",
+        ),
+        ("deeper.ts", "import './deepest';\nexport {};\n"),
+        ("deepest.ts", "export {};\n"),
+        ("writes.ts", "Date.now = () => 1;\nexport {};\n"),
         (
             "shared.ts",
             "import './below';\nexport const shared = () => 1;\n",
@@ -189,14 +189,16 @@ fn what_the_preloads_alone_load_is_of_the_tests_however_deep() {
         MANIFEST,
     ];
     with_run(&files, (2, 1), |files, run| {
-        assert_eq!(whose(files, run, "deeper.ts"), WhoseFile::OfTests);
-        // A test file reaches it too, two steps away, and it asks for nothing.
+        assert_eq!(whose(files, run, "patch.ts"), WhoseFile::OfTests);
+        assert_eq!(whose(files, run, "deeper.ts"), WhoseFile::OfProduct);
+        assert_eq!(whose(files, run, "deepest.ts"), WhoseFile::OfProduct);
+        assert_eq!(whose(files, run, "writes.ts"), WhoseFile::OfTests);
         assert_eq!(whose(files, run, "below.ts"), WhoseFile::OfProduct);
     });
     let mut files = files.to_vec();
     files.push(("main.ts", "import { shared } from './shared';\nshared();\n"));
     with_run(&files, (2, 1), |files, run| {
-        assert_eq!(whose(files, run, "deeper.ts"), WhoseFile::OfTests);
+        assert_eq!(whose(files, run, "patch.ts"), WhoseFile::OfTests);
         assert_eq!(whose(files, run, "shared.ts"), WhoseFile::OfProduct);
         assert_eq!(whose(files, run, "below.ts"), WhoseFile::OfProduct);
     });
@@ -217,7 +219,6 @@ fn of_what_lies_deeper_than_a_step_only_a_file_that_asks_for_it_is_the_tests() {
     for text in asking {
         let mut files = PROJECT.to_vec();
         files.retain(|file| !matches!(file.0, "src/lib.ts"));
-        // Three steps from the test file, behind a file that asks for nothing.
         files.extend([
             ("src/lib.ts", "export { lib } from './deep';\n"),
             ("src/deep.ts", text),
@@ -234,7 +235,6 @@ fn of_what_lies_deeper_than_a_step_only_a_file_that_asks_for_it_is_the_tests() {
                 "{text}"
             );
         });
-        // The product comes to it too.
         files.push(("src/main.ts", "import { lib } from './deep';\nlib('');\n"));
         with_run(&files, (2, 1), |files, run| {
             assert_eq!(
@@ -244,6 +244,52 @@ fn of_what_lies_deeper_than_a_step_only_a_file_that_asks_for_it_is_the_tests() {
             );
         });
     }
+}
+
+#[test]
+fn what_stands_behind_a_file_that_only_hands_names_on_is_imported_by_whoever_imports_that_file() {
+    let files = [
+        (
+            "a.test.ts",
+            "import { test } from 'bun:test';\nimport { put } from './barrel';\nimport { use } from './helper';\ntest('a', () => { put({}); use(); });\n",
+        ),
+        (
+            "barrel.ts",
+            "export { put } from './inner-barrel';\nexport * from './other';\n",
+        ),
+        ("inner-barrel.ts", "export { put } from './put';\n"),
+        (
+            "put.ts",
+            "import './below';\nexport const put = (object: any) => { object.mark = 1; };\n",
+        ),
+        ("other.ts", "export const other = 1;\n"),
+        ("below.ts", "export {};\n"),
+        (
+            "helper.ts",
+            "export { deep } from './behind-code';\nexport const use = () => 1;\n",
+        ),
+        ("behind-code.ts", "export const deep = 1;\n"),
+        MANIFEST,
+    ];
+    with_run(&files, (1, 0), |files, run| {
+        for name in [
+            "barrel.ts",
+            "inner-barrel.ts",
+            "put.ts",
+            "other.ts",
+            "helper.ts",
+        ] {
+            assert_eq!(whose(files, run, name), WhoseFile::OfTests, "{name}");
+        }
+        assert_eq!(whose(files, run, "below.ts"), WhoseFile::OfProduct);
+        assert_eq!(whose(files, run, "behind-code.ts"), WhoseFile::OfProduct);
+    });
+    let mut files = files.to_vec();
+    files.push(("main.ts", "import { put } from './put';\nput({});\n"));
+    with_run(&files, (1, 0), |files, run| {
+        assert_eq!(whose(files, run, "barrel.ts"), WhoseFile::OfTests);
+        assert_eq!(whose(files, run, "put.ts"), WhoseFile::OfProduct);
+    });
 }
 
 #[test]
@@ -325,7 +371,6 @@ fn a_fixture_on_disk_that_only_test_files_import_makes_no_helper_the_products() 
     with_run(&files, (2, 1), |files, run| {
         assert_eq!(whose(files, run, "shared/help.ts"), WhoseFile::OfTests);
     });
-    // The product imports the outer fixture too.
     files.push((
         "src/main.ts",
         "import { outer } from '../fixtures/outer';\nouter();\n",
@@ -399,7 +444,6 @@ const TOOL: [(&str, &str); 3] = [
     ),
 ];
 
-/// Whether the file of the package that writes `require(name)` may load code from disk. `product`: src/product.ts, which src/main.ts imports.
 fn tool_may_load(manifest: &str, product: &str) -> bool {
     let mut files = vec![
         (
@@ -416,7 +460,6 @@ fn tool_may_load(manifest: &str, product: &str) -> bool {
             let file = files.by_path.get(format!("/project/{name}").as_bytes());
             !run.loads_compiled_files_alone[file.unwrap().idx()]
         };
-        // Nothing else of the package asks to leave, and it stays as it is.
         assert!(!may_load("node_modules/tool/index.js"));
         may_load(LOADER)
     })
@@ -445,7 +488,6 @@ fn a_package_that_only_the_tests_reach_loads_by_a_computed_name() {
     ));
 }
 
-/// What a test file with these statements leaves open: a spy under any name, a mock of any module.
 fn left_open_by_test_file(statements: &str) -> (bool, bool) {
     let test_file = format!(
         "import {{ expect, spyOn, test }} from 'bun:test';\nimport * as lib from './src/lib';\ndeclare const made: () => string;\ndeclare const toolsOf: (...all: unknown[]) => any;\ntest('a', () => {{ {statements} }});\n"
@@ -500,7 +542,6 @@ fn text_that_nobody_knows_may_lay_a_spy_where_a_file_of_the_tests_evaluates_it()
             "{statements}"
         );
     }
-    // Global code sees no name of the file.
     for statements in [
         "new Function('ns', made())(lib);",
         "Function('ns', made())(lib);",
@@ -553,7 +594,6 @@ mod texts {
     const UNPARSED: &str = "const config = `In ${process.env.NOBODY_KNOWS} write using spy = spyOn(...) and the spy is put back.`;";
     const WHERE: &str = "process.env.WHERE_NOTHING_IS";
 
-    /// Whether a spy may be anywhere, and whether any module may be mocked: what a text that counts leaves open here.
     fn counts(imports: &str, runs: &str, text: &str) -> (bool, bool) {
         let runs = runs.replace("WHERE", WHERE);
         let test_file = format!(
@@ -576,7 +616,6 @@ mod texts {
                 "test/loader.ts",
                 "export const load = (path: string) => import(path);\n",
             ),
-            // What makes the three files below src/ the product's: a file of the project that no test reaches imports them.
             (
                 "src/main.ts",
                 "import './lib';\nimport './texts';\nimport './plugins';\n",
@@ -587,30 +626,24 @@ mod texts {
         })
     }
 
-    /// A text that is no code can read like code: in this configuration of git, `editor = vi [user]` hands on a member of the test runner's `vi`. Code runs only where something
-    /// runs it: a text counts where its test file reaches a load under a path that nobody reads, a Worker, or whatever evaluates text, and where the text itself goes somewhere.
     #[test]
     fn a_text_that_reads_like_code_counts_where_its_test_file_can_run_it() {
-        // What the test file imports, what it runs, the text that it holds, what is left open.
         let closed = (false, false);
         let open = (true, true);
         let ways = [
             ("", "", CONFIG, closed),
-            // It loads no code from disk, as in the executable.
             (
                 "import { loadPlugin } from \"../src/plugins\";",
                 "await loadPlugin(WHERE);",
                 CONFIG,
                 closed,
             ),
-            // A text of the code under test is no code of the tests, whatever the test file beside it can run.
             (
                 "import { config } from \"../src/texts\";",
                 "await import(WHERE);",
                 "",
                 closed,
             ),
-            // What a tree that the parser has mended leaves open is the mending's.
             ("", "await import(WHERE);", UNPARSED, closed),
             ("", "await import(WHERE);", CONFIG, open),
             ("", "require(WHERE);", CONFIG, open),
@@ -620,7 +653,6 @@ mod texts {
                 CONFIG,
                 open,
             ),
-            // Whatever gets the text itself may run it, whether the build knows it for something that does or not.
             (
                 "",
                 "await import(\"data:text/javascript,\" + encodeURIComponent(config));",
@@ -645,7 +677,6 @@ mod texts {
         assert!(wrong.is_empty(), "{wrong:?}");
     }
 
-    /// What `write(<text>)` in a test file says: `write` is a function that nobody knows, so the text counts whatever stands near the file.
     fn read(text: &str) -> (Vec<String>, Vec<String>, (bool, bool)) {
         let test_file = format!(
             "import {{ test }} from 'bun:test';\ndeclare const write: (text: string) => void;\ndeclare const value: string, method: string, name: string, keyword: string;\ntest('a', () => {{ write({text}); }});\n"
@@ -697,7 +728,7 @@ mod texts {
 
     #[test]
     fn a_spy_in_a_template_that_parses_under_no_filler_is_found() {
-        let head = r#"import { spyOn } from "bun:test"; import * as lib from "./lib"; spyOn(lib, "total");"#;
+        let head = r#"import { spyOn } from "bun:test"; import * as lib from "./lib"; spyOn(held, "total");"#;
         for tail in [
             "lib.other();",
             "lib.other(${value});",
@@ -712,7 +743,6 @@ mod texts {
                 "{tail}"
             );
         }
-        // Nothing runs a text that is no code, and it has no part that the run fills in.
         let (names, modules, left_open) = read(&format!("'{head} lib.();'"));
         assert!(names.is_empty() && modules.is_empty() && left_open == (false, false));
     }
@@ -781,12 +811,62 @@ fn every_member_that_a_test_may_replace_is_written_as_a_read() {
         let has = |member: BuiltinId| listed.binary_search(&member.to_wire()).is_ok();
         assert!(has(BuiltinId::MathFloor) && has(BuiltinId::ArrayIsArray));
         assert!(has(BuiltinId::Map) && has(BuiltinId::Math));
-        // The table leaves `Date.now` writable in every build: it is a read already.
         assert!(!has(BuiltinId::DateNow));
-        // They stay what the executable has: `fix_places_on_the_way`.
         assert!(has(BuiltinId::MapPrototype) && has(BuiltinId::ObjectPrototype));
         assert!(!has(BuiltinId::SymbolIterator));
     });
+}
+
+#[test]
+fn a_spy_in_a_text_on_a_module_that_the_text_names_is_kept_with_the_module() {
+    let lib = "export function answer() { return 1; }\nexport function other() { return 2; }\n";
+    let test_file = |object: &str| {
+        format!(
+            "import {{ test }} from \"bun:test\";\nimport {{ writeFileSync }} from \"node:fs\";\nimport {{ join }} from \"node:path\";\nconst lib = join(import.meta.dir, \"src/lib.js\");\ntest(\"a\", async () => {{\n  writeFileSync(join(process.argv[2], \"late.js\"), `import {{ spyOn }} from 'bun:test'; import * as lib from ${{JSON.stringify(lib)}}; export const lay = given => spyOn({object}, 'answer').mockReturnValue(1);`);\n  (await import(join(process.argv[2], \"late.js\"))).lay();\n}});\n"
+        )
+    };
+    let named = test_file("lib");
+    let files = [("a.test.js", &named[..]), ("src/lib.js", lib), MANIFEST];
+    with_run(&files, (1, 0), |files, run| {
+        assert!(texts_of(files, &run.names_spied).is_empty());
+        let [(module, name)] = run.exports_spied_in_text[..] else {
+            panic!("{}", run.exports_spied_in_text.len());
+        };
+        assert!(files.atoms.bytes(module).ends_with(b"/src/lib.js"));
+        assert_eq!(files.atoms.bytes(name), b"answer");
+    });
+    let from_somewhere = test_file("given");
+    let files = [
+        ("a.test.js", &from_somewhere[..]),
+        ("src/lib.js", lib),
+        MANIFEST,
+    ];
+    with_run(&files, (1, 0), |files, run| {
+        assert_eq!(texts_of(files, &run.names_spied), ["answer"]);
+        assert!(run.exports_spied_in_text.is_empty());
+    });
+}
+
+#[test]
+fn a_piece_of_a_sum_that_is_read_whole_is_not_read_by_itself() {
+    let lib = "export function answer() { return 1; }\nexport function other() { return 2; }\n";
+    let test_file = |text: &str| {
+        format!(
+            "import {{ test }} from \"bun:test\";\nimport {{ writeFileSync }} from \"node:fs\";\nimport {{ join }} from \"node:path\";\nconst lib = join(import.meta.dir, \"src/lib.js\");\ntest(\"a\", async () => {{\n  writeFileSync(join(process.argv[2], \"late.js\"), {text});\n  (await import(join(process.argv[2], \"late.js\"))).lay(\"answer\");\n}});\n"
+        )
+    };
+    let lay = "; export function lay(name) { return spyOn(lib, name).mockReturnValue(1); }";
+    let sum = test_file(&format!(
+        "\"import {{ spyOn }} from 'bun:test'; import * as lib from \" + JSON.stringify(lib) + \"{lay}\""
+    ));
+    let files = [("a.test.js", &sum[..]), ("src/lib.js", lib), MANIFEST];
+    with_run(&files, (1, 0), |_, run| {
+        assert!(!run.spies_under_any_name);
+        assert_eq!(run.modules_replaced_in_text.len(), 1);
+    });
+    let alone = test_file(&format!("\"{lay}\""));
+    let files = [("a.test.js", &alone[..]), ("src/lib.js", lib), MANIFEST];
+    with_run(&files, (1, 0), |_, run| assert!(run.spies_under_any_name));
 }
 
 #[test]
@@ -810,7 +890,6 @@ fn a_helper_that_spies_under_a_name_from_outside_opens_what_its_callers_pass_it(
         assert!(!run.spies_under_any_name && !run.mocks_any_module);
         assert_eq!(texts_of(files, &run.names_spied), ["total", "twice"]);
     });
-    // Whoever calls what a file exports again calls the helper.
     let through = first.replace("./helpers/track.js", "./helpers/index.js");
     let files = [
         ("a.test.js", &through[..]),
@@ -827,11 +906,31 @@ fn a_helper_that_spies_under_a_name_from_outside_opens_what_its_callers_pass_it(
         assert!(!run.spies_under_any_name);
         assert_eq!(texts_of(files, &run.names_spied), ["total"]);
     });
-    // A name that nobody spells may be any name.
     let unspelled = first.replace("\"total\"", "process.argv[2]");
     let files = [
         ("a.test.js", &unspelled[..]),
         ("helpers/track.js", track),
+        ("src/sums.js", sums),
+        MANIFEST,
+    ];
+    with_run(&files, (1, 0), |_, run| assert!(run.spies_under_any_name));
+}
+
+#[test]
+fn a_spy_under_a_made_name_on_a_namespace_in_sight_is_no_spy_on_an_object_from_somewhere() {
+    let sums = "export function total() { return 1; }\nexport function twice() { return 2; }\n";
+    let in_sight = "import { spyOn, test } from \"bun:test\";\nimport * as sums from \"./src/sums.js\";\nconst made = name => name.split(\"\").join(\"\");\ntest(\"a\", () => { spyOn(sums, made(\"total\")); });\n";
+    let files = [("a.test.js", in_sight), ("src/sums.js", sums), MANIFEST];
+    with_run(&files, (1, 0), |files, run| {
+        assert!(!run.spies_under_any_name && !run.counts.spies_on_objects_from_somewhere);
+        assert!(texts_of(files, &run.names_spied).is_empty());
+    });
+    let from_somewhere = in_sight.replace(
+        "spyOn(sums, made(\"total\"));",
+        "for (const object of [sums]) spyOn(object, made(\"total\"));",
+    );
+    let files = [
+        ("a.test.js", &from_somewhere[..]),
         ("src/sums.js", sums),
         MANIFEST,
     ];
@@ -905,7 +1004,6 @@ fn a_callback_takes_its_names_from_what_the_call_in_front_was_handed() {
     ] {
         assert_eq!(names_of(statements), filled, "{statements}");
     }
-    // A name that nobody spells may be any name.
     for statements in [
         "test.each(process.argv)(\"%s\", name => { spyOn(holders.math, name); });",
         "for (const [name] of process.argv.map(it => [it])) spyOn(holders.math, name);",
@@ -949,7 +1047,6 @@ fn a_name_that_is_made_out_of_itself_may_be_any_name() {
     ] {
         assert!(names_of(statements).0, "{statements}");
     }
-    // A name that goes round as it is, and a text with holes that is reached twice and not from inside itself.
     for (statements, names) in [
         (
             "function watch(name: string, left: number) { if (left === 0) spyOn(holders.math, name); else watch(name, left - 1); }\nwatch(\"half\", 2);",
@@ -1043,7 +1140,6 @@ fn bind_opens_what_is_handed_out_where_text_that_nobody_knows_is_evaluated() {
         ("src/main.ts", "import './lib';\nimport './kept';\n"),
         MANIFEST,
     ];
-    // A direct `eval` . global code that is handed an object of the runner . global code that is handed none.
     for (statement, is_open) in [
         ("eval(made())(lib)", true),
         ("new Function('spy', 'ns', made())(spyOn, lib)", true),
@@ -1058,7 +1154,6 @@ fn bind_opens_what_is_handed_out_where_text_that_nobody_knows_is_evaluated() {
                 is_open,
                 "{statement}"
             );
-            // No file hands its object on.
             assert!(
                 !is_replaceable(files, graph, "src/kept.ts", "kept"),
                 "{statement}"
@@ -1116,7 +1211,6 @@ fn what_a_file_of_the_product_writes_on_a_built_in_opens_nothing_and_a_text_goes
             assert!(has(BuiltinId::MathMax) && has(BuiltinId::BufferIsEncoding));
             assert!(has(BuiltinId::MathRandom));
             assert!(!has(BuiltinId::MathMin) && !has(BuiltinId::BufferByteLength));
-            // A package evaluates what it hands to `Function`, and no other string of it is read.
             assert!(!has(BuiltinId::MathImul));
             Ok(())
         })

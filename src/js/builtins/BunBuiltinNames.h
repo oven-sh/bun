@@ -172,7 +172,6 @@ using namespace JSC;
     macro(rawHeaders) \
     macro(read) \
     macro(readable) \
-    macro(readableMark) \
     macro(readableType) \
     macro(redirect) \
     macro(relative) \
@@ -220,7 +219,6 @@ using namespace JSC;
     macro(webStreamClosedPromise) \
     macro(webStreamControllerError) \
     macro(writable) \
-    macro(writableMark) \
     macro(writableType) \
     macro(write) \
     macro(writer) \
@@ -240,10 +238,8 @@ using namespace JSC;
     macro(ownReadableState) \
     macro(ownWritableState) \
     macro(pipelinedResponses) \
-    macro(readableMark) \
     macro(requestListener) \
-    macro(resumeUnlessFlowing) \
-    macro(writableMark)
+    macro(resumeUnlessFlowing)
 
 class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);

@@ -13,7 +13,6 @@ pub(super) fn normalize_type(table: &mut TypeTable, ty: &mut Type) {
     }
 }
 
-// `false`: the type names a class twice, and what the two parts hold together is a type of the table.
 pub(super) fn normalize_without_table(ty: &mut Type) -> bool {
     normalize_integers(ty);
     absorb_covered_parts(ty);
@@ -45,8 +44,6 @@ impl TypeTable {
         }
     }
 
-    /// What `union_all` answers, where the table has that type and it shows without a change to the table.
-    /// So many threads can ask at one time, and whoever writes the table is left with the types that it lacks.
     pub fn find_union(&self, members: impl IntoIterator<Item = TypeId>) -> Option<TypeId> {
         let mut union = Type::never();
         if let Some(known) = self.add_up(members, &mut union) {
@@ -57,7 +54,6 @@ impl TypeTable {
         self.find_hashed(hash, &union)
     }
 
-    /// `Some`: the union is this type. `None`: `union`, which comes in as never, holds the parts of the members laid together, not normalized.
     fn add_up(
         &self,
         members: impl IntoIterator<Item = TypeId>,
@@ -142,7 +138,6 @@ fn is_same_class(left: &ClassPart, right: &ClassPart) -> bool {
     left.builtin_class == right.builtin_class
 }
 
-// The parts are in the order of their classes.
 fn merge_class_parts(table: &mut TypeTable, classes: &mut Vec<ClassPart>) {
     let parts = core::mem::take(classes);
     for run in parts.chunk_by(is_same_class) {

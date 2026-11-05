@@ -241,13 +241,6 @@ mod tests {
             let name = embedded_name(self.context, &file, ContentHasher::run(contents));
             embedded_path(&self.context.module_prefix, &name)
         }
-
-        fn has_message_prefix(&self, prefix: &[u8]) -> bool {
-            self.log
-                .msgs
-                .iter()
-                .any(|message| message.data.text.starts_with(prefix))
-        }
     }
 
     fn load<R>(
@@ -518,10 +511,20 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn toml_date_is_unsupported() {
-        load(Loader::Toml, b"d = 1979-05-27\n", |outcome| {
-            assert!(outcome.has_message_prefix(b"TS100050"));
-            assert!(matches!(outcome.result, Err(DataFailure::Build)));
+    fn toml_time_below_a_list_is_carried() {
+        load(Loader::Toml, b"list = [{ at = 07:32:00 }]\n", |outcome| {
+            let time = DataValue::Temporal {
+                class: outcome.atoms.intern(b"PlainTime"),
+                text: outcome.atoms.intern(b"07:32:00"),
+            };
+            let inner = [(outcome.atoms.intern(b"at"), time)];
+            let list = [DataValue::Object(&inner)];
+            let properties = [(outcome.atoms.intern(b"list"), DataValue::Array(&list))];
+            let module = DataModule::Value {
+                default: &DataValue::Object(&properties),
+                exports_keys: true,
+            };
+            assert_eq!(outcome.result.unwrap(), module);
         });
     }
 

@@ -60,7 +60,6 @@ fn describe_project(loaded: &LoadedBuild<'_, '_>, bound: &BoundProject) -> Vec<S
         .collect()
 }
 
-// In the order in which the test lists the files.
 fn describe(files: &[(&str, &str)]) -> Vec<String> {
     describe_with_options(files, AotOptions::default())
 }
@@ -111,7 +110,6 @@ enum CodeFromDisk {
     Allowed,
 }
 
-// The line of a file of a package that no path spells, of which the program reads one name, beside `load` in the entry point.
 fn describe_package_beside(load: &str, code_from_disk: CodeFromDisk) -> String {
     let main = format!("const a = require('lib/a.cjs'); console.log(a.c); {load};");
     let files = [
@@ -310,7 +308,6 @@ fn test_of_the_main_module_costs_nothing() {
     assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: names []"]);
 }
 
-// The lines of a.cjs and b.cjs, whose exports nobody reads, when the entry point also runs `code`.
 fn describe_files_beside(code: &str) -> Vec<String> {
     let main = format!("require('./a.cjs');\n{code}");
     let files = [
@@ -325,7 +322,6 @@ const WITHOUT_OBJECTS: [&str; 2] = [
     "a.cjs: names [exports.c = 1;]",
     "b.cjs: names [exports.d = 2;]",
 ];
-// Whoever holds the object of a module reads any name off its `exports`, so every store stays.
 const WITH_OBJECTS: [&str; 2] = [
     "a.cjs: value with module object []",
     "b.cjs: value with module object []",
@@ -543,7 +539,6 @@ fn binding_behind_a_getter_that_a_pattern_takes_from_an_awaited_import_stays() {
              exports.default = 3;",
         ),
     ];
-    // The definitions have no code where the names are variables. `const a = 1;` stays.
     assert_eq!(
         describe(&files),
         [
@@ -657,6 +652,54 @@ fn name_that_is_read_on_what_require_gives_of_an_es_module_that_hands_it_on_stay
     );
 }
 
+fn runs_runtime_of_elements(main: &str) -> bool {
+    let runtime =
+        "exports.jsx = exports.jsxs = exports.jsxDEV = function () {}; exports.Fragment = 'f';";
+    let files = [
+        ("main.tsx", main),
+        ("node_modules/react/jsx-runtime.js", runtime),
+        ("node_modules/react/jsx-dev-runtime.js", runtime),
+    ];
+    let lines = describe(&files);
+    lines[1..].iter().any(|line| !line.ends_with(": left out"))
+}
+
+#[test]
+fn runtime_of_elements_runs_where_the_bundler_keeps_a_statement_that_holds_one() {
+    let dropped = [
+        "const unused = <a />;",
+        "let unused = <></>;",
+        "<a />;",
+        "function dead() { return <a />; }",
+        "const view = () => <a />;",
+        "class Unused { render() { return <a />; } }",
+        "const first = <a />; const second = [first];",
+        "function one() { return [two, <a />]; } function two() { return one(); }",
+        "function view() { return <a />; } type Made = ReturnType<typeof view>;",
+    ];
+    let kept = [
+        "console.log(<a />);",
+        "{ const unused = <a />; }",
+        "export const shown = <a />;",
+        "const shown = <a />; export { shown as other };",
+        "export default <a />;",
+        "const unused = <a>{console.log(1)}</a>;",
+        "const first = <a />; const second = [first]; console.log(second);",
+        "function view() { return <a />; } console.log(typeof view);",
+        "function view() { return <a />; } function outer() { function inner() { return view(); } } outer();",
+        "class Shown { render() { return <a />; } } console.log(new Shown());",
+        "class Unused { static { console.log(1); } render() { return <a />; } }",
+        "class Unused { [(console.log(1), 'render')]() { return <a />; } }",
+        "const unused = <a />; eval('unused');",
+    ];
+    for main in dropped {
+        assert!(!runs_runtime_of_elements(main), "{main}");
+    }
+    for main in kept {
+        assert!(runs_runtime_of_elements(main), "{main}");
+    }
+}
+
 const QUIET_PACKAGE: (&str, &str) = (
     "node_modules/lib/package.json",
     r#"{ "name": "lib", "version": "1.0.0", "sideEffects": false }"#,
@@ -666,7 +709,6 @@ const GETTER_OVER_ES_MODULE: &str = "var dep_1 = require('./h2.mjs');\n\
 const GETTER_OVER_OWNER: &str = "var dep_1 = require('./owner.cjs');\n\
     Object.defineProperty(exports, 'x', { enumerable: true, get: function () { return dep_1.x; } });";
 
-// The files of the package that do not run.
 fn find_files_left_out(main: (&str, &str), owner: &str) -> Vec<String> {
     let files = [
         main,
@@ -736,7 +778,6 @@ fn files_that_hand_a_value_of_a_json_file_on_run_for_whoever_reads_it() {
     }
 }
 
-// Of each class of main.mjs that is left out: its name, whether what it extends is still checked, and how many of its keys are still converted.
 fn describe_unused_classes(files: &[(&str, &str)]) -> Vec<String> {
     with_loaded_build(files, &default_settings(), |build, loaded| {
         let Ok(bound) = build.bind_modules(loaded) else {
@@ -938,7 +979,6 @@ const NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT: [(&str, &str); 6] = [
     ("p/c.cjs", "exports.K1 = class {};"),
 ];
 
-// The roots that have a check, and then what `find_check_of_copy_that_nothing_stores` answers.
 fn describe_checks(
     files: &[(&str, &str)],
     checks_what_is_written: bool,
@@ -979,7 +1019,6 @@ fn root_does_not_check_an_importer_behind_an_import_that_is_removed() {
     );
 }
 
-// The entry point stays the importer. Nothing uses the name, so the file that hands it on to the index is left out, and with it the way to the CommonJS file.
 #[test]
 fn root_does_not_check_a_name_that_it_takes_through_a_file_that_is_left_out() {
     let mut files = NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT.to_vec();

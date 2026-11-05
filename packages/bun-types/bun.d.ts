@@ -3859,7 +3859,7 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
-  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "allocations" | "forms";
+  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "allocations" | "forms" | "statistics";
 
   interface TrimOptions {
     /**
@@ -4057,6 +4057,7 @@ declare module "bun" {
      * - `"trim"`: which Bun and Node.js APIs the program uses, and why `trim` kept or removed each feature
      * - `"allocations"`: where each object is allocated (stack, heap or removed), and why
      * - `"forms"`: how many operations of each kind compiled to inline code, to a call of shared code, or to a call into the runtime
+     * - `"statistics"`: what the build counted, one name and number per line
      *
      * Equivalent CLI flag: `--explain`
      */

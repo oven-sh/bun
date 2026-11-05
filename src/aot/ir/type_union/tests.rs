@@ -30,7 +30,6 @@ fn find_union_answers_as_union_all_where_the_table_has_the_type() {
             if let Some(found) = found_before {
                 assert_eq!((found, table.len()), (union, count));
             }
-            // What two parts of one class hold together is asked of the table. Any other union is found once it is there.
             let mut parts = Type::never();
             add_parts(&mut parts, table.get(left));
             add_parts(&mut parts, table.get(right));

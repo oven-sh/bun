@@ -107,7 +107,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-// `bun run` hands the helper the key as the class has it: `5` is a number there, and `[k]` is whatever `k` holds.
 fn emit_key_as_written(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     evaluation: &ClassEvaluation,

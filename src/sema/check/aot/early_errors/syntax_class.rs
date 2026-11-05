@@ -40,8 +40,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// For `await` (`ASYNC`) or `yield` (`GENERATOR`) as a name where the code around it has the operator. A function
-    /// expression reads its own name as its own modifiers say.
     pub(in crate::check) fn operator_as_name_error_class(
         &self,
         file: FileId,
@@ -79,10 +77,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `x` where a namespace exports the variable `x` or an enum has the member: `N.x` in what runs, which strict mode lets `delete` take.
     pub(in crate::check) fn names_member_of_container(&self, file: FileId, name: ExprId) -> bool {
         let bound = self.bound(file);
-        // `bun check` binds a file without the tables of what runs.
         bound.runtime.is_computed()
             && matches!(bound.binding(name), Binding::Symbol(symbol)
                 if bound.binding_stability(symbol) == BindingStability::ContainerMember)

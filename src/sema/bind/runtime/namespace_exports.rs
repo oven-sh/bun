@@ -1,13 +1,38 @@
 use super::declaration_kinds::{DeclarationKind, declaration_kind};
+use super::declarations::{Declarations, append_symbol};
 use super::storage::RuntimeDeclarationsIn;
 use super::{BindingKind, RuntimeScopes};
-use crate::bind::{BoundBuilder, Decl, ScopeKind, SymbolId};
+use crate::bind::{BoundBuilder, Decl, ScopeId, ScopeKind, SymFlags, SymbolId};
 use crate::hir::*;
 
 pub(super) fn is_block_binding(bound: &BoundBuilder, kind: ScopeKind, local: SymbolId) -> bool {
     let mut decls = bound.symbols[local.idx()].decls.iter();
     matches!(kind, ScopeKind::Module(_))
         && decls.all(|decl| !matches!(decl, Decl::Var(_) | Decl::Require(_)))
+}
+
+impl Declarations<'_, '_> {
+    pub(super) fn create_container_parameters(&mut self) {
+        let hir = self.hir;
+        for index in 0..self.bound.scopes.len() {
+            let (decl, name) = match self.bound.scopes[index].kind {
+                ScopeKind::Module(it) => match hir[it].name {
+                    ModuleName::Ident(name) => (Decl::Module(it), name),
+                    ModuleName::String(_) | ModuleName::Global => continue,
+                },
+                ScopeKind::Enum(it) => (Decl::Enum(it), hir[it].name),
+                _ => continue,
+            };
+            if !self.bound.makes_container_object(hir, decl) {
+                continue;
+            }
+            let (scope, flags) = (ScopeId(index as u32), SymFlags::FUNCTION_SCOPED_VARIABLE);
+            let kind = BindingKind::Parameter;
+            let parameter = append_symbol(self.bound, name, flags, kind, decl, scope);
+            let declarations = &mut self.bound.runtime.declarations;
+            declarations.container_parameters.push((scope, parameter));
+        }
+    }
 }
 
 #[derive(Default)]

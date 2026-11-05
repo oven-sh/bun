@@ -108,7 +108,6 @@ const PATH_IMPORTER: [(&str, &str); 1] = [(
 
 const UNUSED_RUNTIME_FUNCTION: u32 = 1 << 30;
 
-/// One for each of the test files, and one that belongs to none of them.
 const TEXTS: [&[u8]; 4] = [b"of main", b"of first", b"of second", b"shared"];
 
 const TEXT_UNIQUE_TO_VISIT: &[u8] = b"thrown away";
@@ -130,7 +129,6 @@ fn find_program_id<K: PartialEq, I: Id>(keys: &[K], key: K) -> Option<I> {
     keys.iter().position(|other| *other == key).map(I::new)
 }
 
-/// What two links of the same sources agree on. The text spells out strings, property keys and types where something names them, so their order stands beside it.
 #[derive(PartialEq, Debug)]
 struct Outcome {
     text: String,
@@ -161,7 +159,6 @@ fn count_sets_of_tables(units: &[LinkUnit]) -> usize {
     sets.len()
 }
 
-/// Calls `make` for the item at `first`, for those behind it, and then for those in front of it. The results stand in the order of the items.
 fn map_beginning_at<T: Copy, I: Id, const COUNT: usize>(
     items: [T; COUNT],
     first: usize,
@@ -174,8 +171,6 @@ fn map_beginning_at<T: Copy, I: Id, const COUNT: usize>(
     made
 }
 
-/// Every file names the same records and begins with its own, so a number stands for another record under each set of tables.
-/// The text, the key and the layout at 3 belong to no file: each file defines that layout. Nothing defines the layout at 4.
 fn name_records_of_every_file(unit: &mut TestUnit, files: [FileId; 3]) {
     let own = files.iter().position(|&file| file == unit.file);
     let own = own.expect("the unit is of one of the files");
@@ -246,7 +241,6 @@ fn name_records_of_every_file(unit: &mut TestUnit, files: [FileId; 3]) {
     fragment.define_variable(variables[own], variable);
 
     let value = DataNode::String { value: texts[own] };
-    // One file alone makes an object with the shared layout and writes the shared key.
     let root = match own {
         1 => {
             let (layout, key) = (layouts[3], keys[3]);
@@ -389,7 +383,6 @@ fn visit_that_is_thrown_away_leaves_nothing_in_the_program() {
             unit.finish_in(&mut task)
         };
         let committed = [main, first].map(|file| visit(file, true));
-        // A visit that is not committed ends its task: another task lowers the file.
         let thrown_away = visit(second, false);
         let tables = thrown_away.tables.take();
         assert!(tables.strings.find(TEXT_UNIQUE_TO_VISIT).is_some());
@@ -477,7 +470,6 @@ fn link_keeps_enclosing_runtime_function_ids() {
     );
 }
 
-// Nodes of a syntax tree: told apart by a literal, with tokens whose instantiations are alike, so that a file defines several layouts, and one of them several times.
 const SYNTAX_TREE: [(&str, &str); 3] = [
     (
         "main.ts",

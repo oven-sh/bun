@@ -7,7 +7,6 @@ use bun_sema::atom::Atom;
 use bun_sema::program::FileId;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
-/// What the statements of a file say of the way of a name, where a mock may stand on it: `FileRow::handed_on`, `FileRow::named_by_stars`, `FileRow::names_from_stars`.
 pub(super) struct NamesHandedOn<'a> {
     scans: &'a Scans,
     tables: &'a ExportTables,
@@ -36,7 +35,6 @@ impl<'a> NamesHandedOn<'a> {
         }
     }
 
-    /// `FileRow::handed_on`
     pub(super) fn names_of(
         &self,
         file: FileId,
@@ -55,7 +53,6 @@ impl<'a> NamesHandedOn<'a> {
         handed_on
     }
 
-    /// `FileRow::named_by_stars`
     pub(super) fn files_named_by_stars(&self, file: FileId, is_compiled: bool) -> Vec<FileId> {
         if !is_compiled || !self.is_any_module_mocked {
             return Vec::new();
@@ -66,7 +63,6 @@ impl<'a> NamesHandedOn<'a> {
             .collect()
     }
 
-    /// `FileRow::names_from_stars`
     pub(super) fn names_from_stars(&self, file: FileId, is_compiled: bool) -> Vec<Atom> {
         if self.files_named_by_stars(file, is_compiled).is_empty() {
             return Vec::new();
@@ -79,7 +75,6 @@ impl<'a> NamesHandedOn<'a> {
     }
 }
 
-/// `export { a as b } from "./c"`, or the import whose name the file exports, by the position of b among the own names of the file: c and a.
 fn find_what_statement_names(
     scans: &Scans,
     tables: &ExportTables,
@@ -93,7 +88,6 @@ fn find_what_statement_names(
     }
 }
 
-/// The files from which `export *` and names that are handed on lead to a file that a mock names, and those files.
 fn find_files_that_lead_to_mocks(
     scans: &Scans,
     tables: &ExportTables,

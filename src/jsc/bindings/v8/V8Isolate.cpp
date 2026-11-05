@@ -7,7 +7,6 @@
 #include "v8_compatibility_assertions.h"
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
-#include <JavaScriptCore/ErrorInstanceInlines.h>
 
 static_assert(offsetof(v8::Isolate, m_roots) == real_v8::internal::Internals::kIsolateRootsOffset, "Isolate roots array is at wrong offset");
 

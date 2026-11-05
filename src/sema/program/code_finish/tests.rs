@@ -97,11 +97,10 @@ fn order_unseen_files(files: &Files<'_>, seen: &[FileId]) -> Ordered {
 }
 
 fn assert_has_no_files(graph: &CodeGraph<'_>) {
-    let files = graph.viewed();
-    assert!(files.entry_points.is_empty());
-    assert!(files.compiled_files.is_empty());
-    assert!(files.is_compiled.is_empty());
-    assert!(files.host_modules.is_empty());
+    assert!(graph.entry_points.is_empty());
+    assert!(graph.compiled_files.is_empty());
+    assert!(graph.is_compiled.is_empty());
+    assert!(graph.host_modules.is_empty());
     assert!(graph.host_payloads.is_empty());
 }
 

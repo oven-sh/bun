@@ -119,7 +119,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_private_global_get_as(name, true)
     }
 
-    // A site that reads a free name under a private key keeps what it found for good.
     fn emit_private_global_get_as(&mut self, name: &[u8], is_free_name: bool) -> ValueId {
         let key = self.file.engine_private_key(name);
         let global = self.builder.builtin(BuiltinId::GlobalThis, false);

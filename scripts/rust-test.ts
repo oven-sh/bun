@@ -56,6 +56,7 @@ const crates = [
   "bun_sema_standalone",
   "bun_shell_parser",
   "bun_sql_jsc",
+  "bun_standalone_graph",
   "bun_threading",
   "bun_trim",
   "bun_wyhash",

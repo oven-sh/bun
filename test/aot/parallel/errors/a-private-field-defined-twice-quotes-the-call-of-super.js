@@ -1,4 +1,4 @@
-// Todo: the message has no quote: plain Bun adds (evaluating 'super(...args)'), out of the constructor that it writes for the class.
+// What fails while fields are laid behind the call of super quotes that call, in the constructor that the engine writes for the class too.
 class Base { constructor(o) { return o; } }
 class A extends Base { #p = 1; }
 const o = {};

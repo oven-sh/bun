@@ -186,6 +186,23 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
     }
 
+    pub(super) fn is_power_truthy(&self, base: Value, exponent: Value) -> Option<bool> {
+        let (Value::Known(base), Value::Known(exponent)) = (base, exponent) else {
+            return None;
+        };
+        match (self.operand(base), self.operand(exponent)) {
+            (Operand::Number(base), Operand::Number(_)) if base.is_nan() => Some(false),
+            (Operand::Number(base), Operand::Number(exponent)) => {
+                match exponent * base.abs().log2() {
+                    power_of_two if power_of_two > -1000.0 => Some(true),
+                    power_of_two if power_of_two < -1100.0 => Some(false),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn is_nullish(&self, primitive: Primitive) -> bool {
         match self.operand(primitive) {
             Operand::Undefined | Operand::Null => true,
@@ -279,7 +296,6 @@ impl<'a, 's> Evaluator<'a, 's> {
         Value::Known(Primitive::ScratchString(ScratchString(index)))
     }
 
-    /// Whether `bun run` puts the result in place of `left op right` where both are literals: `Data::eql` and `visit_binary` in `js_parser`.
     pub(super) fn is_computed_by_bun_run(
         &self,
         op: BinOp,
@@ -294,7 +310,6 @@ impl<'a, 's> Evaluator<'a, 's> {
                 (Boolean(_) | Number(_), Boolean(_) | Number(_))
                 | (String(_), String(_))
                 | (BigInt(_), BigInt(_)) => true,
-                // Of the texts that are numbers it knows those of 0 and 1, and only with the text on the left.
                 (String(text), Number(number)) => {
                     matches!(op, BinOp::EqEqEq | BinOp::NotEqEq)
                         || (number == 0.0 && matches!(text, b"" | b"0"))
@@ -302,7 +317,6 @@ impl<'a, 's> Evaluator<'a, 's> {
                 }
                 _ => false,
             },
-            // `fold_string_addition` joins what is ASCII, and drops an empty text in front of a text.
             BinOp::Add => match operands {
                 (Number(_), Number(_)) => true,
                 (String([]), String(_)) => true,

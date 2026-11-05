@@ -45,7 +45,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.fragment.property_keys.intern(key)
     }
 
-    // Only the home file of a class types its fields, so the answer holds for the file that asks and for no other.
     fn create_field_position(&mut self, home: FileId, types: PositionTypes) -> DeclaredType {
         if home != self.file {
             return DeclaredType::untyped();
@@ -214,7 +213,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 continue;
             }
             let origin = supertypes.iter().find_map(|&supertype| {
-                Some((supertype, super::own_fields(self, supertype).find(key)?))
+                self.make_positions_of_fields(supertype);
+                Some((supertype, self.find_field(supertype, key)?))
             });
             if let Some((origin_layout, origin_field)) = origin {
                 field.origin_layout = Some(origin_layout);
@@ -223,7 +223,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // `class Squares extends Holder<Square>` with `Holder<T extends Shape>`: a Square enters what the base class writes `T`, also where no `super(..)` is written.
     fn record_type_arguments_of_base(&mut self, class: ClassRef, base: ClassRef) {
         for inherited in self.queries.base_types_of_class(class).unwrap_or_default() {
             if let Ok(pairs) = self.queries.class_type_arguments(base, inherited) {
@@ -232,10 +231,8 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // `fill(holder: Holder<Circle>, circle: Circle) { holder.held = circle; }`: a Circle enters what the class writes `T`, also where the file neither makes such a Holder nor calls one.
     pub(super) fn record_type_arguments_of_class_types(&mut self) {
         let mut recorded: FxHashSet<(ClassRef, CheckerTypeId)> = FxHashSet::default();
-        // Recording a flow maps further types.
         while !self.layouts.class_types.is_empty() {
             for (class, ty) in core::mem::take(&mut self.layouts.class_types) {
                 if recorded.insert((class, ty))
@@ -266,7 +263,6 @@ impl FileLowering<'_, '_, '_, '_> {
                     self.record_base_class_flow(instance, base);
                 }
             }
-            // The heritage is not a class: it is a constructor function or a value with a construct signature.
             None => inherited.extend(self.queries.base_types_of_class(class).unwrap_or_default()),
         }
         for node in hir.ids(hir[class.class].implements) {
@@ -277,7 +273,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // `a.b = function () {}`, `{ b: function () {} }`: the function has no name that can be written after `new`.
     fn is_stored_as_property(&self, function: FnId) -> bool {
         let FnOwner::Expr(expression) = self.bound.fns[function.idx()].owner else {
             return false;
@@ -368,7 +363,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(self.fragment.declare_layout(key))
     }
 
-    // A function of this file must be one that the file declares: the layout names it, and the link panics on a layout that names a function without a definition.
     pub(crate) fn constructor_function_layout(
         &mut self,
         function: FunctionRef,
@@ -434,7 +428,6 @@ impl FileLowering<'_, '_, '_, '_> {
             + count_private_fields(shape)
             + instance_accessor_members(hir, class.class).count();
         let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
-        // A state without a field keeps its entries in its collection.
         let mut states = self.private_state_fields(layout, class);
         states.truncate(limit.saturating_sub(written_private_field_count as u64) as usize);
         let private_field_count = written_private_field_count + states.len();
@@ -517,7 +510,6 @@ impl FileLowering<'_, '_, '_, '_> {
         let is_defined = |node: MemberId| defined.contains(&node);
         let mut static_fields = Vec::new();
         let mut keys = FxHashSet::default();
-        // A static method or accessor is a property of the class object, and a field of the same name redefines that property.
         let names_of_functions: FxHashSet<MemberName> = shape
             .members
             .iter()
@@ -572,7 +564,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 file: self.file,
                 function,
             };
-            // Declaring a function that the file lowers defines its layout. The rest are never constructed, and most of them have no definition to name.
             if let Some(layout) = self.declare_constructor_function_layout(reference)
                 && !self.fragment.is_layout_defined(layout)
             {
@@ -637,8 +628,6 @@ pub(in crate::lower) fn define_class_layout(
     }
     let node = file.hir[class];
     let base_class = file.find_base_class(reference);
-    // A class whose statement is not lowered is never created: its module fails to load, or nothing needs the class.
-    // The parent's file may then have no module in the program, so nothing defines the parent's layout.
     let is_defined = |file: &FileLowering<'_, '_, '_, '_>, parent: ClassRef| {
         constructor.is_some() || file.has_module(parent.file)
     };
@@ -646,9 +635,7 @@ pub(in crate::lower) fn define_class_layout(
     let base_class = base_class.filter(|_| !is_parent_left_out);
     let base = match base_class {
         Some(base) => Some(file.class_layout(base)),
-        // Every class added to EventEmitter's family is one more place its fields can be, and an access tests only a few places.
         None if file.source != SourceKind::Program || is_parent_left_out => None,
-        // When the heritage's type is not a class, its binding says what it is: a constructor function or an export of one of Bun's modules.
         None => {
             let parent = file.queries.class_parent(reference);
             let parent = parent.filter(|&parent| match parent {

@@ -128,7 +128,9 @@ pub(in crate::lower) fn symbol_named(
     let name = find_atom(hir, text);
     let symbols = (0..bound.symbols.len() as u32).map(SymbolId);
     let named = symbols.filter(|&symbol| {
-        bound.symbol(symbol).name == name && is_value_binding(bound.binding_kind(symbol))
+        bound.symbol(symbol).name == name
+            && is_value_binding(bound.binding_kind(symbol))
+            && bound.container_parameter(bound.symbol_scope(symbol)) != symbol
     });
     let named: Vec<SymbolId> = named.collect();
     assert_eq!(named.len(), 1, "{text} names one binding");

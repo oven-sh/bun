@@ -30,10 +30,8 @@ pub(in crate::lower) use self::chain::ShortCircuit;
 
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct TailCast<'t> {
-    // In the order in which the value enters them.
     pub(in crate::lower) positions: &'t [DeclaredType],
     pub(in crate::lower) outer: Option<&'t TailCast<'t>>,
-    // Of the innermost: `FileLowering::breaks_no_int32_promise` of the call.
     pub(in crate::lower) breaks_no_int32_promise: bool,
 }
 
@@ -76,11 +74,7 @@ impl<'t> Evaluation<'t> {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(in crate::lower) enum ResultUsage {
     Value,
-    /// Nothing takes the value, in `bun run` either: it hands the expression to `simplify_unused_expr`, which leaves out a name in its dead zone.
-    /// It does so with an expression statement, with the test of an `if` or of a conditional whose answer it knows, with the left of a comma where it minifies, and with the parts that the function itself goes into.
-    /// Nowhere else: what opens the head of a `for` and the operands of `delete` and of a `void` whose value is taken stay as they are written.
     Effect,
-    /// The build has no use for the value, and `bun run` takes it.
     EffectOfTakenValue,
 }
 
@@ -93,12 +87,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.lower_for_effect(expression, ResultUsage::Effect);
     }
 
-    /// `bun run` takes the value, so it reads a member that it leaves out where nothing takes the value.
     pub(in crate::lower) fn lower_taken_value_for_effect(&mut self, expression: ExprId) {
         self.lower_for_effect(expression, ResultUsage::EffectOfTakenValue);
     }
 
-    /// `void x` whose value `bun run` takes: it writes `undefined` where it could leave all of `x` out, and otherwise leaves `x` as it is written.
     pub(in crate::lower) fn lower_operand_of_taken_void(&mut self, operand: ExprId) {
         if !(self.file).reads_only_what_bun_run_leaves_out(operand, true) {
             self.lower_taken_value_for_effect(operand);
@@ -133,8 +125,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.leave_nesting();
     }
 
-    /// Folding has the answer of `expression`, and `bun run` works it out. What shows of that is which members of built-in objects it reads, and in which order:
-    /// a holder may add a member when it is first read. The engine drops each of these reads where nothing can list the keys of the holder.
     pub(in crate::lower) fn lower_member_reads(&mut self, expression: ExprId) {
         let hir = self.file.hir;
         let decisions = self.file.decisions();
@@ -151,11 +141,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             {
                 self.lower_read_of_locked_path(expression);
             }
-            // `"abc"[index]`, `[part][0]`: folding has looked into a literal.
             ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => {
                 self.lower_expression(expression);
             }
-            // The host looks for a member as it reads one.
             ExprKind::Binary {
                 op: BinOp::In,
                 left,
@@ -166,7 +154,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     None => operator::lower_binary(self, expression),
                 };
             }
-            // `bun run` takes neither value.
             ExprKind::Unary {
                 op: UnOp::Void,
                 operand,
@@ -192,12 +179,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.leave_nesting();
     }
 
-    /// `bun run` reads the path, and nothing here takes what it finds.
     pub(in crate::lower) fn lower_read_of_locked_path(&mut self, path: ExprId) {
         let member = match self.file.builtins.of_pure_expr(path) {
             Some(Resolved::Builtin(member)) => member,
             Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) => return,
-            // The table ends above this name: `process.versions.bun`. The host makes such an object whole, so only the reads on the way to it show.
             None => {
                 match self.file.hir[path].kind {
                     ExprKind::Dot { obj, .. } => self.lower_member_reads(obj),
@@ -214,8 +199,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.emit_locked_builtin(builtin);
             return;
         }
-        // No operation names a locked data property, so its read stays.
-        // The way to its holder may be one that a program can change, as `globalThis.process` is: the build knows the answer all the same, so it knows the holder.
         let entry = table::entry(member.id);
         if let Some(holder) = entry.holder
             && entry.mutability == Mutability::AlwaysLocked
@@ -288,7 +271,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(position);
         let counted = self.enter_counted_expression(expression);
         let value = self.lower_by_decision(expression, evaluation);
-        // In a file without a promise nobody is asked.
         let is_read = matches!(
             self.file.hir[expression].kind,
             ExprKind::Dot { .. } | ExprKind::Index { .. }
@@ -336,7 +318,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(symbol) = scope::find_tested_local(self, expression) else {
             return;
         };
-        // The local has its own type again where the claim ends, and a closure takes it at that type.
         let position = self.local_position(symbol);
         if self.is_converted_within(after, position) {
             self.rebind_local(symbol, after);
@@ -497,14 +478,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let inner = self.file.skip_type_syntax(expression);
         let (constant, has_dead_zone) = match self.file.decisions().constant(self.file.hir, inner) {
             FoldedValue::Constant(constant) => (constant, false),
-            // Such an expression throws for a variable in its dead zone or has this value, and does nothing else but test its casts: behind its operations the value is known.
             FoldedValue::ConstantOutsideDeadZone(constant) => (constant, true),
             FoldedValue::Unknown => return lower(self, expression),
         };
         if !self.file.passes_every_assertion(expression, constant) {
             return lower(self, expression);
         }
-        // A text with a character outside Latin-1 is joined when the program runs: a piece of it that lies in a part without such a character is held in 8 bits.
         if let Constant::String(text) = constant
             && self
                 .file
@@ -515,7 +494,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         {
             return lower(self, expression);
         }
-        // `reads_member` holds only where no part of the expression checks a dead zone or tests a cast.
         let runs_for_its_checks = has_dead_zone && !self.file.decisions().reads_member(inner);
         if runs_for_its_checks {
             lower(self, expression);
@@ -525,7 +503,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_constant(constant)
     }
 
-    // Folding has a value for a call only where a method of the language is called that runs no code of the program: behind the receiver and the arguments the value is known.
     fn lower_call_unless_constant(&mut self, call: ExprId, site: Call, tail: Tail<'_>) -> ValueId {
         let hir = self.file.hir;
         let (constant, has_dead_zone) = match self.file.decisions().constant(hir, call) {
@@ -578,7 +555,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_for_effect_by_kind(&mut self, expression: ExprId, usage: ResultUsage) {
-        // `bun run` simplifies what it takes no value of.
         if usage == ResultUsage::Effect && self.file.is_simplified(expression) {
             return self.lower_simplified_expression(expression);
         }
@@ -597,7 +573,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     let last = logical::lower_comma_prefix(self, expression, usage);
                     self.lower_for_effect(last, usage);
                 }
-                // Neither converts an operand, and `bun run` leaves the operands alone.
                 BinOp::EqEqEq | BinOp::NotEqEq if usage == ResultUsage::Effect => {
                     self.lower_expression_for_effect(left);
                     self.lower_expression_for_effect(right);
@@ -653,16 +628,12 @@ impl FileLowering<'_, '_, '_, '_> {
         is_decided(self, expression) || self.builtins.of_expr(expression).is_some()
     }
 
-    /// `bun run` does not read such a path where nothing takes its value.
     fn is_read_left_out_by_bun_run(&self, expression: ExprId) -> bool {
         self.builtins
             .global_path(self.hir, self.bound, expression)
             .is_some_and(|steps| is_read_left_out_by_bun_run(steps[0].id))
     }
 
-    /// The expression reads members of built-in objects, and `bun run` leaves nothing of it where nothing takes its value: `simplify_unused_expr`.
-    /// `false` where the build has something to do for it.
-    /// `names_below_top_level`: whether a name counts among what is left out that `bun build` reads left of a comma: one that is declared below the top level of the file, or a global one.
     pub(in crate::lower) fn reads_only_what_bun_run_leaves_out(
         &self,
         expression: ExprId,
@@ -711,7 +682,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 | ExprKind::AsConst(operand)
                 | ExprKind::NonNull(operand)
                 | ExprKind::Instantiation { expr: operand, .. } => parts.push(operand),
-                // Neither the list nor the object is made. What `...` spreads runs code, and a computed key is converted.
                 ExprKind::Array(elements) => {
                     for element in hir.ids(elements) {
                         match hir[element].kind {
@@ -735,7 +705,6 @@ impl FileLowering<'_, '_, '_, '_> {
                         }
                     }
                 }
-                // A name that is bound, in its dead zone or not. An imported name is no identifier to `bun run`, and below a `with` the name may be a getter of the scope object.
                 ExprKind::Ident(_)
                     if matches!(self.bound.binding(part), bun_sema::bind::Binding::Symbol(symbol)
                         if self.bound.binding_kind(symbol) != bun_sema::bind::BindingKind::Import
@@ -766,13 +735,11 @@ impl FileLowering<'_, '_, '_, '_> {
         reads_member
     }
 
-    // `typeof` answers for a global name that is absent, where a read of its operand alone throws.
     fn is_name_below_typeof(&self, operand: ExprId) -> bool {
         let name = self.skip_type_syntax(operand);
         matches!(self.hir[name].kind, ExprKind::Ident(_)) || is_decided(self, name)
     }
 
-    // `process.versions.bun`: the table has the path, or ends above it.
     fn hangs_below_builtin(&self, path: ExprId) -> bool {
         let mut current = self.skip_type_syntax(path);
         loop {
@@ -787,7 +754,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // `"name" in object`, where the table has the member.
     fn find_member_looked_for(&self, name: ExprId, object: ExprId) -> Option<BuiltinId> {
         let Constant::String(name) = find_constant(self, name)? else {
             return None;
@@ -801,7 +767,6 @@ impl FileLowering<'_, '_, '_, '_> {
         table::is_legal_builtin_constant(member).then_some(member)
     }
 
-    // An `as` is a test at run time, so a constant stands for the whole expression only where the syntax alone shows that each test passes.
     pub(in crate::lower) fn passes_every_assertion(
         &self,
         expression: ExprId,
@@ -847,7 +812,6 @@ pub(in crate::lower) fn find_constant(
     }
 }
 
-/// The expression throws for a variable in its dead zone or has this value, and does nothing else.
 pub(in crate::lower) fn find_constant_outside_dead_zone(
     file: &FileLowering<'_, '_, '_, '_>,
     expression: ExprId,
@@ -861,12 +825,15 @@ pub(in crate::lower) fn find_constant_outside_dead_zone(
     }
 }
 
-/// JSC's parser finds a number or a text where `bun run` has printed the expression. `NaN` is printed as the name.
-pub(in crate::lower) fn is_number_or_text_in_bun_run(
+pub(in crate::lower) fn is_printed_as_number_or_text(
     file: &FileLowering<'_, '_, '_, '_>,
     expression: ExprId,
 ) -> bool {
     let inner = file.skip_type_syntax(expression);
+    let minifies_syntax = file.inputs.options.removable.minifies_syntax();
+    if !minifies_syntax && holds_written_numbers_alone(file, inner) {
+        return true;
+    }
     let decisions = file.decisions();
     let is_number_or_text = match decisions.constant(file.hir, inner) {
         FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
@@ -881,7 +848,42 @@ pub(in crate::lower) fn is_number_or_text_in_bun_run(
         }
         FoldedValue::Unknown => false,
     };
-    is_number_or_text && decisions.is_constant_under_minify_syntax(file.hir, inner)
+    is_number_or_text
+        && match minifies_syntax {
+            true => decisions.is_constant_under_minify_syntax(file.hir, inner),
+            false => decisions.is_constant_in_bun_run(file.hir, inner),
+        }
+}
+
+fn holds_written_numbers_alone(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> bool {
+    match file.hir[file.skip_type_syntax(expression)].kind {
+        ExprKind::Number(_) => true,
+        ExprKind::Unary {
+            op: UnOp::Plus | UnOp::Minus | UnOp::BitNot,
+            operand,
+        } => holds_written_numbers_alone(file, operand),
+        ExprKind::Binary { op, left, right } => {
+            let is_arithmetic = matches!(
+                op,
+                BinOp::Add
+                    | BinOp::Sub
+                    | BinOp::Mul
+                    | BinOp::Div
+                    | BinOp::Rem
+                    | BinOp::Pow
+                    | BinOp::Shl
+                    | BinOp::Shr
+                    | BinOp::UShr
+                    | BinOp::BitAnd
+                    | BinOp::BitOr
+                    | BinOp::BitXor
+            );
+            is_arithmetic
+                && holds_written_numbers_alone(file, left)
+                && holds_written_numbers_alone(file, right)
+        }
+        _ => false,
+    }
 }
 
 fn keyword_accepts(keyword: Keyword, constant: Constant) -> bool {

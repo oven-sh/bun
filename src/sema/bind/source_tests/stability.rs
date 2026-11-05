@@ -116,7 +116,6 @@ const PARAMETERS: &[(&str, &str, BindingStability)] = &[
     ("a.cjs", r#"function f(p) { eval(""); }"#, VisibleToEval),
 ];
 
-/// With `RuntimeBindOptions::object_prototype_takes_names`, and without.
 const PARAMETERS_BELOW_OBJECT_PROTOTYPE: &[(&str, BindingStability, BindingStability)] = &[
     ("function f(p) { arguments.extra; }", MappedArgument, Stable),
     ("function f(p, k) { arguments[k]; }", MappedArgument, Stable),

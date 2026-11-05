@@ -191,7 +191,6 @@ fn create_function(names: &Names) -> Function {
     builder.finish().0
 }
 
-// Every table holds a record, also the two that a build leaves empty: `tasks.rs` counts a task for each.
 fn create_full_program() -> Program {
     let mut program = Program::new();
     let names = add_names(&mut program);
@@ -309,7 +308,6 @@ fn code_of(functions: &[Function]) -> Vec<Vec<u32>> {
     bodies.map(|function| function.body.code.clone()).collect()
 }
 
-// The engine reads an entry as the program's number plus one, and zero as no record: the entry at `index` reads as `index`.
 fn create_ids<I: Id>(count: usize) -> Vec<Option<I>> {
     (0..count)
         .map(|index| index.checked_sub(1).map(I::new))
@@ -337,7 +335,6 @@ fn entries_of_table_ids(shortest: u32) -> [Vec<u32>; REMAPPED_ID_KIND_COUNT] {
     core::array::from_fn(|kind| (0..shortest + kind as u32).collect())
 }
 
-/// A list for each pair: the tables it was written under, and how many of the numbered functions it takes.
 fn link_numbered_functions(tables: Vec<TableIds>, lists: &[(u32, usize)]) -> LinkedFunctions {
     let count: usize = lists.iter().map(|&(_, count)| count).sum();
     let functions = create_numbered_functions(count as u32);
@@ -410,9 +407,6 @@ fn section_bytes<'b>(bytes: &'b [u8], header: &Header, list: ProgramList) -> &'b
     &bytes[start..start + count_of(header, list) * list.element_size()]
 }
 
-// aot/ir/AOTExternalFunctionBodies.h in JavaScriptCore, written out apart from the mirror in external_bodies.rs: a field that
-// moves there shows here.
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct EngineIdTable {
@@ -454,12 +448,9 @@ const _: () = assert!(
 struct EngineView {
     code: Vec<Vec<u32>>,
     unit_indices: Vec<u32>,
-    /// By unit, then in the order of `RemappedIDKind`.
     tables: Vec<[Vec<u32>; REMAPPED_ID_KIND_COUNT]>,
 }
 
-/// # Safety
-/// `first` points to `count` values, unless `count` is 0: the pointer of an empty list may be null.
 unsafe fn copy_list<T: Copy>(first: *const T, count: usize) -> Vec<T> {
     if count == 0 {
         return Vec::new();
@@ -503,7 +494,6 @@ fn create_tasks_with_functions<'p, 'o>(
     tasks
 }
 
-// Emit takes the code out before it writes a record.
 fn create_tasks<'p, 'o>(program: &'p mut Program) -> Vec<Task<'p, 'o>> {
     let mut functions = take(&mut program.functions);
     for function in &mut functions {

@@ -1,9 +1,3 @@
-//! Where a file counts how often it runs, for `bun test --aot --coverage`.
-//!
-//! The places are those of JavaScriptCore's control flow profiler (`emitProfileControlFlow` in NodesCodegen.cpp), which `bun test --coverage`
-//! reads: each is a range of the text with a counter, and a piece of text ran as often as the smallest range that holds it. Here the ranges
-//! are in the text of the file as it is written.
-
 use bun_sema::bind::{Bound, FnOwner};
 use bun_sema::hir::{
     self, BinOp, CaseId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, MemberKind,
@@ -14,13 +8,9 @@ use rustc_hash::FxHashMap;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::StringId;
 
-/// The counter of the body of the file.
 const FILE_BODY: u32 = 0;
 
 pub(in crate::lower) struct CountedPlaces {
-    /// The path of the file, then a line for each counter, which says what text it counts: `b <start> <end>`. For a function:
-    /// `f <start> <end> <counter> <end of head>`, with the counter of the code that makes the function, and where its parameters start.
-    /// `s <start> <end> <counter>` has no counter of its own: that text runs as often as the text of the counter it names.
     description: Vec<u8>,
     interned_description: Option<StringId>,
     count: u32,
@@ -29,25 +19,20 @@ pub(in crate::lower) struct CountedPlaces {
     cases: FxHashMap<CaseId, u32>,
     functions: FxHashMap<FnId, u32>,
     generator_bodies: FxHashMap<FnId, u32>,
-    /// By what stands in front of a `?.`.
     rests_of_chains: FxHashMap<ExprId, u32>,
 }
 
-/// A function, or the initializer of a field of the objects of a class: JSC compiles the initializers of a class as a function.
 struct FunctionRange {
     start: u32,
     end: u32,
     counter: u32,
-    /// Index of the one around it.
     parent: Option<usize>,
 }
 
 struct Finder<'p, 's> {
     hir: &'p hir::File<'s>,
     places: CountedPlaces,
-    /// By where they start.
     functions: Vec<FunctionRange>,
-    /// Where a function can be left for good: each `await` and `yield`, in order.
     suspensions: Vec<u32>,
 }
 
@@ -109,7 +94,6 @@ impl Finder<'_, '_> {
         self.places.count - 1
     }
 
-    /// `end_of_head`: no other function starts between `start` and there.
     fn add_function(&mut self, range: (u32, u32), maker: u32, end_of_head: u32) -> u32 {
         use std::io::Write;
         let counter = self.add(b'f', range.0, range.1, Some(maker));
@@ -143,7 +127,6 @@ impl Finder<'_, '_> {
                 | FnKind::Getter
                 | FnKind::Setter
                 | FnKind::Constructor => !matches!(function.body, FnBody::None),
-                // It runs where the class is evaluated, and is no function of the report.
                 FnKind::StaticBlock
                 | FnKind::CallSignature
                 | FnKind::ConstructSignature
@@ -151,7 +134,6 @@ impl Finder<'_, '_> {
                 | FnKind::ConstructorType
                 | FnKind::IndexSignature => false,
             };
-            // A function that a rewrite has written stands nowhere in the text, and is no function of the report.
             if is_counted
                 && let Some(end) = find_end_of_function(hir, bound, id)
                 && function.text_start < end
@@ -192,7 +174,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    /// The counter of the innermost of them that holds the position.
     fn function_at(&self, position: u32) -> u32 {
         let after = self
             .functions
@@ -241,7 +222,6 @@ impl Finder<'_, '_> {
         inside.clone().any(|&at| self.function_at(at) == function)
     }
 
-    /// Control can leave the statement for elsewhere than the statement behind it.
     fn can_be_left(&self, statement: StmtId) -> bool {
         match self.hir[statement].kind {
             StmtKind::Block(_)
@@ -270,12 +250,10 @@ impl Finder<'_, '_> {
         }
     }
 
-    /// What stands behind a statement that control can leave has a count of its own, up to the end of the statements.
     fn find_statements_behind_exits(&mut self, statements: IdList<StmtId>, end: u32) {
         let hir = self.hir;
         let mut left_at = None;
         for statement in hir.ids(statements) {
-            // A function declaration does not run where it stands.
             if matches!(hir[statement].kind, StmtKind::Fn(_)) {
                 continue;
             }
@@ -310,7 +288,6 @@ impl Finder<'_, '_> {
                 StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
                     let (start, end) = range(body);
                     self.count_statement(body, start, end);
-                    // What stands in front of `in` or `of` is assigned to each time round.
                     let (start, end) = range(left);
                     let counter = self.places.statements[&body];
                     self.add(b's', start, end, Some(counter));
@@ -346,7 +323,6 @@ impl Finder<'_, '_> {
                 && let Some(end) = find_end_of_function(hir, bound, id)
             {
                 self.find_statements_behind_exits(statements, end);
-                // The call of a generator runs nothing of its body.
                 if hir.fns[index].flags.contains(Flags::GENERATOR) && !statements.is_empty() {
                     let counter = self.add_block(hir[hir.id_at(statements, 0)].start, end);
                     self.places.generator_bodies.insert(id, counter);
@@ -367,7 +343,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    /// What stands behind a `?.`, up to the end of the chain, runs where what stands in front of it is neither null nor undefined.
     fn find_rests_of_chains(&mut self) {
         let hir = self.hir;
         let link_of = |expression: &hir::Expr| match expression.kind {
@@ -406,7 +381,6 @@ impl Finder<'_, '_> {
             return;
         }
         let counter = self.add_block(start, end);
-        // Whichever of them the lowering starts with.
         let mut inner = expression;
         loop {
             self.places.expressions.insert(inner, counter);
@@ -480,7 +454,6 @@ impl Finder<'_, '_> {
         for index in 0..hir.pat_elems.len() {
             self.count_whole_expression(hir.pat_elems[index].default);
         }
-        // A field runs when an object is made, not where the class is evaluated.
         for index in 0..hir.members.len() {
             let member = hir.members[index];
             if member.kind == MemberKind::Property
@@ -555,7 +528,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// Counts the expression unless what is being lowered is that expression already. Returns what `leave_counted_expression` takes.
     pub(in crate::lower) fn enter_counted_expression(&mut self, expression: ExprId) -> Option<u32> {
         let outer = self.counted_expression;
         let places = self.file.counted_places.as_ref();

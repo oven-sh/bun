@@ -53,7 +53,6 @@ fn compute_binding_kind(kind: BindingKind) -> EvalBindingKind {
     }
 }
 
-// The depth of a scope is that of its variables. A function keeps its top-level lexical declarations in an environment of their own, inside the environment of its variables: a `var` of the evaluated text that meets one of them is a SyntaxError. The variables of text evaluated among its parameters lie outside its parameters, which lie outside its variables.
 fn compute_scope_depths(file: &FileLowering<'_, '_, '_, '_>, innermost: ScopeId) -> ScopeDepths {
     let mut depths = ScopeDepths::new();
     let (mut scope, mut depth) = (innermost, 1);
@@ -108,7 +107,6 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // The symbol of `export default function f() {}` is named `default`, and code spells it `f`.
     pub(super) fn find_spelled_name(&self, symbol: SymbolId) -> Atom {
         let data = self.bound.symbol(symbol);
         if data.name != known::default {
@@ -177,7 +175,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl EvalRecord<'_, '_, '_, '_, '_, '_> {
-    // A sloppy function keeps its parameters and `arguments` in an environment of their own. It lies inside the environment that takes the variables of a text evaluated among the parameters: a `var` of that text that meets one of them is a SyntaxError. It lies outside the environment that takes the variables of a text evaluated in the body: a `var` of that text makes a new variable.
     fn compute_parameter_depth(&self, parameter: Binding, scope: ScopeId, depth: u32) -> u32 {
         let file = &*self.lowering.file;
         let variables = BindingRef::Slot(scope, ScopeSlot::EvalVariables);
@@ -237,7 +234,6 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         let file = &*self.lowering.file;
         let import = file.inputs.modules.import_binding(file.file, symbol);
         match import {
-            // What the mock answers is no variable: the text gets what the name holds where `eval` is called.
             ImportBinding::Variable(_) if file.may_be_answered_by_mock(symbol) => {
                 let value = self.lowering.get_import(symbol);
                 self.add_value(binding, value);
@@ -534,7 +530,6 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
     }
 }
 
-// The loader fills the variable of a name of a library module.
 fn is_filled_by_loader(file: &FileLowering<'_, '_, '_, '_>, export: SyntheticExportId) -> bool {
     let modules = file.inputs.modules;
     match modules.shape(modules.synthetic_export(export).module) {

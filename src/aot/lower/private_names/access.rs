@@ -48,7 +48,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.strict_eq(object, class_object)
     }
 
-    /// `field`: the name of a static field that the program reads or stores here.
     fn emit_class_object_test(
         &mut self,
         class: ClassId,
@@ -62,7 +61,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder
             .branch(is_class_object, Edge::to(admitted), Edge::to(rejected));
         self.continue_in(rejected);
-        // JSC asks for an object before it looks for the field: `undefined.#s` fails as `undefined.s` does.
         if let Some(name) = field {
             let split = self.split_on_type(object, TypeTable::NULLISH);
             self.builder.switch_to(split.taken);
@@ -240,7 +238,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `o.#name++`, `--o.#name`: where JSC has called the getter and finds no setter, its message names the getter.
     fn is_increment_of_name(&self, source: Option<ExprId>, name: PrivateNameId) -> bool {
         let file = &*self.file;
         let Some(ExprKind::Unary { op, operand }) = source.map(|source| file.hir[source].kind)
@@ -281,7 +278,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // Methods and accessors are on the class object before any static field is defined.
     fn emit_static_field_test(
         &mut self,
         name: PrivateNameId,
@@ -289,7 +285,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         member: MemberId,
         object: ValueId,
     ) -> ValueId {
-        // `in` throws the same error for every key when its right operand is not an object.
         let split = self.split_on_type(object, TypeTable::OBJECT);
         self.builder.switch_to(split.not_taken);
         let name = self.file.bound.private_name(name).name;
@@ -332,7 +327,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let brand = layouts::own_fields(self.file, layout).brand();
         let brand = brand.expect("a class with instance private state has a brand");
         let token = self.get_class_slot(class, ClassSlot::ClassToken);
-        // A base constructor that returns an object lets a derived class initialize that object twice.
         let mut names = self.file.bound.private_names_of_class(class);
         let fails_at_first_private_field = class::is_derived_class(self.file.hir, class)
             && !names.any(|(_, name)| {

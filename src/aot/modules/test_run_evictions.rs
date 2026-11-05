@@ -1,6 +1,3 @@
-//! Which modules of a test run leave the table of loaded modules, by module, and what the copies name that the loader of the host reads from disk in their place.
-//! `test_run_loads` says which files the run takes out or changes on disk. Its files are the application's, so nothing here looks at them in another project.
-
 use super::evicted::EvictedModules;
 use super::imports::MockedModules;
 use super::interop::ModuleKind;
@@ -18,8 +15,6 @@ use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use core::mem::replace;
 
-/// `set`: by `FileId::idx()`. Empty: nothing is marked. What a file has beside its own record goes with the file.
-/// No path names the callback of a bundler's wrapper, and no text of its own lies on disk.
 pub(super) fn is_marked(set: &[bool], module: ModuleRef) -> bool {
     match module {
         ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Check(file) => {
@@ -29,7 +24,6 @@ pub(super) fn is_marked(set: &[bool], module: ModuleRef) -> bool {
     }
 }
 
-/// `leaving`: what `find_files_that_leave` answers.
 pub(super) fn is_among(leaving: &[ModuleRef], module: ModuleRef) -> bool {
     let ModuleRef::File(file) = module else {
         return false;
@@ -41,8 +35,6 @@ pub(super) fn is_among(leaving: &[ModuleRef], module: ModuleRef) -> bool {
     leaving.binary_search_by(compare).is_ok()
 }
 
-/// By the path of the file: `a.txt?text` is a form of `a.txt`, and the loader of `bun run` keeps both under the path of the file.
-/// `ModuleSet::forms_of` has them once the modules are collected, and `leave_imports_of_test_files_to_loader` asks which files leave in front of that.
 fn find_forms<'a>(input: &BindInput<'a, '_>, scans: &Scans) -> Vec<(&'a [u8], FileId)> {
     let is_data = |form: &&FileId| scans.of(**form).interop.kind == ModuleKind::Data;
     let data_files = input.files.compiled_files().iter().filter(is_data);
@@ -57,8 +49,6 @@ fn find_forms<'a>(input: &BindInput<'a, '_>, scans: &Scans) -> Vec<(&'a [u8], Fi
     forms
 }
 
-/// `try { require("./a.cjs"); } catch {}`, `expect(() => require("./a.cjs")).toThrow()`, `test("a", () => { require("./a.cjs"); })`: the program goes on behind a body that throws.
-/// Whoever is handed a function may catch what it throws.
 fn stands_where_a_throw_is_caught(hir: &File<'_>, bound: &Bound<'_>, mut call: ExprId) -> bool {
     let statement_around = |parent: Parent| -> Option<StmtId> {
         match parent {
@@ -97,22 +87,16 @@ fn stands_where_a_throw_is_caught(hir: &File<'_>, bound: &Bound<'_>, mut call: E
         if hir[site].callee != function {
             return true;
         }
-        // `(() => require("./a.cjs"))()`: what it throws goes on to what stands around the call.
         call = user;
     }
 }
 
 #[derive(Default)]
 struct FoundAtSites {
-    /// The imported file and then its importer.
-    /// A module that has not run yet is bound to what its imports name when it runs. Behind an eviction that is an instance from disk, which only code from disk
-    /// imports: the run time leaves such a module to the loader of the host too (`Modules::isLeftToHost`).
     importers: Vec<(FileId, FileId)>,
-    /// A CommonJS file whose body throws is out of the table, and the next `require()` runs it again. What a package looks for and does without is no file of the project.
     throwers: Vec<FileId>,
 }
 
-/// One loop over the import sites of the run.
 fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
     let files = input.files;
     let is_thrower = |required: FileId| {
@@ -157,9 +141,6 @@ fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
     found
 }
 
-/// The files that the run takes out of the table or changes on disk, those that leave where they throw, what import attributes make of them, and whoever has yet to bind
-/// one of them. One search backwards over the statements. Each is a `ModuleRef::File`, ascending. Empty where every module may leave: nobody asks which.
-/// It comes in front of `leave_imports_of_test_files_to_loader`, so a test file that imports one of them is among them.
 pub(super) fn find_files_that_leave(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<ModuleRef> {
     let loads = &input.run.loads;
     if !input.runner_starts_entry_points
@@ -203,7 +184,6 @@ pub(super) fn find_files_that_leave(input: &BindInput<'_, '_>, scans: &Scans) ->
         .collect()
 }
 
-/// Fills `is_changed_on_disk_by_run` and `may_be_evicted` of `Plan::test_run`, both by `FileId::idx()`. `leaving`: `EvictedModules::modules`.
 pub(super) fn fill_plan_of_loads(
     input: &BindInput<'_, '_>,
     leaving: &[ModuleRef],
@@ -221,19 +201,15 @@ pub(super) fn fill_plan_of_loads(
     }
     let mut is_changed_on_disk_by_run = vec![false; file_count];
     for &file in &input.run.loads.files_changed_on_disk {
-        // What loads from there is a text that nobody has read. A file of data names nothing.
         is_changed_on_disk_by_run[file.idx()] = input.sources.kind(file) == SourceKind::Program;
     }
     plan.test_run.may_be_evicted = may_be_evicted;
     plan.test_run.is_changed_on_disk_by_run = is_changed_on_disk_by_run;
 }
 
-/// The files that a copy from disk may name to the loader of the host. It links to the names of compiled modules, and the loader begins a file that nothing has run yet.
 #[derive(Default)]
 pub(super) struct NamedByCopies {
-    /// The text of a copy names a file that nobody knows.
     is_every_file: bool,
-    /// By `FileId::idx()`.
     is_named: Vec<bool>,
 }
 
@@ -243,7 +219,6 @@ impl NamedByCopies {
     }
 }
 
-/// Fills `Plan::named_by_copies`. Behind `collect_modules`, with the sites as `leave_imports_of_test_files_to_loader` has left them.
 pub(super) fn fill_plan_of_copies(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -252,7 +227,6 @@ pub(super) fn fill_plan_of_copies(
     mocked: &MockedModules,
     plan: &mut Plan,
 ) {
-    // Where every module may leave, every module is asked for every name anyway.
     if !input.runner_starts_entry_points || evicted.is_every_module() {
         return;
     }
@@ -264,13 +238,11 @@ pub(super) fn fill_plan_of_copies(
     if evicted.modules().is_empty() && !is_any_module_mocked && copied_under_queries.is_empty() {
         return;
     }
-    // The new text names what it likes. A file of data names nothing.
     let mut changed = input.run.loads.files_changed_on_disk.iter();
     let is_code_changed = changed.any(|&file| input.sources.kind(file) != SourceKind::Data);
     let mut is_every_file = is_code_changed || mocked.is_every_module();
     is_every_file |= !evicted.modules().is_empty();
     let mut named: Vec<ModuleRef> = Vec::new();
-    // The original beside its mock is a copy from disk too: `vi.importActual()`, `importOriginal()`, a mock without a factory.
     let copies = evicted.modules().iter().chain(mocked.iter());
     for &module in copies.chain(&copied_under_queries) {
         let ModuleRef::File(file) = module else {
@@ -288,7 +260,6 @@ pub(super) fn fill_plan_of_copies(
             }
         }
     }
-    // `load::manual_mocks`: the test runner asks for the file by its path, and takes whatever it exports.
     if is_any_module_mocked {
         let is_manual_mock =
             |file: &&FileId| contains(input.files.module(**file).file_name(), b"/__mocks__/");
@@ -316,7 +287,6 @@ pub(super) fn fill_plan_of_copies(
         let Some(scan) = scans.find(file) else {
             continue;
         };
-        // A copy links to a name through the files that hand it on, and the loader asks each of them for it: `export { isUpKey } from "./lib/key"`.
         let sites = input.files.analysis(file).import_sites.iter();
         for (site, answer) in sites.zip(&scan.sites) {
             let hands_on = matches!(
@@ -328,7 +298,6 @@ pub(super) fn fill_plan_of_copies(
             }
         }
     }
-    // The copy is code that the build has not seen, and it calls what it imports from a module of Bun's own.
     library_modules.shared_sort_unstable_by_key(|module| module.registry_id());
     library_modules.dedup();
     for module in library_modules {

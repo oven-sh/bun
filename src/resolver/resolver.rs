@@ -1162,6 +1162,18 @@ impl<'a> Resolver<'a> {
         let Some(graph) = self.standalone_module_graph else {
             return PackageLookup::Unknown;
         };
+        let followed = graph.compiled_program().and_then(|program| {
+            let public_root = graph.base_public_path_with_default_suffix();
+            program.find_name_that_build_followed(
+                public_root,
+                source_dir,
+                import_path,
+                is_require(kind),
+            )
+        });
+        if let Some(file_name) = followed {
+            return PackageLookup::Found(file_name);
+        }
         let is_left_outside = graph.compiled_program().is_some_and(|program| {
             let public_root = graph.base_public_path_with_default_suffix();
             program.leaves_outside(source_dir, import_path)

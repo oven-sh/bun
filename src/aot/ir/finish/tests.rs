@@ -645,7 +645,6 @@ fn block_under_another_handler_is_not_joined() {
     assert_eq!(handlers, [false, true, false]);
 }
 
-/// `if (condition) { 1 }`, then 2. `choose_argument`: what the arm that is not written hands to where the arms meet, out of the condition and the result of its edge.
 fn build_test_with_one_arm(
     has_results: bool,
     choose_argument: impl FnOnce(ValueId, Option<ValueId>) -> Option<ValueId>,
@@ -698,7 +697,6 @@ fn result_of_edge_that_nobody_reads_goes_with_the_block() {
     assert_eq!(blocks.len(), 3);
     let with_proof = (1, Vec::new(), vec![0]);
     assert_eq!(targets_of(&blocks[0]), [with_proof, target_to(2)]);
-    // The condition, the result of the edge that is left, two constants.
     assert_eq!(body.value_count, 4);
 }
 

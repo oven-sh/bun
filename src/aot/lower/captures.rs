@@ -42,7 +42,6 @@ pub(in crate::lower) struct CapturePlan {
     pub(in crate::lower) fields: Vec<BindingRef>,
 }
 
-/// What a closure has room for where no limit is lowered.
 #[cfg(test)]
 pub(in crate::lower) fn max_captures() -> usize {
     let limit = crate::ir::generated::LimitId::MaxCaptures;

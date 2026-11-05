@@ -59,7 +59,6 @@ impl<'s> FileMaps<'s> {
     }
 
     fn add_linkable_file(&mut self, path: &'s [u8], file: FileId, loader: HostLoader) {
-        // What an import without attributes gets stands under the path, ahead of what a `type` asks for.
         let primary = self.primary_files.entry(path).or_insert((file, loader));
         if primary.0 != file {
             self.paths_with_multiple_forms.insert(path);
@@ -112,7 +111,6 @@ pub(super) struct PathInput<'a> {
     pub kind: SourceKind,
     pub plugin_module: Option<&'a PluginModuleName>,
     pub file_name: &'a [u8],
-    /// What stands behind the path of the file in the name of the module: `?fresh=1`, or nothing.
     pub query: &'a [u8],
     pub canonical_path: &'a [u8],
     pub host_loader: HostLoader,
@@ -164,7 +162,6 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
     }
 }
 
-/// `bun run` shows a module of src/js/thirdparty under the name of its file, and its loader knows the module by the specifier.
 pub(super) fn compute_name_of_third_party_file(
     manifest: &Manifest,
     kind: SourceKind,
@@ -178,7 +175,6 @@ pub(super) fn compute_name_of_third_party_file(
     Some(name[..end].into())
 }
 
-/// A module that holds a part of another one is shown under the name of that one.
 pub(super) fn compute_name_of_module_held_in_part(
     manifest: &Manifest,
     kind: SourceKind,
@@ -192,7 +188,6 @@ pub(super) fn compute_name_of_module_held_in_part(
 
 fn compute_path_of_runtime_module(manifest: &Manifest, id: u32) -> Option<Box<[u8]>> {
     let specifier = manifest.module(id)?.specifier.as_deref()?;
-    // `bun run` shows a module of src/js/internal as internal:<name>.
     Some(match specifier.strip_prefix(b"internal/") {
         Some(name) => [b"internal:", name].concat().into(),
         None => specifier.into(),
@@ -206,14 +201,10 @@ fn requested_loader(host_loader: HostLoader, file_name: &[u8]) -> Loader {
     }
 }
 
-// Whoever names the file at run time without an attribute asks for another module than this one.
-// Not so in an executable where the attribute reads the file as its name does, `./a.json` with `{ type: "json" }`: nothing else holds the file there, and `require` answers with this module under `bun run` too.
-// With two attribute forms, both are keyed by type: the run time searches those keys for the form that a static import loaded.
 fn is_data_that_only_an_attribute_asks_for(
     context: &PathContext<'_>,
     input: &PathInput<'_>,
 ) -> bool {
-    // An empty program stands in the place of a file of data whose text its parser refuses.
     let is_data = match input.kind {
         SourceKind::Data => true,
         SourceKind::Program => {
@@ -271,7 +262,6 @@ pub(super) fn compute_program_path(
     }
 }
 
-/// The compiler writes `C:/a/b.ts`. `bun run` names that file `C:\a\b.ts`, and so does whoever asks for a module by its path.
 pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> Vec<u8> {
     let to_host = |&byte: &u8| match byte {
         b'/' if is_windows => b'\\',
@@ -280,7 +270,6 @@ pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> V
     native_path.iter().map(to_host).collect()
 }
 
-/// What the executable prints for a file at run time: its path from the project's folder, with forward slashes.
 pub(super) fn compute_display_path(project_root: &[u8], native_path: &[u8]) -> Box<[u8]> {
     let are_absolute = is_absolute(project_root) && is_absolute(native_path);
     let relative_path = are_absolute.then(|| compute_relative_path(project_root, native_path));
@@ -309,7 +298,6 @@ fn fits_path_buffer(path: &[u8]) -> bool {
 pub(super) fn compute_module_path(paths: &PathOptions, relative_path: &[u8]) -> Vec<u8> {
     let mut path = paths.module_prefix.clone();
     append_sanitized_path(&mut path, relative_path);
-    // `__dirname` in an executable for Windows is `B:\~BUN\root`, and a program compares what it joins to that with the path of a module.
     with_separators_of_host(&path, paths.module_prefix.starts_with(b"B:/"))
 }
 
@@ -347,7 +335,6 @@ fn find_files_with_one_public_path<'a>(
     collision.map(|(first, second)| [first.1, second.1])
 }
 
-/// `sub/_.._/a.mjs` beside `a.mjs`, where `sub` is the root: `append_sanitized_path` spells the `..` of the one as the folder of the other is named.
 pub(super) fn find_folder_named_as_parent_is_spelled<'a>(
     paths: impl Iterator<Item = (FileId, ModulePaths<'a>)>,
 ) -> Option<Diagnostic> {

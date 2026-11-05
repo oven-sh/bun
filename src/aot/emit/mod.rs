@@ -31,18 +31,15 @@ impl ProgramBytes {
         }
     }
 
-    /// `None`: the code of the functions lies in the bytes.
     pub fn external_bodies(&self) -> Option<&ExternalBodies> {
         self.external_bodies.as_ref()
     }
 
-    /// The bytes and the code that lies beside them.
     pub fn size_with_external_bodies(&self) -> usize {
         let bodies = self.external_bodies.as_ref();
         self.size_in_bytes + bodies.map_or(0, ExternalBodies::size_in_bytes)
     }
 
-    /// What lies beside the bytes stays.
     pub fn free_bytes(&mut self) {
         self.storage = Vec::new();
         self.size_in_bytes = 0;
@@ -61,7 +58,6 @@ pub enum EmitError {
     ProgramTooLarge { bytes: u64 },
 }
 
-/// The functions of a program as `emit_with_external_bodies` takes them: the records without their code, measured, and the code beside them.
 pub struct FunctionsWithoutCode {
     count: usize,
     tasks: Vec<layout::Task<'static, 'static>>,
@@ -69,7 +65,6 @@ pub struct FunctionsWithoutCode {
 }
 
 impl FunctionsWithoutCode {
-    /// This asks nothing of the program, so it can run while the program is finished.
     pub fn new(
         mut functions: LinkedFunctions,
         in_parallel: InParallel<'_>,
@@ -93,8 +88,6 @@ impl FunctionsWithoutCode {
     }
 }
 
-/// The bytes hold the tables and the records of the functions, each record in the numbers of the tables it was written under.
-/// The code stays where lowering wrote it and goes along with the bytes.
 pub fn emit_with_external_bodies(
     program: &mut Program,
     functions: FunctionsWithoutCode,
@@ -110,8 +103,6 @@ pub fn emit_with_external_bodies(
     Ok(bytes)
 }
 
-/// For a program that leaves the process as a file: the code lies in the bytes, and nothing lies beside them.
-/// `functions` hold the program's ids: `LinkedFunctions::of_program_functions`.
 pub fn emit_with_bodies_in_bytes(
     program: &mut Program,
     mut functions: LinkedFunctions,

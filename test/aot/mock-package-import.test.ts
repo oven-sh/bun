@@ -86,7 +86,6 @@ const saidByForm: Record<keyof typeof forms, string> = {
   "import() in the package": "real+real helper",
 };
 
-// TODO(bun): `differs`: compiled code hands the package the mock where what it imports is a CommonJS file. Each goes red once it agrees.
 const cases: Record<
   string,
   { files: Files; said: string[]; exitCode?: number; differs?: boolean; words?: string; staysCompiled?: boolean }
@@ -99,7 +98,6 @@ for (const [dep, files] of [
     cases[`${form} of ${dep}`] = {
       files: { ...files, ...reader(forms[form]), ...testFile(say) },
       said: ["SAID " + saidByForm[form]],
-      differs: files === commonJSDep,
     };
 }
 const mockedByForm: Record<keyof typeof forms, string> = {

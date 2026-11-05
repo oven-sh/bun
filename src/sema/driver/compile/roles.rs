@@ -81,7 +81,6 @@ pub fn decide_roles<'s>(
     }
 }
 
-/// Nothing is looked for in the typed files, and nothing is reported of them.
 pub fn keep_verified_roles(loaded: &LoadedProgram<'_>, files_to_lower: &[FileId]) -> RoleDecision {
     let files = loaded.files();
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
@@ -108,7 +107,6 @@ pub fn keep_verified_roles(loaded: &LoadedProgram<'_>, files_to_lower: &[FileId]
     }
 }
 
-// `apply_effects` leaves that effect to early errors in a file.
 fn withdraws_trust(reported: &BuildDiagnostic) -> bool {
     match reported.effect {
         Effect::WithdrawsTrust => true,

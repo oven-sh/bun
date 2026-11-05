@@ -1,8 +1,3 @@
-//! What a message of the engine quotes: "undefined is not an object (evaluating 'task.title')". An executable of `bun build --compile` quotes
-//! the text that `js_printer` has printed, so this prints an expression as it does, with a literal wherever the transpiler of `bun build` has one.
-//! Each outermost expression is printed once, and what it holds is quoted as a part of that text.
-//! It is source text: a build that embeds no text of functions, as an obfuscated one, has none of it, and a message spells what failed from the value and the name.
-
 use bun_core::fmt::pow10_exp_1e4_to_1e9;
 use bun_core::identifier::is_identifier;
 use bun_core::printer::write_pre_quoted_string;
@@ -11,8 +6,8 @@ use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, NameKind, PatId, PatKind,
-    PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind, end_of_expr, start_of,
+    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, NameKind, PatId,
+    PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind, end_of_expr, start_of,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -23,13 +18,11 @@ use crate::load::test_runner_names::{skip_to_written_use, written_name_of_local}
 #[derive(Default)]
 pub(in crate::lower) struct QuotedTexts {
     text: Vec<u8>,
-    /// Where in `text` an expression stands that was printed whole.
     places: FxHashMap<ExprId, (u32, u32)>,
     printed: FxHashSet<ExprId>,
     quoted: Vec<QuotedText>,
 }
 
-/// `Level` of `js_printer`.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Level {
     Lowest,
@@ -90,7 +83,6 @@ impl Level {
 #[derive(Copy, Clone, Default)]
 struct Around {
     forbids_call: bool,
-    /// Where the first `new` stands in front of the callee that this is a link of: the parser of the engine begins each link there.
     start_of_new: Option<usize>,
     forbids_in: bool,
     has_parent_outside_chain: bool,
@@ -131,18 +123,13 @@ struct Printer<'f, 'a, 'c, 'p, 's> {
     file: &'f FileLowering<'a, 'c, 'p, 's>,
     text: Vec<u8>,
     places: FxHashMap<ExprId, (u32, u32)>,
-    /// How often something came that this does not print. What holds it is not quoted.
     gaps: u32,
     end_of_number: usize,
-    /// Where what is being printed begins: what stands in front of it is another text.
     start: usize,
-    /// Where a statement begins: a brace there would open a block, `function` a declaration.
     start_of_statement: usize,
-    /// Where the body of an arrow function begins: a brace there would open a block.
     start_of_arrow_body: usize,
 }
 
-/// An operator whose left side is being printed.
 struct OpenOperator {
     expression: ExprId,
     op: BinOp,
@@ -165,6 +152,10 @@ fn is_truthy(constant: Constant, is_empty: impl FnOnce(Atom) -> bool) -> Option<
 }
 
 impl Printer<'_, '_, '_, '_, '_> {
+    fn minifies_syntax(&self) -> bool {
+        self.file.inputs.options.removable.minifies_syntax()
+    }
+
     fn brace_would_open_block(&self) -> bool {
         self.text.len() == self.start_of_statement || self.text.len() == self.start_of_arrow_body
     }
@@ -185,7 +176,6 @@ impl Printer<'_, '_, '_, '_, '_> {
         self.text.extend_from_slice(word);
     }
 
-    // `+ +x`, `- -x`, `+ ++x`, `- --x`
     fn operator(&mut self, operator: &[u8]) {
         if matches!(operator[0], b'+' | b'-')
             && self.text[self.start..].last() == Some(&operator[0])
@@ -197,10 +187,12 @@ impl Printer<'_, '_, '_, '_, '_> {
 
     fn constant_of(&self, expression: ExprId) -> Option<Constant> {
         let (hir, decisions) = (self.file.hir, self.file.decisions());
-        // A template with substitutions stays one.
-        if matches!(hir[expression].kind, ExprKind::Template { .. })
-            || !decisions.is_constant_in_bun_run(hir, expression)
-        {
+        let is_template = matches!(hir[expression].kind, ExprKind::Template { .. })
+            || (!self.minifies_syntax()
+                && hir
+                    .expr_flags(expression)
+                    .contains(ExprFlags::TEMPLATE_LITERAL));
+        if is_template || !decisions.is_constant_in_bun_run(hir, expression) {
             return None;
         }
         match decisions.constant(hir, expression) {
@@ -380,7 +372,6 @@ impl Printer<'_, '_, '_, '_, '_> {
         self.text.push(b')');
     }
 
-    /// `function g(x) {}`, `async () => {}`
     fn function_without_statements(&mut self, function: FnId) {
         let written = self.file.hir[function];
         if written.flags.contains(Flags::ASYNC) {
@@ -422,8 +413,8 @@ impl Printer<'_, '_, '_, '_, '_> {
         self.expression(body, Level::Comma, around);
     }
 
-    fn member_name(&mut self, name: &[u8], starts_chain: bool, is_in_brackets: bool) {
-        if !is_in_brackets {
+    fn member_name(&mut self, name: &[u8], starts_chain: bool, brackets: Option<u8>) {
+        let Some(quote) = brackets else {
             if starts_chain {
                 self.text.extend_from_slice(b"?.");
             } else {
@@ -433,15 +424,26 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.text.push(b'.');
             }
             append_printed_name(name, &mut self.text);
-        } else {
-            self.text
-                .extend_from_slice(if starts_chain { b"?.[" } else { b"[" });
-            append_printed_text(name, &mut self.text);
-            self.text.push(b']');
+            return;
+        };
+        self.text
+            .extend_from_slice(if starts_chain { b"?.[" } else { b"[" });
+        match quote {
+            b'`' => {
+                self.text.push(b'`');
+                write_pre_quoted_string(name, &mut self.text, b'`', true, false, Encoding::Utf8)
+                    .expect("a list of bytes takes every byte");
+                self.text.push(b'`');
+            }
+            _ => append_printed_text(name, &mut self.text),
         }
+        self.text.push(b']');
     }
 
-    /// True: an opening bracket was printed.
+    fn has_dot_where_syntax_is_minified(&self, name: &[u8]) -> bool {
+        self.minifies_syntax() && name.is_ascii() && is_identifier(name)
+    }
+
     fn begin_link(&mut self, chain: Chain, around: &mut Around) -> bool {
         let wraps = chain != Chain::No && around.has_parent_outside_chain;
         if wraps {
@@ -453,16 +455,16 @@ impl Printer<'_, '_, '_, '_, '_> {
         wraps
     }
 
-    /// True: the key is a name, so that `{ key: key }` is printed `{ key }`.
     fn key(&mut self, key: &[u8], written_as: NameKind) -> bool {
         match written_as {
             NameKind::Identifier | NameKind::StringLiteral | NameKind::Jsx
-                if is_identifier(key) =>
+                if is_identifier(key)
+                    && (key.is_ascii() || written_as != NameKind::StringLiteral) =>
             {
-                self.word(key);
+                self.space_before_name();
+                append_printed_name(key, &mut self.text);
                 return true;
             }
-            // A key is no template.
             NameKind::Identifier | NameKind::StringLiteral | NameKind::Jsx => {
                 append_quoted_text(key, false, &mut self.text)
             }
@@ -481,7 +483,6 @@ impl Printer<'_, '_, '_, '_, '_> {
         false
     }
 
-    // `{ 10000: a }` is printed `{ 1e4: a }`, like any number.
     fn numeric_key(&mut self, key: &[u8]) {
         match core::str::from_utf8(key)
             .ok()
@@ -544,7 +545,6 @@ impl Printer<'_, '_, '_, '_, '_> {
         (start, wraps)
     }
 
-    /// A sum of a hundred thousand terms is as many operators deep on its left side, so this goes down that side in a loop.
     fn operators(&mut self, mut expression: ExprId, mut level: Level, mut around: Around) {
         let hir = self.file.hir;
         let mut open: Vec<OpenOperator> = Vec::new();
@@ -581,7 +581,6 @@ impl Printer<'_, '_, '_, '_, '_> {
                 }
                 _ => {}
             }
-            // `js_parser` drops a constant in front of a comma, but where what follows may be called with a receiver or is `eval`: `(0, o.f)()`.
             let names_callee = || {
                 matches!(
                     hir[self.file.skip_type_syntax(right)].kind,
@@ -589,6 +588,7 @@ impl Printer<'_, '_, '_, '_, '_> {
                 )
             };
             if op == BinOp::Comma
+                && self.minifies_syntax()
                 && self.constant_of(self.file.skip_type_syntax(left)).is_some()
                 && !names_callee()
             {
@@ -596,7 +596,6 @@ impl Printer<'_, '_, '_, '_, '_> {
                 continue;
             }
             let own = level_and_text_of(op).0;
-            // `js_printer`: where a statement or the body of an arrow begins, the operator behind an object literal opens the bracket: `({} instanceof f)`.
             let begins_with_literal = self.brace_would_open_block()
                 && matches!(
                     hir[self.file.skip_type_syntax(left)].kind,
@@ -650,7 +649,6 @@ impl Printer<'_, '_, '_, '_, '_> {
                     left_level = Level::Call;
                 }
             }
-            // `js_printer` forbids `in` inside the brackets that it has just opened.
             let beside = Around {
                 forbids_in: around.forbids_in || wraps,
                 ..Around::default()
@@ -738,7 +736,6 @@ impl Printer<'_, '_, '_, '_, '_> {
         let whole = |printer: &Printer<'_, '_, '_, '_, '_>| (printer.text.len(), false);
         let (start, wraps) = match hir[expression].kind {
             ExprKind::Missing => whole(self),
-            // No text of the program stands for a name that the build has made: `%glob:7` in the expansion of `import.meta.glob`.
             ExprKind::Ident(name)
                 if written_name_of_local(self.file.queries.atom_bytes(name)).starts_with(b"%") =>
             {
@@ -768,15 +765,25 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.word(b"new.target");
                 whole(self)
             }
-            ExprKind::Regex { .. }
-                if hir.text[hir[expression].pos as usize..hir[expression].end as usize]
-                    .is_ascii() =>
-            {
+            ExprKind::Regex { .. } => {
                 self.space_before_name();
                 let start = whole(self);
-                self.text.extend_from_slice(
+                let characters = CodepointIterator::init(
                     &hir.text[hir[expression].pos as usize..hir[expression].end as usize],
                 );
+                let mut cursor = Cursor::default();
+                while characters.next(&mut cursor) {
+                    match (u8::try_from(cursor.c), char::from_u32(cursor.c as u32)) {
+                        (Ok(character), _) if character.is_ascii() => self.text.push(character),
+                        (_, Some(character)) => {
+                            for unit in character.encode_utf16(&mut [0; 2]) {
+                                self.text
+                                    .extend_from_slice(format!("\\u{unit:04X}").as_bytes());
+                            }
+                        }
+                        (_, None) => self.gaps += 1,
+                    }
+                }
                 start
             }
             ExprKind::Spread(operand) => {
@@ -791,20 +798,43 @@ impl Printer<'_, '_, '_, '_, '_> {
                 let start = around.start_of_new.unwrap_or(self.text.len());
                 self.expression(obj, Level::Postfix, around);
                 let name = written_name(self.file.queries.atom_bytes(name));
-                // `js_parser`: `a["b"]` is `a.b`.
+                let is_of_import_meta = chain == Chain::No
+                    && matches!(hir[obj].kind, ExprKind::ImportMeta)
+                    && name.is_ascii()
+                    && is_identifier(name);
                 let stays_in_brackets = hir.is_written_in_brackets(expression)
-                    && !(name.is_ascii() && is_identifier(name));
-                self.member_name(name, chain == Chain::Start, stays_in_brackets);
+                    && !is_of_import_meta
+                    && !self.has_dot_where_syntax_is_minified(name);
+                let quote = stays_in_brackets.then(|| {
+                    if self.minifies_syntax() {
+                        b'"'
+                    } else {
+                        hir.text[hir.name_pos(expression) as usize]
+                    }
+                });
+                self.member_name(name, chain == Chain::Start, quote);
                 (start, wraps)
             }
             ExprKind::Index { obj, index, chain } => {
                 let wraps = self.begin_link(chain, &mut around);
                 let start = around.start_of_new.unwrap_or(self.text.len());
                 self.expression(obj, Level::Postfix, around);
-                self.text
-                    .extend_from_slice(if chain == Chain::Start { b"?.[" } else { b"[" });
-                self.expression(index, Level::Lowest, Around::default());
-                self.text.push(b']');
+                let name = match self.constant_of(self.file.skip_type_syntax(index)) {
+                    Some(Constant::String(text)) => Some(self.file.queries.atom_bytes(text)),
+                    _ => None,
+                };
+                match name.filter(|name| self.has_dot_where_syntax_is_minified(name)) {
+                    Some(name) => self.member_name(name, chain == Chain::Start, None),
+                    None => {
+                        self.text.extend_from_slice(if chain == Chain::Start {
+                            b"?.["
+                        } else {
+                            b"["
+                        });
+                        self.expression(index, Level::Lowest, Around::default());
+                        self.text.push(b']');
+                    }
+                }
                 (start, wraps)
             }
             ExprKind::Call(site) => self.call(hir[site], around, level),
@@ -841,7 +871,6 @@ impl Printer<'_, '_, '_, '_, '_> {
                     self.text.push(b'(');
                 }
                 let start = self.text.len();
-                // An operator like the others.
                 let beside = Around {
                     forbids_in: around.forbids_in || wraps,
                     ..Around::default()
@@ -876,7 +905,6 @@ impl Printer<'_, '_, '_, '_, '_> {
                     self.text.push(b'(');
                 }
                 let start = self.text.len();
-                // `js_printer` hands what stands round the whole to the test and to the last operand: `new ((f()) ? a : o)`, `((o?.p) ? a : (k in o)).b`.
                 let beside = Around {
                     start_of_new: None,
                     forbids_in: around.forbids_in && !wraps,
@@ -903,6 +931,13 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.text.extend_from_slice(b"await ");
                 self.expression(operand, Level::Prefix.below(), Around::default());
                 (start, wraps)
+            }
+            ExprKind::String(text) => {
+                let start = self.text.len();
+                self.text.push(b'`');
+                self.characters(text, b'`');
+                self.text.push(b'`');
+                (start, false)
             }
             ExprKind::Template { exprs } => {
                 let start = self.text.len();
@@ -965,7 +1000,6 @@ impl Printer<'_, '_, '_, '_, '_> {
                 (start, wraps)
             }
             ExprKind::Fn(function) => {
-                // `js_printer` brackets an arrow by what stands round it, a function where a statement begins.
                 let wraps = match hir[function].kind {
                     FnKind::Arrow => level >= Level::Assign,
                     _ => self.text.len() == self.start_of_statement,
@@ -1062,7 +1096,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         skip_to_written_use(self.hir, |name| self.queries.atom_bytes(name), expression)
     }
 
-    /// Of the node itself. What it holds may still leave a gap.
     fn is_printed(&self, expression: ExprId) -> bool {
         let written = self.hir[expression];
         match written.kind {
@@ -1134,7 +1167,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         (gaps == 0).then_some((start as u32, end as u32))
     }
 
-    /// Whatever fails at `position` quotes `expression`.
     fn quote_at(&mut self, position: u32, expression: ExprId) {
         if self.inputs.options.obfuscates || !self.inputs.options.embeds_function_text {
             return;
@@ -1162,7 +1194,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         }
     }
 
-    /// `a.b = c` and `delete a.b` are quoted whole.
     fn find_expression_quoted_for_member(&self, access: ExprId) -> ExprId {
         let mut operand = access;
         while let Parent::Expr(around) = self.bound.parent_of_expr(operand) {
@@ -1180,7 +1211,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         access
     }
 
-    /// Where `in` or `instanceof` is written. Nothing else reports there.
     pub(in crate::lower) fn operator_position_of(&self, binary: ExprId) -> u32 {
         let hir = self.hir;
         let ExprKind::Binary { op, left, right } = hir[binary].kind else {
@@ -1192,7 +1222,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         written.map_or(hir[binary].pos, |written| from + written as u32)
     }
 
-    /// Ascending by position. A position at which two texts would be quoted has none.
     pub(in crate::lower) fn take_quoted_texts(&mut self) -> (Vec<QuotedText>, Vec<u8>) {
         let QuotedTexts {
             text, mut quoted, ..
@@ -1231,13 +1260,11 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    /// The operation that is emitted next, at the position in force, quotes `expression` where it fails.
     pub(in crate::lower) fn quote_if_next_fails(&mut self, expression: ExprId) {
         let position = self.position();
         self.file.quote_at(position, expression);
     }
 
-    /// What reads, stores or deletes the member reports at the end of its object.
     pub(in crate::lower) fn report_at_member(&mut self, access: ExprId) {
         let Some((object, _)) = self.file.hir.member_key(access) else {
             unreachable!("report_at_member takes a Dot or an Index expression");
@@ -1252,7 +1279,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.quote_if_next_fails(binary);
     }
 
-    /// `for (const x of list)` quotes `x of list`.
     pub(in crate::lower) fn quote_head_of_loop_if_next_fails(
         &mut self,
         left: StmtId,
@@ -1264,7 +1290,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 StmtKind::Var(declarations) => match declarations.iter().next() {
                     Some(declaration) => {
                         let declaration = hir[declaration];
-                        // A name is quoted by itself, a pattern with the word in front of it.
                         if !matches!(hir[declaration.pat].kind, PatKind::Ident(_)) {
                             printer.text.extend_from_slice(match declaration.kind {
                                 VarKind::Var => b"var ".as_slice(),
@@ -1288,13 +1313,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         });
     }
 
-    /// `const [a, b] = list` quotes `[a, b]`.
     pub(in crate::lower) fn quote_pattern_if_next_fails(&mut self, pattern: PatId) {
         self.set_position(self.file.hir[pattern].pos);
         self.quote_printed_if_next_fails(|printer| printer.pattern(pattern));
     }
 
-    /// `[a, b] = list` quotes `[a, b]`.
     pub(in crate::lower) fn quote_assigned_pattern_if_next_fails(&mut self, pattern: ExprId) {
         self.set_position(self.file.hir[pattern].pos);
         self.quote_printed_if_next_fails(|printer| {
@@ -1320,7 +1343,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-// As `js_printer` writes a text: between the quotes that leave least to escape, and nothing but ASCII.
 pub(in crate::lower) fn append_printed_text(text: &[u8], printed: &mut Vec<u8>) {
     append_quoted_text(text, true, printed);
 }
@@ -1357,7 +1379,6 @@ fn append_quoted_text(text: &[u8], may_be_template: bool, printed: &mut Vec<u8>)
     printed.push(quote);
 }
 
-// As `js_printer` writes a name: nothing but ASCII.
 pub(in crate::lower) fn append_printed_name(name: &[u8], printed: &mut Vec<u8>) {
     if name.is_ascii() {
         printed.extend_from_slice(name);
@@ -1373,7 +1394,6 @@ pub(in crate::lower) fn append_printed_name(name: &[u8], printed: &mut Vec<u8>) 
     }
 }
 
-// As `js_printer` writes a number that is not negative.
 pub(in crate::lower) fn append_printed_number(number: f64, printed: &mut Vec<u8>) {
     let is_integer = number.fract() == 0.0 && number < (u64::MAX >> 12) as f64;
     match is_integer
@@ -1406,7 +1426,6 @@ mod tests {
         assert_eq!(text_of_quotes(&source), sum.as_bytes());
     }
 
-    // `{ __proto__: __proto__ }` sets the prototype, and `{ __proto__ }` defines a property.
     #[test]
     fn property_that_sets_the_prototype_keeps_its_value() {
         let source = "export function probe(run, __proto__, key) {\n  return run({ __proto__: __proto__, key: key }, { __proto__ });\n}\n";

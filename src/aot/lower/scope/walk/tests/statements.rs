@@ -18,7 +18,6 @@ const MODULE: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Module);
 const REQUIRE: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Require);
 const FILENAME: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Filename);
 
-// A store to one of the five names: the text of the file stays a function that has them as parameters.
 const KEEPS_WRAPPER: &str = "__filename = '';";
 
 fn is_block(kind: &StmtKind) -> bool {

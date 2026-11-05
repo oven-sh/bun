@@ -406,8 +406,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .all(|&(_, decl)| can_merge_with_class(decl));
         let (hir, bound) = (self.c.hir(class.file), self.c.bound(class.file));
         let mut modifiers = hir[class.class].modifiers.iter();
-        // `constructor(@inject port: Port)`: the helper that runs the decorators of the parameters is handed the class, and what it answers is
-        // stored in the binding, as for a decorator of the class itself.
         let has_decorated_constructor = hir[class.class].members.iter().any(|member| {
             hir[member].kind == MemberKind::Constructor && is_legacy_decorated_member(hir, member)
         });

@@ -210,7 +210,6 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"import { createRequire } from "node:module"; const meta = import.meta; createRequire(import.meta.url)("a");"#,
         &[],
     ),
-    // A tag is called with `import.meta` as `this`. What is written into a template is only read.
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; import.meta.tag`x`; createRequire(import.meta.url)("a");"#,
@@ -748,7 +747,6 @@ const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
         r#"(typeof require === "function" ? require : other)("a");"#,
         &["a"],
     ),
-    // What is called may be `require`: the call asks where it runs.
     (
         "a.cjs",
         r#"const load = (flag ? require : other); load("a");"#,
@@ -767,7 +765,6 @@ const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
         &["a"],
     ),
     ("a.cjs", r#"(one ?? two)("a");"#, &[]),
-    // A choice that leads back to itself.
     ("a.cjs", r#"var load = load || require; load("a");"#, &["a"]),
     ("a.cjs", r#"var load = load ?? require; load("a");"#, &["a"]),
     (
@@ -1071,7 +1068,6 @@ fn builtin_module_call_needs_constant_specifier() {
     }
 }
 
-/// The file, its text, and `(specifier, path)` of what the names of its loads ask of other files.
 const ASKED_OF_DATA_FILES: &[(&str, &str, &[(&str, &str)])] = &[
     (
         "a.cjs",
@@ -1108,9 +1104,7 @@ const ASKED_OF_DATA_FILES: &[(&str, &str, &[(&str, &str)])] = &[
         r#"import * as c from "./c.json"; import(c.default.plugin); import(c.other);"#,
         &[("./c.json", "other"), ("./c.json", "plugin")],
     ),
-    // No load is named by it.
     ("a.cjs", r#"console.log(require("./c.json").plugin);"#, &[]),
-    // The key is not known.
     ("a.cjs", r#"require(require("./c.json")[key]);"#, &[]),
 ];
 
@@ -1145,7 +1139,6 @@ fn call_of_require_made_for_own_file_is_site() {
     }
 }
 
-// `None`: no site. `Some(None)`: the name is looked for from the file itself.
 const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
     (
         "a.cjs",
@@ -1197,7 +1190,6 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
         r#"require("module").createRequire(__dirname + "/../lib/")("./a");"#,
         Some(Some("./../lib/")),
     ),
-    // A path without a slash at its end is a file to `createRequire`, and the folder of this one is the folder above.
     (
         "a.cjs",
         r#"require("module").createRequire(__dirname)("./a");"#,
@@ -1208,7 +1200,6 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
         r#"import { createRequire } from "node:module"; createRequire(import.meta.dir + "/lib/")("./a");"#,
         Some(Some("./lib/")),
     ),
-    // A whole path is the same to every `require`.
     (
         "a.cjs",
         r#"require("module").createRequire(__dirname + "/lib/")(__dirname + "/a");"#,
@@ -1249,7 +1240,6 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
         r#"var a = b + "/x", b = a + "/y"; require("module").createRequire(a)("./a");"#,
         None,
     ),
-    // What is made is asked for on the way to what it is made of.
     (
         "a.cjs",
         r#"const load = require("module").createRequire(load("path").join(__dirname, "lib", "index.js")); load("./a");"#,
@@ -1424,7 +1414,6 @@ const TARGET: Fold<'static> = Fold {
     ..Fold::NONE
 };
 
-/// The last call names one of these. A text with `*` stands for its start and its end. That two arms of a condition exclude each other is not looked at.
 const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
     (
         "const names = { linux: `./a-${process.arch}`, darwin: './b' }; require(names[process.platform]);",
@@ -1556,7 +1545,6 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// Something may change the list, the object or the variable in a way that the build does not follow.
 const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "const names = { linux: './a' }; names.linux = x; require(names[process.platform]);",
     "const names = { linux: './a' }; change(names); require(names[process.platform]);",
@@ -1590,7 +1578,6 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "async function find() { return './a'; } require(find());",
 ];
 
-/// What is read out of the list or the object that changes is any text. The other parts of the name are followed.
 const NAMES_WITH_A_PART_OUT_OF_WHAT_MAY_CHANGE: &[(&str, &[&str])] = &[
     (
         "const names = ['A']; names.forEach((name, index, all) => { all[index] = x; }); require(['./lib', names[0] + '.js'].join('/'));",

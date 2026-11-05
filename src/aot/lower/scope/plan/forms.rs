@@ -56,7 +56,6 @@ pub(super) fn compute_forms(
             if bound.binding_kind(symbol) != BindingKind::Parameter {
                 continue;
             }
-            // A mapped parameter lives in the object, so every read and store of it needs the object. It is one only where somebody can tell.
             if bound.is_mapped_argument(hir, symbol, context.input.names_lie_on_object_prototype) {
                 forms[symbol.idx()] = BindingForm::MappedArgument { unit, index };
             }
@@ -144,7 +143,6 @@ pub(super) fn normalize_uses(
 fn compute_form(context: &Context<'_, '_>, symbol: SymbolId, kind: BindingKind) -> BindingForm {
     let (input, bound) = (context.input, context.input.bound);
     if kind == BindingKind::NoBinding {
-        // What a namespace only declares, `export declare let title: string`, is a property of its object that other code stores.
         let declares_variable = |decl: &Decl| matches!(decl, Decl::Var(_));
         let container = find_container(context, symbol)
             .filter(|&container| bound.has_runtime_value(container))

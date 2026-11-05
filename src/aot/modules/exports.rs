@@ -102,7 +102,6 @@ type NodeKey = (FileId, Atom);
 
 fn captured_resolution(modules: &ModuleSet, module: ModuleRef, name: Atom) -> Resolution {
     match module {
-        // Its export table belongs to the project of Bun's own modules, so the name is looked up when the modules are linked.
         ModuleRef::Runtime(runtime_module) if table::is_es_module(runtime_module) => {
             Resolution::LiveName { module, name }
         }
@@ -113,7 +112,6 @@ fn captured_resolution(modules: &ModuleSet, module: ModuleRef, name: Atom) -> Re
         ModuleRef::File(_) | ModuleRef::Inner { .. } | ModuleRef::External { .. } => {
             Resolution::Synthetic { module, name }
         }
-        // It shows the names of the file.
         ModuleRef::Face(file) => Resolution::Synthetic {
             module: ModuleRef::File(file),
             name,
@@ -122,7 +120,6 @@ fn captured_resolution(modules: &ModuleSet, module: ModuleRef, name: Atom) -> Re
     }
 }
 
-// `bun run` turns `import * as ns from "bun"` into a variable that holds `Bun`, which is the default export of the module.
 fn imported_namespace_resolution(module: ModuleRef, phase: ImportPhase) -> Resolution {
     match module {
         ModuleRef::Runtime(module) if table::object_replacing_namespace(module).is_some() => {
@@ -171,7 +168,6 @@ fn compare_bindings(a: Resolution, b: Resolution) -> Identity {
                 name: b_name,
             },
         ) if a_name == b_name => compare_module_identity(a_module, b_module),
-        // `import * as ns from "m"; export { ns }` is `export * as ns from "m"`, whichever module writes it.
         (
             Namespace {
                 module: a_module,
@@ -303,7 +299,6 @@ impl DynamicStarTargets {
         }
     }
 
-    /// What a module exports that names `name` of `module`. It is linked only where one of the targets has the name, and the link finds which.
     fn for_name_exported_again(
         self,
         modules: &ModuleSet,
@@ -340,7 +335,6 @@ struct StarExports {
     dynamic_targets: DynamicStarTargets,
 }
 
-/// `askers`: where to look for who asks for what. Without them every name has a place.
 fn compute_star_exports(
     scans: &Scans,
     entries: &[ExportEntries],
@@ -348,7 +342,6 @@ fn compute_star_exports(
     mocked: &MockedModules,
     askers: Option<(&BindInput<'_, '_>, &ModuleSet)>,
 ) -> (Vec<u32>, Vec<StarExports>, Vec<Vec<u32>>, AskedNames) {
-    // A mock that stands in place of a file answers for every name, and a star hands on what it answers.
     let targets_of_mock =
         |module: &ExportEntries| match mocked.contains(ModuleRef::File(module.file)) {
             true => DynamicStarTargets::Many,
@@ -395,7 +388,6 @@ fn compute_star_exports(
     };
     let mut star_exports: Vec<StarExports> = Vec::with_capacity(components.len());
     for (component, members) in components.iter().enumerate() {
-        // Most files: no `export *` in them, and none that names them. Nobody asks for the list.
         if let [member] = members[..]
             && entries[member].stars.is_empty()
             && !is_taken_by_star[member]
@@ -436,7 +428,6 @@ struct FileTable {
     dynamic_targets: DynamicStarTargets,
     follows_every_star: bool,
     may_be_mocked: bool,
-    /// `AskedNames::left_out`: those of them that `export *` brings the file have no place here.
     leaves_out_names: bool,
 }
 
@@ -463,7 +454,6 @@ impl NameNodes {
     ) {
         let start = self.keys.len() as u32;
         let own_names = module.own.iter().map(|&(name, _)| name);
-        // Without an `export *` the list holds the file's own names and no other.
         let star_names: &[Atom] = match module.stars.is_empty() {
             true => &[],
             false => &star_exports.names,
@@ -500,23 +490,24 @@ enum NodeKind {
 struct ResolutionGraph<'a> {
     scans: &'a Scans,
     modules: &'a ModuleSet,
+    commonjs: &'a CommonJsTexts,
     files: &'a [FileId],
     nodes: &'a NameNodes,
     starts: Vec<Summary>,
     edges: Vec<Vec<u32>>,
+    statements_ahead_of_stars: Vec<(NodeKey, Resolution)>,
 }
 
 impl ResolutionGraph<'_> {
     fn add_file(&mut self, table: &FileTable, module: &ExportEntries) {
         for (node, &(_, entry)) in (table.nodes.start..).zip(&module.own) {
-            self.add_own_name(node, entry);
+            self.add_own_name(node, entry, !module.stars.is_empty());
         }
         let nodes = self.nodes;
         let star_nodes = table.star_nodes();
         for target in star_targets(self.scans, module) {
             let target_table = find_table(self.files, target).map(|table| &nodes.tables[table]);
             match target_table {
-                // Only the target's names can match, so visit those instead of every star name.
                 Some(target_table)
                     if matches!(target_table.dynamic_targets, DynamicStarTargets::Empty) =>
                 {
@@ -538,8 +529,8 @@ impl ResolutionGraph<'_> {
         }
     }
 
-    fn add_own_name(&mut self, node: u32, entry: ExportEntry) {
-        let (importer, _) = self.nodes.keys[node as usize];
+    fn add_own_name(&mut self, node: u32, entry: ExportEntry, has_stars: bool) {
+        let (importer, export_name) = self.nodes.keys[node as usize];
         let site = match entry {
             ExportEntry::Local(id) => {
                 let local = Sym { file: importer, id };
@@ -551,6 +542,26 @@ impl ResolutionGraph<'_> {
             | ExportEntry::Indirect { site, .. } => site,
         };
         let binding = match (&self.scans.of(importer).sites[site as usize], entry) {
+            (
+                &ScannedSite::Module(target),
+                ExportEntry::Indirect {
+                    name,
+                    written: Some(_),
+                    ..
+                },
+            ) if has_stars
+                && export_name != known::default
+                && name != known::default
+                && self.commonjs.may_end_without(target, name) =>
+            {
+                let named = captured_resolution(self.modules, target, name);
+                let key = (importer, export_name);
+                self.statements_ahead_of_stars.push((key, named));
+                Resolution::LiveName {
+                    module: ModuleRef::File(importer),
+                    name: export_name,
+                }
+            }
             (&ScannedSite::Module(target), ExportEntry::Indirect { name, .. }) => {
                 return self.follow(node, NodeKind::Indirect, target, name);
             }
@@ -600,9 +611,7 @@ impl ResolutionGraph<'_> {
         *start = start.join(end, nodes.keys[node as usize]);
     }
 
-    /// What each name comes to, and the tables that follow every star.
     fn solve(self) -> (Vec<(Atom, ResolvedName)>, Vec<usize>) {
-        // Most names are variables of their own files. Such a name leads nowhere and is its own answer: only the others are a graph.
         const LEADS_NOWHERE: u32 = u32::MAX;
         let leads_on = |&node: &usize| !self.edges[node].is_empty();
         let nodes_that_lead_on: Vec<usize> = (0..self.edges.len()).filter(leads_on).collect();
@@ -618,7 +627,6 @@ impl ResolutionGraph<'_> {
         };
         let edges: Vec<Vec<u32>> = nodes_that_lead_on.iter().map(edges_between).collect();
         let (component_of, components) = strongly_connected_components(&edges);
-        // Joined with nothing, a summary is itself.
         let end_at = |node: usize| self.starts[node];
         let mut summaries: Vec<Summary> = Vec::with_capacity(components.len());
         for (component, places) in components.iter().enumerate() {
@@ -699,7 +707,6 @@ fn find_link_failure(
         return None;
     };
     let kind = match resolution {
-        // A link that misses `default` says that `export *` does not hand it on, whatever the module is written in.
         Resolution::NotFound if drops_absent_exports && name != known::default => return None,
         Resolution::NotFound => ModuleFailureKind::ExportNotFound { exporter, name },
         Resolution::Ambiguous => ModuleFailureKind::ExportAmbiguous { exporter, name },
@@ -708,7 +715,6 @@ fn find_link_failure(
     Some(written.fail(importer, kind))
 }
 
-// A name that an ES module imports and that some run of the body of the CommonJS module may end without. With the file that would have it: the import may name an ES module that hands the name on.
 fn find_absent_name(
     tables: &ExportTables,
     modules: &ModuleSet,
@@ -721,7 +727,6 @@ fn find_absent_name(
     } = written.imported;
     let exporter = ModuleRef::File(exporter);
     let mut resolved = tables.resolve_in(modules, exporter, name);
-    // An import statement finds a getter that a loop over the object passes over: it misses the name only where what the getter returns is missing.
     if let Resolution::Synthetic { module, name } = resolved.resolution
         && tables.commonjs.is_hidden(module, name)
     {
@@ -734,7 +739,6 @@ fn find_absent_name(
     else {
         return None;
     };
-    // Without a `default` of its own a module exports its value under the name.
     if owned_name == known::default || !tables.commonjs.may_lack(owner, owned_name) {
         return None;
     }
@@ -786,7 +790,6 @@ pub(super) fn resolve_exports(
     tables
 }
 
-/// With a place for every name that `export *` brings a file.
 #[cfg(any(test, debug_assertions))]
 pub(super) fn resolve_every_export(
     files: &Files<'_>,
@@ -835,18 +838,25 @@ fn resolve_exports_for(
     let mut graph = ResolutionGraph {
         scans,
         modules,
+        commonjs,
         files: &table_files,
         nodes: &nodes,
         starts: vec![Summary::EMPTY; nodes.keys.len()],
         edges: vec![Vec::new(); nodes.keys.len()],
+        statements_ahead_of_stars: Vec::new(),
     };
     for (table, module) in nodes.tables.iter().zip(&entries) {
         graph.add_file(table, module);
     }
     steps.end("exports: what each name leads to");
+    let mut statements_ahead_of_stars = core::mem::take(&mut graph.statements_ahead_of_stars);
+    statements_ahead_of_stars.shared_sort_by_key(|&((file, name), _)| (file, name.0));
     let (results, followed_tables) = graph.solve();
     steps.end("exports: solve");
-    for table in followed_tables {
+    let with_statements = statements_ahead_of_stars.iter();
+    let with_statements = with_statements
+        .filter_map(|&((file, _), _)| find_table(&table_files, ModuleRef::File(file)));
+    for table in followed_tables.into_iter().chain(with_statements) {
         nodes.tables[table].follows_every_star = true;
     }
     let mut failures = Vec::new();
@@ -879,10 +889,15 @@ fn resolve_exports_for(
         index: nodes.index,
         names_left_out: asked.left_out,
         failures,
+        statements_ahead_of_stars,
         ..ExportTables::default()
     };
     tables.commonjs = resolve_commonjs_names(files, modules, &tables, commonjs.entries());
     steps.end("exports: names of CommonJS modules");
+    for position in 0..tables.statements_ahead_of_stars.len() {
+        let named = ResolvedName::new(tables.statements_ahead_of_stars[position].1);
+        tables.statements_ahead_of_stars[position].1 = tables.follow(named).resolution;
+    }
     for position in 0..tables.results.len() {
         let resolved = tables.follow(tables.results[position].1);
         tables.results[position].1 = resolved;
@@ -905,7 +920,6 @@ fn resolve_exports_for(
     }
     let failures = &mut tables.failures;
     failures.shared_sort_by_key(|pending| (pending.failure.importer, pending.order));
-    // A link looks for the names that a module exports ahead of those that it imports.
     absent_names.shared_sort_by_key(|&(imported, order)| (imported.importer, order));
     let absent_names = absent_names.into_iter();
     tables.absent_commonjs_names = absent_names
@@ -932,28 +946,21 @@ fn resolve_exports_for(
 pub(super) struct ExportTables {
     files: Vec<FileId>,
     tables: Vec<FileTable>,
-    /// Of each table, the tables of the modules that `export *` names there.
     star_tables: Vec<Vec<u32>>,
     results: Vec<(Atom, ResolvedName)>,
-    /// Of each own name that stands for a name of another module: its place in `results`, the import site that names the module, and the name there. Sorted.
     indirect_sites: Vec<(u32, u32, Atom)>,
     index: FxHashMap<NodeKey, u32>,
-    /// `AskedNames::left_out`
     names_left_out: FxHashSet<Atom>,
+    statements_ahead_of_stars: Vec<(NodeKey, Resolution)>,
     failures: Vec<PendingFailure>,
     pub(super) commonjs: CommonJsNames,
-    /// The names that import statements and `export { .. } from` of ES modules read of CommonJS files.
     pub(super) commonjs_imports: Vec<CommonJsImport>,
-    /// Those that the body of the CommonJS module may end without, by importer, and of each importer in the order in which a link looks for them.
     pub(super) absent_commonjs_names: Vec<(CommonJsImport, FailureOrder)>,
-    /// Those that the body may end without and that the link of the importer does not ask for: the importer exports them, and goes on without the export.
     pub(super) dropped_commonjs_names: Vec<CommonJsImport>,
-    /// The CommonJS files that `import()`, `export *` or an exported namespace name. Sorted, each once.
     pub(super) commonjs_namespace_loads: Vec<FileId>,
 }
 
 impl ExportTables {
-    // A name of a CommonJS module may stand for a name of another module, or for a binding.
     fn follow_getter(&self, resolved: ResolvedName) -> ResolvedName {
         let Resolution::Synthetic { module, name } = resolved.resolution else {
             return resolved;
@@ -967,7 +974,6 @@ impl ExportTables {
         }
     }
 
-    // An ES module is bound to what the name stands for where nobody can tell that from a copy.
     fn follow(&self, resolved: ResolvedName) -> ResolvedName {
         match resolved.resolution {
             Resolution::Synthetic { module, name } if self.commonjs.is_copied(module, name) => {
@@ -977,7 +983,6 @@ impl ExportTables {
         }
     }
 
-    /// What an ES module that imports the name is bound to.
     pub(super) fn resolve(&self, modules: &ModuleSet, module: FileId, name: Atom) -> ResolvedName {
         if let Some(&node) = self.index.get(&(module, name)) {
             return self.results[node as usize].1;
@@ -991,7 +996,6 @@ impl ExportTables {
         self.follow(resolved)
     }
 
-    /// What an ES module that imports the name is bound to.
     pub(super) fn resolve_in(
         &self,
         modules: &ModuleSet,
@@ -1006,7 +1010,6 @@ impl ExportTables {
         }
     }
 
-    /// What `require(target).name` reads: a getter of a CommonJS module answers anew each time.
     pub(super) fn resolve_required(
         &self,
         modules: &ModuleSet,
@@ -1020,7 +1023,6 @@ impl ExportTables {
         }
     }
 
-    /// The CommonJS file that shows `name` to whoever imports it of `named`: that file, or the one whose names the ES module hands on with `export *`.
     pub(super) fn find_commonjs_exporter(
         &self,
         modules: &ModuleSet,
@@ -1040,7 +1042,6 @@ impl ExportTables {
         }
     }
 
-    /// `ns.name` finds nothing, where `ns` is the namespace of `named`: the CommonJS file that would show the name defines a getter for it that is not enumerable.
     pub(super) fn is_hidden_from_namespace(
         &self,
         modules: &ModuleSet,
@@ -1051,7 +1052,6 @@ impl ExportTables {
         exporter.is_some_and(|exporter| self.commonjs.is_hidden(ModuleRef::File(exporter), name))
     }
 
-    /// Whoever finds no place for a name in a table takes the file to lack the name. A name that was left out is one that nobody was seen to ask for.
     fn assert_has_place_for(&self, file: FileId, name: Atom) {
         assert!(
             !self.names_left_out.contains(&name) || !self.leaves_out_names(file),
@@ -1059,18 +1059,15 @@ impl ExportTables {
         );
     }
 
-    /// Of the names that `export *` brings the file, those of `names_left_out` have no place in its table.
     pub(super) fn leaves_out_names(&self, file: FileId) -> bool {
         self.table_of(file)
             .is_some_and(|table| table.leaves_out_names)
     }
 
-    /// `AskedNames::left_out`
     pub(super) fn names_left_out(&self) -> &FxHashSet<Atom> {
         &self.names_left_out
     }
 
-    /// `with_every_name`: `resolve_every_export` of the same program.
     #[cfg(debug_assertions)]
     fn assert_lacks_only_what_nobody_asks_for(&self, with_every_name: &ExportTables) {
         assert!(self.files == with_every_name.files);
@@ -1111,12 +1108,10 @@ impl ExportTables {
         &self.names(module)[..own_count as usize]
     }
 
-    /// The import site behind one of `names(module)`, by its position there: `export { name } from`, or the import whose name the module exports.
     pub(super) fn find_indirect_site(&self, module: FileId, position: usize) -> Option<u32> {
         Some(self.find_indirect_name(module, position)?.0)
     }
 
-    /// The same, with the name that the module at the site has for it.
     pub(super) fn find_indirect_name(
         &self,
         module: FileId,
@@ -1132,21 +1127,22 @@ impl ExportTables {
         })
     }
 
-    /// The module exports what it imports under `name` at the site.
     pub(super) fn exports_imported_name(&self, module: FileId, site: u32, name: Atom) -> bool {
         let mut positions = 0..self.own_names(module).len();
         positions.any(|position| self.find_indirect_name(module, position) == Some((site, name)))
     }
 
-    /// The files that a link looks into for `name` of `module`: the module first, and wherever the name is not written, those that `export *` names there and that have it.
     pub(super) fn files_searched_for(&self, module: FileId, name: Atom) -> Vec<FileId> {
         let start = find_table(&self.files, ModuleRef::File(module));
         let mut searched: Vec<u32> = start.map(|table| table as u32).into_iter().collect();
         let mut next = 0;
         while let Some(&table) = searched.get(next) {
             next += 1;
-            let node = self.index.get(&(self.files[table as usize], name));
-            if !node.is_some_and(|node| self.tables[table as usize].star_nodes().contains(node)) {
+            let file = self.files[table as usize];
+            let node = self.index.get(&(file, name));
+            if !node.is_some_and(|node| self.tables[table as usize].star_nodes().contains(node))
+                && self.find_statement_ahead_of_stars(file, name).is_none()
+            {
                 continue;
             }
             for &target in &self.star_tables[table as usize] {
@@ -1170,6 +1166,21 @@ impl ExportTables {
         }
     }
 
+    pub(super) fn statements_ahead_of_stars(&self) -> impl Iterator<Item = Resolution> + '_ {
+        self.statements_ahead_of_stars.iter().map(|it| it.1)
+    }
+
+    pub(super) fn find_statement_ahead_of_stars(
+        &self,
+        module: FileId,
+        name: Atom,
+    ) -> Option<Resolution> {
+        let statements = &self.statements_ahead_of_stars;
+        let key_of = |&((file, name), _): &(NodeKey, Resolution)| (file, name.0);
+        let at = statements.binary_search_by_key(&(module, name.0), key_of);
+        Some(statements[at.ok()?].1)
+    }
+
     pub(super) fn follows_every_star(&self, module: FileId) -> bool {
         let table = self.table_of(module);
         table.is_some_and(|table| table.follows_every_star)
@@ -1182,11 +1193,19 @@ impl ExportTables {
         &failures[start..end]
     }
 
-    /// The files that `export *` names in the file, in the order of the text.
     pub(super) fn files_named_by_stars(&self, file: FileId) -> impl Iterator<Item = FileId> + '_ {
         let table = find_table(&self.files, ModuleRef::File(file));
         let targets = table.map_or(&[][..], |table| &self.star_tables[table][..]);
         targets.iter().map(|&target| self.files[target as usize])
+    }
+
+    pub(super) fn files_that_stars_bring_name_from(
+        &self,
+        file: FileId,
+        name: Atom,
+    ) -> impl Iterator<Item = FileId> + '_ {
+        let named = self.files_named_by_stars(file);
+        named.filter(move |&named| self.index.contains_key(&(named, name)))
     }
 
     fn table_of(&self, file: FileId) -> Option<&FileTable> {
@@ -1195,8 +1214,6 @@ impl ExportTables {
     }
 }
 
-/// `export * from "./a"; export * from "./b"`, and both export the name. The module does not export it. The loader of the run time, which links code
-/// that is not compiled to the module, says so in other words than of a name that nobody exports, and looks behind no further star for it.
 pub(super) fn find_ambiguous_names(
     files: &Files<'_>,
     tables: &ExportTables,
@@ -1218,7 +1235,11 @@ pub(super) fn finish_exports(
 ) -> Vec<ModuleExport> {
     let own_count = tables.own_names(file).len();
     let finish = |(position, &(exported_name, resolved)): (usize, &(Atom, ResolvedName))| {
-        let binding = match resolved.resolution {
+        let own_statement = match position < own_count {
+            true => tables.find_statement_ahead_of_stars(file, exported_name),
+            false => None,
+        };
+        let binding = match own_statement.unwrap_or(resolved.resolution) {
             Resolution::Variable(symbol) => ExportBinding::Variable(symbol),
             Resolution::Namespace { module, phase } => ExportBinding::Namespace { module, phase },
             Resolution::Synthetic { module, name } => {

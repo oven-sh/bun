@@ -41,7 +41,6 @@ fn ask<T: Send + Default>(
     })
 }
 
-/// In the order of the text.
 fn find_calls(queries: &Queries<'_, '_, '_>) -> Vec<ExprId> {
     let expressions = queries.hir().exprs.iter().enumerate();
     let mut calls: Vec<(u32, ExprId)> = expressions
@@ -117,14 +116,11 @@ fn the_only_declaration_called_is_the_one_that_the_call_resolves_to() {
         ("shown.show", true),
         ("shown.pick", false),
         ("absent", true),
-        // Too few arguments: a call with one candidate resolves to it all the same.
         ("plain", true),
     ];
     assert_eq!(found, expected);
 }
 
-// As a library of tokens has it. Whoever looks at the argument of `toNumber` asks for the type of `value`, which is what the getter returns, which reads
-// what the setter stores: the call itself.
 const CIRCLE_THROUGH_AN_ARGUMENT: &str = "/** @returns {number} */
 function toNumber(/** @type {any} */ value) { return +value; }
 /** @returns {number} */

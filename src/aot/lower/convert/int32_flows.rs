@@ -229,7 +229,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// The position that `stored` flows into, by what stands around it in the source.
     fn text_of_position_around(&mut self, stored: ExprId) -> Option<Vec<u8>> {
         match self.hir[stored].kind {
             ExprKind::Assign {
@@ -303,7 +302,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// `back`: how to get from the new value to the one that `top++` and `top--` answer with.
     fn step_advice(
         &self,
         step: ExprId,
@@ -343,7 +341,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// A step binds tighter than what is written in its place: `++i * 3` is not `i = (i + 1) | 0 * 3`.
     fn stands_where_any_expression_may(&self, expression: ExprId) -> bool {
         if is_parenthesized(self.hir, expression) {
             return true;
@@ -365,7 +362,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// What to write in place of the stored expression so that the value is an int32 in plain Bun too.
     fn advice_text(&self, stored: ExprId) -> Vec<u8> {
         match self.hir[stored].kind {
             ExprKind::Assign {
@@ -441,8 +437,6 @@ fn owes_proof(position: DeclaredType) -> bool {
     position.flags.contains(PositionFlags::IS_INT32_PROMISE)
 }
 
-// Each keeps what the error about a flow says beside the engine's reason. The conversion is emitted next.
-// Of two descriptions of one conversion the first stays, so whoever holds the binding or the callee describes the flow ahead of `convert_as`.
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn describe_int32_flow(
         &mut self,
@@ -477,7 +471,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.file.add_int32_flow(at, subject, value);
     }
 
-    /// Without an expression the value is assigned by a pattern, or by the head of a `for...of` or a `for...in` loop.
     pub(in crate::lower) fn describe_int32_flow_into_binding(
         &mut self,
         position: DeclaredType,
@@ -499,7 +492,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.file.add_int32_flow(at, subject, value);
     }
 
-    /// As for a binding. A member under a computed key has no name to call the position by.
     pub(super) fn describe_int32_flow_into_member(
         &mut self,
         position: DeclaredType,
@@ -520,7 +512,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.file.add_int32_flow(at, subject, value);
     }
 
-    /// `at`: where the conversion of the argument is emitted. Without an expression the parameter is reached by a spread.
     pub(super) fn describe_int32_argument(
         &mut self,
         at: u32,

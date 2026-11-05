@@ -47,7 +47,7 @@ impl<'s> Folder<'_, 's> {
             ExprKind::This => self.fold_this(e),
             ExprKind::Call(call) => self.fold_call(e, hir[call]),
             ExprKind::ImportCall { args } => self.fold_import_call(args),
-            ExprKind::New(call) => self.fold_construction(hir[call]),
+            ExprKind::New(call) => self.fold_construction(e, hir[call]),
             ExprKind::Array(items) => {
                 self.note_array_literal(e, items);
                 self.conditions.insert(e, true);
@@ -112,7 +112,6 @@ impl<'s> Folder<'_, 's> {
         if op == UnOp::Typeof
             && let Some(type_name) = type_of_literal
         {
-            // Making a closure or a pattern does nothing that a program can see.
             let type_name = Value::from(Constant::String(type_name));
             return Folded::new(type_name, Effects::None);
         }
@@ -139,7 +138,26 @@ impl<'s> Folder<'_, 's> {
 
     fn fold_binary(&mut self, e: ExprId, op: BinOp, left: ExprId, right: ExprId) -> Folded {
         match op {
-            BinOp::Add => self.fold_addition(e),
+            BinOp::Add => {
+                let sum = self.fold_addition(e);
+                if let (Value::Unknown, Some(text)) =
+                    (sum.value, self.find_text_joined_with_nothing(left, right))
+                {
+                    self.copy_condition(e, text);
+                    self.mark_folded_under_minify_syntax_alone(e);
+                }
+                let operands = [(left, right), (right, left)];
+                if matches!(sum.value, Value::Unknown)
+                    && operands.iter().any(|&(text, constructor)| {
+                        matches!(self.hir[text].kind, ExprKind::String(_))
+                            && (self.find_text_written_for_constructor(constructor)).is_some()
+                    })
+                {
+                    self.conditions.insert(e, true);
+                    self.mark_folded_under_minify_syntax_alone(e);
+                }
+                sum
+            }
             BinOp::And | BinOp::Or | BinOp::Nullish => {
                 self.note_nullish_logical_result(e, op, left, right);
                 let operator = match op {
@@ -168,6 +186,17 @@ impl<'s> Folder<'_, 's> {
                 None => self.fold_equality(op, left, right, false),
             },
             BinOp::In => self.fold_membership(left, right),
+            BinOp::Pow => {
+                let power = self.fold_operands(op, left, right);
+                if let (Value::Unknown, Some(is_truthy)) = (
+                    power.value,
+                    (self.evaluator)
+                        .is_power_truthy(self.folded(left).value, self.folded(right).value),
+                ) {
+                    self.conditions.insert(e, is_truthy);
+                }
+                power
+            }
             _ => self.fold_operands(op, left, right),
         }
     }
@@ -295,7 +324,15 @@ impl<'s> Folder<'_, 's> {
             return Folded::UNKNOWN;
         }
         let addends = self.collect_addends(outermost);
-        let addends = addends.iter().map(|&addend| self.folded(addend));
+        let is_text = |addend: &ExprId| matches!(self.folded(*addend).value, Value::Known(value) if self.evaluator.is_string(value));
+        let first_text = addends.iter().position(is_text);
+        let addends = addends.iter().enumerate().map(|(index, &addend)| {
+            let stands_beside_text = first_text.is_some_and(|text| text < index || text == 1);
+            match stands_beside_text.then(|| self.find_text_of_pattern(addend)) {
+                Some(Some(text)) => Folded::new(text, Effects::None),
+                _ => self.folded(addend),
+            }
+        });
         let effects = addends.clone().map(|addend| addend.effects).min();
         let values = addends.map(|addend| addend.value);
         let sum = match self.is_pattern_of_reg_exp(outermost) {
@@ -308,8 +345,6 @@ impl<'s> Folder<'_, 's> {
         Folded::new(sum, effects.unwrap_or(Effects::Unknown))
     }
 
-    /// `new RegExp(text)`, `RegExp(text)`: the build compiles the pattern, and nothing else holds the text.
-    /// It decides how long a joined text pays, never what is right.
     fn is_pattern_of_reg_exp(&self, text: ExprId) -> bool {
         let hir = self.hir;
         let mut argument = text;

@@ -18,7 +18,6 @@ pub(in crate::lower) enum BindingRef {
 }
 
 impl BindingRef {
-    /// `symbols`: ascending.
     pub(in crate::lower) fn is_listed_in(self, symbols: &[SymbolId]) -> bool {
         match self {
             BindingRef::Symbol(symbol) => symbols.binary_search(&symbol).is_ok(),
@@ -71,7 +70,6 @@ pub(in crate::lower) enum ArgumentsObject {
 pub(super) struct ArgumentsObjects {
     pub(super) file: ArgumentsObject,
     pub(super) functions: Vec<ArgumentsObject>,
-    /// Sorted. Fields whose values the constructor evaluates, so `arguments` in a direct eval there is the constructor's.
     pub(super) fields: Vec<MemberId>,
 }
 
@@ -145,6 +143,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) use_counts: Vec<u8>,
     pub(super) calls_by_name: Vec<(ExprId, FnId)>,
     pub(super) made_at_first_read: Vec<(SymbolId, FnId)>,
+    pub(super) created_at_each_read: Vec<SymbolId>,
     pub(super) functions_created_before_loops: Vec<(StmtId, SymbolId)>,
     pub(super) names_called: Vec<SymbolId>,
     pub(super) symbol_placements: Vec<Placement>,
@@ -161,6 +160,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) loops: LoopStores,
     pub(super) field_initializers: Vec<(MemberId, FunctionKey)>,
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
+    pub(super) registries: Vec<BindingRef>,
     pub(super) has_wrapper_parameters: bool,
 }
 
@@ -174,7 +174,6 @@ pub(super) fn sort_unique<T: Ord>(list: &mut Vec<T>) {
     list.dedup();
 }
 
-/// [`sort_unique`] off the hot path: see [`SharedSort`].
 pub(super) fn shared_sort_unique<T: Ord>(list: &mut Vec<T>) {
     list.shared_sort_unstable();
     list.dedup();
@@ -186,23 +185,24 @@ impl ScopeAnalysis {
         form.copied().unwrap_or(BindingForm::NotAValue)
     }
 
-    /// The code that is compiled names the symbol in one place.
     pub(in crate::lower) fn is_named_once(&self, symbol: SymbolId) -> bool {
         self.use_counts.get(symbol.idx()) == Some(&1)
             && self.names_called.binary_search(&symbol).is_err()
     }
 
-    /// The code that is compiled names the symbol nowhere. A call that enters a declared function itself is no such place.
     pub(in crate::lower) fn is_never_named(&self, symbol: SymbolId) -> bool {
         self.use_counts.get(symbol.idx()) == Some(&0)
     }
 
     /// The function that the name is declared as, where its function object is made by whoever reads the name first.
+    pub(in crate::lower) fn is_created_at_each_read(&self, symbol: SymbolId) -> bool {
+        self.created_at_each_read.binary_search(&symbol).is_ok()
+    }
+
     pub(in crate::lower) fn function_made_at_first_read(&self, symbol: SymbolId) -> Option<FnId> {
         find_by_key(&self.made_at_first_read, symbol)
     }
 
-    /// The declared functions that the loop reads and whose closures are created in front of it.
     pub(in crate::lower) fn functions_created_before_loop(
         &self,
         statement: StmtId,
@@ -213,7 +213,6 @@ impl ScopeAnalysis {
         &functions[first..end]
     }
 
-    /// The call enters the function itself: nobody reads the name of the callee.
     pub(in crate::lower) fn function_called_by_name(&self, call: ExprId) -> Option<FnId> {
         let calls = &self.calls_by_name;
         let index = calls.binary_search_by_key(&call, |&(call, _)| call).ok()?;
@@ -263,7 +262,6 @@ impl ScopeAnalysis {
         }
     }
 
-    /// `Some`: the function has more captures than a closure has room for, also with an environment for each scope that it reaches.
     pub(in crate::lower) fn packed_captures(&self, key: FunctionKey) -> Option<u32> {
         let captures = &self.find_function(key)?.captures;
         (captures.len() > self.max_captures).then_some(captures.start)
@@ -279,7 +277,6 @@ impl ScopeAnalysis {
         function.map_or(0, |function| function.undeclared_parameters)
     }
 
-    /// The name holds a required module that is only read by members, so it holds no value, and every run of the function comes behind its initialization.
     pub(in crate::lower) fn is_initialized_holder(
         &self,
         function: FunctionKey,
@@ -289,7 +286,10 @@ impl ScopeAnalysis {
         holders.binary_search(&(function, symbol)).is_ok()
     }
 
-    /// The text of the file is a function of `this` and the five names of a CommonJS module, with an `arguments` object.
+    pub(in crate::lower) fn may_hold_registry(&self, binding: BindingRef) -> bool {
+        self.registries.binary_search(&binding).is_ok()
+    }
+
     pub(in crate::lower) fn has_wrapper_parameters(&self) -> bool {
         self.has_wrapper_parameters
     }

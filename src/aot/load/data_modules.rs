@@ -15,7 +15,6 @@ pub(crate) struct ParsedDataModule<'s> {
     pub hir: File<'s>,
     pub host_values: &'s [(ExprId, HostValue<'s>)],
     pub web_assembly: Option<Vec<u8>>,
-    /// What the parser of its kind says of a text that it refuses: `ParsedSource::parse_failure`.
     pub failure: Option<Vec<u8>>,
 }
 
@@ -29,19 +28,15 @@ pub(crate) fn parse_data_module<'s>(
     let mut failure = None;
     let module = messages.with_log(|log| {
         let module = provider.parse_data(source, arena, atoms, log);
-        // A package brings files that nobody ever loads, and a computed name may find any of them. So the error is the file's: it stops the build where a site spells the file, and is thrown
-        // where the program loads it otherwise, as the error of a program that does not parse is.
         if matches!(module, Err(DataFailure::InvalidText))
             && let Some(first) = log.msgs.iter().position(|it| it.kind == Kind::Err)
         {
             failure = Some(log.msgs[first].data.text.to_vec());
-            // The build goes on saying what the parser found and where, as a warning.
             for message in log.msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
                 message.kind = Kind::Warn;
             }
             log.warnings += core::mem::take(&mut log.errors);
         }
-        // Whoever asks in which files the errors stand finds this one.
         for message in log.msgs.iter_mut().filter(|it| it.data.location.is_none()) {
             message.data.location = Some(Location {
                 file: Box::from(to_native(source.path)),
@@ -65,7 +60,6 @@ pub(crate) fn parse_data_module<'s>(
     }
 }
 
-/// The bundler hands a file without text to no parser (`ParseTask`: `get_empty_ast`): the file exports `undefined` by default in a package of ES modules, and `{}` anywhere else.
 pub(crate) fn create_module_without_text<'s>(
     is_in_es_package: bool,
     arena: &'s Arena,

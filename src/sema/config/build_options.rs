@@ -267,7 +267,6 @@ pub fn default_options_of_aot_package() -> Vec<(Vec<u8>, Json)> {
     options.map(|(name, value)| (name.to_vec(), value)).into()
 }
 
-/// The nearest `package.json` that states `compilerOptions`, up to `node_modules`.
 pub fn find_package_with_compiler_options(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     for dir in ancestors(dir) {
         let path = join(dir, b"package.json");

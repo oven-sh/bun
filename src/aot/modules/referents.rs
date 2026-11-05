@@ -33,11 +33,9 @@ pub struct LinkedProject<'a, 's> {
     pub graph: &'a ModuleGraph,
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
-    // `None`: this is the project of Bun's own modules.
     pub library: Option<&'a Library<'a, 's>>,
 }
 
-// Bun's own modules, as the application sees them.
 pub struct Library<'a, 's> {
     pub project: LinkedProject<'a, 's>,
     pub sources: &'a Sources,
@@ -58,7 +56,6 @@ fn find_module_of_object(object: BuiltinId) -> Option<RuntimeModule> {
     (module_object == table::canonical_id(object)).then_some(module)
 }
 
-/// `module.exports = name` among the statements of a CommonJS file, where it is the only such store there. Later stores and stores in functions are not looked for: whoever asks expects the value and does not rely on it.
 pub fn find_name_stored_as_module_exports(files: &Files<'_>, file: FileId) -> Option<SymbolId> {
     let (hir, bound) = (files.hir(file), files.bound(file));
     let mut stored = None;
@@ -100,7 +97,6 @@ pub fn find_name_stored_as_module_exports(files: &Files<'_>, file: FileId) -> Op
 }
 
 impl LinkedProject<'_, '_> {
-    // `import name from K`: the function that the CommonJS file K stores as its value. A file that Babel wrote stores its value as its own `default` too.
     fn find_function_exported_whole(
         &self,
         file: FileId,
@@ -144,7 +140,6 @@ impl LinkedProject<'_, '_> {
     }
 
     fn runtime_module_export(&self, module: RuntimeModule, name: Atom) -> Linked {
-        // Its export table belongs to the project of Bun's own modules.
         if table::is_es_module(module) {
             return LinkedBinding::Unknown;
         }
@@ -156,13 +151,11 @@ impl LinkedProject<'_, '_> {
 }
 
 impl Library<'_, '_> {
-    // What the text of the module stores as its value, or as the member `member` of that value.
     fn find_declaration(
         &self,
         module: RuntimeModule,
         member: Option<Atom>,
     ) -> Option<ClassDeclaration> {
-        // Its export table has the names. No program extends one of them so far.
         if table::is_es_module(module) {
             return None;
         }
@@ -318,7 +311,6 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             return None;
         };
         let interop = self.graph.interop(module);
-        // `require_result` holds only for calls that `bun build` links. The loader answers every other call with `{ default }`.
         if interop.answers_loader_with_namespace
             && !is_linked_by_bundler(self.files.hir(file), self.files.bound(file), site)
         {
@@ -328,7 +320,6 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             return None;
         }
         match (interop.require_result, module) {
-            // The value of a built-in module is an object. The table of built-ins lists its members as the exports of the module.
             (RequireResult::Namespace, _)
             | (RequireResult::DefaultExport, ModuleRef::Runtime(_)) => {
                 Some(LoadedValue::Namespace(module))

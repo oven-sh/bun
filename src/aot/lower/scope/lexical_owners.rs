@@ -37,12 +37,12 @@ pub(super) fn find_container_binding(
         let binding = bound.declared_symbol(declaration).some()?;
         let names_container = bound.export_symbol_of_value_symbol_if_exported(binding) == container
             || bound.symbol_of_declaration(declaration) == container;
-        names_container.then_some(binding)
+        let parameter = bound.container_parameter(scope).some();
+        parameter.filter(|_| names_container)
     });
     found.unwrap_or_else(|| bound.file_binding(container))
 }
 
-/// The binding whose name is looked for at run time where code in `from` names `binding`: `size` in `namespace Box` is `Box.size` in what runs.
 pub(super) fn find_binding_looked_for(
     bound: &Bound<'_>,
     from: ScopeId,
@@ -63,21 +63,15 @@ pub(super) fn scope_chain(bound: &Bound<'_>, from: ScopeId) -> impl Iterator<Ite
     std::iter::successors(from.some(), parent_of)
 }
 
-/// A walk outwards over the objects that hold bindings made at run time.
 #[derive(Copy, Clone)]
 pub(super) struct ScopeObjectSearch {
     pub(super) start: ScopeId,
-    /// The first scope that is not searched.
     pub(super) until: ScopeId,
-    /// The scope of the binding that the name has where no object holds it.
     pub(super) declaring_scope: ScopeId,
-    /// The position of the code that searches.
     pub(super) pos: u32,
-    /// The name is that of a namespace or an enum whose member the code names: only the object of a `with` can take it.
     pub(super) asks_with_objects_alone: bool,
 }
 
-// A function has two objects. The inner one takes the variables of text evaluated in its body, the outer one those of text evaluated among its parameters. The parameters lie between the two.
 pub(super) fn for_each_scope_object(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,

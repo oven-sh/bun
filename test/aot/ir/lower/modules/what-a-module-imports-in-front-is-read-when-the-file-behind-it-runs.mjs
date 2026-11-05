@@ -6,6 +6,9 @@
 // Each load is asked by itself: main.mjs requires both.cjs too, behind all of its statements.
 // RUN(BOTH): link
 // BOTH: module {{*}}path="{{*}}/both.cjs" displayPath="{{*}}both.cjs" flags=
+// So is each of two that run amid the statements: real.cjs and other.cjs both require two.cjs, which stands in front of both. The lowest file above the two loads is main.mjs, of which the rule says nothing.
+// RUN(TWO): link
+// TWO: module {{*}}path="{{*}}/two.cjs" displayPath="{{*}}two.cjs" flags=
 // deep.cjs runs amid the statements of level.mjs. What main.mjs imports was asked for when main.mjs was read, sooner than anything below level.mjs: wherever it stands there.
 // RUN(ABOVE): link
 // ABOVE: module {{*}}path="{{*}}/above.cjs" displayPath="{{*}}above.cjs" flags=
@@ -18,8 +21,10 @@
 // FILE: main.mjs
 import "./front.cjs";
 import "./both.cjs";
+import "./two.cjs";
 import "./level.mjs";
 import "./real.cjs";
+import "./other.cjs";
 import "./behind.cjs";
 import "./above.cjs";
 export const again = () => require("./both.cjs");
@@ -29,7 +34,10 @@ import "./below.cjs";
 import "./deep.cjs";
 
 // FILE: real.cjs
-exports.all = [require("./front.cjs"), require("./both.cjs"), require("./behind.cjs"), require("./below.cjs")];
+exports.all = [require("./front.cjs"), require("./both.cjs"), require("./two.cjs"), require("./behind.cjs"), require("./below.cjs")];
+
+// FILE: other.cjs
+exports.two = require("./two.cjs");
 
 // FILE: deep.cjs
 exports.above = require("./above.cjs");
@@ -39,6 +47,9 @@ globalThis.seenInFront = true;
 
 // FILE: both.cjs
 globalThis.seenByBoth = true;
+
+// FILE: two.cjs
+globalThis.seenByTwo = true;
 
 // FILE: above.cjs
 globalThis.seenAbove = true;

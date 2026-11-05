@@ -53,7 +53,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `const { a, b: c = d } = require(K)`, where nobody looks at what the call yields: each name is read once, here, from where the module keeps it.
     pub(super) fn destructure_exports(&mut self, node: PatternNode, module: ModuleRef) {
         for property in &self.file.pattern_properties(node) {
             debug_assert!(!property.is_rest, "a rest element looks at the object");
@@ -74,7 +73,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // The copy is born with the names that the type of the binding lists.
     fn find_rest_layout(&mut self, target: PatternNode) -> Option<LayoutId> {
         let queries = &mut *self.file.queries;
         let ty = match target {

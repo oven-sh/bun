@@ -9,17 +9,12 @@ mod tests;
 
 const CODE_PRAGMA_NAMES: [&[u8]; 4] = [b"jsx", b"jsxFrag", b"jsxRuntime", b"jsxImportSource"];
 
-/// What `bun run` reads behind a `@` or a `#` of a comment.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum CommentMark<'t> {
-    /// `@__PURE__`
     Pure,
-    /// `@jsx h`: the index of the name in `CODE_PRAGMA_NAMES`, and the argument.
     Pragma(usize, &'t [u8]),
 }
 
-/// `scan_comment_text`, `scan_single_line_comment` and `scan_pragma`. Behind a pragma the lexer goes on after as many bytes as the name and the argument have,
-/// not counting the whitespace between them, and it passes over the value of ` sourceMappingURL=`: a sign in what it has passed over starts nothing.
 pub(crate) fn comment_marks<'t>(
     text: &'t [u8],
     comment: &Comment,
@@ -33,7 +28,6 @@ pub(crate) fn comment_marks<'t>(
     let mut is_first_sign = true;
     std::iter::from_fn(move || {
         while let Some(sign) = strings::index_of_any(rest, b"@#") {
-            // In a `//` comment only the first sign can start `__PURE__`, behind nothing but whitespace.
             let may_be_pure =
                 is_block || (is_first_sign && strings::is_all_whitespace(&rest[..sign]));
             is_first_sign = false;
@@ -81,7 +75,6 @@ pub(super) fn code_jsx_pragmas(
         true => Atom::NONE,
         false => intern(argument),
     };
-    // `RUNTIME_MAP`
     let (classic, is_development) = match runtime {
         b"classic" | b"react" => (Some(true), None),
         b"automatic" => (Some(false), None),
@@ -98,12 +91,10 @@ pub(super) fn code_jsx_pragmas(
     }
 }
 
-/// Whether `bun run` passes over the comment while it scans a tag: there it reads no pragma. Between the braces of an attribute and in type arguments it scans code.
 fn stands_in_tag(text: &[u8], file: &FileBuilder, comment: &Comment) -> bool {
     if comment.prev_token_end == 0 {
         return false;
     }
-    // Each range runs from the token that opens it to the token that closes it. The innermost one around the comment decides.
     let mut innermost = (0, false);
     let mut look_at = |open: u32, close: u32, is_tag: bool| {
         if innermost.0 <= open && open < comment.pos && comment.end <= close {

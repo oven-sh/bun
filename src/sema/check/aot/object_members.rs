@@ -102,7 +102,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(self.list(&list))
     }
 
-    /// The members with their checked types, in a list that its caller lets go of.
     pub(super) fn compute_checked_members_for_now(
         &mut self,
         ty: TypeId,
@@ -128,8 +127,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(list)
     }
 
-    /// `members_typed_otherwise` without the list of either class: the names that the class declares are looked up in
-    /// both, and so are the few that it inherits with another type. `None`: the lists have to be compared.
     pub(super) fn compute_members_typed_otherwise(
         &mut self,
         instance: TypeId,
@@ -151,17 +148,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         else {
             return Ok(None);
         };
-        // FOR SPEED: where `this` decides the types of much of what is inherited, the lists say the same for less.
         if typed_by_this.len() * 4 > declared_above {
             return Ok(None);
         }
-        // No class of the row has a type parameter but `this`, so a member that the class inherits has the type it has in
-        // the class above, unless that depends on `this`.
         let inherited = typed_by_this.iter().copied();
         let mut names: Vec<Atom> = (declared.shape.props.iter().map(|prop| prop.name))
             .chain(inherited.filter(|&name| declared.prop(name).is_none()))
             .collect();
-        // The methods of the classes above, up to the first of which all have been followed.
         let mut methods = crate::util::FxHashSet::default();
         let mut at = Some(above);
         while let Some(current) =
@@ -217,9 +210,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(Some((found, is_every_type_known.then_some(methods))))
     }
 
-    /// The names in the list of the plain class `class` under which the type depends on what `this` is, but for the
-    /// methods, which `Memo::methods_typed_by_this` has for each class. It may name more. With it, how many properties `class` and the classes above it declare. `None` if one of them isn't plain,
-    /// or has another type parameter.
     fn names_typed_by_this(&mut self, class: Sym) -> Option<(&'c [Atom], usize)> {
         let mut heirs: SmallVec<[Sym; 8]> = SmallVec::new();
         let (mut names, mut count): (&'c [Atom], usize) = (&[], 0);
@@ -310,7 +300,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             debug_assert!(false, "a listed member belongs to a type with members");
             return PositionTypes::unwritten(Err(GaveUp::Unresolved));
         };
-        let prop = &members.shape().props[member.property_index as usize];
+        let listed = members.shape().props.get(member.property_index as usize);
+        let Some(prop) = listed.filter(|prop| prop.name == member.name.atom()) else {
+            self.c.discard_until_recheck();
+            assert!(
+                self.c.was_discarded(),
+                "the members of a type have changed under a task that runs alone"
+            );
+            return PositionTypes::unwritten(Err(GaveUp::Unresolved));
+        };
         self.member_of_prop(prop, members.mapper, members.mapper)
             .types
     }

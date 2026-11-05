@@ -54,9 +54,7 @@ pub(crate) struct ScopeInput<'x, 's> {
     pub(crate) builtins: &'x ResolvedBuiltins,
     pub(crate) fields_under_signed_members: &'x [MemberId],
     pub(crate) holds_registry: &'x dyn Fn(SymbolId) -> bool,
-    /// What a closure has room for in this build.
     pub(crate) max_captures: usize,
-    /// `LoweringInputs::names_lie_on_object_prototype`
     pub(crate) names_lie_on_object_prototype: bool,
 }
 
@@ -70,9 +68,7 @@ pub(crate) enum ScopeSlot {
     ArgumentsBinding,
     CommonJs(CommonJsVariable),
     WithObject,
-    /// The variables of text evaluated in the scope. In a function: of text evaluated in its body.
     EvalVariables,
-    /// The variables of text evaluated among the parameters of the function.
     ParameterEvalVariables,
     Class(ClassSlot),
 }
@@ -89,7 +85,6 @@ pub(crate) enum IdentifierTarget {
         name: Atom,
         holder: ValueId,
     },
-    /// A member of a namespace or an enum whose object was looked for by name.
     MemberOf {
         binding: Binding,
         name: Atom,

@@ -1,7 +1,8 @@
 use super::{Build, CodeOfWorkers, EntryPointPaths, LoadedBuild, LoadedProject, Options};
 use crate::builtins::table::{self, BuiltinId};
 use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
-use crate::diagnostics::{InternalError, LoadMessages, ProgramView};
+use crate::diagnostic_codes::Code;
+use crate::diagnostics::{Diagnostic, InternalError, LoadMessages, ProgramView};
 use crate::link::run_beside;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::contents::{
@@ -25,11 +26,11 @@ use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
-use bun_sema::hir::ExprId;
-use bun_sema::program::{CodeAnswer, CodeView, FileId, Files, MainModule};
+use bun_sema::hir::{ExprId, ExprKind};
+use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::{FxHashMap, SharedSort};
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
     ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram, fit_threads_to_sources,
@@ -42,19 +43,16 @@ use std::thread::Scope;
 
 const MAX_ASSET_READERS: usize = 64;
 
-/// What plugins make of the assets is needed when the executable is written. A plugin can take seconds for one.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum AssetReads {
     #[cfg(test)]
     FinishedByLoad,
-    /// They go on while `then` runs, which calls `LoadedBuild::finish_asset_reads`.
     FinishedLater,
 }
 
 type Then<'t, 'a, R> =
     &'t mut dyn for<'b, 's> FnMut(&mut Build<'a>, LoadedBuild<'b, 's>) -> Result<R, Stage>;
 
-// Each reader starts the next: the calling thread pays for one thread.
 fn start_asset_readers<'scope>(
     scope: &'scope Scope<'scope, '_>,
     host: &'scope LoadHost<'_>,
@@ -84,7 +82,26 @@ fn read_assets<'scope>(scope: &'scope Scope<'scope, '_>, host: &'scope LoadHost<
     start_asset_readers(scope, host, std::sync::Arc::new(Guarded::new(paths)), count);
 }
 
-/// What the files alone show. `Build::finish_started_workers` may only raise it to `Unseen`.
+fn find_starts_that_led_to_files(
+    files: &Files<'_>,
+    sources: &Sources,
+    contents: &ProgramContents,
+) -> Vec<(Vec<u8>, u32)> {
+    let mut places = Vec::new();
+    let starts = contents.found_entry_points.iter();
+    for &(file, start) in starts.flat_map(|found| &found.starts) {
+        let hir = &files.module(file).hir;
+        let ExprKind::New(call) = hir[ExprId(start)].kind else {
+            continue;
+        };
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        for expression in [ExprId(start), callee] {
+            places.push((sources.diagnostic_path(file).to_vec(), hir[expression].pos));
+        }
+    }
+    places
+}
+
 fn code_of_workers(contents: &ProgramContents) -> CodeOfWorkers {
     match (
         contents.names_worker_constructor,
@@ -96,42 +113,56 @@ fn code_of_workers(contents: &ProgramContents) -> CodeOfWorkers {
     }
 }
 
-// An executable for Windows knows its modules as `B:\~BUN\root\a.js`, and an alias is written with forward slashes.
 fn is_path_of_module(module_path: &[u8], alias: &[u8]) -> bool {
     let is_same_byte =
         |(&held, &written): (&u8, &u8)| held == written || (held == b'\\' && written == b'/');
     module_path.len() == alias.len() && module_path.iter().zip(alias).all(is_same_byte)
 }
 
-/// `StartedWorkers::names`. `names_written`: `EntryPointFinder::take_names_written`.
 fn collect_entry_point_aliases(
     files: &Files<'_>,
     sources: &Sources,
     mut names_written: Vec<EntryPointPaths>,
-) -> Vec<EntryPointPaths> {
+    names_joined: &[Vec<u8>],
+) -> (Vec<EntryPointPaths>, Vec<Diagnostic>) {
     names_written.shared_sort_unstable();
     names_written.dedup();
-    // The run cannot tell two files apart that go by one name.
-    let same_name = |a: &EntryPointPaths, b: &EntryPointPaths| a.public_path == b.public_path;
-    let unambiguous = names_written.chunk_by(same_name).filter(|it| it.len() == 1);
-    let mut aliases: Vec<EntryPointPaths> = unambiguous.flatten().cloned().collect();
-    // The path of a module leads to that module.
-    aliases.retain(|alias| {
-        let mut compiled = files.compiled_files().iter();
-        !compiled.any(|&file| is_path_of_module(sources.public_path(file), &alias.public_path))
-    });
-    // The load may leave out a file that it was told of, and a Worker that is given the name of such a file fails to load.
     let begun_at = files.entry_points().iter();
-    let begun_at: FxHashSet<Vec<u8>> = begun_at
-        .map(|&file| source_path_of(files.module(file).file_name()))
+    let begun_at: FxHashMap<Vec<u8>, FileId> = begun_at
+        .map(|&file| (source_path_of(files.module(file).file_name()), file))
         .collect();
-    aliases.retain(|alias| begun_at.contains(&alias.source_path));
-    aliases
+    let mut said = Vec::new();
+    names_written.retain(|alias| {
+        let name = &alias.public_path[..];
+        let is_named = |file: &&FileId| is_path_of_module(sources.public_path(**file), name);
+        let module = files.compiled_files().iter().find(is_named).copied();
+        if let (Some(module), Some(&meant)) = (module, begun_at.get(&alias.source_path))
+            && module != meant
+            && names_joined.contains(&alias.public_path)
+        {
+            let [module, meant] = [module, meant].map(|it| sources.module_paths(it).display_path);
+            let code = Code::WorkerFileGoesByPathOfAnotherFile;
+            said.push(Diagnostic::new(code, None, &[name, module, meant]));
+        }
+        module.is_none()
+    });
+    let same_name = |a: &EntryPointPaths, b: &EntryPointPaths| a.public_path == b.public_path;
+    let (unambiguous, shared): (Vec<_>, Vec<_>) = (names_written.chunk_by(same_name))
+        .partition(|files_of_name: &&[EntryPointPaths]| files_of_name.len() == 1);
+    said.extend(shared.iter().map(|files_of_name| {
+        let [first, second] = [0, 1].map(|index| {
+            let path = &files_of_name[index].source_path;
+            let file = begun_at.get(path);
+            file.map_or(&path[..], |&file| sources.module_paths(file).display_path)
+        });
+        let arguments = [&files_of_name[0].public_path[..], first, second];
+        Diagnostic::new(Code::WorkerFilesGoByOnePath, None, &arguments)
+    }));
+    let mut aliases: Vec<EntryPointPaths> = unambiguous.into_iter().flatten().cloned().collect();
+    aliases.retain(|alias| begun_at.contains_key(&alias.source_path));
+    (aliases, said)
 }
 
-/// `Module._load = f`, `Module._resolveFilename = f`, `Module.prototype.require = f`, `require.extensions[".x"] = f`: from the store on, a `require("./a")` anywhere in the run
-/// may be answered with a file that no import names. Nobody follows the object to the store (`__toESM(require("module"))._load = f`), so whoever gets at the object of
-/// node:module, at a member of it other than `createRequire`, or at a table of loaders counts.
 fn gets_at_module_loader(files: &Files<'_>, file: FileId, builtins: &ResolvedBuiltins) -> bool {
     let is =
         |id: BuiltinId, other: BuiltinId| table::canonical_id(id) == table::canonical_id(other);
@@ -140,15 +171,15 @@ fn gets_at_module_loader(files: &Files<'_>, file: FileId, builtins: &ResolvedBui
         BuiltinId::ModuleRequirePrototypeExtensions,
         BuiltinId::NodeModule_extensions,
     ];
-    // `import { createRequire } from "node:module"` mentions the module, and no expression of the file is its object.
     let holds_object = || {
         let expressions = (0..files.hir(file).exprs.len() as u32).map(ExprId);
         let mut builtins_held = expressions.filter_map(|it| builtins.builtin_of_expression(it));
         builtins_held.any(|id| is(id, BuiltinId::NodeModule))
     };
-    builtins.mentioned().iter().any(|&id| {
-        // `Module.Module` is the object itself.
-        match is(id, BuiltinId::NodeModule) {
+    builtins
+        .mentioned()
+        .iter()
+        .any(|&id| match is(id, BuiltinId::NodeModule) {
             true => holds_object(),
             false => {
                 let mut members = table::members(BuiltinId::NodeModule).iter();
@@ -156,12 +187,9 @@ fn gets_at_module_loader(files: &Files<'_>, file: FileId, builtins: &ResolvedBui
                     || (!is(id, BuiltinId::NodeModuleCreateRequire)
                         && members.any(|&member| is(id, member)))
             }
-        }
-    })
+        })
 }
 
-/// Whether code that is not in the image may come to run through what the file does, other than by a load under a name that the build does not know.
-/// The host reads the original beside a mock from disk, and makes the module for a mock without a factory of text.
 fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
     let (Some(source), Some(compiled)) = (parsed_source(files, file), files.compiled(file)) else {
         return true;
@@ -183,11 +211,11 @@ fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
         )
 }
 
-/// What `EntryPointFinder` knows when the application is loaded.
 #[derive(Default)]
 struct FoundByLoad {
     entry_points: Vec<FoundEntryPoint>,
     names_written: Vec<EntryPointPaths>,
+    names_joined: Vec<Vec<u8>>,
 }
 
 struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
@@ -209,7 +237,6 @@ struct SharedLoadInputs<'c, 's> {
     messages: &'c LoadMessages,
 }
 
-/// What the request for a load of Bun's own code borrows.
 struct RuntimeLoadInputs<'c, 's> {
     fold: FoldInputs<'s>,
     code: CodeOptions,
@@ -313,7 +340,6 @@ impl<'a> Build<'a> {
         then: Then<'_, 'a, R>,
     ) -> Result<R, Stage> {
         let options = self.options;
-        // What a file mocks is known when the last file is loaded, and each file is resolved as it is loaded.
         let code = CodeOptions {
             mocks_any_file: options.load.runs_tests,
             follows_paths_to_functions_of_other_files: options.load.runs_tests,
@@ -395,18 +421,16 @@ impl<'a> Build<'a> {
                 });
                 let find = |code: &dyn CodeView<'_>| -> Vec<Vec<u8>> { finder.find(code) };
                 let request_that_finds = CompileRequest {
-                    entry_points: EntryPoints::WrittenAndFound(
-                        &options.entry_points,
-                        MainModule::EntryPoint,
-                        &find,
-                    ),
+                    entry_points: EntryPoints::WrittenAndFound(&options.entry_points, &find),
                     ..*request
                 };
                 let application = self.load_application(shared, project, &request_that_finds)?;
                 let names_written = finder.take_names_written();
+                let names_joined = finder.take_names_joined();
                 let found = FoundByLoad {
                     entry_points: finder.finish(application.files(), options.entry_points.len()),
                     names_written,
+                    names_joined,
                 };
                 (application, found)
             }
@@ -431,7 +455,6 @@ impl<'a> Build<'a> {
         let files = application.files();
         let in_parallel = self.parallel_runner();
         let mut steps = StepClock::new(Stage::Load);
-        // It unlocks what the tests replace. Whoever reads a built-in of a file comes behind it.
         let contents = collect_program_contents(ContentsInput {
             files,
             options,
@@ -443,7 +466,10 @@ impl<'a> Build<'a> {
         let serves_unseen_code = options.can_load_code_at_run_time();
         #[cfg(test)]
         let serves_unseen_code = serves_unseen_code || self.keeps_library_code_without_names;
-        let further = FurtherLibraryCode { serves_unseen_code };
+        let further = FurtherLibraryCode {
+            serves_unseen_code,
+            loads_code_from_disk: options.aot.loads_code_from_disk,
+        };
         let roots = collect_runtime_roots(
             files,
             &contents,
@@ -451,8 +477,6 @@ impl<'a> Build<'a> {
             self.platform,
             further,
         );
-        // A run that stays in its compiled files refuses every other code, so each way to such code has to be ruled out.
-        // A file that loads again may have been written anew by then, and behind `resetModules()` the host reads it from disk.
         let mut compiled_files = files.compiled_files().iter();
         self.stays_in_compiled_files = options.aot.only_tests_load_code_from_disk
             && !options.can_load_code_at_run_time()
@@ -489,8 +513,19 @@ impl<'a> Build<'a> {
         steps.end("freeze the library, paths across the projects");
         if !options.aot.checks_only {
             self.started_workers.code = code_of_workers(&contents);
-            self.started_workers.names =
-                collect_entry_point_aliases(files, &sources.application, found.names_written);
+            self.started_workers.named_at =
+                find_starts_that_led_to_files(files, &sources.application, &contents);
+            let (names, said) = collect_entry_point_aliases(
+                files,
+                &sources.application,
+                found.names_written,
+                &found.names_joined,
+            );
+            self.started_workers.names = names;
+            for diagnostic in said {
+                self.diagnostics.add(None, diagnostic);
+            }
+            self.stop_if_errors(Stage::Load)?;
         }
         steps.end("other names of entry points");
         let projects = PerProject {
@@ -529,7 +564,6 @@ impl<'a> Build<'a> {
         contents: &'c ProgramContents,
     ) -> RuntimeLoadInputs<'c, 's> {
         let options = self.options;
-        // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
         let is_told_of_code = options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
         let loads_code_by_unknown_names_alone =
             !is_told_of_code && contents.loads_by_unknown_path && options.aot.loads_code_from_disk;
@@ -622,11 +656,8 @@ impl<'a> Build<'a> {
             Err(failure) => {
                 let entry_point_names = match request.entry_points {
                     EntryPoints::Written(specifiers)
-                    | EntryPoints::WrittenFor(specifiers, _)
                     | EntryPoints::WrittenAndFound(specifiers, ..) => specifiers,
-                    EntryPoints::Resolved(paths)
-                    | EntryPoints::Imported(paths)
-                    | EntryPoints::Configured(paths, _) => paths,
+                    EntryPoints::Resolved(paths) => paths,
                 };
                 self.diagnostics
                     .add_load_failure(failure, entry_point_names);
@@ -635,7 +666,6 @@ impl<'a> Build<'a> {
         }
     }
 
-    /// `roots`: of Bun's own modules. `None`: `loaded` is the application, which alone has `found_entry_points`.
     fn create_freeze_input<'i, 's>(
         &self,
         shared: &SharedLoadInputs<'_, '_>,
@@ -677,7 +707,6 @@ impl<'a> Build<'a> {
         };
         let frozen = sources.as_ref();
         let frozen = frozen.map(|project, sources| (programs.get(project).files(), sources));
-        // What the freeze has said of two files of the program is not said again as an error of the compiler.
         self.stop_if_errors(Stage::Load)?;
         self.stop_at_internal_error(check_unique_paths_across_projects(frozen))?;
         Ok(sources)
@@ -770,7 +799,6 @@ mod tests {
         assert!(can_runtime_sources_load_code(false, &[b"left-pad"]));
     }
 
-    /// `bun test --aot`. The first file is the test file.
     fn stays_in_compiled_files(files: &[(&str, &str)]) -> bool {
         let mut project = TestProject::new(files, &default_settings());
         project.runs_tests = true;
@@ -784,7 +812,6 @@ mod tests {
     #[test]
     fn test_run_stays_in_its_compiled_files_unless_a_file_may_run_other_code() {
         const PLAIN: (&str, &str) = ("helper.cjs", "exports.mark = 1;");
-        // What stands above the import in the test file, the helper that it imports, whether the run stays.
         let runs = [
             ("", PLAIN, true),
             (
@@ -860,8 +887,6 @@ mod tests {
 
     #[test]
     fn calls_on_a_free_name_of_the_test_runner_are_sites() {
-        // A file that imports a test module keeps `jest` and `vi` free. load/test_runner_names.rs writes them `(loadedByWorker ??= ..) ? jest : own`, where `const { jest: own = imported } = globalThis`.
-        // The text, and how many of its calls name a module to the test runner.
         let rows = [
             (
                 r#"jest.mock("./dep.js", () => jest.requireActual("./asked.cjs"));"#,
@@ -959,7 +984,6 @@ mod tests {
             public_path: public_path.as_bytes().to_vec(),
             source_path: source_path_of(file_name.as_bytes()),
         };
-        // The program begins at main.ts alone.
         let names_written = vec![
             paths("/$bunfs/root/worker", "/project/main.ts"),
             paths("/$bunfs/root/worker", "/project/main.ts"),
@@ -968,12 +992,26 @@ mod tests {
             paths("/$bunfs/root/other.ts", "/project/main.ts"),
             paths("/$bunfs/root/imported", "/project/other.ts"),
         ];
-        let aliases = with_loaded_build(&files, &default_settings(), |_, loaded| {
+        let build = with_loaded_build(&files, &default_settings(), |_, loaded| {
             let application = loaded.project(ProjectId::Application);
-            let files = application.loaded.files();
-            collect_entry_point_aliases(files, &application.sources, names_written)
+            let (files, sources) = (application.loaded.files(), &application.sources);
+            let (_, said) = collect_entry_point_aliases(files, sources, names_written.clone(), &[]);
+            let joined = [b"/$bunfs/root/other.ts".to_vec()];
+            let found = collect_entry_point_aliases(files, sources, names_written, &joined);
+            (found, said.len())
         });
+        let ((aliases, warnings), said_of_other_names) = build;
         assert_eq!(aliases, [paths("/$bunfs/root/worker", "/project/main.ts")]);
+        let said: Vec<&[Vec<u8>]> = warnings.iter().map(|it| &it.arguments[..]).collect();
+        let shared = [
+            &b"/$bunfs/root/shared"[..],
+            b"main.ts",
+            b"/project/other.ts",
+        ];
+        let of_other = [&b"/$bunfs/root/other.ts"[..], b"other.ts", b"main.ts"];
+        let expected = [of_other, shared].map(|it| it.map(<[u8]>::to_vec));
+        assert_eq!(said, [&expected[0][..], &expected[1][..]]);
+        assert_eq!(said_of_other_names, 1);
         assert!(is_path_of_module(
             b"B:\\~BUN\\root\\a.js",
             b"B:/~BUN/root/a.js"

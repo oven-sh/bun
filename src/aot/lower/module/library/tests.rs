@@ -476,7 +476,6 @@ fn listed_export_implements_builtin() {
     }
 }
 
-// Bun's own sources are lowered with their types: what they write holds, as in the program's code.
 #[test]
 fn listed_export_checks_written_types() {
     let text = "export function at(index: number): number { return index; }";

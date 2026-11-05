@@ -14,7 +14,6 @@ use crate::load::source_provider::WithoutServices;
 use crate::module_keys::{path_of_form, path_without_form};
 use crate::modules::{ModuleGraph, ModuleRef};
 
-/// The first `test_file_count` files are the test files.
 fn test_run(files: &[(&str, &str)], test_file_count: usize) -> TestProject {
     let mut project = TestProject::with_entry_points(files, test_file_count, &default_settings());
     project.runs_tests = true;
@@ -63,7 +62,6 @@ fn names_of(files: &Files<'_>, listed: &[FileId]) -> Vec<String> {
     names
 }
 
-/// A test file that imports uses.cjs, which holds `statement`, and a.cjs.
 fn load_statement<R>(statement: &str, then: impl FnOnce(&LoadedBuild<'_, '_>) -> R) -> R {
     let test_file = "import { test } from \"bun:test\";\nimport \"./uses.cjs\";\nimport \"./a.cjs\";\ntest(\"t\", () => {});\n";
     let files = [
@@ -98,7 +96,6 @@ import { two } from "./lib/two.js";
 const options = { recursive: process.argv.length > 0 };
 "#;
 
-/// By call: which files of its folder the run is taken to write, move or remove. Each call has a folder of its own, and all of them are one run.
 fn find_files_changed_by(calls: &[String]) -> Vec<Vec<String>> {
     let folders = 0..calls.len();
     let test_files = calls.iter().zip(folders.clone()).map(|(call, folder)| {
@@ -184,7 +181,6 @@ fn call_that_fails_on_a_folder_changes_nothing_below_it() {
     for ((call, expected), changed) in cases.iter().zip(find_files_changed_by(&calls)) {
         assert_eq!(changed, *expected, "{call}");
     }
-    // Joined to the working directory the empty path is the whole project, so each of these has a run of its own.
     for call in [
         "createWriteStream(\"\", { fd: 1 })",
         "rmSync(\"\", { recursive: true })",
@@ -219,7 +215,6 @@ fn path_that_is_spelled_in_part_marks_the_files_that_fit() {
 
 #[test]
 fn file_leaves_by_its_key() {
-    // What a file of the run does, the files that it takes out, whether nobody can say which.
     let uses: [(&str, &[&str], bool); 11] = [
         (
             r#"delete require.cache[require.resolve("./a.cjs")];"#,
@@ -284,7 +279,6 @@ fn file_leaves_by_its_key() {
 
 #[test]
 fn place_that_lets_every_file_load_again_is_named() {
-    // What uses.cjs does, why every file may load again, the line, what the notice begins with.
     let doors: [(&str, WhyEveryFile, u32, &str); 5] = [
         (
             "\nBun.plugin({ name: \"p\", setup() {} });",
@@ -329,7 +323,6 @@ fn place_that_lets_every_file_load_again_is_named() {
             assert!(said.contains(&format!("uses.cjs:{line}:")), "{said}");
             let whole = format!("{sentence} After that any file of this test run may load again");
             assert!(said.contains(&whole), "{said}");
-            // A file that is left out of the program says nothing.
             let left_out = [file_named(files, "uses.cjs")];
             assert_eq!(
                 describe_notices(loaded, loads, &left_out),
@@ -342,7 +335,6 @@ fn place_that_lets_every_file_load_again_is_named() {
 
 #[test]
 fn query_behind_a_spelled_path_copies_that_file_alone() {
-    // The query is spelled, or computed behind the path. The name is that of the file, or what a TypeScript project writes for it.
     for name in [
         "\"./a.cjs?again\"",
         "`./a.cjs?t=${Math.random()}`",
@@ -363,7 +355,6 @@ fn query_behind_a_spelled_path_copies_that_file_alone() {
             assert!(loads.reads_files_from_disk(), "{name}");
         });
     }
-    // Nobody has read the file, so nobody knows what the copy imports.
     load_statement("import(`./missing.cjs?t=${Math.random()}`);", |loaded| {
         let loads = &loaded.contents.run.loads;
         let whys: Vec<WhyEveryFile> = loads.why_every_file.iter().map(|it| it.1).collect();
@@ -386,7 +377,6 @@ fn reset_of_the_modules_has_a_notice_of_its_own() {
     });
 }
 
-/// The specifiers of `LoadsOfRun::library_modules_that_entries_may_answer`, by their bytes.
 fn find_modules_that_entries_may_answer(statement: &str) -> Vec<String> {
     load_statement(statement, |loaded| {
         let loads = &loaded.contents.run.loads;
@@ -428,14 +418,12 @@ fn key_that_is_put_together_may_be_the_name_of_any_library_module() {
             let is_listed = modules.iter().any(|it| it == specifier);
             assert!(is_listed, "{statement}: {specifier}");
         }
-        // `require("bun")` is read as `Bun`.
         assert!(!modules.iter().any(|it| it == "bun"), "{statement}");
     }
 }
 
 #[test]
 fn key_that_is_known_in_part_names_the_modules_that_fit() {
-    // What stands in front of the store, what stands behind it, the modules that an entry may answer for.
     let keys: [(&str, &str, &[&str]); 8] = [
         (
             r#"const key = ["u", "r", "l"].join("");"#,
@@ -459,7 +447,6 @@ fn key_that_is_known_in_part_names_the_modules_that_fit() {
         ),
         (r#"const key = "node:" + process.argv[2];"#, "", &[]),
         (r#"const key = require.resolve("os");"#, "", &["node:os"]),
-        // `find_library_modules_stored_in_cache` has the keys that folding reads.
         (r#"const key = "os";"#, "", &[]),
         (r#"const key = require.resolve("./a.cjs");"#, "", &[]),
     ];
@@ -512,7 +499,6 @@ const FILES_AROUND_STATE: [(&str, &str); 7] = [
     ),
 ];
 
-/// A test file that imports user.js, other.js, late.js and the helper.
 fn with_graph_around_state<R>(
     helper: (&str, &str),
     then: impl FnOnce(&Files<'_>, &ModuleGraph) -> R,
@@ -537,7 +523,6 @@ fn file_that_is_taken_out_leaves_with_whoever_has_yet_to_bind_it() {
         let module = |name: &str| ModuleRef::File(file_named(files, name));
         for name in ["state.js", "user.js", "a.test.js"] {
             assert!(graph.may_be_evicted(module(name)), "{name}");
-            // The body of a file that is taken out runs twice.
             assert!(graph.runs_again(file_named(files, name)), "{name}");
             assert!(graph.is_every_export_asked_for(module(name)), "{name}");
         }
@@ -546,12 +531,10 @@ fn file_that_is_taken_out_leaves_with_whoever_has_yet_to_bind_it() {
             assert!(!graph.runs_again(file_named(files, name)), "{name}");
         }
         assert!(!graph.may_be_evicted(module("evicts.cjs")));
-        // The copy of state.js names barrel.js, which hands on what base.js has.
         for name in ["barrel.js", "base.js", "other.js", "late.js"] {
             assert!(graph.is_named_by_copies(module(name)), "{name}");
             assert!(graph.is_every_export_asked_for(module(name)), "{name}");
         }
-        // Wherever a file leaves, the copies name every file, far.js too.
         assert!(graph.is_named_by_copies(module("far.js")));
         assert!(graph.is_every_export_asked_for(module("far.js")));
         assert!(!graph.test_run().is_changed_on_disk_by_run.contains(&true));
@@ -581,7 +564,6 @@ fn original_beside_a_mock_names_what_the_mocked_file_imports() {
     ];
     with_graph(&files, |files, graph| {
         let module = |name: &str| ModuleRef::File(file_named(files, name));
-        // The original is confirm.js once more, from disk. It asks core.js for a name that core.js only hands on.
         for name in ["core.js", "lib/create.js"] {
             assert!(graph.is_named_by_copies(module(name)), "{name}");
             assert!(graph.is_every_export_asked_for(module(name)), "{name}");
@@ -656,7 +638,6 @@ fn key_behind_a_test_of_its_start_takes_out_what_lies_below() {
             );
         });
     }
-    // The test stands on the other branch, asks about another name, or asks for a start that nobody can read: the last three are made out of themselves.
     let unread = [
         "const folder = dirname(require.resolve(\"./lib/a.cjs\")) + sep;\nfor (const key of Object.keys(require.cache)) { if (key.startsWith(folder)) {} else { delete require.cache[key]; } }\n",
         "const folder = dirname(require.resolve(\"./lib/a.cjs\")) + sep;\nfor (const key of Object.keys(require.cache)) { if (folder.startsWith(folder)) { delete require.cache[key]; } }\n",
@@ -691,7 +672,6 @@ fn key_known_in_part_takes_out_the_files_that_fit() {
             then(files_of(loaded), &loaded.contents.run.loads)
         });
     };
-    // What the key ends with, and the files that end so.
     let known: [(&str, &[&str]); 6] = [
         (
             "exports.f = root => { delete require.cache[path.join(root, \"a.cjs\")]; };\n",
@@ -739,7 +719,6 @@ fn key_known_in_part_takes_out_the_files_that_fit() {
 
 #[test]
 fn text_that_comes_in_lets_no_body_run_again() {
-    // What the helper does, and whether a file that has run may be taken out by it.
     let helpers = [
         ("Bun.plugin({ name: \"p\", setup() {} });\n", false),
         ("require.extensions[\".mine\"] = () => {};\n", false),
@@ -754,7 +733,6 @@ fn text_that_comes_in_lets_no_body_run_again() {
         with_graph_around_state(("helper.cjs", text), |files, graph| {
             for name in ["state.js", "far.js", "a.test.js"] {
                 let file = file_named(files, name);
-                // Whoever asks for the file asks the run time which text answers.
                 assert!(
                     graph.may_be_evicted(ModuleRef::File(file)),
                     "{name}: {text}"
@@ -805,7 +783,6 @@ fn file_of_data_that_the_run_writes_names_nothing() {
         let module = |name: &str| ModuleRef::File(file_named(files, name));
         assert!(graph.may_be_evicted(module("data.json")));
         assert!(!graph.may_be_evicted(module("far.js")));
-        // data.json leaves, so the copies name every file, deep.js too.
         assert!(graph.is_named_by_copies(module("deep.js")));
         assert!(!graph.test_run().is_changed_on_disk_by_run.contains(&true));
     });
@@ -813,7 +790,6 @@ fn file_of_data_that_the_run_writes_names_nothing() {
 
 #[test]
 fn what_an_import_attribute_makes_of_a_file_is_listed_with_the_file() {
-    // The first of the two statements decides which file `Files::by_path` holds.
     let orders = [
         "import data from \"./data.json\";\nimport text from \"./data.json\" with { type: \"text\" };",
         "import text from \"./data.json\" with { type: \"text\" };\nimport data from \"./data.json\";",

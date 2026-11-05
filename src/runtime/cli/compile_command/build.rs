@@ -209,7 +209,6 @@ fn write_product(
         runtime_options: settings.runtime_options,
         compiled_program: Some(CompiledProgramInput {
             image: image.ok_or_else(corrupted_program)?,
-            further_images: &[],
             image_alignment: image_alignment(),
             entry_points: &entry_points,
             package_names: &package_names,
@@ -832,7 +831,6 @@ pub(super) fn pair_entry_points<'b>(
                 false => &entry_point.module_path,
             },
             module_path: &entry_point.module_path,
-            image_index: 0,
         })
         .collect())
 }
@@ -864,7 +862,6 @@ pub(super) fn pair_embedded_copies<'b>(
             module_id: compiled.module_id,
             source_path: compiled.source_path,
             module_path: compiled.module_path,
-            image_index: compiled.image_index,
         };
         copy.entry_point_index = Some(u32::try_from(pairs.len()).map_err(|_| corrupted_program())?);
         pairs.push(pair);

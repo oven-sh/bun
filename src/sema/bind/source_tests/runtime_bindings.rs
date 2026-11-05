@@ -968,7 +968,6 @@ fn eval_dynamic_lookups() {
     );
 }
 
-// `x` in `namespace N` is `N.x` in what runs: no variable of evaluated text takes the name `x`, and only the object of a `with` is asked, for `N`.
 #[test]
 fn member_of_a_namespace_is_no_name_that_evaluated_text_can_take() {
     let lookup_of_x = |s: &Analyzed<'_>| {
@@ -1011,7 +1010,6 @@ fn members_of_an_enum_take_the_variables_of_evaluated_text() {
 
 #[test]
 fn eval_variables_between_body_and_parameters() {
-    // (text, name, which mention, whether the lookup searches the variables of the function)
     let cases = [
         (
             r#"function f(a, b = 2) { eval(""); return a; }"#,
@@ -1289,7 +1287,6 @@ fn targets_deep_in_literals() {
         Some(AssignmentTarget::ForInOrOf) => String::from("for"),
     };
     let (mut targets, mut others) = (0, 0);
-    // Without the last two no layer assigns, so the outermost decides.
     let families = [&all_layers[..], &all_layers[..5]];
     let nests = families.into_iter().flat_map(|layers| {
         (0..layers.len() * layers.len()).map(move |number| {

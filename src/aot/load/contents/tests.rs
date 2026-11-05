@@ -38,7 +38,6 @@ const PATH_OF_WORKER: &[u8] = b"/project/w.ts";
 const TEXT_MADE_BY_PLUGIN: &[u8] = b"made by a plugin";
 const PARTS: usize = 48;
 
-/// `WithoutServices`, except that the `file` loader answers as the bundler does: with the path of the copy in the executable.
 struct EmbedsFiles;
 
 impl SourceProvider for EmbedsFiles {
@@ -71,7 +70,6 @@ impl SourceProvider for EmbedsFiles {
         WithoutServices.finish_deferred_loads(log)
     }
 
-    /// Of a URL that is not written in base64.
     fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
         let comma = strings::index_of_char_usize(url, b',')?;
         let digit = |digit: u8| (digit as char).to_digit(16);
@@ -89,12 +87,10 @@ impl SourceProvider for EmbedsFiles {
         Some(text)
     }
 
-    /// Of a Blob without a type.
     fn loader_of_blob(&self, r#type: Option<&[u8]>) -> Option<Loader> {
         r#type.is_none().then_some(Loader::Tsx)
     }
 
-    /// Of a path from the folder of `base`, and of a text in which the parser of URLs escapes only what is no ASCII.
     fn write_url(&self, text: &[u8], base: Option<&[u8]>) -> Option<Vec<u8>> {
         let Some(base) = base.filter(|_| text.starts_with(b".")) else {
             let mut url = Vec::new();
@@ -141,7 +137,6 @@ impl SourceProvider for EmbedsFiles {
     }
 }
 
-/// `EmbedsFiles`, with a plugin that answers for `PATH_OF_WORKER` with what is to be copied.
 struct EmbedsWhatPluginMakes {
     asset_paths_ignore_contents: bool,
 }
@@ -202,12 +197,10 @@ impl SourceProvider for EmbedsWhatPluginMakes {
     }
 }
 
-/// The first file is the entry point.
 fn executable(files: &[(&str, &str)]) -> TestProject {
     TestProject::new(files, &default_settings())
 }
 
-/// The first file is the test file.
 fn test_run(files: &[(&str, &str)]) -> TestProject {
     let mut project = executable(files);
     project.runs_tests = true;
@@ -255,7 +248,6 @@ fn text_of(files: &Files<'_>, atom: Atom) -> String {
     BStr::new(files.atoms.bytes(atom)).to_string()
 }
 
-/// Every text the name may be: a pattern has `*` between its ends, and `?` stands for an unknown name.
 fn describe_name(files: &Files<'_>, file: FileId, name: &ImportSpecifier) -> String {
     let alternatives = files.analysis(file).alternatives_of(name).iter();
     let texts: Vec<String> = alternatives
@@ -275,7 +267,6 @@ fn describe_start(files: &Files<'_>, file: FileId, start: &WorkerStart) -> Strin
     format!("{:?} {name}", start.form)
 }
 
-/// The worker starts of a file: the arguments of constructors, or each `new URL` that stands alone.
 fn describe_starts(files: &Files<'_>, name: &str, are_given_to_constructor: bool) -> Vec<String> {
     let file = file_named(files, name);
     let starts = contents_of(files, name).worker_starts.iter();
@@ -292,7 +283,6 @@ fn describe_found(found: &[FoundEntryPoint]) -> Vec<String> {
         .collect()
 }
 
-/// `StartedWorkers::names`: what `EntryPointFinder::take_names_written` answers, but for the paths of modules. Each with the file that it leads to.
 fn describe_names_written(build: &Build<'_>) -> Vec<String> {
     let names = build.started_workers.names.iter();
     names
@@ -315,7 +305,6 @@ fn describe_entry_points(loaded: &LoadedBuild<'_, '_>) -> Vec<String> {
         .collect()
 }
 
-/// Entry point number `written_count + i` of an executable is `found_entry_points[i]`.
 fn assert_found_follow_written(loaded: &LoadedBuild<'_, '_>, written_count: usize) {
     let found = loaded.contents.found_entry_points.iter();
     let found: Vec<String> = found
@@ -366,6 +355,7 @@ fn describe_file_contents(files: &Files<'_>, file: FileId, contents: &FileConten
         .collect();
     let flags = [
         names.loads_by_unknown_name,
+        names.loads_by_path_alone,
         names.loads_by_unknown_path,
         contents.names_worker_constructor,
         contents.hands_worker_constructor_on,
@@ -380,7 +370,6 @@ fn describe_file_contents(files: &Files<'_>, file: FileId, contents: &FileConten
     )
 }
 
-/// Everything Load decided, without any number that depends on thread order.
 fn describe_program(loaded: &LoadedBuild<'_, '_>) -> String {
     let (files, contents) = (files_of(loaded), loaded.contents);
     let found = contents.found_entry_points.iter();
@@ -410,7 +399,6 @@ fn describe_program(loaded: &LoadedBuild<'_, '_>) -> String {
     text
 }
 
-/// The argument of the file's only import site.
 fn argument_of_only_load(files: &Files<'_>, file: FileId) -> ExprId {
     let [site] = files.analysis(file).import_sites[..] else {
         panic!("the file has one import site");
@@ -418,7 +406,6 @@ fn argument_of_only_load(files: &Files<'_>, file: FileId) -> ExprId {
     site.specifier_node
 }
 
-/// The mutability of every expression in the file that resolves to `builtin`.
 fn mutabilities_of(files: &Files<'_>, name: &str, builtin: BuiltinId) -> Vec<Mutability> {
     let file = file_named(files, name);
     let source = parsed_source(files, file).expect("every compiled file has a payload");
@@ -433,7 +420,6 @@ fn mutabilities_of(files: &Files<'_>, name: &str, builtin: BuiltinId) -> Vec<Mut
 
 #[test]
 fn each_form_of_a_name_finds_the_file_that_the_worker_starts_from() {
-    // The file with the `new`, its text, the descriptions accepted for the start, the files found.
     let forms: [(&str, &str, &[&str], &[&str]); 7] = [
         (
             "src/start.ts",
@@ -447,7 +433,6 @@ fn each_form_of_a_name_finds_the_file_that_the_worker_starts_from() {
             &["FromOwnFolder ./w.ts"],
             &["src/w.ts"],
         ),
-        // sema reports this argument as the answer of a resolver.
         (
             "src/start.ts",
             r#"new Worker(new URL("./w.ts", import.meta.url));"#,
@@ -506,7 +491,6 @@ fn each_form_of_a_name_finds_the_file_that_the_worker_starts_from() {
 
 #[test]
 fn preloads_are_entry_points() {
-    // What stands in front of the `new`, its second argument, the files found beside `w.ts`.
     let rows: [(&str, &str, &[&str]); 8] = [
         ("", r#"{ preload: "./first.ts" }"#, &["first.ts"]),
         (
@@ -601,7 +585,6 @@ fn copy_that_a_plugin_makes_is_no_entry_point() {
         ),
         ("w.ts", WORKER),
     ]);
-    // The plugin has answered by the time the load asks for more entry points, or is asked only after the load.
     for asset_paths_ignore_contents in [false, true] {
         let provider = EmbedsWhatPluginMakes {
             asset_paths_ignore_contents,
@@ -620,8 +603,6 @@ fn copy_that_a_plugin_makes_is_no_entry_point() {
 
 #[test]
 fn build_outside_the_root_directory_looks_from_the_working_directory_first() {
-    // What the Worker is given, the files beside `src/main.ts`, the entry points found, the names written down with their files.
-    // `src/w.ts` is looked for under `/$bunfs/root/w.ts`, which is the path of its module.
     let rows: [(&str, &[&str], &[&str], &[(&str, &str)]); 5] = [
         (r#""./w.ts""#, &["src/w.ts"], &["w.ts"], &[]),
         (
@@ -677,8 +658,100 @@ fn build_outside_the_root_directory_looks_from_the_working_directory_first() {
 }
 
 #[test]
+fn what_is_left_of_a_path_that_goes_up_past_the_root_is_written_down_in_each_form() {
+    let job = ("/jobs/job.ts", "one/jobs/job.ts");
+    let rows: [(&str, &[(&str, &str)]); 7] = [
+        (r#"import.meta.dir + "/../../jobs/job.ts""#, &[job]),
+        (r#"new URL("../../jobs/job.ts", import.meta.url)"#, &[job]),
+        (r#"import.meta.resolve("../../jobs/job.ts")"#, &[job]),
+        (
+            r#"new URL(process.argv[2] ? "../../jobs/job.ts" : "../../../top.ts", import.meta.url)"#,
+            &[job, ("/top.ts", "top.ts")],
+        ),
+        (
+            r#"new URL("../../jobs/" + process.argv[2] + ".ts", import.meta.url)"#,
+            &[job],
+        ),
+        (
+            r#"join(import.meta.dir, "../../jobs", process.argv[2] + ".ts")"#,
+            &[job],
+        ),
+        (r#"new URL("../beside.ts", import.meta.url)"#, &[]),
+    ];
+    for (given, written) in rows {
+        let main = format!(r#"import {{ join }} from "node:path"; new Worker({given});"#);
+        let mut project = executable(&[
+            ("one/two/app/main.ts", &main[..]),
+            ("one/two/beside.ts", WORKER),
+            ("one/jobs/job.ts", WORKER),
+            ("top.ts", WORKER),
+        ]);
+        project.root_directory = Some(b"/project/one/two/app");
+        load_from(&project, &EmbedsFiles, |build, loaded| {
+            let expected = written.iter().map(|(name, file)| {
+                let file = source_path_of(format!("/project/{file}").as_bytes());
+                format!("{name} {}", BStr::new(&file))
+            });
+            assert_eq!(
+                describe_names_written(build),
+                expected.collect::<Vec<String>>(),
+                "{given}"
+            );
+            assert!(!loaded.contents.found_entry_points.is_empty(), "{given}");
+        });
+    }
+}
+
+#[test]
+fn file_above_the_root_that_goes_further_up_is_written_down_as_its_url_says_it() {
+    let rows: [(&str, &[(&str, &str)]); 5] = [
+        ("./helper.ts", &[]),
+        ("../helper.ts", &[]),
+        (
+            "../../helper.ts",
+            &[("/$bunfs/root/helper.ts", "one/helper.ts")],
+        ),
+        (
+            "../app/inner.ts",
+            &[("/$bunfs/root/_.._/app/inner.ts", "one/two/app/inner.ts")],
+        ),
+        (
+            "../../../helper.ts",
+            &[("/$bunfs/root/_.._/helper.ts", "helper.ts")],
+        ),
+    ];
+    for (joined, written) in rows {
+        let job = format!(r#"new Worker(new URL("{joined}", import.meta.url));"#);
+        let mut project = executable(&[
+            (
+                "one/two/app/main.ts",
+                r#"new Worker(new URL("../jobs/job.ts", import.meta.url));"#,
+            ),
+            ("one/two/app/inner.ts", WORKER),
+            ("one/two/jobs/job.ts", &job[..]),
+            ("one/two/jobs/helper.ts", WORKER),
+            ("one/two/helper.ts", WORKER),
+            ("one/helper.ts", WORKER),
+            ("helper.ts", WORKER),
+        ]);
+        project.root_directory = Some(b"/project/one/two/app");
+        load_from(&project, &EmbedsFiles, |build, loaded| {
+            let expected = written.iter().map(|(name, file)| {
+                let file = source_path_of(format!("/project/{file}").as_bytes());
+                format!("{name} {}", BStr::new(&file))
+            });
+            assert_eq!(
+                describe_names_written(build),
+                expected.collect::<Vec<String>>(),
+                "{joined}"
+            );
+            assert_eq!(loaded.contents.found_entry_points.len(), 2, "{joined}");
+        });
+    }
+}
+
+#[test]
 fn worker_constructor_is_recognized_by_binding() {
-    // The text, whether what it constructs is a Worker.
     let texts = [
         (r#"new Worker("./w.ts");"#, true),
         (
@@ -744,8 +817,41 @@ fn worker_constructor_used_as_a_value_is_handed_on() {
 }
 
 #[test]
+fn construction_under_the_name_of_the_constructor_is_a_start_where_the_file_hands_the_module_on() {
+    let rows: [(&str, &[&str]); 4] = [
+        (
+            "const startWith = given => new given.Worker(__filename); exports.start = () => startWith(threads);",
+            &["lib/own.cjs StartsWorker"],
+        ),
+        (
+            r#"const startWith = options => new options.threads.Worker(require.resolve("./w.ts")); exports.start = () => startWith({ threads });"#,
+            &["lib/w.ts StartsWorker"],
+        ),
+        (
+            r#"const startWith = given => new given.Pool(require.resolve("./w.ts")); exports.start = () => startWith(threads);"#,
+            &[],
+        ),
+        (
+            r#"exports.start = given => new given.Worker(require.resolve("./w.ts")); exports.isMain = threads.isMainThread;"#,
+            &[],
+        ),
+    ];
+    for (text, found) in rows {
+        let own = format!(r#"const threads = require("node:worker_threads"); {text}"#);
+        let project = executable(&[
+            ("main.cjs", r#"require("./lib/own.cjs").start();"#),
+            ("lib/own.cjs", &own),
+            ("lib/w.ts", WORKER),
+        ]);
+        load(&project, |loaded| {
+            let names = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(names, found, "{text}");
+        });
+    }
+}
+
+#[test]
 fn constructor_that_is_looked_up_at_run_time_counts_as_the_global() {
-    // What a sloppy file does, whether the constructor goes somewhere as a value.
     let texts = [
         (r#"with (process.env) { new Worker("./w.ts"); }"#, false),
         (
@@ -791,7 +897,6 @@ fn worker_start_with_an_unknown_name_is_recorded() {
 #[test]
 fn code_in_data_url_is_entry_point() {
     const ASK: &str = "const ask = (url: string) => new Worker(url);";
-    // What `main.ts` holds, and the URLs that the program begins at too.
     let rows: [(String, &[&str]); 9] = [
         (
             r#"new Worker("data:text/javascript,postMessage(1)");"#.to_owned(),
@@ -815,7 +920,6 @@ fn code_in_data_url_is_entry_point() {
             format!(r#"{ASK} ask("data:text/" + "javascript," + "postMessage(4)");"#),
             &["data:text/javascript,postMessage(4)"],
         ),
-        // The constructor reads any type as code. Elsewhere the type tells a script from an image.
         (
             r#"new Worker("data:,postMessage(5)");"#.to_owned(),
             &["data:,postMessage(5)"],
@@ -863,7 +967,6 @@ fn own_path_in_text() {
         "data:text/javascript,import(%22file%3A%2F%2F%2F%24bunfs%2Froot%2Flib%2Fbeside.ts%22)";
     let behind_object_url = name_of_text(Loader::Tsx, br#"import("/$bunfs/root/lib/beside.ts")"#);
     let behind_object_url = BStr::new(&behind_object_url).to_string();
-    // What `lib/starts.ts` holds, and what the text goes by that the program begins at too.
     let rows: [(&str, Option<&str>); 9] = [
         (
             r#"const file = import.meta.dir + "/beside.ts";
@@ -936,7 +1039,6 @@ fn own_path_in_text() {
     });
 }
 
-/// What is found and goes by a text, in the order of the bytes.
 fn describe_texts_found(loaded: &LoadedBuild<'_, '_>) -> Vec<String> {
     let mut found = describe_found(&loaded.contents.found_entry_points);
     found.retain(|it| it.starts_with("data:") || it.starts_with("blob:"));
@@ -946,7 +1048,6 @@ fn describe_texts_found(loaded: &LoadedBuild<'_, '_>) -> Vec<String> {
 
 #[test]
 fn data_url_counts_as_a_url_object_says_it_too() {
-    // What `main.ts` holds, and the URLs that the program begins at too.
     let rows: [(&str, &[&str]); 4] = [
         (
             "new Worker(new URL(\"data:text/javascript,postMessage('\u{e9}')\"));",
@@ -988,7 +1089,6 @@ fn path_that_the_library_makes_of_the_own_path_stands_in_text() {
     const START: &str =
         r#"new Worker("data:text/javascript," + encodeURIComponent("postMessage('" + "#;
     const END: &str = r#" + "')"));"#;
-    // The file that `main.ts` imports, what stands ahead of the start, the expression in the text, and what it evaluates to when the program runs.
     let rows: [(&str, &str, &str, Option<&str>); 13] = [
         (
             "lib/starts.ts",
@@ -1089,7 +1189,6 @@ fn path_that_the_library_makes_of_the_own_path_stands_in_text() {
 #[test]
 fn each_text_that_a_worker_may_be_given_is_an_entry_point() {
     const NODE: &str = r#"import { Worker as NodeWorker } from "node:worker_threads";"#;
-    // What `main.ts` holds, and the texts behind object URLs that the program begins at too.
     let rows: [(String, &[&str]); 7] = [
         (
             format!(
@@ -1113,7 +1212,6 @@ fn each_text_that_a_worker_may_be_given_is_an_entry_point() {
                 .to_owned(),
             &["postMessage(6)"],
         ),
-        // Another file may call the function too, so nobody lists what is passed for its parameter.
         (
             format!(
                 r#"{NODE} export const evaluate = (text: string) => new NodeWorker(text, {{ eval: true }}); evaluate("postMessage(7)");"#
@@ -1147,7 +1245,6 @@ fn each_text_that_a_worker_may_be_given_is_an_entry_point() {
 
 #[test]
 fn url_counts_whichever_file_names_the_constructor() {
-    // What the entry point imports, whether the file behind the URL is found.
     let imports = [
         (r#"import "./url.ts"; import "./pool.ts";"#, true),
         (r#"import "./pool.ts"; import "./url.ts";"#, true),
@@ -1183,7 +1280,6 @@ fn url_counts_whichever_file_names_the_constructor() {
     }
 }
 
-/// The load asks for more entry points once `main.ts` is parsed, and parses `plugin.ts` only after that answer.
 #[test]
 fn url_in_a_file_parsed_ahead_of_the_file_that_names_the_constructor_counts() {
     let project = executable(&[
@@ -1217,7 +1313,6 @@ fn url_in_a_file_parsed_ahead_of_the_file_that_names_the_constructor_counts() {
 
 #[test]
 fn url_that_names_no_file_of_code_is_no_entry_point() {
-    // What the file makes, whether the text may name a file at all.
     let urls = [
         (r#"new URL("./w.ts?raw", import.meta.url)"#, false),
         (r#"new URL("./w.ts#part", import.meta.url)"#, false),
@@ -1315,7 +1410,6 @@ fn file_followed_further_than_the_bundler_is_an_entry_point_beside_a_plugin() {
 fn text_passed_for_a_loaded_parameter_names_a_file() {
     const DRIVER: &str = "node_modules/driver/index.js PassedForParameter";
     const BY_REQUIRE: &str = "exports.load = name => require(name);";
-    // The file that loads, what it says, what the entry point says, the entry points found.
     let rows: [(&str, &str, &str, &[&str]); 10] = [
         (
             "tools.cjs",
@@ -1398,7 +1492,6 @@ fn text_passed_for_a_loaded_parameter_names_a_file() {
             let program = loaded.contents;
             let described = describe_found(&program.found_entry_points);
             assert_eq!(described, found, "{loads}\n{main}");
-            // Whoever else gets hold of the function passes what it likes.
             assert!(program.loads_by_unknown_path, "{loads}");
             assert_found_follow_written(loaded, 1);
         });
@@ -1459,12 +1552,13 @@ fn each_text_that_a_name_may_be_names_its_library_module() {
 
 #[test]
 fn name_known_in_part_brings_no_library_module() {
-    // The name, whether some library module fits it.
     let names = [
         (r#""node:v" + process.argv[2]"#, true),
         (r#"`node:${process.argv[2]}`"#, true),
         (r#""bun:" + process.argv[2]"#, true),
         (r#""./locales/" + process.argv[2]"#, false),
+        (r#"import.meta.dir + "/" + process.argv[2]"#, false),
+        (r#"process.cwd() + "/" + process.argv[2]"#, false),
     ];
     for (name, fits) in names {
         let main = format!("console.log({{ kind: \"node:dgram\" }});\nrequire({name});");
@@ -1474,7 +1568,6 @@ fn name_known_in_part_brings_no_library_module() {
             let found = &contents_of(files, "main.ts").names;
             assert!(found.modules.is_empty(), "{name}");
             assert!(!holds_library_module(loaded, BunWrap), "{name}");
-            // Where a library module fits, the whole name may be any that the program writes as a value. What stands behind the start may also make a path.
             assert_eq!(found.written_as_values, [NodeDgram], "{name}");
             assert_eq!(found.loads_by_unknown_name, fits, "{name}");
             let held = find_library_modules_that_unknown_names_may_stand_for(files);
@@ -1488,7 +1581,6 @@ fn name_known_in_part_brings_no_library_module() {
 
 #[test]
 fn call_that_leaves_the_argument_out_passes_undefined() {
-    // The calls, the parameter, whether the build reads the folder that the `require` is made for.
     let calls = [
         (r#"below("/inner/");"#, "sub", true),
         (r#"below("/inner/"); below("/inner/");"#, "sub", true),
@@ -1525,7 +1617,6 @@ fn call_that_leaves_the_argument_out_passes_undefined() {
 
 #[test]
 fn load_says_whether_the_build_knows_its_name() {
-    // The file, its text, whether the name is unknown, whether the name may be a path.
     let loads = [
         ("loads.ts", r#"require("node:os");"#, false, false),
         ("loads.ts", "require(process.argv[2]);", true, true),
@@ -1589,7 +1680,6 @@ export const os = { os: 1 }.os;"#;
 
 #[test]
 fn text_made_by_folding_is_written_as_a_value() {
-    // What a file prints, the library modules that it writes as values.
     let texts: [(&str, &[RuntimeModule]); 4] = [
         (r#"["node:d", "gram"].join("")"#, &[NodeDgram]),
         (r#"["node", "dgram"].join(":")"#, &[NodeDgram]),
@@ -1650,7 +1740,6 @@ fn data_file_that_is_missing_at_build_is_listed_apart_from_code() {
 
 #[test]
 fn entry_taken_out_of_the_module_cache_lets_every_module_load_again() {
-    // What a file of the program does, whether its modules may load again.
     let uses = [
         ("delete require.cache[key];", true),
         ("require.cache[key] = undefined;", true),
@@ -1685,7 +1774,6 @@ fn entry_taken_out_of_the_module_cache_lets_every_module_load_again() {
 
 #[test]
 fn compiled_file_that_a_test_run_changes_is_listed() {
-    // What the test file does, whether its modules may load again.
     let changes = [
         (
             r#"writeFileSync(import.meta.dir + "/made.ts", "export default 2"); await import("./made.ts");"#,
@@ -1742,13 +1830,11 @@ fn compiled_file_that_a_test_run_changes_is_listed() {
             "{statement}"
         );
     }
-    // An executable reads none of its files from disk.
     assert!(!loads_again_in(executable, changes[0].0));
 }
 
 #[test]
 fn file_loaded_under_a_query_lets_every_module_load_again() {
-    // What the test file does, whether its modules may load again.
     let loads = [
         (r#"await import("./a.ts?again");"#, true),
         (r#"await import("./a.ts?" + process.argv[2]);"#, true),
@@ -1771,7 +1857,6 @@ fn file_loaded_under_a_query_lets_every_module_load_again() {
 
 #[test]
 fn mock_under_a_name_that_is_not_spelled_may_replace_any_module() {
-    // What the test file does, whether any module may be mocked.
     let mocks = [
         (r#"mock.module("./a.ts", factory);"#, false),
         (
@@ -1817,7 +1902,6 @@ fn mock_under_a_name_that_is_not_spelled_may_replace_any_module() {
 
 #[test]
 fn mocking_function_used_as_a_value_may_replace_any_module() {
-    // What the test file imports from the runner, what it does with it, whether any module may be mocked.
     let uses = [
         (
             "mock",
@@ -1869,7 +1953,6 @@ fn builtin_writes_of_a_test_run_merge_into_one_list() {
         let (files, program) = (files_of(loaded), loaded.contents);
         let replaced = &program.replaced_builtins;
         assert!(replaced.is_sorted_by(|a, b| a < b), "{replaced:?}");
-        // A computed store on `Math` replaces every member of `Math`.
         for member in [
             BuiltinId::ArrayFrom,
             BuiltinId::ArrayPrototypePush,
@@ -1883,7 +1966,6 @@ fn builtin_writes_of_a_test_run_merge_into_one_list() {
             describe_names_added(files, program),
             ["ObjectPrototype.alpha", "ObjectPrototype.zeta"]
         );
-        // A file that writes nothing reads what another file has replaced.
         let unlocked = mutabilities_of(files, "reads.ts", BuiltinId::ArrayFrom);
         assert!(!unlocked.is_empty());
         assert!(
@@ -1891,7 +1973,6 @@ fn builtin_writes_of_a_test_run_merge_into_one_list() {
                 .iter()
                 .all(|&it| it == Mutability::ConstantUnlessWritten)
         );
-        // What no file replaces is a read too, and is on no list of the program: the engine lays the lock where it follows no write to the member.
         let left_to_engine = mutabilities_of(files, "reads.ts", BuiltinId::ArrayIsArray);
         assert!(!left_to_engine.is_empty());
         assert!(
@@ -1910,7 +1991,6 @@ fn builtin_writes_of_a_test_run_merge_into_one_list() {
 
 #[test]
 fn object_that_may_be_written_is_not_an_object_that_is_replaced() {
-    // What a test does, what the list holds, what it lacks.
     let writes: [(&str, &[BuiltinId], &[BuiltinId]); 3] = [
         (
             "expect(new Map()).toBeInstanceOf(Map);",
@@ -2023,7 +2103,6 @@ fn what_a_test_run_replaces_does_not_depend_on_the_threads() {
         let replaced = &program.replaced_builtins;
         assert!(replaced.is_sorted_by(|a, b| a < b), "{replaced:?}");
         assert!(replaced.len() >= members.len(), "{replaced:?}");
-        // Sorted by the bytes of the names: atom numbers depend on thread order.
         let added = describe_names_added(files_of(loaded), program);
         assert_eq!(added.len(), PARTS);
         assert!(added.is_sorted(), "{added:?}");

@@ -12,9 +12,7 @@ pub struct Program {
     pub strings: StringTable,
     pub property_keys: PropertyKeyTable,
     pub types: TypeTable,
-    /// Always empty: nothing writes a type site, but the schema has the list.
     pub type_sites: Vec<TypeSite>,
-    /// Always empty: nothing writes an expected result, but the schema has the list.
     pub expected_results: Vec<ExpectedResult>,
     pub layouts: Vec<Layout>,
     pub variables: Vec<Variable>,

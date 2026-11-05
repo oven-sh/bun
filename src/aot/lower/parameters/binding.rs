@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 
 use crate::ir::generated::FunctionFlags;
 use crate::ir::{DeclaredType, ValueId};
+use crate::lower::captures::Capture;
 use crate::lower::pattern::{DefaultHolder, PatternNode, apply_default_with};
 use crate::lower::scope::{BindingForm, BindingRef, ScopeSlot, Storage};
 use crate::lower::{FileLowering, FunctionLowering, scope};
@@ -83,11 +84,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let top = self.file.bound.fns[source.idx()].scope;
         let symbols = parameter_symbols(self.file.hir, self.file.bound, source);
         let names = symbols.into_iter().map(BindingRef::Symbol);
-        let arguments = BindingRef::Slot(top, ScopeSlot::Arguments);
-        self.coroutine.held = names.chain([arguments]).collect();
+        let slots = [ScopeSlot::This, ScopeSlot::Arguments];
+        let slots = slots.map(|slot| BindingRef::Slot(top, slot));
+        self.coroutine.held = names.chain(slots).collect();
     }
 
-    // What the names of the parameters hold here. A name that closures share lies in an environment.
     pub(in crate::lower) fn get_held_values(&mut self) -> SmallVec<[ValueId; 4]> {
         let mut values: SmallVec<[ValueId; 4]> = SmallVec::new();
         for index in 0..self.coroutine.held.len() {
@@ -102,6 +103,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 (None, None) => continue,
             };
             if !values.contains(&value) {
+                values.push(value);
+            }
+        }
+        let scopes = &self.file.scopes;
+        for (index, &capture) in scopes.captures(self.key).iter().enumerate() {
+            let holds_registry = match capture {
+                Capture::Value(binding) => scopes.may_hold_registry(binding),
+                Capture::Environment(scope) => {
+                    let mut fields = scopes.environment_fields(scope).iter();
+                    fields.any(|&field| scopes.may_hold_registry(field))
+                }
+            };
+            let value = self.get_capture(index);
+            if holds_registry && !values.contains(&value) {
                 values.push(value);
             }
         }
@@ -149,7 +164,6 @@ fn apply_default(
     let hir = lowering.file.hir;
     let node = hir[parameter];
     let target = PatternNode::Binding(node.pat);
-    // The parameter takes `undefined` for an argument that is left out. The binding behind the default does not.
     apply_default_with(
         lowering,
         value,

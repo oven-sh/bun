@@ -186,6 +186,27 @@ console.log(String(total), out);
 `,
 };
 
+const asksBehindText = (
+  text: string,
+  ask: string,
+) => `let target; try { require(JSON.parse('"./sum.cjs"')); } catch (e) { target = /'([^']+)'/.exec(String(e.message))[1]; }
+import(${JSON.stringify("data:text/javascript," + text)}).then(() => ${ask}).then(space => typeof space.default + ":" + space.default("a", "b"), e => "inside " + say(e)).then(said => console.log(String(total), said));
+`;
+const evaluated = `(0, eval)("import(" + JSON.stringify(target) + ")")`;
+Object.assign(refused, {
+  "a text asks behind the import of a text with a conditional": asksBehindText(
+    "export default 1 ? 'picked' : 'left';",
+    evaluated,
+  ),
+  "a function made of a text asks behind it": asksBehindText(
+    "export default 1 ? 'picked' : 'left';",
+    `new Function("return import(" + JSON.stringify(target) + ")")()`,
+  ),
+  "the question mark stands in a comment": asksBehindText("export default 'picked'; // why?", evaluated),
+  "the question mark is of an optional chain": asksBehindText("export default globalThis?.nothing;", evaluated),
+  "the question marks are of a nullish default": asksBehindText("export default null ?? 'picked';", evaluated),
+});
+
 const stands: Record<string, [body: string, says: string]> = {
   "the loader asks for a file that the build named": [
     String.raw`require.extensions[".json"] = function load(module, filename) {

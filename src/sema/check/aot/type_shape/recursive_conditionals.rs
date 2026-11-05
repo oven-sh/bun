@@ -9,10 +9,7 @@ use smallvec::SmallVec;
 const MAX_CONSTRAINT_STEPS: usize = 8;
 
 impl Checker<'_, '_> {
-    /// The checker finds the base constraint of a conditional type by evaluating it with the constraints of its type parameters.
-    /// tsgo is never asked for most of those that the lowering asks for, and gives up on such a one after millions of instantiations.
     pub(in crate::check) fn has_costly_base_constraint(&mut self, ty: TypeId) -> bool {
-        // What is asked on the way is answered as always.
         let answered_lowering = std::mem::replace(&mut self.answers_lowering, false);
         let is_costly = self.weigh_base_constraint(ty);
         self.answers_lowering = answered_lowering;
@@ -34,7 +31,6 @@ impl Checker<'_, '_> {
                     if self.is_recursive_conditional(file, node) {
                         return true;
                     }
-                    // `T extends infer R ? R : never` is as costly as what `T` stands for.
                     let bound = self.types().mapping(mapper).iter();
                     pending.extend(bound.filter(|(from, to)| from != to).map(|&(_, to)| to));
                 }
@@ -48,7 +44,6 @@ impl Checker<'_, '_> {
         false
     }
 
-    /// Whether evaluating the conditional type at `node` can come back to `node` through the type aliases that it names.
     fn is_recursive_conditional(&mut self, file: FileId, node: TypeNodeId) -> bool {
         if let Some(&known) = self.recursive_conditionals.get(&(file, node)) {
             return known;
@@ -59,7 +54,6 @@ impl Checker<'_, '_> {
         is_recursive
     }
 
-    /// Follows what is evaluated with the type.
     fn reaches_itself(&mut self, file: FileId, node: TypeNodeId) -> bool {
         let TypeNodeKind::Cond {
             check,

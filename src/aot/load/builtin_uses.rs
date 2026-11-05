@@ -20,7 +20,6 @@ pub(crate) struct BuiltinUseInput<'a> {
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
     pub replaced: &'a [u32],
-    /// `ResolveInput::runs_tests`
     pub runs_tests: bool,
 }
 
@@ -40,7 +39,6 @@ pub(crate) fn finish_application_file(
         .collect();
     for text in resolved.evaluated_texts() {
         for part in text.texts.iter().map(|&part| request.atoms.bytes(part)) {
-            // What stands between two quotes, whatever the text does with it.
             let quoted = bun_core::strings::split_any(part, b"\"'`");
             (source.library_modules_named_in_text_left_to_run_time)
                 .extend(quoted.filter_map(find_module_named));
@@ -113,7 +111,6 @@ fn target_module(resolution: SiteResolution<'_>) -> Option<RuntimeModule> {
     let id = match resolution {
         SiteResolution::Constant(CodeResolution::HostModule(id)) => id,
         SiteResolution::Constant(CodeResolution::File(file)) => file.host_module?,
-        // With --no-builtin-modules. The exports of "bun" are the members of the global `Bun`, which needs no module.
         SiteResolution::Constant(CodeResolution::External {
             specifier: b"bun",
             kind: ExternalKind::HostValue,

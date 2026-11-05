@@ -158,7 +158,6 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
     }
 }
 
-/// `import_sites::is_name_read_by_transpiler`
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum NamesKnown {
     ToTranspiler,
@@ -173,17 +172,19 @@ fn resolve_site<'r>(
     alternatives: &[ImportSpecifier],
     names: NamesKnown,
 ) -> SiteResolution<'r> {
-    // `import.meta.require("bun:fs")`
     let is_unknown = |name: &[u8]| {
         names == NamesKnown::ToLoader && context.host.is_name_for_transpiler_alone(name)
     };
     let is_constant = matches!(site.specifier, ImportSpecifier::Constant(_));
     debug_assert!(is_constant || !site.is_host_value && !is_get_builtin_module(site.kind));
     let (atoms, resolver) = (&context.atoms, context.resolver);
-    let kind = (
-        CodeImportKind::from_site(site.kind),
-        CodeImportForm::from_site(site.kind),
-    );
+    let form = match site.kind {
+        ImportSiteKind::ImportEquals(it) if hir[hir[it].stmt].loc == hir::TextRange::default() => {
+            CodeImportForm::WrittenByHost
+        }
+        kind => CodeImportForm::from_site(kind),
+    };
+    let kind = (CodeImportKind::from_site(site.kind), form);
     let specifier = match site.specifier {
         ImportSpecifier::Constant(specifier) => atoms.bytes(specifier),
         ImportSpecifier::Pattern { prefix, suffix } => {
@@ -242,16 +243,11 @@ fn resolve_site<'r>(
     let resolution =
         resolve_at_run_time(context, site, specifier, resolution).unwrap_or(resolution);
     SiteResolution::Constant(match is_get_builtin_module(site.kind) {
-        true => builtin_module_or_erased(resolution, &|specifier| {
-            context.host.is_builtin_module_in_other_program(specifier)
-        }),
+        true => builtin_module_or_erased(resolution),
         false => resolution,
     })
 }
 
-/// `const name = ["node_modules", "pkg", "a.js"].join("/"); import("./" + name)` under `--external pkg`: this build knows the file, and `bun build` leaves the call to the
-/// run time, which finds the module that the host has loaded under the name of the package. So the call is left to the host here.
-/// A path that `bun build` reads it links to a module of the executable, a second one, and so does this build.
 fn leave_outside_with_package<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     key: LoadKey<'r>,
@@ -294,9 +290,6 @@ fn leave_outside_with_package<'r>(
     })
 }
 
-/// `import path from "package/dist/library.js" with { type: "file" }`: another program of the realm holds the file as code, and would answer with what the code exports.
-/// What is asked for is the path of the file, its text or its data, and that is a module of its own, which this program holds.
-/// `import text from "./page.html" with { type: "text" }`: so it is with a page, which the run time would bundle and serve.
 fn resolve_file_loaded_another_way<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     key: LoadKey<'r>,
@@ -306,41 +299,17 @@ fn resolve_file_loaded_another_way<'r>(
     resolution: CodeResolution<'r>,
 ) -> CodeResolution<'r> {
     let is_outside = matches!(resolution, CodeResolution::External { .. });
-    let hands_type_to_loader = site.kind.hands_type_to_loader();
-    if let (CodeResolution::File(file), Some(type_attribute)) =
-        (resolution, loader_attribute(hir, site))
-        && hands_type_to_loader
-        && file.host_module.is_none()
-        && (context.host).is_form_in_other_program(file.path, context.atoms.bytes(type_attribute))
-    {
-        return CodeResolution::External {
-            specifier: file.path,
-            kind: ExternalKind::UncompiledCode,
-        };
-    }
     let Some(type_attribute) = loader_attribute(hir, site).filter(|_| is_outside) else {
         return resolution;
     };
-    // As for a macro: the file itself is looked for, whoever holds it.
     let kind = (CodeImportKind::from_site(site.kind), CodeImportForm::Macro);
     let path = match resolve_specifier(context, key, specifier, kind) {
-        CodeResolution::External {
-            specifier: path,
-            kind: ExternalKind::UncompiledCode,
-        } if context.host.is_in_other_program(path) && !context.host.is_left_to_loader(path) => {
-            path
-        }
         CodeResolution::External {
             specifier: path,
             kind: ExternalKind::HostValue,
         } if context.host.leaves_to_run_time(path) => path,
         _ => return resolution,
     };
-    if hands_type_to_loader
-        && (context.host).is_form_in_other_program(path, context.atoms.bytes(type_attribute))
-    {
-        return resolution;
-    }
     let loader_with = |type_attribute| {
         let kind = loader_kind(site);
         let request = (context.resolver).loader_request(path, kind, type_attribute, None);
@@ -376,7 +345,6 @@ fn resolve_data_url<'r>(
     }))
 }
 
-// `import db from "./my.db" with { type: "sqlite" }`: an executable opens the file that lies below its working directory, whatever lies beside the source.
 fn resolve_database<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     hir: &hir::File<'_>,
@@ -407,7 +375,6 @@ fn resolve_database<'r>(
     }))
 }
 
-// A program may name a file that is created after the build, such as a configuration file under `/etc`.
 fn resolve_at_run_time<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     site: &ImportSite,
@@ -436,7 +403,6 @@ fn resolve_at_run_time<'r>(
         CodeResolution::NotFound(CodeFailure::ModuleNotFound) => {
             is_load && bun_paths::is_absolute(specifier)
         }
-        // `./a.ts?fresh=1` is one more module of the file. Where the program holds none, `CodeHost::holds_modules_with_queries`, only code from disk can be one.
         CodeResolution::NotFound(CodeFailure::QueryString) => kind == ExternalKind::UncompiledCode,
         _ => false,
     };
@@ -450,10 +416,7 @@ fn is_get_builtin_module(kind: ImportSiteKind) -> bool {
     matches!(kind, ImportSiteKind::GetBuiltinModule(_))
 }
 
-fn builtin_module_or_erased<'r>(
-    resolution: CodeResolution<'r>,
-    is_builtin_module_in_other_program: &dyn Fn(&[u8]) -> bool,
-) -> CodeResolution<'r> {
+fn builtin_module_or_erased(resolution: CodeResolution<'_>) -> CodeResolution<'_> {
     match resolution {
         CodeResolution::HostModule(_)
         | CodeResolution::External {
@@ -461,10 +424,6 @@ fn builtin_module_or_erased<'r>(
             ..
         } => resolution,
         CodeResolution::File(file) if file.host_module.is_some() => resolution,
-        CodeResolution::External {
-            kind: ExternalKind::UncompiledCode,
-            specifier,
-        } if is_builtin_module_in_other_program(specifier) => resolution,
         CodeResolution::File(_)
         | CodeResolution::External {
             kind: ExternalKind::UncompiledCode,
@@ -482,9 +441,10 @@ fn directory_of_request<'r>(
 ) -> Cow<'r, [u8]> {
     match form {
         CodeImportForm::Dynamic => context.host.directory_of_dynamic_imports(key.path),
-        CodeImportForm::Static | CodeImportForm::ResolveOnly | CodeImportForm::Macro => {
-            context.host.directory_of(key.path)
-        }
+        CodeImportForm::Static
+        | CodeImportForm::ResolveOnly
+        | CodeImportForm::Macro
+        | CodeImportForm::WrittenByHost => context.host.directory_of(key.path),
     }
 }
 
@@ -549,7 +509,6 @@ fn loader_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
     type_attribute(hir, site).filter(|&value| value != known::r#macro)
 }
 
-/// `import(path, options)`: the call has options, and the build reads no `type` in them. The program may ask under any type there.
 fn may_have_unread_type(hir: &hir::File<'_>, site: &ImportSite) -> bool {
     let ImportSiteKind::ImportCall(call) = site.kind else {
         return false;

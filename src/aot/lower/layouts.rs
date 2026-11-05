@@ -26,10 +26,8 @@ pub use self::object_types::ObjectTypeKey;
 use self::object_types::{ListedFields, SortedMember};
 pub(in crate::lower) use self::own_fields::OwnFields;
 
-// Per file: a layout's fields come from the types this file has looked at. Only `places` carries over to the task's next file.
 #[derive(Default)]
 pub(crate) struct LayoutState {
-    // The index of a layout in `own_fields`, `listed_fields` and `source_types`.
     places: Places,
     own_fields: Vec<Option<Rc<OwnFields>>>,
     listed_fields: Vec<Option<Rc<ListedFields>>>,
@@ -37,18 +35,16 @@ pub(crate) struct LayoutState {
     types_of_layouts: FxHashSet<(LayoutId, CheckerTypeId)>,
     holder_in_progress: Option<CheckerTypeId>,
     holders: FxHashMap<CheckerTypeId, CheckerTypeId>,
-    // The layouts of types that grow without end: `interface Tree<T> { left?: Tree<[T]> }`.
     growing: FxHashSet<LayoutId>,
     object_types: FxHashMap<CheckerTypeId, Option<LayoutId>>,
     sorted_members: FxHashMap<CheckerTypeId, Arc<[SortedMember]>>,
     dictionaries: FxHashMap<CheckerTypeId, bool>,
     literals: FxHashMap<ExprId, LayoutId>,
+    written_types_of_literals: FxHashMap<ExprId, (LayoutId, CheckerTypeId)>,
     literals_in_progress: SmallVec<[ExprId; 2]>,
-    // The types of instances that the file has mapped, until their type arguments are recorded.
+    variables_that_leave_whole: Option<Rc<FxHashSet<bun_sema::bind::SymbolId>>>,
     class_types: Vec<(ClassRef, CheckerTypeId)>,
-    // The layouts of the types that the file declares a position of, and of what a class of the file extends or implements.
     layouts_seen_as_objects: FxHashSet<LayoutId>,
-    // What the file has said of the names of a layout alone: which of its definitions says it, and where the type that it speaks of is declared.
     named_types: FxHashMap<(LayoutId, ObjectTypeKey), (u32, Option<(FileId, u32)>)>,
 }
 
@@ -60,7 +56,6 @@ fn slot_of<T: Default>(slots: &mut Vec<T>, place: usize) -> &mut T {
 }
 
 impl LayoutState {
-    // The caller has already called `begin_file` on `places`.
     pub(in crate::lower) fn new(places: Places) -> LayoutState {
         LayoutState {
             places,
@@ -114,7 +109,6 @@ impl LayoutState {
         }
     }
 
-    // A field's type covers what every type with the layout declares for it, so fields computed before this type was added are stale.
     fn add_source_type(&mut self, layout: LayoutId, ty: CheckerTypeId) -> bool {
         if !self.types_of_layouts.insert((layout, ty)) {
             return false;
@@ -136,7 +130,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.layouts.layouts_seen_as_objects.insert(layout);
     }
 
-    /// `note_layout_of_objects` of each layout that the type names.
     pub(in crate::lower) fn note_layouts_of_objects(&mut self, ty: TypeId) {
         let named = &self.fragment.types.get(ty).layouts;
         self.layouts.layouts_seen_as_objects.extend(named);
@@ -175,13 +168,18 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // Whoever builds a value of the type makes objects with the layouts that it reaches and puts their keys into them.
     pub(crate) fn note_what_is_built(&mut self, ty: TypeId, limit: LimitId) {
         let Some(layouts) = self.collect_reached_layouts(ty, limit) else {
             return;
         };
         for layout in layouts {
             self.fragment.note_allocation(layout);
+            if let Some(listed) = self.list_fields_without_unions(layout) {
+                for &key in listed.keys().iter() {
+                    self.fragment.note_write(key);
+                }
+                continue;
+            }
             let fields = own_fields(self, layout);
             for key in fields.as_slice().iter().filter_map(|field| field.key) {
                 self.fragment.note_write(key);
@@ -193,7 +191,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.record_type_arguments_of_class_types();
         self.define_remaining_class_layouts();
         let mentioned_count = self.fragment.end_layouts_of_code();
-        // Copied because defining a layout names further layouts.
         let mentioned = self.fragment.layouts_named_in_file()[..mentioned_count].to_vec();
         for layout in mentioned {
             match self.fragment.layout_key(layout) {
@@ -215,7 +212,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.define_object_types();
     }
 
-    // The layouts with which the file makes an object, those of `layouts_seen_as_objects`, those of the target of each conversion, and what the types of any of these extend.
     fn find_layouts_of_objects(&self) -> FxHashSet<LayoutId> {
         let mut found = self.layouts.layouts_seen_as_objects.clone();
         found.extend(self.fragment.allocated_layouts());
@@ -238,10 +234,6 @@ impl FileLowering<'_, '_, '_, '_> {
         found
     }
 
-    // A file says what the fields of a layout are declared to hold where `find_layouts_of_objects` lists the layout. Of a layout that it only mentions, and of the type
-    // of a literal, it says the names: what they hold is never looked at.
-    // Defining a layout looks at the types of its fields. A type first seen that way gets no definition from this file: any file whose code builds, reads or
-    // stores an object of that type sees the type while lowering that code, and defines it.
     fn define_object_types(&mut self) {
         let mut types = Vec::new();
         let mut types_of_layouts = Vec::new();
@@ -286,7 +278,6 @@ pub(in crate::lower) fn own_fields(
         }
         LayoutKey::ObjectType { .. } => file.compute_object_type_fields(layout),
         LayoutKey::Container(symbol) => file.compute_container_fields(symbol),
-        // The checker of this project has not read the text that stores them.
         _ => OwnFields::default(),
     };
     file.layouts.store_fields(layout, fields)

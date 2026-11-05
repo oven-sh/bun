@@ -53,8 +53,6 @@ pub(crate) struct Coordinator<'a> {
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
     pub(crate) last_header_idx: Option<u32>,
-    /// Where the run ends as in one process: the file that the worker has begun. It has printed the header itself.
-    pub(crate) header_printed_by_worker: Option<u32>,
     pub frame: Frame,
     pub(crate) parallel_limit: u32,
     /// A compiled run with `--timings` that say how much memory files took: no two files that took over a gigabyte run at once, and
@@ -78,13 +76,6 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) spawned_count: u32,
     pub(crate) live_workers: u32,
     pub(crate) aborted: Option<u32>,
-    /// The workers stand for the one process in which plain `bun test` runs these files, and the run ends as it does there.
-    /// `run_as_coordinator` starts workers only where plain `bun test` does, so it never sets this.
-    /// Where plain `bun test` starts workers, a run ends with 0 whatever a test has stored, and its summary counts no snapshots.
-    pub(crate) ends_as_in_one_process: bool,
-    /// `process.exitCode = 3` in a test: what the last file that changed it has left. Each file starts from there, whichever worker runs it.
-    pub(crate) exit_code_left_by_tests: Option<u8>,
-    pub(crate) failed_to_write_inline_snapshots: bool,
     pub(crate) stop_reason: Option<StopReason>,
     pub(crate) last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
@@ -597,13 +588,11 @@ impl<'a> Coordinator<'a> {
         }
         self.stop_reason = Some(StopReason::Bail);
         self.break_dots();
-        if !self.ends_as_in_one_process {
-            bun_core::pretty_error!(
-                "\nBailed out after {} failure{}<r>\n",
-                self.bail,
-                if self.bail == 1 { "" } else { "s" }
-            );
-        }
+        bun_core::pretty_error!(
+            "\nBailed out after {} failure{}<r>\n",
+            self.bail,
+            if self.bail == 1 { "" } else { "s" }
+        );
         Output::flush();
         // Reachable from on_frame/account_crash with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() here
@@ -652,8 +641,7 @@ impl<'a> Coordinator<'a> {
     }
 
     fn ensure_header(&mut self, file_idx: u32) {
-        if self.last_header_idx == Some(file_idx) || self.header_printed_by_worker == Some(file_idx)
-        {
+        if self.last_header_idx == Some(file_idx) {
             return;
         }
         self.end_group();
@@ -712,10 +700,6 @@ impl<'a> Coordinator<'a> {
             }
             frame::Kind::FileStart => {
                 log_first_time_in_test_run("the first test file has begun");
-                let idx = rd.u32();
-                if self.ends_as_in_one_process {
-                    self.header_printed_by_worker = Some(idx);
-                }
             }
             frame::Kind::TestDone => {
                 log_first_time_in_test_run("the first result is there");
@@ -763,7 +747,6 @@ impl<'a> Coordinator<'a> {
                 let rd_growth = rd.u32();
                 let largest_child = rd.u32();
                 self.max_worker_peak_rss_mb = self.max_worker_peak_rss_mb.max(rd.u32());
-                let exit_code_left = rd.u32();
                 let first_loads = rd.str();
                 // Of the two views of the children, one sees the short-lived and one sees those that run at once.
                 let growth = rd_growth + largest_child.max(self.take_highest_of_children(w));
@@ -785,11 +768,6 @@ impl<'a> Coordinator<'a> {
                 // so we don't double-count.
                 if w.inflight != Some(idx) {
                     return;
-                }
-                if let (true, Some(code)) =
-                    (self.ends_as_in_one_process, exit_code_left.checked_sub(1))
-                {
-                    self.exit_code_left_by_tests = Some(code as u8);
                 }
                 w.first_loads.clear();
                 w.first_loads.extend_from_slice(first_loads);
@@ -855,35 +833,13 @@ impl<'a> Coordinator<'a> {
             frame::Kind::RefusedChange => {
                 crate::cli::run_compiled::add_refused_change(rd.str().to_vec());
             }
-            frame::Kind::Snapshots => {
-                let [total, passed, failed, added, unwritten] = [(); 5].map(|()| rd.u32() as usize);
-                if self.ends_as_in_one_process {
-                    let snapshots = &mut self.reporter.jest.snapshots;
-                    snapshots.total += total;
-                    snapshots.passed += passed;
-                    snapshots.failed += failed;
-                    snapshots.added += added;
-                    self.failed_to_write_inline_snapshots |= unwritten != 0;
-                }
-            }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
     }
 
     fn dispatch_to(&mut self, w: &mut Worker, idx: u32) {
         let file = self.files[idx as usize].as_bytes();
-        let failures_until_bail = match self.ends_as_in_one_process {
-            true => self.bail.saturating_sub(self.reporter.jest.summary.fail),
-            false => 0,
-        };
-        w.dispatch(
-            &mut self.frame,
-            idx,
-            file,
-            self.exit_code_left_by_tests,
-            self.ends_as_in_one_process,
-            failures_until_bail,
-        );
+        w.dispatch(&mut self.frame, idx, file);
     }
 
     pub(crate) fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus, peak_rss_mb: u32) {

@@ -122,7 +122,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_exit(Exit::Return, Some(value));
     }
 
-    // For a value that no expression of the program returns. Nothing proves that it is an `int32`.
     fn convert_to_result(&mut self, value: ValueId) -> ValueId {
         match get_return_rule(self.builder.function().kind) {
             ReturnRule::DeclaredResult => {
@@ -134,7 +133,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // The checker lets a function whose result has no `undefined` end only where it finds the end unreachable.
     pub(crate) fn emit_empty_return(&mut self) {
         let undefined = self.builder.undefined();
         let value = self.convert_to_result(undefined);
@@ -164,7 +162,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // JSC makes no tail call from the body of a for-in statement.
     fn is_in_for_in_body(&self) -> bool {
         let hir = self.file.hir;
         self.control.entries.iter().any(|entry| match entry {
@@ -175,7 +172,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         })
     }
 
-    // `owes_no_proof`: as where a value that is no call in tail position enters the same positions, `convert_as`.
     pub(crate) fn emit_return_call(
         &mut self,
         call: ValueId,
@@ -337,7 +333,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-/// Whether the last call of `value`, which the function returns, is a tail call.
 pub(crate) fn allows_tail_call_of(
     lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
     value: ExprId,

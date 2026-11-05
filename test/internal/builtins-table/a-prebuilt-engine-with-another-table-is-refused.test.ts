@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
@@ -54,7 +54,7 @@ test.skipIf(generated === undefined)(
     expect(errors).not.toContain("another list of the built-ins");
     expect(exitCode).toBe(0);
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );
 
 test.skipIf(generated === undefined)(
@@ -75,7 +75,7 @@ test.skipIf(generated === undefined)(
     expect(errors).toContain("another list of the built-ins");
     expect(exitCode).toBe(1);
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );
 
 test.skipIf(generated === undefined)(
@@ -88,7 +88,7 @@ test.skipIf(generated === undefined)(
     expect(errors).not.toContain("AOTBuiltinTableBuiltins.cpp");
     expect(exitCode).toBe(0);
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );
 
 test.skipIf(generated === undefined)(
@@ -115,5 +115,5 @@ test.skipIf(generated === undefined)(
     expect(exitCode).toBe(0);
     expect(tableOfBuiltins).toContain("aMethodNobodyHasYet");
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );

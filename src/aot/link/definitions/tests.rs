@@ -80,7 +80,6 @@ fn function_fragment(file: FileId, key: FunctionKey) -> Fragment {
 fn layout_fragment(file: FileId, key: LayoutKey) -> Fragment {
     let mut fragment = FragmentBuilder::alone(file);
     define_layout(&mut fragment, key);
-    // The definition of the home file stands only where the code of that file names the layout.
     fragment.end_layouts_of_code();
     finish(fragment)
 }
@@ -232,7 +231,6 @@ fn what_is_said_again_of_a_type_is_dropped() {
         let merged = prepared.layouts.find(&in_application(key)).unwrap();
         let others = prepared.definitions.other_definitions_of(merged).iter();
         let others: Vec<DefinitionSite> = others.map(|&(_, site)| site).collect();
-        // The later unit holds them in the order of their types by now: none, none, one, two, three.
         assert_eq!(others, [site(0, 1), site(1, 0), site(1, 1), site(1, 4)]);
         assert!(prepared.definitions.is_other_definition(merged, site(1, 1)));
         assert!(!prepared.definitions.is_other_definition(merged, site(1, 2)));
@@ -243,7 +241,6 @@ fn what_is_said_again_of_a_type_is_dropped() {
 fn in_which_order_a_unit_defines_the_types_of_a_layout_changes_nothing() {
     with_test_files(|projects, [main, _, _]| {
         let keys = [1, 2].map(test_object_type_key);
-        // Of each definition: which layout, its type, and its position, which tells it from the others here.
         let positions_in_order = |said: &[(usize, Option<u64>, u32)]| {
             let mut fragment = FragmentBuilder::alone(main);
             for &(key, identity, position) in said {
@@ -604,12 +601,10 @@ fn empty_layout_has_kind_of_its_key() {
 #[test]
 fn synthetic_export_variable_is_untyped_and_uninitialized() {
     let (name, module) = (StringId::new(3), ModuleId::new(2));
-    // A copy stays empty where the object lacks the name, and what a face takes is empty for an importer that the CommonJS file itself requires. The check of the importer tests for that.
     let may_be_read_empty = || DeclaredType {
         ty: TypeTable::ANYTHING_OR_ABSENT,
         ..DeclaredType::untyped()
     };
-    // So does the variable for a name that a module of the library may lack.
     let writers = [
         (ExportWriter::Loader, true, DeclaredType::untyped()),
         (ExportWriter::Loader, false, may_be_read_empty()),

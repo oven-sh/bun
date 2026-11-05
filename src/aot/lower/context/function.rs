@@ -25,13 +25,9 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(crate) scopes: ScopeState,
     pub(crate) control: ControlState,
     pub(crate) coroutine: CoroutineState,
-    // By a callee that comes by two ways, read on what `require` answered or read as it is written: what was read on the answer, or nothing.
     pub(in crate::lower) callees_read_on_answers: FxHashMap<ValueId, ValueId>,
-    // The call that is being lowered stands in tail position. What loads a module in its place says so.
     pub(in crate::lower) is_call_in_tail_position: bool,
-    // `const made = Object.create(parent); made.name = ..`: the call of the declaration that is being lowered, or of one before it.
     pub(in crate::lower) object_created_for_maker: Option<bun_sema::hir::ExprId>,
-    // The counter of the expression that is being lowered, where it has one.
     pub(in crate::lower) counted_expression: Option<u32>,
     handler: Option<Handler>,
     position: u32,
@@ -112,13 +108,11 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         }
     }
 
-    // Nothing tests an expected type here. A use that wants to rely on it has its own guard.
     pub(crate) fn expect_type(&mut self, value: ValueId, expected: TypeId) -> ValueId {
         convert::expect_type(self, value, expected)
     }
 
     pub(crate) fn expect_builtin(&mut self, value: ValueId, builtin: BuiltinId) -> ValueId {
-        // The exports of a module are an object that its body makes, or whatever it puts in the place of that.
         let expected = if builtin == BuiltinId::ModuleObjectExports {
             let own_file = self.file.file;
             match self.file.module_exports_layout(own_file) {
@@ -187,8 +181,6 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         self.continue_in_new_block();
     }
 
-    /// Code may be nested as deeply as the stack of this thread allows. The parser ends earlier on nearly all code: it takes a part
-    /// of its stack only, so that whoever walks its tree has enough.
     pub(crate) fn enter_nesting(&mut self, position: u32) -> bool {
         if !self.file.queries.is_stack_low() && bun_core::StackCheck::init().is_safe_to_recurse() {
             self.nesting_depth += 1;

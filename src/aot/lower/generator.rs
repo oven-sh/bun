@@ -10,7 +10,6 @@ use crate::ir::{DeclaredType, Edge, FunctionKey, PositionFlags, ValueId};
 #[derive(Default)]
 pub(crate) struct CoroutineState {
     yielded: Option<DeclaredType>,
-    /// What the function holds until it ends. Every suspension lists the values.
     pub(in crate::lower) held: SmallVec<[BindingRef; 4]>,
 }
 
@@ -35,8 +34,6 @@ pub(crate) fn coroutine_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFl
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // What one operation takes at once waits in the frame for the last of it: a word for each value, and often one more to hand it over.
-    // A function that suspends pays for its whole frame whenever it goes on. So there a literal takes only so much at once, and the rest as it is made.
     pub(in crate::lower) fn may_wait_with(&self, waiting: usize) -> bool {
         let suspends = FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR;
         waiting < MOST_VALUES_THAT_WAIT_WHERE_FRAMES_ARE_SAVED
@@ -147,7 +144,6 @@ pub(crate) fn lower_yield(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // The position takes what the operand is fulfilled with: the operand itself where its type has no promise in it. Only the proof of an `int32` looks at it.
     fn find_awaited_source(&mut self, operand: ExprId, position: DeclaredType) -> Option<ExprId> {
         if !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
             return None;

@@ -54,6 +54,7 @@ pub(super) fn compute_declarations(input: &mut RuntimeInput<'_, '_>) -> RuntimeS
     declarations.create_body_variables();
     declarations.hoist_block_functions();
     declarations.create_class_bindings();
+    declarations.create_container_parameters();
     declarations.check_duplicate_names();
     declarations.finish()
 }
@@ -82,7 +83,6 @@ pub(super) fn append_symbol(
     symbol
 }
 
-// What runs evaluates the body of a namespace, and the members of an enum, in a function of their own.
 pub(super) fn is_var_scope(kind: ScopeKind) -> bool {
     matches!(
         kind,
@@ -177,7 +177,6 @@ impl Declarations<'_, '_> {
             let mut decls = symbol.decls.iter();
             decls.any(|&d| declaration_creates_binding(hir, bound, d))
         };
-        // `namespace K` beside `export declare class K` binds the exported symbol, which lists the class alone.
         let mut bound_without_export = Vec::new();
         for (index, symbol) in bound.symbols.iter().enumerate() {
             let binding = bound.file_binding(SymbolId(index as u32));

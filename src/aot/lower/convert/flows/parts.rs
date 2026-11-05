@@ -8,7 +8,6 @@ use crate::ir::ContentsSlot;
 use crate::lower::types::find_contents_type;
 use crate::lower::{CheckerTypeId, FileLowering};
 
-// `() => Promise<User>` into `() => Promise<Named>`: the result, and what the result holds. A type that grows as it is opened has no last level: `type Next<T> = () => Next<T[]>`.
 pub(super) const LEVELS_BELOW_FLOW: u8 = 2;
 
 fn record_part(
@@ -22,7 +21,6 @@ fn record_part(
     }
 }
 
-// A union is not opened: the checker lists its members in the order of their ids, which follow its schedule, and link reads the pairs in the order they were recorded.
 pub(super) fn find_value_type<'c>(
     file: &mut FileLowering<'_, 'c, '_, '_>,
     ty: CheckerTypeId,
@@ -52,7 +50,6 @@ fn find_function_declaration(
     }
 }
 
-// What a method is in its class and in a class that inherits it, where `this` is another type.
 fn is_one_function(
     file: &mut FileLowering<'_, '_, '_, '_>,
     one: CheckerTypeId,
@@ -62,7 +59,6 @@ fn is_one_function(
     declaration.is_some() && declaration == find_function_declaration(file, other)
 }
 
-// `Queries::members_typed_otherwise` lists the string names alone.
 fn record_symbol_member_flows(
     file: &mut FileLowering<'_, '_, '_, '_>,
     source: CheckerTypeId,
@@ -93,7 +89,6 @@ fn record_symbol_member_flows(
     }
 }
 
-// What an object has under a name of the type that it flows into is read through the type that the name has there. Nothing is followed below a member: those are types that nobody else asks the checker for.
 pub(super) fn record_member_flows(
     file: &mut FileLowering<'_, '_, '_, '_>,
     source: CheckerTypeId,
@@ -117,7 +112,6 @@ pub(super) fn record_member_flows(
     record_symbol_member_flows(file, source, target);
 }
 
-// What is read out of a container, called or read off an object is tested against the type that the target gives it, so what the source gives it goes into the family of that type.
 pub(super) fn record_flows_of_parts(
     file: &mut FileLowering<'_, '_, '_, '_>,
     source: CheckerTypeId,
@@ -146,7 +140,6 @@ pub(super) fn record_flows_of_parts(
         return;
     }
     match (source_kind, target_kind) {
-        // A class says what it extends and implements where it is defined.
         (ShapeKind::Class(_) | ShapeKind::Object, ShapeKind::Object) => {
             record_member_flows(file, source, target);
         }
@@ -191,7 +184,6 @@ pub(super) fn record_flows_of_parts(
                 }
             }
         }
-        // What is passed to the function is tested where the function is entered.
         (ShapeKind::Function(&[returning]), ShapeKind::Function(&[expecting])) => {
             if is_one_function(file, source, target) {
                 return;

@@ -1099,7 +1099,11 @@ Readable.prototype.on = function (this: $Node.Readable, ev: $Node.EventName, fn:
 };
 Readable.prototype.addListener = Readable.prototype.on;
 
-Readable.prototype.removeListener = function (this: $Node.Readable, ev: $Node.EventName, fn: $Node.Listener) {
+const removingMethod = (Readable.prototype.removeListener = function (
+  this: $Node.Readable,
+  ev: $Node.EventName,
+  fn: $Node.Listener,
+) {
   const state: ReadableState = this._readableState;
 
   const res = Stream.prototype.removeListener.$call(this, ev, fn);
@@ -1117,7 +1121,7 @@ Readable.prototype.removeListener = function (this: $Node.Readable, ev: $Node.Ev
   }
 
   return res;
-};
+});
 Readable.prototype.off = Readable.prototype.removeListener;
 
 const removingAllMethod = (Readable.prototype.removeAllListeners = function (
@@ -1236,6 +1240,7 @@ internals.readableMethods = {
   push: pushingMethod,
   resume: resumingMethod,
   removeAllListeners: removingAllMethod,
+  removeListener: removingMethod,
 };
 internals.finishResume = finishResume;
 internals.finishReadOfNothing = finishReadOfNothing;

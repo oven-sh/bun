@@ -10,7 +10,7 @@ use crate::StandaloneModuleGraph::{
 use crate::compiled_program::{
     CompiledProgramInput, EntryPointPathPointers, ImagePlace, append_record,
 };
-use crate::executable_file::{ImageRange, ImageSymbols, PayloadParts, relocate_images};
+use crate::executable_file::{ImageRange, ImageSymbols, PayloadParts, relocate_image};
 
 pub struct GraphRequest<'a> {
     pub target: &'a CompileTarget,
@@ -215,8 +215,8 @@ pub fn to_graph_bytes(
     }
     if let (Some(image), Some(place)) = (graph.image, place) {
         let address = place.mapped_at + size_of::<u64>() as u64 + u64::from(image.offset);
-        let images = &mut graph.bytes[image.offset as usize..][..image.length as usize];
-        relocate_images(images, address);
+        let image = &mut graph.bytes[image.offset as usize..][..image.length as usize];
+        relocate_image(image, address);
     }
     let mut bytes: Vec<u8> = Vec::with_capacity(size_of::<u64>() + graph.bytes.len());
     bytes.extend_from_slice(&(graph.bytes.len() as u64).to_le_bytes());

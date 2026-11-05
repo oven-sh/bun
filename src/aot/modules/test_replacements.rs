@@ -18,20 +18,14 @@ use bun_sema::util::SharedSort;
 use core::ops::Range;
 use std::sync::OnceLock;
 
-/// The spies of a file on objects that are no module object by their binding and no built-in. Such an object may have come from anywhere.
 #[derive(Default)]
 pub(super) struct SpiesOnUnknownObjects {
-    /// `spyOn(object, "name")` replaces what goes by that name and nothing else.
     pub names: Vec<Atom>,
-    /// The build does not know the name, or does not see the call.
     pub is_any_name: bool,
 }
 
-/// What becomes of the object that `require` or an awaited `import()` returns.
 enum LoadedObjectUse {
-    /// The file reads members off it, tests it or drops it.
     OnlyRead,
-    /// A name that is bound once holds it.
     Held(SymbolId),
     Escapes,
 }
@@ -62,19 +56,16 @@ impl FileBinder<'_, '_> {
                     self.imports.namespaces_spied_on_whole.push(module);
                 }
                 (None, Some(name)) => self.imports.spies_on_unknown_objects.names.push(name),
-                // Whoever calls the helper spells the name, and the run has read the callers: `RunContents::names_spied`, or `spies_under_any_name` where nobody does.
                 (None, None) if source.of_run.spies_under_names_from_outside => {}
                 (None, None) => self.imports.spies_on_unknown_objects.is_any_name = true,
             }
         }
     }
 
-    /// The imports and the holders that stand for the object of a module, by symbol.
     fn collect_module_object_names(&self) -> Vec<(SymbolId, StandsFor)> {
         let imported = self.imports.bindings.iter();
         let imported = imported.filter_map(|&(name, binding)| {
             let object = match binding {
-                // A spy reads the name off a deferred namespace, which evaluates the module.
                 PendingBinding::Bound(ImportBinding::Namespace { module, .. }) => {
                     StandsFor::ImportedNamespace(module)
                 }
@@ -102,7 +93,6 @@ impl FileBinder<'_, '_> {
     ) -> Option<StandsFor> {
         let bound = self.bound;
         let object = self.hir.skip_type_assertions(object);
-        // Under `with`, or beside a sloppy direct `eval`, the run looks the name up and may find another object.
         if !bound.is_evaluated_ident(object)
             || bound.dynamic_lookup_scope(NodeData::Expr(object)).is_some()
         {
@@ -115,8 +105,6 @@ impl FileBinder<'_, '_> {
         position.ok().map(|position| names[position].1)
     }
 
-    // `spyOn(ns, "name")` stores a function of the test runner where the module keeps what it exports under the name.
-    // A name that a link has yet to look for is replaced like any other, so what the link requires does not count here.
     fn replace_export(&mut self, spied_on: StandsFor, name: Atom) {
         let resolved = match spied_on {
             StandsFor::ImportedNamespace(module) => {
@@ -126,7 +114,6 @@ impl FileBinder<'_, '_> {
             | StandsFor::Exports(module)
             | StandsFor::Copy { module, .. } => self.resolve_required_name(module, name),
         };
-        // The module has no such name, and the spy throws.
         let Ok((binding, _)) = resolved else {
             return;
         };
@@ -138,7 +125,6 @@ impl FileBinder<'_, '_> {
             | PendingBinding::CapturedBuiltin { module, name, .. } => {
                 self.imports.replaced_names.push((module, name));
             }
-            // Which module behind an `export *` has the name shows at run time.
             PendingBinding::Bound(ImportBinding::NamespaceRead { module, .. }) => {
                 self.imports.namespaces_spied_on_whole.push(module);
             }
@@ -156,13 +142,11 @@ impl FileBinder<'_, '_> {
         }
     }
 
-    // What `import()` and `require` return goes where the file does not follow it, unless the file only reads members off it.
     pub(super) fn note_loads_handed_out(&mut self) {
         if !self.context.runs_tests {
             return;
         }
         let (hir, bound, analysis, scan) = (self.hir, self.bound, self.analysis, self.scan);
-        // Nobody follows the names that hold a deferred namespace, nor what the text of a direct `eval` does with a name that it sees.
         for &(name, binding) in &self.imports.bindings {
             if let PendingBinding::Bound(ImportBinding::Namespace { module, phase }) = binding
                 && (phase == ImportPhase::Defer || bound.is_visible_to_eval(name))
@@ -189,7 +173,6 @@ impl FileBinder<'_, '_> {
                         let holders = &self.imports.holders;
                         match holders.binary_search_by_key(&name, |holder| holder.symbol) {
                             Ok(_) => held.push((name, module)),
-                            // It is exported, or a direct `eval` sees it.
                             Err(_) => self.imports.namespaces_handed_out.push(module),
                         }
                     }
@@ -230,17 +213,14 @@ impl FileBinder<'_, '_> {
             &mut self.imports.namespaces_handed_out,
         );
         if hands_out_every_module {
-            // `BindInput::hands_on_any_module` says the same for the whole program.
             if !self.context.input.hands_on_any_module {
                 let files = modules.compiled_files.iter();
                 handed_out.extend(files.map(|&file| ModuleRef::File(file)));
-                // The members of the test runner stay known: the build has to see which calls are spies.
                 let test_runner = ModuleRef::Runtime(RuntimeModule::BunTest);
                 let others = modules.other_modules.iter().copied();
                 handed_out.extend(others.filter(|&module| module != test_runner));
             }
         } else if hands_out_candidates {
-            // A site does not list all that it may name: the file does, for all its sites together.
             handed_out.extend_from_slice(&scan.candidates);
         }
         if held.is_empty() {
@@ -275,7 +255,6 @@ impl FileBinder<'_, '_> {
 
     fn find_loaded_object_use(&self, call: ExprId, returns_promise: bool) -> LoadedObjectUse {
         let (hir, bound) = (self.hir, self.bound);
-        // `const a = __importStar(require(K))`
         let mut holders = self.imports.holders.iter();
         if let Some(holder) = holders.find(|holder| holder.call == call) {
             return LoadedObjectUse::Held(holder.symbol);
@@ -308,7 +287,6 @@ impl FileBinder<'_, '_> {
 
     pub(super) fn collect_mocked_modules(&mut self) {
         let context = self.context;
-        // One file says it for all of them.
         if context.modules.compiled_files.first() == Some(&self.file) {
             if context.input.mocks_any_module {
                 self.mock_every_module();
@@ -338,7 +316,6 @@ impl FileBinder<'_, '_> {
                     }
                 }
                 ScannedSite::AllModules => self.mock_every_module(),
-                // A test may mock a module that no file stands for.
                 ScannedSite::Unresolved | ScannedSite::Erased => {}
             }
         }
@@ -369,7 +346,6 @@ impl FileBinder<'_, '_> {
         }
     }
 
-    // A mock is stored under the names of the module, as if through its namespace object.
     fn mock(&mut self, module: ModuleRef) {
         self.imports.mocked_modules.push(module);
         self.look_at(StandsFor::ImportedNamespace(module));
@@ -383,27 +359,22 @@ fn find_user(bound: &Bound<'_>, value: ExprId) -> Option<ExprId> {
     }
 }
 
-// `value.name`, `value[key]`
 fn is_object_of_member(hir: &File<'_>, bound: &Bound<'_>, value: ExprId) -> bool {
     let member = find_user(bound, value).and_then(|user| hir.member_key(user));
     member.is_some_and(|(object, _)| object == value)
 }
 
-// `callee(..)`
 fn find_call_of(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> Option<ExprId> {
     let user = find_user(bound, callee)?;
     matches!(hir[user].kind, ExprKind::Call(call) if hir[call].callee == callee).then_some(user)
 }
 
-// `{ a, b: c }`
 fn reads_only_named_properties(hir: &File<'_>, pattern: PatId) -> bool {
     matches!(hir[pattern].kind, PatKind::Object(properties) if properties.iter().all(|it| {
         !hir[it].is_rest && matches!(hir[it].key, PropKey::Name(_))
     }))
 }
 
-/// Whether `value` is only tested where it stands, so that what it stands for goes nowhere: `typeof jest !== "undefined"`, `jest === undefined`,
-/// `!jest`, `if (jest)`, `jest ? a : b`, and `jest && ..`, which evaluates to its left side only where that is no object.
 fn is_only_tested(hir: &File<'_>, bound: &Bound<'_>, mut value: ExprId) -> bool {
     loop {
         let user = match bound.parent_of_expr(value) {
@@ -435,7 +406,6 @@ fn is_only_tested(hir: &File<'_>, bound: &Bound<'_>, mut value: ExprId) -> bool 
                 ..
             } if left == value => return true,
             ExprKind::Cond { test, .. } if test == value => return true,
-            // `typeof jest !== "undefined" && jest ? a : b`: it may be the value of the whole expression, so it goes where that goes.
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Or | BinOp::Nullish,
                 ..
@@ -451,12 +421,10 @@ fn test_runner_object() -> BuiltinId {
     table::canonical_id(table::namespace_of(RuntimeModule::BunTest))
 }
 
-/// `Bun.jest(path)` returns the object of the test runner. `builtin`: a canonical id.
 fn returns_test_runner_object(builtin: BuiltinId) -> bool {
     builtin == table::canonical_id(BuiltinId::BunJest)
 }
 
-/// `mock`, and `jest` and `vi` of either flavor of the runner: what resets the modules of the run is a member of those two. `builtin`: a canonical id.
 fn mocks_modules(builtin: BuiltinId) -> bool {
     let mut members = table::members(builtin).iter();
     builtin == table::canonical_id(BuiltinId::BunTestMock)
@@ -467,8 +435,6 @@ fn leads_to_mocks(builtin: BuiltinId) -> bool {
     builtin == test_runner_object() || returns_test_runner_object(builtin) || mocks_modules(builtin)
 }
 
-/// What `mock`, `jest` and `vi` offer that has nothing to do with the modules of the run, as the table of built-ins names it.
-/// Whatever else a file reads off them may take a mock back or ask for what stands behind it.
 const MEMBERS_THAT_LEAVE_MODULES_ALONE: [&[u8]; 30] = [
     b"advanceTimersByTime",
     b"advanceTimersToNextTimer",
@@ -502,7 +468,6 @@ const MEMBERS_THAT_LEAVE_MODULES_ALONE: [&[u8]; 30] = [
     b"waitUntil",
 ];
 
-/// `member`: what the file's built-ins resolve a read off `mock`, `jest` or `vi` to.
 fn leaves_modules_alone(member: BuiltinId) -> bool {
     static NAMES: OnceLock<Vec<BuiltinName>> = OnceLock::new();
     let names = NAMES.get_or_init(|| {
@@ -512,25 +477,19 @@ fn leaves_modules_alone(member: BuiltinId) -> bool {
     names.contains(&table::entry(member).name)
 }
 
-/// Whether a file may take `member` off `holder`, which leads to mocks, and do with it what it likes. Both are canonical ids.
-/// A member that leads to mocks in its turn is looked at where it is mentioned, and nothing else that the module exports has to do with modules.
 fn allows_member(holder: BuiltinId, member: BuiltinId) -> bool {
     holder == test_runner_object() || leads_to_mocks(member) || leaves_modules_alone(member)
 }
 
-/// How a file uses what leads from the test runner to the mocks of modules.
 struct TestRunnerUses<'a, 's> {
     hir: &'a File<'s>,
     bound: &'a Bound<'s>,
     analysis: &'a FileAnalysis<'s>,
     builtins: &'a ResolvedBuiltins,
-    /// Whether the import site loads `bun:test`.
     is_test_runner: &'a dyn Fn(usize) -> bool,
 }
 
 impl TestRunnerUses<'_, '_> {
-    /// Whether anything loads `bun:test`, and the names of `import * as runner`, which no resolved expression stands for.
-    /// `None`: a load hands the object of the module to code that the file does not show.
     fn find_loads(&self) -> Option<(bool, Vec<SymbolId>)> {
         let (mut is_loaded, mut namespace_names) = (false, Vec::new());
         for (index, site) in self.analysis.import_sites.iter().enumerate() {
@@ -550,7 +509,6 @@ impl TestRunnerUses<'_, '_> {
                 {
                     return None;
                 }
-                // The call stands for the object, or loads nothing.
                 ImportSiteKind::JsxRuntime
                 | ImportSiteKind::JsxPackage
                 | ImportSiteKind::ImportEquals(_)
@@ -560,7 +518,6 @@ impl TestRunnerUses<'_, '_> {
                 | ImportSiteKind::ImportMetaResolve(_)
                 | ImportSiteKind::GetBuiltinModule(_)
                 | ImportSiteKind::MockModule(_) => {}
-                // Whoever imports from this file what it exports from there has `mock` under a name that stands for nothing.
                 ImportSiteKind::ExportFrom(_)
                 | ImportSiteKind::ExportStar(_)
                 | ImportSiteKind::ImportCall(_)
@@ -571,7 +528,6 @@ impl TestRunnerUses<'_, '_> {
         Some((is_loaded, namespace_names))
     }
 
-    /// Whether every way in which the file may mock a module, take a mock back or ask for an original is a call that stands in its text.
     fn shows_every_use(&self) -> bool {
         let (hir, bound, analysis, builtins) = (self.hir, self.bound, self.analysis, self.builtins);
         let Some((is_loaded, namespace_names)) = self.find_loads() else {
@@ -582,7 +538,6 @@ impl TestRunnerUses<'_, '_> {
         if !is_loaded && !mentioned.any(returns_test_runner_object) {
             return true;
         }
-        // The text of a direct `eval` names what the file imports, and nobody reads it.
         let mut evals = bound.runtime.eval_scopes().iter();
         if evals.any(|&(call, _)| !analysis.decisions.is_dead_expr(call)) {
             return false;
@@ -626,7 +581,6 @@ impl TestRunnerUses<'_, '_> {
         })
     }
 
-    /// `mention` stands for `builtin`, which leads to mocks.
     fn shows_use(&self, mention: ExprId, builtin: BuiltinId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let value = find_outermost_type_assertion(hir, bound, mention);
@@ -638,14 +592,12 @@ impl TestRunnerUses<'_, '_> {
                 return false;
             };
             let read = find_outermost_type_assertion(hir, bound, member);
-            // `typeof mock.module === "function"` asks whether it is there, and the function goes nowhere.
             if is_only_tested(hir, bound, read) || self.is_callee_of_mock_site(read) {
                 return true;
             }
             let found = self.builtins.builtin_of_expression(member);
             return found.is_some_and(|found| allows_member(builtin, table::canonical_id(found)));
         }
-        // `mock(() => 1)`
         if let Some(call) = find_call_of(hir, bound, value) {
             return !returns_test_runner_object(builtin)
                 || self.shows_use(call, test_runner_object());
@@ -656,7 +608,6 @@ impl TestRunnerUses<'_, '_> {
         }
     }
 
-    // `mock.module(..)` where it stands is a site of the file, which whoever asks looks at by itself.
     fn is_callee_of_mock_site(&self, callee: ExprId) -> bool {
         let analysis = self.analysis;
         let call = find_call_of(self.hir, self.bound, callee);
@@ -669,7 +620,6 @@ impl TestRunnerUses<'_, '_> {
         })
     }
 
-    // `const { mock, test } = require("bun:test")`: the names say what is taken, as in an import statement, and each stands for what it names from then on.
     fn takes_allowed_members(&self, declaration: VarDeclId, holder: BuiltinId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let declaration = &hir[declaration];
@@ -690,10 +640,6 @@ impl TestRunnerUses<'_, '_> {
     }
 }
 
-/// Whether the file may get at the original of a file beside its mock. The test runner loads that from disk, as a copy that the build has not compiled: `vi.importActual()`,
-/// `jest.requireActual()` and their kin, the parameter of a factory, a mock without a factory, `{ spy: true }`, a mock that is taken back.
-/// `mock.module(path, () => ..)` with a factory that is written out and takes nothing asks for nothing. Everything that this does not read counts as asking.
-/// `is_test_runner`: whether the site loads `bun:test`.
 pub(crate) fn asks_for_original_beside_mock<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
@@ -702,7 +648,6 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
     _atoms: &Interner<'s>,
     is_test_runner: &dyn Fn(usize) -> bool,
 ) -> bool {
-    // The host goes by the text of a factory too, comments and strings with it: `mentionsOriginalModule()` in src/jsc/bindings/BunPlugin.cpp.
     let text_names_original = |factory: ExprId| {
         let written = hir[factory].pos as usize..hir[factory].end as usize;
         hir.text.get(written).is_none_or(|text| {
@@ -716,7 +661,6 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
         let ExprKind::Fn(function) = hir[factory].kind else {
             return false;
         };
-        // A function that is no arrow function has `arguments`.
         hir[function].kind == FnKind::Arrow
             && hir[function].params.is_empty()
             && !text_names_original(factory)

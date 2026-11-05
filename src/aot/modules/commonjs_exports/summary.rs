@@ -1,5 +1,3 @@
-//! What the text of one CommonJS file says of its exports.
-
 use super::{CommonJsInput, find_literal_exported_under_name};
 use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
@@ -24,26 +22,23 @@ use bun_sema::util::SharedSort;
 use core::cmp::Reverse;
 use std::cell::OnceCell;
 
-/// `statement` holds the store, and every run of the body passes the store.
-/// `StmtId::NONE`: a function, a branch or a loop stores, so that a run of the body may end without the name.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum StoredName {
-    /// `exports.n = v`, `module.exports.n = v`, a key of `module.exports = { n: v }`. `value` is what stands behind the `=` or the key.
-    /// `value` is `ExprId::NONE` where a call defines `__esModule`: as `true` if `statement` is set, otherwise only the run knows what the name reads.
     Value {
         name: Atom,
         statement: StmtId,
         value: ExprId,
     },
-    /// `Object.defineProperty(exports, "n", { enumerable, get })`, `__export(exports, { n: () => v })`, `__createBinding`
     Getter {
         name: Atom,
         statement: StmtId,
         getter: ExprId,
         is_enumerable: bool,
     },
-    /// `__exportStar(require(K), exports)`, `__reExport`, `Object.assign(exports, require(K))`
-    AllOf { statement: StmtId, site: u32 },
+    AllOf {
+        statement: StmtId,
+        site: u32,
+    },
 }
 
 impl StoredName {
@@ -63,25 +58,14 @@ impl StoredName {
     }
 }
 
-/// When `object_escapes` is set, `names` may be incomplete and the other fields carry no information.
 #[derive(Debug)]
 pub(super) struct ExportsSummary {
-    /// One entry for each store, in the order in which the body makes them; stores that a run may skip come last.
-    /// A name that is listed twice is created by its first entry and holds what the last store to run left there.
-    /// `__esModule` is listed like any other name, whether a store or a call defines it.
-    /// `exports.n = void 0` in front of the one getter of `n` is left out: nobody sees it.
     pub names: Vec<StoredName>,
-    /// `__esModule`: Some(true) stored in the body ahead of every load, Some(false) never stored, None otherwise.
     pub marker: Option<bool>,
-    /// `exports`, `module.exports` or `module` goes somewhere as a value, is enumerated, deleted from, updated in place or stored
-    /// under a computed key, or `this` of the body is used for more than `this && this.n` in front of all that runs.
     pub object_escapes: bool,
     pub module_object_escapes: bool,
-    /// `module.exports = v`, once, where every run of the body passes it, with `v` nothing that `names` spells out.
     pub replaced_by: Option<ExprId>,
-    /// Once for each `E.n` that is read or called, where the object would be `this`. In the order of the nodes.
     pub names_read_by_own_text: Vec<Atom>,
-    /// Of an inner module: its text names the `exports` of the file around it, on which getters may stand by the time that the callback runs.
     pub names_exports_of_file: bool,
 }
 
@@ -110,11 +94,8 @@ impl ExportsSummary {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Mention {
-    /// The name `exports`: the object that the module was born with.
     ExportsName,
-    /// Written `module.exports`: what the module has there at that time.
     ModuleExports,
-    /// A name that holds either, `(0, exports)`, a member of a name that holds `module`.
     AnotherSpelling,
 }
 
@@ -127,21 +108,16 @@ enum TextNode {
 enum OwnerOfThis {
     Body,
     Function(FnId),
-    /// A field of a class, a namespace, an enum.
     Other,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum OriginKind {
-    /// `E.n = v`
     Store,
-    /// A key of `module.exports = { .. }`
     Literal,
-    /// A call that `look_at_call` understands.
     Call,
 }
 
-/// The node that makes an entry of `names`.
 #[derive(Copy, Clone)]
 struct Origin {
     start: u32,
@@ -149,7 +125,6 @@ struct Origin {
     kind: OriginKind,
 }
 
-/// `module.exports = value`, `export = value`
 #[derive(Copy, Clone)]
 struct Replacement {
     node: ExprId,
@@ -158,13 +133,11 @@ struct Replacement {
     is_whole_statement: bool,
 }
 
-/// `target = value`
 struct Assignment {
     assignment: ExprId,
     value: ExprId,
 }
 
-// `Quiet::runs_nothing` for the head in which `exports` must still be empty: no call qualifies, not even a definition on `exports`.
 fn is_call_that_runs_nothing(_: CallId) -> bool {
     false
 }
@@ -172,7 +145,6 @@ fn is_call_that_runs_nothing(_: CallId) -> bool {
 pub(super) struct SummaryWalk<'a, 'b, 's> {
     pub(super) input: &'a CommonJsInput<'a, 'b, 's>,
     pub(super) file: FileId,
-    /// The callback that is the body of the module, whose parameters name what it exports. `None`: the file is the module.
     pub(super) inner: Option<&'a InnerModule>,
     pub(super) summary: ExportsSummary,
     atoms: &'a Interner<'s>,
@@ -182,20 +154,16 @@ pub(super) struct SummaryWalk<'a, 'b, 's> {
     builtins: &'a ResolvedBuiltins,
     text: FileText<'a, 's>,
     is_half: bool,
-    /// Parallel to `summary.names` until those are sorted.
     origins: Vec<Origin>,
     replacement: Option<Replacement>,
     replacement_count: u32,
-    /// `exports = module.exports = v`
     renames_exports: bool,
     mentions_original_exports: bool,
     understood_calls: Vec<CallId>,
     methods_with_super: Vec<FnId>,
     first_return: OnceCell<u32>,
     end_of_head: OnceCell<u32>,
-    /// Of an inner module: where the first load in the text of the callback stands.
     first_load_in_callback: u32,
-    /// Of a module that may be seen half evaluated: where the first statement of the body starts that runs more than the calls of `understood_calls`, or stores anywhere.
     end_of_head_with_definitions: u32,
 }
 
@@ -219,7 +187,6 @@ pub(super) fn summarize_file(input: &CommonJsInput<'_, '_, '_>, file: FileId) ->
     walk.finish()
 }
 
-/// `exports` and `module.exports`, as the parameters of the callback name them. The second parameter occurs only as `module.exports`.
 pub(super) fn names_exports_of_inner_module(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -238,7 +205,6 @@ pub(super) fn names_exports_of_inner_module(
     object.is_some() && inner.module_parameter == object
 }
 
-// The text of the callback, which an expression owns.
 fn find_range_of_callback(hir: &hir::File<'_>, bound: &Bound<'_>, callback: FnId) -> (u32, u32) {
     match bound.fns[callback.idx()].owner {
         FnOwner::Expr(written) => (hir[written].pos, hir[written].end),
@@ -246,8 +212,6 @@ fn find_range_of_callback(hir: &hir::File<'_>, bound: &Bound<'_>, callback: FnId
     }
 }
 
-/// What the text of each of the callbacks says of the exports of its module, in the order of `inner_modules`, which is that of the text.
-/// One loop over the names of the file serves all of them.
 pub(super) fn summarize_inner_modules<'a>(
     input: &'a CommonJsInput<'a, '_, '_>,
     file: FileId,
@@ -278,7 +242,6 @@ pub(super) fn summarize_inner_modules<'a>(
         let first_load = loads.get(loads.partition_point(|&load| load < start));
         let first_load = first_load.copied().filter(|&load| load < end);
         walk.first_load_in_callback = first_load.unwrap_or(u32::MAX);
-        // Under `with` the run decides what a name means.
         if !hir.with_bodies.is_empty() {
             walk.let_everything_escape();
         }
@@ -368,7 +331,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // Where the first statement of the body starts that is not quiet.
     fn find_end_of_head(&self, quiet: &Quiet<'_, '_>) -> u32 {
         let Some(inner) = self.inner else {
             return quiet.find_end_of_head();
@@ -381,7 +343,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    /// Where the first statement of the body starts that runs anything or stores anywhere.
     fn end_of_head(&self) -> u32 {
         *self
             .end_of_head
@@ -421,13 +382,11 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
             (None, ImportSiteKind::ImportEquals(declaration)) => {
                 Some(hir[hir[declaration].stmt].start)
             }
-            // The body asks for it at its head.
             (None, _) => Some(0),
         });
         positions.min().unwrap_or(u32::MAX)
     }
 
-    /// The parent of an expression, past the type assertions around it.
     fn parent(&self, expression: ExprId) -> (ExprId, Parent) {
         let mut outermost = expression;
         loop {
@@ -461,7 +420,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // `void 0`, also behind `exports.b =`.
     fn is_undefined(&self, mut value: ExprId) -> bool {
         loop {
             value = self.hir.skip_type_assertions(value);
@@ -516,7 +474,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         !suspends_or_chooses && self.text.always_evaluates(user, operand)
     }
 
-    // Folding has decided the test, so that the arm runs whenever the `if` does.
     fn is_decided_arm(&self, conditional: StmtId, arm: StmtId) -> bool {
         let StmtKind::If { test, yes, no } = self.hir[conditional].kind else {
             return false;
@@ -528,7 +485,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    /// The statement that holds the expression, where every run of the body passes the expression: it is in no function, branch, loop or `try`, and behind no `return`.
     fn find_statement_in_every_run(&self, expression: ExprId) -> Option<StmtId> {
         let (hir, bound) = (self.hir, self.bound);
         let mut holder = StmtId::NONE;
@@ -582,13 +538,11 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         (hir[expression].pos < self.first_return()).then_some(holder)
     }
 
-    /// `target = value`: the assignment and the value.
     fn find_assignment(&self, target: ExprId) -> Option<Assignment> {
         let (target, Parent::Expr(user)) = self.parent(target) else {
             return None;
         };
         match self.hir[user].kind {
-            // In a pattern `target = value` is a default, and what is stored comes from elsewhere.
             ExprKind::Assign {
                 op: None,
                 target: assigned,
@@ -610,7 +564,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         self.summary.module_object_escapes = true;
     }
 
-    // The file needs its five wrapper parameters as real parameters (`arguments`, `with`, direct `eval`, a redeclared or reassigned parameter), or it reads `exports` or `module` where no expression names them.
     fn look_at_names_of_wrapper(&mut self) {
         let (hir, bound, decisions) = (self.hir, self.bound, self.decisions());
         let mut evals = bound.runtime.eval_scopes().iter();
@@ -726,7 +679,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
             }
         }
         for statement in hir.ids(hir.body) {
-            // `export = e` of TypeScript is the statement `module.exports = e`.
             if let StmtKind::ExportAssign(value) = hir[statement].kind
                 && !self.decisions().is_dead_stmt(statement)
             {
@@ -742,7 +694,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // A name that is bound to a parameter of the callback.
     fn look_at_parameter(&mut self, name: ExprId, parameter: SymbolId) {
         if !self.is_evaluated(name) {
             return;
@@ -753,7 +704,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         {
             return self.look_at_mention(name, Mention::ExportsName);
         }
-        // It occurs only as `module.exports`.
         match self.parent(name) {
             (_, Parent::Expr(member)) if member.is_some() => {
                 self.look_at_mention(member, Mention::ModuleExports);
@@ -762,7 +712,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // `super` in a method looks above the literal, however the method is called.
     fn may_name_super(&self, function: FnId) -> bool {
         match self.inner {
             Some(_) => {
@@ -775,7 +724,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
 
     fn look_at_name(&mut self, expression: ExprId) {
         let mention = self.find_mention(expression);
-        // The table of built-ins does not say what the name holds.
         let is_unknown_module = mention.is_none()
             && self.is_module_variable(expression)
             && self.builtins.of_expr(expression).is_none();
@@ -789,7 +737,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // The code whose `this` the expression sees: arrow functions have none of their own. Where the text does not say, the body.
     fn find_owner_of_this(&self, expression: ExprId) -> OwnerOfThis {
         let (hir, bound) = (self.hir, self.bound);
         let mut node = TextNode::Expression(expression);
@@ -857,7 +804,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // `this && this.n` while nothing has run: the object is as it was made, so the whole is `undefined`, as it is where `this` is no object.
     fn is_in_test_of_untouched_object(&self, this: ExprId) -> bool {
         let hir = self.hir;
         if !self.quiet().is_this_of_file(this) || hir[this].pos >= self.end_of_head() {
@@ -898,7 +844,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
                 }
             }
             OwnerOfThis::Other => {}
-            // `bun run` replaces the `this` of a file that has ES module syntax with `undefined`.
             OwnerOfThis::Body if self.analysis.has_esm_syntax => {}
             OwnerOfThis::Body => {
                 if !self.is_in_test_of_untouched_object(expression) {
@@ -915,14 +860,12 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
             .get_assignment_target(self.hir, outermost)
             .is_some()
         {
-            // The binder lists the stores to the name.
             if kind == Mention::ModuleExports {
                 self.add_replacement(mention);
             }
             return;
         }
         self.mentions_original_exports |= kind == Mention::ExportsName;
-        // The lowering puts `true` in the place of every mention that is left.
         let is_followed = match parent {
             Parent::Expr(user) if user.is_some() => self.look_at_user(outermost, user),
             Parent::Stmt(user) if user.is_some() => {
@@ -933,13 +876,11 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         self.summary.object_escapes |= !is_followed;
     }
 
-    // True if the expression around a mention is a member access, a test whose result is the same for every object, or a call that `look_at_call` understands.
     fn look_at_user(&mut self, mention: ExprId, user: ExprId) -> bool {
         match self.hir[user].kind {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == mention => {
                 self.look_at_access(user)
             }
-            // An object is true: `exports && e` is `e`.
             ExprKind::Binary {
                 op: BinOp::And,
                 left,
@@ -954,7 +895,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
                 Some(Constant::Undefined | Constant::Null)
             ),
             ExprKind::Unary { op: UnOp::Not, .. } => true,
-            // The fold has the answer, and nothing evaluates the operand.
             ExprKind::Unary {
                 op: UnOp::Typeof, ..
             } => self.constant(user).is_some(),
@@ -966,7 +906,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // `E.n`. False: only the object says what the access comes to.
     fn look_at_access(&mut self, access: ExprId) -> bool {
         let hir = self.hir;
         let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) = hir[access].kind else {
@@ -981,7 +920,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         let (outermost, parent) = self.parent(access);
         match self.bound.get_assignment_target(hir, outermost) {
             Some(AssignmentTarget::Assign(None)) => {
-                // `None`: a part of a pattern.
                 let Some(Assignment { assignment, value }) = self.find_assignment(access) else {
                     return false;
                 };
@@ -1024,10 +962,8 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         self.origins.resize(self.summary.names.len(), origin);
     }
 
-    // `module.exports = e`. What it makes of the module shows once every mention is seen.
     fn add_replacement(&mut self, target: ExprId) {
         self.replacement_count += 1;
-        // `None`: a compound assignment, or a part of a pattern.
         let Some(Assignment { assignment, value }) = self.find_assignment(target) else {
             self.summary.object_escapes = true;
             return;
@@ -1041,12 +977,10 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         });
     }
 
-    // Most of these calls return the object, so the value of the call must be unused.
     fn look_at_call_with_mention(&mut self, node: ExprId, call: CallId, mention: ExprId) -> bool {
         let hir = self.hir;
         let arguments = hir.ids(hir[call].args);
         let mut earlier = arguments.take_while(|&argument: &ExprId| argument != mention);
-        // The call was judged at its first mention, and that verdict stands.
         if earlier.any(|argument| {
             let argument = hir.skip_type_assertions(argument);
             matches!(
@@ -1074,7 +1008,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
         if marker_of_call != marker {
             let is_true = marker_of_call == Some(true);
-            // Every helper that defines the flag does so ahead of the names that it defines.
             self.summary.names.insert(
                 count,
                 StoredName::Value {
@@ -1091,7 +1024,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         true
     }
 
-    // `{ a, b: e, c() {} }`: the literal takes the place of the object that the module was born with, which nobody has seen.
     fn add_names_of_literal(&mut self, replacement: Replacement, literal: ExprId) -> bool {
         let hir = self.hir;
         let ExprKind::Object(properties) = hir[literal].kind else {
@@ -1135,7 +1067,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
         let end = self.hir[replacement.node].end;
         let mut entries = self.summary.names.iter().zip(&self.origins);
-        // What is stored in front of the statement, or by a function that runs in front of it, lands on the first object. So does what `exports` names behind it.
         let uses_only_the_new_object = replacement.is_whole_statement
             && !self.renames_exports
             && !self.mentions_original_exports
@@ -1145,11 +1076,9 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         let value = named.map_or(value, |(literal, _)| literal);
         let is_spelled_out = uses_only_the_new_object
             && match self.hir[value].kind {
-                // Whoever has required the module in a cycle holds the first object.
                 ExprKind::Object(_) => {
                     !self.is_half && self.add_names_of_literal(replacement, value)
                 }
-                // `check_names_visible_mid_evaluation` asks whether anybody can have required it by then.
                 ExprKind::Call(_) => self.ask_about_call(replacement.statement, value),
                 _ => false,
             };
@@ -1158,8 +1087,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // A definition takes no store, and a getter none but `undefined` in front of it: TypeScript stores `void 0` under every name first.
-    // A name that stands for another is there from the start, the property only from its definition on, so the text itself may not read it.
     fn check_names_that_calls_define(&mut self) {
         let origins = &self.origins;
         if !origins.iter().any(|origin| origin.kind == OriginKind::Call) {
@@ -1186,7 +1113,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
             let start = origins[definition as usize].start;
             for &(_, index) in entries.iter().filter(|entry| entry.1 != definition) {
                 let origin = origins[index as usize];
-                // A key of the literal does not count: it was not listed yet when `look_at_call` read the descriptor, and a descriptor without `enumerable` leaves an existing property enumerable.
                 let is_cleared_before = is_getter
                     && origin.kind == OriginKind::Store
                     && origin.end <= start
@@ -1208,7 +1134,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         self.origins.retain(|_| kept.next() == Some(true));
     }
 
-    // `__export(all, { n: () => n })`: the call that gets the literal in which the getter is written.
     fn find_call_with_literal_around(&self, getter: ExprId) -> Option<CallId> {
         let Parent::Prop(property) = self.bound.parent_of_expr(getter) else {
             return None;
@@ -1222,13 +1147,10 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // Whoever finds the module half evaluated finds a name that stands for another only from its definition on.
-    // A definition on the object that the module was born with runs the built-in, or the helper that calls it, and no more. So does one on the object that `__toCommonJS` copies, which nobody else has.
     fn check_names_visible_mid_evaluation(&mut self) {
         if !self.is_half {
             return;
         }
-        // `module.exports = __toCommonJS(all)`: no literal is spelled out for such a module.
         let copy = self
             .replacement
             .filter(|_| self.summary.replaced_by.is_none());
@@ -1244,7 +1166,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
                 }
             })
             .collect();
-        // The getters of one literal stand side by side.
         calls_on_copied_object.dedup();
         self.understood_calls.append(&mut calls_on_copied_object);
         self.understood_calls.shared_sort_unstable();
@@ -1262,14 +1183,12 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
             }
             StoredName::Value { .. } => false,
         });
-        // The store runs the helper and no more. Whoever has required the module in front of it holds the first object.
         let is_copied_too_late =
             copy.is_some_and(|statement| self.hir[statement].start > end_of_head);
         self.summary.object_escapes |= is_seen_too_early || is_copied_too_late;
         self.end_of_head_with_definitions = end_of_head;
     }
 
-    // `exports.a = exports.b = v` stores `b` first.
     fn sort_names(&mut self) {
         type Place = (bool, u32, Reverse<u32>, u32);
         let entries = self.summary.names.iter().zip(&self.origins).zip(0u32..);
@@ -1289,7 +1208,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
-    // Nobody loads anything, and so nobody comes back to look at the module, until the statement has run.
     fn is_ahead_of_every_load(&self, statement: StmtId) -> bool {
         let statement = self.hir[statement];
         statement.loc.end <= self.first_load()
@@ -1320,7 +1238,6 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
             StoredName::Value { .. } | StoredName::Getter { .. } | StoredName::AllOf { .. } => None,
         });
         let Some((statement, is_true)) = stores.next() else {
-            // The names of another module may have one among them.
             let mut entries = summary.names.iter();
             let takes_unknown_names = entries.any(|it| matches!(it, StoredName::AllOf { .. }));
             return (!takes_unknown_names).then_some(false);

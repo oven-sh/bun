@@ -33,22 +33,15 @@ const MAX_UNEXPECTED_DIAGNOSTICS_SHOWN: usize = 5;
 const FILTER_VARIABLE: &str = "AOT_IR_FILTER";
 const JOB_COUNT_VARIABLE: &str = "AOT_IR_JOBS";
 const OUTPUT_FOLDER_VARIABLE: &str = "AOT_IR_OUTPUT";
-/// Set to write the check lines below `GENERATED` anew.
 const UPDATE_VARIABLE: &str = "AOT_IR_UPDATE";
-/// `<index>/<count>`: which of the files this program runs itself, for a debugger.
 const SHARE_VARIABLE: &str = "AOT_IR_SHARE";
-/// The program sets it for the copies that it starts: a copy runs the files whose numbers it reads, a line each.
 const READS_FILE_NUMBERS_VARIABLE: &str = "AOT_IR_READS_FILE_NUMBERS";
-/// libtest's own variable. Under `-Z panic-abort-tests` libtest runs each test in a subprocess with a null stdin, unless this names the test.
 const SECONDARY_TEST_INVOKER_VARIABLE: &str = "__RUST_TEST_INVOKE";
-/// What a copy prints behind the lines of a file.
 const END_OF_FILE_MARK: &str = "DONE";
 const PROJECT_FILE: &str = "tsconfig.json";
 const STDERR_LINES_SHOWN: usize = 12;
-/// Set where a run that the engine did not verify is a failure, as in CI.
 const ENGINE_IS_REQUIRED_VARIABLE: &str = "AOT_IR_REQUIRES_ENGINE";
 
-// A panic hook has no other way to learn which files are running.
 static RUNNING_FILES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 struct FoundTest {
@@ -86,7 +79,6 @@ fn test_root() -> PathBuf {
         .nth(2)
         .expect("src/aot is two folders below the repository root");
     let root = repository_root.join(PathBuf::from_iter(TEST_ROOT));
-    // The resolver names a file by its real path, and a file of a package is known by the folders above it.
     std::fs::canonicalize(&root).unwrap_or(root)
 }
 
@@ -166,7 +158,6 @@ fn run_area(area: &str) {
         assert!(is_first_run, "{} ran twice", tests[index].display_path);
     });
 
-    // Without capture the harness leaves the name of the test in front of the first line.
     println!();
     let mut failed_file_count = 0;
     let mut skipped: Vec<&TestFailure> = Vec::new();
@@ -177,7 +168,6 @@ fn run_area(area: &str) {
         skipped.extend(&outcome.skipped);
     }
     if let Some(summary) = describe_skipped_runs(&display_folder, &skipped) {
-        // The test harness hides what a passing test prints, and this line has to be seen.
         let _ = std::io::stderr().write_all(summary.as_bytes());
     }
     assert!(
@@ -224,7 +214,6 @@ fn run_files_named_on_input(tests: &[FoundTest]) {
     });
 }
 
-/// A copy of this program that runs one file after another.
 struct ProgramCopy {
     process: Child,
     numbers: ChildStdin,
@@ -256,7 +245,6 @@ impl ProgramCopy {
             process,
             numbers,
             lines: BufReader::new(output).lines(),
-            // A copy that nobody listens to waits once the pipe is full.
             errors: std::thread::spawn(move || {
                 let mut bytes = Vec::new();
                 let _ = errors.read_to_end(&mut bytes);
@@ -265,7 +253,6 @@ impl ProgramCopy {
         }
     }
 
-    /// The lines of the file. `None`: the copy has ended over it.
     fn run(&mut self, index: usize) -> Option<Vec<String>> {
         writeln!(self.numbers, "{index}").ok()?;
         let mut lines = Vec::new();
@@ -277,7 +264,6 @@ impl ProgramCopy {
         }
     }
 
-    /// How it ended, and what it wrote as errors.
     fn end(self) -> (ExitStatus, String) {
         let ProgramCopy {
             mut process,
@@ -291,8 +277,6 @@ impl ProgramCopy {
     }
 }
 
-// Builds of one process wait for each other wherever they ask for its one pool, so each job is a process. It runs many files, since the
-// first build of a process pays for what all of them read. A file that ends its process fails alone: the rest goes to a new copy.
 fn run_area_in_copies(area: &str, jobs: usize, tests: &[FoundTest]) {
     let file_count = tests.len();
     let next = AtomicUsize::new(0);
@@ -389,7 +373,6 @@ fn name_running_files_on_panic() {
     HOOK.call_once(|| {
         let report_panic = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            // The hook of a test process that aborts on a panic does not return.
             let running_files = describe_running_files(&lock_running_files());
             let _ = std::io::stderr().write_all(running_files.as_bytes());
             report_panic(info);
@@ -450,14 +433,12 @@ fn link_to(target: &Path, link: &Path) -> std::io::Result<()> {
     };
 }
 
-/// The sections as files of a folder of their own. A tree without a project at its root gets the one that every other test sees.
 fn write_sections(file: &TestFile) -> std::io::Result<TemporaryFolder> {
     static NEXT_FOLDER_NUMBER: AtomicU32 = AtomicU32::new(0);
     let number = NEXT_FOLDER_NUMBER.fetch_add(1, Ordering::Relaxed);
     let name = format!("bun-aot-ir-{}-{number}", std::process::id());
     let path = std::env::temp_dir().join(name);
     std::fs::create_dir_all(&path)?;
-    // A place is printed from the root, and the front end names a file by its real path.
     let folder = TemporaryFolder(std::fs::canonicalize(&path).unwrap_or(path));
     let create_parent = |path: &Path| std::fs::create_dir_all(path.parent().unwrap_or(path));
     for section in &file.sections {
@@ -499,7 +480,6 @@ fn project_of_sections(file: &TestFile, root: &Path) -> Project {
     }
 }
 
-/// `None` for a run whose line is wrong, which `failures` says.
 fn run_all(
     file: &TestFile,
     project: &Project,
@@ -529,7 +509,6 @@ fn run_all(
         if is_done[first] || commands[first].is_none() {
             continue;
         }
-        // Runs with the same options print one build.
         let together: Vec<usize> = (first..file.runs.len())
             .filter(|&index| commands[index].is_some() && words_of(index) == words_of(first))
             .collect();
@@ -633,7 +612,6 @@ fn run_test_text(path: &Path, text: &str) -> TestOutcome {
     outcome
 }
 
-/// False if nothing is written below `GENERATED` yet.
 fn generated_lines_match(text: &str, file: &TestFile, outcomes: &[Option<CommandOutcome>]) -> bool {
     let Some(generated) = &file.generated else {
         return true;
@@ -667,7 +645,6 @@ fn is_token_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$')
 }
 
-/// An id that is counted over the whole program, the library in front: it moves when anything in front of it does.
 fn is_program_wide_id(token: &str) -> bool {
     let mut bytes = token.bytes();
     matches!(bytes.next(), Some(b'f' | b'g' | b'm' | b'L' | b'w' | b'd'))
@@ -675,7 +652,6 @@ fn is_program_wide_id(token: &str) -> bool {
         && bytes.all(|byte| byte.is_ascii_digit())
 }
 
-/// A pattern that one printed line matches. Positions in the source are left out, and an id of the program is a variable.
 fn pattern_of(line: &str, ids: &mut Vec<String>) -> String {
     let (bytes, mut pattern) = (line.trim().as_bytes(), String::new());
     let (mut at, mut is_quoted) = (0, false);
@@ -698,7 +674,6 @@ fn pattern_of(line: &str, ids: &mut Vec<String>) -> String {
             is_quoted = true;
         } else if rest.starts_with(b" @") && digits(2) > 0 {
             at += 2 + digits(2);
-            // A word may stand behind the positions.
             let is_last = !bytes[at..].starts_with(b" @");
             if is_last && at < bytes.len() {
                 pattern.push_str("{{*}}");
@@ -722,7 +697,6 @@ fn pattern_of(line: &str, ids: &mut Vec<String>) -> String {
                     ids.push(token.to_owned());
                     ids.len() - 1
                 });
-                // Three brackets would not read as a bracket and a variable.
                 if pattern.ends_with('[') {
                     pattern.pop();
                     pattern.push_str("{{*}}");
@@ -734,7 +708,6 @@ fn pattern_of(line: &str, ids: &mut Vec<String>) -> String {
             at += length;
             continue;
         }
-        // The two marks of a pattern, where the text has them.
         let is_root = line.trim()[at..].starts_with(ROOT_PLACEHOLDER);
         match is_root || rest.starts_with(b"{{") || rest.starts_with(b"[[") {
             true => pattern.push_str("{{*}}"),
@@ -796,7 +769,6 @@ fn generate_check_lines(prefix: &str, output: &str, functions: &[String], text: 
     }
 }
 
-/// The text of the file with the lines below `GENERATED` written from what the runs print. `None`: the file has no such line.
 fn write_generated_lines(
     text: &str,
     file: &TestFile,
@@ -923,7 +895,6 @@ fn check_expectations(
         }
     }
 
-    // A name that is listed with places is expected at those alone.
     let is_expected = |name: DiagnosticName, index: usize| {
         let mut of_name = listed.iter().filter(|expected| expected.name == name);
         of_name
@@ -964,7 +935,6 @@ fn check_expectations(
     }
 }
 
-// The record of a module prints the text of its file, with the directives of the test in it: a pattern would match itself there.
 fn hide_function_texts(output: &str) -> String {
     const FIELD: &str = " functionText=\"";
     let mut hidden = String::with_capacity(output.len());
@@ -972,7 +942,6 @@ fn hide_function_texts(output: &str) -> String {
     while let Some(start) = rest.find(FIELD) {
         let (shown, text) = rest.split_at(start + FIELD.len());
         hidden.push_str(shown);
-        // A quote in the text is printed as \x22.
         rest = &text[text.find('"').unwrap_or(text.len())..];
     }
     hidden.push_str(rest);
@@ -986,7 +955,6 @@ mod tests {
     use std::sync::Barrier;
 
     const PROGRAM_WITH_IMPORT: &str = "lower-entry-functions.ts";
-    /// The program sets it for the copies that `builds_run_side_by_side` starts.
     const BUILDS_SIDE_BY_SIDE_VARIABLE: &str = "AOT_IR_BUILDS_SIDE_BY_SIDE";
     const PROCESSES_THAT_BUILD: usize = 32;
     const BUILDS_SIDE_BY_SIDE: usize = 4;
@@ -1137,7 +1105,6 @@ mod tests {
         });
     }
 
-    // Only its first builds meet what a process sets up once, so there are many processes.
     #[test]
     fn builds_run_side_by_side() {
         if std::env::var_os(BUILDS_SIDE_BY_SIDE_VARIABLE).is_some() {

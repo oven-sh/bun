@@ -9,7 +9,6 @@ use bun_sema::util::SharedSort;
 use core::cmp::Ordering;
 use core::ops::Range;
 
-/// A total order by content: an `Atom` goes by its bytes, never by its number. Two keys compare equal only if they are equal.
 pub(super) trait OrderedKey: Copy + Eq + Send + Sync {
     fn compare(&self, other: &Self, atoms: &Interner<'_>) -> Ordering;
 }
@@ -27,15 +26,12 @@ impl OrderedKey for ProgramLayoutKey {
 }
 
 pub(super) struct MergedKeys<'a, K> {
-    /// Ascending, each once. So the index of a key is its rank among all keys that the lists hold, which depends on the sources alone.
     pub keys: Vec<K>,
-    /// By list, then by the place in the list: the index in `keys`.
     pub local_to_merged: Vec<Vec<u32>>,
     atoms: &'a Interner<'a>,
 }
 
 impl<K: OrderedKey> MergedKeys<'_, K> {
-    /// `None`: no list holds the key.
     pub(super) fn find(&self, key: &K) -> Option<u32> {
         let found = self
             .keys
@@ -44,12 +40,10 @@ impl<K: OrderedKey> MergedKeys<'_, K> {
     }
 }
 
-// These three cut the work into tasks. The result does not depend on them.
 const RUN_LENGTH: usize = if cfg!(test) { 64 } else { 1 << 12 };
 const SAMPLE_DISTANCE: usize = RUN_LENGTH / 16;
 const MAX_PART_COUNT: usize = if cfg!(test) { 8 } else { 128 };
 
-/// `range` of the lists laid end to end. `starts` holds the place of the first key of each list there.
 fn gather_keys<K: Copy>(lists: &[&[K]], starts: &[usize], range: Range<usize>) -> Vec<K> {
     let mut keys = Vec::with_capacity(range.len());
     let first = starts.partition_point(|&start| start <= range.start) - 1;
@@ -64,7 +58,6 @@ fn gather_keys<K: Copy>(lists: &[&[K]], starts: &[usize], range: Range<usize>) -
     keys
 }
 
-/// Ascending. They split the sorted keys into parts that each hold about the same number of keys from the runs.
 fn choose_splitters<K: OrderedKey>(runs: &[Vec<K>], atoms: &Interner<'_>) -> Vec<K> {
     let samples = runs
         .iter()
@@ -76,7 +69,6 @@ fn choose_splitters<K: OrderedKey>(runs: &[Vec<K>], atoms: &Interner<'_>) -> Vec
     places.map(|place| samples[place]).collect()
 }
 
-/// The keys of an ascending run from `from` up to `to`, without `to` itself. `None`: no bound.
 fn cut_run<'r, K: OrderedKey>(
     run: &'r [K],
     from: Option<&K>,
@@ -88,7 +80,6 @@ fn cut_run<'r, K: OrderedKey>(
     &run[from.map_or(0, count_below)..to.map_or(run.len(), count_below)]
 }
 
-/// Both runs are ascending and hold no key twice, and the same is true of the result.
 fn merge_two_runs<K: OrderedKey>(
     mut first: &[K],
     mut second: &[K],
@@ -122,7 +113,6 @@ fn merge_runs<K: OrderedKey>(runs: &[&[K]], atoms: &Interner<'_>) -> Vec<K> {
     }
 }
 
-/// The keys of all lists, ascending, each once.
 fn sort_distinct_keys<K: OrderedKey>(
     lists: &[&[K]],
     atoms: &Interner<'_>,
@@ -146,7 +136,6 @@ fn sort_distinct_keys<K: OrderedKey>(
         return runs.pop().unwrap_or_default();
     }
 
-    // All that compares equal falls into one part, and every key of a part is below every key of the next.
     let splitters = choose_splitters(&runs, atoms);
     let parts: Vec<usize> = (0..=splitters.len()).collect();
     let parts = map_each(parts, in_parallel, &|part: usize| {
@@ -159,7 +148,6 @@ fn sort_distinct_keys<K: OrderedKey>(
     parts.concat()
 }
 
-/// One list for each set of tables, then any further lists. A list may hold a key more than once.
 pub(super) fn merge_keys<'a, K: OrderedKey>(
     lists: &[&[K]],
     atoms: &'a Interner<'a>,
@@ -199,7 +187,6 @@ pub(super) fn merge_keys<'a, K: OrderedKey>(
     merged
 }
 
-/// An id in a unit is an index into the unit's set of tables. It goes through here before it indexes anything program-wide.
 #[derive(Copy, Clone)]
 pub(super) struct Merged<'a> {
     pub units: &'a [LinkUnit],

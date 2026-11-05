@@ -6,13 +6,11 @@ use bun_sema::fold::Decisions;
 use bun_sema::hir::{ExprId, ExprKind, File, MemberKey, NodeData};
 use bun_sema::import_sites::{find_result_expression, is_made_require};
 
-// A chain of names that comes back to its start holds nothing.
 const MAX_ALIAS_STEPS: usize = 8;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum LoaderAlias {
     Local,
-    /// Whether the binding holds a loader is for the file to say that exports it.
     Import(SymbolId),
 }
 
@@ -33,7 +31,6 @@ fn is_unmodified_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprI
         && !bound.import_meta_may_be_modified()
 }
 
-/// Follows esbuild's `var __require = (x => typeof require !== "undefined" ? require : ..)(function (x) { .. })`.
 pub(crate) fn resolve_loader_alias(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -73,7 +70,6 @@ pub(crate) fn resolve_loader_alias(
     None
 }
 
-/// What the file exports under the name.
 pub(crate) fn resolve_exported_loader_alias(
     hir: &File<'_>,
     bound: &Bound<'_>,

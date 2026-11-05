@@ -1,4 +1,5 @@
 mod support;
+use bun_sema::fold::MadeByCall;
 use support::*;
 
 use Data::{Boolean, Number, String as Text};
@@ -18,7 +19,6 @@ enum Specifier {
     Unknown,
     Constant(&'static str),
     Pattern(&'static str, &'static str),
-    /// What the site may name, and what folding alone says of the argument.
     OneOf(&'static [Specifier], &'static Specifier),
 }
 
@@ -79,7 +79,6 @@ const PUBLISHED_CONSTANTS: &[FoldedRow] = &[
     ("a.ts", "v(-((f(), 1) as number));", Unknown),
 ];
 
-/// Every run finds the functions of the language on these two paths.
 const LOCKED_REPLACE: Fold<'static> = Fold {
     defines: &[
         (
@@ -247,7 +246,6 @@ const CONST_READS: &[FoldedRow] = &[
     ),
 ];
 
-/// `bun run` writes the value in place of the name, so nothing asks whether the constant has been initialized. `bun build` does under `--minify-syntax` alone.
 const REPLACED_READS: &[FoldedRow] = &[
     ("a.mjs", "const X = 1; v(X);", Pure(Number(1.0))),
     ("a.mjs", "const X = 1; v(X + 1);", Pure(Number(2.0))),
@@ -345,13 +343,11 @@ const LIBRARY_READS: &[(&str, Option<Data<'static>>, Expected)] = &[
     ("const X = 1; function g(X) { v(X); }", None, Unknown),
 ];
 
-/// A library decides what stands at the top of the file. `bun build` replaces these under `--minify-syntax`.
 const READS_DECIDED_UNDER_MINIFY_SYNTAX_ALONE: &[(&str, Data<'static>)] = &[
     ("function g() { const X = 1; v(X); }", Number(1.0)),
     ("{ const X = 1; v(X); }", Number(1.0)),
 ];
 
-/// A library runs before anything calls into it.
 const READS_DECIDED_IN_A_LIBRARY_ALONE: &[(&str, Data<'static>)] = &[
     (r#"const X = "a" + "b"; v(X);"#, Text("ab")),
     ("f(); const X = 1; v(X);", Number(1.0)),
@@ -660,7 +656,10 @@ const PATHS_FROM_OWN_DIRECTORY: &[SpecifierRow] = &[
     (
         "a.cjs",
         r#"const path = require("path"); require(path.join(__dirname, "..", x + "/b.js"));"#,
-        Specifier::Pattern("", "b.js"),
+        Specifier::OneOf(
+            &[Specifier::Pattern("./../", "/b.js")],
+            &Specifier::Pattern("", "b.js"),
+        ),
     ),
     (
         "a.cjs",
@@ -1102,7 +1101,6 @@ fn text_is_replaced_at_an_end_where_every_run_finds_the_method() {
                 "{text}"
             );
         });
-        // A test stores its own `replace` or its own `exec`, or spies on one.
         let [replace, exec] = LOCKED_REPLACE.defines else {
             panic!("{:?}", LOCKED_REPLACE.defines);
         };
@@ -1210,7 +1208,6 @@ fn constant_keeps_its_name_without_minify_syntax() {
     }
 }
 
-/// What `bun build` computes without `--minify-syntax`, and what it leaves as the program wrote it. The build knows the value of each.
 const COMPUTED_WITHOUT_MINIFY_SYNTAX: &[(&str, &str, bool)] = &[
     ("a.mjs", "v(-1);", true),
     ("a.mjs", "v(+5);", true),
@@ -1256,7 +1253,6 @@ fn bun_build_computes_less_without_minify_syntax() {
     }
 }
 
-/// Without `--minify-syntax` an `import()` leaves `bun build` computing: to the end of the arguments of the call around it, or of the enum, or of the file.
 const COMPUTED_BEHIND_IMPORT: &[&str] = &[
     r#"() => import("./b"); v(1 + 2);"#,
     r#"() => import("./b"); v(~1);"#,
@@ -1299,8 +1295,6 @@ fn bun_build_computes_behind_import() {
     }
 }
 
-/// Whether `bun build` has a string or a number there, without `--minify-syntax` and with it. It writes nothing for a list, an object, a function or a name that nobody takes.
-/// The build goes by the language, where a name may be in its dead zone and `typeof` of a free name may run a getter: `constant` has no value for most of these.
 const WRITTEN_WITHOUT_WHAT_NOBODY_TAKES: &[(&str, &str, bool, bool)] = &[
     ("a.mjs", r#"v([] ? "a" : "b");"#, true, true),
     (
@@ -1499,8 +1493,6 @@ fn bun_run_computes_the_same_whatever_the_build_minifies() {
     }
 }
 
-/// Whether an executable of plain `bun build` has the one NaN there, without `--minify-syntax` and with it: its transpiler or JSC's parser has computed it.
-/// Any other NaN is made where the program runs, with the sign that the machine gives it.
 const NO_NUMBERS: &[(&str, bool, bool)] = &[
     ("v(0 / 0);", true, true),
     ("v(-(0 / 0));", true, true),
@@ -1520,7 +1512,6 @@ const NO_NUMBERS: &[(&str, bool, bool)] = &[
     ("v(-(undefined + 1));", false, false),
 ];
 
-/// Every build defines them: `after_constant_globals` in `bun_aot`.
 const CONSTANT_GLOBALS: Fold<'static> = Fold {
     defines: &[
         (
@@ -1575,7 +1566,6 @@ const TARGET: Fold<'static> = Fold {
     ..Fold::NONE
 };
 
-/// A define stands for what is written. What a pattern takes out of the object is what the run finds there, which a program may have changed.
 const MEMBERS_TAKEN_BY_PATTERNS: &[&str] = &[
     "const { platform } = process; v(platform);",
     "const { platform: name } = process; v(name);",
@@ -1746,6 +1736,127 @@ fn constant_path_that_a_call_gave_is_marked() {
             let node = last_site(s, text).specifier_node;
             assert_eq!(
                 s.analysis.decisions.is_path_made_by_call(node),
+                expected,
+                "{text}"
+            );
+        });
+    }
+}
+
+const NAMES_MADE_BY_CALLS: &[(&str, &str, Option<MadeByCall>)] = &[
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.resolve(name));"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.resolve(name + ".cjs"));"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("node:path"); require(path.join(__dirname, name + ".cjs"));"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.cjs",
+        r#"const { join } = require("node:path"); require(join(__dirname, folder, name));"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join(__dirname + "/lib", name));"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join(path.resolve(folder), name));"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); const folder = path.resolve("lib"); require(`${folder}/${name}`);"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join(process.cwd(), name));"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.cjs",
+        r#"require(process.cwd() + "/" + name);"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.mjs",
+        r#"import { join } from "node:path"; import(join(import.meta.dirname, name + ".cjs"));"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.mjs",
+        r#"import { dirname } from "node:path"; import { fileURLToPath } from "node:url"; import(dirname(fileURLToPath(import.meta.url)) + "/" + name);"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.mjs",
+        r#"import("kit-" + encodeURIComponent("a b") + name);"#,
+        Some(MadeByCall::Part),
+    ),
+    ("a.cjs", r#"require("./" + name + ".cjs");"#, None),
+    ("a.cjs", r#"require(__dirname + "/" + name);"#, None),
+    ("a.cjs", r#"require(`${__dirname}/${name}.cjs`);"#, None),
+    ("a.mjs", r#"import(import.meta.dir + "/" + name);"#, None),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join(name, "a.cjs"));"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join("./", name));"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(name + path.resolve("a.cjs"));"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(`x${path.resolve(name)}`);"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"const path = { join: (...parts) => parts.at(-1), resolve: part => part }; require(path.join(__dirname, name)); require(path.resolve(name));"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"); { const __dirname = ""; require(path.join(__dirname, name)); }"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"const process = { cwd: () => "" }; require(process.cwd() + name);"#,
+        None,
+    ),
+    (
+        "a.mjs",
+        r#"import { dirname } from "node:path"; import { fileURLToPath } from "node:url"; import(dirname(fileURLToPath(url)) + "/" + name);"#,
+        None,
+    ),
+];
+
+#[test]
+fn name_that_begins_with_what_a_call_gave_is_marked() {
+    for &(path, text, expected) in NAMES_MADE_BY_CALLS {
+        analyzed(path, text, |s| {
+            let node = last_site(s, text).specifier_node;
+            assert_eq!(
+                s.analysis.decisions.find_what_call_made(node),
                 expected,
                 "{text}"
             );

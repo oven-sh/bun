@@ -23,7 +23,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         head
     }
 
-    /// In front of whatever may define a member under one of their keys, where the later definition holds, and of whatever ends the run of code that the literal began in.
     pub(super) fn define_waiting_elements(&mut self, object: &mut ObjectBuilder) {
         if object.waiting_elements.is_empty() {
             return;
@@ -62,7 +61,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 PropertyName::Computed(value) => excluded_values.push(value),
             }
         }
-        // In an object of a layout every property that the layout does not list lies beside the fields.
         let Some(layout) = layout.filter(|&layout| self.file.lists_some_field(layout)) else {
             let (keys, values) = (&excluded_keys, &excluded_values);
             return self.builder.copy_object(source, keys, values, false);
@@ -124,7 +122,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         if let Some(field) = field {
-            let position = self.file.field_position(object.layout, field);
+            let position = self.file.position_of_member(object.layout, field, source);
             value = self.convert_initializer(value, position, source);
             if let ObjectState::Pending(initial) = &mut object.state {
                 if convert::establishes_type(position)

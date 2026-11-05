@@ -63,12 +63,10 @@ impl FileLowering<'_, '_, '_, '_> {
             Shape::EsModule | Shape::Names => return None,
         }
         let bound = self.queries.files().bound(module);
-        // `arguments.callee` is the function that holds the text of the module.
         if bound.file_uses_arguments() {
             return None;
         }
         let file_symbol = bound.file_symbol.some()?;
-        // A file symbol that declarations of other files merge into is defined by no file alone.
         let symbol = self.queries.canonical_symbol(module, file_symbol);
         if symbol.file != module || symbol.id != file_symbol {
             return None;
@@ -94,7 +92,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.module_exports_layout(module)
     }
 
-    // `this` at the top of the file is the object that the body begins with. `bun run` puts `undefined` in the place of one that is written in a file with ES module syntax, and not of the one that a JSX element passes on in a development build.
     fn reads_this_of_body(&self) -> bool {
         let this = BindingRef::Slot(module::file_scope(self), ScopeSlot::This);
         let analysis = &self.compiled.analysis;
@@ -102,7 +99,6 @@ impl FileLowering<'_, '_, '_, '_> {
             && (!analysis.has_esm_syntax || analysis.jsx_imports.contains(JsxImport::JsxDev))
     }
 
-    // `import a = exports.b`, `/** @jsx exports.h */`: no expression spells the name, so nothing says where it is read.
     fn names_exports_without_expression(&self) -> bool {
         let analysis = &self.compiled.analysis;
         let mut bindings = analysis.bindings_read_without_expression(self.hir, self.bound);
@@ -114,7 +110,6 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // Of the file that is lowered. `false`: nobody can see the object, so the body does not make it. A module that is required while its body runs shows it.
     pub(in crate::lower) fn begins_with_exports_object(&self) -> bool {
         let own_module = ModuleRef::File(self.file);
         let modules = self.inputs.modules;
@@ -145,7 +140,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }))
     }
 
-    // The fields are in the order in which the body creates the properties, which is the one order of keys that a creating store goes on from without a call.
     fn compute_exports_fields(&mut self, module: FileId) -> OwnFields {
         let Some(creations) = self.ask_module_text(module, collect_creations) else {
             return OwnFields::default().finish();
@@ -207,7 +201,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 true => DeclaredType::untyped(),
                 false => self.binding_position(export),
             };
-            // `(N as any).f = g`: the name `f` stays bound to the function that is declared, and the property of the object does not.
             if declared.flags.contains(PositionFlags::IS_FROM_COMPILER) {
                 declared.flags |= PositionFlags::IS_EXPECTED;
             }
@@ -263,7 +256,6 @@ struct Assignment {
     value: ExprId,
 }
 
-// `form` is `None` where the text does not say which form the property gets.
 #[derive(Copy, Clone)]
 struct Creation {
     name: Atom,
@@ -393,7 +385,6 @@ fn find_constant_name(text: &ModuleText<'_, '_>, key: ExprId) -> Option<Atom> {
     }
 }
 
-// The form of a property that the descriptor creates.
 fn find_defined_form(text: &ModuleText<'_, '_>, descriptor: ExprId) -> Option<FieldForm> {
     let written = WrittenDescriptor::read(text.hir, text.decisions, descriptor)?;
     let mut form = match written.part {
@@ -471,7 +462,6 @@ fn stores_object_variable(text: &ModuleText<'_, '_>) -> bool {
     })
 }
 
-// `None`: the module puts another object in place of the one its body starts with, so the names land there.
 fn collect_creations(text: &ModuleText<'_, '_>) -> Option<Vec<Creation>> {
     let (hir, bound) = (text.hir, text.bound);
     if has_export_assignment(bound) || stores_object_variable(text) {
@@ -509,7 +499,6 @@ fn collect_creations(text: &ModuleText<'_, '_>) -> Option<Vec<Creation>> {
         let Some(name) = name else {
             continue;
         };
-        // The value is evaluated before the store.
         let node = assignment.map_or(expression, |it| it.node);
         let form = Some(FieldForm::default());
         creations.push(create_creation(text, name, form, node));
@@ -542,7 +531,6 @@ fn find_module_name(text: &ModuleText<'_, '_>, access: ExprId) -> Option<ExprId>
     names_exports_object(text, access).then(|| text.hir.skip_type_assertions(object))
 }
 
-// `module.exports = value` or `exports = module.exports = value` as a statement of the body, or as what the first name of a statement is born with: `const proto = module.exports = value`.
 fn find_replacement(text: &ModuleText<'_, '_>, statement: StmtId) -> Option<Replacement> {
     let hir = text.hir;
     let mut expression = match hir[statement].kind {
@@ -556,7 +544,6 @@ fn find_replacement(text: &ModuleText<'_, '_>, statement: StmtId) -> Option<Repl
     if text.decisions.is_dead_stmt(statement) {
         return None;
     }
-    // `module.exports = value, module.exports.__esModule = true, ..`: what stands first is evaluated first.
     while let ExprKind::Binary {
         op: BinOp::Comma,
         left,
@@ -585,7 +572,6 @@ fn find_replacement(text: &ModuleText<'_, '_>, statement: StmtId) -> Option<Repl
     })
 }
 
-// `evaluated_ahead`: the statements of the body that are written behind the store and run in front of it, in the order of the text.
 fn is_evaluated_behind(
     text: &ModuleText<'_, '_>,
     replacement: &Replacement,
@@ -602,7 +588,6 @@ fn is_evaluated_behind(
         {
             return false;
         }
-        // A function declaration can be called from the first statement on. Any other function is made where it is written.
         let mut outermost = None;
         let is_in_body = is_in_body_through(text, mention, |function| {
             outermost = Some(function);
@@ -610,12 +595,10 @@ fn is_evaluated_behind(
         });
         return is_in_body && outermost.is_none_or(|function| hir[function].kind != FnKind::Decl);
     }
-    // A function that is the value itself is not called before it is stored.
     let value = hir.skip_type_assertions(replacement.value);
     position >= replacement.start && matches!(hir[value].kind, ExprKind::Fn(_))
 }
 
-// Neither `this` nor a name that no expression spells is looked at: `begins_with_exports_object`.
 fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
     let (hir, bound) = (text.hir, text.bound);
     let mut statements = hir.ids(hir.body).enumerate();
@@ -624,7 +607,6 @@ fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
     let Some((statements_in_front, replacement)) = found else {
         return false;
     };
-    // A body that returns in front of the statement exports the object it began with.
     let can_return_first = (0..hir.stmts.len() as u32).map(StmtId).any(|statement| {
         let scope = bound.scope_of_stmt(statement);
         matches!(hir[statement].kind, StmtKind::Return(_))
@@ -635,7 +617,6 @@ fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
     if can_return_first {
         return false;
     }
-    // The body lists its statements as they run: a test run has put `jest.mock(..)` in front of what is written ahead of it. A class that `bun run` moves to the start of the file can be used from the first statement on.
     let evaluated_ahead = hir
         .ids(hir.body)
         .enumerate()

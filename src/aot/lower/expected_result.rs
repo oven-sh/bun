@@ -26,9 +26,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.find_written_result(call, &target)
     }
 
-    // `const config: Config = JSON.parse(text)`, `JSON.parse(text) as Order`: the parse may build its answer with the layouts of the type that it is written under.
-    // So may `return JSON.parse(text)` in a function that declares what it returns. An async function converts what it returns to `Order | PromiseLike<Order>`,
-    // which names no layout, and a parse answers an `Order`.
     fn find_result_written_over_parse(&mut self, call: ExprId) -> Option<ExpectedResultId> {
         let hir = self.hir;
         let ExprKind::Call(id) = hir[call].kind else {
@@ -38,7 +35,6 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.builtins.builtin_of_expression(callee) != Some(BuiltinId::JSONParse) {
             return None;
         }
-        // A reviver answers whatever it likes.
         let mut arguments = hir.ids(hir[id].args);
         let (Some(text), None) = (arguments.next(), arguments.next()) else {
             return None;
@@ -59,7 +55,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(self.fragment.add_expected_result(expected))
     }
 
-    // The signature is the same whatever holds the function: `sql` of "bun", what `new SQL(..)` made, a parameter of that type.
     fn find_builtin_of_signature(&self, target: &CallTarget) -> Option<BuiltinId> {
         let types = self.inputs.builtin_types;
         let index = types.value_of_call_signature(self.queries.files(), target.declaration?)?;
@@ -71,7 +66,6 @@ impl FileLowering<'_, '_, '_, '_> {
         builtin.is_some_and(table::answers_query)
     }
 
-    // ``await sql<Row[]>`..` ``, ``const rows: Row[] = await sql`..` ``: a query settles to its rows.
     fn type_of_rows(&mut self, call: ExprId, query: CheckerTypeId) -> TypeId {
         let settled = match self.queries.awaited_type(query) {
             Ok(settled) => self.result_type(settled),
@@ -91,7 +85,6 @@ impl FileLowering<'_, '_, '_, '_> {
         if !mapped.is_checked || mapped.ty == TypeTable::ANYTHING {
             return TypeTable::ANYTHING;
         }
-        // Every mapped type admits `undefined` and `null`.
         match self.queries.without_nullish(ty) {
             Ok(listed) if listed == ty => self
                 .fragment
@@ -106,7 +99,6 @@ impl FileLowering<'_, '_, '_, '_> {
         call: ExprId,
         target: &CallTarget,
     ) -> Option<ExpectedResultId> {
-        // The record says what code that the engine cannot see creates. It sees a body.
         if target
             .declaration
             .is_some_and(|declaration| has_body(self, declaration))
@@ -130,7 +122,6 @@ impl FileLowering<'_, '_, '_, '_> {
             false => ExpectedResultFlags::default(),
         };
         let expected = ExpectedResult { ty, layouts, flags };
-        // A built-in may build what its type argument says: `response.json<T>()`.
         if builtin.is_none() {
             return Some(self.fragment.add_described_result(expected));
         }

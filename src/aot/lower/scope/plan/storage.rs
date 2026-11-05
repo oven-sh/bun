@@ -20,7 +20,6 @@ pub(super) fn place_bindings(
     let mut fields: Vec<(ScopeId, BindingRef)> = fields.collect();
     sort_unique(&mut fields);
     let initial_functions = find_initial_functions(context, &sharing.variables, captures);
-    // `FunctionKey::Instantiation` makes them, and the body has no value at hand to keep beside what is stored.
     let makes_scope_ahead = context.input.modules.makes_scope_ahead(context.input.file);
     let hoisted = context.walk.hoisted_functions.iter();
     let hoisted = hoisted.filter(|hoisted| makes_scope_ahead && hoisted.0 == context.file_scope);

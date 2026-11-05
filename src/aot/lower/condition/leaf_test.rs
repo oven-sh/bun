@@ -25,7 +25,6 @@ pub(super) enum LeafTest {
         operand: ExprId,
         is_negated: bool,
     },
-    /// `Array.isArray(local)`.
     IsArray {
         local: SymbolId,
         callee: ExprId,
@@ -101,7 +100,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         })
     }
 
-    /// `typeof value > "u"`, as minifiers write `typeof value === "undefined"`: an order that one of the eight names alone passes, or alone fails, asks for that name.
     fn classify_typeof_order(&self, op: BinOp, left: ExprId, right: ExprId) -> Option<LeafTest> {
         let file = &*self.file;
         let (operand, bound, is_typeof_on_the_left) = match self.find_typeof_operand(left) {
@@ -193,7 +191,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (!is_folded).then_some(operand)
     }
 
-    /// A local of the function that asks, past its dead zone, which has one value from there on. Not a `var`: that is undefined until its declaration runs.
     fn find_unchanging_local(&self, node: ExprId) -> Option<SymbolId> {
         let bound = self.file.bound;
         let ExprKind::Ident(_) = self.file.hir[node].kind else {
@@ -210,7 +207,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (has_no_value_before && bound.is_stable_binding(symbol)).then_some(symbol)
     }
 
-    /// `const kind = typeof value`: `kind` is `typeof value` wherever neither changes.
     fn find_kept_typeof(&self, node: ExprId) -> Option<ExprId> {
         let file = &*self.file;
         let kind = self.find_unchanging_local(node)?;

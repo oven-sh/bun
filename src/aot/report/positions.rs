@@ -69,7 +69,6 @@ impl<'a> Positions<'a> {
     }
 }
 
-/// A report for users neither counts nor lists a site in one of Bun's own modules. A site without a location is in the module of its function.
 pub(super) fn is_listed_site(
     names: Names<'_>,
     location: SourceLocation,
@@ -94,7 +93,6 @@ pub(super) fn resolve_ascending<T: Clone>(
         .enumerate()
         .filter_map(|(index, &position)| Some((position?, index)))
         .collect();
-    // Ascending, so the locator scans the text of each module once.
     order.shared_sort_unstable();
 
     let mut resolved: Vec<Option<T>> = vec![None; wanted.len()];

@@ -376,22 +376,11 @@ impl Worker {
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status, peak_rss_mb) };
     }
 
-    pub(crate) fn dispatch(
-        &mut self,
-        f: &mut Frame,
-        file_idx: u32,
-        file: &[u8],
-        exit_code_left_by_tests: Option<u8>,
-        stands_for_one_process: bool,
-        failures_until_bail: u32,
-    ) {
+    pub(crate) fn dispatch(&mut self, f: &mut Frame, file_idx: u32, file: &[u8]) {
         f.begin(frame::Kind::Run);
         f.u32(file_idx);
         f.str(file);
-        f.u32(exit_code_left_by_tests.map_or(0, |code| u32::from(code) + 1));
         f.str(&self.first_loads);
-        f.u32(u32::from(stands_for_one_process));
-        f.u32(failures_until_bail);
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
         self.dispatched_at = bun_core::time::milli_timestamp();

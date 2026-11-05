@@ -14,7 +14,6 @@ use crate::lower::{FunctionLowering, convert, function};
 
 struct ScopeEntry {
     scope: ScopeId,
-    /// The first entry of each binding.
     initial: FxHashMap<BindingRef, ValueId>,
     undefined: Option<ValueId>,
     absent: Option<ValueId>,
@@ -41,16 +40,11 @@ impl ScopeEntry {
 
 type EntryValues = SmallVec<[(BindingRef, Option<ValueId>); 8]>;
 
-/// Who makes what the scope of a file begins with: its environment, and the functions that it declares and somebody else can reach.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(in crate::lower) enum MakerOfScope {
-    /// Whoever enters the scope, and its cell where something first asks for it: `make_environment_put_off()`.
     HereWhenAskedFor,
-    /// Whoever enters the scope.
     Here,
-    /// `FunctionKey::Instantiation`, which is being lowered.
     Instantiation,
-    /// The same function, and the body that is being lowered takes what it has made.
     AheadOfBody,
 }
 
@@ -70,6 +64,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             left.is_some_and(|left| left.scope == scope),
             "scopes are left innermost first"
         );
+    }
+
+    pub(crate) fn enter_container_scope(&mut self, scope: ScopeId, object: ValueId) {
+        let parameter = self.file.bound.container_parameter(scope);
+        let position = self.file.binding_position(parameter);
+        let object = self.convert_initializer(object, position, None);
+        self.allocate_scope(scope, &[(BindingRef::Symbol(parameter), object)]);
+        self.instantiate_functions(scope);
     }
 
     pub(crate) fn enter_with_scope(&mut self, scope: ScopeId, object: ValueId) {
@@ -167,7 +169,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if self.file.scopes.initial_function(symbol).is_some() {
                 continue;
             }
-            // What only the body names is a value of the body.
             let placement = self.file.scopes.placement(BindingRef::Symbol(symbol));
             let is_local = placement.is_none_or(|placement| placement.storage == Storage::Local);
             let is_made_here = match maker {
@@ -180,8 +181,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             self.file.queries.note_idle_between_statements();
             let id = function::declare_source_function(self.file, function, None);
-            // Nobody ever has the function object: whoever calls enters the function itself.
-            // What a file or a namespace declares may be handed out by more than its name.
             let bound = self.file.bound;
             let is_name_in_function = matches!(
                 bound.code_unit(bound.symbol_scope(symbol)),
@@ -191,6 +190,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 && !bound.is_visible_to_eval(symbol)
                 && self.file.scopes.is_never_named(symbol)
             {
+                continue;
+            }
+            if self.file.scopes.is_created_at_each_read(symbol) {
                 continue;
             }
             if self
@@ -312,7 +314,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(variable)
     }
 
-    /// Of the function that makes the scope ahead of the body.
     pub(in crate::lower) fn store_environment_made_ahead(&mut self, scope: ScopeId) {
         let entered = self.scopes.entered.last();
         let Some(environment) = entered.and_then(|entered| entered.environment) else {
@@ -348,7 +349,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut fields: SmallVec<[u32; 8]> = SmallVec::new();
         let mut field_values: SmallVec<[ValueId; 8]> = SmallVec::new();
         for (field, &binding) in (0..).zip(bindings) {
-            // The type of the field says that it holds nothing until its first store. Listed, `Absent` would be an initial value.
             if dead_zone::has_dead_zone(self.file, binding) {
                 continue;
             }
@@ -377,7 +377,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(variable)
     }
 
-    /// In front of whatever reads the variable of the scope's cell.
     pub(super) fn make_environment_put_off(&mut self, scope: ScopeId) {
         let put_off = &mut self.scopes.environments_put_off;
         let Some(index) = put_off.iter().rposition(|it| it.scope == scope) else {
@@ -391,7 +390,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .write_variable_at(it.place, it.variable, object);
     }
 
-    /// From its entry on the scope is these statements and nothing else.
     pub(in crate::lower) fn give_list_to_scope(&mut self, scope: ScopeId, list: IdList<StmtId>) {
         for it in &mut self.scopes.environments_put_off {
             if it.scope == scope {
@@ -400,7 +398,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// The statement at `position` of the lists is about to be lowered. Its start stands above all that is left of a scope whose list holds it.
     pub(in crate::lower) fn move_environments_put_off(&mut self, position: u32) {
         for it in &mut self.scopes.environments_put_off {
             if position.wrapping_sub(it.list.start) < it.list.len {
@@ -433,7 +430,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             "a binding with an entry value does not start in its dead zone"
         );
         let position = self.file.stored_position(binding);
-        // The type of a variable is the type of the values it joins, and nothing tests what is only expected.
         let ty = match position.is_expected() {
             true => TypeTable::ANYTHING,
             false => position.ty,

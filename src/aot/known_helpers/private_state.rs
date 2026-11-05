@@ -27,7 +27,6 @@ const METHODS_OF_COLLECTIONS: [BuiltinId; 5] = [
     BuiltinId::WeakSetPrototypeHas,
 ];
 
-/// `replaced`: ascending.
 pub(super) fn replaces_method_of_collections(replaced: &[u32]) -> bool {
     let is_listed = |id: BuiltinId| replaced.binary_search(&(id as u32)).is_ok();
     let mut methods = METHODS_OF_COLLECTIONS.iter();
@@ -63,7 +62,6 @@ impl FilePrivateStates {
         Some(self.states[*find_by_key(&self.by_creation, creation)? as usize])
     }
 
-    /// Ascending by symbol.
     pub fn states_of_class(&self, class: ClassId) -> &[PrivateState] {
         let start = self.states.partition_point(|state| state.owner < class);
         let count = self.states[start..].partition_point(|state| state.owner == class);
@@ -101,7 +99,6 @@ pub(super) fn find_in_file(input: &ResolveInput<'_, '_>, file: FileId) -> FilePr
     let Some(compiled) = input.files.compiled(file) else {
         return FilePrivateStates::default();
     };
-    // An entry that is in a field is missing in the collection.
     let mut methods = METHODS_OF_COLLECTIONS.iter();
     let is_locked = |&method| table::entry(method).mutability == Mutability::AlwaysLocked;
     if !input.modules.has_record(file) || !methods.all(is_locked) {
@@ -197,7 +194,6 @@ impl Finder<'_, '_, '_> {
 
     fn find_holder(&self, creation: ExprId) -> Option<(SymbolId, Option<ExprId>)> {
         let (hir, bound) = (self.hir, self.bound);
-        // Only the first collection that a variable holds has its entries in fields.
         if !is_in_statement_of_file(bound, creation) {
             return None;
         }
@@ -246,7 +242,6 @@ impl Finder<'_, '_, '_> {
             BindingKind::Var | BindingKind::Let | BindingKind::Const
         );
         let recorded = bound.binding_stability_ignoring(symbol, &|_| true);
-        // Evaluated text stores to no `const`, and reads it.
         if !is_variable || recorded != BindingStability::Stable || bound.is_visible_to_eval(symbol)
         {
             return false;
@@ -336,7 +331,6 @@ impl Finder<'_, '_, '_> {
         }
     }
 
-    // `W.set(x, v)` and `W.add(x)` answer the collection.
     fn find_definition(&self, mention: ExprId, kind: PrivateStateKind) -> Option<ExprId> {
         let (hir, bound) = (self.hir, self.bound);
         let Parent::Expr(method) = bound.parent_of_expr(mention) else {
@@ -401,7 +395,6 @@ impl Finder<'_, '_, '_> {
             && !members.any(|member| hir[member].flags.contains(Flags::ACCESSOR))
     }
 
-    // `W.set(this, v)` in a constructor: the objects of that class have room for the entry.
     fn find_constructed_class(&self, definition: ExprId) -> Option<ClassId> {
         let hir = self.hir;
         let ExprKind::Call(site) = hir[definition].kind else {

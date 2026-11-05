@@ -20,6 +20,7 @@ pub(crate) struct MemoryHost {
     node_paths: Vec<Vec<u8>>,
     found: Vec<(Vec<u8>, Vec<u8>)>,
     holds_modules_with_queries: bool,
+    given_in_memory: Vec<Vec<u8>>,
     reads: bun_threading::Guarded<FxHashMap<Vec<u8>, usize>>,
 }
 
@@ -39,21 +40,23 @@ impl MemoryHost {
         self
     }
 
-    /// `imported` is what "module" names in a package, `required` what "main" names.
     pub(crate) fn required_in_place_of(mut self, imported: &str, required: &str) -> MemoryHost {
         self.required.push((imported.into(), required.into()));
         self
     }
 
-    /// The host finds `specifier` by itself, and the module runs under `path`.
     pub(crate) fn finds(mut self, specifier: &str, path: &str) -> MemoryHost {
         self.found.push((specifier.into(), path.into()));
         self
     }
 
-    /// The module of `/p/a.ts` with `?x` has the path `/p/a.ts?x`, and the host makes none of a `.json` file.
     pub(crate) fn holding_modules_with_queries(mut self) -> MemoryHost {
         self.holds_modules_with_queries = true;
+        self
+    }
+
+    pub(crate) fn given_in_memory(mut self, path: &str) -> MemoryHost {
+        self.given_in_memory.push(path.into());
         self
     }
 
@@ -127,7 +130,6 @@ impl MemoryHost {
 }
 
 impl MemoryHost {
-    // What "imports" of the nearest `package.json` names by an exact key is taken for a module of the host.
     fn find_through_imports(&self, search: &FileSearch<'_>) -> Option<FoundCode> {
         let manifest = ancestors(search.directory).find_map(|directory| {
             let path = self.follow_links(&inside(directory, b"package.json"));
@@ -242,6 +244,10 @@ impl CodeHost for MemoryHost {
 
     fn holds_modules_with_queries(&self) -> bool {
         self.holds_modules_with_queries
+    }
+
+    fn is_given_in_memory(&self, path: &[u8]) -> bool {
+        self.given_in_memory.iter().any(|it| it == path)
     }
 
     fn add_module_with_query(

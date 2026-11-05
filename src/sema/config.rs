@@ -368,6 +368,11 @@ pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     find_config_below(host, dir, &CONFIG_NAMES, |_| false)
 }
 
+/// The `tsconfig.json`, or else the `jsconfig.json`, in `dir` itself.
+pub fn find_config_in(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+    find_config_below(host, dir, &CONFIG_NAMES, |_| true)
+}
+
 /// `find_config`, no further up than the directory that has the `package.json`. What's above it configures another
 /// project, which the package is published without.
 pub fn find_config_of_package(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {

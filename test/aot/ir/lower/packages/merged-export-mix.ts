@@ -20,17 +20,17 @@
 // CHECK-NEXT: v4 = ToBoolean v3
 // CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
 // CHECK-NEXT: b1(v5):
-// CHECK-NEXT: Jump -> next b3(v5, v3)
+// CHECK-NEXT: Jump -> next b3(v5)
 // CHECK-NEXT: b2(v6):
 // CHECK-NEXT: v7 = NewObject layout=[[L_5]]
 // CHECK-NEXT: v8 = FinishObject v7
-// CHECK-NEXT: Jump -> next b3(v8, v8)
-// CHECK-NEXT: b3(v9, v10):
-// CHECK-NEXT: v11 = Integer integer=1
-// CHECK-NEXT: v12 = Convert v11 declared={type=1}
-// CHECK-NEXT: PropSet v10, v12 key="first"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: Jump -> next b3(v8)
+// CHECK-NEXT: b3(v9):
+// CHECK-NEXT: v10 = Integer integer=1
+// CHECK-NEXT: v11 = Convert v10 declared={type=1}
+// CHECK-NEXT: PropSet v9, v11 key="first"
+// CHECK-NEXT: v13 = Undefined
+// CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
 // CHECK: module=[[m_1]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
@@ -50,17 +50,17 @@
 // CHECK-NEXT: v4 = ToBoolean v3
 // CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
 // CHECK-NEXT: b1(v5):
-// CHECK-NEXT: Jump -> next b3(v5, v3)
+// CHECK-NEXT: Jump -> next b3(v5)
 // CHECK-NEXT: b2(v6):
 // CHECK-NEXT: v7 = NewObject layout=[[L_10]]
 // CHECK-NEXT: v8 = FinishObject v7
-// CHECK-NEXT: Jump -> next b3(v8, v8)
-// CHECK-NEXT: b3(v9, v10):
-// CHECK-NEXT: v11 = Integer integer=2
-// CHECK-NEXT: v12 = Convert v11 declared={type=2}
-// CHECK-NEXT: PropSet v10, v12 key="second"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: Jump -> next b3(v8)
+// CHECK-NEXT: b3(v9):
+// CHECK-NEXT: v10 = Integer integer=2
+// CHECK-NEXT: v11 = Convert v10 declared={type=2}
+// CHECK-NEXT: PropSet v9, v11 key="second"
+// CHECK-NEXT: v13 = Undefined
+// CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
 // CHECK: module=[[m_6]] position={{*}} text={end=10} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
@@ -156,7 +156,7 @@
 // CHECK-NEXT: v5 = FinishObject v4
 // CHECK-NEXT: Jump -> next b3(v5, v5)
 // CHECK-NEXT: b3(v6, v7):
-// CHECK-NEXT: v8 = PropGet v7 key="B"
+// CHECK-NEXT: v8 = PropGet v6 key="B"
 // CHECK-NEXT: v9 = ToBoolean v8
 // CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b5(| 0)
 // CHECK-NEXT: b4(v10):
@@ -164,7 +164,7 @@
 // CHECK-NEXT: b5(v11):
 // CHECK-NEXT: v12 = NewObject layout=[[L_21]]
 // CHECK-NEXT: v13 = FinishObject v12
-// CHECK-NEXT: PropSet v7, v13 key="B"
+// CHECK-NEXT: PropSet v6, v13 key="B"
 // CHECK-NEXT: Jump -> next b6(v13)
 // CHECK-NEXT: b6(v15):
 // CHECK-NEXT: v16 = Integer integer=1
@@ -173,28 +173,28 @@
 // CHECK-NEXT: v19 = ToBoolean v7
 // CHECK-NEXT: Branch v19 -> taken b7(| 0), notTaken b8(| 0)
 // CHECK-NEXT: b7(v20):
-// CHECK-NEXT: Jump -> next b9(v20, v7)
+// CHECK-NEXT: Jump -> next b9(v20)
 // CHECK-NEXT: b8(v21):
 // CHECK-NEXT: v22 = NewObject layout=[[L_20]]
 // CHECK-NEXT: v23 = FinishObject v22
-// CHECK-NEXT: Jump -> next b9(v23, v23)
-// CHECK-NEXT: b9(v24, v25):
-// CHECK-NEXT: v26 = PropGet v25 key="B"
-// CHECK-NEXT: v27 = ToBoolean v26
-// CHECK-NEXT: Branch v27 -> taken b10(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b10(v28):
-// CHECK-NEXT: Jump -> next b12(v28)
-// CHECK-NEXT: b11(v29):
-// CHECK-NEXT: v30 = NewObject layout=[[L_22]]
-// CHECK-NEXT: v31 = FinishObject v30
-// CHECK-NEXT: PropSet v25, v31 key="B"
-// CHECK-NEXT: Jump -> next b12(v31)
-// CHECK-NEXT: b12(v33):
-// CHECK-NEXT: v34 = Integer integer=2
-// CHECK-NEXT: v35 = Convert v34 declared={type=2}
-// CHECK-NEXT: PropSet v33, v35 key="t"
-// CHECK-NEXT: v37 = Undefined
-// CHECK-NEXT: Return v37
+// CHECK-NEXT: Jump -> next b9(v23)
+// CHECK-NEXT: b9(v24):
+// CHECK-NEXT: v25 = PropGet v24 key="B"
+// CHECK-NEXT: v26 = ToBoolean v25
+// CHECK-NEXT: Branch v26 -> taken b10(| 0), notTaken b11(| 0)
+// CHECK-NEXT: b10(v27):
+// CHECK-NEXT: Jump -> next b12(v27)
+// CHECK-NEXT: b11(v28):
+// CHECK-NEXT: v29 = NewObject layout=[[L_22]]
+// CHECK-NEXT: v30 = FinishObject v29
+// CHECK-NEXT: PropSet v24, v30 key="B"
+// CHECK-NEXT: Jump -> next b12(v30)
+// CHECK-NEXT: b12(v32):
+// CHECK-NEXT: v33 = Integer integer=2
+// CHECK-NEXT: v34 = Convert v33 declared={type=2}
+// CHECK-NEXT: PropSet v32, v34 key="t"
+// CHECK-NEXT: v36 = Undefined
+// CHECK-NEXT: Return v36
 // CHECK-NEXT: }
 // CHECK: function {{*}}
 // CHECK: module=[[m_23]] kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
@@ -209,7 +209,7 @@
 // CHECK-NEXT: v5 = FinishObject v4
 // CHECK-NEXT: Jump -> next b3(v5, v5)
 // CHECK-NEXT: b3(v6, v7):
-// CHECK-NEXT: v8 = PropGet v7 key="K"
+// CHECK-NEXT: v8 = PropGet v6 key="K"
 // CHECK-NEXT: v9 = ToBoolean v8
 // CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b5(| 0)
 // CHECK-NEXT: b4(v10):
@@ -217,7 +217,7 @@
 // CHECK-NEXT: b5(v11):
 // CHECK-NEXT: v12 = NewObject layout=[[L_25]]
 // CHECK-NEXT: v13 = FinishObject v12
-// CHECK-NEXT: PropSet v7, v13 key="K"
+// CHECK-NEXT: PropSet v6, v13 key="K"
 // CHECK-NEXT: Jump -> next b6(v13)
 // CHECK-NEXT: b6(v15):
 // CHECK-NEXT: v16 = Integer integer=1
@@ -227,29 +227,29 @@
 // CHECK-NEXT: v20 = ToBoolean v7
 // CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b8(| 0)
 // CHECK-NEXT: b7(v21):
-// CHECK-NEXT: Jump -> next b9(v21, v7)
+// CHECK-NEXT: Jump -> next b9(v21)
 // CHECK-NEXT: b8(v22):
 // CHECK-NEXT: v23 = NewObject layout=[[L_24]]
 // CHECK-NEXT: v24 = FinishObject v23
-// CHECK-NEXT: Jump -> next b9(v24, v24)
-// CHECK-NEXT: b9(v25, v26):
-// CHECK-NEXT: v27 = PropGet v26 key="K"
-// CHECK-NEXT: v28 = ToBoolean v27
-// CHECK-NEXT: Branch v28 -> taken b10(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b10(v29):
-// CHECK-NEXT: Jump -> next b12(v29)
-// CHECK-NEXT: b11(v30):
-// CHECK-NEXT: v31 = NewObject layout=[[L_25]]
-// CHECK-NEXT: v32 = FinishObject v31
-// CHECK-NEXT: PropSet v26, v32 key="K"
-// CHECK-NEXT: Jump -> next b12(v32)
-// CHECK-NEXT: b12(v34):
-// CHECK-NEXT: v35 = Integer integer=2
-// CHECK-NEXT: PropSet v34, v35 key="two"
-// CHECK-NEXT: v37 = String string="two"
-// CHECK-NEXT: ElemSet v34, v35, v37
-// CHECK-NEXT: v39 = Undefined
-// CHECK-NEXT: Return v39
+// CHECK-NEXT: Jump -> next b9(v24)
+// CHECK-NEXT: b9(v25):
+// CHECK-NEXT: v26 = PropGet v25 key="K"
+// CHECK-NEXT: v27 = ToBoolean v26
+// CHECK-NEXT: Branch v27 -> taken b10(| 0), notTaken b11(| 0)
+// CHECK-NEXT: b10(v28):
+// CHECK-NEXT: Jump -> next b12(v28)
+// CHECK-NEXT: b11(v29):
+// CHECK-NEXT: v30 = NewObject layout=[[L_25]]
+// CHECK-NEXT: v31 = FinishObject v30
+// CHECK-NEXT: PropSet v25, v31 key="K"
+// CHECK-NEXT: Jump -> next b12(v31)
+// CHECK-NEXT: b12(v33):
+// CHECK-NEXT: v34 = Integer integer=2
+// CHECK-NEXT: PropSet v33, v34 key="two"
+// CHECK-NEXT: v36 = String string="two"
+// CHECK-NEXT: ElemSet v33, v34, v36
+// CHECK-NEXT: v38 = Undefined
+// CHECK-NEXT: Return v38
 // CHECK-NEXT: }
 
 // FILE: main.ts

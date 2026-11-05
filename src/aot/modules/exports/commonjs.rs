@@ -1,5 +1,3 @@
-//! The names of CommonJS modules that stand for something else: a getter that returns a name of another module or a binding.
-
 use super::{ExportTables, Resolution};
 use crate::modules::ModuleRef;
 use crate::modules::commonjs_exports::{
@@ -14,31 +12,21 @@ use bun_sema::hir::FnId;
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::SharedSort;
 
-/// The copy that an ES importer has of a name.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum ImporterCopy {
-    /// It has none: it is bound to what the name stands for, or to the variable that the name has in its own module.
     None,
-    /// It can tell the copy from what the name stands for: it holds what the getter answered when the file was linked, or under `default` the value of the module.
     OfAnswer,
-    /// The copy differs from what the name stands for only where something stores under that name of the other module once its body has ended.
     OfName,
 }
 
-/// What the tables keep of one name of a module.
 #[derive(Copy, Clone)]
 struct NameRow {
-    /// The place of the module in `CommonJsNames::entries`.
     module: u32,
     name: Atom,
-    /// Every run of the body creates the name.
     is_always_created: bool,
-    /// And whoever lists the names of the object finds it.
     is_always_listed: bool,
-    /// Whoever lists the names of the object may pass over it.
     is_hidden: bool,
     copy: ImporterCopy,
-    /// What the name stands for. `None`: it has a variable in its own module, or the module keeps its object.
     target: Option<Resolution>,
 }
 
@@ -52,7 +40,6 @@ fn is_listed(module: &ModuleEntries, entry: &NameEntry) -> bool {
 
 impl NameRow {
     fn new(number: u32, module: &ModuleEntries, entry: &NameEntry) -> NameRow {
-        // As `ModuleText::is_always_found_by_statements`: the bundle finds a value whatever its flag.
         let is_listed = is_listed_for_importers(
             entry.is_enumerable,
             entry.getter.is_some(),
@@ -77,14 +64,10 @@ impl NameRow {
 
 #[derive(Default)]
 pub(in crate::modules) struct CommonJsNames {
-    /// By file: the place in `entries`, or `u32::MAX`.
     index: Vec<u32>,
-    /// The inner modules, each with its place in `entries`. Ascending.
     inner_modules: Vec<((FileId, FnId), u32)>,
     entries: Vec<ModuleEntries>,
-    /// By module, and of one module by name.
     rows: Vec<NameRow>,
-    /// By module: a name of it stands for something that has no variable, so it keeps its object.
     is_refused: Vec<bool>,
 }
 
@@ -145,7 +128,6 @@ impl CommonJsNames {
         Some(&self.rows[self.find_row(number, name)?])
     }
 
-    /// What `require` of the module reads under the name. `None`: the name is a variable of the module itself, or the module keeps its object.
     pub(super) fn find(&self, module: ModuleRef, name: Atom) -> Option<Resolution> {
         self.row(module, name)?.target
     }
@@ -155,22 +137,18 @@ impl CommonJsNames {
         row.map_or(ImporterCopy::None, |row| row.copy)
     }
 
-    /// An ES importer has a copy of the name itself, not of what the name stands for.
     pub(in crate::modules) fn is_copied(&self, module: ModuleRef, name: Atom) -> bool {
         self.copy_of(module, name) != ImporterCopy::None
     }
 
-    /// Nobody can tell the copy from the name of the other module that the getter returns, as long as nothing stores under that name once the body of that module has ended.
     pub(in crate::modules) fn is_copy_of_name(&self, module: ModuleRef, name: Atom) -> bool {
         self.copy_of(module, name) == ImporterCopy::OfName
     }
 
-    /// The namespace object may lack the name. An import statement is still bound to what a getter stands for.
     pub(super) fn is_hidden(&self, module: ModuleRef, name: Atom) -> bool {
         self.row(module, name).is_some_and(|row| row.is_hidden)
     }
 
-    /// Whether the CommonJS module of the program may be without the name when an ES module that imports it is linked: a run of the body may end without it, the body may replace the object, the link may come while the body runs, or whoever lists the names of the object passes over the name.
     pub(super) fn may_lack(&self, module: ModuleRef, name: Atom) -> bool {
         let Some(entries) = self.entries_of(module) else {
             return false;
@@ -179,7 +157,6 @@ impl CommonJsNames {
         entries.is_half || !entries.has_names || !row.is_some_and(|row| row.is_always_listed)
     }
 
-    /// Whoever gets the object once the body has run finds the name on it, whether or not a loop over the object sees it.
     pub(in crate::modules) fn has_name_once_run(&self, module: ModuleRef, name: Atom) -> bool {
         let Some(entries) = self.entries_of(module) else {
             return false;
@@ -191,31 +168,26 @@ impl CommonJsNames {
             && row.is_some_and(|row| row.is_always_created)
     }
 
-    /// What `require` of the module answers is an object on which no trap runs: the text makes it.
     pub(in crate::modules) fn exports_ordinary_object(&self, module: ModuleRef) -> bool {
         let entries = self.entries_of(module);
         entries.is_some_and(|entries| entries.exports_ordinary_object)
     }
 
-    /// Somebody may look at the module while its body runs.
     pub(in crate::modules) fn is_half(&self, module: ModuleRef) -> bool {
         let entries = self.entries_of(module);
         entries.is_some_and(|entries| entries.is_half)
     }
 
-    /// Something may store to `module.exports` once the body has ended.
     pub(in crate::modules) fn is_replaced_late(&self, module: ModuleRef) -> bool {
         let entries = self.entries_of(module);
         entries.is_some_and(|entries| entries.is_replaced_late)
     }
 
-    /// Whether an ES importer finds under the name what `require` of the module reads under it. Without the marker its `default` is the value of the module.
     fn shows_member(&self, module: ModuleRef, name: Atom) -> bool {
         let entries = self.entries_of(module);
         name != known::default || entries.is_some_and(|entries| entries.marker == Some(true))
     }
 
-    /// The names that the namespace object has once the body has run, in the order of the text, and `default`. `None`: the text does not say.
     pub(in crate::modules) fn names_of(&self, module: ModuleRef) -> Option<Vec<Atom>> {
         let number = self.number_of(module)?;
         let entries = &self.entries[number];
@@ -232,7 +204,6 @@ impl CommonJsNames {
         Some(names)
     }
 
-    // No name of a module that keeps its object stands for anything.
     fn refuse(&mut self, number: usize) {
         self.is_refused[number] = true;
         let first = self
@@ -246,28 +217,21 @@ impl CommonJsNames {
     }
 }
 
-/// Where a getter reads what it returns.
 #[derive(Copy, Clone)]
 enum Source {
-    /// A binding of the file of the getter, or of an ES module.
     Binding(Sym),
-    /// A name of a CommonJS module of the program.
     Name {
-        /// The place of the module in `CommonJsNames::entries`.
         number: usize,
         module: ModuleRef,
         name: Atom,
-        /// The getter reads it off an ES module that hands it on.
         is_handed_on_by_es_module: bool,
     },
-    /// Nothing that the build knows a variable for.
     Unknown,
 }
 
 struct Resolver<'a, 's> {
     files: &'a Files<'s>,
     modules: &'a ModuleSet,
-    /// The tables of the ES modules, in which a name of a CommonJS module is still that name.
     tables: &'a ExportTables,
     names: CommonJsNames,
 }
@@ -295,7 +259,6 @@ impl Resolver<'_, '_> {
             return Source::Unknown;
         };
         let resolved = self.tables.resolve(self.modules, file, name);
-        // Only the link says whether the module has a name that it compares with what stands behind a star.
         if resolved.required_name.is_some() {
             return Source::Unknown;
         }
@@ -320,7 +283,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // The CommonJS modules of the program that the getters of the module read a name of.
     fn modules_asked_by(&self, number: usize) -> Vec<u32> {
         let entries = &self.names.entries[number];
         if !entries.has_names {
@@ -334,7 +296,6 @@ impl Resolver<'_, '_> {
         asked.collect()
     }
 
-    // The variable behind what a getter reads. The module that it reads a name of is bound by then. `NotFound`: there is no variable that the build knows.
     fn resolve(&self, source: Source) -> Resolution {
         let names = &self.names;
         match source {
@@ -345,7 +306,6 @@ impl Resolver<'_, '_> {
             {
                 Resolution::NotFound
             }
-            // The ES module holds the copy, or the value of the module, which no name of a CommonJS module stands for.
             Source::Name {
                 module,
                 name,
@@ -363,7 +323,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // Whether an import that is bound to the target finds what the getter answers.
     fn is_found_by_import(&self, target: Resolution) -> bool {
         match target {
             Resolution::Synthetic { module, name } => self.names.shows_member(module, name),
@@ -371,7 +330,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // Whether what the getter answers may change behind the link, or the getter answers `undefined` for a name that is not there. A binding that the link may find unfilled says so itself.
     fn can_be_told_from_copy(&self, target: Resolution) -> bool {
         match target {
             Resolution::Variable(symbol) => {
@@ -382,7 +340,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // `false`: a name of the module stands for something that has no variable, or that no import can be bound to.
     fn bind_getters(&mut self, number: usize) -> bool {
         let entries = &self.names.entries[number];
         if !entries.has_names {
@@ -406,14 +363,11 @@ impl Resolver<'_, '_> {
             let is_told_from_copy = !is_found_by_import
                 || getter.is_seen_unfilled
                 || self.can_be_told_from_copy(target);
-            // Whoever holds the object of the other module may store under the name at any time. Who does shows once the files are bound.
             let is_copy_of_name =
                 !is_told_from_copy && matches!(target, Resolution::Synthetic { .. });
             let row = self.names.find_row(number, entry.name);
             let row = &mut self.names.rows[row.expect("every name has a row")];
             row.target = Some(target);
-            // A getter that a loop over the object passes over is read live where it returns a binding, as in a bundle. Over a name of another module it has a copy of its own:
-            // bound to the name itself, the file would take the copy of that name anew, under whoever holds it already.
             row.copy = if is_copy_of_name {
                 ImporterCopy::OfName
             } else if entry.is_enumerable && is_told_from_copy {
@@ -442,10 +396,8 @@ pub(super) fn resolve_commonjs_names(
     let asked: Vec<Vec<u32>> = numbers
         .map(|number| resolver.modules_asked_by(number))
         .collect();
-    // A module comes behind every module that it asks.
     let (_, components) = strongly_connected_components(&asked);
     for members in components {
-        // On a cycle, following a getter can come back to where it began.
         let is_cycle = match members[..] {
             [member] => asked[member].contains(&(member as u32)),
             _ => true,
@@ -568,7 +520,6 @@ mod tests {
             assert_eq!(names.find(a, x), end);
             assert_eq!(names.find(b, y), end);
             assert_eq!(names.find(c, z), None);
-            // An importer of `x` holds what the getter answered, which is `z` as long as nothing stores `z` late.
             for (module, name) in [(a, x), (b, y)] {
                 assert!(names.is_copied(module, name) && names.is_copy_of_name(module, name));
             }
@@ -716,7 +667,6 @@ mod tests {
                 Some(Resolution::Synthetic { module: b, name: y })
             );
             assert!(names.is_hidden(a, x) && names.is_copied(a, x) && names.is_copy_of_name(a, x));
-            // As in a bundle, an import statement reads the binding itself.
             assert!(names.is_hidden(a, changed) && !names.is_copied(a, changed));
         });
     }

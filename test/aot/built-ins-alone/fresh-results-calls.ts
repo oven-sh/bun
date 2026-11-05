@@ -49,7 +49,47 @@ const told = "data: (socket, data) => resolve(data)";
 const ofServers = (member: string, classes: string, text: string[]) =>
   Object.fromEntries([`%HTTPServer%.prototype.${member} > ${classes}`].map(key => [key, text]));
 
+const stats = (bigint: boolean) => `import { statSync } from "node:fs";\nconst stats = statSync(".", { bigint: ${bigint} });`;
+const observed = [
+  "const { promise, resolve } = Promise.withResolvers();",
+  "const observer = new PerformanceObserver(list => (observer.disconnect(), resolve(list)));",
+  'observer.observe({ entryTypes: ["mark"] });',
+  'performance.mark("fresh-results");',
+  "const list = await promise;",
+].join("\n");
+const ofJSC = (name: string, operands = "") => [`import { ${name} } from "bun:jsc";\n${name}(${operands})`];
+
 export const calls: Record<string, string[]> = {
+  // The rows under the names of the classes are the constructors'. What native code makes is judged under the methods of the binding, as node:fs hands it on.
+  "%Stats%": [`${stats(false)}\nnew stats.constructor(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)`],
+  "%BigIntStats%": [`${stats(true)}\nnew stats.constructor(1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n, 13n, 14n)`],
+  "%NodeJSFS%.prototype.statSync": [`${stats(false)}\nstats`, `${stats(true)}\nstats`],
+  "%NodeJSFS%.prototype.lstatSync": ['import { lstatSync } from "node:fs";\nlstatSync(".")', 'import { lstatSync } from "node:fs";\nlstatSync(".", { bigint: true })'],
+  "%NodeJSFS%.prototype.fstatSync": ['import { fstatSync } from "node:fs";\nfstatSync(0)'],
+  "%NodeJSFS%.prototype.readdirSync": ['import { readdirSync } from "node:fs";\nreaddirSync("/")', 'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })'],
+  "%NodeJSFS%.prototype.readFileSync": ['import { readFileSync } from "node:fs";\nreadFileSync("/etc/hostname")'],
+  "%NodeJSFS%.prototype.realpathSync": ['import { realpathSync } from "node:fs";\nrealpathSync("/", "buffer")'],
+  ...Object.fromEntries(
+    ["atime", "birthtime", "ctime", "mtime"].flatMap(name => [
+      [`%Stats%.prototype.${name} > Date`, [`${stats(false)}\nconst date = stats.${name};\ndate`]],
+      [`%BigIntStats%.prototype.${name} > Date`, [`${stats(true)}\nconst date = stats.${name};\ndate`]],
+    ]),
+  ),
+  "%Dirent%": ['import { Dirent } from "node:fs";\nnew Dirent("name", 1, "/path")'],
+  "PerformanceObserver > PerformanceObserverEntryList": [`${observed}\nlist`],
+  "PerformanceObserverEntryList.prototype.getEntries": [`${observed}\nlist.getEntries()`],
+  "PerformanceObserverEntryList.prototype.getEntriesByName": [`${observed}\nlist.getEntriesByName("fresh-results")`],
+  "PerformanceObserverEntryList.prototype.getEntriesByType": [`${observed}\nlist.getEntriesByType("mark")`],
+  "PerformanceObserver.prototype.takeRecords": ['const observer = new PerformanceObserver(() => {});\nobserver.observe({ entryTypes: ["mark"] });\nobserver.takeRecords()'],
+  // A mark and a measure have a toJSON() of their own.
+  "PerformanceEntry.prototype.toJSON": ['PerformanceEntry.prototype.toJSON.call(performance.mark("fresh-results"))'],
+  "%IntlSegmentIterator%.prototype.next > ": ['const step = new Intl.Segmenter("en").segment("ab")[Symbol.iterator]().next();\nconst value = step.value;\nvalue'],
+  "%Subprocess%.prototype.stdio": ['const child = Bun.spawn(["true"]);\nawait child.exited;\nchild.stdio'],
+  "node:module._nodeModulePaths": ['import { _nodeModulePaths } from "node:module";\n_nodeModulePaths("/a/b")'],
+  "bun:jsc.generateHeapSnapshotForDebugging": ofJSC("generateHeapSnapshotForDebugging"),
+  "bun:jsc.heapStats": ofJSC("heapStats"),
+  "bun:jsc.memoryUsage": ofJSC("memoryUsage"),
+  "bun:jsc.serialize": ofJSC("serialize", "{ a: 1 }"),
   "Bun.Cookie.from": ['Bun.Cookie.from("name", "value")'],
   "Bun.Cookie.parse": ['Bun.Cookie.parse("name=value")'],
   "Bun.dns.getServers": ["Bun.dns.getServers()"],
@@ -446,6 +486,22 @@ const alwaysThrows = "the constructor throws whatever it is given";
 /** Rows that are not called, by what their paths look like. */
 export const familiesNotCalled: { rows: RegExp; why: string }[] = [
   {
+    rows: /^%Expect%\.prototype\.|^bun:test\./,
+    why: "a matcher and a hook of bun:test answer in a test run alone, and this process is none",
+  },
+  {
+    rows: /^%NodeJSFS%\.prototype\./,
+    why: "only internal/fs/binding holds the object, and node:fs hands on what its methods answer: %Stats%, %BigIntStats% and %Dirent% are judged as node:fs hands them out",
+  },
+  {
+    rows: /^(native:Bindgen:(node_net_binding|socket_body)\.bind\.ts:|%NativeFunctions%\.(Node_net_binding|Socket_body)BindTs)/,
+    why: "only node:net and node:tls hold it, and hand it to nobody",
+  },
+  {
+    rows: /^(native:Bindgen:node_assert_binding\.bind\.ts:|%NativeFunctions%\.Node_assert_bindingBindTs)/,
+    why: "only internal/assert/myers_diff holds it, and hands it to nobody",
+  },
+  {
     rows: /_test\.bind\.ts:|^%NativeFunctions%\.[A-Za-z0-9_]+_testBindTs/,
     why: "it exists for the tests of the generator of bindings, and only a build with assertions has it",
   },
@@ -467,6 +523,15 @@ export const notCalled: Record<string, string> = {
   "%LinkTimeConstant:wrapForValidIteratorCreate%": ofTheEngine,
   "%CompilerHelpers%.TextEncoder_prototype_encodeInto_inRanges": ofTheCompiler,
   "%CompilerHelpers%.arrayFromLength": ofTheCompiler,
+  "%CompilerHelpers%.arrayFromList": ofTheCompiler,
+  "%CompilerHelpers%.pairsOfFlatEntries": ofTheCompiler,
+  "%CompilerHelpers%.takeFromIterable": ofTheCompiler,
+  "%PrivateGlobals%.esmRegistryEvaluatedKeys": "a private global of Bun's own library code: no other text can name it",
+  "%PrivateGlobals%.requireMap > Map": "a private global of Bun's own library code: no other text can name it",
+  "bun:jsc.bytecodeOrderStats": "it answers only where the engine was started to record the order of bytecode",
+  "bun:jsc.samplingProfilerStackTraces": "it answers only while the sampling profiler runs",
+  "node:module.enableCompileCache": "it lays a folder for a cache into the user's temporary files",
+  "PerformanceServerTiming.prototype.toJSON": "no entry of this process has a server's timing: only a fetched resource has",
   "%CompilerHelpers%.arrayOfUndefined": ofTheCompiler,
   "%CompilerHelpers%.filledArray": ofTheCompiler,
   "%CompilerHelpers%.importRejectedByLoader": ofTheCompiler,

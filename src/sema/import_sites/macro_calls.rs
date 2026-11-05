@@ -21,7 +21,6 @@ pub fn macro_import_symbols(hir: &File<'_>, bound: &Bound<'_>) -> Vec<SymbolId> 
     symbols
 }
 
-/// A macro that is the tag of a template counts as called: `bun build` stops there, and left alone it would be a name that nothing declares.
 pub fn macro_callee(
     hir: &File<'_>,
     bound: &Bound<'_>,

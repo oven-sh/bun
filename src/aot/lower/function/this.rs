@@ -15,7 +15,6 @@ enum LexicalOwner {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// The scope is that of a field's value, and the constructor evaluates the value itself.
     pub(in crate::lower) fn is_code_of_constructor(&self, scope: ScopeId) -> bool {
         let ScopeKind::FieldInitializer(member) = self.bound.scopes[scope.idx()].kind else {
             return false;
@@ -24,7 +23,6 @@ impl FileLowering<'_, '_, '_, '_> {
         class::is_evaluated_in_constructor(self.hir, self.bound, self.compiled, signed, member)
     }
 
-    /// The scope of that constructor, where the class declares it.
     pub(in crate::lower) fn find_scope_of_evaluating_constructor(
         &self,
         scope: ScopeId,
@@ -64,7 +62,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `bun run` replaces the `this` of a file that has ES module syntax with `null`, in a CommonJS file with `import.meta` too. The language says `undefined`.
     pub(crate) fn lower_this_expression(&mut self) -> ValueId {
         match self.find_lexical_owner() {
             LexicalOwner::File(_) if self.file.compiled.analysis.has_esm_syntax => {
@@ -92,7 +89,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // The exports object of a CommonJS module, `null` in a file with ES module syntax: what `bun run` has there, whatever the checker says.
     pub(in crate::lower) fn is_this_of_module(&self) -> bool {
         matches!(self.find_lexical_owner(), LexicalOwner::File(_))
     }

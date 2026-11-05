@@ -238,6 +238,11 @@ bun build <entry points>
   from disk at run time. Makes it larger and slower
 </ParamField>
 
+<ParamField path="--aot-harden" type="string">
+  With <code>--aot</code>: make a bug in the compiler harder to turn into a memory bug. Takes a list of{" "}
+  <code>proof-checks</code> and <code>ignore-told-ranges</code>. The executable runs slower
+</ParamField>
+
 <ParamField path="--compile-in-place" type="boolean">
   With <code>--aot</code>: keep modules at their paths on disk and load anything that wasn't compiled from there. The
   executable only runs on the machine that built it

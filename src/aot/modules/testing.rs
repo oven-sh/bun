@@ -15,7 +15,6 @@ use bun_sema::program::FileId;
 
 const PROJECT_ROOT: &[u8] = b"/project/";
 
-/// The graph of a program of which nothing is left out.
 pub(crate) fn bind_whole_program(input: &BindInput<'_, '_>) -> ModuleGraph {
     let mut graph = bind_modules(input).graph;
     graph.finish_plan(input.in_parallel);
@@ -38,7 +37,6 @@ pub(crate) fn with_runtime_graph<R>(
     with_runtime_bind_input(files, |input| then(&bind_whole_program(input), input))
 }
 
-/// The first file is the test file that the runner starts.
 pub(crate) fn with_test_run_graph<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&ModuleGraph, &BindInput<'_, '_>) -> R,
@@ -46,7 +44,6 @@ pub(crate) fn with_test_run_graph<R>(
     with_test_run_bind_input(files, |input| then(&bind_whole_program(input), input))
 }
 
-/// `with_bind_input_of_test_files`
 pub(crate) fn with_graph_of_test_files<R>(
     files: &[(&str, &str)],
     test_files: usize,
@@ -72,7 +69,6 @@ pub(crate) fn symbol_named(input: &BindInput<'_, '_>, file: FileId, name: &str) 
     symbol.expect("the file scope does not declare the name")
 }
 
-/// The first access under the name.
 pub(crate) fn member_named(input: &BindInput<'_, '_>, file: FileId, name: &str) -> ExprId {
     let name = input.files.atoms.intern(name.as_bytes());
     let hir = input.files.hir(file);
@@ -117,7 +113,6 @@ pub(crate) fn describe_module(
     text
 }
 
-/// What the module asks for at last, one request a line.
 pub(crate) fn describe_requests_of(
     graph: &ModuleGraph,
     input: &BindInput<'_, '_>,
@@ -399,7 +394,6 @@ mod tests {
         with_test_run_graph(&[("main.test.js", main)], |_, input| {
             let file = file_named(input, "main.test.js");
             let source = parsed_source(input.files, file).expect("the load has parsed the file");
-            // Only a load that runs as a test run looks for spies.
             assert_eq!(source.builtins.spy_calls().len(), 1);
             assert!(input.runs_tests);
             assert!(input.runner_starts_entry_points);

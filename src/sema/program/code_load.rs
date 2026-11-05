@@ -7,24 +7,13 @@ use crate::hir_from_data::HostValue;
 use crate::import_sites::{ExportedRequire, JsxMode};
 use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
-    CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest, CodeResolution,
-    DeclaredSideEffects, EnclosingPackage, HostPayload, JsxSettings, ProjectResolvers,
-    SiteResolution, TranspileSettings,
+    CodeHost, CodeImportKind, CodeOptions, CodeResolution, DeclaredSideEffects, EnclosingPackage,
+    HostPayload, JsxSettings, ProjectResolvers, SiteResolution, TranspileSettings,
 };
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum MainModule {
-    EntryPoint,
-    EntryPointOfProcessOrWorker,
-    Elsewhere,
-    AnyFile,
-}
 
 pub struct CompileInputs<'a, 's> {
     pub entry_points: &'a [Vec<u8>],
-    /// Asked each time every file that was found is parsed, until it names nothing new. The load goes on with what it names, and ends as a load of all of them ends.
     pub finds_entry_points: Option<&'a FindsEntryPoints<'a>>,
-    pub main_module: MainModule,
     pub code: &'a CodeOptions,
     pub fold: &'a FoldInputs<'s>,
     pub atoms: Interner<'s>,
@@ -37,7 +26,6 @@ pub(super) struct CompileLoad<'a, 's> {
 }
 
 impl<'s> Files<'s> {
-    /// `load`, for a compile build, which also loads the files that run.
     pub fn load_for_compile(
         session: &'s Session,
         host: &dyn CodeHost,
@@ -59,14 +47,10 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     pub(super) atoms: Interner<'s>,
     pub(super) projects: Projects<'s>,
     pub(super) project_resolvers: ProjectResolvers<'r>,
-    /// `CompileInputs::entry_points`
     written_entry_points: Vec<CodeTarget<'r>>,
     keys_of_entry_points: FxHashSet<(Cow<'r, [u8]>, HostLoader)>,
-    /// What `CompileInputs::finds_entry_points` has named.
     found_entry_points: Guarded<Vec<CodeTarget<'r>>>,
-    main_modules_beside_entry_points: FxHashSet<Vec<u8>>,
-    entry_points_only_imported_from_above: FxHashSet<Vec<u8>>,
-    entry_points_required_from_above: FxHashSet<Vec<u8>>,
+    entry_points_that_run_first: FxHashSet<Vec<u8>>,
     pub(super) is_case_sensitive: bool,
 }
 
@@ -93,28 +77,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             .map(|it| (to_path(it.key.path, is_case_sensitive), it.key.loader))
             .collect();
         let code = compile.inputs.code;
-        let main_modules_beside_entry_points = (code.main_modules_beside_entry_points.iter())
-            .filter_map(|path| {
-                let resolution = resolver.resolve_code(&CodeRequest {
-                    specifier: path,
-                    importer: b"",
-                    directory: &code.working_directory,
-                    kind: CodeImportKind::EntryPoint,
-                    form: CodeImportForm::Static,
-                });
-                match resolution {
-                    CodeResolution::File(file) if file.host_module.is_none() => {
-                        Some(to_path(file.path, is_case_sensitive).into_owned())
-                    }
-                    _ => None,
-                }
-            })
-            .collect();
-        let entry_points_only_imported_from_above = (code.entry_points_only_imported_from_above)
-            .iter()
-            .map(|path| to_path(path, is_case_sensitive).into_owned())
-            .collect();
-        let entry_points_required_from_above = (code.entry_points_required_from_above)
+        let entry_points_that_run_first = (code.entry_points_that_run_first)
             .iter()
             .map(|path| to_path(path, is_case_sensitive).into_owned())
             .collect();
@@ -130,9 +93,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             written_entry_points: entry_points,
             keys_of_entry_points,
             found_entry_points: Guarded::new(Vec::new()),
-            main_modules_beside_entry_points,
-            entry_points_only_imported_from_above,
-            entry_points_required_from_above,
+            entry_points_that_run_first,
             is_case_sensitive,
         }
     }
@@ -150,7 +111,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             .collect()
     }
 
-    /// They come first among `entry_points()`.
     pub(super) fn written_entry_point_count(&self) -> usize {
         self.written_entry_points.len()
     }
@@ -171,7 +131,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         self.keys_of_entry_points.contains(&(path, key.loader))
     }
 
-    /// `None`: the program begins there already.
     pub(super) fn add_entry_point(&self, path: &[u8]) -> Option<CodeTarget<'r>> {
         let resolver = self.resolver;
         let request = resolver.loader_request(path, CodeImportKind::EntryPoint, None, None);
@@ -183,19 +142,9 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         Some(target)
     }
 
-    pub(super) fn is_only_imported_from_above(&self, key: LoadKey<'_>) -> bool {
+    pub(super) fn runs_first(&self, key: LoadKey<'_>) -> bool {
         let path = to_path(key.path, self.is_case_sensitive);
-        self.entry_points_only_imported_from_above.contains(&*path)
-    }
-
-    pub(super) fn is_required_from_above(&self, key: LoadKey<'_>) -> bool {
-        let path = to_path(key.path, self.is_case_sensitive);
-        self.entry_points_required_from_above.contains(&*path)
-    }
-
-    pub(super) fn is_main_module_beside_entry_points(&self, key: LoadKey<'_>) -> bool {
-        let path = to_path(key.path, self.is_case_sensitive);
-        self.main_modules_beside_entry_points.contains(&*path)
+        self.entry_points_that_run_first.contains(&*path)
     }
 }
 
@@ -211,12 +160,8 @@ pub(super) struct CodeTarget<'r> {
     pub(super) host_module: Option<HostModuleId>,
     pub(super) increases_depth: bool,
     pub(super) has_loader_attribute: bool,
-    /// An import or export statement asks for it, so it is loaded with the graph of the file.
     pub(super) is_loaded_with_importer: bool,
-    /// The statement writes a `type` other than "json". The loader of `bun run` keeps one module for a path and all of those.
     pub(super) has_shared_type: bool,
-    /// A statement or an `import()` writes such a `type`, or the call has options in which the build reads none. Which of the forms a statement gets then shows when the program
-    /// runs: a call may have loaded another one first.
     pub(super) has_type_of_shared_kind: bool,
 }
 
@@ -295,7 +240,6 @@ pub(super) struct CodeFiles<'s, 'r> {
     pub(super) entry_of_file: Vec<Option<u32>>,
     pub(super) is_in_types_program: Vec<bool>,
     pub(super) typed_files_with_other_code: FxHashSet<Vec<u8>>,
-    /// `CodeHost::follows_imports_on_request`
     pub(super) reads_code_on_request: bool,
 }
 

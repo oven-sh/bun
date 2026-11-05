@@ -9,7 +9,6 @@ impl Walker<'_, '_> {
         if statement.is_none() || self.decisions.is_dead_stmt(statement) {
             return;
         }
-        // The module graph turned the statement into facts of the build, `exports.__esModule = true` or a getter that only names a variable of another module: it has no code, so nothing in it is a use and no function in it is created.
         let is_module_body = self.walk.functions[context.function.index()]
             .creator
             .is_none();
@@ -52,7 +51,7 @@ impl Walker<'_, '_> {
             StmtKind::Enum(id) if hir[id].flags.contains(Flags::AMBIENT) => {}
             StmtKind::Enum(id) => {
                 self.push_initialization(bound.declared_symbol(Decl::Enum(id)), context);
-                self.enter_scope(bound.enum_scope[id.idx()], context);
+                self.enter_container_scope(bound.enum_scope[id.idx()], context);
                 for member in hir[id].members.iter() {
                     let member = hir[member];
                     self.push_expressions([member.computed_name, member.init], context);
@@ -61,16 +60,18 @@ impl Walker<'_, '_> {
             StmtKind::Module(id) => {
                 if bound.makes_namespace_object(hir, id) {
                     self.push_initialization(bound.declared_symbol(Decl::Module(id)), context);
-                    self.enter_scope(bound.module_scope[id.idx()], context);
+                    self.enter_container_scope(bound.module_scope[id.idx()], context);
                     self.push_statements(hir.ids(hir[id].body), context);
                 }
             }
             StmtKind::ImportEquals(import) => {
+                self.note_binding_is_looked_at(bound.entity_root_binding(import));
                 self.record_binding_use(context, bound.entity_root_binding(import), false);
                 let symbol = bound.declared_symbol(Decl::ImportEquals(import));
                 self.push_initialization(symbol, context);
             }
             StmtKind::If { test, yes, no } => {
+                self.note_name_that_nobody_looks_at(test);
                 self.push_expressions([test], context);
                 self.push_statements([yes, no], context.conditional());
             }
@@ -109,7 +110,6 @@ impl Walker<'_, '_> {
             | StmtKind::ForOf {
                 left, expr, body, ..
             } => {
-                // `for (var a = 0 in b)` evaluates `0` first, and once.
                 if let StmtKind::Var(declarations) = hir[left].kind {
                     let initializers = declarations.iter().map(|id| hir[id].init);
                     self.push_expressions(initializers, context);
@@ -151,6 +151,12 @@ impl Walker<'_, '_> {
             | StmtKind::ExportAsNamespace(_)
             | StmtKind::Directive { .. } => {}
         }
+    }
+
+    fn enter_container_scope(&mut self, scope: ScopeId, context: Context) {
+        let parameter = self.bound.container_parameter(scope);
+        self.push_task(Task::InitializeParameter(parameter), context);
+        self.enter_scope(scope, context);
     }
 
     pub(super) fn push_initialization(&mut self, symbol: SymbolId, context: Context) {

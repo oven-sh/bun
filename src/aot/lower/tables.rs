@@ -17,7 +17,6 @@ use crate::ir::{
 };
 use crate::modules::{self, ModuleRef};
 
-/// The numbers under which the files of one checker's task write. A visit only appends.
 pub struct UnitTables {
     pub strings: StringTable,
     pub property_keys: PropertyKeyTable,
@@ -27,15 +26,11 @@ pub struct UnitTables {
     pub variable_keys: Vec<VariableKey>,
     pub module_keys: Vec<ModuleRef>,
     pub module_failure_keys: Vec<modules::ModuleFailureId>,
-    /// The records lie in the fragments.
     pub eval_scope_count: u32,
-    /// The records lie in the fragments.
     pub data_count: u32,
-    /// The records lie in the fragments.
     pub expected_result_count: u32,
 }
 
-/// How long each list was when a file was done. What lies at or behind the lengths of the last committed file belongs to a visit that was thrown away.
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub struct TableLengths {
     pub strings: u32,
@@ -52,7 +47,6 @@ pub struct TableLengths {
 }
 
 impl TableLengths {
-    /// Field by field.
     pub fn max(self, other: TableLengths) -> TableLengths {
         TableLengths {
             strings: self.strings.max(other.strings),
@@ -103,7 +97,6 @@ impl UnitTables {
         }
     }
 
-    // `lengths` were read off all lists at one moment, so what stays names nothing that goes.
     fn truncate(&mut self, lengths: TableLengths) {
         self.strings.truncate(lengths.strings as usize);
         self.property_keys.truncate(lengths.property_keys as usize);
@@ -120,10 +113,8 @@ impl UnitTables {
     }
 }
 
-/// Held by the task while it lasts and by every fragment written under the tables.
 pub struct SharedTables {
     tables: Guarded<Option<Box<UnitTables>>>,
-    /// `Fragment::lengths` of the last visit that the checker has committed, and of how many visits that was said. `None`: nobody has said of any.
     commits: Guarded<Option<(TableLengths, u32)>>,
 }
 
@@ -135,7 +126,6 @@ impl SharedTables {
         }
     }
 
-    /// Two visits never overlap within a task, and the link takes the tables once, behind every task.
     pub(crate) fn take(&self) -> Box<UnitTables> {
         let tables = self.tables.lock().take();
         tables.expect("the tables are out: a visit has not given them back, or the link has them")
@@ -146,14 +136,12 @@ impl SharedTables {
         debug_assert!(others.is_none(), "only tables that were taken are put back");
     }
 
-    /// The checker has committed the visit that left the tables this long. Whoever says so of one visit says so of each, on the thread of the task, ahead of its next visit.
     pub(crate) fn note_commit(&self, lengths: TableLengths) {
         let mut commits = self.commits.lock();
         let count = commits.map_or(0, |(_, count)| count);
         *commits = Some((lengths, count + 1));
     }
 
-    /// How often `note_commit` was called. `None`: never, so the tables were those of one task.
     pub(crate) fn count_noted_commits(&self) -> Option<u32> {
         self.commits.lock().map(|(_, count)| count)
     }
@@ -161,13 +149,9 @@ impl SharedTables {
 
 const TOO_MANY_PLACES: &str = "a task gives out fewer than 2^32 places";
 
-/// Leads from a number of the tables to an index into a list of one file, so that the list is as long as what the file names and not as long as the tables.
 pub(crate) struct Places {
-    /// By the number of the tables: `first` of the file that asked last, plus the place it was given. 0: nobody has asked. Never cleared.
     entries: Vec<u32>,
-    /// Above every entry of an earlier file, and above 0.
     first: u32,
-    /// How many places the file at hand has been given.
     count: u32,
 }
 
@@ -187,7 +171,6 @@ impl Places {
         self.count = 0;
     }
 
-    /// 0, 1, 2.. in the order in which the file at hand asks first.
     pub(in crate::lower) fn place(&mut self, index: usize) -> usize {
         if self.entries.len() <= index {
             self.entries.resize(index + 1, 0);
@@ -200,15 +183,12 @@ impl Places {
         (*entry - self.first) as usize
     }
 
-    /// None: the file at hand has not asked for a place of it.
     pub(in crate::lower) fn find(&self, index: usize) -> Option<usize> {
         let place = self.entries.get(index)?.checked_sub(self.first)?;
         Some(place as usize)
     }
 }
 
-/// What lowering keeps in `Checker::state_of_lowering` from one file of a task to the next.
-/// The fragments hold the tables too, and `hand_on` says what else outlives the task.
 pub(crate) struct TaskState {
     pub(in crate::lower) tables: Arc<SharedTables>,
     pub(in crate::lower) finders: KeyFinders,
@@ -217,13 +197,10 @@ pub(crate) struct TaskState {
     pub(in crate::lower) function_places: Places,
     pub(in crate::lower) memo: TypeMemo,
     pub(in crate::lower) orders: KnownOrders,
-    /// Whether the files that filled `memo` are the program's own. `None`: nothing has filled it.
     is_of_program: Option<bool>,
     pub(in crate::lower) atoms: FxHashMap<Atom, StringId>,
     pub(in crate::lower) atom_keys: FxHashMap<Atom, PropertyKeyId>,
-    /// 1, 2, 3.. : the visit at hand. A stamp that holds another number says "not in this file", and 0 says "never".
     pub(in crate::lower) visit: u32,
-    /// The file of the last visit and how long the tables were before it.
     pub(in crate::lower) last_visit: Option<(FileId, TableLengths)>,
 }
 
@@ -245,7 +222,6 @@ impl TaskState {
         }
     }
 
-    /// A name is another key in a module of Bun's own than in the program, so neither takes over what the other has found out about a type.
     pub(in crate::lower) fn begin_file_of(&mut self, is_of_program: bool) {
         let filled_by = self.is_of_program.replace(is_of_program);
         if filled_by.is_some_and(|filled_by| filled_by != is_of_program) {
@@ -253,9 +229,6 @@ impl TaskState {
         }
     }
 
-    /// The last visit is thrown away.
-    /// Nothing that holds a number at or behind `lengths` stays: the next visit gives those numbers out again. Call it between two visits.
-    /// `marks` and the places stay as they are: `visit` and `Places::first` only grow, so what an earlier visit left there says nothing to a later one.
     pub(in crate::lower) fn roll_back(&mut self, lengths: TableLengths) {
         let mut tables = self.tables.take();
         debug_assert_eq!(
@@ -273,11 +246,6 @@ impl TaskState {
         self.memo.forget_types_from(lengths.types);
     }
 
-    /// The state of the next task of the thread. It writes under the same tables: each set of tables holds a copy of what its files name,
-    /// and the link reads every copy to find those that are alike.
-    /// With the tables goes what leads to their numbers, and what was found out about the types of `carried`. All else goes by what
-    /// the checker drops with the task, or belongs to one file.
-    /// `None`: nothing says which visits were committed, or none was.
     fn hand_on(self, carried: Option<&RowsCarriedOver<'_>>) -> Option<TaskState> {
         let (committed_lengths, _) = (*self.tables.commits.lock())?;
         let mut next = TaskState {
@@ -291,7 +259,6 @@ impl TaskState {
             visit: self.visit,
             ..TaskState::new()
         };
-        // A task ends where a commit fails, and the file is visited again by whichever task comes to it.
         let tables = next.tables.take();
         let ends_with_lost_visit = tables.lengths() != committed_lengths;
         next.tables.put_back(tables);
@@ -302,7 +269,6 @@ impl TaskState {
     }
 }
 
-/// Where the task has no state yet: what the task before it on this thread has handed on, or a new one with new tables.
 pub(in crate::lower) fn take_task_state(checker: &mut Checker<'_, '_>) -> Box<TaskState> {
     let kept = checker.state_of_lowering().take();
     let kept = kept.or_else(|| checker.state_of_lowering_in_last_task().take());
@@ -310,7 +276,6 @@ pub(in crate::lower) fn take_task_state(checker: &mut Checker<'_, '_>) -> Box<Ta
     state.unwrap_or_else(|| Box::new(TaskState::new()))
 }
 
-// The checker calls it where the task ends, behind its last commit.
 fn hand_on_at_end_of_task(
     kept: Box<dyn Any + Send>,
     carried: Option<&RowsCarriedOver<'_>>,

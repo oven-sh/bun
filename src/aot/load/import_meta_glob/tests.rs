@@ -4,6 +4,7 @@ use bun_ast::Loader;
 use bun_paths::fs::FileSystem;
 use bun_sema::bind::Parent;
 use bun_sema::module_format::ModuleFormat;
+use bun_sema::program::CodeAnswer;
 use bun_sema::session::Session;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
@@ -20,14 +21,12 @@ const PAGES: [(&str, &str); 2] = [
     ("pages/b.ts", "export const name = \"b\";"),
 ];
 
-/// The parser looks for the files on the disk.
 fn write_project(test: &str, main: (&str, &str)) -> TemporaryDirectory {
     set_up_output();
     let directory = TemporaryDirectory::new(test);
     for (path, text) in PAGES.into_iter().chain([main]) {
         directory.write(path, text);
     }
-    // Where a pattern that starts with "/" is read from. The first test decides it, and no pattern here starts so.
     FileSystem::init(directory.path());
     directory
 }
@@ -103,7 +102,6 @@ fn lazy_and_eager() {
         ModuleFormat::Esm,
         |tree, atoms, warnings| {
             assert!(warnings.is_empty(), "{warnings:?}");
-            // The parser leaves dead code as written.
             assert_eq!(count_calls_of_glob(tree, atoms), 1);
             let is_load = |kind| matches!(kind, ExprKind::ImportCall { .. });
             assert_eq!(count_expressions(tree, is_load), 2);
@@ -135,15 +133,15 @@ fn commonjs() {
             assert!(warnings.is_empty(), "{warnings:?}");
             assert_eq!(count_calls_of_glob(tree, atoms), 0);
             assert!(tree.imports.is_empty());
-            let is_require = |kind| matches!(kind, ExprKind::Ident(name) if name == known::require);
-            assert_eq!(count_expressions(tree, is_require), 2);
-            for specifier in ["%glob::./pages/a.ts", "%glob::./pages/b.ts"] {
-                let specifier = atoms.intern(specifier.as_bytes());
-                let is_named = |kind| matches!(kind, ExprKind::String(text) if text == specifier);
-                assert_eq!(count_expressions(tree, is_named), 1);
-            }
             let head: Vec<StmtKind> = tree.ids(tree.body).map(|it| tree[it].kind).collect();
-            assert!(matches!(head[..2], [StmtKind::Var(_), StmtKind::Var(_)]));
+            for (statement, specifier) in head
+                .iter()
+                .zip(["%glob::./pages/a.ts", "%glob::./pages/b.ts"])
+            {
+                let specifier = atoms.intern(specifier.as_bytes());
+                assert!(matches!(*statement, StmtKind::ImportEquals(it)
+                    if matches!(tree[it].target, ImportEqualsTarget::Require(text) if text == specifier)));
+            }
         },
     );
 }
@@ -164,7 +162,6 @@ fn invalid() {
             let throws = tree.stmts.iter();
             let throws = throws.filter(|it| matches!(it.kind, StmtKind::Throw(_)));
             assert_eq!(throws.count(), 1);
-            // The argument is still evaluated.
             let pattern = atoms.intern(b"pattern");
             let is_pattern = |kind| matches!(kind, ExprKind::Ident(name) if name == pattern);
             assert_eq!(count_expressions(tree, is_pattern), 1);
@@ -172,7 +169,6 @@ fn invalid() {
     );
 }
 
-/// `export {}` shows the format of a file before its names are bound.
 fn assert_pages_are_loaded(test: &str, last_line: &str) {
     let text = format!(
         "const lazy = import.meta.glob(\"./pages/a.ts\");\n\
@@ -212,7 +208,6 @@ fn loads_files_before_binding() {
     assert_pages_are_loaded("glob_loads_files_before_binding", "export {};");
 }
 
-/// What the load makes of a `main.js` that begins with `require`: its format, and how many import statements it holds.
 fn load_beside_require(test: &str, rest: &str) -> (ModuleFormat, usize) {
     let text = format!(
         "const {{ basename }} = require(\"node:path\");\nconsole.log(basename(\"/x\"), {rest});"
@@ -296,7 +291,43 @@ fn a_specifier_that_the_program_writes_finds_no_module_of_the_build() {
     assert_eq!(found, [true, false]);
 }
 
-// Whether the ES module that the build makes for `./pages/a.ts`, and the one for `./pages/b.ts`, is compiled.
+#[test]
+fn the_specifier_of_an_own_entry_finds_its_module_only_where_the_build_wrote_it() {
+    let text = "module.exports = import.meta.glob(\"./pages/a.ts\", { eager: true });\n\
+        try {\n  require(\"%glob::./pages/a.ts\");\n} catch {}";
+    let directory = write_project("glob_written_specifier_of_own_entry", ("main.js", text));
+    let project = TestProject::on_disk(directory.path(), &["main.js"]);
+    let found = run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+        build.with_loaded_projects(|_, loaded| {
+            let files = loaded.project(ProjectId::Application).loaded.files();
+            let is_main = |&file: &_| files.module(file).file_name().ends_with(b"/main.js");
+            let main = files.compiled_files().iter().copied().find(is_main);
+            let answers = files.code_answers(main.expect("the entry point is compiled"));
+            let is_file = |answer: &&_| matches!(answer, CodeAnswer::File(_));
+            Ok(answers.iter().filter(is_file).count())
+        })
+    });
+    assert_eq!(found, 1);
+}
+
+#[test]
+fn nothing_that_the_file_does_to_the_names_of_its_loader_hides_an_eager_entry() {
+    let glob = "import.meta.glob(\"./pages/*.ts\", { eager: true });";
+    for (test, head) in [
+        (
+            "glob_beside_variable",
+            "var require = 1, module = 2;\nexports.pages = ",
+        ),
+        (
+            "glob_beside_block",
+            "{\n  function require() {}\n}\nmodule.exports = ",
+        ),
+    ] {
+        let found = find_modules_of_eager_entries(test, &format!("{head}{glob}"));
+        assert_eq!(found, [true, true], "{head}");
+    }
+}
+
 fn find_modules_of_eager_entries(test: &str, text: &str) -> [bool; 2] {
     let directory = write_project(test, ("main.js", text));
     let project = TestProject::on_disk(directory.path(), &["main.js"]);

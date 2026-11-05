@@ -34,7 +34,6 @@ impl FileLowering<'_, '_, '_, '_> {
         module::finish_body(lowering, Some(scope));
     }
 
-    // A file that stores to one of the five names, or shows them to code that finds names at run time, has them as the parameters they are to `bun run`.
     fn lower_calling_body(&mut self, function: FunctionId) {
         let key = FunctionKey::WrappedModuleBody(self.file);
         let wrapped = self.declare_function(key, create_wrapped_header);
@@ -68,7 +67,6 @@ impl FileLowering<'_, '_, '_, '_> {
         module::finish_body(lowering, Some(scope));
     }
 
-    // The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module: nobody passes it anything, and nobody gets what it returns.
     pub(in crate::lower) fn declare_inner_module_body(&mut self, callback: FnId) -> FunctionId {
         function::declare_source_function_with(self, callback, &mut |_, header| {
             header.kind = FunctionKind::CommonJsModule;
@@ -101,7 +99,6 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             let value = match (is_exports, first_exports) {
                 (true, Some(first_exports)) => first_exports,
-                // Only whether it is an object can be asked of it.
                 (true, None) => lowering.builder.boolean(true),
                 (false, _) => lowering.builder.undefined(),
             };
@@ -121,7 +118,6 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // The body begins as if it were written `exports = module.exports = {}`, with the layout of the names it stores.
     fn emit_first_exports(&mut self, module: ModuleRef) -> Option<ValueId> {
         let variable = self.file.ensure_whole_exports_variable(module)?;
         let layout = match module {
@@ -149,7 +145,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `this` at the top is the object that the body begins with. None of the five names is read from the scope.
     fn enter_plain_file_scope(&mut self, scope: ScopeId, first_exports: Option<ValueId>) {
         let mut entry_values = EntryValues::new();
         let slots = WRAPPER_PARAMETERS.into_iter().map(ScopeSlot::CommonJs);

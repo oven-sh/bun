@@ -80,9 +80,9 @@ pub(crate) fn finish_build(
         summary,
         starts_workers_from_unseen_code,
         names_of_worker_files: _,
+        names_followed: _,
         root_folders_spelled,
         holds_source_paths,
-        imports_file_with_query,
         program_files: _,
         names_added_to_builtins,
     } = compilation;
@@ -103,7 +103,6 @@ pub(crate) fn finish_build(
         root_directory: Vec::new(),
         root_folders_spelled,
         holds_source_paths,
-        imports_file_with_query,
         names_added_to_builtins,
         further_package_names: Vec::new(),
         package_names: Vec::new(),

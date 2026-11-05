@@ -52,7 +52,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // `receiver.name(..)`. Where the receiver is a list that the expression itself makes, the name finds what Array.prototype holds under it.
     fn find_method_of_fresh_array(&self, site: Call) -> Option<(ExprId, BuiltinId)> {
         let ExprKind::Dot {
             obj: receiver,
@@ -90,7 +89,6 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // An arrow function has no `arguments`: it sees what its parameters name.
     fn takes_at_most_two_parameters(&self, mapper: ExprId) -> bool {
         let hir = self.hir;
         let ExprKind::Fn(function) = hir[mapper].kind else {
@@ -118,7 +116,6 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // A maker that stands for one call of the program is in tail position where that call is.
     fn emit_maker_at(
         &mut self,
         call: ExprId,
@@ -150,7 +147,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         arguments[0]
     }
 
-    // `Array(-1)` throws where it is written, before what stands behind it is evaluated.
     fn lower_checked_length(&mut self, array: ExprId, length: ExprId) -> ValueId {
         let length = self.lower_only_argument(array, length);
         self.set_position(self.file.position_of_array_call(array));
@@ -194,7 +190,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return Some(self.emit_maker_at(call, maker, None, &operands, tail));
         }
 
-        // Array.from takes undefined for no mapper at all, and the list then holds undefined: not what a mapper returns.
         let split = self.split_on_type(written[1], TypeTable::UNDEFINED);
         let result = self.builder.create_variable(None);
         let join = self.create_block();
@@ -221,11 +216,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.claim_call_result(call, copy)
     }
 
-    // `Array.from(list)` of a list with its own names is `[...list]`: a hole reads as undefined in both. One that has lost or replaced its iterator is not.
-    // `Array.from(text)` is `[...text]` too: a string has the iterator of its class.
     fn lower_copy_by_array_from(&mut self, call: ExprId, items: ExprId, tail: Tail<'_>) -> ValueId {
         self.emit_locked_builtin(BuiltinId::ArrayFrom);
-        // `Array.from(new Set(list))`: what was made just here has the iterator of its class.
         let made = self.file.skip_type_syntax(items);
         let constructed = match self.file.hir[made].kind {
             ExprKind::New(site) => find_locked_builtin(self.file, self.file.hir[site].callee),
@@ -236,7 +228,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(BuiltinId::Map) => Some(BuiltinId::MapPrototypeSymbolIterator),
             _ => None,
         };
-        // Without an iterator `Array.from` reads a length, where a spread throws.
         let is_new_collection =
             iterator.is_some_and(|iterator| self.file.is_fixed_method(iterator));
         let value = self.lower_expression(items);
@@ -278,7 +269,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.read_variable(result)
     }
 
-    // `Array.from(list, value => ..)`: the iterator of a list with its own names hands out what lies at each index, which the maker reads by itself. Evaluating a function that is written there does nothing.
     fn lower_mapped_copy_by_array_from(
         &mut self,
         call: ExprId,
@@ -317,7 +307,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_filled_array(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
         let filled = self.file.find_filled_array(site)?;
-        // The maker throws what `Array(n)` throws. Nothing else in it can be seen.
         let length = match self.file.is_evaluated_without_effect(filled.value) {
             true => self.lower_only_argument(filled.array, filled.length),
             false => self.lower_checked_length(filled.array, filled.length),

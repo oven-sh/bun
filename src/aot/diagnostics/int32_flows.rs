@@ -22,7 +22,6 @@ fn bounds_of(record: &UserDiagnosticRecord) -> Bounds {
     }
 }
 
-// `| 0` turns a number that is out of range into another number, so a constant is never told to write it.
 fn is_constant(record: &UserDiagnosticRecord, failure: Int32ProofFailure) -> bool {
     let Bounds { minimum, maximum } = bounds_of(record);
     record.kind == UserDiagnosticKind::ConstantNotInt32
@@ -69,7 +68,6 @@ fn describe_failure(record: &UserDiagnosticRecord, failure: Int32ProofFailure) -
     text.to_owned()
 }
 
-// The list of a spread argument arrives in place of its elements, and `...list | 0` is nothing to write.
 fn advice_for(failure: Int32ProofFailure) -> &'static str {
     if failure == Int32ProofFailure::Unknown {
         ADVICE_AT_SPREAD
@@ -153,7 +151,6 @@ fn write_message(record: &UserDiagnosticRecord, flow: &Int32Flow) -> Vec<u8> {
     message
 }
 
-/// The message, and the offset at which it points in place of the conversion's: at the expression that flows, where there is one, and not at the statement around it.
 pub(super) fn write_int32_message(
     record: &UserDiagnosticRecord,
     flow: Option<&Int32Flow>,

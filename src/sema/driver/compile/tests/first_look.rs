@@ -12,7 +12,6 @@ impl NamedValues for NoNamedValues {
     }
 }
 
-// As `stat(path).catch((e: unknown) => (isMissing(e) ? undefined : Promise.reject(e)))` handed to a generic function.
 const BOXES: &str = "export interface Box<T> {
     value: T;
     or<R = never>(handle: (reason: unknown) => R | Box<R>): Box<T | R>;
@@ -23,7 +22,6 @@ declare function bounded<T>(work: Box<T>): T;
 export const kept = bounded(make().or((reason: unknown) => (reason ? undefined : refuse(reason))));
 ";
 
-/// The type of each call of the dependency, asked for in the order of their positions: the outermost first.
 fn ask_for_calls(threads: usize) -> Vec<(String, String)> {
     let files = [
         ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
@@ -68,15 +66,12 @@ fn ask_for_calls(threads: usize) -> Vec<(String, String)> {
                 *answers.lock().unwrap() = texts;
             });
         });
-        // Nobody has checked the file.
         assert!(!build.roles.is_checked(dep));
         assert!(build.codes().is_empty());
         answers.into_inner().unwrap()
     })
 }
 
-/// A check looks at `refuse(reason)` while it infers `R` of the call around the function, where nothing is known of `R`
-/// yet: `T` takes its default. With that call resolved, `R` is `undefined`, and a first look then would say `Box<undefined>`.
 #[test]
 fn call_in_a_function_expression_has_the_type_of_a_check_where_nobody_has_checked() {
     for threads in [1, 4] {

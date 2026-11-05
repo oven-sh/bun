@@ -162,7 +162,6 @@ pub fn resolve_callee(
 ) -> Option<KnownCallee> {
     let (hir, bound) = (input.files.hir(file), input.files.bound(file));
     let mut callee = hir.skip_type_assertions(callee);
-    // `(0, helper)(..)`. A known call may evaluate no callee, so what stands in front of the comma has to do nothing.
     while let ExprKind::Binary {
         op: BinOp::Comma,
         left,
@@ -191,7 +190,6 @@ pub fn resolve_callee(
                 None if bound.binding_kind(symbol) == BindingKind::Import => {
                     resolve_import(input, input.modules.import_binding(file, symbol))
                 }
-                // `var helper = require(K)`
                 None => {
                     let required = find_required_file(input, file, callee)?;
                     predict_exports(input, ModuleRef::File(required))
@@ -252,7 +250,6 @@ pub fn resolve_reference(
     })
 }
 
-/// The function of another file that a helper names, where it is of the family that the published text names there.
 pub fn resolve_loaded_reference(
     input: &ResolveInput<'_, '_>,
     file: FileId,
@@ -296,7 +293,6 @@ pub fn resolve_private_field_call(
         return None;
     }
     let callee = resolve_callee(input, file, site.callee)?;
-    // A mock or a spy of a test run may answer in place of a helper of another file.
     let modules = input.modules;
     let may_be_replaced = callee.file != file
         && (modules.reaches_mock(file) || modules.may_be_mocked(ModuleRef::File(callee.file)));
@@ -353,7 +349,6 @@ fn find_constant_text<'a>(
     }
 }
 
-// What the helpers compare `kind` with.
 fn find_member_kind(
     input: &ResolveInput<'_, '_>,
     file: FileId,
@@ -366,7 +361,6 @@ fn find_member_kind(
     }
 }
 
-// Code of another file can run while the file of the variable has not started.
 fn resolve_variable(input: &ResolveInput<'_, '_>, variable: Sym) -> Option<KnownCallee> {
     let values = input.helpers.binding(variable.file, variable.id)?;
     Some(KnownCallee {
@@ -412,7 +406,6 @@ fn resolve_export(input: &ResolveInput<'_, '_>, file: FileId, name: Atom) -> Opt
     None
 }
 
-// Only a prediction: callers guard the value with IsClosureOf.
 fn predict_member(
     input: &ResolveInput<'_, '_>,
     module: ModuleRef,
@@ -434,7 +427,6 @@ fn predict_member(
     Some(KnownCallee::new(file, values).predicted())
 }
 
-// The helper that a CommonJS file stores as its value: a file that Babel wrote shows it as `default` too. Only a prediction: callers guard the value with IsClosureOf.
 fn predict_exports(input: &ResolveInput<'_, '_>, module: ModuleRef) -> Option<KnownCallee> {
     let ModuleRef::File(file) = module else {
         return None;
@@ -444,7 +436,6 @@ fn predict_exports(input: &ResolveInput<'_, '_>, module: ModuleRef) -> Option<Kn
     Some(KnownCallee::new(file, input.helpers.binding(file, stored)?).predicted())
 }
 
-// `var holder = wrap(require(K))`, `var holder = require(K)`
 fn find_file_required_behind_wrapper(
     input: &ResolveInput<'_, '_>,
     file: FileId,

@@ -9,13 +9,9 @@ use crate::modules::SyntheticExportId;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum FunctionKey {
     ModuleBody(FileId),
-    /// The text of a CommonJS file as a function of `this` and the five names, for a file that stores to one of them or shows them to `eval`.
     WrappedModuleBody(FileId),
-    /// The body of the module that ES modules request in place of a CommonJS file.
     FaceBody(FileId),
-    /// The body of the module that throws for a name that the ES graph below a file imports and no CommonJS file stores.
     CheckBody(FileId),
-    /// What JavaScript does with an ES module when its graph is linked: the environment of the file and the functions that it declares. `Modules::is_instantiated_ahead`
     Instantiation(FileId),
     Source(FunctionRef),
     Signature(FunctionRef),
@@ -23,25 +19,15 @@ pub enum FunctionKey {
     ImplicitConstructor(ClassRef),
     InstanceInitializer(ClassRef),
     StaticInitializer(ClassRef),
-    AccessorGetter {
-        file: FileId,
-        member: MemberId,
-    },
-    AccessorSetter {
-        file: FileId,
-        member: MemberId,
-    },
-    PrivateNameTest {
-        file: FileId,
-        member: MemberId,
-    },
+    AccessorGetter { file: FileId, member: MemberId },
+    AccessorSetter { file: FileId, member: MemberId },
+    PrivateNameTest { file: FileId, member: MemberId },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum LayoutKey {
     Class(ClassRef),
     ConstructorFunction(FunctionRef),
-    /// A class or a constructor function of Bun's own modules, as a file of the application names it.
     Library(ClassDeclaration),
     ObjectType {
         origin: ObjectOrigin,
@@ -51,7 +37,6 @@ pub enum LayoutKey {
         file: FileId,
         members: TypeIdentity,
     },
-    /// What one `Object.create(parent)` makes.
     CreatedObject {
         file: FileId,
         call: u32,
@@ -82,40 +67,27 @@ pub enum PrivateStatePart {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum VariableKey {
     Symbol(Sym),
-    /// A name of a CommonJS module, which its body stores, or of a library module, which the loader fills.
     SyntheticExport(SyntheticExportId),
-    /// What ES importers hold of a name of a CommonJS module. The face of the module stores it.
     Copy(SyntheticExportId),
-    /// `module.exports` of a CommonJS file whose exports are one value.
     ModuleExports(FileId),
-    /// The same for the callback of `__commonJS(cb)`.
     InnerModuleExports(FunctionRef),
     ClassSlot {
         class: ClassRef,
         slot: ClassSlot,
     },
-    /// `require`, `__filename` or `__dirname` of an ES module that stores to it.
     ModulePath {
         file: FileId,
         variable: CommonJsVariable,
     },
-    /// What the program keeps for a variable whose `WeakMap` or `WeakSet` is private state of a class.
     PrivateState {
         state: Sym,
         part: PrivateStatePart,
     },
-    /// What `require` answered in the initializer of a name that holds it in place of the copy that a bundler's helper makes. Nothing is stored where the helper made the copy.
     RequiredAnswer(Sym),
-    /// What `createRequire` made in the initializer of a name, where it was given the file itself. Nothing where it was given something else.
     RequireMadeForOwnFile(Sym),
-    /// The mock that stands in place of a file whose body has not run, and nothing while none does. Of a file that a test may mock: the host stores its
-    /// object there, and every import from the file asks the object while it stands.
     MockOf(FileId),
-    /// Of a file with `FunctionKey::Instantiation`. `undefined`: nothing is made. `false`: it is made and the body has not begun. `true`: a body has taken it.
     InstantiationState(FileId),
-    /// The environment that the function has made last.
     EnvironmentMadeAhead(FileId),
-    /// The same for a module of Bun's own that a test may mock.
     MockOfRuntimeModule(RuntimeModule),
 }
 
@@ -140,7 +112,6 @@ impl FunctionKey {
 }
 
 impl LayoutKey {
-    // The layout of a plain object belongs to no file: each file that lists the same names defines it.
     pub fn has_united_definitions(&self) -> bool {
         matches!(
             self,

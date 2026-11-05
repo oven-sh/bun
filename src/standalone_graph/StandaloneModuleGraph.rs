@@ -126,34 +126,6 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
-/// `BUN_AOT_START_AT`. Answers the file of the entry point that the process starts with, or `None` where nothing asks for another than the first.
-#[cfg(not(bun_locked_environment))]
-fn start_at_named_entry_point(program: &mut CompiledProgram) -> Option<Result<u32, crate::Error>> {
-    if !bun_core::env::IS_CANARY {
-        return None;
-    }
-    let name = bun_core::env_var::BUN_AOT_START_AT.get()?;
-    let is_named = |entry_point: &CompiledEntryPoint| {
-        entry_point.is_below(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), name)
-    };
-    let has_image_for_each = program.images().nth(1).is_some();
-    let position = program.entry_points.iter().position(is_named);
-    Some(match position {
-        Some(position) => {
-            if has_image_for_each {
-                program.start_at(position);
-            }
-            Ok(program.entry_points[position].file_index)
-        }
-        None => Err(crate::Error::NoEntryPointToStartAt),
-    })
-}
-
-#[cfg(bun_locked_environment)]
-fn start_at_named_entry_point(_program: &mut CompiledProgram) -> Option<Result<u32, crate::Error>> {
-    None
-}
-
 // A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
 // `get()` returns a raw `*mut`; the only post-init mutation is
 // `File::sourcemap` (`LazySourceMap::load`, serialized by `INIT_LOCK`).
@@ -1367,7 +1339,7 @@ impl StandaloneModuleGraph {
                 linked_bytecode_payload = ptr;
             }
         }
-        let mut compiled_program = if offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
+        let compiled_program = if offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
             let payload = Payload {
                 base: raw_const,
                 length: raw_len,
@@ -1507,10 +1479,7 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
-        let started = compiled_program
-            .as_mut()
-            .and_then(start_at_named_entry_point);
-        let entry_point_id = started.transpose()?.unwrap_or(offsets.entry_point_id);
+        let entry_point_id = offsets.entry_point_id;
         // `entry_point()` indexes `files`, which has one entry per name, not one per record.
         if entry_point_id as usize >= module_count {
             return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
@@ -3211,11 +3180,7 @@ fn place_of_image(
     program: Option<&CompiledProgramInput<'_>>,
 ) -> ImagePlace {
     match (target.os, program) {
-        (CompileTargetOs::Linux | CompileTargetOs::Freebsd, Some(program))
-            if program.further_images.is_empty() =>
-        {
-            ImagePlace::OutsideGraph
-        }
+        (CompileTargetOs::Linux | CompileTargetOs::Freebsd, Some(_)) => ImagePlace::OutsideGraph,
         _ => ImagePlace::InGraph,
     }
 }

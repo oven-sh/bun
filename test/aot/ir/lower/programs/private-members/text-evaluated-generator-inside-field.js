@@ -129,7 +129,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: function, v3: anything, v4: int[0, 4294967295], v5: anything, v6: undefined|null|string|Array<undefined|null|string>, v7: Array):
 // CHECK-NEXT: v8 = CreateUnmappedArguments v4, v7, v5, v6
 // CHECK-NEXT: v9 = NewObject -, v5, v6 layout=[[L_6]] fields=[0, 1]
-// CHECK-NEXT: InitialYield v9, v8
+// CHECK-NEXT: InitialYield v9, v1, v8
 // CHECK-NEXT: v11 = GetEnvironmentField v9 layout=[[L_6]] field=1
 // CHECK-NEXT: v12 = IteratorOpen v11
 // CHECK-NEXT: Jump -> next b1()
@@ -159,7 +159,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: v26 = Call v25, -, v16 calleeName="eval"
 // CHECK-NEXT: Jump -> next b7(v26)
 // CHECK-NEXT: b7(v27) handler=b12():
-// CHECK-NEXT: v28 = Yield v27, v9, v8
+// CHECK-NEXT: v28 = Yield v27, v9, v1, v8
 // CHECK-NEXT: v29 = ResultAt v28
 // CHECK-NEXT: v30 = ResultAt v28 index=1
 // CHECK-NEXT: Switch v30 cases=[1, 2] -> case b8(), case b9(), otherwise b11()
@@ -211,7 +211,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: v16 = IteratorResume v14, -, v7 iteratorKind=Async
+// CHECK-NEXT: v16 = IteratorResume v14, -, v7, v4 iteratorKind=Async
 // CHECK-NEXT: v17 = ResultAt v16
 // CHECK-NEXT: v18 = ResultAt v16 index=1
 // CHECK-NEXT: Branch v17 -> taken b2(), notTaken b3()
@@ -225,7 +225,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b5() role=IterationCleanup subject=v14:
 // CHECK-NEXT: v21 = CatchException
-// CHECK-NEXT: IteratorClose v14, v7 iteratorKind=Async completion=Throw
+// CHECK-NEXT: IteratorClose v14, v7, v4 iteratorKind=Async completion=Throw
 // CHECK-NEXT: Rethrow v21
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
@@ -233,7 +233,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: b0(v0: env [[L_16]], v1: anything, v2: function, v3: anything, v4: int[0, 4294967295], v5: undefined|null|string, v6: anything, v7: Array):
 // CHECK-NEXT: v8 = CreateUnmappedArguments v4, v7, v5, v6
 // CHECK-NEXT: v9 = NewObject -, v5, v6 layout=[[L_17]] fields=[0, 1]
-// CHECK-NEXT: InitialYield v9, v8
+// CHECK-NEXT: InitialYield v9, v1, v8
 // CHECK-NEXT: v11 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v12 = PropGet v11 key="eval" [isFreeName]
 // CHECK-NEXT: v13 = Convert v12 declared={type=builtin(Eval) flags=[IsExpected]}
@@ -249,7 +249,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: v20 = Call v19, -, v14 calleeName="eval"
 // CHECK-NEXT: Jump -> next b3(v20)
 // CHECK-NEXT: b3(v21):
-// CHECK-NEXT: v22 = Yield v21, v9, v8
+// CHECK-NEXT: v22 = Yield v21, v9, v1, v8
 // CHECK-NEXT: v23 = ResultAt v22
 // CHECK-NEXT: v24 = ResultAt v22 index=1
 // CHECK-NEXT: Switch v24 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
@@ -265,7 +265,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}, {type=env [[L_9]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_8]], v1: env [[L_9]], v2: function, v3: classtoken, v4: anything, v5: function, v6: anything, v7: int[0, 4294967295], v8: Array):
 // CHECK-NEXT: v9 = CreateUnmappedArguments v7, v8
-// CHECK-NEXT: InitialYield v9
+// CHECK-NEXT: InitialYield v4, v9
 // CHECK-NEXT: v11 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v12 = PropGet v11 key="eval" [isFreeName]
 // CHECK-NEXT: v13 = Convert v12 declared={type=builtin(Eval) flags=[IsExpected]}
@@ -280,7 +280,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: v19 = Call v18, -, v14 calleeName="eval"
 // CHECK-NEXT: Jump -> next b3(v19)
 // CHECK-NEXT: b3(v20):
-// CHECK-NEXT: v21 = Yield v20, v9
+// CHECK-NEXT: v21 = Yield v20, v4, v9
 // CHECK-NEXT: v22 = ResultAt v21
 // CHECK-NEXT: v23 = ResultAt v21 index=1
 // CHECK-NEXT: Switch v23 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
@@ -296,7 +296,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=env [[L_12]] flags=[IsFromCompiler]}, {type=env [[L_13]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_12]], v1: env [[L_13]], v2: function, v3: classtoken, v4: anything, v5: anything, v6: function, v7: anything, v8: int[0, 4294967295], v9: Array):
 // CHECK-NEXT: v10 = CreateUnmappedArguments v8, v9
-// CHECK-NEXT: InitialYield v10
+// CHECK-NEXT: InitialYield v5, v10
 // CHECK-NEXT: v12 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v13 = PropGet v12 key="eval" [isFreeName]
 // CHECK-NEXT: v14 = Convert v13 declared={type=builtin(Eval) flags=[IsExpected]}
@@ -311,8 +311,8 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: v20 = Call v19, -, v15 calleeName="eval"
 // CHECK-NEXT: Jump -> next b3(v20)
 // CHECK-NEXT: b3(v21):
-// CHECK-NEXT: v22 = Await v21, v10
-// CHECK-NEXT: v23 = Yield v22, v10
+// CHECK-NEXT: v22 = Await v21, v5, v10
+// CHECK-NEXT: v23 = Yield v22, v5, v10
 // CHECK-NEXT: v24 = ResultAt v23
 // CHECK-NEXT: v25 = ResultAt v23 index=1
 // CHECK-NEXT: Switch v25 cases=[1, 2] -> case b4(), case b5(), otherwise b6()

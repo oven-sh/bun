@@ -14,19 +14,13 @@ use smallvec::SmallVec;
 #[derive(Copy, Clone)]
 struct MemberValue {
     value: Constant,
-    // `bun build` works it out under `--minify-syntax` alone.
     needs_minify_syntax: bool,
 }
 
-/// What `bun run` knows of the enums of a file.
 pub(super) struct EnumMembers {
-    /// By `EnumMemberId`: the number or the text that it writes in place of a read of the member.
     values: Vec<Option<MemberValue>>,
-    /// The expressions that were folded with the enums, ahead of the rest of the file.
     folded_ahead: PositionSet,
-    /// The reads that have a value of `values` in their place.
     reads: PositionSet,
-    /// The reads of constants that hold what is computed with such a value.
     reads_of_results: PositionSet,
 }
 
@@ -45,9 +39,6 @@ impl EnumMembers {
     }
 }
 
-/// `bun run` goes through the enums of a list of statements ahead of the rest of the list, and from then on it writes the number or the text in place of
-/// a read of a member: `Color.Green`, `Color["Green"]`, `shapes.Color.Green`, and `Green` among the members of `Color`. `bun build` does the same.
-/// The build goes on reading the member where the read runs. What the value decides is decided: which code is removed, and with it what kind of module the file is.
 impl<'s> Folder<'_, 's> {
     pub(super) fn fold_enums(&mut self) {
         let hir = self.hir;
@@ -62,7 +53,6 @@ impl<'s> Folder<'_, 's> {
         };
         let mut parts = Vec::new();
         for enumeration in (0..hir.enums.len() as u32).map(EnumId) {
-            // A member without an initializer is one more than the number before it.
             let mut next = Some(MemberValue {
                 value: Constant::Number(0.0),
                 needs_minify_syntax: false,
@@ -84,7 +74,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    // What stands for a variable, or may run code, waits for its turn in the file: `bun run` has no value for it either.
     fn collect_parts_known_ahead(&self, initializer: ExprId, parts: &mut Vec<ExprId>) -> bool {
         let hir = self.hir;
         parts.clear();
@@ -162,7 +151,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    // By binding: the first name is an enum or a namespace of the file that is declared around it, and each name behind it is listed under the one in front.
     fn find_enum_member(&self, path: ExprId) -> Option<EnumMemberId> {
         let (hir, bound) = (self.hir, self.bound);
         let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
@@ -222,8 +210,6 @@ impl<'s> Folder<'_, 's> {
         ))
     }
 
-    /// `bun run` keeps the name of the member beside the value, and what it has there is no number and no string to whoever asks for one of the two:
-    /// `typeof Color.Green` stays as it is written, and `[Color.Green]` is a key that is computed. Where it puts an operand in place of an operator, it has what the operand is.
     pub(super) fn is_enum_member_written_in_place(&self, e: ExprId) -> bool {
         if self.enum_members.values.is_empty() {
             return false;
@@ -273,7 +259,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `Decisions::is_constant_under_minify_syntax`: a member is no constant there, as it is none to `is_constant_in_bun_run`.
     pub(super) fn collect_constants_under_minify_syntax(&self) -> PositionSet {
         let mut found = PositionSet::new(self.hir.exprs.len());
         self.holds_under_minify_syntax(|folder| {
@@ -286,8 +271,6 @@ impl<'s> Folder<'_, 's> {
         found
     }
 
-    /// The build goes on reading a constant whose value rests on a member, as it reads the member.
-    /// A constant that holds a member is the member wherever `bun run` writes its value in place of the name.
     pub(super) fn note_constant_of_enum_member(
         &mut self,
         name: ExprId,

@@ -13,10 +13,6 @@ use super::{FileScan, Interest, Part, TOP_LEVEL};
 use crate::modules::ModuleRef;
 
 impl FileScan<'_, '_> {
-    // A unit for each function that code comes by in one way alone, which a binding shows: through a variable that nothing else is stored to, or under a private name.
-    // What is stored under any other key waits for nothing. A value may name the key: a computed key, a list of names that a built-in takes, the names that a module of WebAssembly imports.
-    // One such key in reached code stands for all of them, and every program of any size has one.
-    // A function that goes somewhere as a value where it is written is code of the region around it.
     pub(super) fn collect_function_units(&mut self, has_decorators: bool) {
         let (hir, bound) = (self.hir, self.bound);
         let places_of_several = self.find_places_of_several_functions();
@@ -25,7 +21,6 @@ impl FileScan<'_, '_> {
                 self.add_units_of_class(class, &places_of_several);
             }
         }
-        // A reference outside the block finds such a function in a second variable.
         let hoisted = bound.runtime.annex_b_functions().iter();
         let hoisted: FxHashSet<FnId> = hoisted.map(|it| it.function).collect();
         for function in (0..hir.fns.len() as u32).map(FnId) {
@@ -49,7 +44,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // Where the text of the function stands, as a unit of it would be placed.
     fn find_place_of_function(&self, function: FnId) -> Option<(u32, u32)> {
         let hir = self.hir;
         match self.bound.fns[function.idx()].owner {
@@ -60,8 +54,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // What the build writes in the place of a call holds several functions at the place of the call: one for each file that `import.meta.glob(..)` finds.
-    // Regions go by the text, which does not tell such functions apart, so they are code of the region around them.
     fn find_places_of_several_functions(&self) -> FxHashSet<(u32, u32)> {
         let mut places: FxHashSet<(u32, u32)> = FxHashSet::default();
         let functions = (0..self.hir.fns.len() as u32).map(FnId);
@@ -71,7 +63,6 @@ impl FileScan<'_, '_> {
             .collect()
     }
 
-    // The pieces are linked by now.
     pub(super) fn place_units(&mut self) {
         for (unit, position) in take(&mut self.units_placed_by_text) {
             let around = self.region_outside(position, Some(unit));
@@ -79,7 +70,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // `around`: the region whose code makes the function, where that is another one than the region it is written in.
     fn add_function(&mut self, function: FnId, written_at: Range<u32>, around: Option<u32>) -> u32 {
         let unit = self.add_unit(Part::Bodies, smallvec![function]);
         self.units.unit_of_function.insert(function, unit);
@@ -95,7 +85,6 @@ impl FileScan<'_, '_> {
         self.units_of_private_names.get(&name).copied()
     }
 
-    // `const name = value`, where nothing else is ever stored to the name.
     fn find_variable_initialized_with(&self, value: ExprId) -> Option<SymbolId> {
         let (_, Parent::VarInit(declaration)) = self.find_parent(value) else {
             return None;
@@ -110,7 +99,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // A namespace stores the functions and classes that it exports in its object, where they are declared. Whoever has the object finds them there.
     fn is_in_variable_alone(&self, symbol: SymbolId) -> bool {
         self.is_stable(symbol)
             && self.bound.export_symbol_of_value_symbol_if_exported(symbol) == symbol
@@ -126,7 +114,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // The private name that alone leads to the function of a member. Every other member stays with its class.
     pub(super) fn find_private_name_of_function(&self, member: MemberId) -> Option<PrivateNameId> {
         let (hir, node) = (self.hir, &self.hir[member]);
         if node.func.is_none() || !hir::has_body(&hir[node.func]) {
@@ -155,7 +142,6 @@ impl FileScan<'_, '_> {
                 self.units_placed_by_text.push((unit, position));
             }
         }
-        // Whoever calls a method has got hold of the class or of an object of it.
         let around = self.units.unit_of_class.get(&class).map(|&unit| unit + 1);
         for member in hir[class].members.iter() {
             let Some(name) = self.find_private_name_of_function(member) else {
@@ -166,7 +152,6 @@ impl FileScan<'_, '_> {
             if places_of_several.contains(&(written_at.start, written_at.end)) {
                 continue;
             }
-            // A getter and a setter share the name.
             match self.find_unit_of_private_name(name) {
                 Some(unit) => {
                     self.units.units[unit as usize].functions.push(node.func);
@@ -194,7 +179,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // What a literal, an assignment or an initializer of a field stores is a property of an object, so such a function is code of the region around it.
     fn add_function_expression(&mut self, function: FnId, expression: ExprId) {
         let written_at = self.hir[expression].pos..self.hir[expression].end;
         if let Some(variable) = self.find_variable_initialized_with(expression)
@@ -204,8 +188,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // `x instanceof C`, `typeof C`
-    // `may_test_instances_itself`: `may_test_instances_itself()` of `C`.
     pub(super) fn is_only_compared(
         &self,
         reference: ExprId,
@@ -227,8 +209,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // `class D extends C`: the definition of `D` needs `C` to be there. What `C` holds is for whoever gets hold of `D`.
-    // The unit of `D`, and what the definition needs.
     pub(super) fn split_interest_of_heritage(
         &self,
         reference: ExprId,
@@ -285,7 +265,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // Whether the file does without a declaration where nothing has the interest.
     pub(super) fn keeps_declaration_of_file(&self, interest: Interest) -> bool {
         match interest {
             Interest::Unit(unit) | Interest::Piece(unit) => {
@@ -304,7 +283,6 @@ impl FileScan<'_, '_> {
             | Interest::KnownVariable(defined)
             | Interest::Lookup(defined)
             | Interest::HandedOnObject(defined) => defined.file == self.file,
-            // The statements of the body that store under the name.
             Interest::Name(export, accessed)
             | Interest::CalledName(export, accessed)
             | Interest::LinkedName(export, accessed) => {
@@ -314,7 +292,6 @@ impl FileScan<'_, '_> {
             Interest::Export(module, _)
             | Interest::CalledExport(module, _)
             | Interest::EveryExport(module) => self.holds_code_of(module),
-            // These run a body, or ask something of the loader. None of them names a declaration.
             Interest::Evaluation(_)
             | Interest::Require { .. }
             | Interest::AnswerOfLoader(_)
@@ -334,8 +311,6 @@ impl FileScan<'_, '_> {
         }
     }
 
-    // A function that stays captures what the functions written in it name, also for one of them that is left out.
-    // So a variable that one of them names is declared as long as the outermost function around them stays.
     pub(super) fn region_below_body(&self, mut region: u32) -> u32 {
         while region != TOP_LEVEL {
             let around = self.units.units[region as usize - 1].region_around;
@@ -347,7 +322,6 @@ impl FileScan<'_, '_> {
         region
     }
 
-    // `this.#name`
     pub(super) fn add_private_name_of_access(&mut self, access: ExprId) {
         if let Some((_, MemberKey::PrivateName(_))) = self.hir.member_key(access)
             && let Some(name) = self.bound.private_name_of_reference(access)

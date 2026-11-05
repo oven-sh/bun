@@ -41,7 +41,6 @@ pub(super) fn build_entries(input: &RecordInput<'_, '_>, strings: &mut StringTab
             | EntryPointKind::LoadedByTestRunner => {}
             _ => continue,
         }
-        // The load has found the file for a Worker, and no code that is left starts one there.
         let graph = &input.projects.application.graph;
         if graph.is_left_out(ModuleRef::File(entry_point.file)) {
             continue;
@@ -68,7 +67,6 @@ pub(super) fn build_entries(input: &RecordInput<'_, '_>, strings: &mut StringTab
     entries
 }
 
-// What a CommonJS file exports is what its importers find under `default`.
 fn read_everything(
     input: &RecordInput<'_, '_>,
     exports: &[ModuleExport],

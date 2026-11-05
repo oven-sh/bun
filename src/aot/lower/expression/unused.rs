@@ -23,7 +23,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // What is evaluated of an expression that `Removable::find_simplified_expressions` lists.
     pub(super) fn lower_simplified_expression(&mut self, expression: ExprId) {
         let hir = self.file.hir;
         let mut parts: SmallVec<[ExprId; 4]> = SmallVec::new();

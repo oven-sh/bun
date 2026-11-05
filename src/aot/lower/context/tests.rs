@@ -103,7 +103,6 @@ fn offset_of(source: &str, text: &str) -> u32 {
     offset.expect("the source has the text") as u32
 }
 
-// The files that one task of the checker lowers share their tables, so whoever reads them gives them back.
 fn with_tables<R>(fragment: &Fragment, read: impl FnOnce(&UnitTables) -> R) -> R {
     let tables = fragment.tables.take();
     let answer = read(&tables);
@@ -128,7 +127,6 @@ fn find_function<'a>(fragment: &'a Fragment, name: &str) -> &'a Function {
     function.expect("the fragment defines the function")
 }
 
-// The application's definition comes first.
 #[track_caller]
 fn find_definitions<'a>(
     lowered: &'a [(FileId, LoweredFile)],
@@ -170,7 +168,6 @@ fn key_of(fragment: &Fragment, function: FunctionId) -> FunctionKey {
     with_tables(fragment, |tables| tables.function_keys[function.index()])
 }
 
-// What lies at or behind the lengths of a fragment was named by a later visit of the task.
 fn function_keys(fragment: &Fragment) -> Vec<FunctionKey> {
     let count = fragment.lengths.functions as usize;
     with_tables(fragment, |tables| tables.function_keys[..count].to_vec())
@@ -186,7 +183,6 @@ fn variable_keys(fragment: &Fragment) -> Vec<VariableKey> {
     with_tables(fragment, |tables| tables.variable_keys[..count].to_vec())
 }
 
-// The tables also list what an earlier file of the task has named, so they do not say what this file names.
 fn variables_named_by_code(fragment: &Fragment) -> Vec<VariableId> {
     let mut variables = Vec::new();
     for (_, function) in &fragment.functions {
@@ -335,7 +331,6 @@ fn source_kind_decides_dialect_and_role() {
     }
 }
 
-// Bun's own sources are lowered with their types, as the program's are.
 #[test]
 fn library_module_checks_types_as_application_code_does() {
     let lowered = lower_in_both_projects(KEYED_STATE);
@@ -356,7 +351,6 @@ fn library_module_checks_types_as_application_code_does() {
     }
 }
 
-// A module of Bun's hoists its top-level variables, so none of them has a dead zone.
 #[test]
 fn library_module_has_operations_of_application_code_without_dead_zones() {
     let lowered = lower_in_both_projects(KEYED_STATE);
@@ -425,7 +419,6 @@ fn symbol_of_library_module_is_created_by_call_of_builtin() {
     }
 }
 
-// No annotation of such a file counts as written. A parameter keeps what the checker makes of it, as a guess.
 #[test]
 fn library_module_with_unverified_types_has_expected_parameters_alone() {
     let source = ["// @ts-nocheck\n", KEYED_STATE].concat();

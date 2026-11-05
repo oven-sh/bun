@@ -18,7 +18,6 @@ fn find_function_name(line: &str) -> Option<&str> {
     line.strip_prefix("fn ")?.split(['(', '<']).next()
 }
 
-// `ResultUsage::Effect` stands for these places. Whoever adds a call of `simplify_unused_expr` to `bun run`, or takes one away, looks at what the lowering lowers with that usage.
 #[test]
 fn bun_run_simplifies_unused_expressions_at_the_places_that_the_lowering_knows() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../js_parser");
@@ -27,7 +26,6 @@ fn bun_run_simplifies_unused_expressions_at_the_places_that_the_lowering_knows()
     files.sort();
     let mut callers = Vec::new();
     for file in files {
-        // There the function goes into the parts of what it was handed.
         if file.ends_with("scan/scan_side_effects.rs") {
             continue;
         }

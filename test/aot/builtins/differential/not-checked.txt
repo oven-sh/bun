@@ -100,8 +100,6 @@ CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instanc
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersImportRejectedByLoader/0: it is not called: it is written with the intrinsics that make and settle promises, and only compiled code has those
-CompilerHelpersLastPieceOfSplit/0: it is not called: the compiler hands it a separator that it has seen not to be empty, and takes that on trust
-CompilerHelpersNumberOfPiecesOfSplit/0: it is not called: the compiler hands it a separator that it has seen not to be empty, and takes that on trust
 CompilerHelpersOwnEntriesFlat/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersPairsOfFlatEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust

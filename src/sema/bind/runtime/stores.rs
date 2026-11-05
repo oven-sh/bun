@@ -3,7 +3,7 @@ use super::queries::find_entry;
 use super::references::ReferencePass;
 use super::{Binding, StoreKind, SymbolStore};
 use crate::atom::known;
-use crate::bind::{BoundBuilder, Parent};
+use crate::bind::{BoundBuilder, Parent, SymbolId};
 use crate::hir::*;
 
 impl ReferencePass<'_, '_> {
@@ -120,15 +120,30 @@ impl ReferencePass<'_, '_> {
         }
         insert_bit(&mut self.references.store_targets, target.idx());
         match self.evaluated_ident_binding(target) {
-            Binding::Symbol(symbol) => self.references.stores.push(SymbolStore {
-                symbol,
-                target,
-                kind,
-            }),
+            Binding::Symbol(symbol) => {
+                let symbol = self.find_binding_that_takes_store(target, symbol);
+                self.references.stores.push(SymbolStore {
+                    symbol,
+                    target,
+                    kind,
+                });
+            }
             Binding::Free | Binding::CommonJs(_) | Binding::Arguments(_) => {
                 self.references.unbound_name_stores.push((target, kind));
             }
         }
+    }
+
+    fn find_binding_that_takes_store(&mut self, target: ExprId, named: SymbolId) -> SymbolId {
+        let Some(own) = self.lookup.bound.own_binding_of_decorated_class(named) else {
+            return named;
+        };
+        let bindings = &mut self.references.ident_bindings;
+        match bindings.binary_search_by_key(&target, |entry| entry.0) {
+            Ok(index) => bindings[index].1 = Binding::Symbol(own),
+            Err(index) => bindings.insert(index, (target, Binding::Symbol(own))),
+        }
+        own
     }
 
     fn evaluated_ident_binding(&self, ident: ExprId) -> Binding {
@@ -147,7 +162,6 @@ pub(super) fn find_outermost_cast(hir: &File<'_>, bound: &BoundBuilder, e: ExprI
     outermost
 }
 
-/// `object[key]`, whatever becomes of it.
 pub(super) fn is_object_of_element(hir: &File<'_>, bound: &BoundBuilder, object: ExprId) -> bool {
     let object = find_outermost_cast(hir, bound, object);
     match bound.parent_of_expr(object) {
@@ -158,7 +172,6 @@ pub(super) fn is_object_of_element(hir: &File<'_>, bound: &BoundBuilder, object:
     }
 }
 
-/// `arguments.length`, `arguments.callee` and `arguments[0]`: the object has the two names itself until somebody deletes them, and no object above it takes a name that is a number.
 pub(super) fn is_object_of_own_member_of_arguments(
     hir: &File<'_>,
     bound: &BoundBuilder,
@@ -179,7 +192,6 @@ pub(super) fn is_object_of_own_member_of_arguments(
     }
 }
 
-/// `object.name` and `object[key]` where the program takes the value and nothing else: no store, no `delete`, and no call, which would hand the object over as `this`.
 pub(super) fn is_object_of_read(hir: &File<'_>, bound: &BoundBuilder, object: ExprId) -> bool {
     let object = find_outermost_cast(hir, bound, object);
     let access = match bound.parent_of_expr(object) {

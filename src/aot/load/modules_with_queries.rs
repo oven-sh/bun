@@ -1,13 +1,7 @@
-//! `import "./a.ts?fresh=1"`: `bun run` reads `a.ts` and makes one more module of it, which it knows as the path of the file with the query behind it.
-//! The build gives each such module a path of its own, beside the file and with the ending of its name, so that whatever goes by the folder or
-//! by the name of a file says of the module what it says of the file.
-
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings;
 use bun_sema::util::ShardedMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-/// How the `?` that every query begins with is written in the path of a module.
 const START_OF_QUERY: &[u8] = b"%3f";
 
 pub(crate) struct ModuleWithQuery {
@@ -19,8 +13,6 @@ pub(crate) struct ModuleWithQuery {
 #[derive(Default)]
 pub(crate) struct ModulesWithQueries {
     modules: ShardedMap<Vec<u8>, ModuleWithQuery>,
-    /// `add_text` has made a module. Most programs have none, and then no import looks for one.
-    holds_texts: AtomicBool,
 }
 
 impl ModulesWithQueries {
@@ -28,7 +20,6 @@ impl ModulesWithQueries {
         debug_assert!(query.starts_with(b"?"));
         let mut path = create_path(file, query);
         let constructor = find_worker_constructor(query);
-        // The wrapper is an ES module, whatever the file is.
         if constructor.is_some() {
             path.extend_from_slice(b".mjs");
         }
@@ -43,8 +34,6 @@ impl ModulesWithQueries {
         path
     }
 
-    /// One more module of `file`: an ES module, whatever the file is, with a text that the build has written.
-    /// An ES module of the build's making beside the file, which `find_text` finds from there under the specifier.
     pub(crate) fn add_text(&self, file: &[u8], specifier: &[u8], text: Vec<u8>) {
         let (query, path) = create_path_of_text(file, specifier);
         if self.modules.get_ref(path.as_slice()).is_none() {
@@ -54,14 +43,10 @@ impl ModulesWithQueries {
                 wrapper: Some(text),
             };
             self.modules.insert_ref(path, module);
-            self.holds_texts.store(true, Ordering::Relaxed);
         }
     }
 
     pub(crate) fn find_text(&self, file: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
-        if !self.holds_texts.load(Ordering::Relaxed) {
-            return None;
-        }
         let (_, path) = create_path_of_text(file, specifier);
         let is_made = self.modules.get_ref(path.as_slice()).is_some();
         is_made.then_some(path)
@@ -78,14 +63,11 @@ impl ModulesWithQueries {
         self.find(path)?.wrapper.as_deref()
     }
 
-    /// The file whose text the module at `path` runs.
     pub(crate) fn file_behind<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {
         self.find(path).map_or(path, |module| &module.file)
     }
 }
 
-/// `bun run` goes by Vite's suffixes, `ImportSuffix::find` of the bundler. Behind the path of a script, `raw` among the parameters asks for the text of the file, `url` for its path,
-/// and `worker` and `sharedworker` for a function that starts the file on a thread of its own: none of them runs the file where it is imported.
 pub(crate) fn has_vite_suffix(query: &[u8]) -> bool {
     let parameters = query.strip_prefix(b"?").unwrap_or(query);
     strings::split(parameters, b"&")
@@ -103,13 +85,11 @@ pub(crate) fn find_worker_constructor(query: &[u8]) -> Option<&'static str> {
     constructors.next().filter(|_| !asks_for_path)
 }
 
-// `ImportSuffix::module` of the bundler, but for the name of the file: the build follows these two forms to an entry point.
 fn write_worker_wrapper(file: &[u8], constructor: &str) -> Vec<u8> {
     let name = strings::basename_posix(file);
     let quote = |text: Vec<u8>| {
         bun_core::fmt::format_json_string_utf8(&text, Default::default()).to_string()
     };
-    // A URL reads these otherwise than a path does.
     let named = match strings::index_of_any(name, b"#%\\").is_some() {
         true => format!("import.meta.dir + {}", quote([b"/", name].concat())),
         false => format!(
@@ -123,7 +103,6 @@ fn write_worker_wrapper(file: &[u8], constructor: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-// The query and the path.
 fn create_path_of_text(file: &[u8], specifier: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let query = [b"?", specifier].concat();
     let path = [&create_path(file, &query)[..], b".mjs"].concat();
@@ -136,7 +115,6 @@ fn create_path(file: &[u8], query: &[u8]) -> Vec<u8> {
     let stem_end = name_start + strings::index_of_char_usize(name, b'.').unwrap_or(name.len());
     let mut path = Vec::with_capacity(file.len() + 3 * query.len());
     path.extend_from_slice(&file[..stem_end]);
-    // Two queries that differ in the case of a letter are two modules, on a disk that does not tell the two cases apart too.
     for &byte in query {
         if matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-') {
             path.push(byte);
@@ -232,7 +210,6 @@ mod tests {
         for query in [&b"?"[..], b"?RAW", b"?raw=1", b"?text", b"?url=1", b"?x=1"] {
             assert!(!has_vite_suffix(query));
         }
-        // `inline` and `init` mean something behind the path of an asset alone.
         for query in [
             &b"?WORKER"[..],
             b"?worker=1",

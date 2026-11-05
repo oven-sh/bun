@@ -3,7 +3,6 @@
 #include "root.h"
 
 #include "JavaScriptCore/Error.h"
-#include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/JSBigInt.h"
 #include "JavaScriptCore/Structure.h"
 #include "JavaScriptCore/ThrowScope.h"

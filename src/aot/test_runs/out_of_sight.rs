@@ -1,8 +1,3 @@
-//! Built-in objects that a file of a test run lets go where it does not follow them: what evaluates text, and the objects that take no other name.
-//! Not what leads to the test runner, `Bun` and the global object: whoever gets the runner where the build does not see it is refused by what it calls, aloud. An object OF the runner that goes
-//! somewhere is followed where the file's built-ins are resolved.
-//! By binding: the file's built-ins say what an expression stands for, and where the expression stands says where the object goes.
-
 use bun_sema::bind::{Decl, Parent};
 use bun_sema::fold::FoldedValue;
 use bun_sema::hir::{BinOp, ExprId, ExprKind, PatKind, PropKey, StmtId, StmtKind, VarDeclId};
@@ -12,7 +7,6 @@ use bun_sema::util::SharedSort;
 use crate::builtins::table::{self, BuiltinFlags};
 use crate::builtins::{BuiltinId, Resolved, ResolvedBuiltins};
 
-// The entry that lists the members of what the place holds. Every name of the global object stands for the one entry.
 fn object_held_at(place: BuiltinId) -> BuiltinId {
     match table::has_flag(place, BuiltinFlags::IS_GLOBAL_OBJECT) {
         true => BuiltinId::GlobalThis,
@@ -43,7 +37,6 @@ pub(super) fn find_outermost_assertion(
     value
 }
 
-// `(0, eval)`, `eval as Run`
 fn find_where_value_stands(request: &FinishedFile<'_, '_>, mut value: ExprId) -> ExprId {
     let &FinishedFile { hir, bound, .. } = request;
     while let Parent::Expr(parent) = bound.parent_of_expr(value)
@@ -64,7 +57,6 @@ pub(super) fn is_known_constant(request: &FinishedFile<'_, '_>, value: ExprId) -
     }
 }
 
-// `object;`, `if (object)`, `while (object)`
 fn is_tested_or_dropped(request: &FinishedFile<'_, '_>, statement: StmtId, value: ExprId) -> bool {
     match request.hir[statement].kind {
         StmtKind::Expr(_) => true,
@@ -76,7 +68,6 @@ fn is_tested_or_dropped(request: &FinishedFile<'_, '_>, statement: StmtId, value
     }
 }
 
-/// `const B = Bun`, where the file's built-ins know what `B` holds from then on, and `const { version, jest } = Bun`: the names say what is taken.
 fn is_followed_from_declaration(
     request: &FinishedFile<'_, '_>,
     builtins: &ResolvedBuiltins,
@@ -98,8 +89,6 @@ fn is_followed_from_declaration(
         }
 }
 
-/// Whether what `mention` stands for goes where the file does not follow it: it is handed to a call, stored, returned, laid into a list, or asked for a member under a
-/// key that folding does not know. `object.name`, `object()`, `typeof object` and `object === other` leave it where it is.
 pub(super) fn goes_out_of_sight(
     request: &FinishedFile<'_, '_>,
     builtins: &ResolvedBuiltins,
@@ -118,7 +107,6 @@ pub(super) fn goes_out_of_sight(
         };
         match hir[user].kind {
             _ if hir.type_assertion_operand(user) == Some(value) => {}
-            // `a && b` answers `a` only where `a` is no object.
             ExprKind::Binary {
                 op: BinOp::And,
                 left,
@@ -155,7 +143,6 @@ pub(super) fn goes_out_of_sight(
     }
 }
 
-/// What the one loop over a file finds of the built-in objects that the file names.
 pub(super) struct ObjectsOutOfSight<'a, 's> {
     request: &'a FinishedFile<'a, 's>,
     builtins: &'a ResolvedBuiltins,
@@ -178,7 +165,6 @@ impl<'a, 's> ObjectsOutOfSight<'a, 's> {
         }
     }
 
-    /// `expect.any`, `expect(made).toBeInstanceOf`, `expect(held).not.toBe`: `expect`, a member of it, a member of what it answers. They compare what they are handed, and call none of it.
     fn is_of_expect(&self, callee: ExprId) -> bool {
         let hir = self.request.hir;
         let mut part = callee;
@@ -195,7 +181,6 @@ impl<'a, 's> ObjectsOutOfSight<'a, 's> {
         }
     }
 
-    /// `eval(text)`: the text sees every name that the place of the call sees.
     fn is_called_as_direct_eval(&self, mention: ExprId) -> bool {
         let bound = self.request.bound;
         match bound.parent_of_expr(find_outermost_assertion(self.request, mention)) {
@@ -204,7 +189,6 @@ impl<'a, 's> ObjectsOutOfSight<'a, 's> {
         }
     }
 
-    /// `mention` stands for a function that evaluates text. `eval("1 + 1")` and `new Function("a", "return a")` are read like any text that the file holds.
     fn may_evaluate_unknown_text(&self, mention: ExprId, evaluator: BuiltinId) -> bool {
         let (request, hir) = (self.request, self.request.hir);
         let callee = find_where_value_stands(request, mention);
@@ -217,7 +201,6 @@ impl<'a, 's> ObjectsOutOfSight<'a, 's> {
         if hir[call].callee != callee {
             return !self.is_of_expect(hir[call].callee);
         }
-        // Each operand of `Function` is a part of the text.
         let mut operands = hir.ids(hir[call].args);
         match table::canonical_id(evaluator) == table::canonical_id(BuiltinId::Function) {
             true => !operands.all(|operand| is_known_constant(request, operand)),
@@ -227,7 +210,6 @@ impl<'a, 's> ObjectsOutOfSight<'a, 's> {
         }
     }
 
-    /// `expression`: in code that runs.
     pub(super) fn look_at(&mut self, expression: ExprId, kind: ExprKind) {
         if !matches!(
             kind,
@@ -254,7 +236,6 @@ impl<'a, 's> ObjectsOutOfSight<'a, 's> {
         }
     }
 
-    /// Ascending, each once.
     pub(super) fn take_closed_holders(&mut self) -> Vec<BuiltinId> {
         let mut holders = std::mem::take(&mut self.closed_holders);
         holders.shared_sort_unstable();

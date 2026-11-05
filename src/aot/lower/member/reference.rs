@@ -8,7 +8,6 @@ use crate::ir::{StringId, TypeTable, ValueId, VariableId};
 use crate::lower::scope::{self, IdentifierTarget};
 use crate::lower::{FunctionLowering, commonjs, expression};
 
-// A variable that may still hold `undefined` where a member of it is named, and the name of that member.
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct Holder {
     pub(in crate::lower) value: ValueId,
@@ -34,12 +33,10 @@ pub(in crate::lower) enum Reference {
         object: ValueId,
         access: ExprId,
     },
-    // What a module has under a name, or `module.exports`.
     ModuleVariable {
         variable: VariableId,
         holder: Option<Holder>,
     },
-    // Nobody can see what is stored there.
     Discarded {
         holder: Option<Holder>,
     },
@@ -64,7 +61,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match hir[target].kind {
             ExprKind::Ident(_) => match self.file.decisions().decision(target) {
                 Decision::GlobalPath(path) => {
-                    let member = self.lower_global_path_holder(path);
+                    let member = self.lower_global_path_holder(target, path);
                     match member.holder {
                         Some(object) => Reference::Property {
                             object,
@@ -149,7 +146,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if conversion == KeyConversion::AtAccess {
             return name;
         }
-        // JSC tests the object by an operation of its own, which has its own message, ahead of the conversion.
         self.builder
             .require_object_coercible(object, NullishAccess::Update, None);
         let PropertyName::Computed(key) = name else {
@@ -277,10 +273,15 @@ fn lower_member_reference(
         lowering.set_position(hir[target].pos);
         return reference;
     }
+    let is_printed_as_template = matches!(hir[target].kind, ExprKind::Dot { .. })
+        && hir.is_written_in_brackets(target)
+        && hir.text[hir.name_pos(target) as usize] == b'`'
+        && !lowering.file.inputs.options.removable.minifies_syntax();
     let conversion = match member {
+        MemberKey::Name(_) if is_printed_as_template => conversion,
         MemberKey::Name(_) | MemberKey::PrivateName(_) => KeyConversion::AtAccess,
         MemberKey::Computed(key)
-            if expression::is_number_or_text_in_bun_run(lowering.file, key) =>
+            if expression::is_printed_as_number_or_text(lowering.file, key) =>
         {
             KeyConversion::AtAccess
         }

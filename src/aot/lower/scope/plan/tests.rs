@@ -44,7 +44,6 @@ fn analyze_source<R>(file: &str, source: &str, test: impl FnOnce(&Probe<'_, '_, 
     analyze_files(&[(file, source)], test)
 }
 
-// The file is the one test file of a test run.
 fn analyze_test_file<R>(file: &str, source: &str, test: impl FnOnce(&Probe<'_, '_, '_>) -> R) -> R {
     with_scope_analysis_of_test_run(&[(file, source)], |hir, bound, analysis| {
         test(&Probe {
@@ -55,7 +54,6 @@ fn analyze_test_file<R>(file: &str, source: &str, test: impl FnOnce(&Probe<'_, '
     })
 }
 
-// The body of the first file may run again. What a CommonJS file declares at its top is then planned like the names of a function.
 fn analyze_files_that_run_again<R>(
     files: &[(&str, &str)],
     test: impl FnOnce(&Probe<'_, '_, '_>) -> R,
@@ -81,7 +79,6 @@ fn storage_in(file: &str, source: &str, name: &str) -> Storage {
     analyze_source(file, source, |probe| probe.placement_of(name).storage)
 }
 
-// What closures copy.
 const COPIED: Placement = Placement {
     storage: Storage::Local,
     has_local: true,
@@ -89,7 +86,6 @@ const COPIED: Placement = Placement {
     is_shared: true,
 };
 
-// What closures read from the first field of the environment of `scope`. Its owner keeps a copy of what is never stored again.
 fn first_field(scope: ScopeId, is_immutable: bool) -> Placement {
     Placement {
         storage: Storage::Field { scope, field: 0 },

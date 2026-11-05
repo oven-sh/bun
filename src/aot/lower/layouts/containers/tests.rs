@@ -23,7 +23,6 @@ fn lower_module(source: &str) -> Fragment {
     lower_only_module(&[("main.cjs", source)])
 }
 
-// The files that one task of the checker lowers share their tables, so whoever reads them gives them back.
 fn with_tables<R>(fragment: &Fragment, read: impl FnOnce(&UnitTables) -> R) -> R {
     let tables = fragment.tables.take();
     let answer = read(&tables);
@@ -61,7 +60,6 @@ fn names_of(source: &str) -> Vec<String> {
         .collect()
 }
 
-// The host may ask what an entry point exports, so one variable holds `module.exports`.
 #[track_caller]
 fn count_objects_made_by_body(fragment: &Fragment) -> usize {
     let body = fragment.module.body.expect("the module has a body");
@@ -249,7 +247,6 @@ fn names_over_the_limit_are_no_fields() {
 #[test]
 fn whoever_requires_a_module_names_its_layout() {
     let files = [
-        // Somebody looks at the object, so the module has one.
         (
             "main.cjs",
             "module.exports = Object.keys(require(\"./names.cjs\"));",
@@ -264,7 +261,6 @@ fn whoever_requires_a_module_names_its_layout() {
         LayoutKey::Container(symbol) => symbol.file == module.file,
         _ => false,
     };
-    // The tables may hold the keys of both files, so only the list of the file says who named the layout.
     let (is_named, is_defined) = with_tables(requirer, |tables| {
         let mut named = requirer.layouts_named_by_code.iter();
         let mut defined = requirer.layouts.iter();

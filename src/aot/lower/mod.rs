@@ -75,7 +75,6 @@ pub struct LoweredFile {
     pub known_helpers: KnownHelpersLowered,
 }
 
-/// `StatisticId::KnownHelperFunctions`, `StatisticId::KnownHelperCalls`
 #[derive(Copy, Clone, Default)]
 pub struct KnownHelpersLowered {
     pub functions: u64,
@@ -86,7 +85,6 @@ const fn assert_send<T: Send>() {}
 
 const _: () = assert_send::<LoweredFile>();
 
-/// `None`: the checker's task was discarded on the way, so the file is lowered again.
 pub fn lower_file<'s>(
     inputs: &LoweringInputs<'_>,
     checker: &mut Checker<'_, 's>,
@@ -106,9 +104,6 @@ pub fn lower_file<'s>(
     lowered
 }
 
-/// The one loop over the functions of a file: `lower_file_that_throws` has none of its own and hands in how it lowers a function.
-/// From one call to the next, `lower_function` holds no reference into a module other than `file`.
-/// Every way out gives back what `task` lends, or the files that the task has committed lose their tables.
 pub(in crate::lower) fn lower_with_queries<'a, 'c, 'p, 's>(
     inputs: &'a LoweringInputs<'a>,
     queries: &'a mut Queries<'c, 'p, 's>,
@@ -119,17 +114,19 @@ pub(in crate::lower) fn lower_with_queries<'a, 'c, 'p, 's>(
     let mut lowering = FileLowering::new(inputs, queries, file, task);
     lowering.refuse_invalid_regexp_literals();
     let roots = lowering.declare_module_roots();
-    while let Some(function) = lowering.take_next_function() {
+    loop {
         lowering.queries.note_idle();
         if lowering.queries.is_discarded() {
             lowering.abandon();
             return None;
         }
+        let Some(function) = lowering.take_next_function() else {
+            break;
+        };
         // SAFETY: between two functions, `lowering`, its queries, the checker and `lower_function` borrow from no module but `file`, whose commit follows.
         unsafe { ReadingTask::repin() };
         lower_function(&mut lowering, function);
     }
-    lowering.queries.note_idle();
     lowering.define_remaining_layouts();
     let module = lowering.finish_module(roots);
     lowering.define_signatures();

@@ -75,11 +75,9 @@ bitflags::bitflags! {
 
 pub struct ModuleLoad {
     pub module: RuntimeModule,
-    /// The exports that native code reads off what the module answers. `None`: nobody has written down which.
     pub exports_read: Option<&'static [&'static str]>,
 }
 
-/// A module that native code loads while Bun starts, and the exports that it reads off what the module answers. `None`: nobody has written down which.
 pub struct StartupLoad {
     pub module: RuntimeModule,
     pub exports_read: Option<&'static [&'static str]>,
@@ -92,7 +90,6 @@ pub struct BuiltinEntry {
     pub mutability: Mutability,
     pub platforms: Platforms,
     pub flags: BuiltinFlags,
-    /// The holder has the member, and lists it among its own keys, from when the member is first read.
     pub is_added_at_first_read: bool,
     pub holder: Option<BuiltinId>,
     pub name: BuiltinName,
@@ -102,11 +99,9 @@ pub struct BuiltinEntry {
     pub same_object_as: Option<BuiltinId>,
     pub first_member: u16,
     pub member_count: u16,
-    /// A position in the table's list of `Dependencies`: see `loads`, `calls`, `calls_for_texts`, `implemented_by` and `guessed_functions`.
     pub dependencies: u16,
 }
 
-/// What an entry calls only where the operand of the call at a position is one of some texts.
 pub struct CallsForTexts {
     pub argument: u8,
     pub texts: &'static [BuiltinName],

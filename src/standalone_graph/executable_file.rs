@@ -99,7 +99,7 @@ impl<'a> PayloadParts<'a> {
     /// Makes the addresses in the image those of an image whose first byte the loader puts at `address`.
     fn relocate_image(&mut self, address: u64) {
         if let Some(image) = self.image_bytes_mut() {
-            relocate_images(image, address);
+            relocate_image(image, address);
         }
     }
 
@@ -500,18 +500,11 @@ pub(crate) fn write_elf(
     Ok(ElfWritten { has_symbols })
 }
 
-/// `images` lie one behind the other, and the loader puts the first byte of the first at `address`.
-pub(crate) fn relocate_images(images: &mut [u8], address: u64) {
-    let mut start = 0;
-    while start < images.len() {
-        let bytes = &mut images[start..];
-        let size = bytes.get(32..).and_then(|rest| rest.first_chunk::<8>());
-        let size = size.map_or(0, |word| u64::from_le_bytes(*word) as usize);
-        if size == 0 || size > bytes.len() {
-            break;
-        }
-        bun_aot::engine::relocate_image(&mut bytes[..size], address + start as u64);
-        start += size;
+/// The loader puts the first byte of `image` at `address`. Bytes whose header says another size than they have are no image.
+pub(crate) fn relocate_image(image: &mut [u8], address: u64) {
+    let size = image.get(32..).and_then(|rest| rest.first_chunk::<8>());
+    if size.is_some_and(|word| u64::from_le_bytes(*word) as usize == image.len()) {
+        bun_aot::engine::relocate_image(image, address);
     }
 }
 
@@ -747,7 +740,8 @@ mod tests {
         if UntouchedPages::of(addresses.clone()).is_none() {
             return;
         }
-        let expected = [&mapped[..], &mapped[..BLOCK]].concat();
+        // What has moved and nothing has written to is read from the original, not through the mapping.
+        let expected = [&mapped[..], &[0xAA; BLOCK][..]].concat();
         let pieces = [kept(&mapped), kept(&mapped[..BLOCK])];
 
         let file = bun_sys::File::open(&path, bun_sys::O::RDWR, 0).unwrap();

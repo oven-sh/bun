@@ -1,0 +1,12 @@
+import { test, describe } from "bun:test";
+const came = [];
+const note = name => () => came.push(name);
+const jobs = async () => { for (let job = 0; job < 40; job++) await Promise.resolve(); };
+const turn = () => new Promise(resolve => setTimeout(resolve, 20));
+import("./helper.mjs").then(note("module"), note("module failed"));
+import("./helper.cjs").then(note("file"), note("file failed"));
+await jobs();
+console.log("a: behind forty jobs:", came.join() || "nothing");
+await turn();
+console.log("a: behind a timer:", [...came].sort().join() || "nothing");
+test("end", () => {});

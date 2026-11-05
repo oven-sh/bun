@@ -39,8 +39,8 @@ pub use crate::ir::generated::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, FeatureUseRecord,
     FormBytesRecord, FunctionNameRecord, InternalErrorRecord, LackedFunctionRecord,
     LackedModuleRecord, LayoutNameRecord, LocaleUseRecord, ModuleBytesRecord, ObfuscatedSiteRecord,
-    OtherOriginsRecord, SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord,
-    UserDiagnosticRecord, Witness, WorkerEntryRecord, WorkerStartRecord, WorkerURLRecord,
+    SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord, Witness,
+    WorkerEntryRecord, WorkerStartRecord, WorkerURLRecord,
 };
 use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, OutputOptions,
@@ -72,7 +72,6 @@ fn default_record() -> CompileOptions {
 
 fn apply_option_word(record: &mut CompileOptions, word: &[u8]) -> Result<(), RejectedOptionWord> {
     let mut sentence = Vec::new();
-    // A rejected word leaves the record unchanged, so the call is repeated with room for the sentence.
     loop {
         // SAFETY: the engine reads `word`, reads and writes `record`, and writes at most `sentence.len()` bytes before it returns.
         let length = unsafe {
@@ -182,7 +181,6 @@ fn fill_feature_bits(bits: &mut [u64; 8], features: &FeatureSet) {
 }
 
 impl EngineOptions {
-    /// The words come last: each changes what the options have filled.
     pub fn new(request: &EngineRequest<'_>) -> Result<EngineOptions, RejectedOptionWord> {
         let mut record = default_record();
         fill_record(&mut record, request);
@@ -214,7 +212,6 @@ impl EngineOptions {
     }
 }
 
-/// Whether the engine takes `word` after `earlier_words`.
 pub fn check_option_word(
     earlier_words: &[Box<[u8]>],
     word: &[u8],
@@ -226,7 +223,6 @@ pub fn check_option_word(
     apply_option_word(&mut record, word)
 }
 
-/// The engine reads the program where it lies, and frees it when the last function is compiled, before it builds the image.
 pub fn compile(
     program: ProgramBytes,
     options: &EngineOptions,
@@ -237,7 +233,6 @@ pub fn compile(
     let list_of_bodies = program
         .external_bodies()
         .map(ExternalBodies::as_engine_argument);
-    // Null: the code of the functions lies in the bytes.
     let external_bodies = list_of_bodies
         .as_ref()
         .map_or(core::ptr::null(), core::ptr::from_ref);
@@ -305,7 +300,6 @@ unsafe extern "C" fn release_program(owner: *mut c_void) {
         drop(program);
         return;
     }
-    // The engine waits for this call, and a large program is hundreds of thousands of allocations.
     let program = Box::into_raw(Box::new(program)).cast::<c_void>();
     // SAFETY: `free_program` gets the box once.
     unsafe { bun_sema_driver::run_on_region_thread(free_program, program) };
@@ -346,7 +340,6 @@ impl EngineResult {
         (!image.is_empty()).then_some(image)
     }
 
-    /// For the writer of an executable: the image, whose addresses it makes those of the executable where the image lies, and the symbols.
     pub fn image_mut_and_symbols(&mut self) -> (Option<&mut [u8]>, &[u8]) {
         let BunAOTBytes { ptr, len } = self.sections[ResultSection::Image as usize];
         // SAFETY: the bytes are memory of the engine's result that may be written, no other section holds any of them, `self` is the
@@ -423,20 +416,15 @@ struct BunAOTResult {
     _opaque: [u8; 0],
 }
 
-/// `JSC::AOT::HostThreadPool`.
 #[repr(C)]
 struct HostThreadPool {
     schedule: unsafe extern "C" fn(run: unsafe extern "C" fn(*mut c_void), argument: *mut c_void),
 }
 
-/// The engine's loops run on the threads that the front end's did.
-/// The engine frees what a build has left after `Bun__AOT__compile` has returned: it calls `schedule` then too, so the pool is never
-/// shut down.
 static REGION_THREADS: HostThreadPool = HostThreadPool {
     schedule: bun_sema_driver::run_on_region_thread,
 };
 
-// Nothing compares these with `src/jsc/bindings/BunAOTCompile.h` and `standalone/engine_stubs.rs`: all three list the same parameters in the same order.
 unsafe extern "C" {
     #[cfg(not(test))]
     safe fn Bun__AOT__initializeOptions(options: &mut CompileOptions);
@@ -495,7 +483,6 @@ result_records! {
     obfuscated_sites: ObfuscatedSiteRecord = ObfuscatedSites,
     bytes_by_module: ModuleBytesRecord = BytesByModule,
     accesses: AccessRecord = Accesses,
-    other_origins: OtherOriginsRecord = OtherOrigins,
     access_counts: AccessCountRecord = AccessCounts,
     type_tests: TypeTestRecord = TypeTests,
     allocation_remarks: AllocationRemarkRecord = AllocationRemarks,

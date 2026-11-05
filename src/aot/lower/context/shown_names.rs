@@ -8,14 +8,10 @@ use rustc_hash::FxHashMap;
 use super::{FileLowering, LoweringOptions, SourceKind};
 use crate::ir::StringId;
 
-/// Under --minify-identifiers a binding that a bundle renames has a short name wherever its name is only shown: in `name` of a function, in a frame, in a message.
-/// An obfuscated executable shows no name of a function, and its source map takes those as they are written: only its messages have the short names.
 #[derive(Default)]
 pub(super) struct ShownNames {
     shortens_bindings: bool,
-    /// In order. A direct eval finds what they declare by what is written.
     scopes_around_evals: Vec<ScopeId>,
-    /// Those handed out so far. None: a function is shown by the name that is written.
     short_function_names: Option<FxHashMap<SymbolId, StringId>>,
 }
 
@@ -63,7 +59,6 @@ fn append_number(mut number: usize, text: &mut Vec<u8>) {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// Whether a function under a key that only the run knows is called after that key. An obfuscated executable shows no name of a function.
     pub(in crate::lower) fn names_functions_by_keys(&self) -> bool {
         !self.inputs.options.obfuscates
     }
@@ -83,7 +78,6 @@ impl FileLowering<'_, '_, '_, '_> {
         is_shortened.then_some(symbol)
     }
 
-    /// In a message. One of a few names, so that messages are alike as often as under the names of a bundle. None: the name is shown as it is written.
     pub(crate) fn short_binding_name(&mut self, binding: Binding) -> Option<StringId> {
         let mut text = Vec::new();
         self.append_short_binding_name(binding, &mut text)
@@ -98,7 +92,6 @@ impl FileLowering<'_, '_, '_, '_> {
         symbol.is_some()
     }
 
-    /// Of an anonymous function or class behind the `export default`.
     pub(crate) fn default_export_name(&mut self) -> Option<StringId> {
         Some(self.intern_atom(known::default))
     }
@@ -117,7 +110,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// No two bindings of the program give one name: a table with such names for keys holds.
     pub(crate) fn short_function_name(&mut self, binding: Binding) -> Option<StringId> {
         let names = self.shown_names.short_function_names.as_ref()?;
         let symbol = self.find_shortened_symbol(binding)?;

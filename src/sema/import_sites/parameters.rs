@@ -21,7 +21,6 @@ pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool 
 
 type FindWritten<'a> = &'a dyn Fn(Atom) -> Vec<ExprId>;
 
-/// The names that the file exports `function` under: `export function f`, `export { f as g }`, `export default f`, `exports.f = function () {}`.
 pub fn find_names_exported_for(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -72,7 +71,6 @@ pub fn find_names_exported_for(
     exported.map(|&(export, _)| export).collect()
 }
 
-/// The function that has the parameter which `mention` names, and the place of the parameter. Only of one that holds what was passed for it as long as the call runs.
 pub fn find_parameter_named(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -101,7 +99,6 @@ pub fn find_parameter_named(
     is_settled.then_some((function, place))
 }
 
-/// `BoundIn::finds_itself`, which walks the file.
 fn finds_itself(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -159,7 +156,6 @@ fn find_only_name_of(
 ) -> Option<SymbolId> {
     let name = find_name_of(hir, bound, function, find_written)?;
     let mut hoisted = bound.runtime.annex_b_functions().iter();
-    // `arguments.callee` and evaluated text hand the function on without its name.
     let other_ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
     let is_only_name = name.is_some()
         && !bound.function_flags(function).intersects(other_ways)
@@ -192,7 +188,6 @@ fn find_arguments_where_written(
     is_only_call.then(|| hir[call].args)
 }
 
-// `function load(name) { return require(name); }`, where every mention of `load` calls it: what the calls pass for `name`.
 pub fn find_values_of_parameter(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -206,7 +201,6 @@ pub fn find_values_of_parameter(
     })
 }
 
-/// `find_written` answers with the places where a name is written.
 pub fn find_values_passed_for(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -219,7 +213,6 @@ pub fn find_values_passed_for(
     path.is_empty().then_some(values)
 }
 
-/// The last: whether a call leaves the argument out where no default stands in. The parameter is `undefined` there, which no expression of the file says.
 pub(super) fn find_values_passed_for_pattern(
     hir: &File<'_>,
     bound: &Bound<'_>,

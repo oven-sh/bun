@@ -1,4 +1,4 @@
-use super::{EntryPointPaths, FolderPaths, LoadedProject};
+use super::{EntryPointPaths, FolderPaths, FollowedName, LoadedProject};
 use crate::diagnostics::ProgramView;
 use crate::ir::{InParallel, for_each_mut};
 use crate::link::ProgramModule;
@@ -7,6 +7,7 @@ use crate::load::sources::SourceKind;
 use crate::load::{
     EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, is_host_path, read_file_bytes,
 };
+use crate::modules::{ModuleGraph, ModuleRef};
 use crate::report::{ModuleOrigin, ModuleSource, SourceTexts};
 use crate::statistics::{Stage, StepClock};
 use bun_sema::check::aot::FileOrigin;
@@ -16,7 +17,6 @@ use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
 use rustc_hash::FxHashMap;
 
-/// `left_out`: `LeftOutCode::files`. An entry point that the load has found for a Worker which nothing starts is among them.
 pub(super) fn collect_entry_point_paths(
     project: &LoadedProject<'_, '_>,
     left_out: &[FileId],
@@ -37,7 +37,6 @@ pub(super) fn collect_entry_point_paths(
             let file_name = files.module(it.file).file_name();
             EntryPointPaths {
                 source_path: match is_host_path(file_name) {
-                    // A text that the program holds is nowhere on the disk.
                     true => public_path.clone(),
                     false => with_separators_of_host(to_native(file_name), cfg!(windows)),
                 },
@@ -54,7 +53,6 @@ fn folder_of(path: &[u8]) -> &[u8] {
     &path[..end.unwrap_or(0)]
 }
 
-/// The files with code of the program, with the separators of the host: the resolver answers with those.
 pub(super) fn collect_program_file_paths(
     files: &Files<'_>,
     sources: &Sources,
@@ -73,13 +71,50 @@ pub(super) fn collect_program_file_paths(
         .collect()
 }
 
+pub(super) fn collect_names_followed(
+    files: &Files<'_>,
+    sources: &Sources,
+    graph: &ModuleGraph,
+) -> Vec<FollowedName> {
+    let mut names = Vec::new();
+    for &file in files.compiled_files() {
+        let importer = sources.public_path(file);
+        let folder =
+            &importer[..bun_core::strings::last_index_of_char(importer, b'/').unwrap_or(0)];
+        for (spelled, is_required) in graph.names_left_to_loader(file) {
+            if let ModuleRef::File(target) = spelled.module {
+                let found = || Some(sources.public_path(target).to_vec());
+                let name = files.atoms.bytes(spelled.spelling);
+                names.push(FollowedName {
+                    folder_and_name_as_written: [folder, b"//", name].concat(),
+                    public_path_for_require: is_required.then(found).flatten(),
+                    public_path_for_import: (!is_required).then(found).flatten(),
+                });
+            }
+        }
+    }
+    names.shared_sort_unstable();
+    names.dedup_by(|later, earlier| {
+        let is_same = later.folder_and_name_as_written == earlier.folder_and_name_as_written;
+        if is_same {
+            let for_require = earlier.public_path_for_require.take();
+            earlier.public_path_for_require =
+                for_require.or_else(|| later.public_path_for_require.take());
+            let for_import = earlier.public_path_for_import.take();
+            earlier.public_path_for_import =
+                for_import.or_else(|| later.public_path_for_import.take());
+        }
+        is_same
+    });
+    names
+}
+
 pub(super) fn collect_folder_paths(
     project: &LoadedProject<'_, '_>,
     left_out: &[FileId],
 ) -> Vec<FolderPaths> {
     let (files, sources) = (project.loaded.files(), &project.sources);
     let compiled = files.compiled_files().iter();
-    // In the order of the fields of `FolderPaths`.
     let mut folders: Vec<(&[u8], &[u8])> = compiled
         .filter(|file| left_out.binary_search(file).is_err())
         .map(|&file| {
@@ -89,7 +124,6 @@ pub(super) fn collect_folder_paths(
             )
         })
         .collect();
-    // Files of one folder mostly follow each other.
     folders.dedup();
     folders.shared_sort_unstable();
     folders.dedup();
@@ -102,7 +136,6 @@ pub(super) fn collect_folder_paths(
         .collect()
 }
 
-/// `modules`: `Linked::modules`, in the order of `ModuleId`.
 pub(super) fn collect_source_texts(
     projects: &PerProject<ProgramView<'_, '_>>,
     modules: &[ProgramModule],
@@ -127,7 +160,6 @@ fn create_module_source(
 ) -> Option<ModuleSource> {
     let program_file = match module {
         ProgramModule::File(file) => file,
-        // Every position in the text of a file names the record of the file.
         _ => return None,
     };
     let ProgramFile { project, file } = program_file;
@@ -140,19 +172,17 @@ fn create_module_source(
     let types = types_in_function_texts.get(&program_file).cloned();
     let origin = find_module_origin(view, program_file);
     let path = view.sources.diagnostic_path(file);
-    // The engine asks for the text of every function. A plugin, a text of the command line or Bun's own archive gives a text that no file holds.
     let path_on_disk = files.module(file).file_name();
     let is_on_disk = types.is_none()
         && project == ProjectId::Application
         && read_file_bytes(path_on_disk).is_some_and(|on_disk| on_disk == text);
     let source = match is_on_disk {
-        true => ModuleSource::new_on_disk(path, path_on_disk, text.len()),
+        true => ModuleSource::new_on_disk(path, path_on_disk, text),
         false => ModuleSource::new(path, text),
     };
     Some(source.with_function_text(types).with_origin(origin))
 }
 
-/// `view`: of the project of `file`.
 fn find_module_origin(view: ProgramView<'_, '_>, file: ProgramFile) -> ModuleOrigin {
     let file = match file.project {
         ProjectId::Application => file.file,

@@ -52,20 +52,16 @@ struct WalkedFile<'s, 'r> {
     imported_file_changers: Vec<ImportedFileChanger>,
     texts_of_other_files: Vec<TextOfOtherFile>,
     foldings_with_constants: u32,
-    /// `ParsedFile::version`
     version: u32,
-    /// How many files stand between it and an entry point on the way on which it was found: each was read, parsed and resolved before the next was known.
     depth: u32,
 }
 
 struct FileToRevisit<'s, 'r> {
     index: u32,
     loaded: Box<ParsedCodeFile<'s, 'r>>,
-    /// `None`: it stays as it is analyzed, and the host looks at it.
     analyzed_again_from: Option<AnalyzedAgainFrom>,
 }
 
-/// `LoadInputs`, copied out of the state of the walk.
 struct CopiedLoadInputs<'s> {
     stored_by_mocks: StoredByMocks<'s>,
     is_only_imported: bool,
@@ -111,17 +107,12 @@ impl<'s, 'r> WalkedFile<'s, 'r> {
     }
 }
 
-/// For `CodeWalk::log_round`: whether the plugins wait for the walk or the walk for the plugins, which answer one at a time.
 #[derive(Default)]
 struct PluginReadTimes {
-    /// When the first file was queued for a plugin to read, and when the last.
     queued: Option<(Duration, Duration)>,
-    /// How many files are queued or being read.
     underway: usize,
     last_answer: Duration,
-    /// How long none was queued or being read, between the first that was queued and the last.
     without_files: Duration,
-    /// Summed over the threads that ask plugins: how long they waited for the answers.
     waited: Duration,
 }
 
@@ -147,8 +138,6 @@ struct WalkState<'s, 'r> {
     files: Vec<WalkedFile<'s, 'r>>,
     index_of: FxHashMap<LoadKey<'r>, u32>,
     found: Vec<u32>,
-    /// Files outside `node_modules`. They are read first: they lead to most other files, and to the files that plugins
-    /// read, which take the longest because plugins answer one at a time.
     own_to_read: VecDeque<u32>,
     to_read: VecDeque<u32>,
     to_read_by_plugin: VecDeque<u32>,
@@ -157,13 +146,10 @@ struct WalkState<'s, 'r> {
     pending_assets: Vec<u32>,
     background_reads_disabled: bool,
     early_loaders: usize,
-    /// How many threads of the walk sleep until there is a file for them.
     asleep: usize,
     has_plugin_reader: bool,
-    /// Every found file is parsed.
     is_drained: bool,
     is_finished: bool,
-    /// In the order they were read. A file that waits here may be the only one that leads to a slow read.
     ready: VecDeque<(u32, Cow<'static, [u8]>)>,
     deferred: Vec<u32>,
     in_progress: usize,
@@ -172,34 +158,22 @@ struct WalkState<'s, 'r> {
     has_exported_requires: bool,
     has_exported_file_changers: bool,
     names_looked_up: NamesLookedUp,
-    /// The files that the host has yet to look at: `is_finished_later`.
     unfinished: Vec<u32>,
-    /// Every file with `FileAnalysis::asked_of_data_files`, among others that had some.
     askers_of_data_files: Vec<u32>,
-    /// Every file with `FileAnalysis::asked_of_other_files`, among others that had some.
     askers_of_other_files: Vec<u32>,
-    /// Every file that is folded with `FileAnalysis::asks_for_main_module`, among others that were.
     askers_for_main_module: Vec<u32>,
-    /// `CodeWalk::log_round`
     files_read_by_plugins: usize,
     time_loading: Duration,
-    /// How long it took, when it began, and the bytes of the file.
     longest_load: (Duration, Duration, usize),
-    /// Summed over the threads of the walk: how long they slept because there was no file for them.
     time_asleep: Duration,
-    /// When the last file came that the threads of the walk read themselves.
     last_read: Duration,
     plugin_reads: PluginReadTimes,
-    /// How many files were found in each tenth of a second.
     found_by_time: Vec<u32>,
-    /// The greatest `WalkedFile::depth`.
     deepest: u32,
-    /// `WalkedFile::depth` of the first file that was queued for a plugin, and the greatest of any.
     depths_read_by_plugins: Option<(u32, u32)>,
 }
 
 impl WalkState<'_, '_> {
-    /// No file waits for a thread: each one that is to be read or parsed has a sleeper that takes it.
     fn has_idle_threads(&self) -> bool {
         let waiting = self.own_to_read.len() + self.to_read.len() + self.ready.len();
         waiting <= self.asleep && self.in_progress > 0
@@ -224,8 +198,6 @@ struct CodeWalk<'c, 'a, 's: 'r, 'r> {
     spawn_background_readers: SpawnBackgroundReaders<'c>,
     early_prefetch: &'c OnceLock<Prefetch<'s, 'r>>,
     state: Guarded<WalkState<'s, 'r>>,
-    /// The paths in `WalkState::index_of` that go by no loader of their own. The early loaders ask about each file that they
-    /// are to read, and the lock is for the threads of the walk.
     paths_without_loader: ShardedMap<&'r [u8], ()>,
     has_changed: Condvar,
     has_to_read: Condvar,
@@ -316,7 +288,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
                 .map_or(0, |it| it.parse.bound.specifiers.len())
         };
         let sizes: Vec<usize> = parsed.iter().map(names_to_resolve).collect();
-        // The tables of the walk, and the trees of the files that nothing reaches. Freeing them takes a while.
         let leftovers = Guarded::new(Some(state));
         let free_leftovers = |_: usize| drop(leftovers.lock().take());
         self.host.parallel_while(1, &free_leftovers, &mut || {
@@ -392,7 +363,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
 }
 
 impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
-    /// `depth`: `WalkedFile::depth`, if the file is new.
     fn enqueue(&self, state: &mut WalkState<'s, 'r>, target: CodeTarget<'r>, depth: u32) -> u32 {
         let context = self.context;
         let path = to_path(target.key.path, context.is_case_sensitive);
@@ -498,7 +468,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         }
     }
 
-    // They hold no code, so no code decides whether they are read.
     fn follow_declaration_files(&self, state: &mut WalkState<'s, 'r>, file: u32) {
         for target in 0..state.files[file as usize].targets.len() {
             let key = state.files[file as usize].code_targets()[target].key;
@@ -508,7 +477,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         }
     }
 
-    /// `CodeHost::choose_imports_to_follow`. Returns whether there are new files to parse.
     fn follow_chosen_imports(&self, state: &mut WalkState<'s, 'r>) -> bool {
         let context = self.context;
         if !context.host.follows_imports_on_request() {
@@ -549,7 +517,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         !state.found.is_empty()
     }
 
-    /// `CompileInputs::finds_entry_points`. Returns whether the program begins at more files than before.
     fn begin_at_found_entry_points(&self, state: &mut WalkState<'s, 'r>) -> bool {
         let context = self.context;
         let Some(find) = context.inputs.finds_entry_points else {
@@ -565,7 +532,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         if added.is_empty() {
             return false;
         }
-        // A file is folded with whether the program begins at it, and whether it begins nowhere else.
         for entry_point in context.entry_points() {
             let index = state.index_of[&context.canonical_key(entry_point.key)];
             let parsed = state.files[index as usize].parsed.as_ref();
@@ -578,7 +544,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         true
     }
 
-    /// Returns how many files it has given the threads of the walk to read. Releases the lock while it asks the host who reads the new files.
     fn queue_found_files<'w>(
         &'w self,
         mut state: LockedState<'w, 's, 'r>,
@@ -694,7 +659,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         });
     }
 
-    /// Runs on the thread that started the walk, once the workers have left. Returns false when the walk is done.
     fn starts_next_round(&self, start_plugin_reader: StartPluginReader<'_>) -> bool {
         let context = self.context;
         let mut state = self.state.lock();
@@ -734,12 +698,10 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         }
     }
 
-    /// How long the walk has run, where `log_round` prints.
     fn now_if_logged(&self) -> Option<Duration> {
         self.logs_rounds.then(|| self.began.elapsed())
     }
 
-    /// `asked`: `now_if_logged` in front of the read.
     fn note_plugin_answer(&self, state: &mut WalkState<'s, 'r>, asked: Option<Duration>) {
         if let Some(asked) = asked {
             let now = self.began.elapsed();
@@ -747,7 +709,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         }
     }
 
-    /// For the line that says what the files that are parsed bring about.
     fn log_round(&self, state: &WalkState<'s, 'r>) {
         if !self.logs_rounds {
             return;
@@ -798,7 +759,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             inputs: Option<CopiedLoadInputs<'s>>,
         }
         enum Outcome<'s, 'r> {
-            /// The file asks the same of the same files as before.
             Unchanged(Box<ParsedCodeFile<'s, 'r>>),
             Changed(Box<ParsedCodeFile<'s, 'r>>),
             MustBeLoadedAgain,
@@ -886,7 +846,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 state.early_loaders = 1;
                 start();
             }
-            // The one that wakes up wakes the next.
             _ => self.may_load_early.notify_one(),
         }
     }
@@ -911,7 +870,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         while !state.is_finished {
             if !state.has_idle_threads() {
                 self.may_load_early.wait_guarded(&mut state);
-                // Woken all at once they would queue for the lock of the walk, as many as the machine has cores.
                 if state.has_idle_threads() {
                     self.may_load_early.notify_one();
                 }
@@ -967,7 +925,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             if can_read_by_plugin && let Some(index) = state.to_read_by_plugin.pop_front() {
                 state.has_plugin_reader = true;
                 state.in_progress += 1;
-                // A plugin can take long, and the thread that queued files woke nobody for the first batch.
                 if state.has_files_to_read() {
                     self.has_changed.notify_one();
                 }
@@ -1014,7 +971,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 if state.in_progress == 0 {
                     self.has_changed.notify_all();
                 } else if reads {
-                    // This thread reads the first batch.
                     let for_others = queued.div_ceil(READ_BATCH_SIZE).saturating_sub(1);
                     notify_for_work(&self.has_changed, for_others, context.host.threads());
                 }
@@ -1141,14 +1097,12 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
     }
 }
 
-/// The files that are parsed, each under its place among `WalkState::files`.
 struct WalkedCode<'w, 's, 'r> {
     session: &'s Session,
     atoms: Interner<'s>,
     files: &'w [WalkedFile<'s, 'r>],
     answers: Vec<OnceLock<(Vec<CodeAnswer<'s>>, Vec<CodeAnswer<'s>>)>>,
     entry_points: Vec<FileId>,
-    /// In the order that `order_files` gives them.
     compiled_files: Vec<FileId>,
 }
 
@@ -1252,7 +1206,6 @@ impl<'s> CodeView<'s> for WalkedCode<'_, 's, '_> {
 
 const FILES_OF_ONE_SHARE: usize = 1024;
 
-/// `Host::parallel`. The calling thread works off a single share itself.
 fn work_off_shares(host: &dyn Host, count: usize, work: &(dyn Fn(usize) + Sync)) {
     match count {
         1 => work(0),
@@ -1260,7 +1213,6 @@ fn work_off_shares(host: &dyn Host, count: usize, work: &(dyn Fn(usize) + Sync))
     }
 }
 
-/// Asks `find` about every file, on all threads. Returns the files for which it answers, in their order.
 fn find_in_every_file<'s, 'r, T: Send>(
     host: &dyn Host,
     files: &[WalkedFile<'s, 'r>],
@@ -1282,7 +1234,6 @@ fn find_in_every_file<'s, 'r, T: Send>(
         .collect()
 }
 
-/// Empties a list that `add_parsed_file` notes files in. Returns the files for which `holds` holds, in their order.
 fn take_noted_files<'s, 'r>(
     noted: &mut Vec<u32>,
     files: &[WalkedFile<'s, 'r>],
@@ -1309,7 +1260,6 @@ fn forget_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
     state.found.push(index);
 }
 
-/// `CodeHost::may_any_file_become_main_module`: the host learns it from a file that is finished, and the files that were folded before are parsed again.
 fn forget_files_folded_with_main_module(
     context: &CodeLoadContext<'_, '_, '_>,
     state: &mut WalkState<'_, '_>,
@@ -1358,7 +1308,6 @@ fn scan_parsed_file_again(state: &mut WalkState<'_, '_>, index: u32) {
     revisit_file(state, index, Some(AnalyzedAgainFrom::ImportScan));
 }
 
-// Nothing is left that folds or parses one of them again.
 fn finish_files(state: &mut WalkState<'_, '_>) -> bool {
     let mut unfinished = std::mem::take(&mut state.unfinished);
     unfinished.shared_sort_unstable();
@@ -1381,7 +1330,6 @@ fn names_export(hir: &hir::File<'_>, site: ImportSiteKind, export: Atom) -> bool
             let mut items = hir[statement].items.iter();
             items.any(|it| hir[it].local == export)
         }
-        // `export * from` passes on every name but `default`.
         ImportSiteKind::ExportStar(statement) => {
             let passes_names_on = matches!(hir[statement].kind, StmtKind::ExportStar { alias, .. } if alias.is_none());
             passes_names_on && export != known::default
@@ -1429,7 +1377,6 @@ fn find_imported_requires(
     found
 }
 
-// esbuild exports its `__require` helper from a chunk that the other chunks import. What they load through it is known once that chunk is parsed.
 fn scan_importers_of_requires_again(
     context: &CodeLoadContext<'_, '_, '_>,
     state: &mut WalkState<'_, '_>,
@@ -1587,7 +1534,6 @@ fn find_imported_file_changers(
     found
 }
 
-// A helper of the tests takes the path of the file that it writes. Which file that is stands where the helper is called, in the files that load it.
 fn scan_importers_of_file_changers_again(
     context: &CodeLoadContext<'_, '_, '_>,
     state: &mut WalkState<'_, '_>,
@@ -1690,7 +1636,6 @@ fn find_texts_of_other_files<'s>(
     found
 }
 
-// `writeFileSync(join(folder, "state.js"), text)`, where another file exports `folder`.
 fn scan_askers_of_other_files_again<'s>(
     context: &CodeLoadContext<'_, 's, '_>,
     state: &mut WalkState<'s, '_>,
@@ -1745,12 +1690,10 @@ fn find_files_required_in_place_of_others<'r>(
         state.index_of.get(&key).copied()
     };
     let mut replacements = FxHashMap::default();
-    // Few packages have such a file, and the program has many files.
     for (imported, required) in context.resolver.files_required_in_place_of_others() {
         let Some((index, required)) = index_of(imported).zip(index_of(required)) else {
             continue;
         };
-        // Where case does not count, the resolver is asked about the name under which the file was found first.
         if state.files[index as usize].target.key.path == imported {
             replacements.insert(index, required);
         }
@@ -1797,11 +1740,6 @@ struct OrderedFiles<'s, 'r> {
     steps: Vec<Vec<bool>>,
 }
 
-/// `CodeTarget::has_shared_type`: the statement that the loader comes to first decides for the later ones. It loads a graph level by level, each file in the
-/// order of its text, and what code asks for when it runs after that. Which thread read a file first has no say.
-/// An executable holds what `bun build` makes of the file: one module, of the type that its scan comes to first. The scan begins at all the entry points that it is given, the
-/// first `scanned` of them, and goes through an `import()` as through a statement. It parses the files of a level side by side, and either of two may be done first: there the
-/// statements go before the calls, as under `bun run`. A file that the load itself has found to begin a thread is no entry point of the scan: its thread has a loader of its own.
 fn share_modules_among_types<'r>(
     files: &mut [WalkedFile<'_, 'r>],
     mut entry_points: VecDeque<u32>,
@@ -1879,7 +1817,9 @@ fn order_files<'s, 'r>(
 ) -> OrderedFiles<'s, 'r> {
     let (files, index_of) = (&mut state.files, &state.index_of);
     let entry_points = context.entry_points();
-    let indexes = entry_points.iter();
+    let (first, others): (Vec<_>, Vec<_>) =
+        (entry_points.iter().copied()).partition(|it| context.runs_first(it.key));
+    let indexes = first.into_iter().chain(others);
     let indexes = indexes.map(|it| index_of[&context.canonical_key(it.key)]);
     let scanned = match context.inputs.code.builds_executable {
         true => context.written_entry_point_count(),

@@ -21,7 +21,6 @@ pub(super) const IS_PARAMETER: u32 = u32::MAX - 1;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct LocalVariable(pub(super) u32);
 
-/// Where the next operation stood when it was taken: behind `behind` in `block`, or at the head of the block.
 #[derive(Copy, Clone, Debug)]
 pub struct Place {
     pub(super) block: BlockId,
@@ -87,9 +86,6 @@ pub(super) fn recycle_vector<T>(mut vector: Vec<T>, max_spare_capacity: usize) -
     vector
 }
 
-/// An operation: `at..at + word_count` of `FunctionBuilder::words` is its wire form (`ValueHead`, fields), with pending ids as operands.
-/// `next` is the id of the next operation in its block, or `NO_VALUE` for the last one.
-/// A parameter: `next` is `IS_PARAMETER`, `at` is `optional_id_to_word(declared)`, `word_count` is 0.
 #[derive(Copy, Clone)]
 pub(super) struct PendingValue {
     pub(super) at: u32,
@@ -99,8 +95,6 @@ pub(super) struct PendingValue {
 
 const _: () = assert!(size_of::<PendingValue>() == 12);
 
-/// `arguments`, `trailing_arguments` and `proofs` are ranges of `FunctionBuilder::words`. An argument is a pending id.
-/// Only SSA construction adds to an edge later.
 pub(super) struct PendingTarget {
     pub(super) block: BlockId,
     pub(super) arguments: Range<u32>,
@@ -121,7 +115,6 @@ impl PendingTarget {
     }
 }
 
-/// `fields` is a range of `FunctionBuilder::words`, with pending ids as operands.
 pub(super) struct PendingTerminator {
     pub(super) kind: TerminatorKind,
     pub(super) position: Option<u32>,
@@ -144,11 +137,9 @@ pub(super) struct PendingBlock {
     pub(super) parameters: SmallVec<[ValueId; 4]>,
     pub(super) variable_parameters: SmallVec<[ValueId; 4]>,
     pub(super) edge_results: SmallVec<[ValueId; 4]>,
-    /// The operations, linked through `PendingValue::next`.
     pub(super) first_value: u32,
     pub(super) last_value: u32,
     pub(super) value_count: u32,
-    /// The words of those operations.
     pub(super) value_word_count: u32,
     pub(super) terminator: Option<PendingTerminator>,
     pub(super) handler: Option<PendingTarget>,
@@ -180,7 +171,6 @@ impl Default for PendingBlock {
 
 pub struct FunctionBuilder {
     pub(super) function: Function,
-    /// Whatever has a length of its own lies here and is named by a range: operations, fields of terminators, explicit arguments, proofs.
     pub(super) words: Vec<u32>,
     pub(super) values: Vec<PendingValue>,
     pub(super) blocks: Vec<PendingBlock>,
@@ -369,7 +359,6 @@ impl FunctionBuilder {
         self.position = position;
     }
 
-    // What is emitted from here on stands for a call in tail position: a stack trace that passes through it does not list the function.
     pub fn set_tail_position(&mut self, stands: bool) -> bool {
         std::mem::replace(&mut self.stands_in_tail_position, stands)
     }
@@ -412,7 +401,6 @@ impl FunctionBuilder {
         }
     }
 
-    /// `build` appends one operation, whose operands stand above `place`. It stands at `place` from then on, in front of whatever has been appended there since.
     pub fn build_at(
         &mut self,
         place: Place,
@@ -454,7 +442,6 @@ impl FunctionBuilder {
         value
     }
 
-    /// `at_front`: ahead of every operation that `block` lists. `block` may be terminated already.
     pub(super) fn append_operation(
         &mut self,
         block: BlockId,
@@ -506,7 +493,6 @@ impl FunctionBuilder {
         value
     }
 
-    /// None: a parameter.
     pub(super) fn opcode_of(&self, value: ValueId) -> Option<Opcode> {
         let pending = self.values[value.index()];
         if pending.next == IS_PARAMETER {

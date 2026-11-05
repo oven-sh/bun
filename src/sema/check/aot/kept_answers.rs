@@ -1,5 +1,3 @@
-//! What a checker has answered about a type, a signature or a declaration holds in every file that it visits, and neighbors in the program ask about the same ones.
-
 use super::answers::{
     ClassRef, FunctionRef, GaveUp, IndexSignature, ListedMember, ObjectMember, PositionTypes,
     SignatureShape, WrittenType,
@@ -8,6 +6,7 @@ use super::class_stores::StoreIndex;
 use super::queries::AliasScan;
 use super::type_identity::TypeIdentity;
 use super::type_shape::{BuiltinShape, PrimitiveKinds, ShapeKind, TypeShape};
+use crate::atom::Atom;
 use crate::check::links::ByType;
 use crate::hir::TypeNodeId;
 use crate::program::{FileId, Sym};
@@ -19,15 +18,9 @@ use crate::util::FxHashMap;
 pub(crate) struct KeptAnswers {
     memo: KeptMemo<'static>,
     arena: Option<Box<Arena>>,
-    /// Belongs to whoever lowers the files this checker visits. It may hold lists indexed by `TypeRow::number`, so it
-    /// leaves this place exactly when the rows are dropped.
     pub(super) of_lowering: Option<Box<dyn core::any::Any + Send>>,
-    /// What `hand_on_of_lowering` made of `of_lowering` at the end of the last task that left something there.
     pub(super) of_lowering_in_last_task: Option<Box<dyn core::any::Any + Send>>,
-    /// Given `of_lowering` where a task ends, it returns what the next task of the thread may have of it: of what goes by a row,
-    /// only what goes by one of `RowsCarriedOver`.
     pub(super) hand_on_of_lowering: Option<HandOn>,
-    /// The task has ended with a commit and none of its records was its own, so every id in the memo means the same to the next task.
     pub(crate) outlives_task: bool,
 }
 
@@ -36,9 +29,7 @@ pub(super) type HandOn = fn(
     Option<&RowsCarriedOver<'_>>,
 ) -> Option<Box<dyn core::any::Any + Send>>;
 
-/// The rows of a task that the next task of the thread finds again, under new numbers.
 pub struct RowsCarriedOver<'a> {
-    /// By the number that a row had: one more than the number that it has now, or 0.
     new_rows: &'a [u32],
     count: usize,
 }
@@ -82,10 +73,7 @@ impl KeptAnswers {
         }
     }
 
-    /// Nearly all the types that a file asks about are its own: no other file asks about them, and they are most of a memo. What two
-    /// files have asked about, the files that follow ask about too, and a task that begins without it works all of it out again.
     fn carry_over(&mut self) {
-        // No file was lowered: what the last task has handed on goes by the rows as they are.
         let Some(state) = self.of_lowering.take() else {
             return;
         };
@@ -188,7 +176,6 @@ pub(super) struct TypeAnswers<'c> {
     pub(super) facts: u8,
     object: u32,
     ty: TypeId,
-    /// The `KeptMemo::visit` that made the row, and the last that asked for it.
     made_in: u32,
     seen_in: u32,
 }
@@ -211,7 +198,7 @@ pub(super) struct KeptMemo<'c> {
     rows: ByType,
     types: Vec<TypeAnswers<'c>>,
     objects: Vec<ObjectAnswers<'c>>,
-    member_types: Vec<Option<PositionTypes>>,
+    member_types: Vec<Option<(Atom, PositionTypes)>>,
     pub(super) signatures: FxHashMap<SigId, SignatureShape<'c>>,
     pub(super) function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
     pub(super) signature_results: FxHashMap<SigId, TypeId>,
@@ -220,7 +207,6 @@ pub(super) struct KeptMemo<'c> {
     pub(super) alias_scans: FxHashMap<Sym, AliasScan>,
     pub(super) alias_reads: FxHashMap<Sym, bool>,
     pub(super) store_indexes: FxHashMap<FileId, StoreIndex<'c>>,
-    /// 1, 2, 3.. : the file at hand, counted from the last time that the memo was empty.
     visit: u32,
 }
 
@@ -307,9 +293,6 @@ impl<'c> KeptMemo<'c> {
         TypeRow(count - 1)
     }
 
-    /// The rows that a file has asked for after the file that made them, in their order, with all that they answer.
-    /// What goes by a signature, a symbol or a node stays behind: most of it is asked for by one file.
-    /// With them: `RowsCarriedOver::new_rows`.
     fn copy_shared_rows<'n>(&self, arena: &'n Arena) -> (KeptMemo<'n>, Vec<u32>) {
         let mut next = KeptMemo {
             visit: self.visit,
@@ -387,12 +370,17 @@ impl<'c> KeptMemo<'c> {
     }
 
     #[inline]
-    pub(super) fn find_member_types(&self, row: ObjectRow, index: u32) -> Option<PositionTypes> {
+    pub(super) fn find_member_types(
+        &self,
+        row: ObjectRow,
+        member: ListedMember,
+    ) -> Option<PositionTypes> {
         let object = &self.objects[row.0 as usize];
-        match index < object.member_type_count {
-            true => self.member_types[(object.first_member_type + index) as usize],
-            false => None,
+        if member.property_index >= object.member_type_count {
+            return None;
         }
+        let kept = self.member_types[(object.first_member_type + member.property_index) as usize];
+        kept.and_then(|(name, types)| (name == member.name.atom()).then_some(types))
     }
 
     pub(super) fn has_room_for_member_types(&self, row: ObjectRow) -> bool {
@@ -407,10 +395,16 @@ impl<'c> KeptMemo<'c> {
             .resize(self.member_types.len() + count as usize, None);
     }
 
-    pub(super) fn keep_member_types(&mut self, row: ObjectRow, index: u32, types: PositionTypes) {
+    pub(super) fn keep_member_types(
+        &mut self,
+        row: ObjectRow,
+        member: ListedMember,
+        types: PositionTypes,
+    ) {
         let object = &self.objects[row.0 as usize];
-        if index < object.member_type_count {
-            self.member_types[(object.first_member_type + index) as usize] = Some(types);
+        if member.property_index < object.member_type_count {
+            self.member_types[(object.first_member_type + member.property_index) as usize] =
+                Some((member.name.atom(), types));
         }
     }
 }

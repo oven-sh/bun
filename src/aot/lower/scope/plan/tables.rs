@@ -47,6 +47,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         use_counts: walk.use_counts.clone(),
         calls_by_name: walk.calls_by_name.clone(),
         made_at_first_read: walk.made_at_first_read.clone(),
+        created_at_each_read: walk.created_at_each_read.clone(),
         functions_created_before_loops: walk.functions_created_before_loops.clone(),
         names_called: walk.names_called.clone(),
         symbol_placements: parts.placements.symbols,
@@ -55,6 +56,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         lexical_owners: parts.lexical_owners,
         arguments_objects: parts.arguments_objects,
         initialized_holders,
+        registries: parts.registries,
         has_wrapper_parameters: walk.has_wrapper_parameters,
     }
 }
@@ -84,18 +86,14 @@ fn has_local(forms: &[BindingForm], placements: &Placements, binding: BindingRef
     }
 }
 
-/// Which scope lies in which: a walk outwards from each loop to each scope takes the depth of the code times its length.
 struct ScopeTree {
-    /// The number of each scope in a walk that comes to a scope before the scopes in it, and to those before the next scope beside it.
     entered: Vec<u32>,
-    /// The number of the first scope that the walk comes to behind those in it.
     left: Vec<u32>,
 }
 
 impl ScopeTree {
     fn new(context: &Context<'_, '_>) -> ScopeTree {
         let scopes = &context.input.bound.scopes;
-        // A scope has a greater number than the scope around it.
         let mut sizes = vec![1; scopes.len()];
         for scope in (0..scopes.len()).rev() {
             if let Some(around) = scopes[scope].parent.some() {
@@ -129,7 +127,6 @@ impl ScopeTree {
     }
 }
 
-/// What a loop carries is stored in it or carried by a loop inside it: the scope around a loop is around the loops inside it, and they belong to one function.
 fn compute_loop_stores(
     context: &Context<'_, '_>,
     forms: &[BindingForm],
@@ -138,7 +135,6 @@ fn compute_loop_stores(
     let walked_loops = &context.walk.loops;
     let mut scopes = None;
     let mut carried: Vec<Vec<BindingRef>> = vec![Vec::new(); walked_loops.len()];
-    // A loop has a greater index than the loop around it.
     for (index, walked) in walked_loops.iter().enumerate().rev() {
         let mut bindings = std::mem::take(&mut carried[index]);
         bindings.extend_from_slice(&walked.stored);
@@ -236,7 +232,6 @@ fn compute_entry_flags(
         FunctionKey::ModuleBody(_) => {
             let has = |slot: ScopeSlot| has_slot(&parts.placements, context.file_scope, slot);
             let mut flags = compute_arguments_entry_flags(parts, CodeUnit::File);
-            // Nobody passes `this` to the body of a module. What `this` stands for there is stored when the scope is entered.
             if has(ScopeSlot::This) && context.walk.has_wrapper_parameters {
                 flags |= FunctionFlags::HAS_THIS;
             }
@@ -269,7 +264,6 @@ fn compute_arguments_entry_flags(parts: &Parts, unit: CodeUnit) -> FunctionFlags
     }
 }
 
-/// A constructor makes the `arguments` object of each field value that it evaluates.
 fn compute_field_arguments_flags(
     context: &Context<'_, '_>,
     key: FunctionKey,

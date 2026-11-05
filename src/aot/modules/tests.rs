@@ -321,7 +321,6 @@ fn typescript_module_is_bound_without_the_exports_that_find_nothing_where_the_ru
         };
         assert_eq!(names_of("again.ts"), ["one"]);
         assert_eq!(names_of("imported.ts"), ["one"]);
-        // Only the run knows whether the file has the name: the export is there while its copy holds something.
         let [perhaps] = graph.exports(file("file.ts")) else {
             panic!("file.ts does not have exactly one export");
         };
@@ -585,7 +584,6 @@ fn a_module_says_which_names_it_binds_that_the_table_of_a_library_module_does_no
             "through.js",
             "import { handedOn } from \"./barrel.js\";\nconsole.log(handedOn);\n",
         ),
-        // `undefined` where the module has no such name.
         (
             "members.js",
             "import * as fs from \"node:fs\";\nconsole.log(fs.unlisted);\n",
@@ -625,7 +623,6 @@ fn a_module_says_which_deferred_exports_of_the_library_it_binds() {
             "through.js",
             "import { ReadStream } from \"./barrel.js\";\nconsole.log(ReadStream);\n",
         ),
-        // The object answers, at the read.
         (
             "members.js",
             "import * as fs from \"node:fs\";\nconsole.log(fs.WriteStream, fs.statSync);\n",
@@ -634,7 +631,6 @@ fn a_module_says_which_deferred_exports_of_the_library_it_binds() {
             "required.cjs",
             "const { WriteStream } = require(\"node:fs\");\nconsole.log(WriteStream);\n",
         ),
-        // `Object.defineProperty(assert, "AssertionError", { get() { .. } })`
         (
             "defined.js",
             "import { AssertionError, ok } from \"node:assert\";\nconsole.log(AssertionError, ok);\n",
@@ -721,7 +717,6 @@ fn each_test_file_with_a_loader_of_its_own_says_which_type_comes_first() {
         let is_loaded_by_loader = |graph: &ModuleGraph, name: &str| {
             graph.is_loaded_by_loader(ModuleRef::File(file_named(input, name)))
         };
-        // One loader comes to the test files one behind the other, and the build has said who is first.
         for name in ["a.test.js", "b.test.js", "c.test.js", "below.js"] {
             assert!(types_left_to_loader(graph, name).is_empty(), "{name}");
             assert!(!is_loaded_by_loader(graph, name), "{name}");
@@ -736,9 +731,37 @@ fn each_test_file_with_a_loader_of_its_own_says_which_type_comes_first() {
         for name in ["a.test.js", "b.test.js", "below.js"] {
             assert!(is_loaded_by_loader(&graph, name), "{name}");
         }
-        // One type asks for the file.
         assert!(types_left_to_loader(&graph, "c.test.js").is_empty());
         assert!(!is_loaded_by_loader(&graph, "c.test.js"));
+    });
+}
+
+#[test]
+fn a_preload_says_in_front_of_the_test_files_which_type_comes_first() {
+    let files = [
+        (
+            "a.test.js",
+            "import near from './conf.txt' with { type: 'jsonc' };\nconsole.log(near);\n",
+        ),
+        (
+            "first.js",
+            "import conf from './conf.txt' with { type: 'text' };\nconsole.log(conf);\n",
+        ),
+        ("conf.txt", "{ \"port\": 21 }\n"),
+    ];
+    with_graph_of_test_files(&files, 1, 1, |graph, input| {
+        for name in ["a.test.js", "first.js"] {
+            let requests = graph.requests(file_named(input, name)).iter();
+            let forms = requests.filter_map(|request| match request.target {
+                ModuleRef::File(form) => Some(input.sources.public_path(form)),
+                _ => None,
+            });
+            let forms: Vec<&[u8]> = forms.collect();
+            assert!(
+                matches!(forms[..], [form] if !form.ends_with(b"?jsonc")),
+                "{name}"
+            );
+        }
     });
 }
 

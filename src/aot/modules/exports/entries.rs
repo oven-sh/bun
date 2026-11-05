@@ -37,29 +37,22 @@ pub(in crate::modules) struct ExportEntries {
     pub file: FileId,
     pub own: Vec<(Atom, ExportEntry)>,
     pub stars: Vec<u32>,
-    /// The names that the file imports, or exports again, of CommonJS files.
     pub commonjs_imports: Vec<WrittenImport>,
-    /// `BindInput::typescript_drops_absent_exports`, of a TypeScript module: a link leaves out what the module exports of another module that lacks the name.
     pub drops_absent_exports: bool,
 }
 
-/// A name of a CommonJS file, where an ES module writes it.
 #[derive(Copy, Clone, Debug)]
 pub(in crate::modules) struct WrittenImport {
     pub imported: CommonJsImport,
     pub written: WrittenPart,
-    /// The module exports the name.
     pub asked_by: Option<ExportStatement>,
-    /// `ExportEntries::drops_absent_exports` of a module that exports the name.
     pub is_dropped_if_absent: bool,
 }
 
 #[derive(Clone)]
 pub(in crate::modules) struct CollectedEntries {
-    /// Of the modules that have an export table, in the order of the files.
     pub tables: Vec<ExportEntries>,
     pub commonjs_imports: Vec<WrittenImport>,
-    /// The CommonJS files that `import()` or `export *` name.
     pub commonjs_namespace_loads: Vec<FileId>,
 }
 
@@ -127,7 +120,8 @@ pub(in crate::modules) fn collect_export_entries(
         };
         module.own = collector.collect_own_entries();
         module.stars = collector.collect_stars();
-        module.commonjs_imports = collector.collect_commonjs_imports(&module.own);
+        let has_stars = !module.stars.is_empty();
+        module.commonjs_imports = collector.collect_commonjs_imports(&module.own, has_stars);
     });
     let tables = entries.iter_mut();
     let commonjs_imports = tables.flat_map(|module| module.commonjs_imports.drain(..));
@@ -155,7 +149,6 @@ struct EntryCollector<'a, 's> {
 }
 
 impl EntryCollector<'_, '_> {
-    /// A CommonJS file, or an ES module, which may hand on the names of one with `export *`.
     fn exporting_file_at(&self, site: usize) -> Option<FileId> {
         match &self.scan.sites[site] {
             ScannedSite::Module(module) => {
@@ -197,7 +190,11 @@ impl EntryCollector<'_, '_> {
         }
     }
 
-    fn collect_commonjs_imports(&self, own: &[(Atom, ExportEntry)]) -> Vec<WrittenImport> {
+    fn collect_commonjs_imports(
+        &self,
+        own: &[(Atom, ExportEntry)],
+        has_stars: bool,
+    ) -> Vec<WrittenImport> {
         let mut imports = Vec::new();
         for index in 0..self.hir.imports.len() as u32 {
             self.add_names_of_import(ImportId(index), &mut imports);
@@ -219,7 +216,6 @@ impl EntryCollector<'_, '_> {
                 _ => None,
             };
             let Some(written) = written else {
-                // `import { name } from "m"; export { name }`.
                 let mut of_statements = imports.iter_mut();
                 let import = of_statements.find(|import| {
                     import.written.order.site == site
@@ -241,7 +237,7 @@ impl EntryCollector<'_, '_> {
                 },
                 written,
                 asked_by,
-                is_dropped_if_absent: self.drops_absent_exports,
+                is_dropped_if_absent: self.drops_absent_exports || has_stars,
             }));
         }
         imports
@@ -291,7 +287,6 @@ impl EntryCollector<'_, '_> {
         }
     }
 
-    // Bun's transpiler writes the `export` of an enum or a namespace on the `var` in front of it, and only the first declaration of a name gets one.
     fn is_first_of_its_name(&self, declaration: Decl) -> bool {
         let bound = self.bound;
         let binding = bound.declared_symbol(declaration);
@@ -342,7 +337,6 @@ impl EntryCollector<'_, '_> {
     }
 
     fn find_import_declaration(&self, local: SymbolId) -> Option<(ImportId, ImportedName)> {
-        // `/** @import { f } from "./types" */ function f() {}`: the name has both declarations, and is the function.
         if self.bound.binding_kind(local) != BindingKind::Import {
             return None;
         }

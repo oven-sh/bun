@@ -21,7 +21,6 @@ pub(super) enum MentionUse {
     Exposed,
 }
 
-// It lists the keys of its first operand, and looks for no member of it.
 fn looks_at_first_operand(builtin: BuiltinId) -> bool {
     matches!(
         builtin,
@@ -38,7 +37,6 @@ fn classify_stmt_parent(hir: &hir::File<'_>, node: ExprId, stmt: StmtId) -> Ment
         StmtKind::Expr(_) | StmtKind::Switch { .. } => MentionUse::Inspected,
         StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } if node == test => MentionUse::Inspected,
         StmtKind::For { test, update, .. } if node == test || node == update => MentionUse::Inspected,
-        // The host makes a member when it is first looked for, and each step looks for the name that it hands out.
         StmtKind::ForIn { .. } | StmtKind::With { .. } => MentionUse::Exposed,
         _ => MentionUse::Exposed,
     }
@@ -79,7 +77,6 @@ impl Resolver<'_, '_> {
         let hir = self.input.hir;
         let mention_use = match hir[parent].kind {
             ExprKind::Binary { op: BinOp::In, right, .. } if node == right => MentionUse::Exposed,
-            // `a && b` answers `a` only where `a` is no object.
             ExprKind::Binary { op: BinOp::And, left, .. } if node == left => MentionUse::Inspected,
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => {
                 return ControlFlow::Continue(parent);
@@ -88,7 +85,6 @@ impl Resolver<'_, '_> {
                 return ControlFlow::Continue(parent);
             }
             ExprKind::Binary { .. } => MentionUse::Inspected,
-            // The conditional expression holds the object, and what is done with it is seen where that stands.
             ExprKind::Cond { test, .. } if node != test && self.is_resolved(parent) => MentionUse::Aliased,
             ExprKind::Cond { test, .. } if node != test => return ControlFlow::Continue(parent),
             ExprKind::Cond { .. } => MentionUse::Inspected,
@@ -115,8 +111,6 @@ impl Resolver<'_, '_> {
         ControlFlow::Break(mention_use)
     }
 
-    // `(_a = globalThis).name ?? (_a.name = value)`, as TypeScript prints `globalThis.name ??= value`. The variable holds nothing but the object, and neither
-    // it nor a store to it goes anywhere but in front of a name that the table does not list on the object: as if the object were named at each of those places.
     fn is_kept_for_unlisted_members(&self, e: ExprId, target: ExprId) -> bool {
         let input = self.input;
         let Some(object) = self.value_of(e) else {
@@ -127,7 +121,6 @@ impl Resolver<'_, '_> {
         };
         let id = table::canonical_id(object.path.id);
         let entry = table::entry(id);
-        // The table lists the members of a namespace and of a prototype object under the entry itself.
         let lists_members = object.kind == HolderKind::Object
             && entry.scope == Scope::Realm
             && matches!(entry.kind, BuiltinKind::Namespace | BuiltinKind::Prototype);
@@ -214,7 +207,6 @@ impl Resolver<'_, '_> {
             && self.find_named_member(object, name).is_none()
     }
 
-    // Native code may walk over every member of what it is handed.
     fn classify_operand(&self, call: CallId, operand: ExprId) -> MentionUse {
         let hir = self.input.hir;
         let callee = hir.skip_type_assertions(hir[call].callee);
@@ -227,8 +219,6 @@ impl Resolver<'_, '_> {
         };
         match table::canonical_id(builtin) {
             builtin if is_first && looks_at_first_operand(builtin) => MentionUse::Inspected,
-            // It writes on the object that it is handed first, and hands it to nobody. What it writes is followed: `look_at_call_of_function`.
-            // In a test run alone: an executable goes by the same answer for what of the run time it needs, and the host makes a member when it is first looked for.
             builtin
                 if is_first
                     && self.input.runs_tests
@@ -241,13 +231,11 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // `require.cache`, `Module._extensions`, `Module._resolveFilename`, `module.children`: what is written on an object of the loader decides what is loaded.
     fn is_of_loader(&self, object: ExprId) -> bool {
         let object = self.input.hir.skip_type_assertions(object);
         mentioned_id(self.state(object)).is_none_or(is_of_loader)
     }
 
-    // `object.method.call(object, ..)`, and `apply` and `bind`, for a method that the object itself holds: what `object.method(..)` does with the object.
     fn is_receiver_of_own_method(&self, operand: ExprId, callee: ExprId) -> bool {
         let hir = self.input.hir;
         let takes_receiver = self.hands_function_on(callee);
@@ -274,7 +262,6 @@ impl Resolver<'_, '_> {
         if self.is_deleted(member) || self.hands_function_on(member) {
             return MentionUse::Exposed;
         }
-        // A function that the table does not list gets the object as `this` and may walk over it.
         if !self.is_resolved(member) && self.is_callee(member) {
             return MentionUse::Exposed;
         }
@@ -292,7 +279,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // `__proto__` and `constructor` lead above the object, `valueOf()` answers it, `__defineGetter__()` lays code on it: whoever asks for one of them has the object.
     pub(super) fn is_inherited_object_prototype_member(
         &self,
         object: Option<BuiltinId>,
@@ -306,7 +292,6 @@ impl Resolver<'_, '_> {
         table::own_member(BuiltinId::ObjectPrototype, name).is_some() && !holds_member_itself
     }
 
-    // `f.call(..)`, `f.apply(..)` and `f.bind(..)` call the function, now or later, with operands that nobody looks at here. Only these three: their first operand is the receiver.
     fn hands_function_on(&self, member: ExprId) -> bool {
         match self.state(member) {
             ExprState::Intrinsic(Intrinsic::Call { .. } | Intrinsic::Apply) => true,
@@ -321,7 +306,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // A deletion that finds the member has the host make every other member of the object first.
     pub(super) fn is_deleted(&self, member: ExprId) -> bool {
         let hir = self.input.hir;
         let mut node = member;
@@ -360,7 +344,6 @@ impl Resolver<'_, '_> {
         hir.template_of(call) == template
     }
 
-    /// `a && b && e`
     pub(super) fn ends_row_of_tests(&self, row: ExprId, e: ExprId) -> bool {
         let hir = self.input.hir;
         let mut last = hir.skip_type_assertions(row);
@@ -387,19 +370,15 @@ impl Resolver<'_, '_> {
             {
                 MentionUse::Aliased
             }
-            // The mention is what the tests in front of it let through, or the row of tests itself: `resolve_alias` finds the object there.
             PatKind::Ident(_)
                 if self.is_local_alias(declaration.pat)
-                    && self
-                        .find_module_object_behind_tests(declaration.init)
-                        .is_some()
+                    && self.find_object_only_held_by(declaration.init).is_some()
                     && (is_whole_initializer
                         || (self.held_value_of(e).is_none()
                             && self.ends_row_of_tests(declaration.init, e))) =>
             {
                 MentionUse::Aliased
             }
-            // No name of a pattern stands for a member of what is only held: `resolve_alias` goes by what the initializer is.
             PatKind::Object(_)
                 if is_whole_initializer && !matches!(hir[e].kind, ExprKind::Cond { .. }) =>
             {

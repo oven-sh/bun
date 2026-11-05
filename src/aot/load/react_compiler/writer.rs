@@ -33,15 +33,12 @@ pub(super) struct TreeWriter<'a, 's> {
     pub(super) stack: StackCheck,
     written_type_arguments: FxHashMap<(u32, u32), ListAt<TypeNodeId>>,
     source_ranges: SourceRanges,
-    /// Names of the module-level items the compiler added, by `Ref::inner_index()`. Functions share them.
     item_names: FxHashMap<u32, Atom>,
-    /// The outlined functions that stand in a list of statements inside a function or a block.
     outlined_into_lists: FxHashSet<StmtId>,
 }
 
 #[derive(Default)]
 pub(super) struct FunctionContext {
-    /// By `Ref::inner_index()`.
     names: FxHashMap<u32, (Atom, SymbolOrigin)>,
     pub import_paths: Vec<Box<[u8]>>,
     used_ranges: FxHashMap<(u32, NodeShape), usize>,
@@ -52,7 +49,6 @@ pub(super) struct FunctionContext {
     pub is_strict_by_syntax: bool,
 }
 
-/// What holds a list of statements.
 #[derive(Copy, Clone)]
 enum ListHolder {
     File,
@@ -71,7 +67,6 @@ pub(super) enum NodeShape {
     Other,
 }
 
-/// The end offset of every expression in the source file. The compiler's output only has start offsets.
 struct SourceRanges(Vec<(u32, NodeShape, u32)>);
 
 impl SourceRanges {
@@ -92,7 +87,6 @@ impl SourceRanges {
         SourceRanges(ranges)
     }
 
-    /// The expressions of one shape that start at `start`, innermost first.
     fn starting_at(&self, start: u32, shape: NodeShape) -> &[(u32, NodeShape, u32)] {
         let first = self
             .0
@@ -171,7 +165,6 @@ impl<'a, 's> TreeWriter<'a, 's> {
 
     pub(super) fn add_imports(&mut self, imports: &[AddedImport<'_>]) {
         for import in imports {
-            // No compiled function references an import without a name.
             if let Some(&local) = self.item_names.get(&import.local.inner_index()) {
                 self.items.add_import(import.path, import.imported, local);
             }
@@ -183,7 +176,6 @@ impl<'a, 's> TreeWriter<'a, 's> {
         finish_file(self.file, arena, self.atoms)
     }
 
-    /// The compiler's tree has no types.
     pub(super) fn type_arguments_of_call(&self, range: (u32, u32)) -> ListAt<TypeNodeId> {
         let written = self.written_type_arguments.get(&range);
         written.copied().unwrap_or(ListAt::EMPTY)
@@ -208,7 +200,6 @@ impl<'a, 's> TreeWriter<'a, 's> {
         self.range_of_shape(loc, NodeShape::Other)
     }
 
-    /// Every node of a chain like `a.b().c()` starts at the same offset, so call this for inner nodes first.
     pub(super) fn range_of_shape(&mut self, loc: Loc, shape: NodeShape) -> (u32, u32) {
         let fallback = self.function.fallback_position;
         self.source_range_of(loc, shape)
@@ -216,7 +207,6 @@ impl<'a, 's> TreeWriter<'a, 's> {
     }
 
     pub(super) fn identifier(&mut self, reference: Ref, loc: Loc) -> ExprId {
-        // TypeScript orders a use and its declaration by position: a use without one comes after every declaration.
         let last = self.function.last_position;
         let (start, end) = self
             .source_range_of(loc, NodeShape::Other)
@@ -270,7 +260,6 @@ impl<'a, 's> TreeWriter<'a, 's> {
         }
     }
 
-    // The end of a statement is where the next one begins: what stands there counts as text of the next.
     fn last_position_of_top_level_statement_at(&self, position: u32) -> u32 {
         let mut statements = self.file.ids(self.file.body).map(|id| self.file[id].loc);
         let around = statements.find(|range| range.pos <= position && position < range.end);
@@ -283,7 +272,6 @@ impl<'a, 's> TreeWriter<'a, 's> {
         outside_names: &FxHashSet<&[u8]>,
     ) -> Atom {
         match symbol.origin {
-            // The compiler keeps two symbols with one name apart by `Ref`. This tree binds by name.
             SymbolOrigin::Local if outside_names.contains(symbol.name) => {
                 ModuleItems::name_shadowing_local(self.atoms, symbol.name)
             }
@@ -302,19 +290,15 @@ impl<'a, 's> TreeWriter<'a, 's> {
         }
     }
 
-    /// `outlined_from`: where the function begins that it is taken out of.
     fn write_outlined_function(&mut self, statement: &Stmt, outlined_from: u32) -> Written<()> {
         let StmtData::SFunction(outlined) = &statement.data else {
             return Err(UnsupportedNode::statement(statement.data.tag()));
         };
         let declaration = self.write_function_declaration(&outlined.func, statement.loc)?;
-        // It may name what the scope around that function declares, and each run of that scope makes it anew. As in a bundle, it follows the statement that holds the function, in the
-        // innermost list of statements. At the top level of the file that is the end of the file.
         match self.find_statement_around(outlined_from) {
             (ListHolder::File, _) => self.items.outlined.push(declaration),
             (holder, index) => {
                 let mut statements: Vec<StmtId> = self.file.ids(self.list_of(holder)).collect();
-                // Behind those that were taken out of it earlier.
                 let earlier = statements[index + 1..].iter();
                 let earlier = earlier.take_while(|it| self.outlined_into_lists.contains(it));
                 statements.insert(index + 1 + earlier.count(), declaration);
@@ -350,7 +334,6 @@ impl<'a, 's> TreeWriter<'a, 's> {
         }
     }
 
-    /// The innermost list with a statement that the position is written in, and the place of that statement in it.
     fn find_statement_around(&self, position: u32) -> (ListHolder, usize) {
         let file = &self.file;
         let blocks = (0..file.stmts.len() as u32).map(|id| ListHolder::Block(StmtId(id)));

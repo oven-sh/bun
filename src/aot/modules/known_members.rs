@@ -30,16 +30,12 @@ mod tests;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Validity {
-    /// `bun build` has the value in the place of the read too.
     Always,
-    /// The file of the enum has run when the read runs. The member holds the value as long as nothing can store to the object.
     WhileObjectIsNotHandedOn,
 }
 
-/// `Color.Green`, `Color["Green"]`, `shapes.Color.Green`, `data.nested.port`: a read of a member whose value the build knows.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(crate) struct MemberRead {
-    /// The variable that holds the object.
     pub object: Sym,
     pub value: Constant,
     pub validity: Validity,
@@ -48,14 +44,11 @@ pub(crate) struct MemberRead {
 #[derive(Copy, Clone)]
 struct MemberValue {
     value: Constant,
-    // No transpiler works it out for an executable, so a read in the file of the enum reads the object: it throws before the enum has run.
     is_known_to_build_alone: bool,
 }
 
-// Which members an initializer may name for its value to be known.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Named {
-    // Those of its own declaration, and those of the declarations that have run before it.
     OwnAndEarlier,
     Own,
 }
@@ -65,12 +58,9 @@ type DeclarationKey = (FileId, EnumId, Named);
 struct DeclarationValues {
     members: Vec<Option<MemberValue>>,
     relies_on: Vec<Sym>,
-    // A member also stores its name under what it holds, unless it is written as a string: `E[E["X"] = f()] = "X"` stores over the member `A` where `f()` answers "A".
-    // The text of a number is no name that `list_members_by_name` lists.
     may_store_over_members: bool,
 }
 
-// Where `KnownMemberValues::values` and `relied_on` hold what is known of a declaration.
 #[derive(Copy, Clone)]
 struct Evaluated {
     first_value: u32,
@@ -96,22 +86,18 @@ impl Evaluated {
 enum Evaluation {
     #[default]
     NotAsked,
-    // What it asks for is evaluated ahead of it.
     Waiting,
     Done(Evaluated),
 }
 
 #[derive(Copy, Clone, Default)]
 struct DeclarationMemo {
-    // By `Named`.
     evaluations: [Evaluation; 2],
-    // Of the first declaration of an enum: the range of `KnownMemberValues::names` with the members of all its declarations.
     names: Option<(u32, u32)>,
 }
 
 struct FileMemo {
     file: FileId,
-    // By `EnumId`, as far as somebody has asked.
     declarations: Vec<DeclarationMemo>,
 }
 
@@ -124,12 +110,9 @@ struct NamedMember {
 
 #[derive(Default)]
 pub(crate) struct KnownMemberValues {
-    // Ascending by file: those whose enums somebody has asked about, which are few beside the files of a program.
     files: RefCell<Vec<FileMemo>>,
     values: RefCell<Vec<Option<MemberValue>>>,
-    // The enums of other files whose members the initializers of a declaration read. The values hold as long as nothing can store to the objects of those.
     relied_on: RefCell<Vec<Sym>>,
-    // Within the range of an enum: ascending by the number of the name, each name once.
     names: RefCell<Vec<NamedMember>>,
 }
 
@@ -191,22 +174,18 @@ impl KnownMemberValues {
     }
 }
 
-// The initializers of a declaration, while they are evaluated in their order.
 #[derive(Copy, Clone)]
 struct Initializers<'a> {
     file: FileId,
     declaration: EnumId,
     earlier: &'a [Option<MemberValue>],
     named: Named,
-    // Whether the initializer that is evaluated rests on a value that the build alone knows.
     is_known_to_build_alone: &'a Cell<bool>,
     relies_on: &'a RefCell<Vec<Sym>>,
-    // A declaration whose values an initializer asks for, and that nobody has evaluated yet.
     asked_for: &'a Cell<Option<DeclarationKey>>,
 }
 
 impl Initializers<'_> {
-    // `member` is one of the declaration.
     fn find_earlier(&self, hir: &hir::File<'_>, member: EnumMemberId) -> Option<Constant> {
         let index = (member.0 - hir[self.declaration].members.start) as usize;
         let earlier = self.earlier.get(index).copied().flatten()?;
@@ -217,8 +196,6 @@ impl Initializers<'_> {
     }
 }
 
-/// The objects that the build knows whole because nothing but their declaration fills them: the enums at the top of the files of a program, and the
-/// values of its modules of data. Each is found by binding.
 #[derive(Copy, Clone)]
 pub(crate) struct KnownObjects<'a, 's> {
     pub files: &'a Files<'s>,
@@ -226,7 +203,6 @@ pub(crate) struct KnownObjects<'a, 's> {
     pub known: &'a KnownMemberValues,
 }
 
-// The parent of an expression, past the type assertions around it, and the outermost of those.
 fn find_parent(hir: &hir::File<'_>, bound: &Bound<'_>, expression: ExprId) -> (ExprId, Parent) {
     let mut outermost = expression;
     loop {
@@ -239,7 +215,6 @@ fn find_parent(hir: &hir::File<'_>, bound: &Bound<'_>, expression: ExprId) -> (E
     }
 }
 
-// Nothing is stored or deleted there.
 fn is_read(hir: &hir::File<'_>, bound: &Bound<'_>, access: ExprId) -> bool {
     let (outermost, parent) = find_parent(hir, bound, access);
     let is_deleted = matches!(parent, Parent::Expr(parent)
@@ -247,7 +222,6 @@ fn is_read(hir: &hir::File<'_>, bound: &Bound<'_>, access: ExprId) -> bool {
     !is_deleted && bound.get_assignment_target(hir, outermost).is_none()
 }
 
-// Nor is anything called with the object as `this`.
 fn is_plain_read(hir: &hir::File<'_>, bound: &Bound<'_>, access: ExprId) -> bool {
     let (outermost, parent) = find_parent(hir, bound, access);
     let is_callee = match parent {
@@ -274,7 +248,6 @@ fn is_link_of_no_chain(hir: &hir::File<'_>, access: ExprId) -> bool {
     )
 }
 
-// Every transpiler sees that such an initializer gives a string, whatever it knows of the names in it.
 fn is_written_as_string(hir: &hir::File<'_>, initializer: ExprId) -> bool {
     let is_text = |expression: ExprId| {
         matches!(
@@ -296,7 +269,6 @@ pub(crate) fn is_enum(bound: &Bound<'_>, symbol: SymbolId) -> bool {
     matches!(bound.symbol(symbol).decls.first(), Some(Decl::Enum(_)))
 }
 
-// An import or export statement links names to variables of the module. Every other site asks a loader, which answers with a value or with a path that a loader takes.
 fn links_names_alone(site: ImportSiteKind) -> bool {
     match site {
         ImportSiteKind::Import(_)
@@ -318,9 +290,7 @@ fn links_names_alone(site: ImportSiteKind) -> bool {
 }
 
 struct DataLinks {
-    // The modules of data, ascending.
     files: Vec<FileId>,
-    // By the place in `files`: something other than an import or export statement refers to the module.
     has_other_references: Vec<bool>,
 }
 
@@ -341,7 +311,6 @@ impl DataLinks {
             ImportBinding::NamespaceRead { module, .. } | ImportBinding::Exports { module } => {
                 self.note_other_reference(module);
             }
-            // Where the object goes somewhere as a value, the module stands in `namespace_values`.
             ImportBinding::Namespace { .. }
             | ImportBinding::Local
             | ImportBinding::Unused
@@ -395,8 +364,6 @@ impl DataLinks {
     }
 }
 
-/// The modules of data that nothing in the text of the program names but statements which link names to their variables. Ascending, as the rows are.
-/// It goes by the text, also of functions that nothing calls. No site names what an import under a type has made of a file, and `require` of the path answers with its object.
 pub(super) fn list_data_linked_by_names_alone(
     rows: &[FileRow],
     forms_require_checks_first: &[(FileId, FileId)],
@@ -449,14 +416,11 @@ impl<'a, 's> KnownObjects<'a, 's> {
         }
     }
 
-    // A mock stands in place of the file, or of a file that hands the variable on, or a spy stores in the variable. What another file then finds under the name is
-    // theirs to say.
     fn may_be_replaced(&self, variable: Sym) -> bool {
         self.graph.may_be_mocked(ModuleRef::File(variable.file))
             || self.graph.is_replaceable(variable)
     }
 
-    /// The enum whose object the expression evaluates to: a name, or a member of the object of a module.
     pub(crate) fn find_enum(&self, file: FileId, expression: ExprId) -> Option<Sym> {
         if !self.graph.has_record(file) {
             return None;
@@ -496,14 +460,12 @@ impl<'a, 's> KnownObjects<'a, 's> {
             _ => false,
         };
         let declarations = bound.symbol(defined.id).decls;
-        // Text that is evaluated in a scope of the file names what it likes.
         let is_known_whole = !declarations.is_empty()
             && declarations.iter().all(is_made_at_top_of_file)
             && bound.runtime.eval_scopes().is_empty();
         is_known_whole.then_some(defined)
     }
 
-    // A member that holds a number also stores its name under the text of the number: `E[E["X"] = 0 / 0] = "X"` stores over a member named `NaN`.
     fn may_be_text_of_number(&self, name: Atom) -> bool {
         matches!(
             classify_name(self.files.atoms.bytes(name)),
@@ -532,7 +494,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
             }
         }
         members.sort_unstable_by_key(|member| member.name.0);
-        // A later member of the same name stores over the earlier one.
         let runs = members.chunk_by(|a, b| a.name == b.name);
         runs.filter_map(|run| match run {
             [only] => Some(*only),
@@ -570,7 +531,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         Some((names[at].declaration, names[at].member))
     }
 
-    // The member that a read names, with its enum and the declaration that it is written in.
     fn find_named_member(
         &self,
         file: FileId,
@@ -615,7 +575,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         (!may_be_stored_over).then_some(read)
     }
 
-    /// The enums of other files that the values of the members of an enum rest on.
     pub(crate) fn enums_relied_on(&self, enumeration: Sym) -> SmallVec<[Sym; 2]> {
         let mut relied_on = SmallVec::new();
         for declaration in self.declarations_of(enumeration) {
@@ -625,7 +584,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         relied_on
     }
 
-    /// The value that the transpiler has for a member of an enum of the file. It stands in place of every read that the transpiler follows to the member.
     pub(crate) fn find_value_in_place(
         &self,
         file: FileId,
@@ -638,7 +596,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         (!known.is_known_to_build_alone).then_some(known.value)
     }
 
-    /// `-Level.Low`: wherever it stands, `bun build` writes a number for a sign in front of a member of the file that it has as a number.
     pub(crate) fn find_signed_member_in_place(
         &self,
         file: FileId,
@@ -682,7 +639,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
             is_known_to_build_alone,
         } = self.known.value_at(values, index)?;
         let name = declared_in[member].name;
-        // `bun test` assigns the members and reads a member of another file off the object. Below a name that a test run lays on `Object.prototype` the enum may have no such member.
         if enumeration.file != file && self.is_laid_on_object_prototype(name) {
             return None;
         }
@@ -690,7 +646,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
             Validity::Always
         } else if enumeration.file != file
             && !self.graph.half(ModuleRef::File(file))
-            // `Object.prototype` has an accessor named `__proto__`, which takes the store.
             && name != known::__proto__
             && !self.may_be_text_of_number(name)
             && is_plain_read(self.files.hir(file), self.files.bound(file), access)
@@ -706,8 +661,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         })
     }
 
-    /// The enum, where the expression evaluates to its object and what takes the object only looks something up in it: `Color[key]`, `Color[Color.Red]`,
-    /// `key in Color`, `for (key in Color)`.
     pub(crate) fn find_lookup(&self, file: FileId, object: ExprId) -> Option<Sym> {
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
         let (outermost, parent) = find_parent(hir, bound, object);
@@ -740,19 +693,15 @@ impl<'a, 's> KnownObjects<'a, 's> {
         self.graph.has_record(file) && self.graph.kind(file) == ModuleKind::Data
     }
 
-    // Whoever gets hold of the value of the module does so through one of its variables. A loader that is given a name which the build does not know finds the
-    // module all the same: whoever follows the code that is reached sees that.
     fn is_reached_through_variables_alone(&self, file: FileId) -> bool {
         let module = ModuleRef::File(file);
         let listed = &self.graph.data_linked_by_names_alone;
         self.is_data_module(file)
             && !self.graph.may_be_mocked(module)
-            // The loader of the run time links the statements of a test file to a module that may load again, and hands over whatever it exports.
             && !self.graph.may_be_evicted(module)
             && listed.binary_search(&file).is_ok()
     }
 
-    // The whole value of a module of data, such as a JSON file, where the variable holds it.
     fn find_data_in(&self, variable: Sym) -> Option<&'s DataValue<'s>> {
         if !self.is_data_module(variable.file) {
             return None;
@@ -773,7 +722,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         }
     }
 
-    // The variable that a module of data exports as its value, where that is an object.
     fn find_variable_with_object(&self, file: FileId) -> Option<Sym> {
         let mut exports = self.graph.exports(file).iter();
         let ExportBinding::Variable(variable) = exports
@@ -787,7 +735,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         holds_object.then_some(variable)
     }
 
-    /// The variable that holds the object of a module of data, where the build sees every way to the object.
     pub(crate) fn find_data_object(&self, file: FileId) -> Option<Sym> {
         if !self.is_reached_through_variables_alone(file) {
             return None;
@@ -796,8 +743,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         (!self.graph.is_replaceable(object)).then_some(object)
     }
 
-    /// The variable with the object of a module of data, where another variable of the module holds an object out of it: `import { nested } from "./data.json"`.
-    /// Also of a module whose object the build does not see every way to.
     pub(crate) fn find_data_object_shared_by(&self, variable: Sym) -> Option<Sym> {
         if !self.is_data_module(variable.file) {
             return None;
@@ -807,7 +752,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         (!holds_no_object).then_some(object)
     }
 
-    /// What a variable of a module of data holds from before any code of the program runs, where that is no object: `import { version } from "./data.json"`.
     pub(crate) fn find_data_variable(&self, variable: Sym) -> Option<(Sym, Constant)> {
         let variable = self.follow_imports(variable)?;
         if !self.is_data_module(variable.file) || self.may_be_replaced(variable) {
@@ -826,7 +770,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         Some((variable, value))
     }
 
-    /// The variables that a module of data declares, with their declarators.
     pub(crate) fn data_variables(&self, file: FileId) -> impl Iterator<Item = (Sym, VarDeclId)> {
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
         let declarators = (0..hir.var_decls.len() as u32).map(VarDeclId);
@@ -836,7 +779,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         })
     }
 
-    /// `data.version`, `data.nested.port`: a read by names, out of the object of a module of data, of a value that is no object.
     pub(crate) fn find_data_read(&self, file: FileId, access: ExprId) -> Option<MemberRead> {
         let (object, value) = self.find_data_value(file, access)?;
         let validity = Validity::WhileObjectIsNotHandedOn;
@@ -847,7 +789,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         })
     }
 
-    // The variable with the object that the read starts at, and what the object is made with under the names.
     fn find_data_value(&self, file: FileId, access: ExprId) -> Option<(Sym, Constant)> {
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
         let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
@@ -880,29 +821,24 @@ impl<'a, 's> KnownObjects<'a, 's> {
             let DataValue::Object(entries) = *value else {
                 return None;
             };
-            // `Object.prototype` has an accessor of this name.
             if name == known::__proto__ {
                 return None;
             }
-            // A key that is written twice holds what is written last.
             value = &entries.iter().rfind(|entry| entry.0 == name)?.1;
         }
         let Decision::Constant(value) = Decision::of_data(value) else {
             return None;
         };
-        // Such a module has its value before any code of the program runs.
         is_plain_read(hir, bound, access).then_some((object, value))
     }
 
     fn is_laid_on_object_prototype(&self, name: Atom) -> bool {
         match name.is_some() {
             true => (self.graph).is_laid_on_object_prototype(self.files.atoms.bytes(name)),
-            // `enum E { [key] }`: the parser recovers, the member has no name, and what it would store under may be any of them.
             false => !self.graph.names_laid_on_object_prototype.is_empty(),
         }
     }
 
-    /// To run such a declaration may be to run a setter of the tests.
     pub(crate) fn stores_under_name_laid_on_object_prototype(
         &self,
         file: FileId,
@@ -913,15 +849,12 @@ impl<'a, 's> KnownObjects<'a, 's> {
         members.any(|member| self.is_laid_on_object_prototype(hir[member].name))
     }
 
-    /// To run such a declaration is to make the object and nothing else.
     pub(crate) fn knows_every_member(&self, file: FileId, declaration: EnumId) -> bool {
         let values = self.values_of((file, declaration, Named::OwnAndEarlier));
         let known = self.known.values.borrow();
         known[values.values()].iter().all(Option::is_some)
     }
 
-    // What is known of a declaration hangs on the declaration alone, never on who asks first: a build asks in more than one order.
-    // An enum may be made of an enum that is made of an enum, however often: what a declaration asks for is evaluated ahead of it, and no call stands in another.
     fn values_of(&self, declaration: DeclarationKey) -> Evaluated {
         if let Evaluation::Done(evaluated) = self.known.evaluation(declaration) {
             return evaluated;
@@ -938,7 +871,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
                 Ok(values) => self.known.keep(next, &values),
                 Err(asked_for) => match self.known.evaluation(asked_for) {
                     Evaluation::NotAsked => waiting.push(asked_for),
-                    // An initializer asks only for what has run before it, so no declaration comes to ask for itself.
                     Evaluation::Waiting | Evaluation::Done(_) => {
                         debug_assert!(false, "enums are made of each other");
                         let nothing = DeclarationValues {
@@ -967,7 +899,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         let members = hir[declaration].members;
         let mut values: Vec<Option<MemberValue>> = Vec::with_capacity(members.len());
         let mut may_store_over_members = false;
-        // A member without an initializer is one more than the member before it, if that is a number.
         let mut counted = Some(0.0);
         let is_known_to_build_alone = Cell::new(false);
         let relies_on = RefCell::new(Vec::new());
@@ -1015,7 +946,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         })
     }
 
-    // The number or the string that an initializer evaluates to whenever it runs.
     fn evaluate(&self, initializers: Initializers<'_>, expression: ExprId) -> Option<Constant> {
         let value = self.evaluate_constant(initializers, expression)?;
         matches!(value, Constant::Number(_) | Constant::String(_)).then_some(value)
@@ -1036,7 +966,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         let hir = self.files.hir(initializers.file);
         let decisions = &self.files.analysis(initializers.file).decisions;
         let atoms = &self.files.atoms;
-        // `A | B | C | ..` leans to the left, however long it is.
         let mut right_operands: SmallVec<[(BinOp, ExprId); 8]> = SmallVec::new();
         let mut leftmost = hir.skip_type_assertions(expression);
         let mut value = loop {
@@ -1134,7 +1063,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         }
     }
 
-    // `"text".length`
     fn evaluate_length(&self, initializers: Initializers<'_>, access: ExprId) -> Option<Constant> {
         let hir = self.files.hir(initializers.file);
         let (text, MemberKey::Name(name)) = hir.member_key(access)? else {
@@ -1151,7 +1079,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         Some(Constant::Number(f64::from(length)))
     }
 
-    // `Color.Green`, where the initializer of a member of an enum reads it.
     fn evaluate_member_read(
         &self,
         initializers: Initializers<'_>,
@@ -1172,8 +1099,6 @@ impl<'a, 's> KnownObjects<'a, 's> {
         if named == Named::Own {
             return None;
         }
-        // The other declaration stands further up in the file, or in a file that has run. A file on a cycle reads a `const enum` of
-        // another file all the same: of that one the members count that name none but their own.
         let has_run_before = match enumeration.file == file {
             true => is_member_visited_before(hir, member, access),
             false => !self.graph.half(ModuleRef::File(file)),
@@ -1188,12 +1113,10 @@ impl<'a, 's> KnownObjects<'a, 's> {
             return None;
         };
         let read = self.read_member(file, access, found, values)?;
-        // `bun build` puts the member of another file in place when it prints, behind the visit that gives the members of this enum their values.
         if enumeration.file != file {
             initializers.is_known_to_build_alone.set(true);
         }
         if read.validity == Validity::WhileObjectIsNotHandedOn {
-            // Each declaration of the enum stores to the object that is read.
             let mut parts: SmallVec<[Evaluated; 1]> = SmallVec::new();
             for part in self.declarations_of(enumeration) {
                 match self.known.evaluation(part) {

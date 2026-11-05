@@ -48,7 +48,6 @@ impl SourceKind {
 pub enum EntryPointKind {
     Main,
     Additional,
-    /// `vi.importMock("./a")`: native code of the test runner loads the file by its path and reads all that it exports.
     LoadedByTestRunner,
     HostLoadedModule,
     ImportedModule,
@@ -73,7 +72,6 @@ pub(crate) struct PluginModuleName {
     pub path: Box<[u8]>,
 }
 
-/// `modules_with_queries`
 pub(crate) struct FileWithQuery {
     pub file: Box<[u8]>,
     pub query: Box<[u8]>,
@@ -86,20 +84,13 @@ pub(crate) struct ParsedSource {
     pub file_with_query: Option<FileWithQuery>,
     pub web_assembly: Option<Vec<u8>>,
     pub has_compiled_components: bool,
-    /// Why the text is no program, where the program finds that out when it loads the file. An empty module stands in its place.
     pub parse_failure: Option<Vec<u8>>,
-    /// Nothing but the way the file is loaded says that it is a program.
     pub is_language_assumed: bool,
     pub builtins: ResolvedBuiltins,
-    /// The modules of Bun whose names stand in quotes in a constant text that the file evaluates: `process.mainModule.require("node:os")`. The interpreter runs the text.
     pub library_modules_named_in_text_left_to_run_time: Vec<RuntimeModule>,
-    /// `manual_mocks::find_manual_mocks`
     pub manual_mocks: Vec<Vec<u8>>,
-    /// `contents::scan_file`. A file that is folded again is scanned again, and the answer is replaced whole.
     pub contents: FileContents,
-    /// In a test run: what the file says of the run. `test_runs::collect_run_contents` joins them.
     pub of_run: FileOfRun,
-    /// `Sources::byte_count`
     pub byte_count: usize,
     pub diagnostics: Vec<FileDiagnostic>,
 }
@@ -149,7 +140,6 @@ pub(crate) fn parsed_source_mut(payload: &mut Option<HostPayload>) -> &mut Parse
     source.expect("the payload of a tree is a ParsedSource")
 }
 
-/// The function that the file of library functions at `path` exports under the name.
 pub(crate) fn find_runtime_function(
     manifest: &Manifest,
     path: &[u8],
@@ -175,7 +165,6 @@ struct SourceEntry {
     loader: Loader,
     byte_count: u64,
     public_path: Box<[u8]>,
-    /// Empty until it is asked for where it is `compute_display_path` of `diagnostic_path`: few files are ever shown.
     display_path: OnceLock<Box<[u8]>>,
     diagnostic_path: Box<[u8]>,
 }
@@ -191,7 +180,6 @@ pub struct Sources {
     modules_named_at_run_time: Vec<RuntimeModule>,
     web_assembly_files: Vec<FileId>,
     manifest: &'static Manifest,
-    /// `holds_source_paths`
     holds_source_paths: Arc<AtomicBool>,
 }
 
@@ -213,8 +201,6 @@ impl Sources {
         self.entries[file.idx()].loader
     }
 
-    /// The length in bytes of the text that the loader, or a plugin in its place, read for the file.
-    /// Only `LoadHost` sets it: 0 for one of Bun's own files, which `RuntimeHost` parses, and for a file read only for its types.
     pub fn byte_count(&self, file: FileId) -> u64 {
         self.entries[file.idx()].byte_count
     }
@@ -238,7 +224,6 @@ impl Sources {
 
     fn find_source_path(&self, file: FileId) -> Option<Vec<u8>> {
         let entry = &self.entries[file.idx()];
-        // An entry text (`LoadOptions::entry_texts`) was never a file on disk, and the `/` in its `data:` or `blob:` name is not a path separator.
         if is_name_of_text(&entry.diagnostic_path) {
             return None;
         }
@@ -250,20 +235,16 @@ impl Sources {
         self.find_source_path(file).is_some()
     }
 
-    /// What `__filename` holds in an executable: where the file lay when the program was built, as `bun build --compile` has it.
-    /// Nothing where that is the path under which the program knows the file. Whoever asks puts the path into the program.
     pub fn source_path(&self, file: FileId) -> Option<Vec<u8>> {
         let path = self.find_source_path(file)?;
         self.holds_source_paths.store(true, Ordering::Relaxed);
         Some(path)
     }
 
-    /// A file asks `require.resolve` under a name that the build does not know: the run time answers with such a path.
     pub fn note_source_paths_at_run_time(&self) {
         self.holds_source_paths.store(true, Ordering::Relaxed);
     }
 
-    /// The program holds the path of a file on the machine that built it, so it may ask for a module by such a path.
     pub fn holds_source_paths(&self) -> bool {
         self.holds_source_paths.load(Ordering::Relaxed)
     }
@@ -284,7 +265,6 @@ impl Sources {
         &self.runtime_module_files
     }
 
-    /// The modules of Bun's own that a load may ask for under a name which the build does not know.
     pub fn modules_named_at_run_time(&self) -> &[RuntimeModule] {
         &self.modules_named_at_run_time
     }

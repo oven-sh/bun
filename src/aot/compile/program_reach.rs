@@ -4,22 +4,20 @@ use core::mem::{replace, take};
 use core::ops::Range;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::strings::{last_index_of, last_index_of_char, split};
+use bun_core::strings::{last_index_of, split};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{
-    Binding, BindingInitializer, Bound, CommonJsVariable, Decl, Parent, PrivateNameId, SymbolId,
-};
+use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, Parent, PrivateNameId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
-use bun_sema::fold::{Constant, Decision};
+use bun_sema::fold::Decision;
 use bun_sema::hir::{
     self, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId,
     MemberKey, MemberKind, ModifierKind, NodeData, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp,
     VarDeclId, VarKind,
 };
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::{ThisPositions, evaluates_own_this};
 use bun_sema::program::{CodeAnswer, FileId, Files, Sym};
-use bun_sema::resolve::{DeclaredSideEffects, join};
+use bun_sema::resolve::DeclaredSideEffects;
 use bun_sema::util::{ShardedMap, SharedSort};
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
@@ -38,11 +36,13 @@ use crate::lower::LeftOutDeclarations;
 use crate::modules::{
     Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
     KnownObjects, Member, ModuleExport, ModuleGraph, ModuleKind, ModuleRef, ModuleRequest,
-    RequiredName, Shape, Site, SiteAnswer, SyntheticExportId, Validity, View, is_enum,
+    RequiredName, Shape, Site, SiteAnswer, SyntheticExportId, Validity, View, directory_of,
+    is_enum,
 };
 use crate::options::RemovableOptions;
 use crate::statistics::{Stage, StepClock};
 
+mod elements;
 #[cfg(test)]
 mod function_tests;
 mod functions;
@@ -55,18 +55,11 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub graph: &'a ModuleGraph,
     pub known_helpers: &'a KnownHelpers,
     pub removable: RemovableOptions,
-    /// Code that the build has not seen names files: `code_on_disk_names_files`. So do the helpers of a test suite: `LoadOptions::runs_tests`.
     pub any_file_is_named_at_run_time: bool,
-    /// A file imports code that the build has not compiled, with `AotOptions::runs_in_place` or `Options::code_from_disk_names_files`.
     pub code_on_disk_names_files: bool,
-    /// `AotOptions::isolates_code_from_disk`
     pub isolates_code_from_disk: bool,
-    /// `ProgramContents::mocks_any_module`
     pub mocks_any_module: bool,
-    /// The test files and the preloads of `bun test --aot`, in order: `BindInput::runner_starts_entry_points`.
     pub files_started_by_runner: &'a [FileId],
-    /// `FoundEntryPoint::starts` of every entry point that has any: the file with the `new`, `WorkerStart::at`, and the entry point. In order.
-    /// Such an entry point is part of the program where code that is reached may start a Worker at it, and nowhere else.
     pub starts_of_workers: &'a [(FileId, ExprId, FileId)],
     pub beside: Beside<'a>,
 }
@@ -79,7 +72,6 @@ impl<'a, 's> ProgramReachInput<'a, 's> {
 
 pub(super) const TOP_LEVEL: u32 = 0;
 
-// Where code of a unit is written. A piece may lie in another one: what is written in both belongs to the inner one.
 struct Piece {
     written_at: Range<u32>,
     unit: u32,
@@ -90,65 +82,40 @@ struct Piece {
 enum Interest {
     Unit(u32),
     Binding(Sym),
-    // The variable is there to be compared with: `x instanceof C`, `typeof C`, and `C` in `class D extends C` until something gets hold of `D`. If it holds a class, nothing makes an object of that.
     TestedBinding(Sym),
-    // The function is called on the object of the module.
     CalledBinding(Sym, ModuleRef),
     Evaluation(ModuleRef),
-    // A call that evaluates the module where it stands.
     Require {
         referrer: ModuleRef,
         target: ModuleRef,
     },
-    // A call of `require` that the loader of the run time answers with the module.
     AnswerOfLoader(ModuleRef),
-    // What an import or export statement of the file asks for.
     Request(ModuleRef),
-    // `export *` from a file whose package says that nothing is lost without it.
     Star(FileId),
-    // The code names what an import statement takes from such a file.
     UsedImport(FileId),
-    // The object of the module comes to the file through others, under a name.
     HandedOnNamespace(ModuleRef),
-    // The loader looks for the name in the export table of the file, if that file is part of the program.
     RequiredName(FileId, Atom),
     Export(ModuleRef, Atom),
     CalledExport(ModuleRef, Atom),
     EveryExport(ModuleRef),
-    // A name that the body of a CommonJS module stores under, and the module that it is read from, which may have it from the other one.
     Name(SyntheticExportId, ModuleRef),
     CalledName(SyntheticExportId, ModuleRef),
-    // The same for an import that nothing refers to: only the link looks for the name.
     LinkedName(SyntheticExportId, ModuleRef),
-    // A mention of an object of the loader that stands for a module.
     ModuleObject(ModuleObjectOwner, ModuleObjectUse),
-    // The file gets at an entry of `require.cache`, which is such an object.
     EntryOfModuleCache,
-    // A loader is given a name that the build does not know.
     LoadByUnknownName,
-    // The same, where the answer of the load is read under this name and looked at no further.
     NameReadFromLoadByUnknownName(Atom),
-    // A loader is given the name of a file that was missing at the build, and whatever lies there when the call runs is refused the files of the program.
     LoadOfIsolatedCode,
-    // A text of the region spells the path of the file. A loader that is given a name which the build does not know may be given that text.
     FileSpelled(FileId),
-    // `SpelledModule::is_left_to_loader`: a loader is given a name that the build has followed to the file.
     FileLeftToLoader(FileId),
-    // A read of a member of an enum of another file whose value the build knows. The value stands for it unless something gets hold of the object.
     KnownMember(Sym),
-    // A read of a variable of a module of data. The value stands for it.
     KnownVariable(Sym),
-    // Something is looked up in the object of the enum, and nothing gets hold of the object.
     Lookup(Sym),
-    // A name of an enum of the file itself hands the object on.
     HandedOnObject(Sym),
-    // Another unit that is reached with the region: a piece of the same enum, a function of the object that the region stands for.
     Piece(u32),
-    // What is stored is handed the object of whichever module asks the loader. The assignment, where the loader calls what is stored.
     StoreOfLoaderFunction(Option<(ExprId, LoaderHook)>),
 }
 
-// A function of `node:module` that the loader calls once the program has replaced it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum LoaderHook {
     ResolveFilename,
@@ -179,36 +146,27 @@ pub(crate) struct ReplacedLoaderHook {
     pub hook: LoaderHook,
 }
 
-// `Module._resolveFilename`, `Module._load` and what else the object of `node:module` holds, and `Module.prototype.require`.
 fn is_loader_function(builtin: BuiltinId) -> bool {
     let builtin = table::canonical_id(builtin);
     let holder = table::entry(builtin).holder.map(table::canonical_id);
     builtin == BuiltinId::NodeModulePrototypeRequire || holder == Some(BuiltinId::NodeModule)
 }
 
-// What of a unit that is not reached the program does without.
 #[derive(Copy, Clone)]
 enum Part {
-    // The declaration runs, with functions that throw.
     Bodies,
     Declarator(VarDeclId),
     Class(ClassId),
     Statement(StmtId),
-    // The body of a module that is written inside the file, by its index among the modules of the file.
     InnerModule(u32),
 }
 
-// A module whose body is code of the file.
 struct ModuleUnits {
     module: ModuleRef,
-    // The region of its body.
     body: u32,
-    // `exports.name = value` as a statement of the body: the units, by the name.
     stores: FxHashMap<Atom, SmallVec<[u32; 1]>>,
-    // The units that do something only for somebody who looks at the exports object.
     parts_of_object: Vec<u32>,
     is_every_export_reached: AtomicBool,
-    // `Reacher::reach_what_object_shows` has begun.
     is_object_shown: AtomicBool,
 }
 
@@ -228,17 +186,12 @@ impl ModuleUnits {
 struct Unit {
     functions: SmallVec<[FnId; 1]>,
     part: Part,
-    // The region whose code makes what the unit is.
     region_around: u32,
-    // What runs of this class even where the unit is left out.
     class_checks: Option<(ClassId, ClassChecks)>,
-    // `FileScan::add_class_unit`: what somebody needs who makes an object of the class or calls something on it.
     is_class: bool,
-    // `may_test_instances_itself()` of that class.
     may_test_instances_itself: bool,
 }
 
-// The regions of a file: the code at its top level, then its units.
 #[derive(Default)]
 struct FileUnits {
     units: Vec<Unit>,
@@ -246,19 +199,15 @@ struct FileUnits {
     unit_of_function: FxHashMap<FnId, u32>,
     unit_of_class: FxHashMap<ClassId, u32>,
     unit_of_inner_name: FxHashMap<SymbolId, u32>,
-    // By a unit that is a statement of an enum: the enum.
     enum_of_unit: FxHashMap<u32, SymbolId>,
     interests: Vec<Vec<Interest>>,
     star_targets: Vec<FileId>,
-    // The files that a call in this one loads.
+    statements_with_elements: Vec<(u32, ModuleRef)>,
     loaded_by_calls: Vec<FileId>,
     is_region_reached: Vec<AtomicBool>,
-    // The file itself, then the modules that are written inside it.
     modules: Vec<ModuleUnits>,
     inner_modules: FxHashMap<FnId, u32>,
-    // A read that the build resolved hands out the object of the loader that stands for the file.
     keeps_module_object: AtomicBool,
-    // `Modules::moduleObjectMadeByRequire()`
     has_object_made_by_require: AtomicBool,
     this_positions: ThisPositions,
 }
@@ -287,7 +236,6 @@ impl FileUnits {
         unit.copied()
     }
 
-    // The module whose body the region is.
     fn find_module_with_body(&self, region: u32) -> Option<usize> {
         match region
             .checked_sub(1)
@@ -317,8 +265,6 @@ fn find_class_in_variable(
     }
 }
 
-// `x instanceof C` calls `C[Symbol.hasInstance]` with `C` as `this`. Whoever lays one on the class itself has got hold of the class; the class finds one without that among its static members
-// under computed keys, and on what it extends, where anybody may have laid it.
 fn may_test_instances_itself(hir: &hir::File<'_>, class: ClassId) -> bool {
     let mut members = hir[class].members.iter().map(|member| &hir[member]);
     !hir[class].extends.is_none()
@@ -333,7 +279,6 @@ fn module_of_view(view: View) -> ModuleRef {
     }
 }
 
-// A face evaluates the file and shows what the file exports.
 fn module_with_code(module: ModuleRef) -> ModuleRef {
     match module {
         ModuleRef::Face(file) => ModuleRef::File(file),
@@ -341,7 +286,6 @@ fn module_with_code(module: ModuleRef) -> ModuleRef {
     }
 }
 
-// The module that the statement names which imports the symbol.
 fn find_module_imported_from(
     input: &ProgramReachInput<'_, '_>,
     file: FileId,
@@ -375,7 +319,6 @@ pub(super) fn is_only_read(hir: &hir::File<'_>, bound: &Bound<'_>, member: ExprI
     }
 }
 
-// The parent of an expression, past `as`, `satisfies` and `!` around it, and the outermost of those.
 pub(super) fn find_parent_past_casts(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -406,15 +349,11 @@ struct FileScan<'a, 's> {
     bound: &'a Bound<'s>,
     units: FileUnits,
     pieces: Vec<Piece>,
-    // The calls that evaluate a module where they stand.
     sites: Vec<(ExprId, ModuleRef)>,
-    // While units are collected: the region that they are written in, and the module whose body it is.
     region: u32,
     module: u32,
     known_members: KnownMemberValues,
-    // Whatever reaches the first unit of a pair reaches the second.
     units_reached_together: Vec<(u32, u32)>,
-    // The units whose `region_around` is the region that they are written in, each with where it begins.
     units_placed_by_text: Vec<(u32, u32)>,
     units_of_private_names: FxHashMap<PrivateNameId, u32>,
 }
@@ -477,7 +416,6 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_piece(written_at, unit);
     }
 
-    // A name that two declarations share (an enum in two pieces, a class with a namespace) is made by all of them together.
     fn is_name_of_one_part(&self, symbol: SymbolId) -> bool {
         if !self.is_stable(symbol) {
             return false;
@@ -497,7 +435,6 @@ impl<'a, 's> FileScan<'a, 's> {
         unit
     }
 
-    // What the checks evaluate is code of the region around the part.
     fn add_part_with_class_checks(
         &mut self,
         part: Part,
@@ -529,7 +466,6 @@ impl<'a, 's> FileScan<'a, 's> {
         unit
     }
 
-    // `false`: something stores to one of the names.
     fn collect_stable_names(&self, pattern: PatId, names: &mut SmallVec<[SymbolId; 2]>) -> bool {
         let hir = self.hir;
         match hir[pattern].kind {
@@ -611,7 +547,6 @@ impl<'a, 's> FileScan<'a, 's> {
         let name = match self.hir[statement].kind {
             StmtKind::Enum(declared) => self.bound.declared_symbol(Decl::Enum(declared)),
             StmtKind::ExportDefault(_) => self.bound.declared_symbol(Decl::ExportExpr(statement)),
-            // An expression statement declares nothing, so nothing reaches it.
             _ => {
                 self.add_part(Part::Statement(statement), written_at, &[]);
                 return;
@@ -635,7 +570,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // An enum in several pieces: whoever gets hold of the object finds the members of all of them.
     fn is_name_of_enums_alone(&self, symbol: SymbolId) -> bool {
         if !self.is_stable(symbol) {
             return false;
@@ -648,7 +582,6 @@ impl<'a, 's> FileScan<'a, 's> {
         has_enums_alone(symbol) && (exported.is_none() || has_enums_alone(exported))
     }
 
-    // A statement that has no code as long as the module has no exports object: the definition of a name that stands for another one, the mark of an ES module.
     fn add_part_of_object(&mut self, statement: StmtId) {
         let written_at = self.hir[statement].loc;
         let unit = self.add_part(
@@ -661,7 +594,6 @@ impl<'a, 's> FileScan<'a, 's> {
             .push(unit);
     }
 
-    // Whether the node stores under a name of the module whose body is scanned, and does nothing else.
     fn add_stored_name(&self, node: ExprId, names: &mut SmallVec<[Atom; 1]>) -> bool {
         let graph = self.input.graph;
         match graph.member(self.file, node) {
@@ -673,7 +605,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 }
                 is_own
             }
-            // Nobody reads the name.
             Some(Member::Undefined) => true,
             Some(Member::Copy(_) | Member::Binding(_) | Member::Marker(_) | Member::OnObject)
             | None => false,
@@ -689,7 +620,6 @@ impl<'a, 's> FileScan<'a, 's> {
     ) -> bool {
         let hir = self.hir;
         let mut expression = hir.skip_type_assertions(expression);
-        // `Object.defineProperty(exports, "name", { value })`
         if let ExprKind::Call(call) = hir[expression].kind {
             let mut described = hir.ids(hir[call].args).skip(1);
             return self.add_stored_name(expression, names)
@@ -720,7 +650,6 @@ impl<'a, 's> FileScan<'a, 's> {
         class_checks.is_some()
     }
 
-    // `exports.a = exports.b = value` is a part like `var a = value`: it is there for whoever reads one of the names.
     fn add_export_store_part(&mut self, removable: &Removable<'_, '_>, statement: StmtId) {
         let StmtKind::Expr(expression) = self.hir[statement].kind else {
             return;
@@ -746,7 +675,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // What runs when the class is defined stays with the code around it: the class it extends, a computed key.
     fn add_class_unit(&mut self, class: ClassId) {
         let hir = self.hir;
         let unit = self.units.units.len() as u32;
@@ -765,7 +693,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 MemberKind::Property if member.flags.contains(Flags::STATIC) => return,
                 _ => false,
             };
-            // `add_units_of_class` makes a unit of a member that a private name alone leads to.
             if has_function
                 && !matches!(member.key, PropKey::Computed(_))
                 && self.find_private_name_of_function(id).is_none()
@@ -811,7 +738,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // The units among the statements of a body: of the file, or of a module that is written inside it.
     fn collect_units_among_statements(
         &mut self,
         statements: IdList<StmtId>,
@@ -940,11 +866,9 @@ impl<'a, 's> FileScan<'a, 's> {
 
     fn collect_units(&mut self) {
         let (hir, bound) = (self.hir, self.bound);
-        // Text that is evaluated in a scope of the file names what it likes.
         if !bound.runtime.eval_scopes().is_empty() {
             return;
         }
-        // A decorator is handed the class or its prototype, wherever in the class it stands.
         let mut modifiers = hir.modifiers.iter();
         let has_decorators = modifiers.any(|it| matches!(it.kind, ModifierKind::Decorator(_)));
         let removable = Removable::new(self.input.files, self.file, self.input.removable);
@@ -963,9 +887,7 @@ impl<'a, 's> FileScan<'a, 's> {
         self.region_outside(position, None)
     }
 
-    // The region that the position is written in, not counting the pieces of one unit.
     fn region_outside(&self, position: u32, unit: Option<u32>) -> u32 {
-        // What the build adds has no text of its own and runs at the head of the body. The piece of the first statement begins at that position too.
         if position == POSITION {
             return TOP_LEVEL;
         }
@@ -982,7 +904,6 @@ impl<'a, 's> FileScan<'a, 's> {
         TOP_LEVEL
     }
 
-    // The module whose body, or a function in it, the region is code of.
     fn module_at(&self, mut region: u32) -> ModuleRef {
         while region != TOP_LEVEL {
             if let Some(index) = self.units.find_module_with_body(region) {
@@ -1001,7 +922,6 @@ impl<'a, 's> FileScan<'a, 's> {
         self.units.interests[region as usize].push(interest);
     }
 
-    // The parent of an expression, past the type assertions around it, and the outermost of those.
     fn find_parent(&self, expression: ExprId) -> (ExprId, Parent) {
         let mut outermost = expression;
         loop {
@@ -1020,7 +940,6 @@ impl<'a, 's> FileScan<'a, 's> {
         is_only_read(self.hir, self.bound, member)
     }
 
-    // `member = value`: nothing is read.
     fn is_plain_store(&self, member: ExprId) -> bool {
         let Parent::Expr(parent) = self.bound.parent_of_expr(member) else {
             return false;
@@ -1047,7 +966,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // The member of the object of a module that is read where `holder` evaluates to the object.
     fn find_member_read_from(&self, holder: ExprId) -> Option<(ExprId, Atom)> {
         let hir = self.hir;
         let mut node = holder;
@@ -1077,14 +995,12 @@ impl<'a, 's> FileScan<'a, 's> {
 
     fn interest_in_module_object(&self, module: ModuleRef, holder: ExprId) -> Interest {
         match self.find_member_read_from(holder) {
-            // The function finds the object, and so every other member, in `this`.
             Some((member, name)) if self.is_called(member) => Interest::CalledExport(module, name),
             Some((_, name)) => Interest::Export(module, name),
             None => Interest::EveryExport(module),
         }
     }
 
-    // `(await import(x)).name` and `const { name } = await import(x)`: the names that the object is read by, and `then`, which `await` reads.
     fn add_names_read_from_awaited_import(
         &self,
         module: ModuleRef,
@@ -1126,7 +1042,6 @@ impl<'a, 's> FileScan<'a, 's> {
         true
     }
 
-    // Whether the expression is the object of a member access that is bound to a variable, so that nothing looks at the object.
     fn is_object_of_bound_member(&self, object: ExprId) -> bool {
         let (object, Parent::Expr(access)) = self.find_parent(object) else {
             return false;
@@ -1168,7 +1083,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 let owner = self.input.graph.synthetic_export(export).module;
                 Some(Interest::Name(export, imported_from.unwrap_or(owner)))
             }
-            // The member says what it reads.
             ImportBinding::Exports { module } => Some(match reference {
                 Some(reference) if self.is_object_of_bound_member(reference) => {
                     Interest::Evaluation(module)
@@ -1188,7 +1102,6 @@ impl<'a, 's> FileScan<'a, 's> {
         find_quiet_file(self.input.graph, module).map(Interest::UsedImport)
     }
 
-    // `export * as inner from "./dep"`, and a mock may stand for "./dep": the code reads `inner` off the object of the file between, whose link says which object it hands on.
     fn find_name_read_off_file_between(&self, symbol: SymbolId) -> Option<(FileId, Atom)> {
         let graph = self.input.graph;
         let ImportBinding::Namespace {
@@ -1212,7 +1125,6 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     fn interest_in_symbol(&self, symbol: SymbolId, reference: Option<ExprId>) -> Option<Interest> {
-        // A name that stands for a module holds nothing.
         if let Some(view) = self.input.graph.holder(self.file, symbol) {
             return match reference {
                 Some(_) => None,
@@ -1222,7 +1134,6 @@ impl<'a, 's> FileScan<'a, 's> {
         match self.input.graph.import_binding(self.file, symbol) {
             ImportBinding::Local => {
                 let unit = self.units.find_unit(self.hir, self.bound, symbol)?;
-                // The code around the class defines it, and that code is reached with the reference.
                 let unit_named = &self.units.units[unit as usize];
                 let is_only_compared = unit_named.is_class
                     && reference.is_some_and(|reference| {
@@ -1236,7 +1147,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // The value stands in the place of the name.
     fn find_data_variable(&self, symbol: SymbolId) -> Option<Sym> {
         let members = self.input.known_objects(&self.known_members);
         let named = Sym {
@@ -1247,8 +1157,6 @@ impl<'a, 's> FileScan<'a, 's> {
         Some(variable)
     }
 
-    // What a name, or a member of the object of a module, is there for where it leads to the object of an enum and no further.
-    // `Some(None)`: the value of a member stands in its place.
     fn interest_in_known_object(&self, holder: ExprId) -> Option<Option<Interest>> {
         let hir = self.hir;
         let members = self.input.known_objects(&self.known_members);
@@ -1275,14 +1183,12 @@ impl<'a, 's> FileScan<'a, 's> {
         if let Some(enumeration) = members.find_lookup(self.file, holder) {
             return Some(Some(Interest::Lookup(enumeration)));
         }
-        // `shapes.Color.Green`
         match is_object && members.find_enum(self.file, access).is_some() {
             true => self.interest_in_known_object(access),
             false => None,
         }
     }
 
-    // Where it leads nobody has looked.
     fn add_name_that_is_no_expression(&mut self, symbol: SymbolId) {
         let interests = &mut self.units.interests[TOP_LEVEL as usize];
         if is_enum(self.bound, symbol) {
@@ -1363,7 +1269,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.add_interest(hir[reference].pos, read);
             }
         }
-        // A name that is imported from a CommonJS file is looked for when the graph is linked, whether or not something refers to it.
         for &(symbol, binding) in self.input.graph.import_bindings(self.file) {
             if let ImportBinding::Synthetic(_) = binding
                 && let Some(ModuleRef::File(exporter)) = self.find_module_imported_from(symbol)
@@ -1376,7 +1281,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             }
         }
-        // Text that is evaluated in a scope of the file names what the file imports.
         if !bound.runtime.eval_scopes().is_empty() {
             for &(symbol, _) in self.input.graph.import_bindings(self.file) {
                 if let Some(interest) = self.interest_in_symbol(symbol, None) {
@@ -1385,26 +1289,18 @@ impl<'a, 's> FileScan<'a, 's> {
             }
             self.units.interests[TOP_LEVEL as usize].extend(quiet_files.map(Interest::UsedImport));
         }
-        // `import a = b.c`: the name at the root is no expression.
         for import in (0..hir.import_equals.len() as u32).map(ImportEqualsId) {
             if let Binding::Symbol(symbol) = bound.entity_root_binding(import) {
                 self.add_name_that_is_no_expression(symbol);
             }
         }
-        // The factory of a JSX element, and a class that the metadata of a decorator names.
         for reference in bound.runtime.implicit_references() {
             if let Binding::Symbol(symbol) = reference.binding {
                 self.add_name_that_is_no_expression(symbol);
             }
         }
-        for &(_, binding) in self.input.graph.jsx_bindings(self.file) {
-            if let Some(interest) = self.interest_in_import(binding, None, None) {
-                self.units.interests[TOP_LEVEL as usize].push(interest);
-            }
-        }
     }
 
-    // The module whose object the access is written on, where that is another one than the module that has the variable.
     fn find_accessed_module(&self, access: ExprId) -> Option<ModuleRef> {
         let graph = self.input.graph;
         let (object, _) = self.hir.member_key(access)?;
@@ -1425,7 +1321,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `exports.name`, `required.name`: a member that is bound to a variable asks for what is stored there.
     fn add_members(&mut self) {
         let (hir, graph) = (self.hir, self.input.graph);
         let decisions = &self.input.files.analysis(self.file).decisions;
@@ -1465,7 +1360,6 @@ impl<'a, 's> FileScan<'a, 's> {
                     false => Interest::Binding(defined),
                 },
                 Some(Member::Undefined | Member::Marker(_) | Member::OnObject) => continue,
-                // What an ES module hands on of another module, on what `require` gives of the ES module: a name of a CommonJS module, the object of a module, `module.exports`.
                 None => match (
                     graph.member_binding(self.file, access),
                     self.find_accessed_module(access),
@@ -1494,7 +1388,6 @@ impl<'a, 's> FileScan<'a, 's> {
                             self.add_interest(hir[access].pos, handed_on);
                         }
                         match binding {
-                            // The member around it says what it reads.
                             ImportBinding::Namespace { module, .. }
                                 if self.is_object_of_bound_member(access) =>
                             {
@@ -1513,7 +1406,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // Whether the build has found the name for the module, be it that a mock, or a star whose names show in the run, takes it away.
     fn has_found(&self, required: &RequiredName) -> bool {
         let graph = self.input.graph;
         let has_record = matches!(required.module, ModuleRef::File(file) if graph.has_record(file));
@@ -1522,20 +1414,15 @@ impl<'a, 's> FileScan<'a, 's> {
                 && graph.lists_export(required.module, required.name, &self.input.files.atoms))
     }
 
-    // A module that is evaluated evaluates what it imports, but for a file whose package says that nothing is lost without it.
     fn add_requests(&mut self) {
         let graph = self.input.graph;
-        // No executable holds a test file or a preload. What one of them imports runs, as under `bun test`.
         let started_by_runner = self.input.files_started_by_runner;
         let is_started_by_runner = started_by_runner.binary_search(&self.file).is_ok();
-        // What the load of a module ends with may name a file that the module asks for, and the link looks for the record of that file.
         let keeps_every_file = is_started_by_runner || graph.load_failure(self.file).is_some();
         for request in graph.requests(self.file) {
-            // A call of `require` asks where it stands, if it is reached.
             if request.kind == ModuleRequestKind::Require {
                 continue;
             }
-            // A read of the object of the file runs it later, with all that it asks for.
             if request.phase == ImportPhase::Defer {
                 self.add_file_loaded_by_call(request.target);
             }
@@ -1560,18 +1447,15 @@ impl<'a, 's> FileScan<'a, 's> {
                 let interest = Interest::RequiredName(exporter, required.name);
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             }
-            // An import of a name that is not there is bound to nothing, so no reference asks for the module. The link is what throws, and it looks in a module that stays.
             if !self.has_found(required) {
                 let interest = Interest::Request(required.module);
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             }
         }
-        // The link goes from table to table.
         for &(exporter, name) in graph.names_searched_behind_stars(self.file) {
             let interest = Interest::RequiredName(exporter, name);
             self.units.interests[TOP_LEVEL as usize].push(interest);
         }
-        // A file that the host loads for a call in this one, as for a worker.
         let implied = self
             .input
             .files
@@ -1585,7 +1469,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // The host loads the file whole where the `new` runs.
     fn add_starts_of_workers(&mut self) {
         let (file, starts) = (self.file, self.input.starts_of_workers);
         let starts = &starts[starts.partition_point(|start| start.0 < file)..];
@@ -1610,7 +1493,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `const { a, b: c = d } = require("./module")` reads the names once.
     fn find_names_read_by_pattern(&self, call: ExprId) -> SmallVec<[Atom; 4]> {
         let hir = self.hir;
         let (_, Parent::VarInit(declaration)) = self.find_parent(call) else {
@@ -1633,13 +1515,11 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // A call of `require` evaluates its target whatever the package of the target says of its side effects.
     fn add_sites(&mut self) {
         let graph = self.input.graph;
         for (call, target) in take(&mut self.sites) {
             let region = self.region_of(self.hir[call].pos);
             let referrer = self.module_at(region);
-            // What a bundler's `init_x()` gives is `undefined`.
             let gives_object = !matches!(target, ModuleRef::Inner { .. })
                 || graph.shape(target) != Shape::EsModule;
             let is_read_as_value = gives_object && graph.is_site_read_as_value(self.file, call);
@@ -1672,7 +1552,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `(await import(x)).name`, `require(x).name` and `const { name } = await import(x)`.
     fn find_names_read_from_load(&self, call: ExprId) -> Option<SmallVec<[Atom; 4]>> {
         let hir = self.hir;
         let (holder, is_awaited) = match self.bound.parent_of_expr(call) {
@@ -1686,7 +1565,6 @@ impl<'a, 's> FileScan<'a, 's> {
             names.push(known::then);
         }
         if let Some((member, name)) = self.find_member_read_from(holder) {
-            // The function finds the object, and so every other member, in `this`.
             if self.is_called(member) {
                 return None;
             }
@@ -1705,12 +1583,9 @@ impl<'a, 's> FileScan<'a, 's> {
                 _ => return None,
             }
         }
-        // `const {} = require(x)` still runs what it finds.
         (!names.is_empty()).then_some(names)
     }
 
-    // By its index among the import sites of the file: the call that a site is, and the region that it stands in. A statement is no call and stands at the top level.
-    // `None`: nothing runs the call.
     fn find_live_site(&self, index: u32) -> Option<(Option<ExprId>, usize)> {
         let analysis = self.input.files.analysis(self.file);
         let call = analysis.import_sites[index as usize].kind.call();
@@ -1741,7 +1616,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 None => interests.push(Interest::LoadByUnknownName),
             }
         }
-        // What the load answers with says nothing of what the text on disk imports.
         let load_of_missing_file = match self.input.isolates_code_from_disk {
             true => Interest::LoadOfIsolatedCode,
             false => Interest::LoadByUnknownName,
@@ -1751,7 +1625,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.units.interests[region].push(load_of_missing_file);
             }
         }
-        // A loader that goes somewhere as a value has no place among the sites.
         let has_no_place = names.loads_by_unknown_name && names.unknown_names_at.is_empty();
         if source.builtins.loads_unknown_modules() || has_no_place {
             self.units.interests[TOP_LEVEL as usize].push(Interest::LoadByUnknownName);
@@ -1763,7 +1636,6 @@ impl<'a, 's> FileScan<'a, 's> {
         let analysis = self.input.files.analysis(self.file);
         for site in analysis.import_sites {
             let (call, is_object_followed) = match site.kind {
-                // The bindings that these create are followed where they are referred to.
                 ImportSiteKind::ImportEquals(declaration) => {
                     let site = graph.import_equals_site(self.file, declaration);
                     if let Some(Site::Evaluate { target, .. }) = site {
@@ -1779,7 +1651,6 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                     (None, false)
                 }
-                // A mock loads nothing, and is stored under every name of the module.
                 ImportSiteKind::MockModule(call) => {
                     if analysis.decisions.is_dead_expr(call) {
                         continue;
@@ -1799,7 +1670,6 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                     continue;
                 }
-                // A path that is asked for is there to be loaded.
                 ImportSiteKind::ImportCall(call)
                 | ImportSiteKind::GetBuiltinModule(call)
                 | ImportSiteKind::RequireResolve(call)
@@ -1844,7 +1714,6 @@ impl<'a, 's> FileScan<'a, 's> {
                     for candidate in candidates {
                         self.add_file_loaded_by_call(candidate.module);
                     }
-                    // A call of `require` evaluates whichever of them the specifier names, so the requests for them stay.
                     if is_object_followed {
                         let referrer = self.module_at(region as u32);
                         let required = candidates.iter().map(|it| Interest::Require {
@@ -1863,7 +1732,6 @@ impl<'a, 's> FileScan<'a, 's> {
                     });
                     self.units.interests[region].extend(left_to_loader);
                 }
-                // As in a bundle, only an entry point answers to a name that the build does not know.
                 Some(
                     SiteAnswer::Computed(Candidates::All)
                     | SiteAnswer::Failed(_)
@@ -1874,7 +1742,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // Whether the folder has put a constant in the place of something that the expression is written in.
     fn is_folded_away(&self, expression: ExprId) -> bool {
         let decisions = &self.input.files.analysis(self.file).decisions;
         let mut node = expression;
@@ -1890,7 +1757,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // The ways to objects that stand for modules, each found by a read that names it and that resolves by binding.
     fn add_module_objects(&mut self) {
         let Some(source) = parsed_source(self.input.files, self.file) else {
             return;
@@ -1903,9 +1769,6 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.add_interest(self.hir[mention.expr].pos, interest);
             }
         }
-        // Where in the file is not recorded.
-        // The table lists the files of the program in a test run alone: in an executable whoever only reads its entries finds the object of none, as in a bundle.
-        // Whoever stores an entry or takes one out decides what a later `require` answers, and the run time keeps track of who has loaded what.
         let only_reads_entries = source.builtins.keys_taken_out_of_module_cache().is_empty()
             && !source.builtins.loses_sight_of_module_cache();
         if source.builtins.reaches_module_cache()
@@ -2025,14 +1888,13 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    fn add_files_spelled(&mut self, files_by_spelling: &FilesBySpelling<'_>) {
-        for (text, spelled) in find_files_spelled_by(self.input, files_by_spelling, self.file) {
-            self.add_interest(self.hir[text].pos, Interest::FileSpelled(spelled));
+    fn add_files_spelled(&mut self) {
+        for text in self.input.graph.texts_that_spell_files_in(self.file) {
+            self.add_interest(self.hir[text.text].pos, Interest::FileSpelled(text.spelled));
         }
     }
 
-    // `files_by_spelling`: `None` where nobody asks what the files spell.
-    fn scan(mut self, files_by_spelling: Option<&FilesBySpelling<'_>>) -> FileUnits {
+    fn scan(mut self, asks_what_files_spell: bool) -> FileUnits {
         self.units.this_positions = ThisPositions::of(self.hir);
         self.find_sites();
         self.collect_units();
@@ -2049,17 +1911,17 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_holders();
         self.add_loads();
         self.add_loads_by_unknown_names();
-        if let Some(files_by_spelling) = files_by_spelling {
-            self.add_files_spelled(files_by_spelling);
+        if asks_what_files_spell {
+            self.add_files_spelled();
         }
         self.add_starts_of_workers();
         self.add_module_objects();
         self.add_stores_of_loader_functions();
+        self.add_imports_of_elements();
         self.drop_repeated_interests();
         self.units
     }
 
-    // A region names most of what it uses more than once.
     fn drop_repeated_interests(&mut self) {
         let mut seen: FxHashSet<Interest> = FxHashSet::default();
         for interests in &mut self.units.interests {
@@ -2083,7 +1945,6 @@ impl HandedOn {
     fn of(binding: ExportBinding) -> HandedOn {
         match binding {
             ExportBinding::Variable(defined) => HandedOn::Variable(defined),
-            // A name that the link finds is read off the object of the module.
             ExportBinding::Namespace { module, .. } | ExportBinding::Indirect { module, .. } => {
                 HandedOn::Namespace(module_with_code(module))
             }
@@ -2092,7 +1953,6 @@ impl HandedOn {
     }
 }
 
-// Whether an import runs the module even if nothing of it is used.
 fn runs_when_imported(graph: &ModuleGraph, module: ModuleRef) -> bool {
     match module {
         ModuleRef::File(file) | ModuleRef::Face(file) => {
@@ -2103,7 +1963,6 @@ fn runs_when_imported(graph: &ModuleGraph, module: ModuleRef) -> bool {
     }
 }
 
-// The file, where its package says that nothing is lost without it.
 fn find_quiet_file(graph: &ModuleGraph, module: ModuleRef) -> Option<FileId> {
     match module {
         ModuleRef::File(file) | ModuleRef::Face(file) if !runs_when_imported(graph, module) => {
@@ -2113,21 +1972,17 @@ fn find_quiet_file(graph: &ModuleGraph, module: ModuleRef) -> Option<FileId> {
     }
 }
 
-// A file that exports a binding or a name of another file, or the object of a module.
 #[derive(Copy, Clone)]
 struct Exporter {
     file: FileId,
     is_by_star: bool,
 }
 
-// `exporters` is sorted by file and holds each file once.
 fn find_exporter(exporters: &[Exporter], file: FileId) -> Option<Exporter> {
     let position = exporters.binary_search_by_key(&file, |exporter| exporter.file);
     position.ok().map(|position| exporters[position])
 }
 
-// Whether the caller is the one that sets the mark.
-// Of two threads that each set a mark and then read the mark of the other, at least one finds it set: `Reacher::enter_body`, `Reacher::follow_look`.
 fn set_mark(mark: &AtomicBool) -> bool {
     !mark.load(Ordering::SeqCst) && !mark.swap(true, Ordering::SeqCst)
 }
@@ -2136,7 +1991,6 @@ fn is_marked(mark: &AtomicBool) -> bool {
     mark.load(Ordering::SeqCst)
 }
 
-// A set that every thread adds to. A lookup takes no lock.
 struct SharedSet<K>(ShardedMap<K, AtomicBool>);
 
 impl<K> Default for SharedSet<K> {
@@ -2146,7 +2000,6 @@ impl<K> Default for SharedSet<K> {
 }
 
 impl<K: Hash + Eq> SharedSet<K> {
-    // Whether the caller is the one that adds the key.
     fn insert(&self, key: K) -> bool {
         if self.0.get_ref(&key).is_some() {
             return false;
@@ -2162,40 +2015,28 @@ impl<K: Hash + Eq> SharedSet<K> {
 
 #[derive(Copy, Clone)]
 enum Step {
-    // What the code of a region asks for, which is reached.
     Enter(FileId, u32),
-    // What follows from a look at the object of the module.
     FollowLook(ModuleRef),
 }
 
-// A loop on the pool takes as long as one thread takes for some hundred steps. The programs of the unit tests are small, and go the way of the large ones.
 const FEWEST_STEPS_OF_A_ROUND: usize = if cfg!(test) { 2 } else { 512 };
 const FEWEST_STEPS_OF_A_TASK: usize = if cfg!(test) { 1 } else { 16 };
-// Enough for every thread to take another task when it has ended a long one.
 const TASKS_OF_A_LARGE_ROUND: usize = 4096;
 
-// What a thread has found and nobody has followed.
 #[derive(Default)]
 struct Found {
     steps: Vec<Step>,
-    // Each of these found a mark not set, which another thread may set in the meantime. `Walk::keep_what_waits` reads the mark again while no other thread runs.
     names_awaiting_exporter: Vec<(FileId, Atom)>,
     members_read: Vec<(Sym, FileId)>,
-    // The file with the load, and the name that its answer is read by.
     loads_by_unknown_names: Vec<(FileId, Option<Atom>)>,
-    // `Interest::FileSpelled`: the file with the text, and the file that it spells.
     files_spelled: Vec<(FileId, FileId)>,
-    // `Interest::FileLeftToLoader`
     files_left_to_loader: Vec<FileId>,
-    // `Interest::LoadOfIsolatedCode`
     loads_isolated_code: bool,
-    // The files in which reached code asks something that the run time answers only where it keeps track of the objects of the loader that stand for modules.
     files_naming_ways: Vec<FileId>,
     replaced_loader_hooks: Vec<ReplacedLoaderHook>,
 }
 
 impl Found {
-    // All but the steps.
     fn append(&mut self, mut other: Found) {
         self.names_awaiting_exporter
             .append(&mut other.names_awaiting_exporter);
@@ -2220,63 +2061,44 @@ impl Found {
     }
 }
 
-// What is reached is the least set that is closed under the interests, so it is the same in whatever order they are followed, on however many threads.
-// The threads of a round share this. They set marks and add to sets, and change nothing else.
 struct Walk<'a, 's> {
     input: &'a ProgramReachInput<'a, 's>,
     files: Vec<Option<FileUnits>>,
     exporters: FxHashMap<HandedOn, SmallVec<[Exporter; 2]>>,
     is_barrel: Vec<bool>,
     is_run_by_call: Vec<bool>,
-    // Those of them whose package says that nothing is lost without them. Until the call is made, only a statement that takes something of such a file runs it.
     waits_for_call: Vec<bool>,
-    // By a module: the CommonJS modules whose own text hands on names of it, by a star, by a name that stands for one of its names, or by `module.exports = require(..)`.
     takers: FxHashMap<ModuleRef, SmallVec<[ModuleRef; 2]>>,
     commonjs_file_may_be_main: bool,
-    // `Bun.main = path`: from there on the file at the path is the main module.
     any_file_may_be_main: bool,
-    // `ModuleGraph::lists_files_in_cache`
     every_file_has_module_object: bool,
-    // A file, and one that waits for a call and that a statement of the first runs.
     run_by_statements: SharedSet<(FileId, FileId)>,
     followed_imports: SharedSet<(FileId, HandedOn)>,
-    // `Interest::RequiredName`, which asks the same of whichever file it is followed for.
     names_looked_for: SharedSet<(FileId, Atom)>,
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     bound_variables: SharedSet<Sym>,
-    // What `reach_binding` returned, which hangs on the program alone.
     reached_bindings: ShardedMap<Sym, bool>,
-    // Reached code comes from one object of the loader that stands for a module to another, or lets one go where nothing follows it: it may come to that of any file.
     keeps_every_module_object: AtomicBool,
     required: SharedSet<(ModuleRef, ModuleRef)>,
     objects_handed_on: SharedSet<Sym>,
-    // An enum, and a file that reads members of it whose values the build knows.
     members_read: SharedSet<(Sym, FileId)>,
-    // These three change in `keep_what_waits` alone.
     names_awaiting_exporter: FxHashMap<FileId, Vec<Atom>>,
-    // By an enum that was not handed on: the files that read members of it whose values the build knows.
     files_reading_members: FxHashMap<Sym, SmallVec<[FileId; 2]>>,
-    // By an enum, the enums whose members are made of its members.
     enums_relying_on: FxHashMap<Sym, SmallVec<[Sym; 2]>>,
 }
 
-// What the loads by names that the build does not know find. One thread keeps it, between the rounds.
 #[derive(Default)]
 struct LoadsByUnknownNames<'a> {
     is_any_reached: bool,
-    // The folders of the packages in which such a load is reached.
     packages: FxHashSet<&'a [u8]>,
     files_named_at_run_time: Option<FilesNamedAtRunTime<'a>>,
-    // `Found::files_spelled` from before the first such load.
     files_spelled: Vec<(FileId, FileId)>,
-    // What the loads read of what they find: every export, or these names.
     looks_at_every_export: bool,
     names_read: Vec<Atom>,
     files_found: Vec<FileId>,
     is_found: FxHashSet<FileId>,
 }
 
-// One thread at work on the walk.
 struct Reacher<'w, 'a, 's> {
     walk: &'w Walk<'a, 's>,
     found: &'w mut Found,
@@ -2290,16 +2112,14 @@ impl<'a, 's> Walk<'a, 's> {
             .map(|file| (file, None))
             .collect();
         let mut steps = StepClock::new(Stage::BindModules);
-        // The largest first, so that the thread that ends last has begun a small one.
         let mut largest_first: Vec<&mut (FileId, Option<FileUnits>)> = scans.iter_mut().collect();
         largest_first
             .sort_unstable_by_key(|scan| (Reverse(input.files.hir(scan.0).exprs.len()), scan.0));
-        let files_by_spelling = asks_what_files_spell(input).then(|| index_by_spelling(input));
+        let asks_what_files_spell = asks_what_files_spell(input);
         for_each_mut(&mut largest_first, in_parallel, &|scan| {
             let file_scan = FileScan::new(input, scan.0);
-            scan.1 = Some(file_scan.scan(files_by_spelling.as_ref()));
+            scan.1 = Some(file_scan.scan(asks_what_files_spell));
         });
-        drop(files_by_spelling);
         steps.end("reach: scan files");
         let mut files: Vec<Option<FileUnits>> =
             (0..input.files.modules.len()).map(|_| None).collect();
@@ -2327,7 +2147,6 @@ impl<'a, 's> Walk<'a, 's> {
             })
             .collect();
         let mut entry_points = input.sources.entry_points().iter();
-        // `Bun.main = path`: from there on the file at the path is the main module, whatever the program began at.
         let mut sources = (input.files.compiled_files().iter())
             .filter_map(|&file| parsed_source(input.files, file));
         let any_file_may_be_main =
@@ -2363,7 +2182,6 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // The file that holds the code of the module, and the index of the module among those of the file.
     fn find_module(&self, module: ModuleRef) -> Option<(FileId, usize)> {
         let (file, callback) = match module {
             ModuleRef::File(file) | ModuleRef::Face(file) => (file, None),
@@ -2387,7 +2205,6 @@ impl<'a, 's> Walk<'a, 's> {
         &units.modules[index]
     }
 
-    // A CommonJS module of the program that the loader has no part in: what it exports is what its body stores.
     fn has_stored_names(&self, module: ModuleRef) -> bool {
         match module {
             ModuleRef::File(_) | ModuleRef::Inner { .. } => match self.input.graph.shape(module) {
@@ -2398,7 +2215,6 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // Whether the file only asks for the other one to hand on names of it, none of which has been asked for so far.
     fn is_request_waiting(&self, file: FileId, target: ModuleRef) -> bool {
         let ModuleRef::File(target) = target else {
             return false;
@@ -2443,7 +2259,6 @@ impl<'a, 's> Walk<'a, 's> {
             }
     }
 
-    // Whether what the binding holds, when it is called as a member of an object, can look at that object.
     fn can_read_this(&self, defined: Sym) -> bool {
         let Sym { file, id } = defined;
         let (hir, bound) = (self.input.files.hir(file), self.input.files.bound(file));
@@ -2478,7 +2293,6 @@ impl<'a, 's> Walk<'a, 's> {
         self.input.graph.find_commonjs_main(entry_points)
     }
 
-    // The loader has no object for an ES module that `import` alone loads.
     fn may_have_module_object(&self, file: FileId, units: &FileUnits) -> bool {
         self.every_file_has_module_object
             || self.input.graph.shape(ModuleRef::File(file)) != Shape::EsModule
@@ -2496,7 +2310,6 @@ impl<'a, 's> Walk<'a, 's> {
             })
     }
 
-    // `Interest::LoadOfIsolatedCode`
     fn loads_isolated_code_outside_units(&self, file: FileId) -> bool {
         self.input.isolates_code_from_disk
             && self.files[file.idx()].is_none()
@@ -2504,7 +2317,6 @@ impl<'a, 's> Walk<'a, 's> {
                 .is_some_and(|source| !source.contents.names.files_missing_at_build_at.is_empty())
     }
 
-    // What the build knows of the members of an enum holds as long as what it knows of the enums that they are made of.
     fn note_enums_relied_on(&mut self, found: &mut Found, enumeration: Sym) {
         if !is_enum(self.input.files.bound(enumeration.file), enumeration.id) {
             return;
@@ -2526,7 +2338,6 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // No other thread runs. So whatever sets a mark from here on finds what is kept here, and what was set before is seen here: nothing waits for a mark that is set.
     fn keep_what_waits(&mut self, found: &mut Found, loads: &mut LoadsByUnknownNames<'a>) {
         while found.holds_what_waits() {
             for (exporter, name) in take(&mut found.names_awaiting_exporter) {
@@ -2601,24 +2412,19 @@ impl<'a, 's> Walk<'a, 's> {
             if self.loads_by_unknown_name_outside_units(file) {
                 loads.hand_on_files_found(&mut reacher, file, None);
             }
-            // A mock is stored under every name of the module. A file that runs again does so as code that the build has not seen, and links to the names it imports.
             let module = ModuleRef::File(file);
             if input.mocks_any_module || input.graph.is_every_export_asked_for(module) {
                 reacher.reach_every_export(module);
             }
         }
-        // `(0, eval)("const os = process.mainModule.require('node:os')")`: a text runs in the global scope, where `process` leads to the object, and does with it what it likes.
         let files = input.files.compiled_files().iter();
         let is_read_by_evaluated_text = files
             .filter_map(|&file| parsed_source(input.files, file))
             .any(|source| source.builtins.mentions_evaluator());
-        // It also imports a data file of the executable by its path and stores into the object that it finds there.
         if is_read_by_evaluated_text {
             reacher.hand_on_data_objects();
         }
-        // A test writes a file and loads it. No build sees that code, and it may read `require.main`.
         let is_read_by_code_from_disk = !input.files_started_by_runner.is_empty();
-        // A file without units is reached whole.
         let mut waits_for_start: Vec<FileId> = Vec::new();
         for &(file, _, entry_point) in input.starts_of_workers {
             match self.files[file.idx()].is_some() {
@@ -2637,7 +2443,6 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // All threads take the steps of the lists. The steps that a task finds stay in a list of their own, which nobody copies.
     fn run_round(
         &self,
         lists: &[Vec<Step>],
@@ -2667,11 +2472,9 @@ impl<'a, 's> Walk<'a, 's> {
         found_lists
     }
 
-    // Also, for the log: the rounds, the steps taken in them, the steps that one thread took between them.
     fn run(&mut self, in_parallel: InParallel<'_>) -> (Found, LoadsByUnknownNames<'a>, [usize; 3]) {
         let (mut found, mut loads) = (Found::default(), LoadsByUnknownNames::default());
         let [mut rounds, mut steps_of_rounds, mut other_steps] = [0; 3];
-        // What the last round found.
         let mut lists: Vec<Vec<Step>> = Vec::new();
         self.reach_where_the_program_starts(&mut found, &mut loads);
         loop {
@@ -2699,7 +2502,6 @@ impl<'a, 's> Walk<'a, 's> {
 }
 
 impl<'a> LoadsByUnknownNames<'a> {
-    // A loader that is given a name which the build does not know finds a module of data by its path, and a file with code that may be named that way.
     fn hand_on_files_found(
         &mut self,
         reacher: &mut Reacher<'_, 'a, '_>,
@@ -2779,7 +2581,6 @@ impl<'a> LoadsByUnknownNames<'a> {
         }
     }
 
-    // `Interest::FileSpelled` of a region of `file` that is reached.
     fn note_file_spelled(
         &mut self,
         reacher: &mut Reacher<'_, 'a, '_>,
@@ -2818,7 +2619,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // Whatever reaches the statement of an enum gets hold of the object, but for what is known to look something up in it and no more.
     fn reach_region(&mut self, file: FileId, region: u32) {
         let walk = self.walk;
         let units = walk.files[file.idx()].as_ref();
@@ -2832,7 +2632,6 @@ impl Reacher<'_, '_, '_> {
         self.run_region(file, region);
     }
 
-    // What a body declares is there once the body has run, and the body of a module inside a file once the file has.
     fn run_region(&mut self, file: FileId, region: u32) {
         let walk = self.walk;
         let Some(units) = &walk.files[file.idx()] else {
@@ -2855,13 +2654,11 @@ impl Reacher<'_, '_, '_> {
                 let body = walk.module_units(found).body;
                 self.reach_region(found.0, body);
             }
-            // A file without units.
             (None, ModuleRef::Inner { file, .. }) => self.reach_region(file, TOP_LEVEL),
             (None, _) => {}
         }
     }
 
-    // A statement of `importer` runs the module: it takes something of it, or asks for it whatever it takes.
     fn note_statement_runs(&self, importer: FileId, module: ModuleRef) {
         if let ModuleRef::File(target) | ModuleRef::Face(target) = module
             && self.walk.waits_for_call[target.idx()]
@@ -2870,7 +2667,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // The files through which `importer` gets the binding.
     fn reach_files_between(&mut self, importer: FileId, handed_on: HandedOn) {
         let walk = self.walk;
         let graph = walk.input.graph;
@@ -2908,7 +2704,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // The body of `file` does not run: a name only passes through it by `export *`. Its importers take over its imports, and those with side effects run.
     fn reach_imports_of_skipped_file(&mut self, file: FileId) {
         let graph = self.walk.input.graph;
         for request in graph.requests(file) {
@@ -2935,7 +2730,6 @@ impl Reacher<'_, '_, '_> {
         self.reach_files_between(file, handed_on);
     }
 
-    // From now on a read of a member reads the object.
     fn hand_on_object(&mut self, enumeration: Sym) {
         let walk = self.walk;
         let known = KnownMemberValues::default();
@@ -2971,7 +2765,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // A loader answers with the object of a CommonJS file, so the file has one, and the object has every name.
     fn reach_name_read_from_load(&mut self, module: ModuleRef, name: Atom) {
         if self.walk.has_stored_names(module_with_code(module)) {
             self.reach_every_export(module);
@@ -2980,7 +2773,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // The statements of the enum run, and nothing gets hold of the object.
     fn look_up_in(&mut self, enumeration: Sym) {
         let Sym { file, id } = enumeration;
         let walk = self.walk;
@@ -2992,7 +2784,6 @@ impl Reacher<'_, '_, '_> {
         self.run_region(file, unit.map_or(TOP_LEVEL, |unit| unit + 1));
     }
 
-    // Each of these says whether what it reached can look at the object that it is called on.
     fn reach_binding(&mut self, defined: Sym) -> bool {
         if let Some(&can_read_this) = self.walk.reached_bindings.get_ref(&defined) {
             return can_read_this;
@@ -3014,7 +2805,6 @@ impl Reacher<'_, '_, '_> {
             self.note_statement_runs(file, module);
         }
         match walk.input.graph.import_binding(file, id) {
-            // The import statement fills a variable of the file, which is what an export of the name shows.
             ImportBinding::Local
             | ImportBinding::Builtin(_)
             | ImportBinding::BuiltinMember { .. } => {}
@@ -3053,7 +2843,6 @@ impl Reacher<'_, '_, '_> {
         walk.can_read_this(defined)
     }
 
-    // The code that defines the class runs. Its constructor and its methods wait for somebody who gets hold of it.
     fn reach_tested_binding(&mut self, defined: Sym) {
         let Sym { file, id } = defined;
         let walk = self.walk;
@@ -3089,7 +2878,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // The statements of the body that store under the name.
     fn reach_stored_name(&mut self, module: ModuleRef, name: Atom) -> bool {
         let walk = self.walk;
         self.evaluate(module);
@@ -3105,7 +2893,6 @@ impl Reacher<'_, '_, '_> {
         !walk.input.graph.ignores_this(module, name)
     }
 
-    // The files through which the module has what a name of it stands for.
     fn reach_files_behind(&mut self, module: ModuleRef, member: Member) {
         let (ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Inner { file, .. }) =
             module
@@ -3131,10 +2918,8 @@ impl Reacher<'_, '_, '_> {
             return true;
         }
         let can_read_this = self.reach_stored_name(export.module, export.name);
-        // The copy is taken of what the getter returns.
         let commonjs = graph.commonjs();
         let returned = commonjs.member_behind_getter(export.module, export.name);
-        // The getter reads it through the files between.
         if let Some(returned) = returned {
             self.reach_files_behind(export.module, returned);
         }
@@ -3145,11 +2930,9 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // A name of a CommonJS module that no expression is bound for: a key of a pattern, a member of a namespace object.
     fn reach_named_member(&mut self, module: ModuleRef, name: Atom) -> bool {
         self.evaluate(module);
         let graph = self.walk.input.graph;
-        // A name that stands for another name or for a binding has no variable of its own.
         let member = graph.member_named(module, name);
         let member = member.or_else(|| graph.commonjs().member_named(module, name));
         if let Some(member) = member {
@@ -3184,7 +2967,6 @@ impl Reacher<'_, '_, '_> {
                 self.reach_every_export(module);
                 false
             }
-            // The read asks the object of the module, which answers that it has no such name.
             ExportLookup::Absent => {
                 self.evaluate(module);
                 false
@@ -3192,7 +2974,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // Somebody looks at the object that shows what the module exports. It says nothing of whether the module is evaluated.
     fn look_at(&mut self, module: ModuleRef) {
         let walk = self.walk;
         let module = module_with_code(module);
@@ -3212,7 +2993,6 @@ impl Reacher<'_, '_, '_> {
     fn look_at_all_of(&mut self, module: ModuleRef) {
         self.look_at(module);
         let walk = self.walk;
-        // A module of data has no units: whoever looks at it gets hold of its value.
         if let ModuleRef::File(file) = module_with_code(module)
             && walk.files[file.idx()].is_none()
             && walk.input.graph.has_record(file)
@@ -3225,7 +3005,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // All that the object of an evaluated module shows.
     fn reach_what_object_shows(&mut self, (file, index): (FileId, usize)) {
         let walk = self.walk;
         let graph = walk.input.graph;
@@ -3238,7 +3017,6 @@ impl Reacher<'_, '_, '_> {
         for &unit in stores.chain(&shown.parts_of_object) {
             self.reach_region(file, unit + 1);
         }
-        // With an object of its own the module takes the names from the objects of the others.
         for &source in graph.name_sources(module) {
             self.reach_every_export(source);
         }
@@ -3249,7 +3027,6 @@ impl Reacher<'_, '_, '_> {
             self.reach_files_between(file, HandedOn::of(export.binding));
             self.reach_export_binding(export.binding);
         }
-        // The names of these are known when they have run.
         for request in graph.requests(file) {
             if request.is_dynamic_star_export {
                 self.reach_every_export(request.target);
@@ -3257,8 +3034,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // A name that stands for a name of a module with an object is a property like any other, so whoever takes names from such a module has an object too.
-    // The look is marked by now. If the body is not found marked here, whoever marks it finds the look in `enter_body`.
     fn follow_look(&mut self, module: ModuleRef) {
         let walk = self.walk;
         if walk.has_stored_names(module) {
@@ -3271,13 +3046,11 @@ impl Reacher<'_, '_, '_> {
         {
             return self.reach_what_object_shows(found);
         }
-        // The graph gives an object to all that such a module takes names from, whether or not the module runs.
         for &source in walk.input.graph.name_sources(module) {
             self.look_at(source);
         }
     }
 
-    // The body is marked by now.
     fn enter_body(&mut self, found: (FileId, usize)) {
         let walk = self.walk;
         if found.1 == 0 {
@@ -3299,19 +3072,16 @@ impl Reacher<'_, '_, '_> {
         let walk = self.walk;
         let units = walk.files[file.idx()].as_ref().expect("a scanned file");
         if set_mark(&units.keeps_module_object) {
-            // Its `exports` shows the object.
             self.look_at(ModuleRef::File(file));
         }
     }
 
-    // `file`: where the reached code stands that asks for it.
     fn keep_every_module_object(&mut self, file: FileId) {
         self.found.files_naming_ways.push(file);
         let walk = self.walk;
         if !set_mark(&walk.keeps_every_module_object) {
             return;
         }
-        // The `exports` of each shows the object of its module, also of a file that is evaluated from here on.
         for (file, units) in (0..).map(FileId).zip(&walk.files) {
             if let Some(units) = units
                 && walk.may_have_module_object(file, units)
@@ -3322,7 +3092,6 @@ impl Reacher<'_, '_, '_> {
         self.hand_on_data_objects();
     }
 
-    // Only a CommonJS module lists its children: `appendNewChildrenOfCompiledModule()`. What an ES module requires shows as the main module alone: `Modules::mainModuleObject()`.
     fn note_answer_of_require(&mut self, referrer: ModuleRef, target: ModuleRef) {
         let walk = self.walk;
         if walk.any_file_may_be_main || walk.input.graph.shape(referrer) != Shape::EsModule {
@@ -3330,7 +3099,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // If the objects are not found kept here, whoever keeps them finds the mark of the file in `keep_every_module_object`.
     fn give_module_object(&mut self, module: ModuleRef) {
         let walk = self.walk;
         if let ModuleRef::File(file) | ModuleRef::Face(file) = module
@@ -3342,7 +3110,6 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
-    // By whatever name the loader of the run time came to the module. It reads these two off an ES module to find what `require` answers.
     fn reach_answer_of_loader(&mut self, module: ModuleRef) {
         self.give_module_object(module);
         let input = self.walk.input;
@@ -3361,12 +3128,10 @@ impl Reacher<'_, '_, '_> {
         owner: ModuleObjectOwner,
         object_use: ModuleObjectUse,
     ) {
-        // Under an entry point that is an ES module `require.main` and `process.mainModule` answer undefined, as they do in a program that names no way.
         if owner == ModuleObjectOwner::EntryPoint && !self.walk.commonjs_file_may_be_main {
             return;
         }
         match (owner, object_use) {
-            // The host answers whether there is such an object, and it answers undefined in a program that names no way.
             (_, ModuleObjectUse::Tested) => self.found.files_naming_ways.push(file),
             (ModuleObjectOwner::EntryPoint, _)
             | (
@@ -3377,16 +3142,13 @@ impl Reacher<'_, '_, '_> {
                 | ModuleObjectUse::HandedOn
                 | ModuleObjectUse::HolderHandedOn,
             ) => self.keep_every_module_object(file),
-            // The run time says which file has the id ".", and it keeps track in a program that names a way.
             (_, ModuleObjectUse::Field(ModuleField::Id))
                 if self.walk.find_commonjs_main().is_none() =>
             {
                 self.found.files_naming_ways.push(file);
             }
-            // The record of the module answers these, as long as nobody holds the object, who could store into it: `try_lower_module_field`.
             (_, ModuleObjectUse::Field(_)) => {}
             (ModuleObjectOwner::OwnFile, ModuleObjectUse::Object) => self.keep_module_object(file),
-            // Whatever led to the object has kept every one.
             (ModuleObjectOwner::Related, ModuleObjectUse::Object) => {}
         }
     }
@@ -3411,7 +3173,6 @@ impl Reacher<'_, '_, '_> {
                 self.reach_files_between(file, HandedOn::Variable(variable));
             }
             Interest::KnownMember(enumeration) => {
-                // The bundler does not have the value, so it counts the read as a use of the import.
                 self.reach_files_between(file, HandedOn::Variable(enumeration));
                 if walk.input.graph.kind(enumeration.file) != ModuleKind::Data {
                     self.evaluate(ModuleRef::File(enumeration.file));
@@ -3462,7 +3223,6 @@ impl Reacher<'_, '_, '_> {
             }
             Interest::RequiredName(exporter, name) => {
                 let module = ModuleRef::File(exporter);
-                // A file without units has no body to wait for.
                 if let Some(found) = walk.find_module(module)
                     && walk.names_looked_for.insert((exporter, name))
                 {
@@ -3519,19 +3279,6 @@ impl Reacher<'_, '_, '_> {
     }
 }
 
-fn without_extension(path: &[u8]) -> &[u8] {
-    let name = last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
-    match last_index_of_char(&path[name..], b'.') {
-        Some(dot) if dot > 0 => &path[..name + dot],
-        _ => path,
-    }
-}
-
-fn directory_of(path: &[u8]) -> &[u8] {
-    &path[..last_index_of_char(path, b'/').unwrap_or(0)]
-}
-
-// The folder of the package that holds the file: `../node_modules/name` or `../node_modules/@scope/name`. Nothing for a file of the program itself.
 pub(super) fn package_of(path: &[u8]) -> &[u8] {
     const FOLDER: &[u8] = b"/node_modules/";
     let Some(at) = last_index_of(path, FOLDER) else {
@@ -3543,36 +3290,6 @@ pub(super) fn package_of(path: &[u8]) -> &[u8] {
     &path[..slashes.take(parts).last().unwrap_or(path.len())]
 }
 
-// Whether a call of `import()` that is not dead is given the path of a file with a query, as far as the build knows its argument: each query is an instance of its own, which only code
-// from disk can be. A query that reaches the call through a parameter or a call shows nowhere. That load is refused with an error that names the option.
-pub(crate) fn imports_file_with_query(files: &Files<'_>, sources: &Sources) -> bool {
-    let holds_query =
-        |text: Atom| bun_core::strings::index_of_char(files.atoms.bytes(text), b'?').is_some();
-    files.compiled_files().iter().any(|&file| {
-        if sources.kind(file) != SourceKind::Program {
-            return false;
-        }
-        let analysis = files.analysis(file);
-        analysis.import_sites.iter().any(|site| {
-            let ImportSiteKind::ImportCall(call) = site.kind else {
-                return false;
-            };
-            !analysis.decisions.is_dead_expr(call)
-                && analysis.alternatives_of(&site.specifier).iter().any(
-                    |specifier| match *specifier {
-                        ImportSpecifier::Constant(text) => holds_query(text),
-                        ImportSpecifier::Pattern { prefix, suffix } => {
-                            holds_query(prefix) || holds_query(suffix)
-                        }
-                        ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => false,
-                    },
-                )
-        })
-    })
-}
-
-// The last folders of the root directory that a path in the program goes up out of and comes back through: "../app/a.ts" in a file of the root directory
-// `/work/app`. Such a path names a file of the executable, and the executable knows no more of where it was built than the program writes itself.
 pub(crate) fn find_root_folders_spelled(
     files: &Files<'_>,
     sources: &Sources,
@@ -3629,19 +3346,11 @@ fn count_root_folders_spelled(
     most
 }
 
-// The files with code that a load in the package may find under a name the build does not follow to it: any file where `any_file_is_named_at_run_time`,
-// else those that a relative path spells which a file writes as a string, in code that is reached. The path comes from the package, from a file that imports from it, or from a package that one of those imports.
-// The extension may differ, and a folder stands for its index file.
-// What does not go by the package is found once, for the first package that asks. Whoever asks keeps all that was found, so an answer holds only what no answer before it held.
 struct FilesNamedAtRunTime<'a> {
     numbers_of_packages: FxHashMap<&'a [u8], u32>,
-    // By package: what the regions of its files spell that are reached so far. Emptied once somebody has asked: from there on what it spells is found at once.
     files_spelled: Vec<Vec<FileId>>,
-    // By package: the files with code that are of it or import from it, as numbers in `packages_beside`.
     files_beside: Vec<Vec<u32>>,
-    // By such a file: its package and those of what it imports. Emptied once somebody has asked.
     packages_beside: Vec<SmallVec<[u32; 8]>>,
-    // By package: somebody has asked what its files spell.
     is_asked: Vec<bool>,
 }
 
@@ -3691,7 +3400,6 @@ impl<'a> FilesNamedAtRunTime<'a> {
         }
     }
 
-    // Whether the file that is spelled is found now: somebody has asked what the package of `file` spells.
     fn note_spelled(
         &mut self,
         input: &ProgramReachInput<'_, '_>,
@@ -3727,98 +3435,10 @@ impl<'a> FilesNamedAtRunTime<'a> {
     }
 }
 
-// By the path without its extension, and by the folder of an index file: the files with code.
-type FilesBySpelling<'a> = FxHashMap<&'a [u8], SmallVec<[FileId; 2]>>;
-
-fn index_by_spelling<'a>(input: &ProgramReachInput<'a, '_>) -> FilesBySpelling<'a> {
-    let files = input.files;
-    let is_code = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Program;
-    let mut files_by_spelling = FilesBySpelling::default();
-    for &file in files.compiled_files().iter().filter(is_code) {
-        let spelling = without_extension(files.module(file).file_name());
-        files_by_spelling.entry(spelling).or_default().push(file);
-        if spelling.ends_with(b"/index") {
-            let folder = directory_of(spelling);
-            files_by_spelling.entry(folder).or_default().push(file);
-        }
-    }
-    files_by_spelling
-}
-
-// Whether `FilesNamedAtRunTime` may be asked: some file may give a loader a name that the build does not know, and not every file is found that way.
 fn asks_what_files_spell(input: &ProgramReachInput<'_, '_>) -> bool {
-    let mut files = input.files.compiled_files().iter();
-    !input.any_file_is_named_at_run_time
-        && files.any(|&file| {
-            parsed_source(input.files, file).is_none_or(|source| {
-                let names = &source.contents.names;
-                names.loads_by_unknown_name
-                    || !names.unknown_names_at.is_empty()
-                    || !names.files_missing_at_build_at.is_empty()
-                    || source.builtins.loads_unknown_modules()
-            })
-        })
+    !input.any_file_is_named_at_run_time && input.graph.knows_texts_that_spell_files()
 }
 
-// Each text that spells a file, with the file.
-fn find_files_spelled_by(
-    input: &ProgramReachInput<'_, '_>,
-    files_by_spelling: &FilesBySpelling<'_>,
-    file: FileId,
-) -> Vec<(ExprId, FileId)> {
-    let files = input.files;
-    let mut found = Vec::new();
-    let directory = directory_of(files.module(file).file_name());
-    let decisions = &files.analysis(file).decisions;
-    let bound = files.bound(file);
-    let mut stores = bound.runtime.unbound_name_stores().iter();
-    // `require = name => kept(name)`: what stands in `require` is handed the names too.
-    let stores_require = stores.any(|&(target, _)| {
-        bound.binding(target) == Binding::CommonJs(CommonJsVariable::Require)
-            && !decisions.is_dead_expr(target)
-    });
-    let sites = files.analysis(file).import_sites.iter();
-    let sites =
-        sites.filter(|site| !stores_require || !matches!(site.kind, ImportSiteKind::Require(_)));
-    let resolved: FxHashSet<ExprId> = sites.map(|site| site.specifier_node).collect();
-    for (index, expression) in files.hir(file).exprs.iter().enumerate() {
-        let text = match expression.kind {
-            ExprKind::String(text) => text,
-            // `["./a", ".js"].join("")`: the parts are dead, and the text stands in the place of the call.
-            ExprKind::Call(_) => match decisions.decision(ExprId(index as u32)) {
-                Decision::Constant(Constant::String(text)) => text,
-                Decision::Constant(_)
-                | Decision::Unknown
-                | Decision::GlobalPath(_)
-                | Decision::Data(_)
-                | Decision::DeferredData => continue,
-            },
-            _ => continue,
-        };
-        // `feature ? require("./a.js") : null`, where the build has decided: nothing runs it.
-        if decisions.is_dead_expr(ExprId(index as u32)) {
-            continue;
-        }
-        let text = files.atoms.bytes(text);
-        let names_something = split(text, b"/").any(|part| !matches!(part, b"" | b"." | b".."));
-        // `import.meta.dir + "/a.ts"`
-        if !(text.starts_with(b"./") || text.starts_with(b"../") || text.starts_with(b"/"))
-            || !names_something
-            || resolved.contains(&ExprId(index as u32))
-        {
-            continue;
-        }
-        let path = join(directory, text.strip_prefix(b"/").unwrap_or(text));
-        let path = path.strip_suffix(b"/").unwrap_or(&path);
-        for spelling in [path, without_extension(path)] {
-            let spelled = files_by_spelling.get(spelling).into_iter().flatten();
-            found.extend(spelled.map(|&spelled| (ExprId(index as u32), spelled)));
-        }
-    }
-    found
-}
-
-// By what is handed on, the files that export it and do not define it. By a module, `Walk::takers`.
 fn find_who_hands_on_what(
     input: &ProgramReachInput<'_, '_>,
     files: &[Option<FileUnits>],
@@ -3844,7 +3464,6 @@ fn find_who_hands_on_what(
                 continue;
             }
             let is_by_star = export.is_from_star_export;
-            // Whoever shows a name that a getter answers for hands on what the getter returns too.
             let behind = match export.binding {
                 ExportBinding::Synthetic(shown) => {
                     let shown = input.graph.synthetic_export(shown);
@@ -3859,7 +3478,6 @@ fn find_who_hands_on_what(
             };
             for handed_on in [Some(handed_on), behind].into_iter().flatten() {
                 let exporters = exporters.entry(handed_on).or_default();
-                // A file may export one thing under several names.
                 match exporters.last_mut().filter(|last| last.file == file) {
                     Some(last) => last.is_by_star &= is_by_star,
                     None => exporters.push(Exporter { file, is_by_star }),
@@ -3881,7 +3499,6 @@ fn find_who_hands_on_what(
         }
         is_new
     };
-    // A CommonJS file evaluates what it has a name from when its own body runs.
     let mut handed_on_by_commonjs: Vec<(FileId, HandedOn)> = Vec::new();
     for (module, member) in input.graph.commonjs().names_bound_elsewhere() {
         let handed_on = match member {
@@ -3899,7 +3516,6 @@ fn find_who_hands_on_what(
             handed_on_by_commonjs.push((file, handed_on));
         }
     }
-    // The names that the file stores itself. No star takes `default`.
     let own_names = (0..)
         .map(SyntheticExportId)
         .zip(input.graph.synthetic_exports());
@@ -3907,7 +3523,6 @@ fn find_who_hands_on_what(
         ModuleRef::File(file) if export.name != known::default => Some((file, HandedOn::Name(id))),
         _ => None,
     }));
-    // The table of an ES module lacks the names that `export *` takes from such a file.
     if !handed_on_by_commonjs.is_empty() {
         let mut takers_by_star: FxHashMap<FileId, SmallVec<[FileId; 2]>> = FxHashMap::default();
         let scanned_files = (0..).map(FileId).zip(files);
@@ -3941,8 +3556,6 @@ fn find_who_hands_on_what(
     (exporters, takers)
 }
 
-// The decisions of the bundler (src/bundler/barrel_imports.rs): a barrel is a file of a package with `"sideEffects": false`, no entry point, that defines none of the names it exports, and that no file exports with `export *`.
-// With --ignore-dce-annotations the load still leaves out what no import names, and all that is loaded runs: no request waits.
 fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) -> Vec<bool> {
     let graph = input.graph;
     let hands_on_all_it_exports = |file: FileId| {
@@ -3981,8 +3594,6 @@ fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) 
     is_barrel
 }
 
-// In a bundle a file that `require()` or `import()` loads, and all that it asks for, is a function: a used import and every `export *` call it whatever "sideEffects" says.
-// So it is with a file that `import defer` names: what reads its object finds the object of that very file.
 fn find_files_run_by_calls(
     input: &ProgramReachInput<'_, '_>,
     files: &[Option<FileUnits>],
@@ -4008,21 +3619,16 @@ fn find_files_run_by_calls(
 
 #[derive(Default)]
 pub(crate) struct LeftOutCode {
-    // In a file that is evaluated. Each keeps its name and throws.
     pub functions: FxHashSet<FunctionRef>,
     pub declarations: LeftOutDeclarations,
-    // In order.
     pub files: Vec<FileId>,
-    // The files, in order, of whose exports only some are read from the object of the module, and those.
     files_read_by_name: Vec<FileId>,
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     bound_variables: SharedSet<Sym>,
-    // No code that stays gives a loader a name that the build does not know, or the name of a file that was missing at the build.
     pub holds_every_load_by_unknown_name: bool,
 }
 
 impl LeftOutCode {
-    // An import by a name is bound to the variable and asks nothing of the object of the module.
     pub(crate) fn find_export_use(&self, file: FileId, export: &ModuleExport) -> ExportUse {
         if self.files_read_by_name.binary_search(&file).is_err()
             || self.names_read_from_objects.contains(&(file, export.name))
@@ -4040,34 +3646,29 @@ impl LeftOutCode {
     }
 }
 
-// What the code that is reached does with the modules that are evaluated.
 #[derive(Default)]
 pub(crate) struct ReachedModules {
-    // Somebody looks at the object that shows what the module exports: the exports object, or the namespace object.
     pub looked_at: Vec<ModuleRef>,
-    // A read that the build resolved hands out the object of the loader that stands for the module. All of them, where reached code may come from one such object to another.
     pub with_module_objects: Vec<ModuleRef>,
-    // Code that is reached in the file asks something that the run time answers only where it keeps track of such objects: `children`, `parent`, `require.main`, `process.mainModule`, `require.cache`, which file has the id ".". In order.
     pub naming_ways: Vec<ModuleRef>,
-    // A load under a name that the build does not follow may find the file. In order.
     pub found_by_name: Vec<ModuleRef>,
-    // The same of the files of data. Such a load may come before any module that imports the file has run.
     pub data_found_by_name: Vec<ModuleRef>,
-    // The modules written inside files that no code evaluates that is left.
     pub left_out_inner_modules: Vec<ModuleRef>,
-    // In code that is reached, in the order of the files and of the text.
     pub replaced_loader_hooks: Vec<ReplacedLoaderHook>,
     required: SharedSet<(ModuleRef, ModuleRef)>,
-    // A file, and one that it imports and takes nothing of, and that waits for the call that loads it.
     left_to_calls: FxHashSet<(FileId, FileId)>,
+    left_with_elements: FxHashSet<(FileId, ModuleRef)>,
 }
 
 impl ReachedModules {
-    // A request that stands for calls of `require` goes with the last of them. An import that takes nothing of a file that waits for a call does not run it.
-    // The names behind a star that shows them in the run are taken out of sight, and `import defer` runs nothing.
     pub(crate) fn keeps_request(&self, referrer: ModuleRef, request: &ModuleRequest) -> bool {
         if request.kind == ModuleRequestKind::Require {
             return self.required.contains(&(referrer, request.target));
+        }
+        if let ModuleRef::File(importer) = referrer
+            && (self.left_with_elements).contains(&(importer, request.target))
+        {
+            return false;
         }
         let (ModuleRef::File(importer), ModuleRef::File(target) | ModuleRef::Face(target)) =
             (referrer, request.target)
@@ -4080,7 +3681,6 @@ impl ReachedModules {
     }
 }
 
-// For the log: a number that is the same where the walk has found the same, whatever numbers the load has given the files and the names.
 fn fingerprint(
     input: &ProgramReachInput<'_, '_>,
     left_out: &LeftOutCode,
@@ -4161,7 +3761,6 @@ fn fingerprint(
         .wrapping_add(u64::from(left_out.holds_every_load_by_unknown_name))
 }
 
-// What of the program nothing that it can run refers to, found the way a bundler finds it: by bindings, never by what a value is.
 pub(crate) fn find_left_out_code(
     input: &ProgramReachInput<'_, '_>,
     in_parallel: InParallel<'_>,
@@ -4196,6 +3795,21 @@ pub(crate) fn find_left_out_code(
             let inner_modules = units.modules[1..].iter().map(|module| module.module);
             reached_modules.left_out_inner_modules.extend(inner_modules);
             continue;
+        }
+        for &(_, target) in &units.statements_with_elements {
+            let is_reached = |region: u32| is_marked(&units.is_region_reached[region as usize]);
+            let mut holding = (units.statements_with_elements.iter()).filter(|it| it.1 == target);
+            let runs_at_first_import_that_stays = match target {
+                ModuleRef::File(it) | ModuleRef::Face(it) => {
+                    input.graph.kind(it) == ModuleKind::CommonJs || walk.is_run_by_call[it.idx()]
+                }
+                _ => true,
+            };
+            if runs_at_first_import_that_stays
+                && !holding.any(|&(statement, _)| is_reached(statement))
+            {
+                reached_modules.left_with_elements.insert((file, target));
+            }
         }
         if !is_marked(&units.modules[0].is_every_export_reached) {
             left_out.files_read_by_name.push(file);
@@ -4242,7 +3856,6 @@ pub(crate) fn find_left_out_code(
             }
         }
     }
-    // The threads list these as they come to them.
     let in_order = |mut files: Vec<FileId>| -> Vec<ModuleRef> {
         files.sort_unstable();
         files.dedup();
@@ -4274,7 +3887,6 @@ pub(crate) fn find_left_out_code(
         {
             let declarations = &mut left_out.declarations;
             declarations.note_object_never_handed_on(file, object.id);
-            // A variable that is reached holds no object, or the object would be handed on: the value stands in the place of its initializer.
             for (variable, declarator) in members.data_variables(file) {
                 if walk.reached_bindings.get_ref(&variable).is_none() {
                     declarations.leave_out_declarator(file, declarator);

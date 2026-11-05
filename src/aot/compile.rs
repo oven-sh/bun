@@ -29,9 +29,9 @@ mod tests;
 #[cfg(test)]
 pub(crate) use self::lower_stage::collect_file_inputs;
 #[cfg(test)]
-pub use self::paths::{EntryPointPaths, FolderPaths};
+pub use self::paths::{EntryPointPaths, FolderPaths, FollowedName};
 #[cfg(not(test))]
-pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths};
+pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths, FollowedName};
 
 use self::load_stage::AssetReads;
 use self::module_list::ListedModules;
@@ -42,8 +42,8 @@ use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, P
 use crate::emit::{
     FunctionsWithoutCode, ProgramBytes, emit_with_bodies_in_bytes, emit_with_external_bodies,
 };
-use crate::engine::{self, EngineOptions, EngineRequest, EngineResult};
-use crate::ir::generated::UnseenCodeCause;
+use crate::engine::{self, EngineOptions, EngineRequest, EngineResult, position_of};
+use crate::ir::generated::{UnseenCodeCause, Witness};
 use crate::ir::{Id, ModuleId, Program};
 use crate::known_helpers::KnownHelpers;
 use crate::link::{Leftovers, LinkedFunctions, run_beside, run_one_after_the_other};
@@ -56,7 +56,7 @@ use crate::module_keys::is_name_of_text;
 use crate::module_list::ModuleList;
 use crate::modules::ModuleGraph;
 use crate::options::{Options, PathOptions};
-use crate::report::SourceTexts;
+use crate::report::{ModuleOrigin, SourceTexts};
 use crate::statistics::{
     LimitValues, Stage, StageClock, Statistics, log_part_of_time_outside_stages,
     log_time_outside_stages,
@@ -80,11 +80,9 @@ use std::time::Instant;
 
 pub struct ProgramSummary {
     pub entry_points: Vec<EntryPointPaths>,
-    /// The folders that hold compiled files of a program with further entry points, each once.
     pub folders: Vec<FolderPaths>,
     pub texts: SourceTexts,
     pub statistics: Statistics,
-    /// Where `Options::lists_modules` asks for it.
     pub modules: Option<ModuleList>,
 }
 
@@ -96,41 +94,30 @@ pub struct LinkedProgram {
 pub struct Compilation {
     pub engine: EngineResult,
     pub summary: ProgramSummary,
-    // linked.rs alone reads the three that follow, and no test build holds it.
     #[cfg(not(test))]
     pub(crate) started_workers: StartedWorkers,
-    /// `Sources::holds_source_paths`
     #[cfg(not(test))]
     pub(crate) holds_source_paths: bool,
-    /// `Program::opened_names`, for a run from source, which has no image to list them: the number of the holder in the table of built-ins, and the bytes of the name.
-    /// Ascending by holder, then by the bytes of the name.
     #[cfg(not(test))]
     pub(crate) names_added_to_builtins: Vec<(u32, Vec<u8>)>,
 }
 
-/// What the build knows about the code that the Workers of the program start from.
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub(crate) enum CodeOfWorkers {
-    /// No file names a constructor of Workers.
     #[default]
     NoneNamed,
-    /// Each constructor is named only to be called, with the path of a file that the build has compiled.
     Compiled,
     Unseen,
 }
 
-/// What the program says about the Workers that it starts.
 #[derive(Default)]
 pub(crate) struct StartedWorkers {
-    /// `find_root_folders_spelled`
     pub root_folders_spelled: Vec<u8>,
-    /// `imports_file_with_query`
-    pub imports_file_with_query: bool,
-    /// With code from disk, isolated or not: the files of the program, for the names of their packages. Compiled code that computes a bare name finds its own instance by them.
     pub program_files: Vec<EntryPointPaths>,
     pub code: CodeOfWorkers,
-    /// The entry points that the load has found and that go by another name than the path of their module.
     pub names: Vec<EntryPointPaths>,
+    pub named_at: Vec<(Vec<u8>, u32)>,
+    pub names_followed: Vec<FollowedName>,
 }
 
 pub struct BuildFailed {
@@ -163,20 +150,13 @@ pub(crate) struct Build<'a> {
     clock: StageClock,
     statistics: Statistics,
     retired_sessions: Vec<Session>,
-    // Nothing waits for the memory of what a stage has read for the last time, and one thread takes a while to free it.
     leftovers: Vec<Leftovers>,
-    // By index of the module, in ascending order. The program is freed while the engine runs.
     paths_of_modules_without_bodies: Vec<(usize, Vec<u8>)>,
-    // In ascending order.
     unreached_runtime_files: Vec<FileId>,
-    // Each with `QueryStatistics::closed_cycles`, which is not 0.
     circular_runtime_files: Vec<(FileId, u32)>,
     pub(crate) started_workers: StartedWorkers,
-    /// A test run in which no file of the tests can load what was not compiled.
     pub(crate) stays_in_compiled_files: bool,
-    /// `RuntimeRoots::keeps_code_without_names`, from the load on. A test that sets it ahead of the load gets that code whatever the program names.
     keeps_library_code_without_names: bool,
-    /// The engine gets the code of the functions beside the bytes of the program, so the link stage makes the functions ready for that.
     hands_code_over_beside_program: bool,
 }
 
@@ -194,11 +174,8 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub builtin_names: &'b BuiltinNames,
     pub contents: &'b ProgramContents,
     pub can_load_code_at_run_time: bool,
-    /// It can for no other reason than that a loader is given a name that the build does not know.
     pub loads_code_by_unknown_names_alone: bool,
-    /// `RuntimeRoots::keeps_code_without_names`
     pub keeps_library_code_without_names: bool,
-    /// Waits until the plugins have answered for every asset. What they answer wrongly is among `messages` then.
     pub finish_asset_reads: &'b dyn Fn(),
 }
 
@@ -207,7 +184,6 @@ pub(crate) struct BoundProject {
     pub left_out: LeftOutCode,
     pub known_helpers: KnownHelpers,
     pub builtin_types: BuiltinTypeSymbols,
-    /// What `SourceProvider::bundle_pages` answers for each page of an executable, ascending by file.
     pub page_manifests: Vec<(FileId, Vec<u8>)>,
 }
 
@@ -215,7 +191,6 @@ pub(crate) struct BoundBuild {
     pub projects: PerProject<BoundProject>,
 }
 
-// The engine asks for the text of a module where it lays out the text of functions. A program that leaves this process holds it.
 fn put_function_texts_into(program: &mut Program, texts: &SourceTexts) {
     for (index, module) in program.modules.iter_mut().enumerate() {
         if let Some(source) = texts.get(ModuleId::new(index)) {
@@ -224,7 +199,6 @@ fn put_function_texts_into(program: &mut Program, texts: &SourceTexts) {
     }
 }
 
-/// `Compilation::names_added_to_builtins`
 #[cfg(not(test))]
 fn collect_names_added_to_builtins(program: &Program) -> Vec<(u32, Vec<u8>)> {
     let opened = program.opened_names.iter();
@@ -237,16 +211,12 @@ fn collect_names_added_to_builtins(program: &Program) -> Vec<(u32, Vec<u8>)> {
 }
 
 struct FrontEndOutput {
-    /// It lists no function.
     program: Program,
-    /// None where `functions_without_code` has them.
     functions: LinkedFunctions,
-    /// `Build::hands_code_over_beside_program`
     functions_without_code: Option<FunctionsWithoutCode>,
     texts: SourceTexts,
     entry_points: Vec<EntryPointPaths>,
     folders: Vec<FolderPaths>,
-    /// `Sources::holds_source_paths`
     #[cfg(not(test))]
     holds_source_paths: bool,
     modules: Option<ListedModules>,
@@ -258,7 +228,6 @@ impl FrontEndOutput {
         core::mem::replace(&mut self.functions, none)
     }
 
-    /// `engine`: of a build that has run it.
     fn into_parts(
         self,
         statistics: Statistics,
@@ -291,7 +260,6 @@ impl<'b, 's> LoadedBuild<'b, 's> {
     }
 }
 
-/// The front end of `compile`. The program lists its functions, in its own ids.
 pub fn link_program(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
@@ -309,7 +277,6 @@ pub fn link_program(
     Ok(LinkedProgram { program, summary })
 }
 
-// The lists of the engine do not hold every Worker: it did not analyze the program, or a debugger starts whatever it likes.
 fn starts_workers_out_of_sight(engine: &EngineResult) -> bool {
     let mut causes = engine.unseen_code().iter().map(|record| record.cause);
     causes.any(|cause| {
@@ -317,7 +284,6 @@ fn starts_workers_out_of_sight(engine: &EngineResult) -> bool {
     })
 }
 
-/// `Build::paths_of_modules_without_bodies`
 fn collect_paths_of_modules_without_bodies(program: &Program) -> Vec<(usize, Vec<u8>)> {
     let modules = program.modules.iter().enumerate();
     modules
@@ -326,7 +292,6 @@ fn collect_paths_of_modules_without_bodies(program: &Program) -> Vec<(usize, Vec
         .collect()
 }
 
-/// Nothing: the program holds code of every module of Bun's library that it evaluates.
 fn describe_library_modules_lacked(
     engine: &EngineResult,
     paths_of_modules_without_bodies: &[(usize, Vec<u8>)],
@@ -349,14 +314,10 @@ fn describe_library_modules_lacked(
     ))
 }
 
-/// `./w.ts`, `../w.ts`
 fn is_relative_path(path: &[u8]) -> bool {
     path.starts_with(b"./") || path.starts_with(b"../")
 }
 
-/// Whether a Worker that is given `name` starts from one of `files`: `name` is the path that the program knows the file by, the path
-/// that the file had when the program was built, a path from the root of the executable, or a relative path that an executable looks
-/// for under what the file goes by (`EntryPointFinder::take_names_written`).
 fn names_one_of<'f>(
     name: &[u8],
     mut files: impl Iterator<Item = &'f EntryPointPaths>,
@@ -368,7 +329,6 @@ fn names_one_of<'f>(
         .map(|path| source_path_of(&path));
     let looked_under = match is_relative_path(name) {
         true => {
-            // What the load writes down has forward slashes, in an executable for Windows too.
             let root = paths.module_prefix.iter();
             let root: Vec<u8> = root
                 .map(|&byte| if byte == b'\\' { b'/' } else { byte })
@@ -413,7 +373,6 @@ pub fn compile(
     };
     let caches = ThreadCaches::default();
     let mut build = Build::new(options, provider, &caches, engine_options.limit_values());
-    // A file has no place for what lies beside the bytes.
     build.hands_code_over_beside_program = options.aot.ir_output_path.is_none();
     let output = match build.run_front_end() {
         Ok(output) => output,
@@ -561,7 +520,6 @@ impl<'a> Build<'a> {
             return Err(Stage::LinkAndEmit);
         }
         let in_parallel = self.parallel_runner();
-        // Emit asks nothing of the sessions, and few threads have something to free.
         let sessions = core::mem::take(&mut self.retired_sessions);
         let runner_of_drops = self.parallel_runner();
         let writes_program_file = self.options.aot.ir_output_path.is_some();
@@ -577,7 +535,6 @@ impl<'a> Build<'a> {
                 }
             },
             || match writes_program_file {
-                // A file has no place for what lies beside the bytes, and the engine gets the bytes of the file.
                 true => {
                     put_function_texts_into(&mut program, texts);
                     let functions = functions.into_program_functions(&in_parallel);
@@ -607,7 +564,6 @@ impl<'a> Build<'a> {
         }
     }
 
-    /// `--aot-out`
     fn write_program_file(&mut self, bytes: &ProgramBytes) -> Result<(), Stage> {
         let Some(path) = self.options.aot.ir_output_path.as_deref() else {
             return Ok(());
@@ -623,8 +579,6 @@ impl<'a> Build<'a> {
         Err(Stage::LinkAndEmit)
     }
 
-    /// Unless somebody chose a thread count, no more threads than there is program for: a thread that joins touches megabytes of its own first.
-    /// Ten lines and Bun's library are 1.8 MB, which the engine compiles fastest on six to eight threads. On 192 it takes half as long again, and twice the processor time.
     fn threads_of_engine(&self, bytes: &ProgramBytes) -> NonZeroUsize {
         const PROGRAM_BYTES_PER_THREAD: usize = 256 << 10;
         let useful = bytes
@@ -643,7 +597,6 @@ impl<'a> Build<'a> {
         engine_options: &EngineOptions,
         output: &FrontEndOutput,
     ) -> EngineResult {
-        // The pool has as many threads as there was source text of the program's own to read.
         if self.options.aot.thread_count.is_none() {
             bun_sema_driver::allow_threads(self.threads_of_engine(&bytes));
         }
@@ -687,9 +640,7 @@ impl<'a> Build<'a> {
         engine
     }
 
-    /// The load takes in every function of Bun's library that the program can enter. One that it has missed would run in the interpreter.
     fn report_library_functions_lacked(&mut self, engine: &EngineResult) {
-        // The option leaves Bun's library to the run time: the program holds none of it, as asked.
         if self.options.load.omits_builtin_modules {
             return;
         }
@@ -699,10 +650,7 @@ impl<'a> Build<'a> {
         let lacked = lacked.map(|record| RuntimeFunction(record.function));
         let names: Vec<String> = lacked
             .filter_map(|function| match table::runtime_function(function) {
-                // There is no such function on the platform, so no program for it holds one.
                 Some(data) if !data.platforms.contains(platform) => None,
-                // A name read off a value that nobody knows may be any member of any object of the host, so the engine enters every function of the host.
-                // Such a program holds those that it names.
                 Some(data)
                     if holds_named_functions_of_host_alone
                         && data.role == table::RuntimeFunctionRole::HostBuiltin =>
@@ -726,7 +674,6 @@ impl<'a> Build<'a> {
         });
     }
 
-    /// A module of Bun's library that the program evaluates and holds no code of would run in the interpreter, where the build has not seen what it does.
     fn report_library_modules_lacked(&mut self, engine: &EngineResult) {
         if self.options.load.omits_builtin_modules {
             return;
@@ -741,18 +688,31 @@ impl<'a> Build<'a> {
         });
     }
 
-    /// The load goes by what the files name. The engine follows values, so it sees what reaches a constructor of Workers.
+    fn is_start_followed_by_load(&self, witness: &Witness, texts: &SourceTexts) -> bool {
+        let Some(position) = position_of(witness.location) else {
+            return false;
+        };
+        if texts.origin(position.module) == ModuleOrigin::Runtime {
+            return true;
+        }
+        let path = texts.path(position.module);
+        let mut named_at = self.started_workers.named_at.iter();
+        named_at.any(|place| place.0 == path && place.1 == position.offset)
+    }
+
     fn finish_started_workers(&mut self, engine: &EngineResult, output: &FrontEndOutput) {
         let options = self.options;
         if starts_workers_out_of_sight(engine) {
             self.started_workers.code = CodeOfWorkers::Unseen;
         }
         for record in engine.worker_starts_without_name() {
+            if self.is_start_followed_by_load(&record.witness, &output.texts) {
+                continue;
+            }
             self.started_workers.code = CodeOfWorkers::Unseen;
             self.diagnostics
                 .add_worker_start_without_name(&record.witness, &output.texts);
         }
-        // A build that only checks looks for no file of a Worker.
         if options.aot.checks_only {
             return;
         }
@@ -765,7 +725,6 @@ impl<'a> Build<'a> {
             if names_one_of(name, compiled, &options.paths) {
                 continue;
             }
-            // The Worker may get code that the build has not compiled: the text of a `data:` URL, or a file on disk.
             self.started_workers.code = CodeOfWorkers::Unseen;
             let (code, arguments): (Code, &[&[u8]]) = match is_name_of_text(name) {
                 true => (Code::WorkerTextNotCompiled, &[]),

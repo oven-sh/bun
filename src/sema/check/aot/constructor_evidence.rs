@@ -126,9 +126,6 @@ fn is_seen_to_be_constructor(hir: &hir::File<'_>, bound: &Bound<'_>, mut value: 
     }
 }
 
-// `fill(this, options)`   `const made = parent ? create() : this`
-// Somebody else may fill the object. `other.call(this)` and `Reflect.apply(other, this, list)` hand on a receiver, which every method has.
-// `Object.defineProperty(this, "name", { .. })`, `Error.captureStackTrace(this)`: a member of a global, or a global, stores nothing under a name.
 fn is_handed_on(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -387,7 +384,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             {
                 continue;
             }
-            // A function that says what it is called on is called on that.
             if let Some(Ok(function)) = self.c.this_container(file, this)
                 && matches!(hir[function].kind, FnKind::Decl | FnKind::Expr)
                 && !declares_this(hir, function)
@@ -400,7 +396,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         list_in(self.c.arena, &functions)
     }
 
-    /// Whether the function gives its `this` to other code that may store the fields of what `new` makes.
     pub(super) fn hands_this_on(&mut self, function: FunctionRef) -> bool {
         let of_file = self.prototype_links(function.file);
         let functions = *of_file
@@ -409,7 +404,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         functions.binary_search(&function.function).is_ok()
     }
 
-    /// A member of an object is taken for a method. What has a name of its own, or is what a function returns, may be anything.
     pub(super) fn is_held_by_name_or_returned(&self, function: FunctionRef) -> bool {
         let FunctionRef { file, function } = function;
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
@@ -426,8 +420,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `kind.update = function () { if (this.options.strict) this.allowed = true; }`: what `new` makes has no `options` yet, so the
-    /// function is called on an object that somebody else has filled. A function that hands `this` on may have had it filled.
     fn reads_member_nobody_has_stored(&mut self, function: FunctionRef) -> bool {
         if self.hands_this_on(function) {
             return false;

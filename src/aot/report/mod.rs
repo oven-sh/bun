@@ -86,7 +86,6 @@ pub fn collect_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<Report
     entries
 }
 
-/// What `engine.rs` asks the engine for.
 pub(crate) fn engine_reports_for(explain: ExplainSet) -> ReportSet {
     let mut reports = ReportSet::default();
     if explain.intersects(ExplainSet::TEXT | ExplainSet::JSON | CAUSE_FAMILIES) {
@@ -131,13 +130,10 @@ mod tests {
         cause: UnprovenCause::FieldDeleted,
         layout: ABSENT_WORD,
         copies: 1,
-        distance: 0,
         witness: WITNESS,
         function: ABSENT_WORD,
         ill_typed_cause: IllTypedCause::None,
         cost: AccessCost::ByName,
-        has_other_roots: 0,
-        other_origins: 0,
         loop_depth: 0,
     }];
     const GUARD: &[TypeTestRecord] = &[TypeTestRecord {

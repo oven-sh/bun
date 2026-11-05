@@ -176,8 +176,9 @@ const programs: Record<string, Program> = {
     stdout: "TypeError\n",
   },
   "mock.method() of node:test": {
+    // The build does not follow the object into Bun's own code, which makes the write: docs/compiler/compatibility.mdx, "Built-in objects are read-only".
     source: `import { mock } from "node:test";\n` + attempt(`mock.method(Date.prototype, "getTime", () => 7)`),
-    warnings: ["main.mjs:3:8"],
+    warnings: [],
     stdout: "TypeError\n",
   },
   "the functions that the loader asks are stored": {

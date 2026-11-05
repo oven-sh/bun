@@ -13,7 +13,6 @@ impl NamedValues for NoNamedValues {
     }
 }
 
-/// The type of each name in the text, in the order of the text, and how many types of loops the checker has kept.
 fn ask_for_names(text: &str, far_walk: u32) -> (Vec<String>, usize) {
     with_program(&[("main.ts", text)], &["./main.ts"], 1, |program| {
         let all = program.files();
@@ -57,13 +56,11 @@ fn ask_for_names(text: &str, far_walk: u32) -> (Vec<String>, usize) {
 }
 
 const STATEMENTS_IN_BETWEEN: &[&str] = &[
-    // Nothing here concerns `subject`.
     "for (const item of items) other.push(item);",
     "if (flag) { other.push(1); } else { other.push(2); }",
     "while (other.length < 3) { if (flag) continue; other.push(3); }",
     "switch (other.length) { case 1: other.push(4); break; default: other.push(5); }",
     "try { other.push(6); } catch { other.push(7); } finally { other.push(8); }",
-    // Each of these does.
     "for (const item of items) { if (item > 1) subject = item; }",
     "for (const item of items) { if (typeof subject === \"number\") break; other.push(item); }",
     "if (typeof subject === \"string\") throw new Error(subject);",

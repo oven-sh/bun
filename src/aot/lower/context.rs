@@ -54,7 +54,6 @@ use crate::statistics::{LimitId, LimitValues};
 
 pub(crate) use self::function::FunctionLowering;
 
-/// As `js_printer` writes a literal for `bun run`: the engine is handed that text, and `source` reads it.
 pub(super) fn regexp_pattern_as_printed(written: &[u8]) -> Cow<'_, [u8]> {
     let is_printed_as_written = |character: u32| (FIRST_ASCII..=LAST_ASCII).contains(&character);
     if written
@@ -120,9 +119,7 @@ pub struct LoweringOptions {
     pub removable: RemovableOptions,
     pub minifies_identifiers: bool,
     pub obfuscates: bool,
-    /// `bun test --aot --coverage`: the files of the project count how often their parts run.
     pub counts_executions: bool,
-    /// `LoadOptions::runs_tests`
     pub runs_tests: bool,
 }
 
@@ -133,26 +130,18 @@ pub struct LoweringInputs<'a> {
     pub builtin_names: &'a BuiltinNames,
     pub sources: &'a Sources,
     pub modules: &'a ModuleGraph,
-    // The files of Bun's own that no code of the program loads, in order.
     pub unreached_files: &'a [FileId],
-    // The files that whoever builds the program cannot mend, in order.
     pub files_of_dependencies: &'a [FileId],
     pub library_functions: &'a LibraryFunctions,
     pub known_helpers: &'a KnownHelpers,
     pub commonjs_exports: &'a CommonJsExports,
     pub files: &'a [Option<FileInputs<'a>>],
     pub makes_registries: bool,
-    /// `BoundProject::page_manifests`
     pub page_manifests: &'a [(FileId, &'a DataValue<'a>)],
-    // A file of an executable reads `__filename` or `__dirname` or asks `require.resolve`: a path of the machine that builds, which any file of the program may come to hold.
     pub reads_source_paths: bool,
-    /// The program names `Bun.plugin` and is no test run: a plugin may answer what `bun build` leaves to the run time.
     pub may_have_plugins: bool,
-    /// `ProgramContents::replaced_builtins`
     pub replaced_builtins: &'a [u32],
-    /// `ProgramContents::fixed_builtins`
     pub fixed_builtins: &'a FixedBuiltins,
-    /// `ProgramContents::names_added_to_builtins`
     pub names_added_to_builtins: &'a [(BuiltinId, Atom)],
     pub limits: &'a LimitValues,
     pub options: LoweringOptions,
@@ -160,14 +149,12 @@ pub struct LoweringInputs<'a> {
 }
 
 impl<'a> LoweringInputs<'a> {
-    /// A test run lays a name on `Object.prototype`: an accessor may lie above every ordinary object. Never in an executable.
     pub(crate) fn names_lie_on_object_prototype(&self) -> bool {
         let added = self.names_added_to_builtins;
         let first = added.partition_point(|&(holder, _)| holder < BuiltinId::ObjectPrototype);
         (added.get(first)).is_some_and(|&(holder, _)| holder == BuiltinId::ObjectPrototype)
     }
 
-    // The file is in the build for the types that it declares alone: the program has no module of it.
     pub(crate) fn is_left_out(&self, file: FileId) -> bool {
         self.modules.is_left_out(ModuleRef::File(file))
             || self.unreached_files.binary_search(&file).is_ok()
@@ -193,18 +180,12 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(crate) hir: &'p hir::File<'s>,
     pub(crate) bound: &'p Bound<'s>,
     pub(crate) compiled: &'p CompiledModule<'s>,
-    /// The expressions in whose place `bun build` has a value: `finish_function_texts`.
     pub(in crate::lower) values_written_in_place: RefCell<Vec<(ExprId, Constant)>>,
-    /// The parts of enums that are declared in functions, as code: `note_enum_as_code`.
     pub(in crate::lower) enums_written_as_code: Vec<ReplacedText>,
     pub(crate) builtins: &'a ResolvedBuiltins,
-    /// `Removable::find_simplified_expressions`
     simplified_expressions: Vec<ExprId>,
-    /// The literals that JavaScript rejects and `Removable::find_regexp_literals_left_out` lists, ascending.
     invalid_regexp_literals_left_out: Vec<ExprId>,
     pub(crate) queries: &'a mut Queries<'c, 'p, 's>,
-    /// What the files of the checker's task share. Until `finish` or `abandon`, its tables, finders and marks are with `fragment`
-    /// and its places with `layouts` and `functions`.
     pub(in crate::lower) task: &'a mut TaskState,
     pub(crate) fragment: FragmentBuilder,
     pub(crate) diagnostics: DiagnosticBuffer,
@@ -214,9 +195,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(crate) classes: ClassState,
     pub(crate) modules: ModuleState,
     functions: FunctionTable,
-    /// `FileLowering::is_built_by_code`
     pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
-    /// `FileLowering::is_stored_as_prototype_object`
     pub(in crate::lower) literals_named_as_prototype_objects: OnceCell<FxHashSet<ExprId>>,
     shown_names: ShownNames,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
@@ -261,7 +240,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let compiled = queries.files().compiled(file);
         let compiled = compiled.expect("only compiled files are lowered");
         let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
-        // What `bun test --coverage` reports on: no package, and nothing of Bun's own.
         let path = inputs.sources.diagnostic_path(file);
         let is_counted = inputs.options.counts_executions
             && inputs.sources.kind(file) == load::SourceKind::Program
@@ -329,9 +307,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         }
     }
 
-    /// `bun run` reports a file that holds such a literal and runs nothing of it, whether or not anything reads the literal.
-    /// Code that folding decided dead is no part of the program, and the engine never reads a literal that the transpiler leaves out:
-    /// neither stops a build.
     pub(super) fn refuse_invalid_regexp_literals(&mut self) {
         if self.inputs.sources.kind(self.file) != load::SourceKind::Program {
             return;
@@ -374,7 +349,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         }
     }
 
-    /// Nothing reads such a literal but a test of its truth or of its type, for which it stays an object.
     pub(super) fn is_invalid_regexp_literal_left_out(&self, literal: ExprId) -> bool {
         self.invalid_regexp_literals_left_out
             .binary_search(&literal)
@@ -407,7 +381,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         }
     }
 
-    /// The visit is thrown away. What is not given back here is lost to every file that the task has committed.
     pub(super) fn abandon(self) {
         let FileLowering {
             task,
@@ -475,7 +448,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         }
     }
 
-    /// The name that the program or the React Compiler has written, for one that the build has put in its place.
     pub(crate) fn intern_written_name(&mut self, name: Atom) -> StringId {
         let bytes = self.queries.atom_bytes(name);
         match written_name_of_local(bytes) {

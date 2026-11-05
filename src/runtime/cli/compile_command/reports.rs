@@ -88,7 +88,8 @@ pub(super) fn write_obfuscation_map(
         &build.texts,
         bun_paths::basename(outfile),
         debug_id,
-    );
+    )
+    .map_err(|changed| CompileFailure::SourceChanged { path: changed.path })?;
     let map_path = [outfile, b".map".as_slice()].concat();
     write_file(root_dir, &map_path, &bytes)?;
     let stub = source_map_stub(bun_paths::basename(&map_path), debug_id);

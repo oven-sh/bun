@@ -14,13 +14,11 @@ fn find_function_of_other_project(
     (is_function && keys[base.index()].project != keys[layout].project).then_some(base)
 }
 
-// The code of a class names its private fields by their numbers.
 fn is_named_by_number(field: &Field) -> bool {
     let unnamed = FieldFlags::IS_PRIVATE | FieldFlags::IS_BRAND | FieldFlags::IS_HIDDEN;
     field.key.is_none() || field.flags.intersects(unnamed)
 }
 
-// The function may leave early, and another function may stand in its place when the program runs.
 fn copy_field(field: &Field) -> Field {
     Field {
         flags: field.flags.without(FieldFlags::IS_REQUIRED),
@@ -46,10 +44,8 @@ fn take_fields(layouts: &mut [Layout], layout: usize, base: LayoutId) -> u32 {
     taken
 }
 
-// This cuts the work into tasks. No answer depends on it.
 const LAYOUTS_IN_A_TASK: usize = if cfg!(test) { 2 } else { 1024 };
 
-/// A constructor function stores its fields before what is below it stores its own, so they come first.
 pub(super) fn take_fields_of_base_functions(
     layouts: &mut [Layout],
     keys: &[ProgramLayoutKey],
@@ -64,7 +60,6 @@ pub(super) fn take_fields_of_base_functions(
     if taken.iter().all(|&taken| taken == 0) {
         return;
     }
-    // Every field of the program is looked at, each list of fields somewhere else in memory.
     let mut tasks: Vec<&mut [Layout]> = layouts.chunks_mut(LAYOUTS_IN_A_TASK).collect();
     for_each_mut(&mut tasks, in_parallel, &|layouts| {
         for field in layouts.iter_mut().flat_map(|layout| &mut layout.fields) {
@@ -90,7 +85,6 @@ mod tests {
         }
     }
 
-    // Field `number` of layout `origin`, as a class below declares it again.
     fn field_from(key: usize, origin: usize, number: u32) -> Field {
         Field {
             origin_layout: Some(LayoutId::new(origin)),

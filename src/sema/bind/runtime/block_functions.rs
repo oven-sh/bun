@@ -3,7 +3,7 @@ use super::bits::{has_bit, insert_bit};
 use super::declaration_kinds::{
     Declaration, DeclarationKind, FunctionPosition, declaration_kind, function_position,
 };
-use super::declarations::{Declarations, is_var_scope};
+use super::declarations::{Declarations, append_symbol, is_var_scope};
 use super::lookup::COMMONJS_VARIABLES;
 use super::{AnnexBFunction, BindingKind};
 use crate::bind::{
@@ -133,8 +133,6 @@ impl Declarations<'_, '_> {
             }
             scope = self.bound.scopes[scope.idx()].parent;
         }
-        // Sloppy text is the body of a function that has the five names as parameters, and a parameter keeps what it holds.
-        // The name is bound to a variable all the same, which stands for the parameter: `bun run` takes it for the function's, so it is no sign of CommonJS.
         let mut parameters = COMMONJS_VARIABLES.into_iter();
         let is_wrapper_parameter = self.bound.scopes[scope.idx()].kind == ScopeKind::File
             && parameters.any(|parameter| parameter.name() == name);
@@ -170,11 +168,20 @@ impl Declarations<'_, '_> {
                     inner
                 }
             };
-            self.bound
-                .runtime
-                .declarations
-                .inner_class_symbols
-                .push((id, inner));
+            let declarations = &mut self.bound.runtime.declarations;
+            declarations.inner_class_symbols.push((id, inner));
+            let has_legacy_decorators = hir.has_typescript_semantics() && hir.legacy_decorators;
+            let is_decorator =
+                |modifier: ModifierId| matches!(hir[modifier].kind, ModifierKind::Decorator(_));
+            if has_legacy_decorators || !class.modifiers.iter().any(is_decorator) {
+                continue;
+            }
+            let scope = declarations.symbol_scopes[inner.idx()];
+            let (flags, kind) = (SymFlags::CLASS, BindingKind::ClassInnerName);
+            let own = append_symbol(self.bound, class.name, flags, kind, Decl::Class(id), scope);
+            let declarations = &mut self.bound.runtime.declarations;
+            let own_bindings = &mut declarations.own_bindings_of_decorated_classes;
+            own_bindings.push((inner, own));
         }
     }
 }

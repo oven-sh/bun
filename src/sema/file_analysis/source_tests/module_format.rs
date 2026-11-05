@@ -1283,7 +1283,6 @@ fn format_of(path: &str, text: &str, fold: &Fold<'_>) -> ModuleFormat {
     format.expect("the file is analyzed")
 }
 
-/// The rows are those of `bun run`, which `bun build` follows under `--minify-syntax`.
 #[test]
 fn formats() {
     for &(path, text, format) in FORMATS {
@@ -1292,7 +1291,6 @@ fn formats() {
     }
 }
 
-/// Without `--minify-syntax`, `bun build` still has the `require()` that a constant or a computation switches off. `bun run` has not, and the format is what `bun run` takes the file for.
 const REQUIRES_THAT_BUN_RUN_REMOVES: &[&str] = &[
     r#"if (false) require("a");"#,
     r#"if (2 < 1) require("a");"#,
@@ -1305,7 +1303,6 @@ const REQUIRES_THAT_BUN_RUN_REMOVES: &[&str] = &[
     r#"if (~-1) require("a");"#,
 ];
 
-/// What `bun run` removes as code that does nothing is gone from a build too, with the names in it.
 #[test]
 fn statement_that_bun_run_removes_decides_nothing_without_minify_syntax() {
     for text in [
@@ -1793,7 +1790,6 @@ const LEFT_BEHIND_TEMPLATES: &[&str] = &[
 
 #[test]
 fn what_and_and_or_give_decides_the_format_where_bun_run_knows_the_left_operand() {
-    // Whether the whole is true is known whatever stands on the left.
     for text in [
         "if (0x0n || \"x\") {} else { module.exports = 1; }",
         "if (0x1n && \"\") { module.exports = 1; }",

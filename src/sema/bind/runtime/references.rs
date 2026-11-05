@@ -15,6 +15,7 @@ use super::{
 };
 use crate::atom::{Atom, Intern, known};
 use crate::bind::{BoundBuilder, Decl, Parent, ScopeId, ScopeKind, SymbolId};
+use crate::fold::{DefinePath, DefineRoot, PathInPlace};
 use crate::hir::*;
 
 pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &RuntimeScopes) {
@@ -67,6 +68,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     pass.resolve_exports();
     pass.resolve_entity_roots();
     pass.resolve_classic_jsx();
+    pass.resolve_defined_paths();
     pass.resolve_decorator_metadata();
     pass.collect_jump_targets();
     pass.finish_results();
@@ -158,7 +160,7 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) idents: &'a [(ExprId, ScopeId)],
     pub(super) options: RuntimeBindOptions,
     pub(super) atoms: &'a dyn Intern,
-    pub(super) names_in_place: &'a [(Atom, Atom)],
+    pub(super) names_in_place: &'a [PathInPlace<'a>],
     pub(super) type_only: TypeOnlyCode,
     pub(super) direct_evals: Vec<DirectEval>,
     pub(super) first_eval_id: u32,
@@ -185,11 +187,15 @@ impl ReferencePass<'_, '_> {
             }
             insert_bit(&mut self.references.evaluated_idents, ident.idx());
             let mut found = self.lookup.find(scope, name, hir[ident].pos);
-            // `--define MODE=mode`: Bun looks `mode` up where `MODE` stands. Where that is free too, the fold has the define.
+            let written = DefinePath {
+                root: DefineRoot::Global(name),
+                members: &[],
+            };
             if found.binding == Binding::Free
-                && let Some(&(_, in_place)) = self.names_in_place.iter().find(|it| it.0 == name)
+                && let Some(in_place) = self.names_in_place.iter().find(|it| it.path == written)
+                && let Some(at_hand) = self.find_name_in_place(scope, in_place, hir[ident].pos)
             {
-                found = self.lookup.find(scope, in_place, hir[ident].pos);
+                found = at_hand;
             }
             if found.binding != bound.default_binding(ident) {
                 self.references.ident_bindings.push((ident, found.binding));
@@ -293,7 +299,6 @@ impl ReferencePass<'_, '_> {
                     .push((symbol, variable));
                 continue;
             }
-            // The variable of a function in a block.
             let appended = &self.lookup.scopes.appended_bindings;
             if let Some(&(symbol, declaration)) = appended.get(&(ScopeId(0), variable.name()))
                 && declaration.kind == DeclarationKind::Var

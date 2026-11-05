@@ -6,7 +6,6 @@ use crate::modules::testing::{file_named, member_named, with_test_run_graph};
 const STATES: &str = "export enum State { Ready = 3, Done = 4 }";
 const READS: &str = "import { State } from './states.ts'; console.log(State.Ready, State.Done);";
 
-// Whether the build has the value of `State.Ready` and of `State.Done` in the test file, and whether the declaration may store under a name that lies above the enum.
 fn ask(lays: &str) -> (bool, bool, bool) {
     let test_file = format!("{READS} {lays}");
     let files = [("a.test.ts", test_file.as_str()), ("states.ts", STATES)];

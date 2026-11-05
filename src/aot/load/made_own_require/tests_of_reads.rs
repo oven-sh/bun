@@ -4,7 +4,6 @@ use bun_sema::hir::{ExprId, ExprKind, StmtKind};
 use crate::compile::testing::{default_settings, with_loaded_build};
 use crate::load::ProjectId;
 
-/// By text: whether `require = ..` is still a statement of the file when the program is loaded. Each text is a file of one program.
 fn keep_their_stores(texts: &[String]) -> Vec<bool> {
     let names: Vec<String> = (0..texts.len())
         .map(|row| format!("row{row}.cjs"))
@@ -45,7 +44,6 @@ fn keep_their_stores(texts: &[String]) -> Vec<bool> {
 
 #[test]
 fn the_store_goes_only_where_nobody_holds_the_function() {
-    // What stands in front of the store, what stands behind it, and whether the store stays.
     let rows = [
         ("", "module.exports = require('./which.cjs');", false),
         (

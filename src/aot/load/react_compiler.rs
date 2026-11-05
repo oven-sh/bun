@@ -99,9 +99,6 @@ impl<'a> ReactCompiler<'a> {
         source.has_compiled_components
     }
 
-    /// Runs the compiler inside Bun's parser, on the same AST `bun build` gives it. What the compiler memoizes depends
-    /// on the shape of the code, so it depends on every rewrite the parser has done by then: defines, dead code
-    /// removal, `--minify-syntax`.
     fn compile_components<'s>(
         &self,
         arena: &'s Arena,
@@ -137,7 +134,6 @@ impl<'a> ReactCompiler<'a> {
             None if is_parsed => {
                 return Some(output.writer?.into_file(arena, request.module_format));
             }
-            // Lowering reports the file's syntax errors.
             None => {}
         }
         None
@@ -166,19 +162,15 @@ enum Failure {
     Writer(&'static str),
 }
 
-/// Copies each compiled function into the type checker's tree.
 struct CompilerOutput<'a, 's> {
     tree: &'a hir::File<'s>,
     atoms: &'a Interner<'s>,
     jsx: &'a JsxSettings,
-    /// Created when the first function is compiled: it copies the tree.
     writer: Option<TreeWriter<'a, 's>>,
     failure: Option<Failure>,
 }
 
 impl CompilerOutput<'_, '_> {
-    /// `parameters_loc`: see `CompiledFunction`. Only whitespace and comments can separate `=>` from the `{` after it,
-    /// so the closest anchor at or before the position belongs to the compiled function.
     fn find_function(&self, parameters_loc: Loc) -> Option<FnId> {
         let position = u32::try_from(parameters_loc.start).ok()?;
         let functions = self.tree.fns.iter().enumerate();

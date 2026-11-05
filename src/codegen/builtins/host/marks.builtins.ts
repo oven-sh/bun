@@ -47,6 +47,14 @@ export default b.declarations(
     "node:module._load",
     "node:module._resolveFilename",
   ]),
+  marked("AnswersWithPathOfModule", [
+    "%ImportMeta%.resolve",
+    "%ImportMeta%.resolveSync",
+    "%ModuleRequire%.resolve",
+    "%ModuleRequirePrototype%.resolve",
+    "Bun.resolve",
+    "Bun.resolveSync",
+  ]),
   // import() of a graph, and the handlers under ".js" and the like: (module, filename) => ..
   marked("ReadLoadsCodeByName", [
     "Bun.ModuleGraph",

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
@@ -79,7 +79,7 @@ test.skipIf(generated === undefined)(
         .map(({ symbol }) => symbol),
     ).toEqual([]);
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );
 
 test.skipIf(generated === undefined)(
@@ -123,5 +123,5 @@ test.skipIf(generated === undefined)(
       expect(functions.filter(symbol => !recorded.has(`${feature} ${symbol}`))).toEqual([]);
     }
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );

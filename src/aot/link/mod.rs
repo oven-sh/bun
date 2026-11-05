@@ -67,7 +67,6 @@ pub struct LinkProject<'a, 's> {
     pub loaded: &'a LoadedProgram<'s>,
     pub graph: &'a ModuleGraph,
     pub sources: &'a Sources,
-    /// The files that were not lowered because the program does not reach them, in ascending order.
     pub unreached_files: &'a [FileId],
 }
 
@@ -80,14 +79,11 @@ pub struct LinkInput<'a, 's> {
     pub beside: Beside<'a>,
 }
 
-/// What link has read for the last time. Nothing waits for the memory, and it takes a while to free.
 pub type Leftovers = Box<dyn Send>;
 
 pub struct Linked {
-    /// It lists no function.
     pub program: Program,
     pub functions: LinkedFunctions,
-    /// In the order of `ModuleId`.
     pub modules: Vec<ProgramModule>,
     pub leftovers: Leftovers,
     #[cfg(test)]
@@ -107,7 +103,6 @@ fn key_context<'a>(projects: &Projects<'a, '_>, project: ProjectId) -> KeyContex
     }
 }
 
-// For the log: how much the merges that follow have to read.
 fn describe_tables(units: &[LinkUnit], tables: &[LinkTables]) -> String {
     let sum = |length_of: fn(&LinkTables) -> u32| -> u64 {
         tables
@@ -137,7 +132,6 @@ type KeysOfTables<'a> = (
     MergedKeys<'a, ProgramLayoutKey>,
 );
 
-/// `synthetic_export_keys`, and the keys of each kind, which ask nothing of the other kinds.
 fn merge_keys_of_tables<'a>(
     tables: &[LinkTables],
     projects: &Projects<'a, '_>,
@@ -152,7 +146,6 @@ fn merge_keys_of_tables<'a>(
         ["merge keys of variables", "of functions, layouts"],
         || {
             let synthetic_exports = synthetic_export_keys(projects);
-            // The tables' lists come first, in table order: `number_program` treats a key found only in a later list as one that no code names.
             let mut variable_lists = collect_key_lists(tables, |tables| &tables.variables);
             variable_lists.push(&synthetic_exports);
             let variables = merge_keys(&variable_lists, atoms, in_parallel);
@@ -192,7 +185,6 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     if steps.logs() {
         steps.end(&describe_tables(&units, &tables));
     }
-    // The strings, the heights of the types and the keys ask nothing of each other.
     let ((ordered_strings, string_ids), (types_by_height, of_keys)) = run_steps_beside(
         beside,
         &mut steps,
@@ -233,8 +225,6 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     let ((modules, shown_by_export_tables), keys_of_tables) = of_keys;
     let (synthetic_exports, variables, functions, layouts) = keys_of_tables;
 
-    // What leads from the keys to the numbers runs on a thread or two for most of its time. Most of the work on the types is to find those that are alike,
-    // which the keys show as well as the numbers.
     let (alike_types, (mut strings, of_keys)) = run_steps_beside(
         beside,
         &mut steps,
@@ -303,8 +293,6 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
         make_synthetic_export_variables(&definitions, &numbering, atoms, &mut strings);
     steps.end("variables of synthetic exports");
 
-    // How the definitions stand to each other is written into the records of layouts and functions, and nothing else asks for it.
-    // The records of the modules name no layout, no type and no property key. No type names a property key, and no property key names a type.
     let merged = Merged {
         units: &units,
         tables: &tables,
@@ -430,7 +418,6 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     literal_slots::expect_fields_filled_with_other_data(defined, data, &types, in_parallel);
     steps.end("views of literals, fields filled with other data");
 
-    // A mock stores its object as what a CommonJS file exports.
     for module in &records.modules {
         if let Some(exports) = module.exports_variable
             && module.flags.contains(ModuleFlags::MAY_BE_MOCKED)
@@ -492,7 +479,6 @@ fn collect_key_lists<K>(tables: &[LinkTables], keys_of: fn(&LinkTables) -> &Vec<
     lists.map(|tables| keys_of(tables).as_slice()).collect()
 }
 
-/// `lists` has a list for each of `tables`, in their order.
 fn store_ids<I>(
     tables: &mut [TableIds],
     lists: Vec<Vec<Option<I>>>,
@@ -504,12 +490,10 @@ fn store_ids<I>(
     }
 }
 
-// `MergedKeys` borrows the interner, and the leftovers outlive it.
 fn into_owned_lists<K>(merged: MergedKeys<'_, K>) -> (Vec<K>, Vec<Vec<u32>>) {
     (merged.keys, merged.local_to_merged)
 }
 
-// The lower stage leaves out what the program does not reach.
 fn is_unit_optional(projects: &Projects<'_, '_>, file: ProgramFile) -> bool {
     let project = projects.get(file.project);
     project.unreached_files.binary_search(&file.file).is_ok()

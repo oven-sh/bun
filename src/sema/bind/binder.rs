@@ -149,7 +149,7 @@ pub(super) struct Binder<'f, 's> {
     options: BindOptions,
     atoms: &'f dyn crate::atom::Intern,
     /// `bind_below_defines`
-    names_in_place: &'f [(Atom, Atom)],
+    names_in_place: &'f [PathInPlace<'f>],
     b: BoundBuilder,
     tables: Vec<Table>,
     /// For `Table::insert`.
@@ -271,7 +271,7 @@ impl<'f, 's> Binder<'f, 's> {
     pub(super) fn run_in(
         f: &'f File<'s>,
         options: BindOptions,
-        names_in_place: &'f [(Atom, Atom)],
+        names_in_place: &'f [PathInPlace<'f>],
         atoms: &'f dyn crate::atom::Intern,
         buffers: &mut Buffers,
     ) -> BoundBuilder {
@@ -4700,8 +4700,13 @@ impl<'f, 's> Binder<'f, 's> {
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
             | ExprKind::JsxText(_)
-            | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => {}
+            ExprKind::ImportMeta => {
+                let is_root = |it: &PathInPlace<'_>| it.path.root == DefineRoot::ImportMeta;
+                if self.names_in_place.iter().any(is_root) {
+                    self.b.expr_scope.insert(id, self.scope);
+                }
+            }
             ExprKind::Ident(_) => {
                 self.idents.push((id, self.scope));
                 let name = self.associated_declaration;

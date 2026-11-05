@@ -22,7 +22,6 @@ impl Checker<'_, '_> {
         self.reparsed_for_await = None;
     }
 
-    /// With `keeps_grammar`, also the mistakes in TypeScript's own grammar that the parser has flagged: they cost no look at the file.
     fn find_early_errors(&mut self, file: FileId, keeps_grammar: bool) -> Vec<Reported> {
         let from = self.reported.len();
         if !self.hir(file).has_parse_diagnostics {
@@ -32,7 +31,6 @@ impl Checker<'_, '_> {
         let mut from_parser = self.reported.len() - from;
         self.check_early_errors(file);
         let mut found = self.reported.split_off(from);
-        // `/** @import Foo#bar */`: a mistake in a comment of a JavaScript file keeps no program from running.
         let hir = self.hir(file);
         found.retain(|d| {
             let is_from_parser = from_parser > 0;
@@ -86,7 +84,6 @@ impl Checker<'_, '_> {
         if !self.is_in_compile_build(file) {
             return;
         }
-        // The check of the whole file has reported what the parser flagged.
         let found = self.find_early_errors(file, false);
         self.reported.extend(found);
     }

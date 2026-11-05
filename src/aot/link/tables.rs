@@ -12,8 +12,6 @@ use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
-/// The tables that the files of one checker task were written under. Which files share tables depends on thread scheduling,
-/// so nothing that reaches the program may depend on an index into these lists or on the position of these tables among all tables.
 pub(super) struct LinkTables {
     pub project: ProjectId,
     pub strings: StringTable,
@@ -24,28 +22,22 @@ pub(super) struct LinkTables {
     pub variables: Vec<ProgramVariableKey>,
     pub modules: Vec<ProgramModule>,
     pub module_failures: Vec<modules::ModuleFailureId>,
-    /// Nothing at or past these lengths is read. The lists above end there.
     pub lengths: TableLengths,
 }
 
 struct TaskTables {
     project: ProjectId,
     tables: Box<UnitTables>,
-    /// `TableLengths::max` over the units that hold the tables.
     lengths: TableLengths,
-    /// How many units hold the tables.
     unit_count: u32,
-    /// `SharedTables::count_noted_commits`
     noted_commits: Option<u32>,
 }
 
-/// One entry for each set of tables that a unit holds, in the order of the first unit that holds it. Sets `LinkUnit::tables`.
 fn take_tables_of_units(units: &mut [LinkUnit]) -> Vec<TaskTables> {
     assert!(
         units.len() <= u32::MAX as usize,
         "a set of tables has a 32-bit number"
     );
-    // Lookup only, never iterated: an address tells one set from another and carries no order.
     let mut numbers: FxHashMap<*const SharedTables, u32> = FxHashMap::default();
     let mut sets: Vec<TaskTables> = Vec::new();
     for unit in units {
@@ -71,7 +63,6 @@ fn take_tables_of_units(units: &mut [LinkUnit]) -> Vec<TaskTables> {
         set.unit_count += 1;
         unit.tables = number;
     }
-    // The next task of a thread cuts the tables back to the last commit that was noted. Behind a commit that nobody noted it would give the numbers of a unit out again.
     assert!(
         sets.iter().all(|set| set
             .noted_commits
@@ -111,7 +102,6 @@ fn create_link_tables(context: &KeyContext<'_>, set: TaskTables) -> LinkTables {
         data_count: _,
         expected_result_count: _,
     } = *tables;
-    // Entries past the lengths were added by a discarded visit, so they depend on thread scheduling.
     strings.truncate(lengths.strings as usize);
     property_keys.truncate(lengths.property_keys as usize);
     types.truncate(lengths.types as usize);
@@ -136,8 +126,6 @@ fn create_link_tables(context: &KeyContext<'_>, set: TaskTables) -> LinkTables {
     }
 }
 
-/// `units` must be in file order. A set of tables gets its number from the first unit that holds it, and each of its lists is cut at
-/// `lengths`, the `max` over its units. The tables are moved out of the units' `SharedTables`, so units can be passed in only once.
 pub(super) fn collect_tables(
     units: &mut [LinkUnit],
     projects: &Projects<'_, '_>,
@@ -168,7 +156,6 @@ mod tests {
         format!("name of file {}", file.0).into_bytes()
     }
 
-    /// Adds one entry to every list except the modules: every `TestUnit` already names its file's module.
     fn add_entries_unique_to_file(unit: &mut TestUnit) {
         let (file, fragment) = (unit.file, &mut unit.fragment);
         fragment.declare_function(test_function_key(file.0, 0));

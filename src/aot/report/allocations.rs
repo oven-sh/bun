@@ -145,7 +145,6 @@ mod tests {
         position: 0,
     };
     const NO_REASON: AllocationEscapeReason = AllocationEscapeReason(0);
-    // The fixture names function 0 in PROGRAM and function 1 in RUNTIME.
     const PROGRAM_FUNCTION: u32 = 0;
     const RUNTIME_FUNCTION: u32 = 1;
     const UNNAMED_FUNCTION: u32 = 9;

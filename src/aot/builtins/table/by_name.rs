@@ -1,6 +1,3 @@
-//! The test runner and `Bun.plugin`, found in the table under the names that a program has for them. Whoever asks here writes no id of theirs, so the code
-//! is the same for a table that lists neither.
-
 use std::sync::OnceLock;
 
 use super::ids::{BuiltinId, RuntimeModule};
@@ -36,7 +33,6 @@ fn found() -> &'static Found {
     })
 }
 
-/// `bun:test`.
 pub fn test_runner() -> Option<RuntimeModule> {
     found().test_runner
 }
@@ -45,17 +41,14 @@ pub fn is_test_runner(module: RuntimeModule) -> bool {
     Some(module) == found().test_runner
 }
 
-/// What `bun:test` exports, and all that hangs below it.
 pub fn is_of_test_runner(id: BuiltinId) -> bool {
     entry(root_of(id)).module.is_some_and(is_test_runner)
 }
 
-/// `Bun.jest(path)` answers the object of the test runner.
 pub fn returns_test_runner(id: BuiltinId) -> bool {
     Some(canonical_id(id)) == found().jest
 }
 
-/// `expect` of `bun:test`, and all that hangs below it.
 pub fn is_of_expect(id: BuiltinId) -> bool {
     let mut holder = Some(id);
     while let Some(held) = holder {
@@ -67,7 +60,6 @@ pub fn is_of_expect(id: BuiltinId) -> bool {
     false
 }
 
-/// `Bun.plugin`.
 pub fn is_plugin(id: BuiltinId) -> bool {
     Some(canonical_id(id)) == found().plugin
 }

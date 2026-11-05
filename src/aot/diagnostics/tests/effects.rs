@@ -189,7 +189,6 @@ fn compiler_diagnostic_follows_origin() {
         let of_warning = report(Code::WorkerFileNotCompiled, b"./w.ts");
         shown.push((origin, of_error, of_warning));
     });
-    // None of these is a build of tests, and no text that a program evaluates is a file.
     let is_shown = |it: &(FileOrigin, Effect, Effect)| {
         !matches!(it.0, FileOrigin::TestedSource | FileOrigin::EvaluatedText)
     };
@@ -270,7 +269,6 @@ fn nobody_looks_for_type_errors() {
     assert_eq!(check_dependency_javascript(text), NOTHING);
 }
 
-// `bun check --aot`
 #[test]
 fn type_errors_of_the_program_are_looked_for_on_request() {
     let check = |files: &[(&str, &str)]| {

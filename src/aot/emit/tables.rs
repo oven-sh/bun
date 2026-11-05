@@ -11,7 +11,6 @@ use core::ops::Range;
 const RECORDS_PER_TASK: usize = 4096;
 const STRINGS_PER_TASK: usize = if cfg!(test) { 64 } else { 1 << 14 };
 
-/// Strings of the table that follow each other.
 pub(super) struct StringsOfTask<'p> {
     table: &'p StringTable,
     indexes: Range<usize>,
@@ -149,7 +148,6 @@ pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, '
     tasks
 }
 
-// A program has hundreds of thousands of strings, and a task runs on one thread. A table without strings has a task too.
 fn add_strings<'p>(tasks: &mut Vec<Task<'p, '_>>, table: &'p StringTable) {
     for start in (0..table.len().max(1)).step_by(STRINGS_PER_TASK) {
         let indexes = start..table.len().min(start + STRINGS_PER_TASK);

@@ -17,20 +17,15 @@ use core::ops::Range;
 use rustc_hash::FxBuildHasher;
 use std::sync::atomic::{self, AtomicU32};
 
-/// The types of one set of tables but for the well-known ones, those of one height in a row.
 pub(super) struct TypesByHeight {
-    /// Numbers of the tables. Those of one height are ascending.
     numbers: Vec<u32>,
-    /// `numbers[starts[height]..starts[height + 1]]` have that height.
     starts: Vec<u32>,
 }
 
 impl TypesByHeight {
-    /// A type that names no type has the height 0. Any other stands one above the highest that it names.
     fn new(types: &[Type]) -> TypesByHeight {
         let mut heights: Vec<u32> = Vec::with_capacity(types.len());
         for ty in types {
-            // It names only types below it.
             let named = ty.classes.iter().flat_map(|part| &part.contents);
             let height = named.map(|id| heights[id.index()] + 1).max();
             heights.push(height.unwrap_or(0));
@@ -74,7 +69,6 @@ impl TypesByHeight {
 
 const END_OF_LIST: u32 = 0;
 
-/// The ids of the program, each plus one. `None`: the program lacks one of the records.
 fn push_program_ids<I: Id>(
     row: &mut Vec<u32>,
     named: &[I],
@@ -86,7 +80,6 @@ fn push_program_ids<I: Id>(
     Some(())
 }
 
-/// A list that the wire has in the order of its ids. The numbers of one set of tables say nothing of the order of the program's.
 fn push_sorted_list<I: Id>(
     row: &mut Vec<u32>,
     named: &[I],
@@ -99,9 +92,6 @@ fn push_sorted_list<I: Id>(
     Some(())
 }
 
-/// Appends the type, in the ids of the program, as a row of words. Two rows are alike where the types are, and they compare as the types do:
-/// every field of the wire counts, in the order of the schema. An entry of a list is written plus one and 0 ends the list, so a list that ends is below one that goes on.
-/// `None`: the type names a record that the program lacks. What was appended by then is of no use.
 fn push_row(row: &mut Vec<u32>, ty: &Type, map: &IdMap<'_>) -> Option<()> {
     let Type {
         primitives,
@@ -155,7 +145,6 @@ fn compare_rows(a: &[u32], b: &[u32]) -> Ordering {
     a.cmp(b)
 }
 
-// How the work of one height is cut into tasks. No answer depends on these.
 const TYPES_IN_A_RUN: usize = if cfg!(test) { 64 } else { 1 << 12 };
 const WORDS_IN_MOST_ROWS: usize = 16;
 const MAX_PART_BITS: u32 = 10;
@@ -168,17 +157,13 @@ fn keep_hash(hash: u64) -> u64 {
     hash
 }
 
-/// Most types stand in many tables. A hash finds those that are alike, so that only the different ones are put in order.
 #[derive(Copy, Clone)]
 struct Hashing {
-    /// `keep_hash`, except in tests that make different types share a hash.
     weaken: fn(u64) -> u64,
-    /// The types of a height fall into 2^`part_bits` parts.
     part_bits: u32,
 }
 
 impl Hashing {
-    /// `count`: no more types than this are hashed.
     fn new(weaken: fn(u64) -> u64, count: usize) -> Hashing {
         let part_bits = (count / MIN_PART_LENGTH).max(1).ilog2().min(MAX_PART_BITS);
         Hashing { weaken, part_bits }
@@ -192,43 +177,31 @@ impl Hashing {
         1 << self.part_bits
     }
 
-    /// Every hash of a part is below every hash of the next.
     fn part_of(self, hash: u64) -> usize {
-        // One part: a shift by all 64 bits at once is not allowed.
         (hash >> 1 >> (u64::BITS - 1 - self.part_bits)) as usize
     }
 }
 
-/// A type of a run.
 #[derive(Copy, Clone)]
 struct Entry {
-    /// Of its row.
     hash: u64,
     run: u32,
-    /// Among the types of the run.
     place: u32,
 }
 
 const _: () = assert!(size_of::<Entry>() == 16);
 
-/// Types of one height that follow each other in one set of tables.
 #[derive(Copy, Clone)]
 struct Cut<'a> {
     tables: u32,
-    /// Ascending, and not empty.
     numbers: &'a [u32],
 }
 
-/// Those types of a cut that the program can hold.
 struct Run {
     tables: u32,
-    /// The number of each in its tables.
     numbers: Vec<u32>,
-    /// The rows of the types, one behind the other.
     rows: Vec<u32>,
-    /// Where the row of each type ends.
     ends: Vec<u32>,
-    /// One for each type, grouped by part.
     entries: Grouped<Entry>,
 }
 
@@ -280,7 +253,6 @@ fn row_at(runs: &[Run], entry: Entry) -> &[u32] {
     runs[entry.run as usize].row(entry.place)
 }
 
-/// One entry for each different type that falls into `part`, ascending by hash.
 fn list_types_of_part(runs: &[Run], part: usize) -> Vec<Entry> {
     let pieces = || runs.iter().map(|run| run.entries.in_group(part));
     let mut entries = Vec::with_capacity(pieces().map(<[Entry]>::len).sum());
@@ -289,7 +261,6 @@ fn list_types_of_part(runs: &[Run], part: usize) -> Vec<Entry> {
     }
     entries.sort_by_u64(|entry| entry.hash);
 
-    // Any entry of a type can stand for it: types that are alike have the same row.
     let mut listed: Vec<Entry> = Vec::new();
     for tied in entries.chunk_by(|a, b| a.hash == b.hash) {
         let first = listed.len();
@@ -304,17 +275,13 @@ fn list_types_of_part(runs: &[Run], part: usize) -> Vec<Entry> {
     listed
 }
 
-/// Where `ListedTypes` lists a type.
 struct ListedAt {
     part: usize,
     place: usize,
 }
 
-/// The different types of some runs.
 struct ListedTypes {
-    /// `None`: no two types of the runs are alike. Each run is a part then.
     hashing: Option<Hashing>,
-    /// By part: `list_types_of_part`, or the types of the run in their order.
     by_part: Vec<Vec<Entry>>,
 }
 
@@ -327,7 +294,6 @@ impl ListedTypes {
         }
     }
 
-    /// No two types of the runs are alike, so nothing is looked for.
     fn of_different_types(runs: &[Run], in_parallel: InParallel<'_>) -> ListedTypes {
         let numbered_runs: Vec<(u32, &Run)> = (0u32..).zip(runs).collect();
         let by_part = map_each(numbered_runs, in_parallel, &|(run, types)| {
@@ -345,7 +311,6 @@ impl ListedTypes {
         }
     }
 
-    /// The part that lists the type of `entry`, and its place there. `entry` is one of `runs`.
     fn find(&self, runs: &[Run], entry: Entry) -> ListedAt {
         let Some(hashing) = self.hashing else {
             return ListedAt {
@@ -360,7 +325,6 @@ impl ListedTypes {
             let other = listed.get(place);
             other.is_some_and(|other| other.hash == entry.hash)
         };
-        // If only one type of the part has this hash, it is the type of the entry.
         let place = match has_hash_of_entry(first + 1) {
             true => {
                 let row = row_at(runs, entry);
@@ -375,14 +339,12 @@ impl ListedTypes {
     }
 }
 
-/// Ascending. One more bucket than splitters. `listed`: `ListedTypes::by_part`.
 fn choose_splitters<'a>(runs: &'a [Run], listed: &[Vec<Entry>]) -> Vec<&'a [u32]> {
     let count: usize = listed.iter().map(Vec::len).sum();
     let bucket_count = (count / MIN_BUCKET_LENGTH).min(MAX_BUCKET_COUNT);
     if bucket_count < 2 {
         return Vec::new();
     }
-    // The parts lie in the order of the hashes or of the tables, which says nothing of the order of the types.
     let stride = count / (bucket_count * SAMPLES_PER_BUCKET);
     let entries = listed.iter().flatten().step_by(stride);
     let mut samples: Vec<&[u32]> = entries.map(|&entry| row_at(runs, entry)).collect();
@@ -391,16 +353,13 @@ fn choose_splitters<'a>(runs: &'a [Run], listed: &[Vec<Entry>]) -> Vec<&'a [u32]
     splitters.skip(1).collect()
 }
 
-/// One of the different types of a height.
 #[derive(Copy, Clone)]
 struct Listed {
     entry: Entry,
-    /// `list_types_of_part` lists it for this part, at this place.
     part: u32,
     place: u32,
 }
 
-/// Bucket `n` holds the types from splitter `n - 1` on and below splitter `n`.
 fn group_by_bucket(
     runs: &[Run],
     splitters: &[&[u32]],
@@ -421,15 +380,12 @@ fn group_by_bucket(
     Grouped::new(&listed, &buckets, splitters.len() + 1)
 }
 
-/// The different types of a height with their ids.
 struct NumberedTypes {
     listed: ListedTypes,
-    /// By part, then by the place in `listed`: `TypeId::to_word`.
     ids: Vec<Vec<AtomicU32>>,
 }
 
 impl NumberedTypes {
-    /// The types of `bucket` in order. The lowest gets `first_id`, and each further one the next id.
     fn number_bucket(
         &self,
         runs: &[Run],
@@ -441,7 +397,6 @@ impl NumberedTypes {
         for part in by_bucket {
             listed.extend_from_slice(part.in_group(bucket));
         }
-        // The rows lie all over the runs, and the sort reads each of them many times. Side by side, those of a bucket stay in the cache.
         let mut words: Vec<u32> = Vec::with_capacity(listed.len() * WORDS_IN_MOST_ROWS);
         let mut rows: Vec<(Range<usize>, Listed)> = Vec::with_capacity(listed.len());
         for ty in listed {
@@ -456,15 +411,12 @@ impl NumberedTypes {
         rows.iter().map(|(_, ty)| ty.entry).collect()
     }
 
-    /// `entry` is one of `runs`.
     fn find(&self, runs: &[Run], entry: Entry) -> TypeId {
         let ListedAt { part, place } = self.listed.find(runs, entry);
         TypeId::from_word(self.ids[part][place].load(atomic::Ordering::Relaxed))
     }
 }
 
-/// Each different type of the runs gets an id, from `first_id` on in the order of the rows.
-/// Beside them an entry for each, in that order, in lists that follow each other.
 fn number_types(
     runs: &[Run],
     listed: ListedTypes,
@@ -477,7 +429,6 @@ fn number_types(
         group_by_bucket(runs, &splitters, part, &listed.by_part[part])
     });
 
-    // Where a bucket starts follows from the lengths of those before it.
     let mut next_id = first_id;
     let mut buckets: Vec<(usize, u32)> = Vec::with_capacity(splitters.len() + 1);
     for bucket in 0..=splitters.len() {
@@ -498,14 +449,11 @@ fn number_types(
     (numbered, in_order)
 }
 
-/// The part of a list of one set of tables that holds the numbers of a cut. It starts at the number `first_number`.
 struct Share<'a, T> {
     first_number: u32,
     items: &'a mut [T],
 }
 
-/// A share for each cut. `lists` go by set of tables, then by the number of a type there.
-/// The cuts stand in the order of the tables, and the numbers of a cut are below those of the next cut of the same tables.
 fn share_out<'a, T>(cuts: &[Cut<'_>], lists: &'a mut [Vec<T>]) -> Vec<Share<'a, T>> {
     let mut shares = Vec::with_capacity(cuts.len());
     let mut left = cuts.iter().peekable();
@@ -528,7 +476,6 @@ fn share_out<'a, T>(cuts: &[Cut<'_>], lists: &'a mut [Vec<T>]) -> Vec<Share<'a, 
     shares
 }
 
-/// The types of one height. A set of tables may hold many times as many types as another.
 fn cut_height(by_height: &[TypesByHeight], height: usize) -> Vec<Cut<'_>> {
     let mut cuts = Vec::new();
     for (tables, types) in (0u32..).zip(by_height) {
@@ -538,7 +485,6 @@ fn cut_height(by_height: &[TypesByHeight], height: usize) -> Vec<Cut<'_>> {
     cuts
 }
 
-/// What is read of the types of each set of tables.
 fn list_types_of_tables(tables: &[LinkTables]) -> Vec<&[Type]> {
     tables
         .iter()
@@ -552,7 +498,6 @@ fn sort_lists_by_height(lists: &[&[Type]], in_parallel: InParallel<'_>) -> Vec<T
     })
 }
 
-/// For each set of tables. This asks for no id of the program.
 pub(super) fn sort_types_by_height(
     tables: &[LinkTables],
     in_parallel: InParallel<'_>,
@@ -560,36 +505,24 @@ pub(super) fn sort_types_by_height(
     sort_lists_by_height(&list_types_of_tables(tables), in_parallel)
 }
 
-/// What tells the records that a type names apart while the layouts and the functions of the program have no ids.
-/// Each list goes by set of tables, then by the number of a record there.
 #[derive(Copy, Clone)]
 pub(super) struct NamesOfRecords<'a> {
-    /// The ids of the program.
     pub strings: &'a [Vec<Option<StringId>>],
-    /// `MergedKeys::local_to_merged`, like the next: the id of a record follows from this number alone, and no two of these numbers get one id.
     pub layouts: &'a [Vec<u32>],
     pub functions: &'a [Vec<u32>],
 }
 
 const NO_GROUP: u32 = u32::MAX;
 
-/// Types of one set of tables.
 struct ChosenTypes {
     tables: u32,
-    /// Ascending, not empty, and no more than `TYPES_IN_A_RUN`.
     numbers: Vec<u32>,
 }
 
-/// Which types of height 0 are alike. Most types have that height and stand in many tables, and this asks for no id of a layout or a function.
 pub(super) struct AlikeTypes {
-    /// By set of tables, then by the number of a type there: types of height 0 that are alike are in one group.
-    /// `NO_GROUP`: the type is higher, or well known, or it names a string that the program lacks.
     groups: Vec<Vec<u32>>,
-    /// One type of each group, in the order of the tables.
     chosen: Vec<ChosenTypes>,
-    /// Where the chosen type of each group stands: the set of tables, and its number there. In lists that follow each other.
     places: Vec<Vec<(u32, u32)>>,
-    /// By set of tables, then by the number of a type there: the id of a well-known type, and `None`.
     ids_of_well_known_types: Vec<Vec<Option<TypeId>>>,
 }
 
@@ -606,7 +539,6 @@ fn find_alike_types_in_lists(
 ) -> AlikeTypes {
     debug_assert_eq!(lists.len(), by_height.len());
     let mut steps = StepClock::new(Stage::LinkAndEmit);
-    // A name stands in a row where the id will stand. Types whose rows of names are alike get rows of ids that are alike.
     let all_tables: Vec<usize> = (0..lists.len()).collect();
     let names_as_ids = map_each(all_tables, in_parallel, &|tables: usize| TableIds {
         layouts: write_names_as_ids::<LayoutId>(&names.layouts[tables]),
@@ -629,7 +561,6 @@ fn find_alike_types_in_lists(
     let listed = ListedTypes::new(&runs, hashing, in_parallel);
     steps.end("types that are alike: those that differ");
 
-    // The groups are numbered by part, then as the part lists them.
     let mut first_groups: Vec<u32> = Vec::with_capacity(listed.by_part.len());
     let mut group_count = 0usize;
     for part in &listed.by_part {
@@ -696,11 +627,8 @@ fn find_alike_types_in_lists(
     }
 }
 
-/// Where the types of the program stand.
 pub(super) struct MergedTypes {
-    /// With the well-known ones.
     pub count: usize,
-    /// Behind the well-known ones, in the order of the ids: the set of tables, and the number of the type there. In lists that follow each other.
     places: Vec<Vec<(u32, u32)>>,
 }
 
@@ -723,7 +651,6 @@ fn merge_type_lists(
             .iter()
             .all(|types| types.starts_with(TypeTable::new().types()))
     );
-    // The records are made at the end, each in its place: a list that grew with each height would be copied as a whole each time.
     let mut type_count = TypeTable::WELL_KNOWN_COUNT;
     let mut places_of_types: Vec<Vec<(u32, u32)>> = Vec::new();
     let AlikeTypes {
@@ -733,9 +660,7 @@ fn merge_type_lists(
         ids_of_well_known_types: mut program_ids,
     } = alike;
 
-    // What a type names is lower than the type, so it has its id by now or never gets one.
     for height in 0..height_count {
-        // Of the types of height 0 that are alike, one is put in order.
         let cuts: Vec<Cut<'_>> = match height {
             0 => {
                 let chosen = chosen.iter().map(|chosen| Cut {
@@ -749,7 +674,6 @@ fn merge_type_lists(
         let count: usize = cuts.iter().map(|cut| cut.numbers.len()).sum();
         let hashing = Hashing::new(weaken_hash, count);
         let known_count = type_count;
-        // For the log: where a height goes that has most of the types.
         let mut parts_of_height = StepClock::new(Stage::LinkAndEmit);
         let mut end_part = |part: &str| {
             if count >= 1 << 18 {
@@ -766,7 +690,6 @@ fn merge_type_lists(
             Run::new(run, cut, types, &map_of(cut.tables), hashing)
         });
         end_part("rows");
-        // Types whose names differ have ids that differ: `NamesOfRecords`.
         let listed = match height {
             0 => ListedTypes::of_different_types(&runs, in_parallel),
             _ => ListedTypes::new(&runs, hashing, in_parallel),
@@ -834,7 +757,6 @@ fn merge_type_lists(
     (merged, program_ids)
 }
 
-/// `map_of` leads from the numbers of a set of tables to the ids of the program, those of the types too.
 fn make_records_of_lists<'a>(
     lists: &[&[Type]],
     merged: &MergedTypes,
@@ -842,7 +764,6 @@ fn make_records_of_lists<'a>(
     in_parallel: InParallel<'_>,
 ) -> Vec<Type> {
     let mut steps = StepClock::new(Stage::LinkAndEmit);
-    // The link adds types of its own behind these, and a list that is full is copied as a whole for the first of them.
     let mut program_types: Vec<Type> = Vec::with_capacity(merged.count + merged.count / 8);
     program_types.extend_from_slice(TypeTable::new().types());
     extend_from_each(&mut program_types, &merged.places, in_parallel, &|&(
@@ -858,7 +779,6 @@ fn make_records_of_lists<'a>(
     program_types
 }
 
-/// This asks for no id of a layout or a function, so it runs while those are chosen and numbered.
 pub(super) fn find_alike_types(
     tables: &[LinkTables],
     by_height: &[TypesByHeight],
@@ -869,9 +789,6 @@ pub(super) fn find_alike_types(
     find_alike_types_in_lists(&lists, by_height, names, keep_hash, in_parallel)
 }
 
-/// The types of all tables, each once: the well-known ones at their ids, then by height, then as `push_row` orders them.
-/// Beside it, by set of tables and by the number of a type there, its id. `None`: the type names a record that the program lacks, itself or through another type.
-/// `ids` leads to the strings, the layouts and the functions of the program.
 pub(super) fn merge_types(
     tables: &[LinkTables],
     by_height: &[TypesByHeight],
@@ -883,7 +800,6 @@ pub(super) fn merge_types(
     merge_type_lists(&lists, by_height, alike, ids, keep_hash, in_parallel)
 }
 
-/// The records of the types, as `TypeTable::of_distinct_types` takes them. `ids` leads to the types of the program too.
 pub(super) fn make_type_records(
     tables: &[LinkTables],
     merged: &MergedTypes,
@@ -913,7 +829,6 @@ mod tests {
         Some(TypeId::new(WELL_KNOWN_COUNT + place))
     }
 
-    // Layout `n` of the tables is layout `layouts[n]` of the program.
     fn ids_of_layouts(layouts: &[usize]) -> TableIds {
         TableIds {
             layouts: layouts.iter().map(|&index| Some(layout(index))).collect(),
@@ -921,7 +836,6 @@ mod tests {
         }
     }
 
-    // A record that the program lacks has a key like any other.
     fn name_records<I: Id>(tables: usize, ids: &[Option<I>]) -> Vec<u32> {
         let numbered = (0u32..).zip(ids);
         numbered
@@ -939,7 +853,6 @@ mod tests {
     }
 
     impl Names {
-        /// A record that has an id goes by the number of that.
         fn of_ids(ids: &[TableIds]) -> Names {
             let numbered = || ids.iter().enumerate();
             Names {
@@ -1014,7 +927,6 @@ mod tests {
             Type::function(function(1)),
             Type { builtins: vec![builtin(5)], ..Type::default() },
             Type { builtins: vec![builtin(6)], ..Type::default() },
-            // Contents that end are below contents that go on, and so are parts.
             Type { classes: vec![class_part(0, &[])], ..Type::default() },
             Type { classes: vec![number_list()], ..Type::default() },
             Type { classes: vec![number_list(), class_part(1, &[])], ..Type::default() },
@@ -1033,7 +945,6 @@ mod tests {
             Type::any_function(),
             Type::primitives(Primitives::UNDEFINED),
         ];
-        // Every number of the tables is the id of the program.
         let ids = TableIds {
             strings: (0..2).map(|index| Some(string(index))).collect(),
             types: (0..WELL_KNOWN_COUNT)
@@ -1127,7 +1038,6 @@ mod tests {
         assert_eq!(ids[1][WELL_KNOWN_COUNT..], [id(2), id(3), id(1)]);
     }
 
-    // The keys of the layouts stand in another order than the ids, and one of them gets no id.
     #[test]
     fn types_found_alike_by_the_keys_of_their_layouts_get_one_id() {
         let either = |a: usize, b: usize| Type {
@@ -1221,7 +1131,6 @@ mod tests {
         types
     }
 
-    // Enough types for many buckets.
     #[test]
     fn program_does_not_depend_on_how_the_types_are_spread_over_tables() {
         let ranges = (1..20_000).map(|maximum| Type::integers(0, maximum));
@@ -1261,7 +1170,6 @@ mod tests {
         assert_eq!(program.types()[WELL_KNOWN_COUNT..], expected);
     }
 
-    // A file that names a type of a library has it in its tables, and thousands of files name the same ones.
     #[test]
     fn type_that_many_tables_hold_is_put_in_order_once() {
         let tables: Vec<TypeTable> = (0..64)
@@ -1272,11 +1180,9 @@ mod tests {
         let (program, _) = merge(&tables, &ids, &run_serially);
         let comparisons = COMPARISONS.get() - before;
         assert_eq!(program.len(), WELL_KNOWN_COUNT + 2 * 999);
-        // Two heights of 999 different types.
         assert!(comparisons < 2 * 999 * 32, "{comparisons}");
     }
 
-    // What waits for the ids of the layouts and the functions is as much as the program has types, not as much as its tables have.
     #[test]
     fn behind_the_ids_one_row_is_written_for_the_types_of_height_0_that_are_alike() {
         let tables: Vec<TypeTable> = (0..64)
@@ -1292,7 +1198,6 @@ mod tests {
         let (merged, _) =
             merge_type_lists(&lists, &by_height, alike, &ids, keep_hash, &run_serially);
         assert_eq!(merged.count, WELL_KNOWN_COUNT + 2 * 999);
-        // The ranges, and the lists of ranges, which name a type.
         assert_eq!(ROWS.get() - before, 999 + 64 * 999);
     }
 
@@ -1328,7 +1233,6 @@ mod tests {
     #[test]
     fn types_that_share_a_hash_stay_apart() {
         assert_ranges_and_their_lists_are_merged(300, |_| 7);
-        // Several parts, and in each of them many types for each hash.
         assert_ranges_and_their_lists_are_merged(6_000, |hash| hash >> 58 << 58);
     }
 

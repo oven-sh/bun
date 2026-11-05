@@ -21,7 +21,6 @@ impl Mapped {
         }
     }
 
-    // A type that says nothing has nothing to check.
     pub fn expected(ty: TypeId) -> Mapped {
         Mapped {
             ty,
@@ -77,7 +76,6 @@ impl DeclaredType {
         DeclaredType::new(Mapped::UNKNOWN, None, PositionFlags::default())
     }
 
-    /// In a definition of a plain layout that says which names a type has and not what they hold.
     pub fn unsaid() -> DeclaredType {
         DeclaredType {
             ty: TypeTable::NEVER,
@@ -94,7 +92,6 @@ impl DeclaredType {
         DeclaredType::new(Mapped::checked(ty), None, PositionFlags::IS_FROM_COMPILER)
     }
 
-    // The front end says so of a value in code that it lays down itself or that the library has written: nothing tests it.
     pub fn claimed(ty: TypeId) -> DeclaredType {
         let flags = PositionFlags::IS_FROM_COMPILER | PositionFlags::IS_CLAIM;
         DeclaredType::new(Mapped::checked(ty), None, flags)

@@ -28,7 +28,6 @@ impl FileLowering<'_, '_, '_, '_> {
         )
     }
 
-    // The types are asked in the order in which a literal finds its layout: the type it is written under, then its own.
     fn find_dictionary(&mut self, literal: ExprId) -> Option<Dictionary> {
         if let ExprKind::Object(properties) = self.hir[literal].kind
             && properties.iter().next().is_none()
@@ -47,7 +46,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.is_dictionary_type(ty).then_some(Dictionary { ty })
     }
 
-    // The call alone has a literal that is written as its operand.
     fn is_operand_of_builtin(
         &self,
         literal: ExprId,
@@ -74,7 +72,6 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
-    // `Object.defineProperties(target, { .. })`, `Object.create(base, { .. })`: the built-in takes the literal as a map, name by name.
     fn is_map_of_descriptors(&self, literal: ExprId) -> bool {
         self.is_operand_of_builtin(literal, 1, |builtin| {
             matches!(
@@ -84,7 +81,6 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // `Object.defineProperty(object, key, { .. })`: what the literal says becomes part of the definition, also where it says constants alone.
     fn is_written_descriptor(&self, literal: ExprId) -> bool {
         self.is_operand_of_builtin(literal, 2, |builtin| {
             matches!(
@@ -94,7 +90,6 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // `{ ...source, a }` where no type says which names the object will have.
     pub(in crate::lower) fn has_names_known_only_at_run_time(&mut self, source: ExprId) -> bool {
         let names_are_unknown = self
             .queries
@@ -109,7 +104,6 @@ impl FileLowering<'_, '_, '_, '_> {
         if names_are_unknown {
             return true;
         }
-        // `{ ...counts, [name]: n }`: the names of a dictionary are known only when it runs, and a copy takes them all at once.
         matches!(self.queries.expression_type(source), Ok(ty) if self.is_dictionary_type(ty))
     }
 
@@ -127,7 +121,6 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.has_names_known_only_at_run_time(first.value) {
             return true;
         }
-        // `{ ...defaults, ...options }`: an object of its own kind, which holds the names of every source.
         if properties.len() > 1
             && properties
                 .iter()
@@ -156,7 +149,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.object_type_layout(written).is_none()
     }
 
-    // `Point.prototype = { .. }`: the run time watches the members of a class on an ordinary object alone.
     fn is_stored_as_prototype_object(&self, literal: ExprId) -> bool {
         let hir = self.hir;
         if !matches!(hir[literal].kind, ExprKind::Object(_)) {
@@ -188,7 +180,6 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
-    // `const point = { .. }; Point.prototype = point;`: the same object, under a name that holds nothing else.
     fn find_literals_named_as_prototype_objects(&self) -> FxHashSet<ExprId> {
         let (hir, bound) = (self.hir, self.bound);
         let mut names: FxHashSet<Binding> = FxHashSet::default();
@@ -221,8 +212,6 @@ impl FileLowering<'_, '_, '_, '_> {
             .collect()
     }
 
-    /// Whether code builds a literal of constants, and no data record: it holds a dictionary, or literals lie in one another more
-    /// deeply than data may. Of those, code builds the outer ones, and the rest is a record.
     pub(crate) fn is_built_by_code(&mut self, root: ExprId) -> bool {
         debug_assert!(
             self.decisions().is_data_literal(root),
@@ -265,7 +254,6 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
-    // Each literal inside one that code builds is asked in its turn. A dictionary counts as more levels than data may have.
     fn count_levels_of_literals_inside(&mut self, root: ExprId) {
         let hir = self.hir;
         let mut found: Vec<(ExprId, usize, u64)> = vec![(hir.skip_type_assertions(root), 0, 1)];
@@ -324,7 +312,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // Which pattern a key matches depends on its text, so beside a pattern nothing is said about a key that has only a kind.
     fn find_types_under_key_kind(
         &mut self,
         dictionary: CheckerTypeId,
@@ -344,7 +331,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-// `{ [key]: value }` and nothing else.
 fn has_only_computed_values(hir: &File<'_>, literal: ExprId) -> bool {
     let ExprKind::Object(properties) = hir[literal].kind else {
         return false;
@@ -374,7 +360,6 @@ fn has_only_named_values(hir: &File<'_>, literal: ExprId, allows_methods: bool) 
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // A member of the literal is converted like the value of `dictionary[key] = value`: where the build owes the proof of an `int32`.
     fn convert_dictionary_member(
         &mut self,
         dictionary: Option<Dictionary>,
@@ -454,7 +439,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // A property of a literal that somebody else writes out, laid as the literal lays it.
     pub(in crate::lower) fn lower_property_of_written_literal(
         &mut self,
         object: &mut ObjectBuilder,
@@ -561,7 +545,6 @@ fn find_signature(signatures: &[IndexSignature], key: IndexKey) -> Option<IndexS
         .find(|signature| signature.key == key)
 }
 
-// `{ __proto__: null }` and nothing else.
 fn is_empty_without_prototype(hir: &File<'_>, literal: ExprId) -> bool {
     let ExprKind::Object(props) = hir[literal].kind else {
         return false;
@@ -586,7 +569,6 @@ pub(crate) fn lower_object_literal(
     let ExprKind::Object(props) = hir[literal].kind else {
         unreachable!("lower_object_literal takes an Object expression");
     };
-    // What Object.create(null) makes: the object is born without a prototype and nothing takes one away from it.
     if is_empty_without_prototype(hir, literal) {
         lowering.set_position(hir[literal].pos);
         let null = lowering.builder.null();
@@ -606,7 +588,6 @@ pub(crate) fn lower_object_literal(
     };
     let mut rest = props.iter();
     let mut object = match dictionary {
-        // `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name, and the names that the object has are written.
         Some(_)
             if has_only_named_values(hir, literal, true)
                 && !lowering.file.is_map_of_descriptors(literal) =>
@@ -618,7 +599,6 @@ pub(crate) fn lower_object_literal(
             lowering.open_head(&mut object);
             object
         }
-        // `{ [symbol]: value }`: few objects hold many symbols.
         Some(found)
             if lowering.file.is_keyed_by_symbols_alone(found.ty)
                 || has_only_computed_values(hir, literal) =>

@@ -52,7 +52,6 @@ impl FileLowering<'_, '_, '_, '_> {
             BindingRef::Symbol(symbol) => symbol,
             BindingRef::Slot(scope, slot) => return self.slot_position(scope, slot),
         };
-        // A name that stands for a module holds `true`, whatever type is written behind it.
         if self.inputs.modules.holder(self.file, symbol).is_some() {
             return DeclaredType::untyped();
         }
@@ -119,13 +118,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// What the source calls the binding, or its short name where identifiers are minified. A heap snapshot shows what it holds under that name.
     pub(in crate::lower) fn written_name(&mut self, binding: BindingRef) -> Option<StringId> {
         match binding {
             BindingRef::Symbol(symbol) => {
                 let name = self.bound.symbol(symbol).name;
                 (name != Atom::NONE).then(|| {
-                    // One of a few names, as in a message: a name of its own for each variable is a string more for each.
                     self.short_binding_name(Binding::Symbol(symbol))
                         .unwrap_or_else(|| self.intern_atom(name))
                 })
@@ -180,7 +177,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(DeclaredType::new(exports, None, PositionFlags::default()))
     }
 
-    // `ToThis` gives an object, so of the type of the entry value only the object part holds.
     fn converted_this_position(&mut self, entry: DeclaredType) -> DeclaredType {
         let types = &mut self.fragment.types;
         let objects = types.without_primitives(entry.ty, Primitives::ALL);
@@ -194,7 +190,6 @@ impl FileLowering<'_, '_, '_, '_> {
         DeclaredType::new(mapped, entry.site, PositionFlags::default())
     }
 
-    // Every store is checked against a checked type, so that type stays as it is.
     fn expect_builtin_path(
         &mut self,
         position: DeclaredType,

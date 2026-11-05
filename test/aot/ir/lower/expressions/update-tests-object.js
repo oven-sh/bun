@@ -13,9 +13,17 @@
 // CHECK-LABEL: function {{*}}name="logical"
 // CHECK: = RequireObjectCoercible [[a]] nullishAccess=Update
 // CHECK: = ElemGet [[a]],
-// A key that is a number or a text once `bun run` has printed the file has no such test.
+// A key that is a number or a text once the build has printed the file has no such test.
 // CHECK-LABEL: function {{*}}name="numberOrText"
 // CHECK-NOT: RequireObjectCoercible
+// A bundle that does not minify syntax prints a constant and a template as they are written, and JSC's parser finds neither a number nor a text there.
+// CHECK-LABEL: function {{*}}name="printedAsWritten"
+// CHECK: = RequireObjectCoercible [[a]] nullishAccess=Update
+// CHECK-NEXT: = PropGet [[a]] key="p"
+// CHECK: = RequireObjectCoercible [[a]] nullishAccess=Update
+// CHECK-NEXT: = PropGet [[a]] key="p1"
+// CHECK: = RequireObjectCoercible [[a]] nullishAccess=Update
+// CHECK-NEXT: = PropGet [[a]] key="pqr"
 // CHECK-LABEL: function {{*}}name="symbol"
 // CHECK: = RequireObjectCoercible [[a]] nullishAccess=Update
 // CHECK-NEXT: = PropGet [[a]] key=@@iterator
@@ -42,12 +50,16 @@ export function logical(a) {
 }
 
 export function numberOrText(a) {
+  a["p"]++;
+  a[2] += 1;
+  a[1 + 2] ??= 1;
+}
+
+export function printedAsWritten(a) {
   const k = "p";
   a[k]++;
-  a[2] += 1;
   a[`p${1}`] ??= 1;
   a[`p${`q${"r"}`}`] += 1;
-  --a[Infinity];
 }
 
 export function symbol(a) {

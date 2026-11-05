@@ -124,6 +124,9 @@ const OPENS_NOTHING: &[&str] = &[
     with_runner!("jest.fn().mockReturnValue(1);"),
     "typeof Bun.jest(import.meta.path, true).suite === 'function';",
     "var kept = Bun.jest(import.meta.path, true, true) | 0; (kept ??= Bun.jest(import.meta.path, true, true) | 0) & 8;",
+    "const runner = Bun.jest(import.meta.path); runner.test('t', () => {});",
+    "const { test, describe } = Bun.jest(import.meta.path); describe('d', () => { test('t', () => {}); });",
+    "const runner = Bun.jest(import.meta.path); const { test } = runner; const again = runner; again.describe('d', () => { test('t', () => {}); });",
 ];
 
 const UNKNOWN_KEY: &[(&str, BuiltinId)] = &[
@@ -250,9 +253,13 @@ const RUNNER_OUT_OF_SIGHT: &[&str] = &[
     "use(Bun.jest(import.meta.path));",
     "var kept; kept ??= Bun.jest(import.meta.path, true, true);",
     "const kept = [Bun.jest(import.meta.path, true, true)];",
+    "const runner = Bun.jest(import.meta.path); use(runner);",
+    "const runner = Bun.jest(import.meta.path); runner[key]();",
+    "const { test, ...others } = Bun.jest(import.meta.path);",
+    "export const runner = Bun.jest(import.meta.path);",
+    "function runner() { return Bun.jest(import.meta.path); } runner().test('t', () => {});",
 ];
 
-// replaced_members lists a place and the canonical id of the object it holds.
 fn with_canonical_ids(places: &[BuiltinId]) -> Vec<BuiltinId> {
     let objects = places.iter().map(|&place| table::canonical_id(place));
     let mut members: Vec<BuiltinId> = places.iter().copied().chain(objects).collect();
@@ -314,7 +321,6 @@ fn unknown_key_opens_the_holder() {
 
 #[test]
 fn key_that_hangs_on_itself_is_what_is_spelled_for_it() {
-    // The name goes round as it is, and through more functions than anybody counts.
     for source in [
         "function put(name, left) { if (left) return put(name, left - 1); Object.defineProperty(Math, name, {}); } put('max', 6);",
         "function one(name, left) { if (left) return two(name, left - 1); Object.defineProperty(Math, name, {}); } function two(name, left) { one(name, left); } one('max', 6);",
@@ -322,7 +328,6 @@ fn key_that_hangs_on_itself_is_what_is_spelled_for_it() {
     ] {
         assert_replaces_only(TEST_RUN, source, &[BuiltinId::MathMax]);
     }
-    // `make` returns an object under its parameter, and one call passes a key of what another call has made. What a function returns may have got more keys.
     for source in [
         "function make(key) { return { [key]: 1 }; } for (const name of Object.keys(make('max'))) Object.assign(Math, make(name));",
         "function make(key) { return { [key]: 1 }; } for (const [name] of Object.entries(make('max'))) Object.assign(Math, make(name));",

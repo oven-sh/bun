@@ -7,6 +7,8 @@ pub(crate) mod data_modules;
 pub(crate) mod disk_delegation;
 pub(crate) mod externals;
 pub(crate) mod fold_inputs;
+#[cfg(test)]
+mod format_grid;
 pub(crate) mod globals_of_a_window;
 pub(crate) mod hoisted_mocks;
 pub(crate) mod host;

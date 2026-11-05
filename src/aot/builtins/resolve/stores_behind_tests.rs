@@ -1,6 +1,3 @@
-//! A package brings a member of a built-in object for engines that lack it, behind a test for that member: `if (!Array.prototype.at) Array.prototype.at = f`.
-//! The member is there, and no function or symbol is falsy, so the store runs only behind another write: as `Array.prototype.at ||= f`.
-
 use super::resolver::Resolver;
 use super::written_members::holder_of;
 use crate::builtins::table::{self, BuiltinId, MemberLookup};
@@ -16,7 +13,6 @@ enum Node {
 }
 
 impl Resolver<'_, '_> {
-    /// A canonical id.
     fn find_member_under(&self, holder: ExprId, name: Atom) -> Option<BuiltinId> {
         let holder = holder_of(self.value_of(holder)?.path.id);
         match table::member(holder, self.input.names.get(name)?) {
@@ -25,7 +21,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// Nothing but the member: read off its holder or off `(_c = Symbol)`, `(_a = Symbol.dispose)`, or `filled`.
     fn reads_member(&self, value: ExprId, member: BuiltinId, filled: Option<SymbolId>) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut value = hir.skip_type_assertions(value);
@@ -56,7 +51,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// `_a` in `(_a = Symbol.dispose) !== null`: what stands to the right of that in the same test reads the member out of it.
     fn find_variable_filled_with_member(
         &self,
         test: ExprId,
@@ -86,7 +80,6 @@ impl Resolver<'_, '_> {
         })
     }
 
-    /// `typeof Symbol.dispose` beside `"undefined"`, `Symbol.dispose` beside `null`, `undefined` or `void 0`.
     fn is_member_beside_what_says_missing(
         &self,
         value: ExprId,
@@ -112,7 +105,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// What a test answers where `member` is there and is not falsy. `filled`: a variable that holds it.
     fn find_answer_where_member_is_there(
         &self,
         test: ExprId,
@@ -179,9 +171,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// `Symbol.dispose || (Symbol.dispose = f)`, `if (typeof Symbol.dispose === "undefined") Symbol.dispose = f`, and `Symbol.dispose ??= f` as a compiler
-    /// writes it for an older engine: `(_a = (_c = Symbol).dispose) !== null && _a !== void 0 ? _a : (_c.dispose = f)`.
-    /// `member`: a canonical id. The answer holds for a member that is there and is not falsy.
     pub(super) fn is_behind_test_that_finds_member_missing(
         &self,
         write: ExprId,
@@ -194,7 +183,6 @@ impl Resolver<'_, '_> {
                 Node::Expr(expr) => bound.parent_of_expr(expr),
                 Node::Stmt(stmt) => bound.parent_of_stmt(stmt),
             };
-            // The test around the node, and the answer with which the node is passed over.
             let passed_over_by = match (parent, node) {
                 (Parent::Expr(parent), Node::Expr(child)) => match hir[parent].kind {
                     ExprKind::Cond { test, branches } if child == hir.branches(branches).yes => {

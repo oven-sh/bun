@@ -43,7 +43,6 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_asserted_layout(&mut self, expression: ExprId) -> Option<LayoutId> {
         let ty = match self.hir[expression].kind {
             ExprKind::As { .. } => self.queries.expression_type(expression).ok()?,
-            // The whole has the type of its operand. What is written is what the operand is written under.
             ExprKind::Satisfies { expr: operand, .. } => {
                 self.queries.contextual_type(operand).ok()??
             }
@@ -52,7 +51,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.object_type_layout(ty)
     }
 
-    // `Object.assign({ ...defaults }, given) as unknown as Options` makes an `Options`: the literal is where the object is born, and the first declared type on its way out says where its members lie.
     pub(super) fn find_target_layout(&mut self, literal: ExprId) -> Option<LayoutId> {
         let mut outer = self.find_passage(literal)?;
         loop {

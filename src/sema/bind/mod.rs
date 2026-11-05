@@ -26,6 +26,7 @@ pub use static_referent::{
 };
 
 use crate::atom::{Atom, known};
+use crate::fold::{DefineRoot, PathInPlace};
 use crate::hir::*;
 use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena};
 use crate::util::{FxBuild, FxHashMap, SharedSort};
@@ -3231,7 +3232,7 @@ pub fn bind<'s>(
 pub fn bind_below_defines<'s>(
     file: &File,
     options: BindOptions,
-    names_in_place: &[(Atom, Atom)],
+    names_in_place: &[PathInPlace<'_>],
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {

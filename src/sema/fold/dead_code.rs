@@ -54,7 +54,6 @@ impl<'s> Folder<'_, 's> {
         roots
     }
 
-    // `/** @import {Promise<Array<string>>} p */`: the parser reads a JSX element there. A comment is no code.
     fn push_expressions_in_comments(&self, roots: &mut DeadRoots) {
         if self.hir.jsdoc_comments.is_empty() {
             return;

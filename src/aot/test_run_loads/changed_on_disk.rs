@@ -1,5 +1,3 @@
-//! The files of a test run that the run itself writes, moves or removes, and the files that it loads once more under a query.
-
 use bun_core::strings::{contains_char, index_of_char_usize, last_index_of_char};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
@@ -27,9 +25,6 @@ fn node_of_site(hir: &File<'_>, site: &ImportSite) -> NodeData {
     }
 }
 
-/// `import("./a.ts?again")` in code that runs: the offset of the first. `LoadHost::resolve_code` leaves such a name to the loader of a test run, which reads the file
-/// once more. Nobody has read the copy, so it may import any name of any file.
-/// `import(`./a.ts?fresh=${n}`)`: the path is spelled whatever the query turns out to be, so the copy is a copy of that file: `FilesNamedWithQueries::spelled`.
 pub(super) fn names_file_with_query(request: &FinishedFile<'_, '_>) -> FilesNamedWithQueries {
     let &FinishedFile {
         hir,
@@ -40,7 +35,6 @@ pub(super) fn names_file_with_query(request: &FinishedFile<'_, '_>) -> FilesName
     let has_query = |text: Atom| contains_char(atoms.bytes(text), b'?');
     let mut found = FilesNamedWithQueries::default();
     for site in analysis.import_sites.iter() {
-        // A file that is folded again may keep the sites of the folding before.
         if (site.kind.call()).is_some_and(|call| analysis.decisions.is_dead_expr(call)) {
             continue;
         }
@@ -63,13 +57,10 @@ pub(super) fn names_file_with_query(request: &FinishedFile<'_, '_>) -> FilesName
 
 #[derive(Default)]
 pub(crate) struct FilesNamedWithQueries {
-    /// A text that holds the whole path and the `?` behind it, with the offset of the place.
     pub spelled: Vec<(Atom, u32)>,
-    /// The offset of the first place whose path nobody can read.
     pub unspelled_at: Option<u32>,
 }
 
-/// As the resolver goes from a name in a TypeScript project to a file. Only a file that the build has read counts: its text says what the copy imports.
 pub(super) fn find_file_in_front_of_query(
     files: &Files<'_>,
     importer: FileId,
@@ -107,7 +98,6 @@ pub(super) fn find_file_in_front_of_query(
     })
 }
 
-/// Paths that a test run writes, moves or removes and that a file spells in part: each begins with `start` and ends with `end`.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct ChangedPaths {
     start: Vec<u8>,
@@ -120,7 +110,6 @@ fn end_with_slash(path: &mut Vec<u8>) {
     }
 }
 
-/// `start` goes on behind its end, so what stands behind its last slash is kept as it is.
 pub(super) fn write_whole_start(folder: &[u8], start: &[u8]) -> Vec<u8> {
     let (head, name) = match last_index_of_char(start, b'/') {
         Some(slash) => (&start[..slash.max(1)], &start[slash + 1..]),
@@ -132,7 +121,6 @@ pub(super) fn write_whole_start(folder: &[u8], start: &[u8]) -> Vec<u8> {
     whole
 }
 
-/// The compiled files at `whole` paths, and those whose names begin and end as one of `in_part` says.
 fn find_files_at(
     files: &Files<'_>,
     whole: &[Vec<u8>],
@@ -151,7 +139,6 @@ fn find_files_at(
         .collect();
     names.shared_sort_unstable();
     let mut found: Vec<FileId> = Vec::new();
-    // What an import attribute makes of a file has the name of the file, and `by_path` holds one file a path.
     for &file in &at_paths {
         let path = files.module(file).file_name();
         let first = names.partition_point(|&(name, _)| name < path);
@@ -169,7 +156,6 @@ fn find_files_at(
     found
 }
 
-/// What the files of a run spell to calls that write, move or remove what is there.
 #[derive(Default)]
 pub(super) struct ChangedOnDisk {
     whole_paths: Vec<Vec<u8>>,
@@ -177,9 +163,6 @@ pub(super) struct ChangedOnDisk {
 }
 
 impl ChangedOnDisk {
-    /// `bun test` reads a file when something first loads it, so it runs what the tests have written there by then.
-    /// A path of which the file spells nothing counts for nothing: a test writes where it likes, mostly into a folder of its own.
-    /// `working_directory`: in the format of the checker.
     pub(super) fn look_at_changed_paths(
         &mut self,
         files: &Files<'_>,
@@ -189,7 +172,6 @@ impl ChangedOnDisk {
         let analysis = files.analysis(file);
         let text_of = |atom: Atom| files.atoms.bytes(atom);
         for changed in analysis.paths_of_changed_files {
-            // A file that is folded again may keep the paths of the folding before.
             if analysis.decisions.is_dead_expr(changed.operand) {
                 continue;
             }
@@ -202,7 +184,6 @@ impl ChangedOnDisk {
             for alternative in analysis.alternatives_of(&changed.path) {
                 match *alternative {
                     ImportSpecifier::Constant(path) => {
-                        // Nothing lies at the empty path: `createWriteStream("", { fd })`. Joined to a folder it would be the folder.
                         if text_of(path).is_empty() {
                             continue;
                         }
@@ -229,7 +210,6 @@ impl ChangedOnDisk {
         }
     }
 
-    /// The compiled files there. Ascending, each once.
     pub(super) fn find_files(mut self, files: &Files<'_>) -> Vec<FileId> {
         let mut found = find_files_at(files, &self.whole_paths, &mut self.paths_in_part);
         found.shared_sort_unstable();

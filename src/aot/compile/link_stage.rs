@@ -98,7 +98,6 @@ impl Build<'_> {
         let views = loaded.projects.as_ref().map(|_, project| project.view());
         let runs_tests = self.options.aot.runs_tests;
         let hands_code_over_beside_program = self.hands_code_over_beside_program;
-        // Neither the texts nor the functions ask anything of the program, and one thread adds to it what follows.
         let (texts, (functions, added)) = run_steps_beside(
             &beside,
             &mut steps,
@@ -129,13 +128,11 @@ impl Build<'_> {
                         let application = loaded.project(ProjectId::Application);
                         let left_out = &bound.projects.application.left_out.files;
                         let entry_points = collect_entry_point_paths(application, left_out);
-                        // Nothing loads the one entry point of a build by a name.
                         let folders = match entry_points.len() {
                             0 | 1 => Vec::new(),
                             _ => collect_folder_paths(application, left_out),
                         };
                         steps.end("link stage: paths of entry points and folders");
-                        // The schema has the list sorted by member. A member that it lacks is a constant for the engine.
                         let replaced = &loaded.contents.replaced_builtins;
                         debug_assert!(replaced.is_sorted_by(|left, right| left < right));
                         program.replaceable_builtins = (replaced.iter())
@@ -145,7 +142,6 @@ impl Build<'_> {
                                 stays_locked: false,
                             })
                             .collect();
-                        // No file is folded with whether it is the main module, so the run time may take another path for `Bun.main`.
                         let main = table::find_name(b"main");
                         let holds_path =
                             main.and_then(|main| table::own_member(BuiltinId::Bun, main));
@@ -166,7 +162,6 @@ impl Build<'_> {
                                 );
                             }
                         }
-                        // A test run leaves the lock of most members to what the engine's flow finds. What the build has folded by stays locked whatever it finds. An executable locks it anyway.
                         let fixed = loaded.contents.fixed_builtins.list();
                         for member in fixed.into_iter().filter(|_| runs_tests) {
                             let listed = &mut program.replaceable_builtins;
@@ -183,7 +178,6 @@ impl Build<'_> {
                                 );
                             }
                         }
-                        // The front end asks nothing of these names, so what the files spell goes straight to the engine.
                         let atoms = &application.loaded.files().atoms;
                         for &(holder, name) in &loaded.contents.names_added_to_builtins {
                             let name = program.strings.intern(atoms.bytes(name));
@@ -195,13 +189,9 @@ impl Build<'_> {
                                 program.opened_names.push(OpenedName { holder, name });
                             }
                         }
-                        // A test may write a file of the program anew before anything has loaded it, and `bun test` reads what is there by then.
                         if self.options.aot.runs_in_place {
-                            // The system is asked about each file: thousands of calls, which wait for nothing but one another.
                             const ASKED_TOGETHER: usize = 256;
                             let records = program.modules.iter().enumerate();
-                            // In a test run every file of the program: one that changes although the build saw nothing that writes it fails its load, where it would run as it was compiled.
-                            // An executable that is built in place runs later, also where its project no longer lies: it asks about what may leave `require.cache`, as ever, and no other file.
                             let of_program: Vec<(usize, StringId)> = records
                                 .filter(|(_, module)| {
                                     !module.flags.contains(ModuleFlags::IS_LIBRARY)
@@ -217,7 +207,6 @@ impl Build<'_> {
                                 map_each(lots, &in_parallel, &|lot: &[(usize, StringId)]| {
                                     let stamps = lot.iter().filter_map(|&(index, path)| {
                                         let path = strings.get(path);
-                                        // A name with a NUL in it is the path of no file: the system would read it up to there.
                                         let stat_at =
                                             |path: &[u8]| match bun_core::strings::contains_char(
                                                 path, 0,
@@ -228,7 +217,6 @@ impl Build<'_> {
                                                         .ok()
                                                 }
                                             };
-                                        // What an import attribute makes of a file is written when the file is. The host asks the same two: `Bun__AOT__stampOfFile`.
                                         let is_data =
                                             module_records[index].kind == ModuleKind::Data;
                                         let file_of_form =
@@ -273,7 +261,6 @@ impl Build<'_> {
             entry_points,
             folders,
         };
-        // Freed beside the engine's run.
         let sources = loaded.projects.map(|_, project| project.sources);
         self.leftovers.push(Box::new(sources));
         self.leftovers.push(Box::new(bound));

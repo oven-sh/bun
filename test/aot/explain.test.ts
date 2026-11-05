@@ -46,8 +46,6 @@ interface Cause extends Place, Wording {
   dependencyAccesses: number;
   calls: number;
   operators: number;
-  fixedByThisAlone: number;
-  otherOrigins: Place[];
   inLoops: number;
   function: string;
   types: string[];
@@ -66,11 +64,10 @@ interface Report {
 const env = { ...bunEnv, NO_COLOR: "1" };
 const buildTimeout = 300_000;
 const maxShownCauses = 20;
-const maxShownOtherOrigins = 3;
 const textAndJSON = ["--explain", "--explain=json"];
 const membersOfCause =
   "rank reason file line column inDependency source message fix url accesses dependencyAccesses calls operators " +
-  "fixedByThisAlone otherOrigins inLoops function types family why";
+  "inLoops function types family why";
 
 const pagePath = join(import.meta.dir, "..", "..", "docs", "compiler", "explain.mdx");
 const page = readFileSync(pagePath, "utf8").replaceAll("\r\n", "\n");
@@ -232,9 +229,6 @@ function linesDecidedBy(causes: Cause[]) {
         ...(cause.inLoops > 0
           ? [`note: ${counted(cause.inLoops, "of these runs in a loop", "of these run in a loop")}`]
           : []),
-        ...cause.otherOrigins
-          .slice(0, maxShownOtherOrigins)
-          .flatMap(origin => ["note: fix this too: the same operations also start here", at(origin)]),
         ...(cause.why ? [`note: why (${cause.why.reason}): ${cause.why.message}`] : []),
         `note: fix: ${cause.fix}`,
         `note: ${cause.url}`,
@@ -251,7 +245,7 @@ function expectCountsToAgree({ lines, numbers, causes }: Report) {
   for (const cause of causes) {
     const operations = cause.accesses + cause.dependencyAccesses + cause.calls + cause.operators;
     expect(operations).toBeGreaterThan(0);
-    expect(Math.max(cause.fixedByThisAlone, cause.inLoops)).toBeLessThanOrEqual(operations);
+    expect(cause.inLoops).toBeLessThanOrEqual(operations);
     if (cause.accesses > 0) expect(cause.inDependency).toBe(false);
     for (const { reason, url } of cause.why ? [cause, cause.why] : [cause]) {
       expect(url).toBe(`https://bun.com/docs/compiler/explain#${reason}`);

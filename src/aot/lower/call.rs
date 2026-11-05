@@ -31,7 +31,6 @@ pub(crate) enum Arguments {
     List(ValueId),
 }
 
-// A marked call goes where `bun build` lets it go, and `Removable` decides that.
 const IS_ANNOTATED_PURE: bool = false;
 
 #[derive(Copy, Clone, Debug)]
@@ -146,7 +145,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_call_expression(call, callee, arguments, evaluation.tail)
     }
 
-    // As `emit_call_expression`, but for the callee: nobody reads it.
     fn lower_call_of_declaration(
         &mut self,
         call: ExprId,
@@ -185,7 +183,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // The host reads two operands. The table can say what is written only of an operand.
     fn hand_global_object_to_stub(&mut self, arguments: Arguments) -> Arguments {
         let mut values: SmallVec<[ValueId; 4]> = match arguments {
             Arguments::Values(values) => values,
@@ -221,7 +218,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value
     }
 
-    // The engine reads the file that a Worker starts from off a text or a URL object.
     fn lower_arguments_of_construction(&mut self, site: Call) -> Arguments {
         let file = &*self.file;
         let arguments: SmallVec<[ExprId; 4]> = file.hir.ids(site.args).collect();
@@ -462,7 +458,6 @@ pub(in crate::lower) fn emit_call_of(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // A call of `Symbol` itself says which of the calls of its file it is: the key of the symbols that it makes holds the number.
     fn find_number_of_symbol_call(&self, call: ExprId) -> Option<u32> {
         let ExprKind::Call(number) = self.hir[call].kind else {
             return None;
@@ -472,8 +467,6 @@ impl FileLowering<'_, '_, '_, '_> {
         calls_symbol.then_some(u32::from(number))
     }
 
-    // The engine knows the one symbol of a call that runs once by its key, and finds the key only if the program holds it. A type names the symbol of `const k = Symbol("k")` alone:
-    // `{ k: Symbol("k") }` and `exports.k = Symbol("k")` make symbols that no type tells apart.
     fn number_symbol_call(&mut self, call: ExprId) -> Option<u32> {
         let number = self.find_number_of_symbol_call(call)?;
         let description = match self.hir.ids(call_site(self, call).args).next() {

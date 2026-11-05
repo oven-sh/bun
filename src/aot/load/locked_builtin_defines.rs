@@ -56,8 +56,6 @@ impl LockedPathWalk<'_, '_> {
     }
 }
 
-/// Every path of names from the global scope on which each step is always locked and which ends at a function, an object or a well-known symbol.
-/// A test run unlocks what its files replace, which is known only when the last of them is loaded: its application is folded without this list.
 pub(crate) fn locked_builtin_defines<'s>(
     platform: Platforms,
     arena: &'s Arena,
@@ -85,11 +83,7 @@ enum KnownValue {
     Text(&'static str),
 }
 
-/// The paths that programs test to find out which runtime they are on.
-/// `Bun` is read-only and cannot be deleted (ZigGlobalObject.lut.txt), so no program replaces it.
-/// The table locks `process` and the name after it, and BunProcess.cpp makes the name after that read-only in an executable.
-const RUNTIME_IDENTITY: [(&[&str], KnownValue); 7] = [
-    (&["Bun"], KnownValue::Object),
+const RUNTIME_IDENTITY: [(&[&str], KnownValue); 6] = [
     (&["process", "isBun"], KnownValue::True),
     (&["process", "versions"], KnownValue::Object),
     (
@@ -104,8 +98,6 @@ const RUNTIME_IDENTITY: [(&[&str], KnownValue); 7] = [
     (&["process", "release", "name"], KnownValue::Text("node")),
 ];
 
-/// A test replaces `process.versions`, `process.release` and `process.isBun`, or a member of the first two, to pose as another runtime, as under plain
-/// `bun test`: the application of a test run is folded without this list too.
 pub(crate) fn runtime_identity_defines<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
@@ -180,6 +172,8 @@ mod tests {
             (&["globalThis", "Reflect", "ownKeys"], Function),
             (&["process"], Object),
             (&["globalThis", "process"], Object),
+            (&["Bun"], Object),
+            (&["globalThis", "Bun"], Object),
         ];
         for &(path, kind) in rows {
             assert_eq!(kind_at(path), Some(kind), "{path:?}");
@@ -205,14 +199,13 @@ mod tests {
             })
             .collect();
         assert_eq!(paths.len(), 2 * RUNTIME_IDENTITY.len());
-        assert_eq!(paths[..2], [vec![&b"Bun"[..]], vec![b"globalThis", b"Bun"]]);
-        assert_eq!(paths[2], [&b"process"[..], b"isBun"]);
-        assert_eq!(paths[3], [&b"globalThis"[..], b"process", b"isBun"]);
+        assert_eq!(paths[0], [&b"process"[..], b"isBun"]);
+        assert_eq!(paths[1], [&b"globalThis"[..], b"process", b"isBun"]);
     }
 
     #[test]
     fn table_locks_runtime_identity_on_process() {
-        for (names, _) in &RUNTIME_IDENTITY[1..] {
+        for (names, _) in &RUNTIME_IDENTITY {
             assert_eq!(names[0], "process");
             let name = table::find_name(names[1].as_bytes()).unwrap();
             let location = table::own_member(BuiltinId::Process, name).unwrap();
@@ -234,7 +227,6 @@ mod tests {
             &["console"],
             &["process", "platform"],
             &["process", "isBun"],
-            &["Bun"],
             &["Bun", "serve"],
             &["navigator"],
             &["Map", "prototype", "size"],

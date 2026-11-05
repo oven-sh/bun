@@ -31,7 +31,6 @@ impl Diagnostics {
         for record in result
             .user_diagnostics()
             .iter()
-            // A suite has many such loads, and most find a file that was compiled. The test whose load is refused fails with an error that says so.
             .filter(|record| !(runs_tests && is_about_load_by_unknown_name(record)))
         {
             self.add_user_diagnostic(record, result.text(record.message), texts, &mut locator);
@@ -41,8 +40,6 @@ impl Diagnostics {
         }
     }
 
-    /// A warning or an error of the front end's own at a place that the engine names.
-    /// It speaks of the program, so it is the user's even where that place lies in one of Bun's own modules.
     pub(crate) fn add_at_witness(
         &mut self,
         code: Code,
@@ -62,8 +59,6 @@ impl Diagnostics {
         );
     }
 
-    /// A record of no place says that a constructor of Workers is within reach of code that the build can't follow.
-    /// Nobody has seen a Worker start, so nobody is warned.
     pub(crate) fn add_worker_start_without_name(&mut self, witness: &Witness, texts: &SourceTexts) {
         if witness.function_id().is_some() {
             self.add_at_witness(Code::WorkerStartedFromUnknownValue, &[], witness, texts);

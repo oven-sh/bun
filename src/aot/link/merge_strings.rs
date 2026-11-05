@@ -7,7 +7,6 @@ use bun_sort_by_number::SortByNumber;
 use core::cmp::Ordering;
 use core::ops::Range;
 
-/// A string of one set of tables.
 #[derive(Copy, Clone, Default)]
 struct StringEntry {
     hash: u64,
@@ -17,24 +16,19 @@ struct StringEntry {
 
 const _: () = assert!(size_of::<StringEntry>() == 16);
 
-// These only split the work into tasks. The result does not depend on them.
 const PART_BITS: u32 = 8;
 const PART_COUNT: usize = 1 << PART_BITS;
 const STRINGS_IN_A_TASK: usize = if cfg!(test) { 64 } else { 1 << 14 };
 
-/// Every hash in a part is less than every hash in the next part.
 fn part_of(hash: u64) -> usize {
     (hash >> (u64::BITS - PART_BITS)) as usize
 }
 
-/// Consecutive strings of one set of tables.
 struct Slice {
     tables: u32,
     ids: Range<u32>,
 }
 
-/// Every string below the length of its tables is in exactly one slice. The slices of one set of tables are consecutive and in string
-/// order, and all but the last hold `STRINGS_IN_A_TASK` strings.
 fn cut_into_slices(tables: &[LinkTables]) -> Vec<Slice> {
     let mut slices = Vec::new();
     for (number, set) in (0u32..).zip(tables) {
@@ -53,7 +47,6 @@ fn cut_into_slices(tables: &[LinkTables]) -> Vec<Slice> {
 #[derive(Copy, Clone)]
 struct StringSources<'a> {
     tables: &'a [LinkTables],
-    /// `StringTable::hash`, except in tests that make different strings share a hash.
     hash_of: fn(&StringTable, StringId) -> u64,
 }
 
@@ -62,7 +55,6 @@ impl<'a> StringSources<'a> {
         self.tables[entry.tables as usize].strings.get(entry.id)
     }
 
-    /// Reads bytes only where the hashes tie.
     fn compare(self, a: StringEntry, b: StringEntry) -> Ordering {
         let by_hash = a.hash.cmp(&b.hash);
         by_hash.then_with(|| self.bytes(a).cmp(self.bytes(b)))
@@ -80,10 +72,8 @@ impl<'a> StringSources<'a> {
     }
 }
 
-/// The entries of a slice, grouped by part.
 struct EntriesByPart {
     entries: Vec<StringEntry>,
-    /// `entries[starts[part]..starts[part + 1]]` fall into `part`.
     starts: [u32; PART_COUNT + 1],
 }
 
@@ -113,7 +103,6 @@ impl EntriesByPart {
     }
 }
 
-/// One entry for each string that falls into `part`, ascending by hash and then by bytes.
 fn list_strings_of_part(
     sources: StringSources<'_>,
     slices: &[EntriesByPart],
@@ -126,7 +115,6 @@ fn list_strings_of_part(
     }
     entries.sort_by_u64(|entry| entry.hash);
 
-    // Any of a string's entries can represent it: everything the program's table takes from an entry is determined by the bytes.
     let mut strings = Vec::new();
     for tied in entries.chunk_by_mut(|a, b| a.hash == b.hash) {
         let bytes = sources.bytes(tied[0]);
@@ -141,14 +129,10 @@ fn list_strings_of_part(
     strings
 }
 
-/// The program's strings, in id order. Where each stands says its id, so the ids wait for no table.
 pub(super) struct ProgramStrings<'a> {
     sources: StringSources<'a>,
-    /// `cut_into_slices`
     slices: Vec<Slice>,
-    /// One for each string, ascending by hash and then by bytes.
     entries: Vec<StringEntry>,
-    /// `entries[part_starts[part]..part_starts[part + 1]]` fall into `part`.
     part_starts: [usize; PART_COUNT + 1],
 }
 
@@ -178,7 +162,6 @@ impl<'a> ProgramStrings<'a> {
         }
     }
 
-    /// `entry` must name a string below the length of its tables.
     fn find(&self, entry: StringEntry) -> StringId {
         let part = part_of(entry.hash);
         let start = self.part_starts[part];
@@ -188,7 +171,6 @@ impl<'a> ProgramStrings<'a> {
             let other = in_part.get(place);
             other.is_some_and(|other| other.hash == entry.hash)
         };
-        // If only one of the program's strings has this hash, it is the entry's string.
         let place = match has_hash_of_entry(first + 1) {
             true => {
                 let found = in_part.binary_search_by(|&other| self.sources.compare(other, entry));
@@ -201,8 +183,6 @@ impl<'a> ProgramStrings<'a> {
         StringId::new(start + place)
     }
 
-    /// A string interned into the table later gets the next id. So later interning must run on one thread, in an order that depends on the
-    /// sources alone.
     pub(super) fn make_table(&self, in_parallel: InParallel<'_>) -> StringTable {
         let mut steps = StepClock::new(Stage::LinkAndEmit);
         let tables = self.sources.tables;
@@ -215,8 +195,6 @@ impl<'a> ProgramStrings<'a> {
         table
     }
 
-    /// The program's id of every string below `lengths.strings`, indexed by set of tables and then by the string's id in those tables.
-    /// No entry is `None`.
     pub(super) fn list_ids(&self, in_parallel: InParallel<'_>) -> Vec<Vec<Option<StringId>>> {
         let mut steps = StepClock::new(Stage::LinkAndEmit);
         let lengths = self.sources.tables.iter().map(|set| set.lengths.strings);
@@ -241,7 +219,6 @@ impl<'a> ProgramStrings<'a> {
     }
 }
 
-/// The strings of all tables, each once, ascending by `StringTable::hash` and then by bytes.
 pub(super) fn order_strings<'a>(
     tables: &'a [LinkTables],
     in_parallel: InParallel<'_>,

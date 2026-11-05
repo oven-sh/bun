@@ -1,6 +1,3 @@
-//! Which files a call changes on disk: `writeFileSync(path, text)`, `fs.promises.rm(path)`, `Bun.write(path, text)`. `bun test` reads a file when something
-//! first loads it, so a build for a test run has to know which files of the program the run itself writes, moves or removes.
-
 use super::alternatives::{AskedOfDataFiles, Folder, WrittenNames, find_alternatives};
 use super::call_sites::is_free_name;
 use super::made_requires::follow_settled_bindings;
@@ -30,7 +27,6 @@ enum Reach {
     BelowIfRecursive(usize),
 }
 
-// The places of the operands that name what is another file behind the call, or none.
 fn operands_changed_by_function_of_fs(name: &[u8]) -> &'static [(usize, Reach)] {
     match name {
         b"writeFile" | b"writeFileSync" | b"appendFile" | b"appendFileSync" | b"truncate"
@@ -58,7 +54,6 @@ fn find_constant(inputs: &ScanInputs<'_, '_>, e: ExprId) -> Option<Constant> {
     }
 }
 
-// `fs.promises.writeFile`: where the function lives, and its name.
 fn find_function(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder, Atom)> {
     let &ScanInputs {
         hir, bound, atoms, ..
@@ -90,7 +85,6 @@ fn find_function(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder,
     }
 }
 
-// `put(path, text)`, where another file exports `put` and the loader has said what it does.
 fn find_functions_of_other_files_called<'a>(
     inputs: &ScanInputs<'a, '_>,
     callee: ExprId,
@@ -104,7 +98,6 @@ fn find_functions_of_other_files_called<'a>(
     };
     let find_constant = |e| find_constant(inputs, e);
     let members = find_members_below_module(hir, bound, callee, &find_constant, &is_module, true);
-    // A name that stands for the whole module is called: `import put from "./put.js"`.
     let export = match members.as_deref() {
         Some(&[]) => known::default,
         Some(&[export]) => export,
@@ -116,7 +109,6 @@ fn find_functions_of_other_files_called<'a>(
     named.collect()
 }
 
-// `Bun.file(path)`, itself or in a variable that holds nothing else.
 fn find_path_of_file_object(inputs: &ScanInputs<'_, '_>, file: ExprId) -> Option<ExprId> {
     let &ScanInputs {
         hir, bound, atoms, ..
@@ -132,7 +124,6 @@ fn find_path_of_file_object(inputs: &ScanInputs<'_, '_>, file: ExprId) -> Option
     }
 }
 
-// `openSync(path, "w")`. Whoever opens a file to read it changes nothing.
 fn opens_for_writing(inputs: &ScanInputs<'_, '_>, flags: Option<ExprId>) -> bool {
     let flags = flags.and_then(|flags| find_constant(inputs, flags));
     matches!(flags, Some(Constant::String(flags))
@@ -195,7 +186,6 @@ fn find_value_of_export(hir: &File<'_>, bound: &Bound<'_>, export: SymbolId) -> 
     declarations.find_map(|&declaration| value_of(declaration))
 }
 
-/// Reads which text an expression of one file is, as the specifier of an import is read.
 pub struct TextsOfFile<'a, 's> {
     inputs: ScanInputs<'a, 's>,
     written_names: WrittenNames,
@@ -236,7 +226,6 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         }
     }
 
-    /// `join(import.meta.dir, "made")`, or a `const` that holds it: `./made`, true. `None` where it may be more than one text.
     pub fn find(&self, value: ExprId) -> Option<(Atom, bool)> {
         match self.find_one(value)? {
             (text, starts_at_own_directory, None) => Some((text, starts_at_own_directory)),
@@ -244,7 +233,6 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         }
     }
 
-    /// As `find`. Also `require.resolve("../made.js")`: `../made.js`, true. What a resolver answers for the name of a package lies where nobody knows.
     pub fn find_path(&self, value: ExprId) -> Option<(Atom, bool)> {
         let is_from_folder = |text: Atom| {
             let text = self.inputs.atoms.bytes(text);
@@ -257,7 +245,6 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         }
     }
 
-    /// `writeFileSync(path, text)`, `fs.promises.appendFile(path, text)`, `Bun.write(path, text)`: a call of it writes its second operand into a file.
     pub fn writes_second_operand_into_file(&self, callee: ExprId) -> bool {
         let Some((holder, name)) = find_function(&self.inputs, callee) else {
             return false;
@@ -273,7 +260,6 @@ impl<'a, 's> TextsOfFile<'a, 's> {
     }
 }
 
-/// The exports that are given one text where they are declared.
 pub fn find_texts_of_exports<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
@@ -303,7 +289,6 @@ pub fn find_texts_of_exports<'s>(
     texts.collect()
 }
 
-/// `./made`, as a file in `folder` writes it from there, as a file in `other` writes it.
 pub fn write_from_other_folder(text: &[u8], folder: &[u8], other: &[u8]) -> Option<Vec<u8>> {
     let is_separator = |&byte: &u8| byte == b'/' || cfg!(windows) && byte == b'\\';
     let mut whole: Vec<&[u8]> = Vec::new();
@@ -331,7 +316,6 @@ pub fn write_from_other_folder(text: &[u8], folder: &[u8], other: &[u8]) -> Opti
     Some(written)
 }
 
-/// `write_from_other_folder` of a text that goes on behind its end: what stands behind its last slash is kept as it is.
 pub fn write_start_from_other_folder(start: &[u8], folder: &[u8], other: &[u8]) -> Option<Vec<u8>> {
     let slash = bun_core::strings::last_index_of_char(start, b'/')?;
     let mut written = write_from_other_folder(&start[..slash], folder, other)?;
@@ -339,7 +323,6 @@ pub fn write_start_from_other_folder(start: &[u8], folder: &[u8], other: &[u8]) 
     Some(written)
 }
 
-/// With the function of another file that is called, where the operand is what it is given.
 pub(super) fn find_operands_that_name_changed_files<'a>(
     inputs: &ScanInputs<'a, '_>,
     callee: ExprId,
@@ -348,7 +331,6 @@ pub(super) fn find_operands_that_name_changed_files<'a>(
     let &ScanInputs { hir, atoms, .. } = inputs;
     let callee = hir.skip_type_assertions(callee);
     let mut found = SmallVec::new();
-    // Most calls are calls of a member, and most members go by another name.
     let written_name = match hir.member_key(callee) {
         Some((_, MemberKey::Name(name))) => Some(atoms.bytes(name)),
         Some(_) => return found,

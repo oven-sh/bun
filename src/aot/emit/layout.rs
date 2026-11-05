@@ -32,7 +32,6 @@ pub(super) fn measure_tasks(tasks: &mut [Task<'_, '_>], in_parallel: InParallel<
     for_each_mut(tasks, in_parallel, &|task| task.measure());
 }
 
-/// `function_tasks` are measured: they ask nothing of the program.
 pub(super) fn emit_program<'p>(
     program: &'p Program,
     function_tasks: Vec<Task<'p, '_>>,
@@ -63,7 +62,6 @@ pub(super) fn emit_program<'p>(
     Ok(ProgramBytes::new(storage, size_in_bytes))
 }
 
-// For the log: how much of each list the engine has to read, the largest first.
 fn describe_sections(totals: &ListCounts) -> String {
     let sizes = ProgramList::ALL.map(|list| (byte_count(list, totals[list as usize]), list));
     let mut sizes: Vec<(usize, ProgramList)> = sizes.into_iter().collect();

@@ -34,7 +34,7 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
-  compile: { aot: true, aotExplain: ["allocations", "guards", "forms"] },
+  compile: { aot: true, aotExplain: ["allocations", "guards", "forms", "statistics"] },
 });
 
 Bun.build({

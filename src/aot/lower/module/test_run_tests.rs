@@ -11,7 +11,6 @@ use bun_sema::program::FileId;
 const TEST_FILE: &str = "main.test.js";
 const LIB: (&str, &str) = ("lib.js", "export const fn = () => 'real';\n");
 
-/// The text of a test file that mocks `mocked` and goes on with `rest`.
 fn write_test_file(mocked: &[&str], rest: &str) -> String {
     let mut text = String::from("import { mock } from 'bun:test';\n");
     for path in mocked {
@@ -54,7 +53,6 @@ fn describe(input: &BindInput<'_, '_>, steps: &[Step]) -> Vec<String> {
     steps.iter().map(describe_step).collect()
 }
 
-/// The way from a name that the test file asks of a file. `others`: the files beside the test file.
 fn find_way(mocked: &[&str], others: &[(&str, &str)], asked: (&str, &str)) -> Vec<String> {
     let imports = format!("import * as all from './{}';\nconsole.log(all);\n", asked.0);
     let test_file = write_test_file(mocked, &imports);
@@ -83,7 +81,6 @@ fn link_test_run(files: &[(&str, &str)]) -> Program {
     }
 }
 
-/// For each `SeesMockOf` in the functions of the test file, in the order of the text: the file that may hold a mock, and the file whose link decides.
 fn find_stations(mocked: &[&str], rest: &str, others: &[(&str, &str)]) -> Vec<String> {
     let test_file = write_test_file(mocked, rest);
     let mut files = vec![(TEST_FILE, test_file.as_str())];
@@ -114,7 +111,6 @@ fn find_stations(mocked: &[&str], rest: &str, others: &[(&str, &str)]) -> Vec<St
     stations
 }
 
-/// The operations in the functions of uses.js that ask for a module, in the order of the text.
 fn find_asks_of_user(test_file: &str, uses: &str) -> Vec<&'static str> {
     let program = link_test_run(&[(TEST_FILE, test_file), ("uses.js", uses)]);
     let mut is_in_user = false;
@@ -149,7 +145,6 @@ fn module_that_mocks_alone_make_is_asked_for_at_each_read() {
         find_asks_of_user(mocks, uses),
         ["RequireModule", "RequireModule"]
     );
-    // No mock gives the name: what the loader answered at the link stays.
     let mocks_another = mocks.replace("mock.module('vscode'", "mock.module('electron'");
     assert_eq!(
         find_asks_of_user(&mocks_another, uses),
@@ -178,7 +173,6 @@ fn computed_load_may_name_a_declaration_file_beside_a_spy() {
             .modules
             .iter()
             .map(|module| program.strings.get(module.path));
-        // The declaration file is among what the load may name: it has a record, and no code.
         for name in [&b"/lib/real.ts"[..], b"/lib/more.d.ts"] {
             assert!(paths.clone().any(|path| path.ends_with(name)));
         }
@@ -252,7 +246,6 @@ fn name_that_is_handed_on_twice_has_a_station_for_the_third_file() {
             "declaration"
         ]
     );
-    // The file between alone: neither the file that the statement names nor the file that declares holds a mock.
     let reads = "import { c } from './outer.js';\nconsole.log(c);\n";
     assert_eq!(
         find_stations(&["inner.js"], reads, &files),
@@ -331,7 +324,6 @@ fn mock_behind_a_star_that_lacks_the_name_sends_the_question_to_the_next_star() 
     );
 }
 
-// A mock of the first that lacks the name sends the run past what lies below the first: below the second the file is asked anew.
 #[test]
 fn file_behind_two_mocked_files_is_asked_below_each() {
     let files = [
@@ -395,7 +387,6 @@ fn star_over_a_file_that_hands_the_name_on_leads_to_the_mock() {
     );
 }
 
-// The test file imports the name and nothing else. Nobody reads it off the object of the barrel, so the table of the barrel has lost it by the time the read is lowered.
 #[test]
 fn file_between_behind_an_ordinary_star_is_a_station() {
     let files = [
@@ -469,7 +460,6 @@ fn namespace_that_is_handed_on_has_no_station_for_the_names_below_it() {
         find_way(&["lib.js"], &files, ("barrel.js", "ns")),
         ["declaration"]
     );
-    // Which object the barrel hands on goes by the link of the barrel: the read goes to the object of the barrel.
     let reads = "import { ns } from './barrel.js';\nconsole.log(ns);\n";
     assert_eq!(find_stations(&["lib.js"], reads, &files), [""; 0]);
 }
@@ -568,7 +558,6 @@ fn program_that_mocks_no_file_has_no_station() {
     ];
     assert_eq!(find_way(&[], &files, ("barrel.js", "fn")), [""; 0]);
     assert_eq!(find_stations(&[], READS_FN, &files), [""; 0]);
-    // A mock elsewhere: no request leads from the barrel to it.
     let mut beside = files.to_vec();
     beside.push(("elsewhere.js", "export const far = 1;\n"));
     assert_eq!(
@@ -579,7 +568,6 @@ fn program_that_mocks_no_file_has_no_station() {
     assert_eq!(find_stations(&["elsewhere.js"], reads, &beside), [""; 0]);
 }
 
-/// `b0.js` to `lib.js`, each a star over the next.
 #[test]
 fn name_read_off_what_require_gives_is_asked_of_the_file_that_is_required() {
     let others = [
@@ -598,6 +586,41 @@ fn name_read_off_what_require_gives_is_asked_of_the_file_that_is_required() {
     ] {
         assert_eq!(find(rest), by_import, "{rest}");
     }
+}
+
+#[test]
+fn name_read_off_an_object_that_another_object_shows_is_asked_of_its_module() {
+    let others = [
+        ("declares.js", "export const v = 'real';\n"),
+        ("mocked.js", "export { v } from './declares.js';\n"),
+        ("barrel.js", "export * as inner from './mocked.js';\n"),
+    ];
+    let find = |rest: &str| find_stations(&["mocked.js"], rest, &others);
+    let by_name = find("import { inner } from './barrel.js';\nconsole.log(inner.v);\n");
+    assert_eq!(by_name, [format!("mocked.js seen by {TEST_FILE}")]);
+    for rest in [
+        "import * as all from './barrel.js';\nconsole.log(all.inner.v);\n",
+        "console.log(require('./barrel.js').inner.v);\n",
+        "const all = require('./barrel.js');\nconsole.log(all.inner.v);\n",
+    ] {
+        assert_eq!(find(rest), by_name, "{rest}");
+    }
+}
+
+#[test]
+fn object_of_a_module_that_may_be_mocked_is_asked_for_in_the_name_of_its_importer() {
+    let rest = "import * as all from './mocked.js';\nconsole.log(Object.keys(all));\n";
+    let test_file = write_test_file(&["mocked.js"], rest);
+    let files = [
+        (TEST_FILE, test_file.as_str()),
+        ("mocked.js", "export const v = 'real';\n"),
+    ];
+    let printed = print_program(&link_test_run(&files));
+    let asks: Vec<&str> = (printed.lines())
+        .filter(|line| line.contains(" = NamespaceSeenBy "))
+        .collect();
+    assert_eq!(asks.len(), 1, "{printed}");
+    assert!(asks[0].contains("referrer=m"), "{}", asks[0]);
 }
 
 fn write_chain(count: usize) -> Vec<(String, String)> {
@@ -650,7 +673,6 @@ fn chain_of_barrels_has_a_step_for_each_file() {
     }
 }
 
-// Two files a level, each with a star over both files of the next level: as many ways as two to the number of levels. Each file is asked once.
 #[test]
 fn stars_that_meet_again_behind_a_fork_are_asked_once() {
     const LEVELS: usize = 40;

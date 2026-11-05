@@ -206,16 +206,16 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   },
   {
     paths:
-      /^src\/sema\/(import_sites\/(alternatives|call_sites|made_requires)|fold\/(folder_names|known_to_bun_run|string_affixes))\.rs$/,
+      /^src\/sema\/(import_sites\/(alternatives|call_sites|made_requires)|fold\/(folder_names|known_to_bun_run|removed_by_bun_run|string_affixes))\.rs$/,
     lines:
-      /known::(?:require|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|platform|arch|fileURLToPath|pathToFileURL)"/,
+      /known::(?:require|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|hot|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|platform|arch|fileURLToPath|pathToFileURL)"/,
     reason:
       "a member behind a thing: of `import.meta`, which is syntax; of `require`, `module` and `process`, where the binder has said that the object is the module's own parameter or the global; of what node:module, node:path, node:url, node:os and node:process export, found by the record of the import",
   },
   {
     paths: /^src\/sema\/(import_sites\/alternatives|fold\/folder_calls)\.rs$/,
     lines:
-      /b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|keys|values|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
+      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|keys|values|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
     reason:
       "a member behind a value: whoever follows a text has the list, the text, the URL, the object literal or the global `Object` in hand where it reads the name of the member, and built-ins are frozen",
   },
@@ -275,6 +275,13 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     lines: /known::(?:undefined|RegExp|ShadowRealm)\b|\bconstant_globals\.contains\(&name\)/,
     reason:
       "a global by its name, where the binder has said that the identifier is free: Binding::Free stands beside the name or in front of the call",
+  },
+  {
+    paths: /^src\/sema\/fold\/known_constructors\.rs$/,
+    lines:
+      /^(?:\(|\| )?b"(?:Object|Array|Set|Map|WeakSet|WeakMap|Date|Headers|Response|TextEncoder|TextDecoder)"/,
+    reason:
+      "a global by its name, where the binder has said that the identifier is free: find_known_construction() returns in front of the list unless Binding::Free stands. The list is the one of Bun's transpiler (KnownGlobal::minify_global_constructor), which goes by the name of an unbound symbol, and a build says what the transpiler does",
   },
   {
     paths: /^src\/sema\/check\/aot\/early_errors\//,

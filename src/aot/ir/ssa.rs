@@ -91,9 +91,7 @@ struct VariableState {
 }
 
 struct NarrowedName {
-    /// What the test was asked of: the value itself, or the name that an earlier test has given it.
     value: ValueId,
-    /// The value itself, and how many tests lie between.
     origin: ValueId,
     depth: u32,
     block: BlockId,
@@ -120,7 +118,6 @@ pub(super) struct SsaState {
     pending_reads: Vec<PendingRead>,
     observed_values: FxHashSet<ValueId>,
     variables: Vec<VariableState>,
-    // By the name that a value has behind a test.
     narrowed_from: FxHashMap<ValueId, NarrowedName>,
 }
 
@@ -196,7 +193,6 @@ impl SsaState {
         name.map_or(value, |name| name.origin)
     }
 
-    /// What both are, each behind tests of its own.
     fn find_value_behind_tests(&self, first: ValueId, second: ValueId) -> Option<ValueId> {
         let origin = self.origin_of(first);
         if origin != self.origin_of(second) {
@@ -231,7 +227,6 @@ impl SsaState {
         }
     }
 
-    /// The names that nothing has read, each with the block that lists it.
     pub(super) fn unread_names(&self) -> impl Iterator<Item = (ValueId, BlockId)> {
         let names = self.narrowed_from.iter();
         let unread = names.filter(|(_, name)| name.read_count == 0);
@@ -351,9 +346,6 @@ impl SsaState {
         self.link_below(block, &predecessors);
     }
 
-    /// A loop is entered by the first edge into its header alone: find_definition() goes by that too. Its body is sealed before the
-    /// header is, so the header is linked as soon as a block below it is. In code that nothing enters, headers reach one another by
-    /// their first edges: each is a root from the moment it is met, which ends the walk.
     fn link_loop_headers(&mut self, mut block: BlockId) {
         let mut unlinked: SmallVec<[BlockId; 4]> = SmallVec::new();
         loop {
@@ -410,7 +402,6 @@ impl SsaState {
         block != ENTRY_BLOCK && state.is_sealed && state.predecessors.is_empty()
     }
 
-    // A block is a predecessor of its handler from its creation, also the block that follows a `return` or a `throw`.
     fn unique_predecessors(&self, block: BlockId) -> Predecessors {
         let mut predecessors = self.states[block.index()].predecessors.clone();
         predecessors.retain(|predecessor| !self.is_never_entered(*predecessor));
@@ -448,7 +439,6 @@ impl FunctionBuilder {
         };
     }
 
-    /// The first store of the variable, which nothing has read yet.
     pub fn write_variable_at(&mut self, place: Place, variable: LocalVariable, value: ValueId) {
         let covering = self.blocks[place.block.index()].covering;
         assert!(
@@ -462,12 +452,10 @@ impl FunctionBuilder {
         self.ssa.record_definition_block(variable, place.block);
     }
 
-    /// The value itself, whatever names tests have given it.
     pub fn value_behind_tests(&self, value: ValueId) -> ValueId {
         self.ssa.origin_of(value)
     }
 
-    /// `narrowed` is what a test has left of `value`, which the variable holds. Where the ways behind the test meet, the variable holds `value` again.
     pub fn write_narrowed_variable(
         &mut self,
         variable: LocalVariable,
@@ -498,7 +486,6 @@ impl FunctionBuilder {
         matches!(self.opcode_of(value), Some(Opcode::NewClosure))
     }
 
-    /// For `x = undefined` and `x = null`, where `x` lives in no environment. Whether or not `x` is read again, no store is left of the assignment.
     pub fn write_released_variable(&mut self, variable: LocalVariable, assigned: ValueId) {
         let released = self.read_variable(variable);
         self.write_variable(variable, assigned);

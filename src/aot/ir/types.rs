@@ -75,7 +75,6 @@ impl Type {
         }
     }
 
-    /// A constant is a primitive, and the table says which kind of primitive only for the well-known symbols.
     pub fn value_of_builtin(builtin: BuiltinId) -> Option<Type> {
         if entry(builtin).kind != BuiltinKind::Constant {
             return Some(Type::builtin(builtin));
@@ -157,7 +156,6 @@ impl Type {
 #[derive(Clone)]
 pub struct TypeTable {
     types: Vec<Type>,
-    /// By type: its `hash_of`. A table that grows asks for the hash of each type that it holds, and a hash reads every list of its type.
     hashes: Vec<u64>,
     type_ids: HashTable<TypeId>,
 }
@@ -166,11 +164,8 @@ pub(super) fn hash_of<T: core::hash::Hash>(value: &T) -> u64 {
     FxBuildHasher.hash_one(value)
 }
 
-/// Each hash with its index. A large table is many times the size of a cache, and in the order of the indexes each entry would go somewhere else in it.
-/// So those whose places in a table of `capacity` lie near each other follow each other. In which order a table is filled shows nowhere.
 fn order_by_place_in_table(hashes: &[u64], capacity: usize) -> Vec<(u64, u32)> {
     const PART_BITS: u32 = 8;
-    // A place starts from the low bits of the hash, and seven of eight places can be taken.
     let place_count = (capacity / 7 * 8).next_power_of_two();
     let shift = place_count.trailing_zeros().saturating_sub(PART_BITS);
     let part_of = |hash: u64| (hash as usize & (place_count - 1)) >> shift;
@@ -207,7 +202,6 @@ impl TypeTable {
     pub const ANYTHING: TypeId = TypeId::from_word(13);
     pub const ABSENT: TypeId = TypeId::from_word(14);
     pub const ARRAY: TypeId = TypeId::from_word(15);
-    /// What a variable holds that link defines and that may stay empty.
     pub const ANYTHING_OR_ABSENT: TypeId = TypeId::from_word(16);
     pub const WELL_KNOWN_COUNT: usize = 17;
 
@@ -255,20 +249,17 @@ impl TypeTable {
         table
     }
 
-    /// The well-known types first, at their ids; every type behind what it names; no two alike; each normalized.
     pub fn of_distinct_types(types: Vec<Type>, in_parallel: InParallel<'_>) -> TypeTable {
         const TYPES_IN_A_TASK: usize = 1 << 12;
         debug_assert!(
             types.starts_with(TypeTable::new().types()),
             "the well-known types stand first, at their ids"
         );
-        // A hash reads every list of its type, each somewhere else in memory. One thread is left with the table.
         let tasks: Vec<&[Type]> = types.chunks(TYPES_IN_A_TASK).collect();
         let hashes = map_each(tasks, in_parallel, &|types: &[Type]| {
             types.iter().map(hash_of).collect::<Vec<u64>>()
         });
         let hashes: Vec<u64> = hashes.into_iter().flatten().collect();
-        // With room for types that are added.
         let capacity = types.len() + types.len() / 8;
         let mut type_ids: HashTable<TypeId> = HashTable::with_capacity(capacity);
         for (hash, index) in order_by_place_in_table(&hashes, type_ids.capacity()) {
@@ -307,7 +298,6 @@ impl TypeTable {
         id
     }
 
-    /// The types interned next take the ids from `length` on: whoever holds one of those has to forget it.
     pub fn truncate(&mut self, length: usize) {
         let length = length.max(Self::WELL_KNOWN_COUNT);
         if self.types.len() <= length {

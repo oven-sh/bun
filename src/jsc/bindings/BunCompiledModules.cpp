@@ -9,6 +9,7 @@
 #include "CodeGenerationFromStrings.h"
 #include "ErrorCode.h"
 #include "ImportMetaObject.h"
+#include "IsolatedModuleCache.h"
 #include "JSCommonJSExtensions.h"
 #include "JSCommonJSModule.h"
 #include "JSMockFunction.h"
@@ -161,9 +162,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
 extern "C" bool Bun__compiledProgramRunsInPlace();
+extern "C" bool Bun__AOT__onResolveAnswersFor(JSC::JSGlobalObject*, const BunString* name, const BunString* importer);
 extern "C" bool Bun__compiledProgramHoldsFileAsItIs(const BunString*);
 extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, const BunString* path);
-extern "C" bool Bun__AOT__isStartOfWorker(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isLoadedSynchronously(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(JSC::JSGlobalObject*);
@@ -250,6 +251,49 @@ static bool loadsFileItself(JSGlobalObject* globalObject, const String& path)
 }
 
 void recordFileRunFromSource(JSGlobalObject*, const String& path, ASCIILiteral why);
+
+// A module that `build.module()` gave for the name, or an onResolve whose filter takes it. The loader calls the callback where it resolves the name. A mock lies in the same table and is no function.
+static bool isGivenByPlugin(Zig::GlobalObject* global, const String& name)
+{
+    auto* modules = global->onLoadPlugins.virtualModules;
+    auto given = modules ? modules->get(name) : JSC::Strong<JSC::JSObject>();
+    return given && given->isCallable();
+}
+
+static bool mayAnswerForName(JSGlobalObject* globalObject, const String& name)
+{
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    if (isGivenByPlugin(global, name))
+        return true;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    auto& resolvers = global->onResolvePlugins;
+    String whole = name;
+    bool isTaken = resolvers.fileNamespace.find(globalObject, whole);
+    if (size_t colon = name.find(':'); !isTaken && colon != notFound) {
+        String space = name.left(colon);
+        auto* group = resolvers.group(space == "file"_s ? String() : space);
+        String rest = name.substring(colon + 1);
+        isTaken = group && group->find(globalObject, rest);
+    }
+    (void)scope.tryClearException();
+    return isTaken;
+}
+
+static bool answersForName(JSGlobalObject* globalObject, const String& name, const String& importer)
+{
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    bool answers = isGivenByPlugin(global, name);
+    if (!answers) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+        BunString nameArgument = Bun::toString(name);
+        BunString importerArgument = Bun::toString(importer);
+        answers = Bun__AOT__onResolveAnswersFor(globalObject, &nameArgument, &importerArgument);
+        (void)scope.tryClearException();
+    }
+    if (answers)
+        recordFileRunFromSource(globalObject, importer, "a plugin answers for a name that it imports"_s);
+    return answers;
+}
 
 // Code that an executable loads from disk names globals, built-in modules, files on disk and what it is handed. The helpers of a test run import the files under test.
 static bool refusesFileToAsker(JSGlobalObject* globalObject, AOT::ModuleID module, AOT::LoadByName way)
@@ -1196,6 +1240,11 @@ static bool holdsTextsOfProgram(JSGlobalObject*)
     return true;
 }
 
+static bool keepsTexts(JSGlobalObject* globalObject)
+{
+    return Bun::IsolatedModuleCache::canUse(globalObject->vm(), defaultGlobalObject(globalObject)->bunVM());
+}
+
 static bool loadsSynchronously(JSGlobalObject* globalObject, AOT::ModuleID module)
 {
     String path = AOT::modulePath(module);
@@ -1274,6 +1323,8 @@ const AOT::ModuleHost compiledModuleHost = {
     &runMock,
     &loadsSynchronously,
     &loadsFileItself,
+    &mayAnswerForName,
+    &answersForName,
     &mockOperations,
     &stampOfFile,
     &givesOriginalBesideMock,
@@ -1284,9 +1335,10 @@ const AOT::ModuleHost compiledModuleHost = {
     &didStartImport,
     &holdsTextsOfProgram,
     &isCalledFromFactoryThatWaits,
+    &keepsTexts,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 33 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 36 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);
@@ -1302,17 +1354,12 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
         if (Bun__AOT__isWorkerTextRefusedByTrimming(globalObject, &text))
             return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, and --trim removed what a Worker needs to run code that wasn't compiled into it. Build without --trim."_s));
     }
-    // The flag acts on the file that a Worker starts from, and where the compiler found an import() or a require() of a path that it does not know.
-    const AOT::Image* image = AOT::Image::current();
-    // --trim removed what such a Worker runs on: the flag would only lead to the refusal above.
-    bool startsWorker = !isDataOrBlobURL(path) && !Bun__AOT__allowsCodeFromDisk() && Bun__AOT__isStartOfWorker(globalObject, &text) && !Bun__AOT__isWorkerTextRefusedByTrimming(globalObject, &text);
-    bool flagWouldHelp = !image || image->findsDataFilesByName() || startsWorker;
     // `bun test --aot` makes no executable and takes no entry points.
     if (compiledModulesRunInPlaceOfFiles())
         recordRefusedLoad(globalObject, path);
     if (compiledModulesRunInPlaceOfFiles())
-        return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it wasn't compiled with the program, and --aot only runs code that was. Import the file by a constant path"_s, flagWouldHelp ? ", or add --aot-allow-code-from-disk."_s : "."_s));
-    return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point"_s, flagWouldHelp ? ", or build with --aot-allow-code-from-disk."_s : "."_s));
+        return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it wasn't compiled with the program, and --aot only runs code that was. Import the file by a constant path, or add --aot-allow-code-from-disk."_s));
+    return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk."_s));
 }
 
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode code, const String& path)

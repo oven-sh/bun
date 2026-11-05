@@ -83,7 +83,6 @@ mod tests {
         type int32 = number & { readonly \"bun.int32\"?: true };\n\
         }\n";
 
-    /// The type of each parameter, and whether the build has to prove that it is an `int32`.
     #[track_caller]
     fn lower_parameters(types: [&str; 2]) -> Vec<(Type, bool)> {
         let [first, second] = types;

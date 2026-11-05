@@ -5,7 +5,6 @@ const TSX: Setup = Setup {
     ..PROGRAM
 };
 
-// As TypeScript prints `globalThis.own ??= {}`.
 macro_rules! kept_for_own_name {
     ($further:literal) => {
         concat!("var a; (a = globalThis).own ?? (a.own = {}); ", $further)
@@ -44,7 +43,6 @@ const NOT_EXPOSED: &[(&str, BuiltinId)] = &[
     ("URL.prototype.toString;", BuiltinId::URLPrototype),
 ];
 
-// `process` lists all that it holds and what stands above it, `Bun` and the global object do not.
 const INHERITED_OBJECT_PROTOTYPE_MEMBERS: &[(&str, BuiltinId)] = &[
     (
         "process.__proto__ = { get all() { return this; } };",

@@ -34,7 +34,6 @@ static NEXT_PROGRAM_FILE_NUMBER: AtomicU32 = AtomicU32::new(0);
 pub struct CommandResult {
     pub output: String,
     pub diagnostics: Vec<(DiagnosticName, String)>,
-    /// Where each of `diagnostics` stands. The engine's have no place.
     pub places: Vec<Option<Place>>,
     pub statistics: Vec<(StatisticId, u64)>,
     pub engine_was_skipped: Option<String>,
@@ -53,7 +52,6 @@ pub fn find_command(name: &str) -> Option<Command> {
     Some(command)
 }
 
-/// What is built: the entry points, and the folders that paths are read and printed from.
 pub struct Project {
     pub root: PathBuf,
     pub working_directory: PathBuf,
@@ -163,7 +161,6 @@ pub fn run_command(command: Command, path: &Path, aot: &AotOptions) -> CommandOu
     outcomes.pop().expect("one command has one outcome")
 }
 
-/// One build, printed by each of the commands.
 pub fn run_commands(
     commands: &[Command],
     project: &Project,
@@ -191,7 +188,6 @@ fn build(
     outputs: &mut [String],
 ) -> CommandOutcome {
     static OUTPUT: Once = Once::new();
-    // A thread of Bun's pool asserts that Bun's `main` has set up the output.
     OUTPUT.call_once(bun_core::output::stdio::init);
     let bytes_of = |path: &Path| path.as_os_str().as_encoded_bytes().to_vec();
     let entry_points: Vec<Vec<u8>> = project
@@ -234,7 +230,6 @@ fn build(
     }
     let text = print_program_held_to_engine(&program);
     let functions = LinkedFunctions::of_program_functions(take(&mut program.functions));
-    // The tool reads the program from a file, which has no place for code that lies beside the bytes.
     let bytes = emit_with_bodies_in_bytes(&mut program, functions, &run_serially)
         .map_err(|error| format!("emit failed: {error:?}"))?;
     let byte_count = bytes.as_slice().len() as u64;
@@ -313,7 +308,6 @@ fn print_with_engine(testaot: &OsStr, program: &[u8]) -> Result<Output, String> 
     output
 }
 
-/// The tool and these tests were built from two states of the schema, so it reads nothing that they emit.
 fn reports_other_schema(stderr: &str) -> bool {
     let message = InternalErrorKind::SchemaMismatch.message();
     stderr.lines().any(|line| line.contains(message))
@@ -329,7 +323,6 @@ fn parse_engine_diagnostics(stderr: &str) -> Vec<(DiagnosticName, String)> {
         .collect()
 }
 
-/// Up to the bracket that closes what `text` stands in, or to `, ` or a blank outside of every bracket and quote.
 fn find_end_of_item(text: &str) -> usize {
     let mut depth = 0usize;
     let mut is_quoted = false;
@@ -350,7 +343,6 @@ fn find_end_of_item(text: &str) -> usize {
     text.len()
 }
 
-/// What stands in front of the fields of a layout, the fields, and what stands behind them.
 fn split_at_fields(line: &str) -> Option<(&str, Vec<&str>, &str)> {
     const LIST: &str = " fields=[";
     let start = line.find(LIST).filter(|_| line.starts_with("layout "))?;
@@ -364,7 +356,6 @@ fn split_at_fields(line: &str) -> Option<(&str, Vec<&str>, &str)> {
     Some((&line[..start], fields, rest.strip_prefix(']')?))
 }
 
-/// The engine lays the fields of the bases of a layout behind its own.
 fn remove_inherited_fields(engine_line: &str, front_end_line: &str) -> String {
     let Some((head, fields, rest)) = split_at_fields(engine_line) else {
         return engine_line.to_owned();
@@ -380,7 +371,6 @@ fn remove_inherited_fields(engine_line: &str, front_end_line: &str) -> String {
     format!("{head} fields=[{}]{rest}", own.join(", "))
 }
 
-/// The engine only expects the type of a field that data of the program fills with something else.
 fn remove_expectations_of_fields(line: &str) -> String {
     match line.starts_with("layout ") {
         true => (line.replace(" flags=[IsExpected]", "")).replace("IsExpected, ", ""),

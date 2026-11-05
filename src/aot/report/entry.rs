@@ -52,7 +52,6 @@ pub fn to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMe
         let notes = entry.notes.iter();
         parts.extend(notes.map(|note| (&note.text[..], note.position)));
     }
-    // Ascending, so the locator scans the text of each module once. Entries arrive by rank.
     let mut order: Vec<usize> = (0..parts.len()).collect();
     order.shared_sort_unstable_by_key(|&index| parts[index].1);
 

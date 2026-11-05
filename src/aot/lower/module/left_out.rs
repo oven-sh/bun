@@ -12,19 +12,15 @@ enum Declaration {
     Declarator(VarDeclId),
     Class(ClassId),
     Statement(StmtId),
-    // Not left out, where the class itself is: the check of what it extends, the conversion of a computed key to a property key.
     HeritageCheck(ClassId),
     KeyConversion(MemberId),
-    // Not left out by itself: the variable of an enum or of the value of a module of data, whose object nothing that the program can run gets hold of.
     ObjectNeverHandedOn(SymbolId),
 }
 
-/// One declarator of `const a = f(), b = 1` can go while the other stays, so a declarator is named by itself.
 #[derive(Default, Clone, PartialEq, Eq)]
 pub struct LeftOutDeclarations(FxHashSet<(FileId, Declaration)>);
 
 impl LeftOutDeclarations {
-    /// For the log: the same for the same declarations, whatever numbers the files have. `hash_of_file`: a number that stands for a file.
     pub fn fingerprint(&self, hash_of_file: &dyn Fn(FileId) -> u64) -> u64 {
         let hashes = (self.0.iter())
             .map(|&(file, declaration)| FxBuildHasher.hash_one((hash_of_file(file), declaration)));
@@ -66,7 +62,6 @@ impl LeftOutDeclarations {
             .insert((file, Declaration::ObjectNeverHandedOn(variable)));
     }
 
-    /// Nothing stores to the object, so each member holds what it was made with.
     pub fn is_object_never_handed_on(&self, file: FileId, variable: SymbolId) -> bool {
         self.0
             .contains(&(file, Declaration::ObjectNeverHandedOn(variable)))

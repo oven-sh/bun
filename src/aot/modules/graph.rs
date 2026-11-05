@@ -43,11 +43,9 @@ pub(super) enum StoredSiteAnswer {
 
 pub struct ModuleGraph {
     pub(super) row_by_file: Vec<Option<u32>>,
-    /// Ascending by file.
     pub(super) rows: Vec<FileRow>,
     pub(super) record_files: Vec<FileId>,
     pub(super) left_out_files: Vec<FileId>,
-    /// Those of `left_out_files` that keep a record without code.
     pub(super) placeholder_files: Vec<FileId>,
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
     pub(super) other_modules: Vec<ModuleRef>,
@@ -55,27 +53,19 @@ pub struct ModuleGraph {
     pub(super) synthetic_exports: Vec<SyntheticExport>,
     pub(super) errors: Vec<ModuleFailure>,
     pub(super) failures: Vec<ModuleFailure>,
-    /// Ascending by file.
     pub(super) load_failures: Vec<(FileId, ModuleFailureId)>,
-    /// By file: `find_files_that_sites_name`.
     pub(super) files_that_sites_name: Vec<bool>,
-    /// Ascending behind `finish`, each once.
     pub(super) mocked_library_modules: Vec<RuntimeModule>,
     pub(super) wrapped: WrappedModules,
     pub(super) commonjs_exports: CommonJsExports,
     pub(super) plan: Plan,
-    /// By file.
     pub(super) member_stores: Vec<OnceLock<MemberStores>>,
-    /// `list_data_linked_by_names_alone`. Ascending.
     pub(super) data_linked_by_names_alone: Box<[FileId]>,
-    /// `ModuleSet::forms_require_checks_first`
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
     pub(super) star_names_left_out: StarNamesLeftOut,
-    /// Those of `BindInput::names_added_to_builtins` that a test run lays on `Object.prototype`. Ascending. As bytes: whoever asks may hold an atom of another table.
     pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
 }
 
-/// The names that `export *` brings files and that nobody was seen to ask for (`ExportTables::names_left_out`), and the files that list none of them among their exports. Ascending.
 #[derive(Default)]
 pub(super) struct StarNamesLeftOut {
     pub names: FxHashSet<Atom>,
@@ -98,9 +88,7 @@ pub(super) struct FileRow {
     pub sites: Vec<(ImportSiteKind, StoredSiteAnswer)>,
     pub spellings: Vec<SpelledModule>,
     pub imports: Vec<(SymbolId, ImportBinding)>,
-    /// The accesses that are bound to a name of a module: reads, stores and callees.
     pub members: Vec<(ExprId, ImportBinding)>,
-    /// For each of `members`, the module that the access is written on.
     pub accessed: Vec<(ExprId, AccessedModule)>,
     pub fixed_members: Vec<(ExprId, (ModuleRef, Member))>,
     pub named_members: Vec<((ModuleRef, Atom), NamedMember<ImportBinding>)>,
@@ -108,27 +96,18 @@ pub(super) struct FileRow {
     pub namespace_values: Vec<ModuleRef>,
     pub evaluating_sites: Vec<(SiteKey, StoredSite)>,
     pub unread_sites: Vec<(ExprId, bool)>,
-    /// Ascending by symbol.
     pub holders: Vec<Holder>,
-    /// `FileImports::answer_members`
     pub answer_members: Vec<(ExprId, AnswerMember)>,
-    /// `FileImports::names_read_on_answers`
     pub names_read_on_answers: Vec<(SymbolId, Atom)>,
     pub exports: Vec<ModuleExport>,
-    /// `find_ambiguous_names`
     pub ambiguous_names: Vec<Atom>,
     pub unread_exports: Vec<SymbolId>,
-    /// A statement of a test file names the file to the loader of the run time, which may ask it for any name: `ModuleSet::left_to_loader`.
     pub is_left_to_loader: bool,
     pub required_names: Vec<RequiredName>,
     pub names_searched_behind_stars: Vec<(FileId, Atom)>,
-    /// `export { a as b } from "./c"`, or the import whose name the file exports: b, with c and a. Ascending by the number of b. Only where a mock may stand: the tables name the variable.
     pub handed_on: Vec<(Atom, (ModuleRef, Atom))>,
-    /// Of the files that `export *` names, in the order of the text, those from which stars and names that are handed on lead to a mock.
     pub named_by_stars: Vec<FileId>,
-    /// The names that `export *` brings the file, where `named_by_stars` lists a file. Ascending by number. `exports` loses those that nobody reads off the object of the file.
     pub names_from_stars: Vec<Atom>,
-    /// A mock names the file, or the file comes by requests to one that a mock names.
     pub reaches_mock: bool,
 }
 
@@ -169,7 +148,6 @@ fn spelled_in<'a>(row: &'a FileRow, range: &Range<u32>) -> &'a [SpelledModule] {
     &row.spellings[range.start as usize..range.end as usize]
 }
 
-// The modules whose namespace object something in the file may look at.
 fn add_seen_namespaces(file: &FileRow, seen: &mut Vec<ModuleRef>) {
     seen.extend_from_slice(&file.namespace_values);
     for (site, answer) in &file.sites {
@@ -197,7 +175,6 @@ impl ModuleGraph {
         match module {
             ModuleRef::File(file) => self.row(file).interop,
             ModuleRef::Inner { .. } => Interop::INNER_MODULE,
-            // A face that has the loader capture what the file exports goes by the rule of the file.
             ModuleRef::Face(file) if self.commonjs_exports.face_captures(file) => Interop {
                 export_rule: self.row(file).interop.export_rule,
                 ..Interop::ES_MODULE
@@ -212,7 +189,6 @@ impl ModuleGraph {
         }
     }
 
-    /// The importer under which the program knows the external module. Each importer has a module of its own for what the build does not compile.
     pub fn importer_of_external(&self, importer: FileId, _specifier: Atom) -> FileId {
         importer
     }
@@ -241,7 +217,6 @@ impl ModuleGraph {
         index.ok().map(|index| kinds[index].1)
     }
 
-    /// What the text of the file asks for: what it imports, and then what its sites evaluate.
     pub fn requests(&self, file: FileId) -> &[ModuleRequest] {
         &self.row(file).requests
     }
@@ -276,7 +251,6 @@ impl ModuleGraph {
 
     pub fn import_binding(&self, file: FileId, symbol: SymbolId) -> ImportBinding {
         let imports = &self.row(file).imports;
-        // Most names that are asked about are declared behind the imports of their file, which mostly stand one behind the other.
         let (Some(first), Some(last)) = (imports.first(), imports.last()) else {
             return ImportBinding::Local;
         };
@@ -301,11 +275,18 @@ impl ModuleGraph {
         is_namespace.then_some(members[index].1)
     }
 
+    pub fn find_module_accessed(&self, file: FileId, member: ExprId) -> Option<ModuleRef> {
+        let accessed = &self.row(file).accessed;
+        let index = accessed
+            .binary_search_by_key(&member, |&(member, _)| member)
+            .ok()?;
+        Some(accessed[index].1.module)
+    }
+
     pub(super) fn find_stored_site(&self, file: FileId, key: SiteKey) -> Option<StoredSite> {
         find(&self.find_row(file)?.evaluating_sites, key)
     }
 
-    /// By symbol. One that is needed as a value is an ordinary binding that holds the object. Final behind `finish_plan`.
     pub fn holders(&self, file: FileId) -> &[Holder] {
         debug_assert!(
             self.plan.are_holders_settled,
@@ -320,7 +301,6 @@ impl ModuleGraph {
         binding.expect("a JSX import that is not in use").1
     }
 
-    /// The program never evaluates these files, which are in order.
     pub fn leave_out_files(&mut self, files: &[FileId], in_parallel: InParallel<'_>) {
         for row in &mut self.rows {
             row.has_no_side_effects = false;
@@ -357,7 +337,6 @@ impl ModuleGraph {
         self.record_files.retain(|file| {
             files.binary_search(file).is_err() || placeholder_files.binary_search(file).is_ok()
         });
-        // Each importer has a module of its own for what the build does not compile.
         self.other_modules.retain(|module| match *module {
             ModuleRef::External { importer, .. } => files.binary_search(&importer).is_err(),
             _ => true,
@@ -365,15 +344,19 @@ impl ModuleGraph {
         self.finish_plan(in_parallel);
     }
 
-    /// A request all of whose sites stand in code that is left out goes. `finish_plan` has to follow.
     pub fn limit_requests(&mut self, keeps: impl Fn(ModuleRef, &ModuleRequest) -> bool) {
         self.plan.reopen();
         for row in &mut self.rows {
             let module = ModuleRef::File(row.file);
             row.requests.retain(|request| keeps(module, request));
+            let requests = &row.requests;
+            row.required_names.retain(|name| {
+                !matches!(name.module, ModuleRef::External { .. })
+                    || requests.iter().any(|it| it.target == name.module)
+            });
         }
         let plan = &mut self.plan;
-        #[allow(clippy::needless_collect)] // ends the borrow of `plan`
+        #[allow(clippy::needless_collect)]
         let inner_modules: Vec<ModuleRef> = plan
             .inner_modules()
             .iter()
@@ -384,7 +367,6 @@ impl ModuleGraph {
         }
     }
 
-    /// Wrappers that no code calls that is left. They have no record. `finish_plan` has to follow.
     pub fn leave_out_inner_modules(&mut self, modules: &[ModuleRef]) {
         let mut left_out: Vec<(FileId, FnId)> = modules
             .iter()
@@ -403,8 +385,6 @@ impl ModuleGraph {
         self.left_out_inner_modules = left_out;
     }
 
-    // The files that are left out and lie on a cycle of imports with a file that runs. A file of the cycle that asks for one while
-    // it is being evaluated asks for nothing, so what it imports cannot stand in the lists of its importers.
     fn find_placeholder_files(&self, left_out_files: &[FileId]) -> Vec<FileId> {
         let row_of = |file: FileId| self.row_by_file.get(file.idx()).copied().flatten();
         let mut imported: Vec<Vec<u32>> = vec![Vec::new(); self.rows.len()];
@@ -445,7 +425,6 @@ impl ModuleGraph {
         let is_left_out = |file: FileId| left_out_files.binary_search(&file).is_ok();
         let mut lists = Vec::with_capacity(self.rows.len() + self.plan.inner_requests.len());
         let mut seen = FxHashSet::default();
-        // With each request: whether the file has written it itself.
         let mut pending: Vec<(ModuleRequest, bool)> = Vec::new();
         let is_import = |request: &&ModuleRequest| request.kind == ModuleRequestKind::Import;
         let of_files = self.rows.iter().map(|row| &row.requests);
@@ -458,10 +437,8 @@ impl ModuleGraph {
                     earlier.target == request.target && earlier.kind == request.kind
                 };
                 match request.target {
-                    // No site of it is left.
                     ModuleRef::File(target) | ModuleRef::Inner { file: target, .. }
                         if is_left_out(target) && request.kind == ModuleRequestKind::Require => {}
-                    // The body that its sites are written in does not run.
                     ModuleRef::File(target)
                         if is_left_out(target) && !self.is_placeholder(target) =>
                     {
@@ -470,11 +447,8 @@ impl ModuleGraph {
                             pending.extend(imports.map(|&request| (request, false)));
                         }
                     }
-                    // It goes with its importer, as a file does that only a file asks for that is left out.
                     ModuleRef::External { importer, .. } if is_left_out(importer) => {}
-                    // What the file asks for itself stays as it is written, also twice.
                     _ if seen.is_empty() => passed_on.push(request),
-                    // A file that is left out may have asked for the same in front of it: that request takes what this one says of the names.
                     _ if is_written_here => {
                         match passed_on.iter_mut().find(|earlier| is_same(earlier)) {
                             Some(earlier) => {
@@ -570,7 +544,6 @@ impl ModuleGraph {
         }
     }
 
-    /// Whether the build found the name for the module, be it that a star whose names show in the run may make it ambiguous.
     pub fn lists_export(&self, module: ModuleRef, name: Atom, atoms: &Interner<'_>) -> bool {
         let ModuleRef::File(file) = module else {
             return false;
@@ -587,12 +560,10 @@ impl ModuleGraph {
         is_listed
     }
 
-    /// Of the names that `export *` brings the file its exports list those alone that somebody was seen to ask for. Nobody may look at the object that shows them all.
     pub fn leaves_out_star_names(&self, file: FileId) -> bool {
         self.star_names_left_out.files.binary_search(&file).is_ok()
     }
 
-    /// Whoever does not find a name among the exports of a file takes the file to lack it.
     fn assert_lists_export_if_it_has_it(&self, file: FileId, name: Atom) {
         assert!(
             !self.star_names_left_out.names.contains(&name) || !self.leaves_out_star_names(file),
@@ -608,12 +579,10 @@ impl ModuleGraph {
         &self.row(file).required_names
     }
 
-    /// Where a required name of the file comes through `export *` and a mock may take it away: the files behind the module that a link looks into, with the name.
     pub fn names_searched_behind_stars(&self, file: FileId) -> &[(FileId, Atom)] {
         &self.row(file).names_searched_behind_stars
     }
 
-    /// A mock that comes before the body of the file has run stands in place of the file, in a variable of the file.
     pub fn holds_mock_in_variable(&self, file: FileId) -> bool {
         let is_file_of_program = matches!(
             self.kind(file),
@@ -630,32 +599,26 @@ impl ModuleGraph {
         &self.row(file).named_by_stars
     }
 
-    /// `export *` brings the file the name, and a way leads from one of its stars to a mock.
     pub fn is_brought_by_star(&self, file: FileId, name: Atom) -> bool {
         let names = &self.row(file).names_from_stars;
         names.binary_search_by_key(&name.0, |it| it.0).is_ok()
     }
 
-    /// The module that the statement names which hands `name` on, and the name that it asks for there.
     pub fn find_what_hands_on_names(&self, file: FileId, name: Atom) -> Option<(ModuleRef, Atom)> {
         let handed_on = &self.row(file).handed_on;
         let at = handed_on.binary_search_by_key(&name.0, |entry| entry.0.0);
         Some(handed_on[at.ok()?].1)
     }
 
-    /// The modules of Bun's library that a mock or a spy of the program may replace. Ascending, each once.
     pub fn mocked_library_modules(&self) -> &[RuntimeModule] {
         &self.mocked_library_modules
     }
 
-    /// An assignment under the name to an ordinary object may run a setter, and give the object nothing. Never in an executable.
     pub fn is_laid_on_object_prototype(&self, name: &[u8]) -> bool {
         let laid = &self.names_laid_on_object_prototype;
         laid.binary_search_by(|laid| (**laid).cmp(name)).is_ok()
     }
 
-    /// The second of each pair: what an import may have made of the path of the file. `require` answers with the namespace object of the first of them that the loader holds,
-    /// and reads the file itself where it holds none.
     pub fn forms_require_checks_first(&self, module: ModuleRef) -> &[(FileId, FileId)] {
         let ModuleRef::File(file) = module else {
             return &[];
@@ -666,7 +629,6 @@ impl ModuleGraph {
         &forms[start..start + count]
     }
 
-    /// A file that loads again runs from disk, as code that the build has not seen, and links to whatever names its text imports. So does the loader, for a statement that is left to it.
     pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {
         let is_left_to_loader =
             |file: FileId| self.find_row(file).is_some_and(|row| row.is_left_to_loader);
@@ -679,7 +641,6 @@ impl ModuleGraph {
         &self.synthetic_exports[id.0 as usize]
     }
 
-    /// `export { a } from "node:process"` reads nothing. `process.a` is read when an importer binds the name, or when the namespace object is asked for it.
     pub fn lazy_export(&self, binding: ExportBinding) -> Option<(ModuleRef, Atom)> {
         let ExportBinding::Synthetic(id) = binding else {
             return None;
@@ -711,7 +672,6 @@ impl ModuleGraph {
         &self.failures
     }
 
-    /// What the load of the module ends with: an import of it, or of a module that it imports, names nothing.
     pub fn load_failure(&self, file: FileId) -> Option<ModuleFailureId> {
         find(&self.load_failures, file)
     }
@@ -720,20 +680,16 @@ impl ModuleGraph {
         self.load_failures.iter().map(|&(file, _)| file)
     }
 
-    /// No chain of sites that spell their files leads from an entry point to the file: only a `Pattern`, a `OneOf` or `AllModules` finds it, or finds whoever spells it.
     pub fn is_found_by_computed_names_alone(&self, file: FileId) -> bool {
         let Some(row) = self.find_row(file) else {
             return false;
         };
-        // No path finds a module of Bun's own, and the sites that name one spell no file.
         let is_file_of_program =
             row.interop.kind == ModuleKind::Data || self.is_code_of_program(ModuleRef::File(file));
         let is_named = self.files_that_sites_name.get(file.idx());
         is_file_of_program && is_named.is_some_and(|&is_named| !is_named)
     }
 
-    /// The files that a site which loads a module names, ascending. A load of an unknown path names none, and `require.resolve`
-    /// and `import.meta.resolve` load nothing.
     pub fn find_files_named_by_load_sites(&self) -> Vec<FileId> {
         let mut named = Vec::new();
         for row in &self.rows {
@@ -790,7 +746,6 @@ impl ModuleGraph {
         self.row(file).has_top_level_await
     }
 
-    /// By `sideEffects` of its package.
     pub fn has_no_side_effects(&self, file: FileId) -> bool {
         self.row(file).has_no_side_effects
     }
@@ -800,7 +755,6 @@ impl ModuleGraph {
         self.row(file).has_dynamic_names
     }
 
-    /// `finish_plan` has to follow.
     pub(super) fn finish(mut self) -> ModuleGraph {
         remove_unread_data_exports(&mut self.rows);
         self.data_linked_by_names_alone =
@@ -840,6 +794,25 @@ impl ModuleGraph {
         self.mocked_library_modules.dedup();
         self.settle_holders();
         self
+    }
+
+    pub fn names_left_to_loader(
+        &self,
+        file: FileId,
+    ) -> impl Iterator<Item = (SpelledModule, bool)> + '_ {
+        let sites = self.find_row(file).into_iter().flat_map(|row| {
+            row.sites
+                .iter()
+                .filter_map(move |(kind, answer)| match answer {
+                    StoredSiteAnswer::Candidates(range) => Some((*kind, spelled_in(row, range))),
+                    _ => None,
+                })
+        });
+        sites.flat_map(|(kind, spelled)| {
+            let is_required = !matches!(kind, ImportSiteKind::ImportCall(_));
+            let left = spelled.iter().filter(|it| it.is_left_to_loader);
+            left.map(move |&it| (it, is_required))
+        })
     }
 
     fn find_row(&self, file: FileId) -> Option<&FileRow> {

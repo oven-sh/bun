@@ -437,6 +437,8 @@ fn locator_works_after_lowering() {
     with_program(&files, &["./main.ts"], 1, |program| {
         let (files, main) = (program.files(), program.file("main.ts"));
         check_only(program);
+        // SAFETY: no task runs, and nothing refers to the file.
+        unsafe { files.free_tree(main) };
         assert!(files.hir(main).stmts.is_empty());
         let located = Locator::new(files, main).locate(17, 22, global(1, &[""; 0]));
         assert_eq!(located.file, Some(main));
@@ -500,7 +502,6 @@ fn diagnostics_do_not_depend_on_threads() {
     }
 }
 
-/// The text of the type of each access `x.name` of main.ts, in the order of the text. `None`: the checker has no type for it.
 fn ask_for_member_accesses(files: &[(&str, &str)], threads: usize) -> Vec<Option<String>> {
     with_program(files, &["./main.ts"], threads, |program| {
         let all = program.files();

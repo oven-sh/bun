@@ -141,7 +141,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         closure
     }
 
-    // As `create_named_closure`, where nobody ever has the function object.
     pub(in crate::lower) fn declare_function_named_by(&mut self, function: FnId, given: GivenName) {
         let text_name = match given.name {
             PropertyName::Constant(key) => member::find_function_name(self.file, key),

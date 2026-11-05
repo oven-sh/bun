@@ -73,6 +73,28 @@ console.log(local({ max: () => "local" }), CALC.max(1, 2), said);`,
     },
     prints: "module parameter captured stored global own string\nlocal 2 require is not defined\n",
   },
+  "--define of a name in place of a path, and of a path in place of a name": {
+    flags: [
+      "--define=config.mode=mode",
+      "--define=import.meta.env.MODE=mode",
+      "--define=DEPTH=settings.depth",
+      "--define=LOADER_AT_HAND=require",
+    ],
+    files: {
+      "main.mjs": `globalThis.mode = "global";
+globalThis.settings = { depth: "global" };
+const mode = "module";
+const settings = { depth: "module" };
+function pick(mode) { return config.mode; }
+function later(mode) { return () => import.meta.env.MODE; }
+function own(config) { return config.mode; }
+function depth(settings) { return DEPTH; }
+function loader(require) { return LOADER_AT_HAND; }
+console.log(config.mode, import.meta.env.MODE, pick("parameter"), later("captured")(), own({ mode: "own" }), typeof config.mode);
+console.log(DEPTH, depth({ depth: "parameter" }), loader("parameter"));`,
+    },
+    prints: "module module parameter captured own string\nglobal parameter parameter\n",
+  },
   "--define of a name in place of a path, under typeof": {
     flags: ["--define=config.flag=absent", "--define=FLAG=absent", "--define=config.there=present"],
     files: {

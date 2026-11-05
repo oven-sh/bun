@@ -2,7 +2,6 @@ use crate::statistics::StepClock;
 use core::time::Duration;
 use std::time::Instant;
 
-// Calls each once, at the same time: the first on one other thread, the second on the calling thread.
 pub type Beside<'a> = &'a (dyn Fn(&mut (dyn FnMut() + Send), &mut dyn FnMut()) + Sync);
 
 pub(crate) fn run_one_after_the_other(first: &mut (dyn FnMut() + Send), second: &mut dyn FnMut()) {
@@ -33,7 +32,6 @@ fn run_timed<R>(run: impl FnOnce() -> R) -> (R, Duration) {
     (result, began.elapsed())
 }
 
-/// `run_beside` as one step of `steps`. Its line says how long each of the two took.
 pub(crate) fn run_steps_beside<A: Send, B>(
     beside: Beside<'_>,
     steps: &mut StepClock,

@@ -32,7 +32,6 @@ fn from_records(
     let mut named = FeatureSet::EMPTY;
     let mut used = Vec::new();
     for (index, record) in features.iter().enumerate() {
-        // An undeclared word can stand for any feature, so nothing may be removed.
         let Some(feature) = feature_of(record.feature) else {
             return UsedFeatures::default();
         };
@@ -61,7 +60,6 @@ fn from_records(
         features: used,
         causes: causes.collect(),
         locales: used_locales(locales, text_of),
-        // The answer also needs what Load saw, so `Compilation` carries it and its holder overwrites this.
         starts_workers_from_unseen_code: true,
     }
 }

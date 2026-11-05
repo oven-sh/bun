@@ -19,11 +19,8 @@ pub struct RejectedOptionWord {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RegExpLiteralCreation {
-    /// From its record, which cannot throw.
     FromRecord,
-    /// Its pattern can never be built.
     NeverBuilt,
-    /// It is nested too deep for the build to analyze, so whether it can be built depends on the stack of the thread that evaluates it.
     DependsOnStack,
 }
 
@@ -50,7 +47,6 @@ pub fn describe_difference_of_runtime(description: &[u8]) -> Option<Vec<u8>> {
     (length > 0).then_some(sentence)
 }
 
-/// What the engine's parser says of the literal `/pattern/flags`, for which it refuses the file that holds it. `None`: nothing.
 pub fn describe_regexp_syntax_error(pattern: &[u8], flags: &[u8]) -> Option<Vec<u8>> {
     if !has_compiler() {
         return None;
@@ -71,7 +67,6 @@ pub fn describe_regexp_syntax_error(pattern: &[u8], flags: &[u8]) -> Option<Vec<
     (length > 0).then_some(sentence)
 }
 
-/// How the literal `/pattern/flags` is created. The flags must be valid. The pattern need not be: lowering continues after a syntax error is reported, and such a literal is `NeverBuilt`.
 pub fn classify_regexp_literal(pattern: &[u8], flags: &[u8]) -> RegExpLiteralCreation {
     if !has_compiler() {
         return RegExpLiteralCreation::FromRecord;
@@ -93,7 +88,6 @@ pub fn classify_regexp_literal(pattern: &[u8], flags: &[u8]) -> RegExpLiteralCre
     }
 }
 
-/// The whole message of the SyntaxError that the literal `/pattern/flags` throws wherever it is evaluated. The flags must be valid. `None`: it is not `NeverBuilt`, or the message is not at hand.
 pub fn describe_regexp_construction_error(pattern: &[u8], flags: &[u8]) -> Option<Vec<u8>> {
     if !has_compiler() {
         return None;
@@ -110,7 +104,6 @@ pub fn describe_regexp_construction_error(pattern: &[u8], flags: &[u8]) -> Optio
             sentence.len(),
         )
     };
-    // The program sees the message, so one that was cut short is none.
     if length == 0 || length > sentence.len() {
         return None;
     }
@@ -118,7 +111,6 @@ pub fn describe_regexp_construction_error(pattern: &[u8], flags: &[u8]) -> Optio
     Some(sentence)
 }
 
-/// Makes the addresses in `image` those of an image whose first byte the loader puts at `address`.
 pub fn relocate_image(image: &mut [u8], address: u64) {
     // SAFETY: the engine reads and writes `image.len()` bytes from the pointer, which the exclusive borrow covers.
     unsafe { Bun__AOT__relocateImage(image.as_mut_ptr(), image.len(), address) }

@@ -61,7 +61,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `exports.a = class extends B {}`
     fn lower_checks_of_left_out_store(&mut self, statement: StmtId) {
         let hir = self.file.hir;
         let StmtKind::Expr(mut expression) = hir[statement].kind else {
@@ -78,7 +77,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `Object.defineProperty(exports, "name", { value })`, where the name is a variable of the module or nobody reads it.
     fn is_export_definition(&self, statement: StmtId) -> bool {
         let hir = self.file.hir;
         let StmtKind::Expr(expression) = hir[statement].kind else {
@@ -90,11 +88,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             && !matches!(member, None | Some(Member::OnObject))
     }
 
-    // No call is left of a definition on `exports`: the graph of modules has taken all there is from `Object.defineProperty(exports, "__esModule", { value: true })`, or nobody reads the name.
-    // `bun run` makes the call, and reads its callee off `Object` first.
     fn lower_read_of_unmade_callee(&mut self, statement: StmtId) {
         let hir = self.file.hir;
-        // Nothing of a placeholder runs.
         if !self.file.inputs.modules.is_placeholder(self.file.file)
             && let StmtKind::Expr(expression) = hir[statement].kind
             && let ExprKind::Call(site) = hir[self.file.skip_type_syntax(expression)].kind
@@ -105,7 +100,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_statement_in_place(&mut self, statement: StmtId, behind: IdList<StmtId>) {
-        // A statement whose position lies in a JSDoc comment was synthesized from a tag. It describes types and never runs.
         if self.file.hir.is_in_jsdoc(self.file.hir[statement].start) {
             return;
         }
@@ -212,7 +206,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.emit_empty_return();
             return;
         }
-        // Nobody gets what the body of a module returns.
         if self.drops_returned_value() {
             self.lower_taken_value_for_effect(expression);
             self.emit_empty_return();
@@ -224,7 +217,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_if(&mut self, test: ExprId, yes: StmtId, no: StmtId) {
-        // `if (!Reflect.has) {}`: `bun run` drops the statement where it drops `!Reflect.has;`.
         let hir = self.file.hir;
         let holds_nothing = |arm: StmtId| match arm.some().map(|arm| hir[arm].kind) {
             None | Some(StmtKind::Empty) => true,

@@ -662,6 +662,21 @@ unsafe extern "C" fn highway_last_index_of_any_char(
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_index_of_untidy_slash(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let path = unsafe { bytes(p, len) };
+    let is_untidy = |part: &[u8]| {
+        matches!(
+            part,
+            [b'/', ..] | [b'.'] | [b'.', b'/', ..] | [b'.', b'.'] | [b'.', b'.', b'/', ..]
+        )
+    };
+    (1..len)
+        .find(|&at| path[at - 1] == b'/' && is_untidy(&path[at..]))
+        .map_or(len, |at| at - 1)
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_memmem(
     h: *const u8,
     h_len: usize,

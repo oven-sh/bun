@@ -191,7 +191,6 @@ fn second_terminator_is_ignored() {
         .blocks()
         .next()
         .expect("the body has an entry block");
-    // The end of `first`, which stays open and goes on where the entry block jumps.
     let terminator = entry.terminator();
     assert_eq!(terminator.kind, TerminatorKind::Unreachable);
     assert_eq!(terminator.target_count(), 0);

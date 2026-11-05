@@ -36,7 +36,6 @@ const MODULE_PATH: &str = "/$bun/js/node/os.ts";
 
 struct LoweredFiles {
     files: Vec<(FileId, LoweredFile)>,
-    /// Taken out of each distinct `Fragment::tables`. Files lowered by one checker task share a set, and a second `take` panics, so each set is taken once and never put back.
     tables: Vec<(Arc<SharedTables>, UnitTables)>,
 }
 
@@ -363,7 +362,6 @@ impl Operation<'_> {
         self.value.id
     }
 
-    // What the program passes. A type that is only expected of a value changes nothing about what an intrinsic takes.
     fn operands(&self) -> Vec<ValueId> {
         let fields = self.value.fields;
         let mut operands = Vec::new();

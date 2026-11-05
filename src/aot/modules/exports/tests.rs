@@ -92,7 +92,6 @@ fn with_export_tables(
     });
 }
 
-/// The names that stars bring each of the files and that have a place in its table, as a build makes the tables.
 fn star_names_with_a_place(files: &[(&str, &str)], asked: &[&str]) -> Vec<String> {
     let mut found = Vec::new();
     with_graph(files, |_, input| {
@@ -157,7 +156,6 @@ fn a_name_that_a_star_brings_has_a_place_where_somebody_asks_for_it() {
             ],
             ["u0", "u0"],
         ),
-        // Whoever asks one file for a name asks every file for it.
         (
             &[("main.js", "import { v0 } from './m1'; import './m2'; v0")],
             ["v0", "v0"],
@@ -253,7 +251,6 @@ fn whoever_may_get_hold_of_the_object_of_a_file_asks_for_every_name() {
     assert!(unseen.is_empty(), "{unseen:?}");
 }
 
-// `find_accessed_module` of the reach. The object that the function finds is that of "space.js".
 #[test]
 fn the_file_that_the_reach_takes_for_the_object_that_a_function_is_called_on_has_every_name() {
     let space = ("space.js", "export let tell = function () { return this }");
@@ -518,7 +515,6 @@ fn exports_follow_resolve_export() {
             &["Buffer = synthetic runtime:NodeBuffer Buffer"],
         ),
     ];
-    // Somebody looks at the object of each file: a name that a star brings a file has a place only where it may be asked for.
     let look = |(index, (file, _)): (usize, &(&str, &[&str]))| {
         format!("import * as n{index} from './{file}'; console.log(n{index});\n")
     };

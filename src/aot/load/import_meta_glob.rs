@@ -1,16 +1,14 @@
-//! `import.meta.glob()`. Bun's parser expands the call, so the files, the keys and the messages are those of `bun build`, and the same object is written into the tree that is compiled.
-
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_ast::{Loc, Source};
 use bun_core::fmt::format_json_string_utf8;
 use bun_js_parser::{ExpandedImportMetaGlob, ImportMetaGlobFiles, InvalidImportMetaGlob};
-use bun_sema::atom::{Atom, Interner, known};
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::{
     Call, CallId, Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func, Import,
-    ImportId, ImportSpec, Keyword, ListAt, NameKind, Param, ParamId, PatKind, Prop, PropKey,
-    PropKind, ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtId, StmtKind, TextRange,
-    TypeNodeId, TypeNodeKind, rare,
+    ImportEquals, ImportEqualsTarget, ImportId, ImportSpec, Keyword, ListAt, NameKind, Param,
+    ParamId, PatKind, Prop, PropKey, PropKind, ResolutionMode, Span, SpecifierKind, SpecifierUse,
+    StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind, rare,
 };
 use bun_sema::resolve::{EarlyTransformRequest, TreeChange};
 use bun_sema::session::Arena;
@@ -18,16 +16,13 @@ use bun_sema_driver::host::to_native;
 
 use crate::diagnostics::LoadMessages;
 use crate::load::is_in_node_modules;
-use crate::load::react_compiler::module_items::{
-    POSITION, finish_file, put_around_body, write_declaration,
-};
+use crate::load::react_compiler::module_items::{POSITION, finish_file, put_around_body};
 use crate::load::source_provider::{ComponentFile, ModuleName, SourceProvider};
 use crate::load::sources::{ParsedSource, SourceKind};
 
 #[cfg(test)]
 mod tests;
 
-// No program can write such a name.
 const LOCAL_NAME_PREFIX: &[u8] = b"%glob:";
 const EXPORT_OF_EAGER_ENTRY: &str = "entry";
 const EAGER_IN_COMMON_JS: &[u8] = b"The \"import.meta.glob\" option \"eager\" needs import statements, so it can't be used in a CommonJS module";
@@ -37,11 +32,9 @@ const NOT_CALLED_DIRECTLY: &[u8] =
 struct WrittenCall {
     expression: ExprId,
     call: CallId,
-    /// Where `import` stands, which is where Bun's parser says that the call starts.
     start: u32,
 }
 
-/// The parser finds the calls by spelling. `import.meta` is syntax, so there is no binding to decide by.
 fn find_calls(hir: &File<'_>, glob: Atom) -> Vec<WrittenCall> {
     let expressions = (0..).map(ExprId).zip(hir.exprs.iter());
     let calls = expressions.filter_map(|(expression, node)| {
@@ -73,12 +66,9 @@ fn find_calls(hir: &File<'_>, glob: Atom) -> Vec<WrittenCall> {
 struct Writer<'a, 's> {
     file: FileBuilder,
     atoms: &'a Interner<'s>,
-    /// What goes to the head of the file's body.
     head: Vec<StmtId>,
     is_common_js: bool,
-    /// Lays a module of the build's making beside the file: the specifier that finds it from there, and its text.
     add_module: &'a dyn Fn(&[u8], Vec<u8>),
-    /// Where the call that is being replaced stands.
     pos: u32,
     end: u32,
 }
@@ -93,7 +83,6 @@ impl Writer<'_, '_> {
         self.expression(ExprKind::String(text))
     }
 
-    /// The parser lists every specifier for the type checker, by the kind of its use.
     fn specifier(&mut self, path: &[u8], kind: SpecifierKind) -> ExprId {
         self.file.specifier_uses.push(SpecifierUse {
             spec: self.atoms.intern(path),
@@ -109,7 +98,6 @@ impl Writer<'_, '_> {
         self.file.ty(kind, self.pos, self.end)
     }
 
-    /// The declared type of the call says nothing of the files, and what stands in its place is checked against nothing.
     fn as_any(&mut self, expr: ExprId) -> ExprKind {
         let ty = self.any();
         ExprKind::As { expr, ty }
@@ -188,13 +176,11 @@ impl Writer<'_, '_> {
         self.expression(ExprKind::Fn(function))
     }
 
-    /// `{ type: "text" }`
     fn attributes(&mut self, import_type: &[u8]) -> ExprId {
         let import_type = self.text(import_type);
         self.object_of(b"type", import_type)
     }
 
-    /// `import(path).then(m => m.name)`
     fn then_export(&mut self, import: ExprId, name: &[u8]) -> ExprId {
         let parameter = self.atoms.intern(b"m");
         let ty = match self.file.is_js {
@@ -218,7 +204,6 @@ impl Writer<'_, '_> {
         self.expression(ExprKind::Call(call))
     }
 
-    /// `() => import(path)`
     fn lazy_entry(&mut self, files: &ImportMetaGlobFiles, path: &[u8]) -> ExprId {
         let mut args = vec![self.specifier(path, SpecifierKind::ImportCall)];
         if let Some(import_type) = files.import_type {
@@ -233,27 +218,30 @@ impl Writer<'_, '_> {
         self.arrow(Span::EMPTY, FnBody::Expr(value))
     }
 
-    /// `const local = require("%glob:type:path").entry`: a CommonJS file cannot hold an import statement, and `require(path)` answers otherwise than a statement brings for a CommonJS file, for data
-    /// and for a text. Which of them the entry is shows once it is loaded, so an ES module holds the statement: `write_module_of_eager_entry`.
-    /// A bundle loads the entry at the same place, the head of the file's body.
     fn write_require(&mut self, files: &ImportMetaGlobFiles, path: &[u8], local: Atom) {
-        let written = (self.pos, self.end);
-        (self.pos, self.end) = (POSITION, POSITION);
-        let require = self.expression(ExprKind::Ident(known::require));
         let import_type = files.import_type.unwrap_or_default();
         let specifier = [LOCAL_NAME_PREFIX, import_type, b":", path].concat();
         (self.add_module)(&specifier, write_module_of_eager_entry(import_type, path));
-        let specifier = self.specifier(&specifier, SpecifierKind::RequireCall);
-        let call = self.call(require, &[specifier]);
-        let module = self.expression(ExprKind::Call(call));
-        let value = self.member(module, EXPORT_OF_EAGER_ENTRY.as_bytes());
-        let pat = (self.file).pat(PatKind::Ident(local), POSITION, POSITION);
-        let statement = write_declaration(&mut self.file, pat, value);
+        let spec = self.atoms.intern(&specifier);
+        self.file.specifier_uses.push(SpecifierUse {
+            spec,
+            pos: POSITION,
+            kind: SpecifierKind::Require,
+            mode: ResolutionMode::None,
+        });
+        let declaration = self.file.add_import_equals(ImportEquals {
+            name: local,
+            name_pos: POSITION,
+            target: ImportEqualsTarget::Require(spec),
+            expression: ExprId::NONE,
+            flags: Flags::empty(),
+            stmt: StmtId::NONE,
+        });
+        let statement = (self.file).stmt(StmtKind::ImportEquals(declaration), POSITION);
+        self.file[declaration].stmt = statement;
         self.head.push(statement);
-        (self.pos, self.end) = written;
     }
 
-    /// `import * as local from path`, or `import { name as local } from path`
     fn write_import(&mut self, files: &ImportMetaGlobFiles, path: &[u8], local: Atom) {
         let import = ImportId(self.file.imports.len() as u32);
         let is_namespace = files.import.is_empty();
@@ -300,7 +288,6 @@ impl Writer<'_, '_> {
     }
 
     fn eager_entry(&mut self, files: &ImportMetaGlobFiles, path: &[u8]) -> ExprId {
-        // A file may be expanded twice, and the tree only grows.
         let number = self.file.exprs.len().to_string();
         let local = (self.atoms).intern(&[LOCAL_NAME_PREFIX, number.as_bytes()].concat());
         match self.is_common_js {
@@ -308,10 +295,13 @@ impl Writer<'_, '_> {
             false => self.write_import(files, path, local),
         }
         let entry = self.expression(ExprKind::Ident(local));
-        // A bundle reads the name off the namespace too: a CommonJS entry that lacks it answers undefined, where a statement that names it would not link.
-        match self.is_common_js && !files.import.is_empty() {
-            true => self.member(entry, &files.import),
-            false => entry,
+        if !self.is_common_js {
+            return entry;
+        }
+        let entry = self.member(entry, EXPORT_OF_EAGER_ENTRY.as_bytes());
+        match files.import.is_empty() {
+            true => entry,
+            false => self.member(entry, &files.import),
         }
     }
 
@@ -337,7 +327,6 @@ impl Writer<'_, '_> {
         self.file[expression].kind = kind;
     }
 
-    /// `() => { throw new TypeError(message) }`
     fn throwing_function(&mut self, message: &[u8]) -> ExprId {
         let type_error = self.atoms.intern(b"TypeError");
         let type_error = self.expression(ExprKind::Ident(type_error));
@@ -350,14 +339,12 @@ impl Writer<'_, '_> {
         self.untyped(function)
     }
 
-    /// The call stays, so its arguments are evaluated first, and its callee throws.
     fn write_throw(&mut self, call: CallId, message: &[u8]) {
         let callee = self.throwing_function(message);
         self.file[call].callee = callee;
         self.file[call].type_args = ListAt::EMPTY;
     }
 
-    /// `import.meta.glob = () => { throw .. }`, so `typeof import.meta.glob` is "function" as under `bun test`.
     fn write_definition(&mut self) -> StmtId {
         (self.pos, self.end) = (POSITION, POSITION);
         let object = self.expression(ExprKind::ImportMeta);
@@ -370,7 +357,6 @@ impl Writer<'_, '_> {
     }
 }
 
-/// `export * as entry from "path" with { type: "text" };`, for the specifier that `write_require` has written. `None`: it is no such specifier.
 fn write_module_of_eager_entry(import_type: &[u8], path: &[u8]) -> Vec<u8> {
     let quote = |text: &[u8]| format_json_string_utf8(text, Default::default()).to_string();
     let attributes = match import_type {
@@ -420,7 +406,6 @@ fn ask_parser(
     })
 }
 
-/// It goes by the shape of the tree alone. A call that the parser leaves as written stays a call of whatever the program has put there.
 pub(crate) fn expand_calls<'s>(
     provider: &dyn SourceProvider,
     messages: &LoadMessages,
@@ -446,7 +431,6 @@ pub(crate) fn expand_calls<'s>(
     if !calls.iter().any(|call| find_expanded(call).is_some()) {
         return TreeChange::Unchanged;
     }
-    // Bun's parser decides the format behind the expansion, so the import statements of eager entries count like written ones.
     let is_common_js = !request.takes_import_statements;
     let mut writer = Writer {
         file: FileBuilder::from_file(request.hir),
@@ -465,7 +449,6 @@ pub(crate) fn expand_calls<'s>(
         let written = writer.file[call.expression];
         (writer.pos, writer.end) = (written.pos, written.end);
         match &found.result {
-            // `bun test` transpiles a file by itself, and a CommonJS file takes no import statement. What a plugin names is no file, and has no further module.
             Ok(files)
                 if is_common_js
                     && (runs_tests || source.plugin_module.is_some())

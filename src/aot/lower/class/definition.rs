@@ -58,7 +58,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let extends = hir[class].extends.some()?;
         let value = self.lower_expression(extends);
-        // JSC reports what it asks of a superclass where the expression starts.
         self.set_position(start_of(hir, extends));
         Some((value, self.builder.resolve_heritage(value)))
     }
@@ -121,10 +120,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let values = self.define_members(head, &plan);
         self.set_position(node.start);
         let class_object = self.builder.finish_class(head.value, head.layout);
-        let inner = inner.map(Binding::Symbol);
-        if let (Some(inner), false) = (inner, has_class_decorators) {
-            scope::initialize_binding(self, inner, node.name, class_object);
+        let own = inner.and_then(|inner| bound.own_binding_of_decorated_class(inner));
+        debug_assert!(inner.is_none() || own.is_some() == has_class_decorators);
+        if let Some(own) = own.or(inner) {
+            scope::initialize_binding(self, Binding::Symbol(own), node.name, class_object);
         }
+        let inner = inner.map(Binding::Symbol);
 
         let static_name = self.file.find_static_name(name);
         let evaluation = ClassEvaluation {
@@ -149,7 +150,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if !plan.static_elements.is_empty() {
             let initializer = fields::declare_initializer(self.file, class, true);
-            // JSC reports the static members where the class starts, behind an `export`.
             self.set_position(node.text_start);
             self.emit_call_on(initializer, class_object);
             self.set_position(node.start);

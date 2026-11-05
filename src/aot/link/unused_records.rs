@@ -48,14 +48,12 @@ pub(super) fn unmarked(count: usize) -> Vec<AtomicBool> {
     (0..count).map(|_| AtomicBool::new(false)).collect()
 }
 
-// Most marks are set many times, and a store takes the line from every other thread.
 pub(super) fn set_mark(mark: &AtomicBool) {
     if !mark.load(Ordering::Relaxed) {
         mark.store(true, Ordering::Relaxed);
     }
 }
 
-// Every other layout comes with the code that makes its objects and fills them.
 pub(super) fn is_plain_record(layout: &Layout) -> bool {
     layout.kind == LayoutKind::Record && layout.constructor.is_none()
 }
@@ -96,7 +94,6 @@ fn find_written_keys(layouts: &[Layout], input: &UseInput<'_>) -> Vec<AtomicBool
     is_written
 }
 
-// An error has a message that no compiled code stored: a type that requires one describes what native code makes.
 fn is_stored_by_native_code(input: &UseInput<'_>, key: PropertyKeyId) -> bool {
     let key = input.property_keys.get(key);
     let text = key.text.filter(|_| key.kind == PropertyKeyKind::Text);
@@ -104,7 +101,6 @@ fn is_stored_by_native_code(input: &UseInput<'_>, key: PropertyKeyId) -> bool {
     name.is_some_and(table::is_stored_by_native_code)
 }
 
-/// Flags the plain records that nothing in the program allocates, and the fields of plain records whose key nothing writes.
 pub(super) fn mark_unused_records(layouts: &mut [Layout], input: &UseInput<'_>) {
     let is_allocated = find_allocated_layouts(input);
     let is_written = find_written_keys(layouts, input);
@@ -117,7 +113,6 @@ pub(super) fn mark_unused_records(layouts: &mut [Layout], input: &UseInput<'_>) 
         }
         for field in &mut layout.fields {
             let Some(key) = field.key else { continue };
-            // `response[kState] = state`: a store under a symbol is written under a computed key, and lowering notes no key for it: nobody here can say that such a key is never written.
             if input.property_keys.get(key).kind != PropertyKeyKind::Text {
                 continue;
             }
@@ -158,7 +153,6 @@ export interface Made { id: number; label: string }
 export function make(id: number): Made { return { id, label: "made" }; }
 "#;
 
-    // The layout of an interface has no name. It stands where a source writes the name.
     fn find_layout<'a>(program: &'a Program, name: &str) -> &'a Layout {
         let declaration = format!("interface {name} ");
         let places = [MAIN, MAKER, FILLED_BY_NATIVE_CODE].map(|source| {
@@ -246,7 +240,6 @@ export function read(holder: Holder): number { return (holder[kState] ?? 0) + ho
         );
     }
 
-    // The only names that the program stores are `name` and `level`.
     const FILLED_BY_NATIVE_CODE: &str = r#"
 /// <reference lib="dom" />
 interface Warning extends Error { level: number }
@@ -294,7 +287,6 @@ export function make(level: number) { return { name: "made", level }; }
         }
     }
 
-    // An object made with the layout has no place for it, and whoever looks for the name finds nothing at once.
     #[test]
     fn an_optional_field_that_only_native_code_stores_is_never_written() {
         let linked = link_sources_without_bun_modules(&[("main.ts", FILLED_BY_NATIVE_CODE)]);
@@ -330,8 +322,6 @@ export function make(level: number) { return { name: "made", level }; }
         }
     }
 
-    // Both units allocate layout 0 and write key 0 of their own tables.
-    // Each unit's tables map those to a different layout and key of the program.
     #[test]
     fn each_unit_is_read_through_its_own_tables() {
         with_test_files(|projects, [main, first, _]| {

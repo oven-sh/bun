@@ -27,12 +27,9 @@ use std::borrow::Cow;
 #[derive(Debug)]
 pub struct Failed;
 
-/// Why `parse_data` has no module. The log has the words.
 #[derive(Debug)]
 pub enum DataFailure {
-    /// The parser of the file's kind refuses its text, as it does where plain Bun loads the file.
     InvalidText,
-    /// A service is missing, the file cannot be embedded, the compiler cannot carry the value.
     Build,
 }
 
@@ -118,14 +115,12 @@ pub trait SourceProvider: Sync {
         log: &mut Log,
     ) -> FoldOptions<'s>;
 
-    /// The `Define` of the transpiler: what the build puts in place of names, as `fold_options` lists it.
     fn define(&self) -> Option<&Define> {
         None
     }
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed>;
 
-    /// Which file runs for an import that no plugin has resolved.
     fn find_file(&self, host: &dyn Host, search: &FileSearch<'_>) -> FoundCode {
         find_file_plainly(host, search)
     }
@@ -142,27 +137,22 @@ pub trait SourceProvider: Sync {
 
     fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad>;
 
-    /// What a `data:` URL holds, as the loader of `bun run` decodes it. `None`: that loader refuses the URL.
     fn decode_data_url(&self, _url: &[u8]) -> Option<Vec<u8>> {
         None
     }
 
-    /// How the run time reads what `new Blob(parts, { type })` holds where a Worker starts from it: `Blob::get_loader`.
     fn loader_of_blob(&self, _type: Option<&[u8]>) -> Option<Loader> {
         None
     }
 
-    /// The `href` of `new URL(text, base)`, as the parser of URLs of the run time writes it. `None`: the constructor throws.
     fn write_url(&self, _text: &[u8], _base: Option<&[u8]>) -> Option<Vec<u8>> {
         None
     }
 
-    /// True if the embedded path of a `file` loader module does not depend on its contents.
     fn asset_paths_ignore_contents(&self) -> bool {
         false
     }
 
-    /// Replaces the contents of a file that `parse_data` embedded with empty contents.
     fn set_embedded_contents(&self, _file: &SourceFile<'_>, _log: &mut Log) -> Result<(), Failed> {
         Ok(())
     }
@@ -175,8 +165,6 @@ pub trait SourceProvider: Sync {
         log: &mut Log,
     ) -> Result<DataModule<'s>, DataFailure>;
 
-    /// Bundles every page that an executable imports for the browser, in one bundle as `bun build` does, and embeds the files
-    /// that come out. Returns what an import of each page gets, as JSON, in the order of `pages`.
     fn bundle_pages(&self, pages: &[&[u8]], log: &mut Log) -> Result<Vec<Vec<u8>>, Failed> {
         match pages.is_empty() {
             true => Ok(Vec::new()),
@@ -187,20 +175,14 @@ pub trait SourceProvider: Sync {
         }
     }
 
-    /// Parses `file` with the parser options of `bun build` and the React Compiler enabled, and reports each compiled
-    /// function to `observer`. Returns false if the file has an error.
     fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
         compile_components_without_bundler(file, self.define(), observer)
     }
 
-    /// Parses `file` with the parser options of `bun build`, and returns every call of `import.meta.glob()` as the parser has
-    /// expanded it. A call that it leaves as written, as in dead code, is not among them.
     fn expand_globs(&self, file: &ComponentFile<'_>) -> Vec<ExpandedImportMetaGlob> {
         expand_globs_without_bundler(file, self.define())
     }
 
-    /// Sorts the embedded files by name, joins the copies of one file, and fails if files with different contents share
-    /// a name. Every build must call this once, after its last `parse_data`, `bundle_pages` and `set_embedded_contents`.
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed>;
 }
 
@@ -224,7 +206,6 @@ pub fn apply_jsx_settings(pragma: &mut jsx::Pragma, settings: &JsxSettings) {
     pragma.set_import_source();
 }
 
-/// Without a host for them the parser leaves the calls of `import.meta.glob()` as written: an expanded one names imports that only the parser's tree holds.
 pub fn compile_components_without_bundler(
     file: &ComponentFile<'_>,
     define: Option<&Define>,
@@ -233,7 +214,6 @@ pub fn compile_components_without_bundler(
     observe(observer, || parse_without_bundler(file, define, None))
 }
 
-/// A path alias takes the resolver of the bundler, so a pattern that starts with one is invalid here.
 pub fn expand_globs_without_bundler(
     file: &ComponentFile<'_>,
     define: Option<&Define>,
@@ -361,7 +341,6 @@ impl SourceProvider for WithoutServices {
             },
             Loader::Text => {
                 #[allow(clippy::disallowed_methods)]
-                // a JavaScript string holds no ill-formed UTF-8
                 let text = String::from_utf8_lossy(file.contents);
                 Ok(DataModule::Value {
                     default: arena.alloc(DataValue::String(atoms.intern(text.as_bytes()))),

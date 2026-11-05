@@ -14,7 +14,6 @@ use crate::lower::{FileLowering, FunctionLowering, convert, function};
 enum BindingStore {
     Initialize,
     Assign,
-    /// `x = undefined`, `x = null`
     Release,
 }
 
@@ -24,7 +23,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-// Only the text of a CommonJS file that keeps the five names as parameters is a function with an arguments object.
 pub(super) fn normalize_binding(file: &FileLowering<'_, '_, '_, '_>, binding: Binding) -> Binding {
     match binding {
         Binding::Arguments(CodeUnit::File) if !file.scopes.has_wrapper_parameters() => {
@@ -119,7 +117,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// For a read that `FileAnalysis::bindings_read_without_expression` lists.
     pub(crate) fn get_binding_without_expression(
         &mut self,
         binding: Binding,
@@ -187,7 +184,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.store_binding_in(None, binding, name, value, source, tests_dead_zone);
     }
 
-    // The object of the container was looked for by name.
     pub(super) fn store_member_of(
         &mut self,
         container: ValueId,
@@ -276,13 +272,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `f ??= <the closure>`
     fn get_function_made_at_first_read(
         &mut self,
         symbol: SymbolId,
         name: Atom,
         function: FnId,
     ) -> ValueId {
+        if self.file.scopes.is_created_at_each_read(symbol) {
+            let id = function::declare_source_function(self.file, function, None);
+            return self.emit_closure(id, None);
+        }
         let held = self.get_checked(symbol, name);
         if self.builder.is_new_closure(held)
             || self.scopes.created_functions.get(&symbol) == Some(&held)

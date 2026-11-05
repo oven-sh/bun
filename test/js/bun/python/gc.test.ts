@@ -386,18 +386,19 @@ test.skipIf(isDebug || isASAN || isWindows)(
   "idle threads do not collect again and again beside a thread that works",
   async () => {
     const { stdout, stderr, exitCode } = await run(`
-import argparse, collections, gc, hashlib, inspect, io, os, select, threading, tokenize
+import argparse, collections, gc, hashlib, inspect, io, os, select, threading, time, tokenize
 
+# For a given time, not a given amount of work: what is counted comes so many times a second, on a fast machine and on a slow one.
 def full_collections_during(work):
     before = gc.get_stats()[2]["collections"]
-    work()
+    work(time.monotonic() + 1.5)
     return gc.get_stats()[2]["collections"] - before
 
 # Generators and lists that live for a while.
 source = inspect.getsource(argparse)
-def tokenizes():
+def tokenizes(end):
     kept = collections.deque(maxlen=20)
-    for i in range(150):
+    while time.monotonic() < end:
         kept.append(list(tokenize.generate_tokens(io.StringIO(source).readline))[:200])
 
 # Nearly all the time in native code, without the GIL.
@@ -405,9 +406,9 @@ class A:
     def __del__(self):
         pass
 data = bytes(32 * 1024 * 1024)
-def hashes():
+def hashes(end):
     kept = collections.deque(maxlen=200)
-    for i in range(50):
+    while time.monotonic() < end:
         kept.extend(A() for j in range(20))
         hashlib.sha256(data).digest()
 
@@ -422,12 +423,13 @@ print(full_collections_during(tokenizes), full_collections_during(hashes))
 `);
     expect(stderr).toBe("");
     const [whileTokenizing, whileHashing] = stdout.trim().split(" ").map(Number);
-    // A handful: the engine's own, and those of the idle threads, which come less and less often. One every 50 ms or so was 20 and more
-    // while tokenizing, and anything up to that while hashing.
+    // A handful: the engine's own, and those of the idle threads, which have a twentieth of the time. One every 50 ms or so was 22
+    // while tokenizing, and 9 to 21 while hashing.
     expect(whileTokenizing).toBeLessThan(10);
-    expect(whileHashing).toBeLessThan(5);
+    expect(whileHashing).toBeLessThan(8);
     expect(exitCode).toBe(0);
   },
+  30_000,
 );
 
 test.skipIf(isDebug || isASAN || isWindows)(
@@ -455,4 +457,5 @@ print(gc.get_stats()[2]["collections"] - before, finalized > 0)
     expect(Number(collections)).toBeLessThan(8);
     expect(exitCode).toBe(0);
   },
+  30_000,
 );

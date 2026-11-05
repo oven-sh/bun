@@ -2958,8 +2958,9 @@ impl RunCommand {
         while joined.len() > root_len && joined[joined.len() - 1] == paths::SEP {
             joined = &joined[..joined.len() - 1];
         }
-        // Windows keeps the typed casing in the cwd; the fd path is canonical.
-        let is_entry_path = if cfg!(windows) {
+        // Case-insensitive file systems: the typed path can differ from the
+        // canonical fd path by case alone.
+        let is_entry_path = if cfg!(any(windows, target_os = "macos")) {
             bun_core::strings::eql_case_insensitive_ascii(joined, entry_path, true)
         } else {
             joined == entry_path

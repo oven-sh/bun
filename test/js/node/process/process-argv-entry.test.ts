@@ -4,8 +4,8 @@
 // Module loading realpaths separately, so import.meta.url / Bun.main reflect
 // the real file while argv[1] reflects what was invoked.
 import { describe, expect, test } from "bun:test";
-import { symlinkSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync, symlinkSync } from "fs";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
@@ -277,6 +277,24 @@ describe.concurrent("process.argv[1] is path.resolve of the entry argument", () 
     expect(root.toLowerCase()).not.toBe(root);
 
     const { stdout, stderr, exitCode } = await run(root.toLowerCase(), "foo.mjs");
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      argv1: fooPath,
+      url: pathToFileURL(fooPath).href,
+      metaMain: true,
+      bunMain: fooPath,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isMacOS)("an entry typed in another case is not a symlink", async () => {
+    using dir = tempDir("argv-case-name", { "foo.mjs": printEntry });
+    const root = String(dir);
+    const fooPath = join(root, "foo.mjs");
+    if (!existsSync(join(root, "FOO.mjs"))) return; // case-sensitive volume
+
+    const { stdout, stderr, exitCode } = await run(root, "FOO.mjs");
 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({

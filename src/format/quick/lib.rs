@@ -419,28 +419,28 @@ pub(crate) fn copy_block<const COUNT: usize>(to: &mut [u8], o: i32, from: &[u8],
 }
 
 const ONES: u64 = 0x0101_0101_0101_0101;
-const TOP_BITS: u64 = 0x8080_8080_8080_8080;
 
-/// Eight bytes at a time: the top bit of the first byte of `v` that is `byte` is set, none below it; what is set above it says nothing.
+const fn all(byte: u8) -> u128 {
+    u128::from_le_bytes([byte; 16])
+}
+
+/// Sixteen bytes at a time: the top bit of the first byte of `v` that is `byte` is set, none below it; what is set above it says nothing.
 #[inline(always)]
-pub(crate) fn where_byte_is(v: u64, byte: u8) -> u64 {
-    let x = v ^ ONES.wrapping_mul(byte as u64);
-    x.wrapping_sub(ONES) & !x & TOP_BITS
+pub(crate) fn where_byte_is(v: u128, byte: u8) -> u128 {
+    let x = v ^ all(byte);
+    x.wrapping_sub(all(1)) & !x & all(0x80)
 }
 
 /// The same for the first byte that is not printable ASCII: below a blank, 127, or beyond.
 #[inline(always)]
-pub(crate) fn where_not_printable(v: u64) -> u64 {
-    (v | v.wrapping_sub(ONES.wrapping_mul(32)) | v.wrapping_add(ONES)) & TOP_BITS
+pub(crate) fn where_not_printable(v: u128) -> u128 {
+    (v | v.wrapping_sub(all(32)) | v.wrapping_add(all(1))) & all(0x80)
 }
 
-/// Sixteen bytes at a time: the top bit of the first byte of `v` that is no letter of ASCII is set, none below it.
+/// The same for the first byte that is no letter of ASCII, and nothing is set above it that is one.
 /// (x + (0x80 - low)) & !(x + (0x7f - high)) has the top bit set for low <= x <= high, for x below 0x80, without carries.
 #[inline(always)]
 pub(crate) fn where_letters_end(v: u128) -> u128 {
-    const fn all(byte: u8) -> u128 {
-        u128::from_le_bytes([byte; 16])
-    }
     let lower = (v & all(0x7f)) | all(0x20);
     !(lower.wrapping_add(all(0x1f)) & !lower.wrapping_add(all(0x05)) & !v) & all(0x80)
 }
@@ -453,7 +453,7 @@ pub(crate) fn is_digit_or_sign_of_names(c: u8) -> bool {
 
 /// How many bytes stand before the first one that is marked.
 #[inline(always)]
-pub(crate) fn bytes_before(marks: u64) -> i32 {
+pub(crate) fn bytes_before(marks: u128) -> i32 {
     (marks.trailing_zeros() >> 3) as i32
 }
 
@@ -598,7 +598,7 @@ impl Quick {
                 continue;
             }
             // most names are letters and no more
-            p += (ends.trailing_zeros() >> 3) as i32;
+            p += bytes_before(ends);
             if !is_digit_or_sign_of_names(self.t.at(p) as u8) {
                 return p;
             }
@@ -612,7 +612,7 @@ impl Quick {
         loop {
             let others = self.t.u64_at(p) ^ ONES.wrapping_mul(32);
             if others != 0 {
-                return p + bytes_before(others);
+                return p + (others.trailing_zeros() >> 3) as i32;
             }
             p += 8;
         }

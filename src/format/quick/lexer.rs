@@ -480,12 +480,12 @@ impl Quick {
                     p += 2;
                     loop {
                         loop {
-                            let stops = where_not_printable(self.t.u64_at(p));
+                            let stops = where_not_printable(self.t.u128_at(p));
                             if stops != 0 {
                                 p += bytes_before(stops);
                                 break;
                             }
-                            p += 8;
+                            p += 16;
                         }
                         let e = self.t.at(p);
                         if e < 0x20 || e > 0x7e {
@@ -526,13 +526,13 @@ impl Quick {
                     p += 2;
                     loop {
                         loop {
-                            let v = self.t.u64_at(p);
+                            let v = self.t.u128_at(p);
                             let stops = where_not_printable(v) | where_byte_is(v, b'*');
                             if stops != 0 {
                                 p += bytes_before(stops);
                                 break;
                             }
-                            p += 8;
+                            p += 16;
                         }
                         let e = self.t.at(p);
                         if e == 42 {
@@ -872,7 +872,7 @@ impl Quick {
         loop {
             // up to a quote, a backslash, or what is not printable ASCII
             while p < end {
-                let v = self.t.u64_at(p);
+                let v = self.t.u128_at(p);
                 let stops = where_not_printable(v)
                     | where_byte_is(v, b'"')
                     | where_byte_is(v, b'\'')
@@ -881,7 +881,7 @@ impl Quick {
                     p += bytes_before(stops);
                     break;
                 }
-                p += 8;
+                p += 16;
             }
             let c = self.t.at(p);
             if c == quote {

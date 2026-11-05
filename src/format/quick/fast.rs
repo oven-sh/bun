@@ -421,11 +421,13 @@ impl Quick {
             self.fast.too_long = true;
             n = 0;
         }
-        // eight bytes at a time and up to seven too many, as in the printer
-        let mut k: i32 = 0;
+        // sixteen bytes at a time and up to 31 too many, as in the printer
+        self.t.put_u128(o, self.t.u128_at(from));
+        self.t.put_u128(o + 16, self.t.u128_at(from + 16));
+        let mut k: i32 = 32;
         while k < n {
-            self.t.put_u64(o + k, self.t.u64_at(from + k));
-            k += 8;
+            self.t.put_u128(o + k, self.t.u128_at(from + k));
+            k += 16;
         }
         self.fast.out = o + n;
         self.fast.run = p;
@@ -616,7 +618,7 @@ impl Quick {
         loop {
             // up to a quote, a backslash, or what is not printable ASCII
             loop {
-                let v = self.t.u64_at(q);
+                let v = self.t.u128_at(q);
                 let stops = where_not_printable(v)
                     | where_byte_is(v, b'"')
                     | where_byte_is(v, b'\'')
@@ -625,7 +627,7 @@ impl Quick {
                     q += bytes_before(stops);
                     break;
                 }
-                q += 8;
+                q += 16;
             }
             if q > end {
                 return self.no(refusal::Long);
@@ -5133,7 +5135,7 @@ impl Quick {
                 loop {
                     // up to the end of a line, a 0, or the first byte of U+2028
                     loop {
-                        let v = self.t.u64_at(q);
+                        let v = self.t.u128_at(q);
                         let stops = where_byte_is(v, 10)
                             | where_byte_is(v, 13)
                             | where_byte_is(v, 0)
@@ -5142,7 +5144,7 @@ impl Quick {
                             q += bytes_before(stops);
                             break;
                         }
-                        q += 8;
+                        q += 16;
                     }
                     if self.t.at(q) == 10 {
                         break;
@@ -5173,7 +5175,7 @@ impl Quick {
                 loop {
                     // up to a `*`, the end of a line, or a 0
                     loop {
-                        let v = self.t.u64_at(q);
+                        let v = self.t.u128_at(q);
                         let stops = where_byte_is(v, b'*')
                             | where_byte_is(v, 10)
                             | where_byte_is(v, 13)
@@ -5182,7 +5184,7 @@ impl Quick {
                             q += bytes_before(stops);
                             break;
                         }
-                        q += 8;
+                        q += 16;
                     }
                     let c = self.t.at(q);
                     if c == 42 && self.t.at(q + 1) == 47 {

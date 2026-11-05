@@ -1667,8 +1667,11 @@ impl Quick {
                         } else {
                             let mut k: i32 = 0;
                             while k < len {
-                                self.printer.out.put_u64(o + k, self.t.u64_at(s + k));
-                                k += 8;
+                                if !copy_block::<64>(&mut self.printer.out, o + k, &self.t, s + k) {
+                                    self.printer.out.set_all(self.t.sub(s + k, s + len), o + k);
+                                    break;
+                                }
+                                k += 64;
                             }
                         }
                         o += len;

@@ -5671,9 +5671,11 @@ impl Quick {
                 p = self.terminate(q, false);
             }
             tk::Import => {
+                self.parse.needs_module |= self.fast.ts;
                 p = self.import_declaration(end);
             }
             tk::Export => {
+                self.parse.needs_module |= self.fast.ts;
                 p = self.export_declaration(end)?;
             }
             _ => {}

@@ -709,7 +709,7 @@ impl Quick {
             self.leaf(k::ThisExpression)?
         } else {
             if self.lexer.tok == tk::Name {
-                self.identifier()?
+                self.parse_ident()?
             } else {
                 self.parse_ident_name()?
             }
@@ -1901,9 +1901,6 @@ impl Quick {
             id = self.identifier()?;
         } else {
             self.next()?;
-            if self.is_kw(kw::Enum) {
-                return Err(self.text_refuse());
-            }
             id = if self.lexer.tok == tk::String {
                 self.string_literal()?
             } else {

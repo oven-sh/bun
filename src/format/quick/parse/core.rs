@@ -563,6 +563,7 @@ impl Quick {
         }
         if self.parse.place.only_for_patterns != 0
             || self.parse_typescript.stray_optional_types != 0
+            || (self.parse.needs_module && self.parse.await_names != 0)
         {
             return Err(self.text_refuse());
         }
@@ -5863,7 +5864,7 @@ impl Quick {
 
     /// `default` at `at` is a name that the file exports, and this may not be the first time that it is read. Is there another one? (TypeScript's parser does not count.)
     pub(crate) fn is_second_default_export(&mut self, at: i32) -> bool {
-        if self.parse.typed == TYPED_TS {
+        if self.parse.typed == TYPED_TS || self.parse.default_export_at < 0 {
             return false;
         }
         if self.parse.default_export_at == 0 {
@@ -5923,6 +5924,8 @@ impl Quick {
 
     /// The current token is `import`, and a declaration follows.
     pub(crate) fn parse_import(&mut self, start: i32) -> R<i32> {
+        // (for TypeScript's parser a file with an import or an export is a module)
+        self.parse.needs_module |= self.parse.typed == TYPED_TS;
         self.next()?;
         let mut phase = P_NONE;
         let mark = self.arena.ls_pos;
@@ -6149,6 +6152,7 @@ impl Quick {
 
     /// The current token is `export`. `decorators` stood in front of it.
     pub(crate) fn parse_export(&mut self, start: i32, decorators: i32) -> R<i32> {
+        self.parse.needs_module |= self.parse.typed == TYPED_TS;
         self.next()?;
         let mut export_kind: i32 = 0;
         if self.parse.typed == TYPED_TS {

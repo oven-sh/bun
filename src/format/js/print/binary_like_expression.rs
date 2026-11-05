@@ -851,6 +851,8 @@ fn should_indent_if_parent_inlines(parent: AstNodes<'_>, f: &Formatter<'_>) -> b
         | AstNodes::AssignmentTargetPropertyProperty(_)
         | AstNodes::VariableDeclarator(_)
         | AstNodes::PropertyDefinition(_) => true,
+        // The key of `const { [a + b]: c } = d`.
+        AstNodes::BindingProperty(_) => !f.options().flavor.is_oxfmt(),
         _ => false,
     }
 }

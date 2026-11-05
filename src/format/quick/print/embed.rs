@@ -266,6 +266,9 @@ impl Quick {
     }
 
     pub(crate) fn embed_kind_of(&self, n: i32) -> i32 {
+        if (self.n.at(n) & 0xff) == k::TemplateLiteralType {
+            return EMBED_NONE;
+        }
         let parent = self.n.at(n + 3);
         if self.is_styled_jsx(parent)
             || self.is_styled_components(parent)

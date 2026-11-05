@@ -405,8 +405,21 @@ impl Quick {
                     == (k::KeywordType | (type_keyword::All << SUB_SHIFT)))
         {
             // (on the left of a `=`, whether it can break decides about the right side)
-            if (self.n.at(grandparent) & 0xff) == k::TypeAnnotation {
-                let owner = self.n.at(grandparent + 3);
+            let mut ancestor = grandparent;
+            while matches!(
+                self.n.at(ancestor) & 0xff,
+                k::ArrayType
+                    | k::NullableType
+                    | k::UnionType
+                    | k::IntersectionType
+                    | k::TupleType
+                    | k::TypeReference
+                    | k::TypeParameterInstantiation
+            ) {
+                ancestor = self.n.at(ancestor + 3);
+            }
+            if (self.n.at(ancestor) & 0xff) == k::TypeAnnotation {
+                let owner = self.n.at(ancestor + 3);
                 if (self.n.at(owner) & 0xff) == k::ClassProperty
                     || (self.n.at(self.n.at(owner + 3)) & 0xff) == k::VariableDeclarator
                 {

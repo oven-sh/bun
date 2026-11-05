@@ -5291,6 +5291,60 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.jsx", "--print-width=31", "a(({a=a(<a>a</a>)},[])=>{''})\n"],
     // A comment on a line of its own before what is asserted.
     ["a.tsx", "--print-width=5", "function d():h is\n//\nd|/**/t\n"],
+    // Flow: an object type as the only parameter, without a name.
+    ["a.js.flow", "", "type A={a:X}=>Y\n"],
+    // Flow: a function type with `?A` among its parameters, as a parameter without a name.
+    ["a.js.flow", "", "type A=((?X)=>Y)=>B\n"],
+    ["a.js.flow", "", "type A=((a:?X)=>Y,Z)=>B\n"],
+    // Flow: a cast of something that starts with parentheses, `<*>` deeper in a type on the left of a `=`.
+    ["a.js", "", "//@flow\na=(//\n(a())((()=>{d()})()):s<c>)\n"],
+    ["a.js", "", "//@flow\na=((a:c))\n"],
+    ["a.js", "--print-width=20", "//@flow\nconst a:b<*>[]=class{}\n"],
+    // A blank has been written when the comments that wait for the end of the line are.
+    ["a.ts", "--print-width=15", "(()=>a+(a//\n)as``)\n"],
+    ["a.tsx", "--print-width=13", "function d//\n([]:j):[]|l\n"],
+    ["a.ts", "", "(a as//\nX)=``\n"],
+    // `await`, the end of the line, `using`.
+    ["a.cts", "", "{await\nusing a=f}\n"],
+    ["a.ts", "", "(function(){await/**/\nusing a=x})\n"],
+    // An optional chain in parentheses that goes on.
+    ["a.ts", "--print-width=5", "(a?.e.e)?.()\n"],
+    ["a.tsx", "--print-width=7", 'a=(a?.e().D((<a r=""/>)).a).a\n'],
+    // A comment that names a language before a template literal type.
+    ["a.tsx", "", "type a=((keyof/* GraphQL */(`${o}`)))\n"],
+    // `{...a}` between tags with a blank behind it.
+    ["a.js", "", '<>{""}{...t(()=>{g},[])} <b></b></>\n'],
+    // Comments: between a callee and its arguments on the left of a `=` or in a key, around the `?` or the `]` of the key of a method, behind an optional chain, before a cast of JSDoc with an object in it or without semicolons, in or behind the braces of an import, ..
+    ["a.ts", "--print-width=9", "a\n/**/().b=``\n"],
+    ["a.ts", "--print-width=9", "({[a\n/**/()]:``})\n"],
+    ["a.ts", "--print-width=10", "class a{a?\n/**/():Y{z()}}\n"],
+    ["a.ts", "", "[{s(){}},{[this]\n//\n(){}}]\n"],
+    ["a.ts", "", "({[((c/**/))\n/**/](){}})\n"],
+    ["a.ts", "", "`${(e?.()\n/**/)}`\n"],
+    ["a.js", "--print-width=16", "{/**@type*/({}())}\n"],
+    ["a.js", "--print-width=12 --no-semi", '/**@type*/(await"")\n'],
+    ["a.ts", "", '{import d,{//\n}/**/ /**/from""}\n'],
+    // .. behind a `=` before a function whose first parameter is `this`, behind a decorator on the line of what it decorates, a line comment and a block comment over lines among arguments, in a chain before `satisfies`, in and behind the parentheses of a `switch`.
+    ["a.ts", "", "const p=//\nfunction(this:l){}\n"],
+    ["a.ts", "", "const p=//\ntypeof function(this:l){}\n"],
+    ["a.js", "", '(/ /),class{@("")\n/**/#a=(``)}\n'],
+    ["a.js", "--print-width=9", 'skip("",//\n/*\n*/()=>{})\n'],
+    ["a.tsx", "", 'class e{*e(){yield e("")\n//\n.o satisfies[]}}\n'],
+    ["a.ts", "", "switch(a()//\n)/**/ /**/{/**/}\n"],
+    // `new await`.
+    ["a.ts", "", "const a=new await\n"],
+    ["a.md", "", "```ts\nconst a=new await\n```\n"],
+    // A comment of JSDoc on a line of its own before parentheses with an object in them, a comment in the parentheses of the type of the elements of an array.
+    ["a.js", "--print-width=15", "\n/**@type*/({}())\n"],
+    ["a.js", "--print-width=13", "{/**@type*/\n({}.a=[])}\n"],
+    ["a.ts", "", "(a as((e)//\n//\n)[])=class{a():()=>d}\n"],
+    // What the quick way refuses and a line is written for without a document: the head of a `case` before a block that is ignored, a statement behind a block comment and a `;`.
+    [
+      "a.mjs",
+      "--print-width=40 --tab-width=7",
+      'switch(a){case(()=>f):{import""with{t:""}}//prettier-ignore\n;case c:}\n',
+    ],
+    ["a.jsx", "--print-width=10 --tab-width=5 --no-semi", "{/*\nd*/;e2|n}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

@@ -14,8 +14,10 @@ pub(crate) fn write_case_head<'a>(case: Case<'a>, f: &mut Formatter<'a>) -> bool
     // The `{` of a block that's the only statement is on this line.
     let after = match first {
         Some(first) if first.tag() == StmtTag::Block && statements.next().is_none() => {
-            // All of a block with nothing but a comment in it can be on this line.
-            if first.as_block().is_none_or(|it| it.is_empty()) {
+            // All of a block with nothing but a comment in it can be on this line, and all of one that's ignored is.
+            if first.as_block().is_none_or(|it| it.is_empty())
+                || f.comments().is_ignored(first.as_ast_nodes())
+            {
                 return false;
             }
             2

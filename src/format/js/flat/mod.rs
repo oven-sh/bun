@@ -463,9 +463,10 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
 }
 
 /// True if a block comment is before what starts at `start` on its line, so that it doesn't start where its line does.
+/// A `;` between the two is an empty statement, which isn't printed.
 fn is_after_block_comment(source: &[u8], start: u32) -> bool {
     let mut before = source.get(..start as usize).unwrap_or_default();
-    while let [rest @ .., b' ' | b'\t' | 0x0B | 0x0C | 0x80..] = before {
+    while let [rest @ .., b' ' | b'\t' | b';' | 0x0B | 0x0C | 0x80..] = before {
         before = rest;
     }
     before.ends_with(b"*/")

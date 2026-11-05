@@ -1985,6 +1985,10 @@ impl Quick {
                         kw::Await => {
                             let saved = self.save();
                             self.next()?;
+                            // (whether a line break counts here is a matter of the parser)
+                            if self.is_kw(kw::Using) && self.lexer.tok_nl != 0 {
+                                return Err(self.text_refuse());
+                            }
                             let mut is_declaration =
                                 self.is_kw(kw::Using) && self.lexer.tok_nl == 0;
                             if is_declaration {
@@ -5132,9 +5136,13 @@ impl Quick {
             let v5 = self.list_finish(mark);
             expression = self.node_l(k::SequenceExpression, inner_start, inner_end, v5);
         }
-        if (self.n.at(expression) & (0xff | F_PAREN)) == k::TypeCastExpression
-            && self.t.at(self.n.at(expression + 1)) != 40
-        {
+        if (self.n.at(expression) & (0xff | F_PAREN)) == k::TypeCastExpression {
+            // (`((a)(): (A))`, `((a: A))`: whether it has its parentheses already is not seen at a glance)
+            if self.t.at(self.n.at(expression + 1)) == 40
+                && self.t.at(self.n.at(expression + 2) - 1) == 41
+            {
+                return Err(self.rare(rare::OTHER));
+            }
             // the parentheses are part of the cast
             self.n.put(expression + 1, start);
             self.n.put(expression + 2, self.lexer.prev_end);
@@ -5147,6 +5155,14 @@ impl Quick {
                 self.lexer.prev_end,
                 expression,
             ));
+        }
+        // `(a?.b).c`: some trees have a node for the chain, and where the lines of what goes on break is a matter of the tree
+        if matches!(
+            self.lexer.tok,
+            tk::Dot | tk::QuestionDot | tk::BracketL | tk::ParenL | tk::BackQuote | tk::Not
+        ) && self.is_part_of_optional_chain(expression)
+        {
+            return Err(self.rare(rare::OTHER));
         }
         self.n.put(expression, self.n.at(expression) | F_PAREN);
         return Ok(expression);
@@ -5167,7 +5183,8 @@ impl Quick {
             return Ok(self.node2(k::MetaProperty, start, self.lexer.prev_end, meta, property));
         }
         let callee_start = self.lexer.tok_start;
-        if self.lexer.tok == tk::Lt && self.parse.typed == TYPED_TS {
+        // (`new await`: a name for some, an operator without an operand for others)
+        if (self.lexer.tok == tk::Lt && self.parse.typed == TYPED_TS) || self.is_kw(kw::Await) {
             return Err(self.text_refuse());
         }
         let v0 = if self.lexer.tok == tk::New {
@@ -6753,6 +6770,10 @@ impl Quick {
             let expression = self.parse_expression()?;
             if self.lexer.tok != tk::BraceR {
                 return Err(self.unexpected());
+            }
+            // (the long way keeps a blank behind it that Prettier writes as `{" "}`)
+            if self.t.at(self.lexer.tok_end) == 32 {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
             }
             return Ok(self.node1(k::JSXSpreadChild, start, self.lexer.tok_end, expression));
         }

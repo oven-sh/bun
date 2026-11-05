@@ -1050,6 +1050,10 @@ impl Quick {
                 }
             }
             if !named {
+                // (a function type in this place has parentheses if one of its own parameters is `?A`)
+                if self.t.at(q) == 40 {
+                    return Ok(self.no(refusal::FunctionType));
+                }
                 unnamed += 1;
             }
             q = self.type_(q)?;

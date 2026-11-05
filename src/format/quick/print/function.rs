@@ -261,8 +261,6 @@ impl Quick {
         if self.mode.is_flow && self.is_flow_shorthand_with_one_arg(fn_, params) {
             let parens = self.options.arrow_parens_always
                 || (self.n.at(fn_) & 0xff) == k::HookTypeAnnotation;
-            // Nothing in it can break. In some places the long way breaks it all the same.
-            let g = self.group_open();
             if parens {
                 self.text(LPAREN);
             }
@@ -270,19 +268,7 @@ impl Quick {
             if parens {
                 self.text(RPAREN);
             }
-            self.group_close(g);
-            self.gives_up_where_broken(g)?;
             return Ok(());
-        }
-        if self.mode.is_flow
-            && !self.options.arrow_parens_always
-            && matches!(
-                self.n.at(self.n.at(fn_ + 3)) & 0xff,
-                k::ObjectTypeIndexer | k::ObjectTypeSpreadProperty
-            )
-            && self.has_one_simple_type_as_parameters(fn_, params)
-        {
-            return Err(self.rare(rare::FLOW));
         }
         self.text(LPAREN);
         self.indent_softline();

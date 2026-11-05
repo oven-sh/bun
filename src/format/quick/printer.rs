@@ -1704,6 +1704,10 @@ impl Quick {
                     }
                     if (waiting & WAIT_SUFFIX) != 0 {
                         // the comments that wait for the end of the line go first, then this command runs again
+                        // (behind a blank Prettier writes another one before them, the long way does not)
+                        if self.printer.out.at(o - 1) == 32 {
+                            return Err(self.rare(rare::COMMENT));
+                        }
                         self.printer.st.put(sp, pc);
                         self.printer.st.put(sp + 1, mode);
                         self.printer.st.put(sp + 2, ind);

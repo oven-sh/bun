@@ -1175,6 +1175,10 @@ impl Quick {
         if doc < 0 {
             return Ok(false);
         }
+        // (what is printed without its lines is not what is printed with them, and one document is kept)
+        if self.doc.remove_lines_depth != 0 {
+            return Err(self.rare(rare::HUGGED_CHAIN));
+        }
         self.call(doc);
         return Ok(true);
     }

@@ -5901,6 +5901,14 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // A block comment on a line of its own between a property and its comma.
     ["a.jsx", "--print-width=14", "({\na,[[]]:b\n/**/\n,/**/\nb})\n"],
     ["a.jsx", "--print-width=14", "({\na,[[]]:b\n/**/ // c\n,\nb})\n"],
+    // A template in another language in the parameters of a function that may be hugged.
+    ["a.cjs", "--print-width=15", "a(({a=html`<a><`})=>{(<a></a>)})\n"],
+    ["a.js", "--print-width=20", "a(({[html`<a>>`]:a},{a=()=>{}})=>{})\n"],
+    ["a.cjs", "--print-width=20", "a(({a=html`<a>bbbbbbbbbbbb</a>`})=>{b})\n"],
+    // A chain that starts with a short name, in the parentheses of a cast of JSDoc that is a statement.
+    ["a.cjs", "--print-width=11", "{/**@type*/(e.a().c())}\n"],
+    // `yield` as a computed key that is short.
+    ["a.mjs", "--print-width=15 --tab-width=7", "class a{@a*a(){({[yield]:a})}}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

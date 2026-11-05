@@ -749,6 +749,12 @@ const nativeCalls = [
         onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
       },
+      // Node worker option parsing also reads the parent's environment.
+      {
+        file: inBindings("webcore/JSWorker.cpp"),
+        caller: "JSWorkerDOMConstructor::construct",
+        onBehalfOf: ["native:Cpp:Worker.cpp:createNodeWorkerConstructor"],
+      },
       { file: inBindings("ViUtils.cpp"), caller: "processEnv", onBehalfOf: testModules },
     ],
   }),

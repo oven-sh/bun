@@ -226,9 +226,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
     }
     /// `CompiledProgram::root_beside_executable`
     fn root_beside_executable(&self) -> Option<Vec<u8>> {
-        let program = self.compiled_program()?;
-        let executable = bun_core::self_exe_path().ok()?;
-        program.root_beside_executable(executable.as_bytes())
+        self.compiled_program()?.root_beside_executable()
     }
     /// The root directory on disk: below the folder of the executable, else below the working directory of the process.
     fn root_on_disk(&self) -> Option<Vec<u8>> {

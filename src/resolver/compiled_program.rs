@@ -479,11 +479,12 @@ impl CompiledProgram {
     }
 
     /// Where the root directory lies below the folder of this executable, wherever it is installed.
-    pub fn root_beside_executable(&self, executable: &[u8]) -> Option<Vec<u8>> {
+    pub fn root_beside_executable(&self) -> Option<Vec<u8>> {
         use bun_paths::resolve_path::{dirname, join_abs_string_buf_checked, platform};
         let root = self.root_from_executable?;
+        let executable = bun_core::self_exe_path().ok()?;
         let mut buffer = bun_paths::path_buffer_pool::get();
-        let folder = dirname::<platform::Auto>(executable);
+        let folder = dirname::<platform::Auto>(executable.as_bytes());
         let joined =
             join_abs_string_buf_checked::<platform::Auto>(folder, &mut buffer[..], &[root])?;
         Some(joined.to_vec())

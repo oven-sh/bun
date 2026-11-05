@@ -509,9 +509,7 @@ impl Quick {
         if self.t.at(p) == 10 && q - p == indentation + 1 {
             // (nothing but blanks behind the line break?)
             let mut r = p + 1;
-            while self.t.at(r) == 32 {
-                r += 1;
-            }
+            r = self.blanks_end(r);
             if r == q {
                 return q;
             }
@@ -1228,9 +1226,7 @@ impl Quick {
             return false;
         }
         let mut r = q + 2;
-        while self.t.at(r) == 32 || self.t.at(r) == 10 {
-            r += 1;
-        }
+        r = self.blank_lines_end(r);
         return self.t.at(r) == 60;
     }
 
@@ -1241,14 +1237,10 @@ impl Quick {
             return self.no(refusal::Paren);
         }
         let mut r = q + 2;
-        while self.t.at(r) == 32 || self.t.at(r) == 10 {
-            r += 1;
-        }
+        r = self.blank_lines_end(r);
         if self.t.at(r + 1) == 62 {
             let mut s = r + 2;
-            while self.t.at(s) == 32 || self.t.at(s) == 10 {
-                s += 1;
-            }
+            s = self.blank_lines_end(s);
             if self.t.at(s) == 40 {
                 return self.no(refusal::Less);
             }
@@ -1266,9 +1258,7 @@ impl Quick {
                 return self.no(refusal::Less);
             }
             let mut s = if c == 62 { e + 1 } else { e };
-            while self.t.at(s) == 32 || self.t.at(s) == 10 {
-                s += 1;
-            }
+            s = self.blank_lines_end(s);
             if if c == 62 {
                 self.t.at(s) == 40
             } else {
@@ -1451,9 +1441,7 @@ impl Quick {
                 let e = if has_comma { q + 1 } else { q };
                 // (an empty line between two of them is kept)
                 let mut s = e + 1;
-                while self.t.at(s) == 32 {
-                    s += 1;
-                }
+                s = self.blanks_end(s);
                 if self.t.at(e) != 10 || self.t.at(s) == 10 {
                     return Ok(self.no(refusal::Paren));
                 }
@@ -1793,9 +1781,7 @@ impl Quick {
         loop {
             // an empty line between two arguments is kept
             let mut r = q + 1;
-            while self.t.at(r) == 32 {
-                r += 1;
-            }
+            r = self.blanks_end(r);
             if self.t.at(q) != 10 || self.t.at(r) == 10 {
                 return Ok(self.no(refusal::Arguments));
             }
@@ -3158,9 +3144,7 @@ impl Quick {
         if self.t.at(p) == 59 && self.t.at(p + 1) == 10 {
             // `;` and the end of the line
             let mut e = p + 2;
-            while self.t.at(e) == 32 {
-                e += 1;
-            }
+            e = self.blanks_end(e);
             let c = self.t.at(e);
             if c < 128 && c != 9 {
                 self.fast.ready_flags |= if c == 10 {
@@ -5078,9 +5062,7 @@ impl Quick {
     /// a lexer (a comment is in the way).
     pub(crate) fn word_behind_block(&self, p: i32) -> i32 {
         let mut q = p;
-        while self.t.at(q) == 32 || self.t.at(q) == 10 {
-            q += 1;
-        }
+        q = self.blank_lines_end(q);
         let c = self.t.at(q);
         if c == 101 {
             return if self.word_is(q, b"else") {
@@ -5132,9 +5114,7 @@ impl Quick {
                 q += 1;
                 line = q;
                 lines += 1;
-                while self.t.at(q) == 32 {
-                    q += 1;
-                }
+                q = self.blanks_end(q);
                 if !(self.t.at(q) == 10) {
                     break;
                 }
@@ -5215,9 +5195,7 @@ impl Quick {
                         }
                         last_line = q + 1 + column;
                         q += 1;
-                        while self.t.at(q) == 32 {
-                            q += 1;
-                        }
+                        q = self.blanks_end(q);
                         if q - last_line != 1 || self.t.at(q) != 42 {
                             return 0;
                         }
@@ -5303,9 +5281,7 @@ impl Quick {
         loop {
             q += 1;
             line = q;
-            while self.t.at(q) == 32 {
-                q += 1;
-            }
+            q = self.blanks_end(q);
             if !(self.t.at(q) == 10) {
                 break;
             }
@@ -5522,9 +5498,7 @@ impl Quick {
         self.fast.await_is_operator = await_operator;
         // It has to be the first thing on its line. Its indentation is the guess at where it will stand.
         let mut b = start;
-        while self.t.at(b - 1) == 32 {
-            b -= 1;
-        }
+        b = self.blanks_start(b);
         let mut indentation = start - b;
         self.fast.source_indent = if self.t.at(b - 1) == 9 {
             -1
@@ -5663,6 +5637,8 @@ impl Quick {
                 return fast_refuse(refusal::Wide, start);
             }
         }
+        #[cfg(feature = "tally")]
+        crate::tally::read(start, p, self.fast.out == 0);
         self.fast.ready_stands = self.fast.out == 0
             && self.fast.source_indent == self.fast.least_column
             && self.fast.column == self.fast.least_column
@@ -6308,9 +6284,7 @@ impl Quick {
     /// The next one, if nothing but white space stands between p and it.
     pub(crate) fn read_next_jsx_attribute(&mut self, p: i32, tag_column: i32) -> R<bool> {
         let mut q = p;
-        while self.t.at(q) == 32 || self.t.at(q) == 10 {
-            q += 1;
-        }
+        q = self.blank_lines_end(q);
         self.fast.ready_start = 0;
         if q == p || ((CC.at(self.t.at(q)) & ID_START) == 0 && self.t.at(q) != 123) {
             return Ok(false);

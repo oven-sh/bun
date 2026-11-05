@@ -6,6 +6,8 @@ use std::cell::RefCell;
 pub struct Tally {
     /// (where the item starts, why it was refused: see `refusal` in fast.rs)
     pub refused: Vec<(i32, i32)>,
+    /// (where the item starts, where the reading ended, whether the text is the source itself)
+    pub read: Vec<(i32, i32, bool)>,
     /// where each token starts
     pub tokens: Vec<i32>,
     /// (head, start, end)
@@ -18,6 +20,10 @@ thread_local! {
 
 pub(crate) fn refused(reason: i32, start: i32) {
     TALLY.with_borrow_mut(|t| t.refused.push((start, reason)));
+}
+
+pub(crate) fn read(start: i32, end: i32, is_source: bool) {
+    TALLY.with_borrow_mut(|t| t.read.push((start, end, is_source)));
 }
 
 pub(crate) fn token(start: i32) {

@@ -1,4 +1,4 @@
-//! format(): bytes in, bytes out. The languages are registered by whoever imports this: all.rs has all of them.
+//! format(): bytes in, bytes out.
 
 use crate::doc::DOC_START;
 use crate::lang::lang;

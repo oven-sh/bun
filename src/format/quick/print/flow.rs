@@ -16,89 +16,88 @@ use crate::print::statics::{
 use crate::{Quick, R, Words};
 
 impl Quick {
-    pub(crate) fn print_variance(&mut self, n: i32) -> R<()> {
+    pub(crate) fn print_variance(&mut self, n: i32) {
         match ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 {
             VA_PLUS => {
-                self.text(PLUS)?;
+                self.text(PLUS);
             }
             VA_MINUS => {
-                self.text(MINUS)?;
+                self.text(MINUS);
             }
             VA_READONLY => {
-                self.text(READONLY_)?;
+                self.text(READONLY_);
             }
             VA_IN => {
-                self.text(IN_)?;
+                self.text(IN_);
             }
             VA_OUT => {
-                self.text(OUT_)?;
+                self.text(OUT_);
             }
             _ => {
-                self.text(WRITEONLY_)?;
+                self.text(WRITEONLY_);
             }
         }
-        Ok(())
     }
 
     pub(crate) fn print_component(&mut self, n: i32, k: i32) -> R<()> {
-        self.print_declare_token(n)?;
+        self.print_declare_token(n);
         if (self.n.at(n) & F_ASYNC) != 0 {
-            self.text(ASYNC_)?;
+            self.text(ASYNC_);
         }
-        self.text(COMPONENT)?;
+        self.text(COMPONENT);
         if self.n.at(n + 4) != 0 {
-            self.text(SPACE)?;
+            self.text(SPACE);
             self.print(self.n.at(n + 4))?;
         }
         self.print(self.n.at(n + FN_TYPE_PARAMETERS))?;
         let g = self.group_open();
         self.print_function_parameters(n, false, false)?;
         if self.n.at(n + FN_RETURN_TYPE) != 0 {
-            self.text(SPACE)?;
+            self.text(SPACE);
             self.print(self.n.at(n + FN_RETURN_TYPE))?;
         }
         self.group_close(g);
         if self.n.at(n + 5) != 0 {
-            self.text(SPACE)?;
+            self.text(SPACE);
             self.print(self.n.at(n + 5))?;
         }
         if k == k::DeclareComponent && self.options.semi {
-            self.text(SEMI)?;
+            self.text(SEMI);
         }
         Ok(())
     }
 
     pub(crate) fn print_opaque_type(&mut self, n: i32) -> R<()> {
-        self.print_declare_token(n)?;
-        self.text(OPAQUE_TYPE_)?;
+        self.print_declare_token(n);
+        self.text(OPAQUE_TYPE_);
         self.print(self.n.at(n + 4))?;
         self.print(self.n.at(n + 5))?;
         if self.n.at(n + 6) != 0 {
-            self.text(COLON_SPACE)?;
+            self.text(COLON_SPACE);
             self.print(self.n.at(n + 6))?;
         }
         if self.n.at(n + 7) != 0 || self.n.at(n + 8) != 0 {
             let g = self.group_open();
             if self.n.at(n + 7) != 0 {
-                self.indent_line()?;
-                self.text(SUPER_)?;
+                self.indent_line();
+                self.text(SUPER_);
                 self.print(self.n.at(n + 7))?;
                 self.indent_close();
             }
             if self.n.at(n + 8) != 0 {
-                self.indent_line()?;
-                self.text(EXTENDS_)?;
+                self.indent_line();
+                self.text(EXTENDS_);
                 self.print(self.n.at(n + 8))?;
                 self.indent_close();
             }
             self.group_close(g);
         }
         if self.n.at(n + 9) != 0 {
-            self.text(EQ_SPACES)?;
+            self.text(EQ_SPACES);
             self.print(self.n.at(n + 9))?;
         }
         if self.options.semi {
-            self.text(SEMI)?;
+            self.text(SEMI);
         }
         Ok(())
     }
@@ -106,14 +105,14 @@ impl Quick {
     // -------------------------------------------------------------------------------------------------------------- match
     pub(crate) fn print_match(&mut self, n: i32) -> R<()> {
         let g = self.group_open();
-        self.text(MATCH_LPAREN)?;
+        self.text(MATCH_LPAREN);
         self.indent_softline();
         self.print(self.n.at(n + 4))?;
         self.dedent_softline();
-        self.text(RPAREN)?;
+        self.text(RPAREN);
         self.group_close(g);
-        self.text(SPACE)?;
-        self.text(LBRACE)?;
+        self.text(SPACE);
+        self.text(LBRACE);
         let cases = self.n.at(n + 5);
         let count = self.n.at(cases);
         if count > 0 {
@@ -132,7 +131,7 @@ impl Quick {
             self.indent_close();
         }
         self.hardline();
-        self.text(RBRACE)?;
+        self.text(RBRACE);
         Ok(())
     }
 
@@ -140,26 +139,26 @@ impl Quick {
         self.print(self.n.at(n + 4))?;
         if self.n.at(n + 5) != 0 {
             let g = self.group_open();
-            self.indent_line()?;
-            self.text(IF_LPAREN)?;
+            self.indent_line();
+            self.text(IF_LPAREN);
             self.print(self.n.at(n + 5))?;
-            self.text(RPAREN)?;
+            self.text(RPAREN);
             self.indent_close();
             self.group_close(g);
         }
         let g = self.group_open();
-        self.text(_ARROW)?;
+        self.text(_ARROW);
         if self.has_dangling_comment(n) {
-            self.text(SPACE)?;
-            self.print_dangling_comments(n)?;
+            self.text(SPACE);
+            self.print_dangling_comments(n);
         }
         if k == k::MatchStatementCase {
-            self.text(SPACE)?;
+            self.text(SPACE);
             self.print(self.n.at(n + 6))?;
         } else {
-            self.indent_line()?;
+            self.indent_line();
             self.print(self.n.at(n + 6))?;
-            self.text(COMMA)?;
+            self.text(COMMA);
             self.indent_close();
         }
         self.group_close(g);
@@ -171,29 +170,29 @@ impl Quick {
         let list = self.n.at(n + 5);
         let count = self.n.at(list);
         let g = self.group_open();
-        self.text(open)?;
+        self.text(open);
         self.indent_softline();
         let mut i: i32 = 1;
         while i <= count {
             if i > 1 {
-                self.text(COMMA)?;
-                self.line()?;
+                self.text(COMMA);
+                self.line();
             }
             self.print(self.n.at(list + i))?;
             i += 1;
         }
         if rest != 0 {
             if count > 0 {
-                self.text(COMMA)?;
-                self.line()?;
+                self.text(COMMA);
+                self.line();
             }
             self.print(rest)?;
         }
         if rest == 0 {
-            self.if_break_text(COMMA, 0, 0)?;
+            self.if_break_text(COMMA, 0, 0);
         }
         self.dedent_softline();
-        self.text(close)?;
+        self.text(close);
         self.group_close(g);
         Ok(())
     }
@@ -237,20 +236,20 @@ impl Quick {
     pub(crate) fn print_match_or_patterns(&mut self, n: i32, should_hug: bool) -> R<()> {
         let list = self.n.at(n + 4);
         if !should_hug {
-            self.if_break_text(BAR_, 0, 0)?;
+            self.if_break_text(BAR_, 0, 0);
         }
         let mut i: i32 = 1;
         while i <= self.n.at(list) {
             let pattern = self.n.at(list + i);
             if i > 1 {
                 if should_hug {
-                    self.text(_BAR_)?;
+                    self.text(_BAR_);
                 } else {
-                    self.line()?;
-                    self.text(BAR_)?;
+                    self.line();
+                    self.text(BAR_);
                 }
             }
-            self.print_leading_comments(pattern)?;
+            self.print_leading_comments(pattern);
             if !should_hug {
                 self.align_open(2);
             }
@@ -258,7 +257,7 @@ impl Quick {
             if !should_hug {
                 self.indent_close();
             }
-            self.print_trailing_comments(pattern)?;
+            self.print_trailing_comments(pattern);
             i += 1;
         }
         Ok(())
@@ -283,13 +282,13 @@ impl Quick {
         } else if pk == k::MatchArrayPattern && self.n.at(self.n.at(parent + 5)) > 1 {
             self.indent_open();
             let h = self.if_break_open(0);
-            self.text(LPAREN)?;
+            self.text(LPAREN);
             self.softline();
             self.if_break_else(h);
             self.if_break_close(h);
             self.print_match_or_patterns(n, false)?;
             self.dedent_softline();
-            self.if_break_text(RPAREN, 0, 0)?;
+            self.if_break_text(RPAREN, 0, 0);
         } else {
             let should_indent = pk != k::MatchStatementCase
                 && pk != k::MatchExpressionCase
@@ -315,76 +314,76 @@ impl Quick {
                 let head = self.n.at(n);
                 let position = self.member_position();
                 if (head & F_PROTO) != 0 {
-                    self.text(PROTO_)?;
+                    self.text(PROTO_);
                 } else if (head & F_STATIC) != 0 {
-                    self.text(STATIC_)?;
+                    self.text(STATIC_);
                 }
                 let method = ((head as u32) >> SUB_SHIFT) as i32 & M_MASK;
                 if method == M_GET {
-                    self.text(GET_)?;
+                    self.text(GET_);
                 } else if method == M_SET {
-                    self.text(SET_)?;
+                    self.text(SET_);
                 }
                 self.print(self.n.at(n + 6))?;
                 self.print_key(n)?;
                 if (head & F_OPTIONAL) != 0 {
-                    self.text(QUESTION)?;
+                    self.text(QUESTION);
                 }
                 if (head & F_METHOD) == 0 && method != M_GET && method != M_SET {
-                    self.text(COLON_SPACE)?;
+                    self.text(COLON_SPACE);
                 }
                 self.print(self.n.at(n + 5))?;
-                self.print_class_member_semicolon(n, position)?;
+                self.print_class_member_semicolon(n, position);
                 return Ok(true);
             }
             k::ObjectTypeIndexer => {
                 let position = self.member_position();
                 if (self.n.at(n) & F_STATIC) != 0 {
-                    self.text(STATIC_)?;
+                    self.text(STATIC_);
                 }
                 self.print(self.n.at(n + 7))?;
-                self.text(LBRACKET)?;
+                self.text(LBRACKET);
                 if self.n.at(n + 4) != 0 {
                     self.print(self.n.at(n + 4))?;
-                    self.text(COLON_SPACE)?;
+                    self.text(COLON_SPACE);
                 }
                 self.print(self.n.at(n + 5))?;
-                self.text(RBRACKET_COLON_)?;
+                self.text(RBRACKET_COLON_);
                 self.print(self.n.at(n + 6))?;
-                self.print_class_member_semicolon(n, position)?;
+                self.print_class_member_semicolon(n, position);
                 return Ok(true);
             }
             k::ObjectTypeCallProperty => {
                 let position = self.member_position();
                 if (self.n.at(n) & F_STATIC) != 0 {
-                    self.text(STATIC_)?;
+                    self.text(STATIC_);
                 }
                 self.print(self.n.at(n + 4))?;
-                self.print_class_member_semicolon(n, position)?;
+                self.print_class_member_semicolon(n, position);
                 return Ok(true);
             }
             k::ObjectTypeInternalSlot => {
                 let position = self.member_position();
                 if (self.n.at(n) & F_STATIC) != 0 {
-                    self.text(STATIC_)?;
+                    self.text(STATIC_);
                 }
-                self.text(LBRACKET)?;
-                self.text(LBRACKET)?;
+                self.text(LBRACKET);
+                self.text(LBRACKET);
                 self.print(self.n.at(n + 4))?;
-                self.text(RBRACKET)?;
-                self.text(RBRACKET)?;
+                self.text(RBRACKET);
+                self.text(RBRACKET);
                 if (self.n.at(n) & F_OPTIONAL) != 0 {
-                    self.text(QUESTION)?;
+                    self.text(QUESTION);
                 }
                 if (self.n.at(n) & F_METHOD) == 0 {
-                    self.text(COLON_SPACE)?;
+                    self.text(COLON_SPACE);
                 }
                 self.print(self.n.at(n + 5))?;
-                self.print_class_member_semicolon(n, position)?;
+                self.print_class_member_semicolon(n, position);
                 return Ok(true);
             }
             k::ObjectTypeSpreadProperty => {
-                self.text(ELLIPSIS)?;
+                self.text(ELLIPSIS);
                 self.print(self.n.at(n + 4))?;
                 return Ok(true);
             }
@@ -393,27 +392,27 @@ impl Quick {
                 let g = self.group_open();
                 self.print(self.n.at(n + 7))?;
                 let kg = self.group_open();
-                self.text(LBRACKET)?;
+                self.text(LBRACKET);
                 self.indent_softline();
                 self.print(self.n.at(n + 4))?;
-                self.text(_IN_)?;
+                self.text(_IN_);
                 self.print(self.n.at(n + 5))?;
                 self.dedent_softline();
-                self.text(RBRACKET)?;
+                self.text(RBRACKET);
                 self.group_close(kg);
                 let optional = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32;
                 if optional != MT_NONE {
                     if optional == MT_PLUS {
-                        self.text(PLUS)?;
+                        self.text(PLUS);
                     } else if optional == MT_MINUS {
-                        self.text(MINUS)?;
+                        self.text(MINUS);
                     }
-                    self.text(QUESTION)?;
+                    self.text(QUESTION);
                 }
-                self.text(COLON_SPACE)?;
+                self.text(COLON_SPACE);
                 self.print(self.n.at(n + 6))?;
                 self.group_close(g);
-                self.print_class_member_semicolon(n, position)?;
+                self.print_class_member_semicolon(n, position);
                 return Ok(true);
             }
             k::FunctionTypeParam => {
@@ -421,26 +420,26 @@ impl Quick {
                 if self.n.at(n + 4) != 0 {
                     self.print(self.n.at(n + 4))?;
                 } else if (self.n.at(n) & F_THIS) != 0 {
-                    self.text(THIS)?;
+                    self.text(THIS);
                 }
                 if (self.n.at(n) & F_OPTIONAL) != 0 {
-                    self.text(QUESTION)?;
+                    self.text(QUESTION);
                 }
                 if has_name {
-                    self.text(COLON_SPACE)?;
+                    self.text(COLON_SPACE);
                 }
                 self.print(self.n.at(n + 5))?;
                 return Ok(true);
             }
             k::Variance => {
-                self.print_variance(n)?;
+                self.print_variance(n);
                 return Ok(true);
             }
             k::TypeCastExpression => {
-                self.text(LPAREN)?;
+                self.text(LPAREN);
                 self.print(self.n.at(n + 4))?;
                 self.print_type_annotation_property(self.n.at(n + 5))?;
-                self.text(RPAREN)?;
+                self.text(RPAREN);
                 return Ok(true);
             }
             k::Predicate => {
@@ -453,12 +452,12 @@ impl Quick {
                     } else {
                         SPACE
                     },
-                )?;
-                self.text(CHECKS)?;
+                );
+                self.text(CHECKS);
                 if self.n.at(n + 4) != 0 {
-                    self.text(LPAREN)?;
+                    self.text(LPAREN);
                     self.print(self.n.at(n + 4))?;
-                    self.text(RPAREN)?;
+                    self.text(RPAREN);
                 }
                 return Ok(true);
             }
@@ -467,21 +466,21 @@ impl Quick {
                 return Ok(true);
             }
             k::DeclareFunction => {
-                self.print_declare_token(n)?;
-                self.text(FUNCTION)?;
-                self.text(SPACE)?;
+                self.print_declare_token(n);
+                self.text(FUNCTION);
+                self.text(SPACE);
                 self.print(self.n.at(n + 4))?;
                 self.print(self.n.at(n + 5))?;
                 if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(true);
             }
             k::DeclareModuleExports => {
-                self.text(DECLARE_MODULE_EXPORTS)?;
+                self.text(DECLARE_MODULE_EXPORTS);
                 self.print_type_annotation_property(self.n.at(n + 4))?;
                 if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(true);
             }
@@ -492,7 +491,7 @@ impl Quick {
             k::ComponentParameter => {
                 if (self.n.at(n) & F_SHORTHAND) == 0 {
                     self.print(self.n.at(n + 4))?;
-                    self.text(_AS_)?;
+                    self.text(_AS_);
                 }
                 self.print(self.n.at(n + 5))?;
                 return Ok(true);
@@ -501,20 +500,20 @@ impl Quick {
                 if self.n.at(n + 4) != 0 {
                     self.print(self.n.at(n + 4))?;
                     if (self.n.at(n) & F_OPTIONAL) != 0 {
-                        self.text(QUESTION)?;
+                        self.text(QUESTION);
                     }
-                    self.text(COLON_SPACE)?;
+                    self.text(COLON_SPACE);
                 }
                 self.print(self.n.at(n + 5))?;
                 return Ok(true);
             }
             k::DeclareHook => {
-                self.print_declare_token(n)?;
-                self.text(HOOK)?;
-                self.text(SPACE)?;
+                self.print_declare_token(n);
+                self.text(HOOK);
+                self.text(SPACE);
                 self.print(self.n.at(n + 4))?;
                 if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(true);
             }
@@ -524,8 +523,8 @@ impl Quick {
                     && (self.n.at(self.n.at(self.n.at(self.n.at(n + 3) + 3) + 3)) & 0xff)
                         == k::DeclareHook;
                 if !is_declared {
-                    self.text(HOOK)?;
-                    self.text(SPACE)?;
+                    self.text(HOOK);
+                    self.text(SPACE);
                 }
                 self.print_parameters_and_return_type(n, false, true, false, false)?;
                 self.group_close(g);
@@ -545,12 +544,12 @@ impl Quick {
             }
             k::MatchAsPattern => {
                 self.print(self.n.at(n + 4))?;
-                self.text(_AS_)?;
+                self.text(_AS_);
                 self.print(self.n.at(n + 5))?;
                 return Ok(true);
             }
             k::MatchWildcardPattern => {
-                self.text(UNDERSCORE)?;
+                self.text(UNDERSCORE);
                 return Ok(true);
             }
             k::MatchLiteralPattern | k::MatchIdentifierPattern => {
@@ -558,7 +557,7 @@ impl Quick {
                 return Ok(true);
             }
             k::MatchUnaryPattern => {
-                self.text(OPERATOR.at(((self.n.at(n) as u32) >> SUB_SHIFT) as i32))?;
+                self.text(OPERATOR.at(((self.n.at(n) as u32) >> SUB_SHIFT) as i32));
                 self.print(self.n.at(n + 4))?;
                 return Ok(true);
             }
@@ -567,14 +566,14 @@ impl Quick {
                 self.print(self.n.at(n + 4))?;
                 let property = self.n.at(n + 5);
                 if (self.n.at(property) & 0xff) == k::Identifier {
-                    self.text(DOT)?;
+                    self.text(DOT);
                     self.print(property)?;
                 } else {
-                    self.text(LBRACKET)?;
+                    self.text(LBRACKET);
                     self.indent_softline();
                     self.print(property)?;
                     self.dedent_softline();
-                    self.text(RBRACKET)?;
+                    self.text(RBRACKET);
                 }
                 self.group_close(g);
                 return Ok(true);
@@ -585,8 +584,8 @@ impl Quick {
                     CONST
                 } else {
                     if kind == V_LET { LET } else { VAR }
-                })?;
-                self.text(SPACE)?;
+                });
+                self.text(SPACE);
                 self.print(self.n.at(n + 4))?;
                 return Ok(true);
             }
@@ -601,7 +600,7 @@ impl Quick {
             k::MatchInstancePattern => {
                 let g = self.group_open();
                 self.print(self.n.at(n + 4))?;
-                self.text(SPACE)?;
+                self.text(SPACE);
                 self.print(self.n.at(n + 5))?;
                 self.group_close(g);
                 return Ok(true);
@@ -613,33 +612,33 @@ impl Quick {
                 }
                 let g = self.group_open();
                 self.print(self.n.at(n + 4))?;
-                self.text(COLON)?;
-                self.indent_line()?;
+                self.text(COLON);
+                self.indent_line();
                 self.print(self.n.at(n + 5))?;
                 self.indent_close();
                 self.group_close(g);
                 return Ok(true);
             }
             k::MatchRestPattern => {
-                self.text(ELLIPSIS)?;
+                self.text(ELLIPSIS);
                 self.print(self.n.at(n + 4))?;
                 return Ok(true);
             }
             k::RecordExpression => {
                 self.print(self.n.at(n + 4))?;
                 self.print(self.n.at(n + 5))?;
-                self.text(SPACE)?;
+                self.text(SPACE);
                 self.print(self.n.at(n + 6))?;
                 return Ok(true);
             }
             k::RecordDeclarationProperty => {
                 if (self.n.at(n) & F_STATIC) != 0 {
-                    self.text(STATIC_)?;
+                    self.text(STATIC_);
                 }
                 self.print_key(n)?;
                 self.print_type_annotation_property(self.n.at(n + 5))?;
                 if self.n.at(n + 6) != 0 {
-                    self.text(EQ_SPACES)?;
+                    self.text(EQ_SPACES);
                     self.print(self.n.at(n + 6))?;
                 }
                 return Ok(true);

@@ -1,16 +1,11 @@
 //! The languages, and how one is run inside another.
 //!
-//! A language is a function (start, end) that reads the window T[start, end) and appends its doc to the command stream.
-//! It registers itself here; nobody imports a language but index.rs. That keeps the import graph free of cycles
-//! although Markdown holds JavaScript that holds CSS that .. (see README.md on what a cycle costs under `bun compile`).
-//!
 //! What Prettier does for embedded code: walk the whole tree once more before printing, cut the code out as a new string,
 //! normalize a new set of options, parse, print to a doc, strip its last line break, walk that doc to put expressions in
 //! the place of placeholders, and keep it in a map until the printer comes by. All of it asynchronous.
 //!
 //! Here there is no separate pass and no separate result. The printer of the host, when it stands at the node, calls
-//! embed(). The window is narrowed to the code in place (text.rs), the guest's tree goes behind the host's in the same
-//! arena, and the guest's printer appends to the same stream, between what the host wrote before and what it writes after.
+//! embed(), and the guest's printer appends to the same stream, between what the host wrote before and what it writes after.
 //! If the code does not parse, the stream is cut back to where it was and the host prints the node as plain text.
 
 use crate::{Quick, R, why};

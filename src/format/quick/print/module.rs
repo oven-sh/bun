@@ -20,9 +20,9 @@ pub(crate) fn is_standalone(k: i32) -> bool {
 impl Quick {
     pub(crate) fn print_module_specifiers(&mut self, specifiers: i32) -> R<()> {
         let count = self.n.at(specifiers);
-        self.text(SPACE)?;
+        self.text(SPACE);
         if count == 0 {
-            self.text(BRACES)?;
+            self.text(BRACES);
             return Ok(());
         }
         let mut standalone: i32 = 0;
@@ -55,7 +55,7 @@ impl Quick {
                     v0
                 }) > 0
                 {
-                    self.text(COMMA_SPACE)?;
+                    self.text(COMMA_SPACE);
                 }
                 self.print(specifier)?;
             }
@@ -65,14 +65,14 @@ impl Quick {
             return Ok(());
         }
         if standalone > 0 {
-            self.text(COMMA_SPACE)?;
+            self.text(COMMA_SPACE);
         }
         if grouped > 1 || standalone > 0 || any_comment {
             let g = self.group_open();
-            self.text(LBRACE)?;
+            self.text(LBRACE);
             self.indent_open();
             if self.options.bracket_spacing {
-                self.line()?;
+                self.line();
             } else {
                 self.softline();
             }
@@ -90,28 +90,28 @@ impl Quick {
                         v1
                     }) > 0
                     {
-                        self.text(COMMA)?;
-                        self.line()?;
+                        self.text(COMMA);
+                        self.line();
                     }
                     self.print(specifier)?;
                 }
                 i += 1;
             }
             if self.options.trailing_comma != TRAILING_COMMA_NONE {
-                self.if_break_text(COMMA, 0, 0)?;
+                self.if_break_text(COMMA, 0, 0);
             }
             if self.options.bracket_spacing {
-                self.dedent_line()?;
+                self.dedent_line();
             } else {
                 self.dedent_softline();
             }
-            self.text(RBRACE)?;
+            self.text(RBRACE);
             self.group_close(g);
             return Ok(());
         }
-        self.text(LBRACE)?;
+        self.text(LBRACE);
         if self.options.bracket_spacing {
-            self.text(SPACE)?;
+            self.text(SPACE);
         }
         let mut i: i32 = 1;
         while i <= count {
@@ -121,9 +121,9 @@ impl Quick {
             i += 1;
         }
         if self.options.bracket_spacing {
-            self.text(SPACE)?;
+            self.text(SPACE);
         }
-        self.text(RBRACE)?;
+        self.text(RBRACE);
         Ok(())
     }
 
@@ -168,11 +168,11 @@ impl Quick {
                 _ASSERT_
             } else {
                 _WITH_
-            })?;
+            });
             let g = self.group_open();
-            self.text(LBRACE)?;
-            self.print_dangling_comments_in_list(n)?;
-            self.text(RBRACE)?;
+            self.text(LBRACE);
+            self.print_dangling_comments_in_list(n);
+            self.text(RBRACE);
             self.group_close(g);
             return Ok(());
         }
@@ -180,7 +180,7 @@ impl Quick {
             _ASSERT_
         } else {
             _WITH_
-        })?;
+        });
         let first = self.n.at(attributes + 1);
         let should_break = self.options.object_wrap_preserve
             && self.has_newline_in_range(
@@ -202,24 +202,24 @@ impl Quick {
         let source = self.n.at(n + 4);
         let specifiers = self.n.at(n + 5);
         let attributes = self.n.at(n + 6);
-        self.text(IMPORT)?;
+        self.text(IMPORT);
         match ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & P_MASK {
             P_DEFER => {
-                self.text(SPACE)?;
-                self.text(DEFER_)?;
+                self.text(SPACE);
+                self.text(DEFER_);
             }
             P_SOURCE => {
-                self.text(SPACE)?;
-                self.text(SOURCE_)?;
+                self.text(SPACE);
+                self.text(SOURCE_);
             }
             P_MODULE => {
-                self.text(SPACE)?;
-                self.text(MODULE_)?;
+                self.text(SPACE);
+                self.text(MODULE_);
             }
             _ => {}
         }
         let has_phase = (((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & P_MASK) != 0;
-        self.print_import_or_export_kind(n, false)?;
+        self.print_import_or_export_kind(n, false);
         let should_print_specifiers = self.n.at(specifiers) > 0
             || (self.n.at(n) & F_SHORTHAND) != 0
             || (((((self.n.at(n) as u32) >> SUB_SHIFT) as i32) >> IK_SHIFT) & IK_MASK) == IK_TYPE;
@@ -229,14 +229,14 @@ impl Quick {
             } else {
                 self.print_module_specifiers(specifiers)?;
             }
-            self.text(FROM)?;
+            self.text(FROM);
         } else {
-            self.text(SPACE)?;
+            self.text(SPACE);
         }
         self.print(source)?;
         self.print_import_attributes(n, source, attributes)?;
         if self.options.semi {
-            self.text(SEMI)?;
+            self.text(SEMI);
         }
         Ok(())
     }
@@ -246,7 +246,7 @@ impl Quick {
         let mut i: i32 = 1;
         while i <= self.n.at(specifiers) {
             if i > 1 {
-                self.text(COMMA_SPACE)?;
+                self.text(COMMA_SPACE);
             }
             self.print(self.n.at(specifiers + i))?;
             i += 1;
@@ -274,22 +274,22 @@ impl Quick {
     pub(crate) fn print_export_declaration(&mut self, n: i32) -> R<()> {
         let k = self.n.at(n) & 0xff;
         self.print_decorators_before_export(n)?;
-        self.print_declare_token(n)?;
+        self.print_declare_token(n);
         self.text(if k == k::ExportDefaultDeclaration {
             EXPORT_DEFAULT
         } else {
             EXPORT
-        })?;
+        });
         if self.has_dangling_comment(n) {
-            self.text(SPACE)?;
-            self.print_dangling_comments(n)?;
+            self.text(SPACE);
+            self.print_dangling_comments(n);
             if !self.is_block_comment(self.last_dangling_comment(n)) {
                 self.hardline();
             }
         }
         if k == k::ExportDefaultDeclaration {
             let declaration = self.n.at(n + 4);
-            self.text(SPACE)?;
+            self.text(SPACE);
             self.print(declaration)?;
             let dk = self.n.at(declaration) & 0xff;
             if self.options.semi
@@ -299,41 +299,41 @@ impl Quick {
                 && dk != k::TSDeclareFunction
                 && !omits_semicolon_in_flow(dk)
             {
-                self.text(SEMI)?;
+                self.text(SEMI);
             }
             return Ok(());
         }
         if k == k::ExportAllDeclaration {
-            self.print_import_or_export_kind(n, false)?;
-            self.text(_STAR)?;
+            self.print_import_or_export_kind(n, false);
+            self.text(_STAR);
             if self.n.at(n + 4) != 0 {
-                self.text(_AS_)?;
+                self.text(_AS_);
                 self.print(self.n.at(n + 4))?;
             }
-            self.text(FROM)?;
+            self.text(FROM);
             self.print(self.n.at(n + 5))?;
             self.print_import_attributes(n, self.n.at(n + 5), self.n.at(n + 6))?;
             if self.options.semi {
-                self.text(SEMI)?;
+                self.text(SEMI);
             }
             return Ok(());
         }
         let declaration = self.n.at(n + 4);
         if declaration != 0 {
-            self.text(SPACE)?;
+            self.text(SPACE);
             self.print(declaration)?;
             return Ok(());
         }
-        self.print_import_or_export_kind(n, false)?;
+        self.print_import_or_export_kind(n, false);
         self.print_module_specifiers(self.n.at(n + 6))?;
         let source = self.n.at(n + 5);
         if source != 0 {
-            self.text(FROM)?;
+            self.text(FROM);
             self.print(source)?;
             self.print_import_attributes(n, source, self.n.at(n + 7))?;
         }
         if self.options.semi {
-            self.text(SEMI)?;
+            self.text(SEMI);
         }
         Ok(())
     }
@@ -342,7 +342,7 @@ impl Quick {
         let k = self.n.at(n) & 0xff;
         match k {
             k::ImportNamespaceSpecifier | k::ExportNamespaceSpecifier => {
-                self.text(STAR_AS_)?;
+                self.text(STAR_AS_);
                 self.print(self.n.at(n + 4))?;
                 return Ok(());
             }
@@ -354,11 +354,11 @@ impl Quick {
         }
         let left = self.n.at(n + 4);
         let right = self.n.at(n + 5);
-        self.print_import_or_export_kind(n, true)?;
+        self.print_import_or_export_kind(n, true);
         self.print(left)?;
         // without `as` the second name is a copy of the first
         if self.n.at(right + 1) != self.n.at(left + 1) {
-            self.text(_AS_)?;
+            self.text(_AS_);
             self.print(right)?;
         }
         Ok(())

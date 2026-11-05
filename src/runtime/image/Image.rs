@@ -118,19 +118,16 @@ pub(crate) enum Source {
 // `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
 
-// These C++ helpers are
-// Image-specific (they pin/adopt typed-array storage for the off-thread
-// pipeline) and have no `bun_jsc` wrapper.
+// Image-specific (pins typed-array storage for the off-thread pipeline); no `bun_jsc` wrapper.
 unsafe extern "C" {
-    fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
     /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
     /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
     /// caller roots the value as it does for 2).
-    fn JSC__JSValue__borrowBytesForOffThread(
+    safe fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
-        out_ptr: *mut *const u8,
-        out_len: *mut usize,
+        out_ptr: &mut *const u8,
+        out_len: &mut usize,
     ) -> i32;
 }
 
@@ -694,10 +691,7 @@ impl Image {
                 // tells us whether anything actually needs pinning.
                 let mut ptr: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
-                // SAFETY: FFI call; out-params are valid pointers to locals.
-                match unsafe {
-                    JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len)
-                } {
+                match JSC__JSValue__borrowBytesForOffThread(v, &mut ptr, &mut len) {
                     0 => Err(PinError::Detached),
                     // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
                     // by definition — dupe instead of forcing JSC to copy via
@@ -723,8 +717,7 @@ impl Image {
                     kind @ (2 | 3) => {
                         if len == 0 {
                             if kind == 2 {
-                                // SAFETY: helper pinned `v`; unpin before erroring.
-                                unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                                v.unpin_array_buffer();
                             }
                             Err(PinError::Detached)
                         } else {
@@ -1218,9 +1211,9 @@ impl Image {
 /// Promise-of-promise flattens, so the caller sees one `await` for
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
-struct BlobReadChain<'a> {
+struct BlobReadChain {
     image: *const Image,
-    global: &'a JSGlobalObject,
+    global: bun_ptr::BackRef<JSGlobalObject>,
     /// The context of the script that asked: the task the read is followed by is that script's.
     context: jsc::ContextId,
     kind: Kind,
@@ -1228,10 +1221,10 @@ struct BlobReadChain<'a> {
     outer: jsc::JSPromiseStrong,
 }
 
-impl<'a> BlobReadChain<'a> {
+impl BlobReadChain {
     fn start(
         image: &Image,
-        cx: &bun_jsc::JsThread<'a>,
+        cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
@@ -1243,14 +1236,12 @@ impl<'a> BlobReadChain<'a> {
             unreachable!()
         };
         let blob_js = strong.get();
-        let Some(blob) = blob_js.as_::<Blob>() else {
+        let Some(blob) = blob_js.as_class_ref::<Blob>() else {
             drop(deliver);
             return Err(cx
                 .global()
                 .throw(format_args!("Image: Blob source is no longer a Blob")));
         };
-        // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
-        let blob = unsafe { &mut *blob };
 
         // Same Strong-ref contract as the regular pending_tasks bump — keeps
         // the wrapper (and its sourceJS slot) alive until the read settles.
@@ -1263,29 +1254,21 @@ impl<'a> BlobReadChain<'a> {
 
         let chain = Box::new(BlobReadChain {
             image: std::ptr::from_ref::<Image>(image),
-            global: cx.global(),
+            global: bun_ptr::BackRef::new(cx.global()),
             context: cx.context().id(),
             kind,
             deliver,
             outer: jsc::JSPromiseStrong::init(cx.global()),
         });
         let promise = chain.outer.value();
-        // `read_bytes_to_handler` stores the handler pointer and calls
-        // `on_read_bytes` on the JS thread (sync for in-memory, async for
-        // file/S3). Ownership of the chain transfers there; the trait impl
-        // below reconstructs the Box and frees it.
-        let raw = bun_core::heap::into_raw(chain);
-        // SAFETY: `raw` is freshly leaked and not used again here; the read
-        // dispatch hands it to `on_read_bytes` below exactly once, also when it
-        // returns `Err` (an exception left pending while delivering synchronously,
-        // i.e. after the chain has already been reclaimed).
-        unsafe { blob.read_bytes_to_handler(raw, cx) }?;
+        // `on_read_bytes` runs on the JS thread: in this call for in-memory bytes, else later.
+        blob.read_bytes_to_handler(chain, cx)?;
         Ok(promise)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
     fn on_read_bytes_impl(self, r: ReadBytesResult) -> JsResult<()> {
-        let global = self.global;
+        let global = self.global.get();
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —
         // mutation goes through `Cell`/`JsCell`.
@@ -1343,13 +1326,9 @@ impl<'a> BlobReadChain<'a> {
     }
 }
 
-impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) -> JsResult<()> {
-        // SAFETY: `this` is the Box `start()` leaked into `read_bytes_to_handler`,
-        // handed back to us exactly once (trait contract); nothing else points
-        // at it, so reclaiming it here is the chain's one and only free.
-        let boxed = unsafe { bun_core::heap::take(this) };
-        boxed.on_read_bytes_impl(result)
+impl ReadBytesHandler for BlobReadChain {
+    fn on_read_bytes(self: Box<Self>, result: ReadBytesResult) -> JsResult<()> {
+        self.on_read_bytes_impl(result)
     }
 }
 
@@ -1387,8 +1366,7 @@ impl Pin {
 impl Drop for Pin {
     fn drop(&mut self) {
         if !self.0.is_empty() {
-            // SAFETY: JS thread; `self.0` was pinned by the helper.
-            unsafe { JSC__JSValue__unpinArrayBuffer(self.0) };
+            self.0.unpin_array_buffer();
         }
     }
 }
@@ -1810,11 +1788,7 @@ impl PipelineTask {
                                 format.mime().as_bytes(),
                             ));
                         blob.content_type_was_set.set(true);
-                        // UFCS to pick the consuming `JsClass::to_js(self, _)`
-                        // (heap-promotes via `Blob::new`) over the inherent
-                        // `Blob::to_js(&mut self, _)` that expects an
-                        // already-heap-allocated receiver.
-                        promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
+                        promise.resolve(global, blob.into_js(global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {
                         // This arm copies the bytes out — re-arm `Encoded::drop` so

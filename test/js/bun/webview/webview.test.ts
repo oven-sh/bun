@@ -1250,6 +1250,59 @@ itPersistentDataStore("persistent dataStore: localStorage survives across instan
   expect(got).toBe("survives");
 });
 
+// Runs in a subprocess because aborting the shared host would fail every other view in this file.
+it("dataStore.directory works, or only fails that view if WebKit doesn't have initWithDirectory:", async () => {
+  using dir = tempDir("webview-persist-old-webkit", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const html = h => "data:text/html," + encodeURIComponent(h);
+        const settle = fn => fn().catch(e => e.message);
+        const ephemeral = new Bun.WebView({ width: 100, height: 100 });
+        const persistent = new Bun.WebView({
+          width: 100,
+          height: 100,
+          dataStore: { directory: ${JSON.stringify(String(dir))} },
+        });
+        const failed = [];
+        persistent.onNavigationFailed = e => failed.push(e.message);
+        const result = {
+          persistent: await settle(async () => {
+            await persistent.navigate(html("<body>persistent</body>"));
+            return "navigated";
+          }),
+          ephemeral: await settle(async () => {
+            await ephemeral.navigate(html("<body>ephemeral</body>"));
+            return ephemeral.evaluate("document.body.textContent");
+          }),
+          failed,
+        };
+        persistent.close();
+        ephemeral.close();
+        console.log(JSON.stringify(result));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr).toEndWith("}\n");
+  const result = JSON.parse(stdout);
+  const unsupported =
+    'dataStore.directory needs a newer WebKit (macOS 15.2 or later); use dataStore: "ephemeral" or backend: "chrome"';
+  // Older macOS versions only have initWithDirectory: after a Safari update.
+  const supported = isMacOSVersionAtLeast(15.2) || result.persistent === "navigated";
+  expect(result).toEqual(
+    supported
+      ? { persistent: "navigated", ephemeral: "ephemeral", failed: [] }
+      : { persistent: unsupported, ephemeral: "ephemeral", failed: [unsupported] },
+  );
+  expect(exitCode, stderr).toBe(0);
+});
+
 it("ephemeral dataStore: localStorage does NOT survive across instances", async () => {
   using server = Bun.serve({
     port: 0,

@@ -1,6 +1,7 @@
 #include "root.h"
 #include "wrapAnsi.h"
 #include "ANSIHelpers.h"
+#include "StringSizeLimit.h"
 #include "VectorSizeLimit.h"
 
 #include <JavaScriptCore/ExceptionHelpers.h>
@@ -661,25 +662,20 @@ template<typename Char>
 // Main Implementation
 // ============================================================================
 
-// nullopt: a row, or the list of rows, could not grow.
+// Returns nullopt if a row, the list of rows or the result couldn't grow.
 template<typename Char>
 static std::optional<WTF::String> wrapAnsiImpl(std::span<const Char> input, size_t columns, const WrapAnsiOptions& options)
 {
-    if (columns == 0 || input.empty()) {
-        // Return copy of input
-        StringBuilder result;
-        result.reserveCapacity(input.size());
-        for (auto c : input)
-            result.append(static_cast<UChar>(c));
-        return result.toString();
-    }
+    if (columns == 0 || input.empty())
+        return WTF::String(input);
 
     // Process each line separately. \n, a bare \r and a \r\n pair each
     // break a line and are emitted as one \n — callers (Claude Code's
     // wrap-text) map wrapped output back to the original text by relying on
     // every \r becoming a break.
-    StringBuilder result;
-    result.reserveCapacity(input.size() + input.size() / 10);
+    // Each row reopens the active hyperlink, so the result can be much longer than the input.
+    StringBuilder result { OverflowPolicy::RecordOverflow };
+    result.reserveCapacity(cappedStringBuilderReserve(input.size() + input.size() / 10));
 
     const Char* lineStart = input.data();
     const Char* const dataEnd = input.data() + input.size();
@@ -717,6 +713,8 @@ static std::optional<WTF::String> wrapAnsiImpl(std::span<const Char> input, size
         lineStart = (*lineEnd == '\r' && lineEnd + 1 != dataEnd && *(lineEnd + 1) == '\n') ? lineEnd + 2 : lineEnd + 1;
     }
 
+    if (result.hasOverflowed() || exceedsStringLimit(result.length())) [[unlikely]]
+        return std::nullopt;
     return result.toString();
 }
 

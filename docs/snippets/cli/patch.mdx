@@ -82,8 +82,7 @@ bun patch <package>@<version>
 </ParamField>
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install packages, update <code>package.json</code>, or save a lockfile. The package is still copied into{" "}
-  <code>node_modules</code> for patching, and <code>--commit</code> still writes the patch file
+  Print what the command would do, with or without <code>--commit</code>, and leave the project as it is
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -102,6 +101,18 @@ bun patch <package>@<version>
 
 <ParamField path="--cafile" type="string">
   Same as <code>--ca</code>, but as a file path to the certificate
+</ParamField>
+
+<ParamField path="--use-system-ca" type="boolean">
+  Use the system's trusted certificate authorities
+</ParamField>
+
+<ParamField path="--use-openssl-ca" type="boolean">
+  Use OpenSSL's default CA store instead of the bundled one
+</ParamField>
+
+<ParamField path="--use-bundled-ca" type="boolean">
+  Use bundled CA store
 </ParamField>
 
 <ParamField path="--registry" type="string">

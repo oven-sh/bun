@@ -992,11 +992,6 @@ pub struct JsonTape {
     pub encoding: StrEncoding,
 }
 
-// SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
-unsafe impl Send for JsonTape {}
-// SAFETY: see the `Send` impl.
-unsafe impl Sync for JsonTape {}
-
 impl JsonTape {
     const STR_CHUNK: usize = 4096;
 
@@ -1108,6 +1103,12 @@ impl JsonTape {
         &self.props[first as usize..first as usize + count as usize]
     }
 
+    /// Returns one object's properties, given the row range from its [`ObjectJSON::rows`].
+    #[inline]
+    pub fn properties(&self, rows: core::ops::Range<u32>) -> &[PropertyJSON] {
+        &self.props[rows.start as usize..rows.end as usize]
+    }
+
     #[inline]
     fn items_span(&self, first: u32, count: u32) -> &[JsonValue] {
         &self.items[first as usize..first as usize + count as usize]
@@ -1175,6 +1176,13 @@ impl ObjectJSON {
         }
         // SAFETY: per the constructor's contract the tape outlives this node.
         unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
+    }
+
+    /// The tape rows that hold [`Self::properties`]. Code that keeps the tape alive longer than
+    /// this node can store the range and read it back with [`JsonTape::properties`].
+    #[inline]
+    pub fn rows(&self) -> core::ops::Range<u32> {
+        self.first..self.first + self.count
     }
 
     /// Parallel to [`Self::properties`]; `None` unless the parse recorded value locations.
@@ -1284,43 +1292,24 @@ impl Default for Object {
 
 /// Dotted-key path used by the INI parser (`get_or_put_object`).
 ///
-/// Node types are lifetime-free, so `next` is a raw `*mut Rope`
-/// into the bump arena. Segments are bulk-freed at arena reset.
-pub struct Rope {
+/// Segments live in the bump arena and are bulk-freed at arena reset.
+pub struct Rope<'a> {
     pub head: Expr,
-    pub next: *mut Rope,
+    pub next: Option<&'a mut Rope<'a>>,
 }
-impl Rope {
-    pub fn append(&mut self, expr: Expr, bump: &Bump) -> Result<*mut Rope, AllocError> {
+impl<'a> Rope<'a> {
+    pub fn append(&mut self, expr: Expr, bump: &'a Bump) {
         // Walk to the tail iteratively: recursing once per node overflows the
         // native stack on adversarially deep ropes (e.g. an `.npmrc` section
         // header with thousands of dot-separated segments).
-        //
-        // Arena-allocated Rope nodes are uniquely owned by the chain at this
-        // point; route through `StoreRef::DerefMut` (the arena-backed handle
-        // whose deref is centralised in `nodes.rs`).
-        let mut tail = StoreRef::from_bump(self);
-        while let Some(next) = core::ptr::NonNull::new(tail.next).map(StoreRef::from_non_null) {
-            tail = next;
+        let mut tail = &mut self.next;
+        while let Some(next) = tail {
+            tail = &mut next.next;
         }
-        let rope: *mut Rope = bump.alloc(Rope {
+        *tail = Some(bump.alloc(Rope {
             head: expr,
-            next: core::ptr::null_mut(),
-        });
-        tail.next = rope;
-        Ok(rope)
-    }
-
-    /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
-    /// the pointee is a bump allocation valid until arena reset. Centralises
-    /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
-    /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
-    #[inline]
-    pub(crate) fn next_ref<'a>(&self) -> Option<&'a Rope> {
-        // SAFETY: `next` is either null or a bump-arena allocation valid until
-        // arena reset. Read-only borrow; no `&mut` alias is
-        // outstanding at any caller (the chain is fully built before walking).
-        unsafe { self.next.cast_const().as_ref() }
+            next: None,
+        }));
     }
 }
 
@@ -1381,11 +1370,11 @@ impl Object {
         false
     }
 
-    pub fn put(&mut self, _bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
+    pub fn put(&mut self, bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
-            let key = Expr::init(EString::init(key), expr.loc);
+            let key = Expr::allocate(bump, EString::init(key), expr.loc);
             VecExt::append(
                 &mut self.properties,
                 G::Property {
@@ -1403,13 +1392,13 @@ impl Object {
         self.put(
             bump,
             key,
-            Expr::init(EString::init(value), crate::Loc::EMPTY),
+            Expr::allocate(bump, EString::init(value), crate::Loc::EMPTY),
         )
     }
 
     /// Walks `rope` segments, creating nested objects as needed, and returns
     /// the leaf `E.Object` expression.
-    pub fn get_or_put_object(&mut self, rope: &Rope, _bump: &Bump) -> Result<Expr, SetError> {
+    pub fn get_or_put_object(&mut self, rope: &Rope<'_>, _bump: &Bump) -> Result<Expr, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -1417,7 +1406,7 @@ impl Object {
         if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 crate::expr::Data::EArray(array) => {
-                    let Some(next) = rope.next_ref() else {
+                    let Some(next) = rope.next.as_deref() else {
                         return Err(SetError::Clobber);
                     };
                     if let Some(last) = array.items.last() {
@@ -1429,7 +1418,7 @@ impl Object {
                     return Err(SetError::Clobber);
                 }
                 crate::expr::Data::EObject(mut object) => {
-                    if let Some(next) = rope.next_ref() {
+                    if let Some(next) = rope.next.as_deref() {
                         return object.get_or_put_object(next, _bump);
                     }
                     return Ok(existing);
@@ -1438,7 +1427,7 @@ impl Object {
             }
         }
 
-        if let Some(next) = rope.next_ref() {
+        if let Some(next) = rope.next.as_deref() {
             let obj = Expr::init(Object::default(), rope.head.loc);
             let out = match obj.data {
                 crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, _bump)?,
@@ -1649,7 +1638,7 @@ impl EString {
         // as `*const u8` for storage only) and `data.len` deliberately stores the
         // **u16 element count**, not a byte count — so the backing allocation is
         // `2 * data.len` bytes and reading `data.len` u16s is in-bounds. Can't be
-        // `bytemuck::cast_slice(self.data.slice())` because that would yield
+        // `bun_core::cast_slice(self.data.slice())` because that would yield
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
         // `javascript_length()` and changing it is a cross-crate refactor (see
         // TODO above).
@@ -1705,7 +1694,7 @@ impl EString {
         // pointer/length pair as the old raw-slice construction, without an
         // `unsafe` block. Consumers must check `is_utf16` and re-slice via
         // `slice16`.
-        let bytes = &bytemuck::cast_slice::<u16, u8>(data)[..data.len()];
+        let bytes = &bun_core::slice_as_bytes(data)[..data.len()];
         Self {
             data: Str::new(bytes),
             is_utf16: true,
@@ -1867,7 +1856,7 @@ impl EString {
         if self.is_utf8() {
             bun_wyhash::hash(&self.data)
         } else {
-            bun_wyhash::hash(bytemuck::cast_slice::<u16, u8>(self.slice16()))
+            bun_wyhash::hash(bun_core::slice_as_bytes(self.slice16()))
         }
     }
 }

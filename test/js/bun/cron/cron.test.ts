@@ -1153,12 +1153,15 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
       "e2e-job.ts": `
         export default {
           scheduled(controller) {
-            require("node:fs").writeFileSync("${markerPath}", JSON.stringify({
+            const fs = require("node:fs");
+            fs.writeFileSync("${markerPath}.tmp", JSON.stringify({
               type: controller.type,
               cron: controller.cron,
               scheduledTime: controller.scheduledTime,
               keys: Object.keys(controller).sort(),
             }));
+            // The test reads the marker as soon as it exists, so it appears with its content.
+            fs.renameSync("${markerPath}.tmp", "${markerPath}");
           }
         };
       `,

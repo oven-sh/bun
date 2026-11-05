@@ -1,4 +1,5 @@
-// What `generate-data.mjs` and `generate-es-syntax.cjs` share: they write a tree of names in the form of `table.rs`.
+// Code shared by `generate-data.mjs` and `generate-es-syntax.cjs`. Both write a tree of names in the format `table.rs`
+// reads.
 
 const NONE = 0xffff;
 
@@ -7,8 +8,8 @@ const check = (value, limit, what) => {
   return value;
 };
 
-/** Finds `list` in `pool`, both lists of strings, or appends it. Returns where it starts. */
-function place(pool, list) {
+/** Finds `list` in `pool`, both lists of strings, or appends it. Returns its start index. */
+function findOrAppend(pool, list) {
   for (let start = 0; start + list.length <= pool.length; start++) {
     if (list.every((it, i) => pool[start + i] === it)) return start;
   }
@@ -16,7 +17,7 @@ function place(pool, list) {
   return pool.length - list.length;
 }
 
-/** The rows of an array, as many on a line as fit. */
+/** Formats an array's rows, with as many per line as fit. */
 function pack(rows) {
   const lines = [];
   let line = "   ";
@@ -29,11 +30,11 @@ function pack(rows) {
 }
 
 class Table {
-  /** For each array of members its rows: `{ name, kinds: [read, call, construct], members: an array or undefined }`. */
+  /** The rows of each member array: `{ name, kinds: [read, call, construct], members: an array or undefined }`. */
   arrays = [];
   texts = new Set();
 
-  /** An array of members that is filled later, so that a member of it can have it as its members. */
+  /** Reserves a member array to be filled later, so that one of its members can refer back to it. */
   reserve() {
     return this.arrays.push(null) - 1;
   }
@@ -48,20 +49,20 @@ class Table {
     return this.fill(this.reserve(), rows);
   }
 
-  /** A text that is no name of a member. */
+  /** Adds a text that isn't a member's name. */
   text(text) {
     this.texts.add(text);
     return text;
   }
 
-  /** The texts are in place from here on. A text that is part of another is not there twice. */
+  /** Fixes the layout, so no texts can be added afterwards. A text that's a substring of another isn't stored twice. */
   layOut() {
     this.names = "";
     for (const text of [...this.texts].sort((a, b) => b.length - a.length || (a < b ? -1 : 1))) {
       if (Buffer.byteLength(text) !== text.length) throw new Error(`${text} is not ASCII`);
       if (!this.names.includes(text)) this.names += text;
     }
-    // Arrays with the same rows are one, also those that are the same only once their members are one.
+    // Merge arrays with identical rows, including arrays that only become identical once their members are merged.
     const one = this.arrays.map((_, array) => array);
     for (let found = true; found;) {
       found = false;
@@ -76,14 +77,14 @@ class Table {
       one.forEach((it, array) => (one[array] = one[it]));
     }
     this.one = one;
-    const kept = this.arrays.filter((_, array) => one[array] === array);
+    const unique = this.arrays.filter((_, array) => one[array] === array);
     this.first = [];
     let count = 0;
     this.arrays.forEach((rows, array) => {
       if (one[array] === array) ((this.first[array] = count), (count += rows.length));
     });
     this.kinds = [];
-    this.rows = kept.flat().map(row => {
+    this.rows = unique.flat().map(row => {
       const kinds = JSON.stringify(
         (row.kinds ?? [])
           .concat(NONE, NONE, NONE)
@@ -106,7 +107,7 @@ class Table {
     return `${check(this.first[this.one[array]], 0x10000, "first")}, ${check(this.arrays[array].length, 0x100, "count")}`;
   }
 
-  /** The statics, and the type `name` that stands for them. */
+  /** The statics, and the type `name` that implements `Table` for them. */
   statics(name, about) {
     return `/// ${about}
 pub(crate) enum ${name} {}
@@ -132,7 +133,7 @@ const fn m(name: u16, name_len: u8, kinds: u16, first: u16, count: u8) -> Member
 #[rustfmt::skip]
 static NAMES: &str = ${JSON.stringify(this.names)};
 
-/// What is at \`[READ]\`, \`[CALL]\` and \`[CONSTRUCT]\`.
+/// The values for \`[READ]\`, \`[CALL]\` and \`[CONSTRUCT]\`.
 #[rustfmt::skip]
 static KINDS: [[u16; 3]; ${this.kinds.length}] = [
 ${pack(this.kinds.map(it => it.replaceAll(",", ", ").replaceAll(String(NONE), "NONE")))}
@@ -145,4 +146,4 @@ ${pack(this.rows)}
   }
 }
 
-module.exports = { NONE, Table, check, pack, place };
+module.exports = { NONE, Table, check, pack, findOrAppend };

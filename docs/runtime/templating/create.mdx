@@ -207,7 +207,7 @@ You can specify pre- and post-install setup scripts in the `"bun-create"` sectio
 }
 ```
 
-`preinstall` and `postinstall` accept a string or an array of strings. An array of commands runs in order. Each command runs through the shell in the destination folder, like a `package.json` script; the name of a `package.json` script runs that script. If a command or `bun install` exits with a non-zero code, `bun create` stops with that code. The commands run even when the template has no dependencies. `--no-install` skips them.
+`preinstall` and `postinstall` accept a string or an array of strings. An array of commands runs in order. Each command runs through the shell in the destination folder, like a `package.json` script; the name of a `package.json` script runs that script. If a command or `bun install` exits with a non-zero code, `bun create` stops with that code. The commands run even when the template has no dependencies. `--no-install` skips them. So do `--ignore-scripts` and what turns off lifecycle scripts for a `bun install` in the directory where you run `bun create`: `ignoreScripts = true` under `[install]` in `bunfig.toml`, or `ignore-scripts=true` in `.npmrc`. `bun install` then runs with `--ignore-scripts`. A `bunfig.toml` or `.npmrc` that is only in the destination folder does not skip the commands.
 
 | Field         | Description                                                                                 |
 | ------------- | ------------------------------------------------------------------------------------------- |
@@ -221,12 +221,13 @@ After cloning a template, `bun create` removes the `"bun-create"` section from `
 
 ### CLI flags
 
-| Flag           | Description                            |
-| -------------- | -------------------------------------- |
-| `--force`      | Overwrite existing files               |
-| `--no-install` | Skip installing `node_modules` & tasks |
-| `--no-git`     | Don't initialize a git repository      |
-| `--open`       | Start & open in-browser after finish   |
+| Flag               | Description                            |
+| ------------------ | -------------------------------------- |
+| `--force`          | Overwrite existing files               |
+| `--no-install`     | Skip installing `node_modules` & tasks |
+| `--ignore-scripts` | Skip tasks & lifecycle scripts         |
+| `--no-git`         | Don't initialize a git repository      |
+| `--open`           | Start & open in-browser after finish   |
 
 ### Environment variables
 
@@ -264,7 +265,7 @@ THEN, for remote templates, GitHub repos, and local templates alike:
 5. Run `git init; git add -A .; git commit -am "Initial Commit";`
    - Skipped if `${destination}/.git` already exists.
    - Without a git `user.name` and `user.email`, the files are staged but not committed.
-   - Rename `gitignore` to `.gitignore`. npm strips `.gitignore` files from published packages.
+   - Rename `gitignore` to `.gitignore`, unless there is a `.gitignore` already (`--force` replaces one that was yours). npm strips `.gitignore` files from published packages.
    - Git finishes before the tasks and `bun install` start.
    - We tested using libgit2 if available, and it performed 3x slower in microbenchmarks
 6. Run any tasks defined in `"bun-create": { "preinstall" }`

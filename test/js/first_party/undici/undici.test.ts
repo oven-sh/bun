@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import diagnosticsChannel from "node:diagnostics_channel";
 import { Readable } from "node:stream";
-import { request, fetch as undiciFetch } from "undici";
+// @ts-ignore undici 5's types don't declare ping()
+import { ping, request, fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -288,6 +290,12 @@ describe("undici", () => {
       expect(json2.args.foo).toBe("bar");
     });
 
+    it("should take a URL of another implementation", async () => {
+      const { href, protocol } = new URL(`${hostUrl}/get`);
+      const { body } = await request({ href, protocol } as URL, { query: { foo: "bar" } });
+      expect(await body.json()).toMatchObject({ url: `${hostUrl}/get?foo=bar`, args: { foo: "bar" } });
+    });
+
     it("should throw on HTTP 4xx or 5xx error when throwOnError is true", async () => {
       try {
         await request(`${hostUrl}/status/404`, { throwOnError: true });
@@ -391,6 +399,169 @@ describe("undici.request maxRedirections", () => {
       );
     } finally {
       server.stop(true);
+    }
+  });
+});
+
+describe.concurrent("WebSocket ping", () => {
+  function serve(websocket: Partial<Bun.WebSocketHandler<undefined>> = {}) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response(null, { status: 400 });
+      },
+      websocket: { message() {}, ...websocket },
+    });
+  }
+
+  function once(ws: EventTarget, type: "open" | "close") {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    ws.addEventListener(type, () => resolve());
+    ws.addEventListener("error", (e: any) => reject(e.error ?? new Error(e.message)));
+    return promise;
+  }
+
+  // Resolves with the first message published for `ws`. Channels are process-wide and these tests
+  // run concurrently, so filter by socket.
+  async function firstPublished(name: "ping" | "pong", ws: EventTarget) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ payload: Buffer; websocket: unknown }>();
+    const onMessage = (message: any) => {
+      if (message.websocket === ws) resolve(message);
+    };
+    ws.addEventListener("error", (e: any) => reject(e.error ?? new Error(e.message)));
+    ws.addEventListener("close", (e: any) => reject(new Error(`closed with ${e.code} before a ${name} was published`)));
+    diagnosticsChannel.subscribe(`undici:websocket:${name}`, onMessage);
+    try {
+      return await promise;
+    } finally {
+      diagnosticsChannel.unsubscribe(`undici:websocket:${name}`, onMessage);
+    }
+  }
+
+  it("ping() sends a Ping frame and publishes the Pong on undici:websocket:pong", async () => {
+    const received = Promise.withResolvers<Buffer>();
+    await using server = serve({
+      ping(ws, data) {
+        received.resolve(data);
+        ws.close(1000);
+      },
+    });
+    const ws = new UndiciWebSocket(`ws://127.0.0.1:${server.port}`);
+    expect(ws).toBeInstanceOf(WebSocket);
+    const pong = firstPublished("pong", ws);
+    await once(ws, "open");
+
+    ping(ws, Buffer.from("hello slack"));
+
+    expect((await received.promise).toString()).toBe("hello slack");
+    const { payload, websocket } = await pong;
+    expect(payload).toBeInstanceOf(Buffer);
+    expect(payload.toString()).toBe("hello slack");
+    expect(websocket).toBe(ws);
+  });
+
+  it("ping() without a body sends an empty Ping frame", async () => {
+    const received = Promise.withResolvers<Buffer>();
+    await using server = serve({
+      ping(ws, data) {
+        received.resolve(data);
+        ws.close(1000);
+      },
+    });
+    const ws = new UndiciWebSocket(`ws://127.0.0.1:${server.port}`);
+    const pong = firstPublished("pong", ws);
+    await once(ws, "open");
+
+    ping(ws);
+
+    expect((await received.promise).toString()).toBe("");
+    expect((await pong).payload).toEqual(Buffer.alloc(0));
+  });
+
+  it("ping() accepts a global WebSocket", async () => {
+    const received = Promise.withResolvers<Buffer>();
+    await using server = serve({
+      ping(ws, data) {
+        received.resolve(data);
+        ws.close(1000);
+      },
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+    await once(ws, "open");
+
+    ping(ws, Buffer.from("global"));
+
+    expect((await received.promise).toString()).toBe("global");
+  });
+
+  it.each(["nodebuffer", "arraybuffer", "blob"])(
+    "publishes a Ping from the server as a Buffer when binaryType is %s",
+    async binaryType => {
+      await using server = serve({
+        open(ws) {
+          ws.ping("from server");
+          ws.close(1000);
+        },
+      });
+      const ws = new UndiciWebSocket(`ws://127.0.0.1:${server.port}`);
+      ws.binaryType = binaryType as any;
+      expect(ws.binaryType).toBe(binaryType as any);
+
+      const { payload, websocket } = await firstPublished("ping", ws);
+      expect(payload).toBeInstanceOf(Buffer);
+      expect(payload.toString()).toBe("from server");
+      expect(websocket).toBe(ws);
+    },
+  );
+
+  it("ping() is a no-op unless the socket is OPEN", async () => {
+    const pings: string[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+    await using server = serve({
+      ping(_ws, data) {
+        pings.push(data.toString());
+      },
+      close() {
+        serverClosed.resolve();
+      },
+    });
+    const ws = new UndiciWebSocket(`ws://127.0.0.1:${server.port}`);
+
+    expect(ws.readyState).toBe(UndiciWebSocket.CONNECTING);
+    ping(ws, Buffer.from("connecting"));
+    await once(ws, "open");
+    ping(ws, Buffer.from("open"));
+    const closed = once(ws, "close");
+    ws.close();
+    expect(ws.readyState).toBe(UndiciWebSocket.CLOSING);
+    ping(ws, Buffer.from("closing"));
+    await closed;
+    expect(ws.readyState).toBe(UndiciWebSocket.CLOSED);
+    ping(ws, Buffer.from("closed"));
+
+    await serverClosed.promise;
+    expect(pings).toEqual(["open"]);
+  });
+
+  it("ping() validates its arguments like undici", async () => {
+    await using server = serve();
+    const ws = new UndiciWebSocket(`ws://127.0.0.1:${server.port}`);
+    try {
+      expect(() => ping(undefined)).toThrow(TypeError);
+      expect(() => ping(null)).toThrow(TypeError);
+      expect(() => ping({})).toThrow(TypeError);
+      expect(() => ping(ws, "not a buffer")).toThrow(new TypeError("Expected buffer payload"));
+      expect(() => ping(ws, null)).toThrow(new TypeError("Expected buffer payload"));
+      expect(() => ping(ws, new Uint8Array(4))).toThrow(new TypeError("Expected buffer payload"));
+      expect(() => ping({}, "not a buffer")).toThrow(new TypeError("Expected buffer payload"));
+      expect(() => ping(ws, Buffer.alloc(126))).toThrow(
+        new TypeError("A PING frame cannot have a body larger than 125 bytes."),
+      );
+      expect(() => ping(ws, Buffer.alloc(125))).not.toThrow();
+    } finally {
+      ws.close();
     }
   });
 });

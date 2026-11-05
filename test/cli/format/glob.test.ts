@@ -194,8 +194,8 @@ test.concurrent.each([
   expect(exitCode).toBe(1);
 });
 
-// The expected files come from Prettier 3.9. To its `ignore` package the `**` in `build/**/` can stand for nothing, so the line is
-// about `build` itself. git reads it differently: there `build/a.js` isn't ignored.
+// The expected files come from Prettier 3.9. In its `ignore` package the `**` in `build/**/` can match nothing, so the
+// line also covers `build` itself. git reads it differently: there `build/a.js` isn't ignored.
 test.concurrent.each([
   ["build/**/", "a.js a/f.js ab.js src/build/d.js src/e.js"],
   ["**/build/**/", "a.js a/f.js ab.js src/e.js"],

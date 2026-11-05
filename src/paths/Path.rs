@@ -683,8 +683,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             {
                 let mut wbuf = crate::w_path_buffer_pool::get();
                 let wslice: &mut [u16] = wbuf.as_mut_slice();
-                // SAFETY: wslice is valid for wslice.len() writable u16 units.
-                let n = unsafe { bun_core::fd_path_raw_w(fd, wslice.as_mut_ptr(), wslice.len()) };
+                let n = bun_core::fd_path_raw_w(fd, wslice);
                 if n <= 0 {
                     // `GetFinalPathNameByHandle` surfaces
                     // FileNotFound (return_length==0 → -1) or
@@ -720,8 +719,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // U == u16 → getFdPathW (Windows GetFinalPathNameByHandleW).
             let buf: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
 
-            // SAFETY: buf is valid for buf.len() writable u16 units.
-            let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
+            let n = bun_core::fd_path_raw_w(fd, buf);
             if n <= 0 {
                 // `GetFinalPathNameByHandle` surfaces
                 // FileNotFound (return_length==0 → -1) or
@@ -900,11 +898,21 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     #[inline]
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self._buf.set_length(0);
     }
 
     pub fn append<C: PathUnit>(&mut self, input: &[C]) -> options::Result<()> {
+        self.append_with(CheckLength::from_u8(CHECK), input)
+    }
+
+    /// [`Self::append`] that returns `Err(MaxPathExceeded)` on overflow whatever `CHECK` is.
+    pub fn try_append<C: PathUnit>(&mut self, input: &[C]) -> options::Result<()> {
+        self.append_with(CheckLength::CheckForGreaterThanMaxPath, input)
+    }
+
+    #[inline(always)]
+    fn append_with<C: PathUnit>(&mut self, check: CheckLength, input: &[C]) -> options::Result<()> {
         let needs_sep = self.len() > 0
             && match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any => {
@@ -941,7 +949,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     return Ok(());
                 }
 
-                if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                if check == CheckLength::CheckForGreaterThanMaxPath {
                     if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
                         return Err(PathError::MaxPathExceeded);
                     }
@@ -958,7 +966,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     return Ok(());
                 }
 
-                if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                if check == CheckLength::CheckForGreaterThanMaxPath {
                     if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
                         return Err(PathError::MaxPathExceeded);
                     }
@@ -993,7 +1001,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     return Ok(());
                 }
 
-                if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                if check == CheckLength::CheckForGreaterThanMaxPath {
                     if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
                         return Err(PathError::MaxPathExceeded);
                     }
@@ -1006,6 +1014,19 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
+        self.append_fmt_with(CheckLength::from_u8(CHECK), args)
+    }
+
+    /// [`Self::append_fmt`] that returns `Err(MaxPathExceeded)` on overflow whatever `CHECK` is.
+    pub fn try_append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
+        self.append_fmt_with(CheckLength::CheckForGreaterThanMaxPath, args)
+    }
+
+    fn append_fmt_with(
+        &mut self,
+        check: CheckLength,
+        args: core::fmt::Arguments<'_>,
+    ) -> options::Result<()> {
         // TODO: there's probably a better way to do this. needed for trimming slashes
         let mut temp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
 
@@ -1021,7 +1042,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     &u8::buffer_as_slice(&temp._buf.pooled)[..written]
                 }
                 Err(_) => {
-                    if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                    if check == CheckLength::CheckForGreaterThanMaxPath {
                         return Err(PathError::MaxPathExceeded);
                     }
                     unreachable!();
@@ -1029,7 +1050,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             }
         };
 
-        self.append(input)
+        self.append_with(check, input)
     }
 
     fn assert_joinable(&self) {
@@ -1079,6 +1100,14 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             self._buf.len = trimmed.len();
         }
         Ok(())
+    }
+
+    /// [`Self::append_join`] that returns `Err(MaxPathExceeded)` on overflow whatever `CHECK` is.
+    pub fn try_append_join<C: PathUnit>(&mut self, part: &[C]) -> options::Result<()> {
+        if self.len() + 1 + part.len() >= U::MAX_PATH {
+            return Err(PathError::MaxPathExceeded);
+        }
+        self.append_join(part)
     }
 
     pub fn append_join<C: PathUnit>(&mut self, part: &[C]) -> options::Result<()> {

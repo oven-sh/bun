@@ -1,0 +1,58 @@
+# console.log    delete console.warn; console.warn    console.__defineSetter__-like: { set error(v) {} } on console; console.error    console.info = undefined; console.info    console.nothingHere
+# RegExp.prototype.lastIndex    RegExp.$1    Math.imul
+# A read that starts at a built-in holder with a member of the name finds the member, so it does not answer undefined: the lookup never comes to the end of a chain.
+# It may answer undefined where the member may be deleted, where an accessor with a setter alone may take its place, where undefined is stored, and where the holder has no such member.
+# What the table lists at a prototype object for the instances of the class does not lie on that object, and a member that changes on its own may hold anything
+# RUN: valueflow-apply
+# CHECK: variable g0 name="kept" module=m0 declared={type=builtin(ConsoleLog)}
+# CHECK: variable g1 name="deleted" module=m0 declared={type=anything}
+# CHECK: variable g2 name="setterAlone" module=m0 declared={type=undefined|builtin(ConsoleError)}
+# CHECK: variable g3 name="storedUndefined" module=m0 declared={type=undefined|builtin(ConsoleInfo)}
+# CHECK: variable g4 name="noSuchMember" module=m0 declared={type=anything}
+# CHECK: variable g5 name="ofInstances" module=m0 declared={type=undefined|number}
+# CHECK: variable g6 name="changesOnItsOwn" module=m0 declared={type=undefined|string}
+# CHECK: variable g7 name="locked" module=m0 declared={type=builtin(MathImul)}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="deleted" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="setterAlone" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="storedUndefined" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="noSuchMember" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="ofInstances" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="changesOnItsOwn" module=m0 declared={type=anything} initialization=Undefined
+variable g7 name="locked" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Console
+    v1 = PropGet v0 key="log"
+    PutModuleVariable v1 variable=g0
+    v3 = PropDelete v0 key="warn" mode=Sloppy
+    v4 = PropGet v0 key="warn"
+    PutModuleVariable v4 variable=g1
+    v6 = NewClosure function=f1
+    DefineSetter v0, v6, - key="error"
+    v8 = PropGet v0 key="error"
+    PutModuleVariable v8 variable=g2
+    v10 = Undefined
+    PropSet v0, v10 key="info" mode=Sloppy
+    v12 = PropGet v0 key="info"
+    PutModuleVariable v12 variable=g3
+    v14 = PropGet v0 key="nothingHere"
+    PutModuleVariable v14 variable=g4
+    v16 = Builtin builtin=RegExpPrototype
+    v17 = PropGet v16 key="lastIndex"
+    PutModuleVariable v17 variable=g5
+    v19 = Builtin builtin=RegExp
+    v20 = PropGet v19 key="$1"
+    PutModuleVariable v20 variable=g6
+    v22 = Builtin builtin=Math
+    v23 = PropGet v22 key="imul"
+    PutModuleVariable v23 variable=g7
+    Return
+}
+function f1 name="setter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

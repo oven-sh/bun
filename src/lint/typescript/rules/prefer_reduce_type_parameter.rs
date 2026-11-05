@@ -7,7 +7,7 @@ use bun_lint::utils::ts_utils::is_static_member_access_of_value;
 /// Enforce using type parameter when calling `Array#reduce` instead of using a type assertion.
 pub struct PreferReduceTypeParameter;
 
-const PREFER_TYPE_PARAMETER: Message = Message::new(
+const PREFER_TYPE_PARAMETER: &Message = &Message::new(
     "preferTypeParameter",
     "Unnecessary assertion: Array#reduce accepts a type parameter for the default value.",
 );
@@ -37,7 +37,7 @@ impl Rule for PreferReduceTypeParameter {
         let Some(second_arg) = call.args().get(1) else {
             return;
         };
-        // `asserted_type` is `None` for `const`, which stands for the type of the expression.
+        // `asserted_type` is `None` for `as const`, where the asserted type is the expression's own type.
         let (expression, type_annotation, asserted_type) = match second_arg.kind() {
             ExprKind::As { expr, ty } => (expr, ty.span(), Some(ty)),
             ExprKind::AsConst(expr) => match second_arg.const_keyword_span() {
@@ -47,7 +47,7 @@ impl Rule for PreferReduceTypeParameter {
             _ => return,
         };
         let callee = call.callee();
-        // ESLint has a `ChainExpression` around the callee of `(a?.reduce)()`.
+        // ESLint wraps the callee of `(a?.reduce)()` in a `ChainExpression`.
         if callee.is_chain_root() {
             return;
         }
@@ -56,7 +56,7 @@ impl Rule for PreferReduceTypeParameter {
         };
         let is_oxlint = cx.language().is_oxlint;
         let is_reduce = match is_oxlint {
-            // tsgolint asks the checker's `getAccessedPropertyName`.
+            // tsgolint uses the checker's `getAccessedPropertyName`.
             true => {
                 // Not `(a?.reduce)(f, x)`, where the parentheses end the chain.
                 !callee.is_chain_root()
@@ -77,12 +77,13 @@ impl Rule for PreferReduceTypeParameter {
             let file = fixer.file();
             let outer = second_arg.span();
             let (mut fixes, type_annotation) = if is_oxlint {
-                // tsgolint makes `reduce<const>(..)`, which does not parse.
+                // tsgolint produces `reduce<const>(..)`, which doesn't parse.
                 let Some(asserted) = asserted_type else {
                     return Vec::new();
                 };
-                // For tsgolint a node begins where the token before it ends, and parentheses are nodes:
-                // it removes `<T>` from the end of the token before it, or from the operand to the end of `as T`.
+                // In tsgolint a node starts where the previous token ends, and parentheses are nodes. So it removes
+                // `<T>` starting at the end of the previous token, or everything from the end of the operand to the end
+                // of `as T`.
                 let inner = expression.outer_span();
                 let mut type_annotation = asserted.outer_span();
                 type_annotation.start = file.end_of_token_before(type_annotation.start);

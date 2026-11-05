@@ -13,21 +13,22 @@ pub(crate) struct HMAC {
 
 impl HMAC {
     pub(crate) fn init(algorithm: evp::Algorithm, key: &[u8]) -> Option<Box<HMAC>> {
+        // The caller reads the error queue to learn why this failed. Clearing an empty one costs six times a peek.
+        if boringssl::ERR_peek_last_error() != 0 {
+            boringssl::ERR_clear_error();
+        }
         let md = algorithm.md()?;
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
-        // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
-        unsafe { boringssl::HMAC_CTX_init(ctx.as_mut_ptr()) };
+        boringssl::HMAC_CTX_init(&mut ctx);
         // SAFETY: ctx was initialized by HMAC_CTX_init above.
         let mut ctx = unsafe { ctx.assume_init() };
         // SAFETY: ctx is initialized; key.ptr/len are a valid readable region; md is non-null.
-        // `Algorithm::md()` lives in `bun_sha_hmac` and returns that
-        // crate's opaque `EVP_MD`; both name the same C struct so the pointer cast is sound.
         if unsafe {
             boringssl::HMAC_Init_ex(
                 &raw mut ctx,
                 key.as_ptr().cast(),
                 key.len(),
-                md.cast::<boringssl::EVP_MD>(),
+                md,
                 ptr::null_mut(),
             )
         } != 1
@@ -39,9 +40,10 @@ impl HMAC {
         Some(Box::new(HMAC { ctx, algorithm }))
     }
 
-    pub(crate) fn update(&mut self, data: &[u8]) {
+    #[must_use]
+    pub(crate) fn update(&mut self, data: &[u8]) -> bool {
         // SAFETY: self.ctx is initialized; data is a valid readable slice.
-        let _ = unsafe { boringssl::HMAC_Update(&raw mut self.ctx, data.as_ptr(), data.len()) };
+        unsafe { boringssl::HMAC_Update(&raw mut self.ctx, data.as_ptr(), data.len()) == 1 }
     }
 
     pub(crate) fn size(&self) -> usize {
@@ -49,10 +51,10 @@ impl HMAC {
         unsafe { boringssl::HMAC_size(&raw const self.ctx) }
     }
 
-    pub(crate) fn copy(&mut self) -> crate::Result<Box<HMAC>> {
+    pub(crate) fn copy(&self) -> crate::Result<Box<HMAC>> {
+        boringssl::ERR_clear_error();
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
-        // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
-        unsafe { boringssl::HMAC_CTX_init(ctx.as_mut_ptr()) };
+        boringssl::HMAC_CTX_init(&mut ctx);
         // SAFETY: ctx was initialized by HMAC_CTX_init above.
         let mut ctx = unsafe { ctx.assume_init() };
         // SAFETY: both ctx and self.ctx are initialized HMAC_CTX values.

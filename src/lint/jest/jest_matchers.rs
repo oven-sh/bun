@@ -1,5 +1,5 @@
-//! What the rules of `jest` and of `vitest` about matchers do: the `toBe` of `expect(a).toBe(b)`. Each module is a file of oxlint's
-//! `rules/shared/jest_vitest`. See [`jest`](crate::jest).
+//! The shared logic of the `jest` and `vitest` rules about matchers, like the `toBe` in `expect(a).toBe(b)`. Each
+//! module is a file in oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
     Ctx, EnclosingFunctions, JestFnKind, JestGeneralFnKind, KnownMemberExpressionProperty,
@@ -20,8 +20,8 @@ use smallvec::SmallVec;
 pub(crate) mod require_to_throw_message {
     use super::*;
 
-    const REQUIRE_TO_THROW_MESSAGE: Message =
-        Message::new("", "Require a message for \"{{matcher_name}}\".");
+    const REQUIRE_TO_THROW_MESSAGE: &Message =
+        &Message::new("", "Require a message for \"{{matcher_name}}\".");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node) else {
@@ -43,11 +43,11 @@ pub(crate) mod require_to_throw_message {
 pub(crate) mod prefer_snapshot_hint {
     use super::*;
 
-    const MISSING_HINT: Message = Message::new("", "Snapshot is missing a hint.");
-    const HINT_MUST_BE_STRING: Message =
-        Message::new("", "Snapshot hint must be a string literal.");
-    const TOO_MANY_ARGUMENTS: Message =
-        Message::new("", "`toMatchSnapshot` takes at most two arguments.");
+    const MISSING_HINT: &Message = &Message::new("", "Snapshot is missing a hint.");
+    const HINT_MUST_BE_STRING: &Message =
+        &Message::new("", "Snapshot hint must be a string literal.");
+    const TOO_MANY_ARGUMENTS: &Message =
+        &Message::new("", "`toMatchSnapshot` takes at most two arguments.");
 
     pub(crate) const SNAPSHOT_MATCHERS: [&str; 2] =
         ["toMatchSnapshot", "toThrowErrorMatchingSnapshot"];
@@ -68,7 +68,7 @@ pub(crate) mod prefer_snapshot_hint {
 
         pub(crate) fn run_once<'a>(self, ctx: &Ctx<'a, '_>) {
             let mut functions = EnclosingFunctions::default();
-            // By the test, or the outermost function, that they are in.
+            // Grouped by the test, or the outermost function, that contains them.
             let mut scoped_expects: FxHashMap<Option<Func<'a>>, SmallVec<[Expr<'a>; 2]>> =
                 FxHashMap::default();
             for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
@@ -86,7 +86,7 @@ pub(crate) mod prefer_snapshot_hint {
                 }
             }
             let first = |it: &&SmallVec<[Expr<'a>; 2]>| it.first().map(|it| it.span().start);
-            for expects in utils::sort::in_order_of(scoped_expects.values(), first) {
+            for expects in utils::sort::collect_sorted_by_key(scoped_expects.values(), first) {
                 if self == SnapshotHintMode::Always || expects.len() > 1 {
                     expects.iter().for_each(|it| check_expect(*it, ctx));
                 }
@@ -139,12 +139,12 @@ pub(crate) mod prefer_snapshot_hint {
     }
 }
 
-/// `a.b` or `a[b]`, not in parentheses, with the name of the property.
+/// Matches an unparenthesized `a.b` or `a[b]`. Also returns the property name.
 fn member_with_name(e: Expr<'_>) -> Option<(Expr<'_>, Option<Name<'_>>)> {
     as_member_expression(e).map(|it| (it, static_property_name(it)))
 }
 
-/// The `true` or the `false` that `e` is, whatever the type that it is said to have.
+/// Returns the `true` or `false` literal inside `e`, ignoring type assertions.
 fn as_boolean_literal(e: Expr<'_>) -> Option<(Expr<'_>, bool)> {
     let inner = get_inner_expression(e);
     match inner.tag() {
@@ -158,7 +158,7 @@ fn is_string_literal(e: Expr) -> bool {
     matches!(e.tag(), ExprTag::String | ExprTag::Template) && !e.is_parenthesized()
 }
 
-/// An argument that is not `...a`.
+/// The first argument, unless it's `...a`.
 fn first_expression<'a>(arguments: List<'a, Expr<'a>>) -> Option<Expr<'a>> {
     arguments.first().filter(|it| it.tag() != ExprTag::Spread)
 }
@@ -169,13 +169,13 @@ fn has_not_modifier(jest_fn_call: &ParsedExpectFnCall) -> bool {
         .any(|modifier| modifier.is_name_equal("not"))
 }
 
-/// The `expect(..)` of `expect(..).toBe(..)`, with its arguments.
+/// The `expect(..)` in `expect(..).toBe(..)`, also as a call.
 fn expect_call<'a>(jest_fn_call: &ParsedExpectFnCall<'a>) -> Option<(Expr<'a>, Call<'a>)> {
     let parent = jest_fn_call.head.parent?;
     Some((parent, parent.as_call()?))
 }
 
-/// With the parentheses around it.
+/// The source text, including the parentheses around `e`.
 fn outer_text(e: Expr<'_>) -> &[u8] {
     e.file().slice(e.outer_span())
 }
@@ -183,7 +183,7 @@ fn outer_text(e: Expr<'_>) -> &[u8] {
 pub(crate) mod no_alias_methods {
     use super::*;
 
-    const NO_ALIAS_METHODS: Message = Message::new("", "Unexpected alias \"{{name}}\"");
+    const NO_ALIAS_METHODS: &Message = &Message::new("", "Unexpected alias \"{{name}}\"");
 
     pub(crate) const ALIASES: [&str; 11] = [
         "toBeCalled",
@@ -221,7 +221,7 @@ pub(crate) mod no_alias_methods {
             && let Some(i) = ALIASES.iter().position(|it| it.as_bytes() == alias)
             && let Some(canonical_name) = CANONICAL_NAMES.get(i)
         {
-            // What is between the quotes.
+            // Replaces only the text between the quotes.
             let quotes = u32::from(matcher.element.is_string_literal());
             (ctx.report(matcher.span, NO_ALIAS_METHODS)
                 .data("name", alias)
@@ -234,10 +234,10 @@ pub(crate) mod no_alias_methods {
 pub(crate) mod no_restricted_matchers {
     use super::*;
 
-    const RESTRICTED_CHAIN: Message = Message::new("", "Use of `{{chain_call}}` is disallowed");
+    const RESTRICTED_CHAIN: &Message = &Message::new("", "Use of `{{chain_call}}` is disallowed");
 
     pub(crate) struct NoRestrictedMatchersConfig {
-        /// Each with the message of the configuration.
+        /// Each matcher with its configured message.
         restricted_matchers: Vec<(Vec<u8>, Vec<u8>)>,
     }
 
@@ -284,7 +284,7 @@ pub(crate) mod no_restricted_matchers {
         }
     }
 
-    /// A modifier, and what ends in `.not`, is for everything that starts with it.
+    /// A modifier, or a restriction that ends in `.not`, matches every chain that starts with it.
     fn check_restriction(chain_call: &[u8], restriction: &[u8]) -> bool {
         let file_name =
             strings::last_index_of_char(restriction, b'/').and_then(|at| restriction.get(at + 1..));
@@ -303,11 +303,11 @@ pub(crate) mod no_restricted_matchers {
 pub(crate) mod prefer_called_with {
     use super::*;
 
-    const USE_CALLED_WITH: Message = Message::new(
+    const USE_CALLED_WITH: &Message = &Message::new(
         "",
         "Suggest using `toBeCalledWith()` or `toHaveBeenCalledWith()`.",
     );
-    const USE: Message = Message::new("", "Use `{{code}}`");
+    const USE: &Message = &Message::new("", "Use `{{code}}`");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node) else {
@@ -334,7 +334,7 @@ pub(crate) mod prefer_called_with {
 pub(crate) mod prefer_strict_equal {
     use super::*;
 
-    const USE_TO_STRICT_EQUAL: Message = Message::new("", "Suggest using `toStrictEqual()`.");
+    const USE_TO_STRICT_EQUAL: &Message = &Message::new("", "Suggest using `toStrictEqual()`.");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node) else {
@@ -361,7 +361,7 @@ pub(crate) mod prefer_strict_equal {
 pub(crate) mod prefer_to_have_been_called_times {
     use super::*;
 
-    const PREFER_TO_HAVE_BEEN_CALLED_TIMES: Message = Message::new(
+    const PREFER_TO_HAVE_BEEN_CALLED_TIMES: &Message = &Message::new(
         "",
         "Prefer `toHaveBeenCalledTimes()` over `toHaveLength()` when asserting mock call counts",
     );
@@ -386,7 +386,7 @@ pub(crate) mod prefer_to_have_been_called_times {
         {
             ctx.report(possible_jest_node.node, PREFER_TO_HAVE_BEEN_CALLED_TIMES)
                 .fix(|fixer| {
-                    let (expect, rest) = parsed_expect_call.around_first_argument(ctx.runner);
+                    let (expect, rest) = parsed_expect_call.expect_prefix_and_suffix(ctx.runner);
                     let mut code = [expect, b"(".as_slice(), outer_text(mocked), rest].concat();
                     for modifier in parsed_expect_call.modifiers() {
                         code.push(b'.');
@@ -404,7 +404,7 @@ pub(crate) mod prefer_to_have_been_called_times {
 pub(crate) mod prefer_to_have_length {
     use super::*;
 
-    const USE_TO_HAVE_LENGTH: Message = Message::new("", "Suggest using `toHaveLength()`.");
+    const USE_TO_HAVE_LENGTH: &Message = &Message::new("", "Suggest using `toHaveLength()`.");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let node = possible_jest_node.node;
@@ -419,7 +419,7 @@ pub(crate) mod prefer_to_have_length {
         else {
             return;
         };
-        // The `.not` of `expect(a.length).not.toBe(1)`: there can be one modifier.
+        // The `.not` in `expect(a.length).not.toBe(1)`. At most one modifier is allowed.
         let (super_mem_expr, expr_call_expr) = match as_member_expression(object) {
             Some(mem_expr) if mem_expr.is_private_member() => return,
             Some(mem_expr) => (Some(mem_expr), mem_expr.object()),
@@ -439,7 +439,7 @@ pub(crate) mod prefer_to_have_length {
                 let file = fixer.file();
                 let after_matcher = Span::after(matcher.span, node.span().end);
                 let open_paren = find_next_token_within(file, after_matcher, b"(")?;
-                // Everything up to the `(` is replaced.
+                // Everything up to the `(` is replaced, so a comment there would be lost.
                 if file
                     .comments_in(Span::after(matcher.span, open_paren))
                     .next()
@@ -449,7 +449,7 @@ pub(crate) mod prefer_to_have_length {
                 }
                 let modifier =
                     super_mem_expr.map(|it| Span::new(expr_call_expr.span().end, it.span().end));
-                let (expect, rest) = parsed_expect_call.around_first_argument(ctx.runner);
+                let (expect, rest) = parsed_expect_call.expect_prefix_and_suffix(ctx.runner);
                 let code = [
                     expect,
                     b"(".as_slice(),
@@ -470,7 +470,7 @@ pub(crate) mod prefer_to_have_length {
 pub(crate) mod prefer_expect_resolves {
     use super::*;
 
-    const EXPECT_RESOLVES: Message = Message::new(
+    const EXPECT_RESOLVES: &Message = &Message::new(
         "",
         "Prefer `await expect(...).resolves` over `expect(await ...)` syntax.",
     );
@@ -484,11 +484,11 @@ pub(crate) mod prefer_expect_resolves {
             && let Some(await_expr) = call_expr.args().first().filter(|it| !it.is_parenthesized())
             && let ExprKind::Await(argument) = await_expr.kind()
         {
-            // What is awaited need not be a promise, and `.resolves` takes nothing else.
+            // The awaited value might not be a promise, and `.resolves` only accepts promises.
             let report = ctx.report(await_expr, EXPECT_RESOLVES);
             ctx.risky_fix_with(report, EXPECT_RESOLVES, |fixer| {
                 let (local, argument) = (jest_expect_fn_call.local, outer_text(argument));
-                let (_, rest) = jest_expect_fn_call.around_first_argument(ctx.runner);
+                let (_, rest) = jest_expect_fn_call.expect_prefix_and_suffix(ctx.runner);
                 fixer.replace(
                     expect,
                     [
@@ -509,8 +509,8 @@ pub(crate) mod prefer_expect_resolves {
 pub(crate) mod no_interpolation_in_snapshots {
     use super::*;
 
-    const NO_INTERPOLATION_IN_SNAPSHOTS: Message =
-        Message::new("", "Do not use string interpolation inside of snapshots");
+    const NO_INTERPOLATION_IN_SNAPSHOTS: &Message =
+        &Message::new("", "Do not use string interpolation inside of snapshots");
 
     pub(crate) const INLINE_SNAPSHOT_MATCHERS: [&str; 2] = [
         "toMatchInlineSnapshot",
@@ -529,7 +529,7 @@ pub(crate) mod no_interpolation_in_snapshots {
         if !jest_fn_call.matcher().is_some_and(is_inline_snapshot) {
             return;
         }
-        // The snapshot can come after the matchers of properties.
+        // The snapshot can come after the property matchers.
         for arg in jest_fn_call.args {
             if let ExprKind::Template(template_lit) = arg.kind()
                 && !template_lit.exprs().is_empty()
@@ -544,11 +544,11 @@ pub(crate) mod no_interpolation_in_snapshots {
 pub(crate) mod prefer_to_be {
     use super::*;
 
-    const USE_TO_BE: Message = Message::new("", "Use `toBe` when expecting primitive literals.");
-    const USE_TO_BE_UNDEFINED: Message = Message::new("", "Use `toBeUndefined` instead.");
-    const USE_TO_BE_DEFINED: Message = Message::new("", "Use `toBeDefined` instead.");
-    const USE_TO_BE_NULL: Message = Message::new("", "Use `toBeNull` instead.");
-    const USE_TO_BE_NAN: Message = Message::new("", "Use `toBeNaN` instead.");
+    const USE_TO_BE: &Message = &Message::new("", "Use `toBe` when expecting primitive literals.");
+    const USE_TO_BE_UNDEFINED: &Message = &Message::new("", "Use `toBeUndefined` instead.");
+    const USE_TO_BE_DEFINED: &Message = &Message::new("", "Use `toBeDefined` instead.");
+    const USE_TO_BE_NULL: &Message = &Message::new("", "Use `toBeNull` instead.");
+    const USE_TO_BE_NAN: &Message = &Message::new("", "Use `toBeNaN` instead.");
 
     #[derive(Copy, Clone)]
     enum PreferToBeKind {
@@ -605,7 +605,7 @@ pub(crate) mod prefer_to_be {
         );
     }
 
-    /// A literal that is no regular expression, or the negative of one. Not a number that is written with a `.`.
+    /// True for a literal other than a regular expression, or a negated one. False for a number written with a `.`.
     fn should_use_tobe(first_matcher_arg: Expr, runner: Runner) -> bool {
         let expr = match first_matcher_arg.kind() {
             ExprKind::Unary {
@@ -643,7 +643,7 @@ pub(crate) mod prefer_to_be {
         )
     }
 
-    /// From where it is replaced, and by what.
+    /// Returns where the replacement starts, and the replacement text.
     fn build_suggestion_with_not_modifier(
         matcher_name: &str,
         not_modifier: Option<&KnownMemberExpressionProperty>,
@@ -657,7 +657,7 @@ pub(crate) mod prefer_to_be {
         };
         let dot = if is_cmp_mem_expr { "" } else { "." };
         match not_modifier {
-            // `["not"]["toBe"](value)`, from the `[`.
+            // `["not"]["toBe"](value)`: start at the `[`.
             Some(not_modifier)
                 if not_modifier
                     .parent
@@ -748,7 +748,7 @@ pub(crate) mod prefer_to_be {
 pub(crate) mod prefer_to_contain {
     use super::*;
 
-    const USE_TO_CONTAIN: Message = Message::new("", "Suggest using `toContain()`.");
+    const USE_TO_CONTAIN: &Message = &Message::new("", "Suggest using `toContain()`.");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_expect_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
@@ -771,7 +771,7 @@ pub(crate) mod prefer_to_contain {
             && let Some(argument) = first_expression(includes_call_expr.args())
             && let Some(object) = mem_expr.object()
         {
-            // Not all that has `includes` can be given to `toContain`.
+            // Not everything that has `includes` can be passed to `toContain`.
             let report = ctx.report(matcher.span, USE_TO_CONTAIN);
             ctx.risky_fix_with(report, USE_TO_CONTAIN, |fixer| {
                 let negation = if boolean_value == has_not_modifier(&jest_expect_fn_call) {
@@ -783,7 +783,7 @@ pub(crate) mod prefer_to_contain {
                 print_expression(&mut code, expect_call_expr.callee());
                 code.push(b'(');
                 print_expression(&mut code, object);
-                code.extend_from_slice(jest_expect_fn_call.around_first_argument(ctx.runner).1);
+                code.extend_from_slice(jest_expect_fn_call.expect_prefix_and_suffix(ctx.runner).1);
                 code.extend_from_slice(negation.as_bytes());
                 code.extend_from_slice(b".toContain(");
                 print_expression(&mut code, argument);
@@ -794,7 +794,7 @@ pub(crate) mod prefer_to_contain {
     }
 }
 
-/// `expect(a < b).toBe(true)`: what [`prefer_comparison_matcher`] and [`prefer_equality_matcher`] look at.
+/// `expect(a < b).toBe(true)`, as [`prefer_comparison_matcher`] and [`prefer_equality_matcher`] see it.
 struct ComparisonInExpect<'a> {
     jest_fn_call: ParsedExpectFnCall<'a>,
     matcher_span: Span,
@@ -847,7 +847,7 @@ impl<'a> ComparisonInExpect<'a> {
         })
     }
 
-    /// `expect(a,).toBeLessThan(b,)` for `expect(a < b,).toBe(true,)`: what is after the arguments stays.
+    /// Prints `expect(a,).toBeLessThan(b,)` for `expect(a < b,).toBe(true,)`. The text after the arguments is kept.
     fn build_code(
         &self,
         call_expr: Expr<'a>,
@@ -885,8 +885,8 @@ impl<'a> ComparisonInExpect<'a> {
 pub(crate) mod prefer_comparison_matcher {
     use super::*;
 
-    const USE_TO_BE_COMPARISON: Message =
-        Message::new("", "Suggest using the built-in comparison matchers");
+    const USE_TO_BE_COMPARISON: &Message =
+        &Message::new("", "Suggest using the built-in comparison matchers");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(comparison) = ComparisonInExpect::parse(ctx.file, possible_jest_node) else {
@@ -904,7 +904,7 @@ pub(crate) mod prefer_comparison_matcher {
             _ => return,
         };
         let call_expr = possible_jest_node.node;
-        // Strings and dates can be compared too, and the matchers take numbers only.
+        // Strings and dates can be compared too, but the matchers only accept numbers.
         let report = ctx
             .report(comparison.matcher_span, USE_TO_BE_COMPARISON)
             .data("preferred_method", prefer_matcher_name);
@@ -920,9 +920,9 @@ pub(crate) mod prefer_comparison_matcher {
 pub(crate) mod prefer_equality_matcher {
     use super::*;
 
-    const USE_EQUALITY_MATCHER: Message =
-        Message::new("", "Suggest using the built-in equality matchers.");
-    const USE: Message = Message::new("", "Use `{{eq_matcher}}`");
+    const USE_EQUALITY_MATCHER: &Message =
+        &Message::new("", "Suggest using the built-in equality matchers.");
+    const USE: &Message = &Message::new("", "Use `{{eq_matcher}}`");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(comparison) = ComparisonInExpect::parse(ctx.file, possible_jest_node) else {
@@ -952,15 +952,22 @@ pub(crate) mod prefer_equality_matcher {
 pub(crate) mod no_unneeded_async_expect_function {
     use super::*;
 
-    const NO_UNNEEDED_ASYNC_EXPECT_FUNCTION: Message =
-        Message::new("", "Unnecessary async function wrapper");
+    const NO_UNNEEDED_ASYNC_EXPECT_FUNCTION: &Message =
+        &Message::new("", "Unnecessary async function wrapper");
 
     pub(crate) fn run<'a>(jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(parsed_expect_call) = parse_expect_jest_fn_call(ctx.file, jest_node) else {
             return;
         };
+        // In `bun test`, `expect(asyncFunction).toThrow()` passes and `expect(promise).toThrow()` fails. Only
+        // `.rejects` and `.resolves` accept a promise.
+        let takes_promise = ctx.runner != Runner::Bun
+            || parsed_expect_call
+                .modifiers()
+                .any(|it| it.is_name_equal("rejects") || it.is_name_equal("resolves"));
         // `expect(async () => { await a(); })`
         if parsed_expect_call.matcher().is_some()
+            && takes_promise
             && let Some((_, expect_call_expr)) = expect_call(&parsed_expect_call)
             && let Some(first_arg) = expect_call_expr
                 .args()
@@ -984,7 +991,12 @@ pub(crate) mod no_unneeded_async_expect_function {
             && !inner_call.is_chain_root()
         {
             ctx.report(first_arg, NO_UNNEEDED_ASYNC_EXPECT_FUNCTION)
-                .fix(|fixer| fixer.replace(first_arg, inner_call.text()));
+                .fix(|fixer| {
+                    // The fix keeps only the call, so a comment anywhere else in the function would be dropped.
+                    let mut comments = fixer.file().comments_in(first_arg);
+                    let keeps_comments = comments.all(|it| inner_call.span().contains(it.span()));
+                    keeps_comments.then(|| fixer.replace(first_arg, inner_call.text()))
+                });
         }
     }
 }
@@ -993,9 +1005,9 @@ pub(crate) mod no_large_snapshots {
     use super::no_interpolation_in_snapshots::INLINE_SNAPSHOT_MATCHERS;
     use super::*;
 
-    const TOO_LONG_SNAPSHOT: Message = Message::new("", "Snapshot is too long.");
+    const TOO_LONG_SNAPSHOT: &Message = &Message::new("", "Snapshot is too long.");
 
-    /// `no_snapshot`, `too_long_snapshot`
+    /// oxlint's `no_snapshot` and `too_long_snapshot`.
     fn help(runner: Runner, is_none_expected: bool, line_limit: u32, line_count: u32) -> String {
         let (a, whose) = match runner {
             Runner::Bun => ("a ", ""),
@@ -1020,7 +1032,7 @@ pub(crate) mod no_large_snapshots {
     pub(crate) struct NoLargeSnapshotsConfig {
         max_size: u32,
         inline_max_size: u32,
-        /// By the path of the file.
+        /// Keyed by file path.
         allowed_snapshots: Vec<(Vec<u8>, Vec<AllowedSnapshotMatcher>)>,
     }
 
@@ -1139,7 +1151,7 @@ pub(crate) mod no_large_snapshots {
             || is_snapshot_file(file)
     }
 
-    /// The line breaks in it, and in the character after it.
+    /// Counts the line breaks in the span plus the character after it, not counting one at the very end.
     fn get_line_count(span: Span, file: &File) -> u32 {
         let text = file.text().get(span.start as usize..).unwrap_or_default();
         let text = text.get(..=span.len() as usize).unwrap_or(text);
@@ -1147,11 +1159,11 @@ pub(crate) mod no_large_snapshots {
     }
 }
 
-/// What `vitest/prefer-to-be-truthy` and `vitest/prefer-to-be-falsy` do.
+/// The logic of `vitest/prefer-to-be-truthy` and `vitest/prefer-to-be-falsy`.
 pub(crate) mod prefer_to_be_simply_bool {
     use super::*;
 
-    const USE_INSTEAD: Message = Message::new("", "Use `{{call_name}}` instead.");
+    const USE_INSTEAD: &Message = &Message::new("", "Use `{{call_name}}` instead.");
 
     pub(crate) fn run<'a>(
         possible_vitest_node: PossibleJestNode<'a>,

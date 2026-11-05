@@ -4,8 +4,8 @@ use bun_lint::prelude::*;
 /// Disallow `// tslint:<rule-flag>` comments.
 pub struct BanTslintComment;
 
-const COMMENT_DETECTED: Message =
-    Message::new("commentDetected", "tslint comment detected: \"{{ text }}\"");
+const COMMENT_DETECTED: &Message =
+    &Message::new("commentDetected", "tslint comment detected: \"{{ text }}\"");
 
 /// `/^\s*tslint:(enable|disable)(?:-(line|next-line))?(:|\s|$)/`
 fn is_enable_disable(value: &[u8]) -> bool {
@@ -62,8 +62,8 @@ impl Rule for BanTslintComment {
             if !is_enable_disable(comment.comment_value()) {
                 continue;
             }
-            // oxlint has what is in the comment, and points at the comment with the line break right after it, which is
-            // also what it removes.
+            // oxlint's message quotes the comment's content. It reports the comment plus the line break right after it,
+            // and its fix removes the same range.
             if cx.language().is_oxlint {
                 let has_line_break = cx.text().get(comment.end() as usize) == Some(&b'\n');
                 let full_comment = Span::new(comment.start(), comment.end() + u32::from(has_line_break));
@@ -79,7 +79,8 @@ impl Rule for BanTslintComment {
                     line: start.line,
                     column: start.column.saturating_sub(1),
                 });
-                // With the character after it. One more than the end, also at the end of the text.
+                // Also remove the character after the comment. The range ends one past the comment even at the end of
+                // the text.
                 let range_end = file.offset(end);
                 let after = strings::wtf8_codepoint_at(file.text(), range_end as usize).1.max(1);
                 fixer.remove(Span::new(range_start, range_end + after as u32))

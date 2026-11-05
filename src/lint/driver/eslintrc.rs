@@ -1,5 +1,5 @@
-//! Finds and reads the configuration files of ESLint 8: `.eslintrc.*`, `eslintConfig` in a `package.json`, `.eslintignore`.
-//! `CascadingConfigArrayFactory` and `loadConfigFile` of `@eslint/eslintrc`.
+//! Finds and reads ESLint 8's configuration files: `.eslintrc.*`, `eslintConfig` in a `package.json`, `.eslintignore`.
+//! It's `CascadingConfigArrayFactory` and `loadConfigFile` from `@eslint/eslintrc`.
 
 use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
@@ -8,7 +8,7 @@ use bun_lint::json::{self, Notation};
 use bun_lint::linter::{LegacyFailure, LegacyFile, LegacyKind, json_parse, write_json};
 use bun_lint::options::Json;
 
-/// By priority: of several in a directory the first counts.
+/// In priority order. If a directory has several, the first one wins.
 pub(crate) const NAMES: [&[u8]; 7] = [
     b".eslintrc.js",
     b".eslintrc.cjs",
@@ -19,7 +19,7 @@ pub(crate) const NAMES: [&[u8]; 7] = [
     b"package.json",
 ];
 
-/// `ESLINT_USE_FLAT_CONFIG`: `Some(false)` is for these files alone, `Some(true)` for none of them.
+/// `ESLINT_USE_FLAT_CONFIG`: `Some(false)` means only these files are read, `Some(true)` means none of them are.
 pub(crate) fn uses_flat_config() -> Option<bool> {
     match bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"ESLINT_USE_FLAT_CONFIG"))? {
         b"true" => Some(true),
@@ -37,13 +37,13 @@ fn cannot_read(path: &[u8], why: &[u8]) -> Vec<u8> {
     }
 }
 
-/// What `loadPackageJSONConfigFile` throws about the `package.json` at `path`, which has no `eslintConfig`.
+/// The error `loadPackageJSONConfigFile` throws for the `package.json` at `path`, which has no `eslintConfig`.
 fn lacks_field(path: &[u8]) -> Vec<u8> {
     let why: &[u8] = b"\nError: package.json file doesn't have 'eslintConfig' field.";
     [b"Cannot read config file: ", path, why].concat()
 }
 
-/// It is there and cannot be used.
+/// A failure for something that exists but can't be used.
 fn failed(message: Vec<u8>) -> LegacyFailure {
     LegacyFailure {
         message,
@@ -60,33 +60,37 @@ fn answer(entries: Vec<(&[u8], Json)>) -> Json {
     Json::Object(entries.map(|(key, value)| (key.to_vec(), value)).collect())
 }
 
-/// What only a program can load: a file that is one, a package. `evaluate-eslintrc.js` does, for a file and all that it names.
+/// Loads the things that take running JavaScript: config files that are programs, and packages. `evaluate-eslintrc.js`
+/// does the loading, for a file and everything it refers to.
 pub(crate) struct Modules<'m> {
     pub(crate) environment: &'m Environment<'m>,
     pub(crate) registry: &'m bun_lint::linter::Registry,
     /// `--resolve-plugins-relative-to`, absolute.
     pub(crate) plugins_from: Option<Vec<u8>>,
-    /// What stands for a file and cannot be read: its path, and what it says.
+    /// The command line's config, which is treated as a file that can't be read from disk: its placeholder path and its
+    /// content.
     pub(crate) command_line: (Vec<u8>, Json),
-    /// What the script has printed, by the file that it was run for.
+    /// The script's output, keyed by the file it was run for.
     pub(crate) printed: Vec<(Vec<u8>, Json)>,
+    /// `--config` can point to a named pipe.
+    pub(crate) pipes: &'m fs::NamedPipes,
 }
 
 impl Modules<'_> {
-    /// `pluginBasePath`: where the plugins are looked for that `entry`, a file of the cascade, names, and what it extends. Not
-    /// where the file is that names them.
+    /// `pluginBasePath`: the directory to resolve plugins from, for the plugins listed by `entry`, a file in the
+    /// cascade, and by the configs it extends. It isn't the directory of the file that lists them.
     fn plugins_from<'p>(&'p self, entry: &'p [u8]) -> &'p [u8] {
         let given = self.plugins_from.as_deref();
         given.unwrap_or_else(|| paths::dirname(entry))
     }
 
-    /// What the run for the file at `path` has printed at `keys`, each in what the one before it is the key of.
+    /// The value at the nested path `keys` in the output of the run for the file at `path`.
     fn printed_at(&self, path: &[u8], keys: &[&[u8]]) -> Option<&Json> {
         let printed = &self.printed.iter().find(|it| it.0 == path)?.1;
         keys.iter().try_fold(printed, |json, key| json.get(key))
     }
 
-    /// Runs the script for the file at `path`, which is `entry` or something that it extends.
+    /// Runs the script for the file at `path`, which is `entry` or a config it extends.
     fn run(&mut self, path: &[u8], entry: &[u8]) -> Result<(), Vec<u8>> {
         let plugins_from = Json::String(self.plugins_from(entry).to_vec());
         let mut argument = vec![
@@ -96,7 +100,7 @@ impl Modules<'_> {
         if self.command_line.0 == path {
             argument.push((b"content", self.command_line.1.clone()));
         }
-        if !self.registry.answers_for(b"@typescript-eslint") {
+        if !self.registry.replaces_plugin(b"@typescript-eslint") {
             argument.push((b"loadsTypescriptEslint", Json::Bool(true)));
         }
         let mut text = Vec::new();
@@ -107,9 +111,10 @@ impl Modules<'_> {
         Ok(())
     }
 
-    /// What the script prints at `keys`. One run for `entry`, a file of the cascade, has all that it names, and of a plugin the
-    /// configurations that it extends: the run for another file does not do. `from`: the file that names what is looked for,
-    /// which the script can know by another path than this program: of a link.
+    /// The value the script prints at `keys`. A single run for `entry`, a file in the cascade, covers everything it
+    /// refers to, including the plugin configs it extends, so another file's run can't be reused. `from` is the file
+    /// that refers to the thing being looked up. The script may know it under a different path than this program does,
+    /// because of a symlink.
     fn find(&mut self, keys: &[&[u8]], from: &[u8], entry: &[u8]) -> Result<Option<Json>, Vec<u8>> {
         for path in [entry, from] {
             if !self.printed.iter().any(|it| it.0 == path) {
@@ -122,7 +127,7 @@ impl Modules<'_> {
         Ok(None)
     }
 
-    /// What the script has loaded for `keys`.
+    /// The value the script loaded for `keys`, or the failure it reported.
     fn loaded(
         &mut self,
         keys: [&[u8]; 3],
@@ -143,30 +148,31 @@ impl Modules<'_> {
     }
 }
 
-/// `$error` of what the script has printed.
+/// The `$error` field in the script's output.
 fn error_of(found: &Json) -> Option<&[u8]> {
     found.get(b"$error").and_then(Json::as_str)
 }
 
-/// The script has said nothing about what it was asked for.
+/// Used when the script's output has nothing for the requested item.
 const NOT_LOADED: &[u8] = b"The file could not be loaded.";
 
-/// `loadConfigFile`: what the file at `path` says. `None`: a `package.json` without `eslintConfig`, a program that exports
-/// nothing.
+/// `loadConfigFile`: the config in the file at `path`. `None` for a `package.json` without `eslintConfig`, or a program
+/// that exports nothing.
 fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
     let name = paths::basename(path);
     if is_program(name) {
         return match modules.find(&[b"files", path], path, path)? {
             Some(Json::Null) => Ok(None),
             Some(found) => match error_of(&found) {
-                // All of the message.
+                // It's already the complete message.
                 Some(why) => Err(why.to_vec()),
                 None => Ok(Some(found)),
             },
             None => Err(cannot_read(path, NOT_LOADED)),
         };
     }
-    let text = fs::read(path).map_err(|error| cannot_read(path, &fs::describe(&error)))?;
+    let text = modules.pipes.read(path);
+    let text = text.map_err(|error| cannot_read(path, &fs::describe(&error)))?;
     let json = || json::parse(&text).ok_or_else(|| cannot_read(path, b"Invalid JSON."));
     // js-yaml throws.
     let repeated = || crate::fmt::duplicated_mapping_key(&text).map(|why| cannot_read(path, &why));
@@ -191,7 +197,7 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
     } else if name.ends_with(b".yaml") || name.ends_with(b".yml") {
         yaml()?
     } else {
-        // YAML, which JSON is a part of, with the comments of JavaScript.
+        // YAML, which is a superset of JSON, plus JavaScript comments.
         match json::parse(&text) {
             Some(_) if let Some(why) = repeated() => return Err(why),
             Some(value) => value,
@@ -200,8 +206,8 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
     }))
 }
 
-/// Whether the file at `path`, which `--config` names, is one of ESLint 8, as far as that can be told without running it.
-pub(crate) fn is_one(path: &[u8]) -> bool {
+/// True if the file at `path`, passed with `--config`, is an ESLint 8 config, as far as can be told without running it.
+pub(crate) fn is_eslintrc_file(path: &[u8], pipes: &fs::NamedPipes) -> bool {
     let name = paths::basename(path);
     if name.starts_with(b".eslintrc") || name.ends_with(b".yaml") || name.ends_with(b".yml") {
         return true;
@@ -209,11 +215,11 @@ pub(crate) fn is_one(path: &[u8]) -> bool {
     if !name.ends_with(b".json") {
         return false;
     }
-    let Some(json) = fs::read(path).ok().and_then(|it| json::parse(&it)) else {
+    let Some(json) = pipes.read(path).ok().and_then(|it| json::parse(&it)) else {
         return false;
     };
-    // What an `.oxlintrc.json` does not have.
-    let only_here: [&[u8]; 7] = [
+    // Keys that an `.oxlintrc.json` doesn't have.
+    let eslintrc_only_keys: [&[u8]; 7] = [
         b"root",
         b"parser",
         b"parserOptions",
@@ -222,23 +228,23 @@ pub(crate) fn is_one(path: &[u8]) -> bool {
         b"processor",
         b"ecmaFeatures",
     ];
-    let names_preset = |it: &Json| {
+    let is_preset = |it: &Json| {
         (it.as_str()).is_some_and(|it| it.starts_with(b"eslint:") || it.starts_with(b"plugin:"))
     };
-    only_here.iter().any(|key| json.get(key).is_some())
+    eslintrc_only_keys.iter().any(|key| json.get(key).is_some())
         || match json.get(b"extends") {
-            Some(Json::Array(all)) => all.iter().any(names_preset),
-            Some(one) => names_preset(one),
+            Some(Json::Array(all)) => all.iter().any(is_preset),
+            Some(one) => is_preset(one),
             None => false,
         }
 }
 
-/// What a message calls the file at `path`.
+/// The name messages use for the file at `path`.
 fn name_of(path: &[u8], cwd: &[u8]) -> Vec<u8> {
     paths::relative(cwd, path)
 }
 
-/// The file at `path`, which `--config` names: its patterns are relative to the working directory.
+/// Loads the file at `path`, passed with `--config`. Its patterns are relative to `base_path`.
 pub(crate) fn named(
     path: &[u8],
     base_path: &[u8],
@@ -281,14 +287,18 @@ fn in_directory(
     Ok(None)
 }
 
-/// Whether `directory` has a configuration file of ESLint 8.
-pub(crate) fn has_one(directory: &[u8]) -> bool {
-    let is_there = |name: &&[u8]| fs::is_file(&paths::join(directory, name));
+/// True if `directory` has an ESLint 8 configuration file.
+pub(crate) fn has_eslintrc_file(directory: &[u8]) -> bool {
+    let file_exists = |name: &&[u8]| fs::is_file(&paths::join(directory, name));
     NAMES.iter().any(|name| match *name {
-        // One that cannot be read is found out when it is.
-        b"package.json" => fs::read(&paths::join(directory, name))
-            .is_ok_and(|it| json::parse(&it).is_none_or(|it| it.get(b"eslintConfig").is_some())),
-        _ => is_there(name),
+        // One that can't be parsed counts as a config. The error is reported when it's loaded.
+        b"package.json" => {
+            file_exists(name)
+                && fs::read(&paths::join(directory, name)).is_ok_and(|it| {
+                    json::parse(&it).is_none_or(|it| it.get(b"eslintConfig").is_some())
+                })
+        }
+        _ => file_exists(name),
     })
 }
 
@@ -314,7 +324,7 @@ pub(crate) fn personal(cwd: &[u8], modules: &mut Modules) -> Result<Option<Legac
     }))
 }
 
-/// `_loadConfigInAncestors`: the files that count for what is in `directory`, the outermost first.
+/// `_loadConfigInAncestors`: the files that apply to `directory`, outermost first.
 pub(crate) fn cascade(
     directory: &[u8],
     cwd: &[u8],
@@ -322,7 +332,7 @@ pub(crate) fn cascade(
 ) -> Result<Vec<LegacyFile>, Fatal> {
     let (mut files, home) = (Vec::new(), home());
     for ancestor in paths::ancestors(directory) {
-        // ESLint takes the home directory for the end of a project, unless it runs there.
+        // ESLint stops at the home directory, unless it's running there.
         if home.as_deref() == Some(ancestor) && cwd != ancestor {
             break;
         }
@@ -347,9 +357,13 @@ fn patterns(name: &[u8], path: &[u8], cwd: &[u8], patterns: Vec<Json>) -> Legacy
     }
 }
 
-/// `loadESLintIgnore(path)`, or `loadDefaultESLintIgnore()`: `.eslintignore` in the working directory, or else `eslintIgnore` in
-/// its `package.json`.
-pub(crate) fn ignore_file(path: Option<&[u8]>, cwd: &[u8]) -> Result<Option<LegacyFile>, Fatal> {
+/// `loadESLintIgnore(path)`, or `loadDefaultESLintIgnore()`: `.eslintignore` in the working directory, or else
+/// `eslintIgnore` in its `package.json`.
+pub(crate) fn ignore_file(
+    path: Option<&[u8]>,
+    cwd: &[u8],
+    pipes: &fs::NamedPipes,
+) -> Result<Option<LegacyFile>, Fatal> {
     let default = paths::join(cwd, b".eslintignore");
     let file = match path {
         Some(path) => path,
@@ -373,7 +387,7 @@ pub(crate) fn ignore_file(path: Option<&[u8]>, cwd: &[u8]) -> Result<Option<Lega
             };
         }
     };
-    let text = fs::read(file).map_err(|error| {
+    let text = pipes.read(file).map_err(|error| {
         Fatal(
             [
                 b"Cannot read .eslintignore file: ",
@@ -391,12 +405,12 @@ pub(crate) fn ignore_file(path: Option<&[u8]>, cwd: &[u8]) -> Result<Option<Lega
     Ok(Some(patterns(b".eslintignore", file, cwd, lines.collect())))
 }
 
-/// The answer for what is implemented here and need not be loaded.
+/// The answer for something that's built in and doesn't need loading.
 fn built_in(request: &[u8]) -> Json {
     answer(vec![(b"name", Json::String(request.to_vec()))])
 }
 
-/// [`bun_lint::linter::LoadLegacy`]. `short`: the name of a plugin as the rules have it.
+/// [`bun_lint::linter::LoadLegacy`]. `short` is the plugin's name as used in rule ids.
 pub(crate) fn load(
     kind: LegacyKind,
     request: &[u8],
@@ -409,7 +423,7 @@ pub(crate) fn load(
         LegacyKind::Config => {
             let is_path = request.starts_with(b".") || paths::is_absolute(request);
             let file = paths::resolve(paths::dirname(from), request);
-            // It can be had without a program.
+            // It can be read without running JavaScript.
             if is_path && fs::is_file(&file) && !is_program(&file) {
                 let Some(config) = read(&file, modules).map_err(failed)? else {
                     return Err(failed(lacks_field(&file)));
@@ -423,13 +437,13 @@ pub(crate) fn load(
         }
         LegacyKind::Plugin => {
             let directory = modules.plugins_from(entry).to_vec();
-            let is_implemented_here = matches!(
+            let is_built_in = matches!(
                 short,
                 b"@typescript-eslint" | b"react-hooks" | b"import" | b"n"
-            ) && modules.registry.answers_for(short);
+            ) && modules.registry.replaces_plugin(short);
             match modules.loaded([b"plugins", &directory, request], from, entry) {
-                // What is installed comes before what is implemented here: it has configurations, too.
-                Err(failure) if failure.is_missing && is_implemented_here => Ok(built_in(request)),
+                // An installed package takes precedence over the built-in implementation, because it also has configs.
+                Err(failure) if failure.is_missing && is_built_in => Ok(built_in(request)),
                 loaded => loaded,
             }
         }

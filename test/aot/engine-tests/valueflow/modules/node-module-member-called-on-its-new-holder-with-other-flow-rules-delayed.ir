@@ -1,0 +1,28 @@
+# import Module from "node:module"; copy = {}; copy[globalThis.key] = Module[globalThis.key]; copy[globalThis.other]("/app/main.js")(globalThis.name)
+# The import names the module that is read, so what the read answers may be createRequire, wherever it goes.
+# The call of what that call returns loads code by name, and no other call does.
+# OPTIONS: testing=DelayOtherFlowRules
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsCodeByName ModuleRequire f0:v11
+# CHECK-NOT: unseen LoadsCodeByName
+# CHECK: unseen-code yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+layout L0 module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = PropGet v0 key="other" [isFreeName]
+    v4 = Builtin builtin=NodeModule
+    v5 = ElemGet v4, v1
+    v6 = NewObject layout=L0
+    ElemSet v6, v1, v5 mode=Strict
+    v8 = ElemGet v6, v3
+    v9 = String string="/app/main.js"
+    v10 = Call v8, v6, v9
+    v11 = Call v10, -, v2
+    Return v11
+}

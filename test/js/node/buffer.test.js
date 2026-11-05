@@ -1,6 +1,6 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, tempDir, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import os from "node:os";
@@ -197,7 +197,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]))).toBeFalse();
         expect(isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
-        expect(new isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
+        expect(() => new isAscii(new Buffer("abc"))).toThrow(TypeError);
         expect(isAscii(new Buffer("").buffer)).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]).buffer)).toBeFalse();
       });
@@ -207,6 +207,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isUtf8(new Buffer("What did the 🦊 say?"))).toBeTrue();
         expect(isUtf8(new Buffer([129, 129, 129]))).toBeFalse();
+        expect(() => new isUtf8(new Buffer("abc"))).toThrow(TypeError);
 
         expect(isUtf8(new Buffer("abc").buffer)).toBeTrue();
         expect(isAscii(new Buffer("").buffer)).toBeTrue();
@@ -2899,6 +2900,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("transcode", () => {
         expect(typeof BufferModule.transcode).toBe("function");
         const transcode = BufferModule.transcode;
+        expect(() => Reflect.construct(transcode, [Buffer.from("a"), "latin1", "utf8"])).toThrow(TypeError);
 
         expect(transcode(Buffer.from("hä", "latin1"), "latin1", "utf8")).toStrictEqual(Buffer.from("hä", "utf8"));
         expect(() => transcode(Buffer.from("a"), "b", "utf8")).toThrow(
@@ -5424,6 +5426,24 @@ describe("transcode allocation limits", () => {
   });
 });
 
+it("read*/write* called without a receiver throw the same error as .call(undefined)", () => {
+  for (const [name, a, b, c] of [
+    ["readInt8", 0],
+    ["readIntLE", 0, 1],
+    ["writeInt8", 0],
+    ["writeUIntBE", 0, 0, 1],
+    ["writeBigInt64LE", 0n, 0],
+  ]) {
+    // When a captured variable is called bare, JSC passes its scope object as `this`.
+    const callee = Buffer.prototype[name];
+    expect(() => callee(a, b, c)).toThrow('The "buf" argument must be of type Buffer. Received undefined');
+    // `constructor` is captured, so it lives in that scope object and is still uninitialized during the call.
+    // The error message must not read it to describe the receiver.
+    let constructor;
+    (() => constructor)();
+  }
+});
+
 // The fixed-width read* / write* accessors are C++ host functions that JSC's DFG/FTL compile into
 // bounds-checked loads / stores (JSBuffer.cpp + JavaScriptCore's BufferAccessorRegistry). They must
 // keep agreeing with a DataView reference after tier-up, and everything the JIT does not speculate
@@ -5714,4 +5734,72 @@ describe("read*/write* after JIT tier-up", () => {
     expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");
     expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");
   });
+});
+
+// The length pass doesn't count a UTF-16 unit for a 0x80 byte. If the byte is 0x61 by the conversion pass, that pass
+// writes one more unit than was allocated.
+it("UTF-8 decoders don't write out of bounds while another thread writes to the SharedArrayBuffer input", async () => {
+  const fixture = `
+    import { Worker, isMainThread, workerData, parentPort } from "node:worker_threads";
+    import { transcode } from "node:buffer";
+    import { StringDecoder } from "node:string_decoder";
+    if (!isMainThread) {
+      const bytes = new Uint8Array(workerData);
+      parentPort.postMessage("go");
+      for (;;) {
+        bytes.fill(0x80);
+        bytes.fill(0x61);
+      }
+    } else {
+      const iterations = 500;
+      const shared = new SharedArrayBuffer(512);
+      const buf = Buffer.from(shared).fill(0x61);
+      const worker = new Worker(import.meta.path, { workerData: shared });
+      worker.on("message", async () => {
+        let total = 0;
+        for (let i = 0; i < iterations; i++) total += buf.toString("utf8").length;
+        for (let i = 0; i < iterations; i++) {
+          try {
+            total += transcode(buf, "utf8", "ucs2").length;
+          } catch (e) {
+            if (e.code !== "U_INVALID_CHAR_FOUND") throw e;
+          }
+        }
+        const decoder = new StringDecoder("utf8");
+        for (let i = 0; i < iterations; i++) {
+          total += decoder.write(buf).length + decoder.text(buf, 0).length + decoder.end(buf).length;
+        }
+        for (const options of [{}, { ignoreBOM: true }]) {
+          const stream = new TextDecoderStream("utf-8", options);
+          const writer = stream.writable.getWriter();
+          const reader = stream.readable.getReader();
+          for (let i = 0; i < iterations; i++) {
+            writer.write(i & 1 ? buf : shared);
+            total += (await reader.read()).value.length;
+          }
+        }
+        let enqueued = 0;
+        const source = new ReadableStream({
+          pull(controller) {
+            controller.enqueue(enqueued & 1 ? buf : shared);
+            if (++enqueued >= iterations) controller.close();
+          },
+        });
+        for await (const text of new Response(source).textStream()) total += text.length;
+        console.log("ok", total > 0);
+        process.exit(0);
+      });
+    }
+  `;
+  using dir = tempDir("buffer-shared-decode-race", { "fixture.mjs": fixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "ok true\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });

@@ -8,7 +8,7 @@ const { parse, apply, makeDiff } = patchInternals;
 
 const makeDiffJs = async (aFolder: string, bFolder: string, cwd: string): Promise<string> => {
   const { stdout, stderr } =
-    await $`git -c core.safecrlf=false diff --src-prefix=a/ --dst-prefix=b/ --ignore-cr-at-eol --irreversible-delete --full-index --no-index ${aFolder} ${bFolder}`
+    await $`git -c core.safecrlf=false -c core.quotepath=false diff --src-prefix=a/ --dst-prefix=b/ --ignore-cr-at-eol --irreversible-delete --full-index --no-index ${aFolder} ${bFolder}`
       .env(
         // https://github.com/pnpm/pnpm/blob/45f4262f0369cadf41cea3b823e8932eae157c4b/patching/plugin-commands-patching/src/patchCommit.ts#L117
         {
@@ -17,9 +17,11 @@ const makeDiffJs = async (aFolder: string, bFolder: string, cwd: string): Promis
           // These variables aim to ignore the global git config so we get predictable output
           // https://git-scm.com/docs/git#Documentation/git.txt-codeGITCONFIGNOSYSTEMcode
           GIT_CONFIG_NOSYSTEM: "1",
+          GIT_ATTR_NOSYSTEM: "1",
           HOME: "",
           XDG_CONFIG_HOME: "",
           USERPROFILE: "",
+          GIT_DIR: "/dev/null",
         },
       )
       .quiet()
@@ -359,6 +361,32 @@ describe("apply", () => {
       const stat = await fs.stat(join(afolder, "hi.txt"));
       expect((stat.mode & parseInt("777", 8)).toString(8)).toBe("755");
     });
+  });
+
+  // `diff --git a/plan b/notes.js b/plan b/notes.js` is the only line with the name of a deleted file, of an
+  // empty new file and of a mode change, and it has ` b/` three times.
+  test("files in a folder whose name ends in ' b'", async () => {
+    await using tempdir = tempDir("patch-test", {
+      "a/plan": "keep me\n",
+      "a/plan b/notes.js": "old notes\n",
+      "a/plan b/run.sh": "#!/bin/sh\n",
+      "b/plan": "keep me\n",
+      "b/plan b/todo.js": "new file\n",
+      "b/plan b/empty.js": "",
+      "b/plan b/run.sh": "#!/bin/sh\n",
+    });
+    const afolder = join(tempdir, "a");
+    const bfolder = join(tempdir, "b");
+    await fs.chmod(join(bfolder, "plan b", "run.sh"), 0o755);
+
+    await apply(await makeDiff(afolder, bfolder, tempdir), afolder);
+
+    const tree = (await fs.readdir(afolder, { recursive: true })).map(path => path.replaceAll("\\", "/")).sort();
+    expect(tree).toEqual(["plan", "plan b", "plan b/empty.js", "plan b/run.sh", "plan b/todo.js"]);
+    expect(await fs.readFile(join(afolder, "plan b", "todo.js"), "utf8")).toBe("new file\n");
+    if (process.platform !== "win32") {
+      expect((await fs.stat(join(afolder, "plan b", "run.sh"))).mode & 0o777).toBe(0o755);
+    }
   });
 
   describe("patch", () => {
@@ -826,6 +854,33 @@ describe("apply", () => {
         "@@ -1,2 +1,3 @@\n+X\n a\n b\n\\ No newline at end of file\n",
         "X\na\nb",
       ],
+      // With `--ignore-cr-at-eol` a line that only gains or loses its newline is context, printed from the new file.
+      [
+        "last lines deleted, neither side has a newline",
+        "one\ntwo\nthree",
+        "@@ -1,3 +1 @@\n one\n\\ No newline at end of file\n-two\n-three\n\\ No newline at end of file\n",
+        "one",
+      ],
+      [
+        "last line deleted, old side had a newline",
+        "a\nb\n",
+        "@@ -1,2 +1 @@\n a\n\\ No newline at end of file\n-b\n",
+        "a",
+      ],
+      [
+        "lines appended, neither side has a newline",
+        "one",
+        "@@ -1 +1,3 @@\n one\n+two\n+three\n\\ No newline at end of file\n",
+        "one\ntwo\nthree",
+      ],
+      ["lines appended, new side has a newline", "one", "@@ -1 +1,2 @@\n one\n+two\n", "one\ntwo\n"],
+      [
+        "unchanged last line loses its newline",
+        "a\nb\n",
+        "@@ -1,2 +1,2 @@\n-a\n+A\n b\n\\ No newline at end of file\n",
+        "A\nb",
+      ],
+      ["unchanged last line gains a newline", "a\nb", "@@ -1,2 +1,2 @@\n-a\n+A\n b\n", "A\nb\n"],
     ])("a no-newline pragma where git puts it applies: %s", async (_name, before, hunk, after) => {
       using dir = tempDir("patch-pragma", { "index.js": before });
       const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunk}`;
@@ -842,13 +897,75 @@ describe("apply", () => {
         "hunk #1 does not apply to index.js (expected at line 4000000000)",
       );
     });
+
+    // Of every 10 lines one is edited, one added and one deleted. The time has to grow with the number of
+    // lines, not with lines x changes: that took 30 seconds here.
+    test("a patch that changes 80,000 lines of a 200,000-line file", async () => {
+      const before: string[] = [];
+      const after: string[] = [];
+      const hunk: string[] = [];
+      for (let i = 0; i < 200_000; i++) {
+        const line = `const v${i} = ${i};`;
+        before.push(line);
+        if (i % 10 === 0) {
+          after.push(`${line} // x`, "// added");
+          hunk.push(`-${line}`, `+${line} // x`, "+// added");
+        } else if (i % 10 === 5) {
+          hunk.push(`-${line}`);
+        } else {
+          after.push(line);
+          hunk.push(` ${line}`);
+        }
+      }
+      using dir = tempDir("patch-large", { "index.js": before.join("\n") + "\n" });
+      const header = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -1,${before.length} +1,${after.length} @@\n`;
+      await apply(header + hunk.join("\n") + "\n", String(dir));
+      expect((await fs.readFile(join(String(dir), "index.js"), "utf8")) === after.join("\n") + "\n").toBe(true);
+    });
+
+    // No tool writes these, but a patch file merged by hand can have them. Every case is what `git apply` produces.
+    test.each([
+      [
+        "two swapped",
+        "@@ -6 +6 @@\n-line 6\n+SIX\n@@ -2 +2 @@\n-line 2\n+TWO\n",
+        "line 1\nTWO\nline 3\nline 4\nline 5\nSIX\nline 7\nline 8\n",
+      ],
+      [
+        "three rotated",
+        "@@ -4 +4 @@\n-line 4\n+FOUR\n@@ -6 +6 @@\n-line 6\n+SIX\n@@ -2 +2 @@\n-line 2\n+TWO\n",
+        "line 1\nTWO\nline 3\nFOUR\nline 5\nSIX\nline 7\nline 8\n",
+      ],
+      [
+        "two swapped that change the number of lines",
+        "@@ -5,4 +7,2 @@\n line 5\n-line 6\n-line 7\n line 8\n@@ -2,2 +2,4 @@\n line 2\n+A\n+B\n line 3\n",
+        "line 1\nline 2\nA\nB\nline 3\nline 4\nline 5\nline 8\n",
+      ],
+      [
+        "two swapped that change the number of lines, no context",
+        "@@ -6,2 +8,0 @@\n-line 6\n-line 7\n@@ -2,0 +3,2 @@\n+A\n+B\n",
+        "line 1\nline 2\nA\nB\nline 3\nline 4\nline 5\nline 8\n",
+      ],
+    ])("hunks that are not in rising order: %s", async (_name, hunks, after) => {
+      using dir = tempDir("patch-order", { "index.js": numbered(8) });
+      await apply(`diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunks}`, String(dir));
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(after);
+    });
+
+    test("hunks that overlap do not apply, and the error has the hunk's number in the file", async () => {
+      using dir = tempDir("patch-order", { "index.js": numbered(8) });
+      const patchfile =
+        "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n" +
+        "@@ -4,2 +4,2 @@\n-line 4\n+Y\n line 5\n@@ -2,3 +2,3 @@\n line 2\n-line 3\n+X\n line 4\n";
+      expect(() => apply(patchfile, String(dir))).toThrow("hunk #1 does not apply to index.js (expected at line 4)");
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(numbered(8));
+    });
   });
 
   describe("No newline at end of file", () => {
     // TODO: simple, multiline, multiple hunks
   });
 
-  // Each of these hits an error path in `parse_apply_args`. The native code must
+  // Each of these hits an error path in `apply`. The native code must
   // surface the failure as a catchable JS exception; it used to return a normal
   // value while the exception was still pending, which aborts debug/ASAN builds
   // with "Unexpected exception observed" (releaseAssertNoException).
@@ -859,7 +976,6 @@ describe("apply", () => {
         "-e",
         `import { patchInternals } from "bun:internal-for-testing";
          try { patchInternals.apply("@@"); console.log("no-error"); } catch (e) { console.log("invalid-patchfile: " + e.message); }
-         try { patchInternals.apply(); console.log("no-error"); } catch (e) { console.log("missing-argument: " + e.message); }
          try { patchInternals.apply("@@", "bun-patch-test-nonexistent-dir"); console.log("no-error"); } catch (e) { console.log("bad-dir: " + e.code); }
          try { patchInternals.apply({ toString() { throw new Error("coerce-fail"); } }, process.cwd()); console.log("no-error"); } catch (e) { console.log("bad-patchfile-arg: " + e.message); }`,
       ],
@@ -872,7 +988,6 @@ describe("apply", () => {
     expect(stderr).toBe("");
     expect(stdout.trim().split("\n")).toEqual([
       "invalid-patchfile: bad_header_line failed to parse patchfile",
-      "missing-argument: apply: expected at least 1 argument, got 0",
       "bad-dir: ENOENT",
       "bad-patchfile-arg: coerce-fail",
     ]);
@@ -1185,7 +1300,7 @@ describe("apply", () => {
 
 describe("makeDiff", () => {
   // git names one folder on both sides of the headers of an added file (the new one) and of a
-  // deleted file (the old one), and it quotes a name that is not ASCII.
+  // deleted file (the old one). A name that is not ASCII is printed as it is.
   test("strips both folders from both sides of every header", async () => {
     await using tempdir = tempDir("patch-make-diff", {
       "a/changed.txt": "one\n",
@@ -1208,14 +1323,48 @@ describe("makeDiff", () => {
       "--- a/changed.txt",
       "+++ b/changed.txt",
       "diff --git a/deleted.txt b/deleted.txt",
-      String.raw`diff --git "a/\303\251.txt" "b/\303\251.txt"`,
-      String.raw`--- "a/\303\251.txt"`,
-      String.raw`+++ "b/\303\251.txt"`,
-      String.raw`diff --git "a/\303\274.txt" "b/\303\274.txt"`,
+      "diff --git a/é.txt b/é.txt",
+      "--- a/é.txt",
+      "+++ b/é.txt",
+      "diff --git a/ü.txt b/ü.txt",
       "--- /dev/null",
-      String.raw`+++ "b/\303\274.txt"`,
+      "+++ b/ü.txt",
     ]);
     expect(patch).toBe(await makeDiffJs(afolder, bfolder, String(tempdir)));
+  });
+
+  // The old folder is a git checkout in the cache, the new one a copy of it that left the links out.
+  test.skipIf(process.platform === "win32")("leaves out the symlinks that only the old folder has", async () => {
+    await using tempdir = tempDir("patch-make-diff-links", {
+      "a/a.txt": "one\n",
+      "a/m.txt": "one\n",
+      "a/z.txt": "one\n",
+      "b/a.txt": "one\n",
+      "b/m.txt": "two\n",
+      "b/replaced": "now a file\n",
+      "b/z.txt": "one\n",
+    });
+    for (const link of ["a-first", "n-middle", "replaced", "zz-last"]) {
+      await fs.symlink("m.txt", join(String(tempdir), "a", link));
+    }
+
+    const patch = await makeDiff(join(String(tempdir), "a"), join(String(tempdir), "b"), String(tempdir));
+    expect(patch.match(/^(diff --git|deleted file|new file|index|---|\+\+\+) .*$/gm)).toEqual([
+      "diff --git a/m.txt b/m.txt",
+      expect.stringMatching(/^index \w+\.\.\w+ 100644$/),
+      "--- a/m.txt",
+      "+++ b/m.txt",
+      "diff --git a/replaced b/replaced",
+      "new file mode 100644",
+      expect.stringMatching(/^index 0+\.\.\w+$/),
+      "--- /dev/null",
+      "+++ b/replaced",
+    ]);
+    expect(patch).toEndWith("+now a file\n");
+
+    await fs.rm(join(String(tempdir), "b", "replaced"));
+    await fs.writeFile(join(String(tempdir), "b", "m.txt"), "one\n");
+    expect(await makeDiff(join(String(tempdir), "a"), join(String(tempdir), "b"), String(tempdir))).toBe("");
   });
 });
 
@@ -1590,6 +1739,61 @@ describe("parse", () => {
           },
         ],
       },
+    });
+  });
+
+  // No tool that makes patches for packages writes these, and the change in them would be lost.
+  test.each([
+    ["a hunk of no file", "@@ -1 +1 @@\n-a\n+b\n", "no_path_given_for_hunk"],
+    [
+      "a binary patch",
+      "diff --git a/a.bin b/a.bin\nindex 2de83dd..842652c 100644\nGIT binary patch\nliteral 3\nKcmZQzWC8#H2LJ>B\n\nliteral 3\nKcmZQzWCj2L2ml2D\n\n",
+      "git_binary_patch_not_supported",
+    ],
+    [
+      "a binary patch of a new file",
+      "diff --git a/a.bin b/a.bin\nnew file mode 100644\nindex 0000000..842652c\nGIT binary patch\nliteral 3\nKcmZQzWC8#H2LJ>B\n\nliteral 0\nHcmV?d00001\n\n",
+      "git_binary_patch_not_supported",
+    ],
+  ])("refuses %s", (_name, patchfile, error) => {
+    expect(() => parse(patchfile)).toThrow(error);
+  });
+
+  // Patch files that older versions wrote have these. The install warns about them.
+  test.each([
+    ["a copy", "diff --git a/lib.js b/lib-copy.js\nsimilarity index 100%\ncopy from lib.js\ncopy to lib-copy.js\n", []],
+    ["colored output", "\x1b[1mdiff --git a/a.js b/a.js\x1b[m\n\x1b[36m@@ -1 +1 @@\x1b[m\n\x1b[31m-a\x1b[m\n", []],
+    ["a header alone", "diff --git a/a.js b/a.js\nindex 2de83dd..842652c 100644\n", []],
+    [
+      "text after the last hunk",
+      "diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-a\n+b\nOnly in b: new.js\n",
+      ["file_patch"],
+    ],
+    [
+      "a changed binary file",
+      "diff --git a/a.bin b/a.bin\nindex 2de83dd..842652c 100644\nBinary files a/a.bin and b/a.bin differ\n",
+      [],
+    ],
+    [
+      "a renamed and changed binary file",
+      "diff --git a/a.bin b/b.bin\nsimilarity index 90%\nrename from a.bin\nrename to b.bin\nindex 2de83dd..842652c 100644\nBinary files a/a.bin and b/b.bin differ\n",
+      ["file_rename"],
+    ],
+  ])("leaves out %s", (_name, patchfile, parts) => {
+    expect(JSON.parse(parse(patchfile)).parts.items.flatMap(Object.keys)).toEqual(parts);
+  });
+
+  test("a deleted binary file is a deletion", () => {
+    expect(
+      removeCapacity(
+        JSON.parse(
+          parse(
+            "diff --git a/a.bin b/a.bin\ndeleted file mode 100644\nindex 2de83dd..0000000\nBinary files a/a.bin and /dev/null differ\n",
+          ),
+        ),
+      ),
+    ).toEqual({
+      parts: { items: [{ file_deletion: { path: "a.bin", mode: "non_executable", hunk: null, hash: "2de83dd" } }] },
     });
   });
 });

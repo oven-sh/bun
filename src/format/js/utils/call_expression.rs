@@ -1,4 +1,4 @@
-//! Calls that are written in a special way because of what they call: `it("..", () => {})`.
+//! Calls that are printed in a special way because of their callee: `it("..", () => {})`.
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use super::typecast::comments_of_expression;
@@ -7,24 +7,22 @@ use crate::write;
 
 /// Prettier's `isCallExpression`.
 ///
-/// Prettier reads JavaScript with Babel and TypeScript with typescript-estree. For `(a?.b())`,
-/// the whole of an optional chain, the one has an `OptionalCallExpression` and the other a
-/// `ChainExpression` with the call in it, so what Prettier asks about the type of a node has
-/// different answers.
+/// Prettier parses JavaScript with Babel and TypeScript with typescript-estree. For `(a?.b())`, a whole optional chain,
+/// Babel has an `OptionalCallExpression` and typescript-estree a `ChainExpression` with the call in it, so Prettier's
+/// node type checks give different answers.
 #[inline]
 pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    e.tag() == ExprTag::Call && (f.context().has_tree_of_babel() || !e.is_chain_root())
+    e.tag() == ExprTag::Call && (f.context().has_babel_tree() || !e.is_chain_root())
 }
 
 /// Prettier's `isMemberExpression`. See [`is_call_expression`].
 #[inline]
 pub(crate) fn is_member_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     matches!(e.tag(), ExprTag::Dot | ExprTag::Index)
-        && (f.context().has_tree_of_babel() || !e.is_chain_root())
+        && (f.context().has_babel_tree() || !e.is_chain_root())
 }
 
-/// Prettier's `stripChainElementWrappers`: `e` without the `!`s after it. The `ChainExpression` is
-/// not a node here.
+/// Prettier's `stripChainElementWrappers`: `e` without the `!`s after it. The `ChainExpression` isn't a node here.
 #[inline]
 pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
     while e.tag() == ExprTag::NonNull
@@ -45,11 +43,11 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
 ///                   );
 /// ```
 ///
-/// Not after `new A` without type arguments, not after `a[b]`, not between `a.b` and `?.`, and not after a call that is a link
-/// of a member chain.
+/// Not after `new A` without type arguments, not after `a[b]`, not between `a.b` and `?.`, and not after a call that's
+/// a link in a member chain.
 ///
-/// `is_in_member_chain`: whether `callee` is written as a part of a member chain.
-pub(crate) fn comments_stay_behind_callee<'a>(
+/// `is_in_member_chain` means `callee` is printed as part of a member chain.
+pub(crate) fn keeps_comments_after_callee<'a>(
     callee: Expr<'a>,
     is_in_member_chain: bool,
     f: &Formatter<'a>,
@@ -58,8 +56,8 @@ pub(crate) fn comments_stay_behind_callee<'a>(
         && comments_stay_after_callee_for_oxfmt(callee, |_| is_in_member_chain)
 }
 
-/// See [`comments_stay_behind_callee`]. The attachment of comments asks this too, and finds out from the tree whether a call
-/// is a link of a member chain.
+/// See [`keeps_comments_after_callee`]. Comment attachment also calls this, and works out from the tree if a call is a
+/// link in a member chain.
 pub(crate) fn comments_stay_after_callee_for_oxfmt<'a>(
     callee: Expr<'a>,
     is_link_of_member_chain: impl FnOnce(Expr<'a>) -> bool,
@@ -85,16 +83,16 @@ pub(crate) struct FormatCallee<'a> {
 impl<'a> Format<'a> for FormatCallee<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let callee = self.callee;
-        if f.is_quiet() || !comments_stay_behind_callee(callee, self.is_in_member_chain, f) {
+        if f.is_quiet() || !keeps_comments_after_callee(callee, self.is_in_member_chain, f) {
             return write!(f, callee);
         }
         write!(f, FormatNodeWithoutTrailingComments(&callee));
-        write_comments_behind_callee(comments_of_expression(callee, f).trailing, f);
+        write_comments_after_callee(comments_of_expression(callee, f).trailing, f);
     }
 }
 
-/// See [`comments_stay_behind_callee`]. The comments on the line of the callee trail it. The others keep their lines.
-pub(crate) fn write_comments_behind_callee<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
+/// See [`keeps_comments_after_callee`]. The comments on the callee's line trail it. The others keep their lines.
+pub(crate) fn write_comments_after_callee<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
     let same_line_count = (comments.iter())
         .take_while(|comment| !comment.has_newline_before())
         .count();
@@ -115,28 +113,27 @@ pub(crate) fn write_comments_behind_callee<'a>(comments: CommentList<'a>, f: &mu
 
 /// Prettier's `isTestCall`. `e` is a call.
 ///
-/// - `it("name", () => {})`, `test.only("name", async function () {}, 1000)`: the callee is one of
-///   the names of a test framework, the first argument is a string or a template, the second a
-///   function with at most one parameter, the third, if any, a number.
+/// - `it("name", () => {})`, `test.only("name", async function () {}, 1000)`: the callee is one of a test framework's
+///   names, the first argument is a string or a template, the second is a function with at most one parameter, and the
+///   third, if any, is a number.
 /// - `beforeEach(inject(() => {}))`
 pub(crate) fn is_test_call_expression(e: Expr<'_>) -> bool {
     is_test_call(e, contains_a_test_pattern)
 }
 
-/// The same, with the callees that the flavor knows.
+/// The same, with the callees that the flavor recognizes.
 pub(crate) fn is_test_call_expression_in_flavor<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    match knows_test_callees_of_vitest_and_deno(f) {
+    match recognizes_vitest_and_deno_test_callees(f) {
         true => {
-            is_test_call(e, contains_a_test_pattern_of_oxfmt)
-                && !has_comments_around_arguments(e, f)
+            is_test_call(e, contains_oxfmt_test_pattern) && !has_comments_around_arguments(e, f)
         }
         false => is_test_call_expression(e),
     }
 }
 
-/// Whether there is a comment before, between or after the arguments of the call `e`. Prettier writes the
-/// arguments of a call of a test on one line all the same, and the comments come out in another order.
-/// To oxfmt it is a call like any other then.
+/// True if there's a comment before, between or after the arguments of the call `e`. Prettier still prints a test
+/// call's arguments on one line, and the comments come out in a different order. oxfmt then treats it like any other
+/// call.
 fn has_comments_around_arguments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let Some(call) = e.as_call_like() else {
         return false;
@@ -155,12 +152,12 @@ fn has_comments_around_arguments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// oxfmt has a longer list than Prettier: `it.todo("name", () => {})`, `Deno.test("name", () => {})`.
-fn knows_test_callees_of_vitest_and_deno(f: &Formatter<'_>) -> bool {
+fn recognizes_vitest_and_deno_test_callees(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
 /// oxfmt's `contains_a_test_pattern`: Prettier's `testCallCalleePatterns` and some more.
-fn contains_a_test_pattern_of_oxfmt(e: Expr<'_>) -> bool {
+fn contains_oxfmt_test_pattern(e: Expr<'_>) -> bool {
     if contains_a_test_pattern(e) {
         return true;
     }
@@ -207,7 +204,7 @@ fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
     match (args.next(), args.next(), args.next()) {
         (Some(argument), None, None) => {
             if is_angular_test_wrapper(e)
-                // A wrapper with nothing but a wrapper in it is none: what is in it is no function.
+                // A wrapper that contains only another wrapper doesn't count, because its argument isn't a function.
                 && matches!(e.as_chain_element().parent(), AstNodes::CallExpression(parent)
                     if !(is_angular_test_wrapper(parent) && parent.as_call_like().is_some_and(|it| it.args().len() == 1))
                         && is_test_call(parent, is_test_callee))
@@ -241,8 +238,7 @@ fn is_angular_test_wrapper_expression(e: Expr<'_>) -> bool {
     matches!(e.as_ast_nodes(), AstNodes::CallExpression(_)) && is_angular_test_wrapper(e)
 }
 
-/// `inject(..)` of AngularJS, `async(..)`, `fakeAsync(..)` and `waitForAsync(..)` of Angular. `e` is
-/// a call.
+/// AngularJS's `inject(..)`, and Angular's `async(..)`, `fakeAsync(..)` and `waitForAsync(..)`. `e` is a call.
 pub(crate) fn is_angular_test_wrapper(e: Expr<'_>) -> bool {
     e.callee().is_some_and(|callee| {
         callee.tag() == ExprTag::Ident
@@ -261,8 +257,7 @@ fn is_unit_test_set_up_callee(callee: Expr<'_>) -> bool {
         )
 }
 
-/// The names of `a.b.c`, from the left. `None` if there are more than five or it is anything but
-/// names and dots.
+/// The names in `a.b.c`, from the left. `None` if there are more than five, or it's anything but names and dots.
 pub(crate) fn callee_name_iterator<'a>(e: Expr<'a>) -> Option<impl Iterator<Item = &'a [u8]>> {
     let mut names: [Option<&'a [u8]>; 5] = [None; 5];
     let mut current = e;
@@ -285,8 +280,7 @@ pub(crate) fn callee_name_iterator<'a>(e: Expr<'a>) -> Option<impl Iterator<Item
     None
 }
 
-/// Prettier's `testCallCalleePatterns`: whether `e` is a function of a test framework that takes a
-/// name and a callback.
+/// Prettier's `testCallCalleePatterns`: true if `e` is a test framework function that takes a name and a callback.
 ///
 /// ```text
 /// ├─ it[.only|skip]

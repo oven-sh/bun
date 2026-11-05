@@ -34,18 +34,18 @@ pub enum MemberNameType {
     Expression = 4,
 }
 
-/// What [`get_name_from_member`] returns.
+/// The result of [`get_name_from_member`].
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct MemberName<'a> {
-    /// A `Private` name has its `#`, a `Quoted` one is in double quotes.
+    /// A `Private` name includes its `#`, and a `Quoted` one is in double quotes.
     pub name: Cow<'a, [u8]>,
     /// Upstream's `type`.
     pub kind: MemberNameType,
 }
 
-/// typescript-eslint's `NodeWithKey`: what has a name that
+/// typescript-eslint's `NodeWithKey`: a node whose name
 /// [`get_static_member_access_value`](super::get_static_member_access_value) and
-/// [`get_name_from_member`] look at.
+/// [`get_name_from_member`] can read.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum NodeWithKey<'a> {
     /// A member of a class, an interface or a type literal.
@@ -78,8 +78,8 @@ impl<'a> From<Expr<'a>> for NodeWithKey<'a> {
 }
 
 impl<'a> NodeWithKey<'a> {
-    /// The `key` or the `property` of ESTree. `None` for what has none: a spread, a signature
-    /// without a name, an expression that is not a member access.
+    /// ESTree's `key` or `property`. `None` if there isn't one: a spread, a signature without a
+    /// name, an expression that isn't a member access.
     pub(super) fn key(self) -> Option<KeyKind<'a>> {
         match self {
             NodeWithKey::Member(member) => member.key().map(|key| key.kind()),
@@ -95,7 +95,7 @@ impl<'a> NodeWithKey<'a> {
         }
     }
 
-    /// The text of the `key` of a `Member` or a `Prop`, without the brackets.
+    /// The text of a `Member`'s or `Prop`'s `key`, without the brackets.
     fn key_text(self) -> &'a [u8] {
         let (key, file) = match self {
             NodeWithKey::Member(member) => (member.key(), member.file()),
@@ -110,7 +110,7 @@ impl<'a> NodeWithKey<'a> {
     }
 }
 
-/// The name of a key that is a `Literal` whose value, as a string, is `name`.
+/// The name of a key that's a `Literal` whose value, as a string, is `name`.
 fn literal_member_name(name: Cow<'_, [u8]>) -> MemberName<'_> {
     match requires_quoting(&name) {
         true => {
@@ -132,8 +132,8 @@ fn literal_member_name(name: Cow<'_, [u8]>) -> MemberName<'_> {
 
 /// typescript-eslint's `getNameFromMember`, for a `Member` or a `Prop`.
 ///
-/// As upstream, brackets make no difference to a key that is an identifier or a literal: `[a]` is
-/// the `Normal` name `a`. Any other computed key is an `Expression`, named by its text.
+/// As upstream, brackets don't matter for a key that's an identifier or a literal: `[a]` is the
+/// `Normal` name `a`. Any other computed key is an `Expression`, named by its text.
 pub fn get_name_from_member<'a>(member: impl Into<NodeWithKey<'a>>) -> MemberName<'a> {
     let member = member.into();
     let normal = |name: &'a [u8]| MemberName {
@@ -151,7 +151,7 @@ pub fn get_name_from_member<'a>(member: impl Into<NodeWithKey<'a>>) -> MemberNam
             name: Cow::Borrowed(name.bytes()),
             kind: MemberNameType::Private,
         },
-        // A template is not a `Literal`.
+        // A template isn't a `Literal`.
         Some(KeyKind::ComputedString(_)) if member.key_text().starts_with(b"`") => MemberName {
             name: Cow::Borrowed(member.key_text()),
             kind: MemberNameType::Expression,
@@ -173,8 +173,9 @@ pub fn get_name_from_member<'a>(member: impl Into<NodeWithKey<'a>>) -> MemberNam
     }
 }
 
-/// `requiresQuoting` of `@typescript-eslint/type-utils`: whether `name` is not an identifier name.
-/// As upstream, which looks at UTF-16 code units, a character outside the BMP requires quoting.
+/// `requiresQuoting` of `@typescript-eslint/type-utils`: true if `name` isn't an identifier name.
+/// Like upstream, which looks at UTF-16 code units, it requires quoting for a character outside the
+/// BMP.
 pub fn requires_quoting(name: &[u8]) -> bool {
     let is_part = |c: u32| c <= 0xFFFF && bun_core::lexer::is_type_script_identifier_part(c as i32);
     let mut points = bun_core::strings::wtf8_codepoints(name).map(|it| it.1);
@@ -198,7 +199,7 @@ pub fn format_word_list(words: &[impl AsRef<[u8]>]) -> Vec<u8> {
     out
 }
 
-/// typescript-eslint's `typeNodeRequiresParentheses`: whether `node`, whose text is `text`, needs
+/// typescript-eslint's `typeNodeRequiresParentheses`: true if `node`, whose text is `text`, needs
 /// parentheses as a constituent of a union or an intersection.
 pub fn type_node_requires_parentheses(node: TypeNode<'_>, text: &[u8]) -> bool {
     match node.kind() {
@@ -209,8 +210,8 @@ pub fn type_node_requires_parentheses(node: TypeNode<'_>, text: &[u8]) -> bool {
     }
 }
 
-/// typescript-eslint's `isParenlessArrowFunction`: `a => b`. As upstream, so is `(a,) => b`: the
-/// test is that the one parameter is not directly between a `(` and a `)`.
+/// typescript-eslint's `isParenlessArrowFunction`: `a => b`. As upstream, `(a,) => b` counts too,
+/// because the test is that the only parameter isn't directly between a `(` and a `)`.
 pub fn is_parenless_arrow_function(func: Func<'_>) -> bool {
     let (params, text) = (func.params(), func.file().text());
     let Some(param) = params.first().filter(|_| params.len() == 1) else {

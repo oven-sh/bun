@@ -4,7 +4,7 @@ use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
 use bun_core::Output;
-use bun_core::{ZStr, strings};
+use bun_core::strings;
 use bun_glob as glob;
 use bun_install::package_manager::workspace_selection::{
     self, Candidate, NegatedWorkspaces, RootSelection, WorkspaceGraph,
@@ -64,11 +64,14 @@ fn get_candidate_package_patterns<'a>(
     'walk: loop {
         'body: {
             let mut name_buf = bun_paths::path_buffer_pool::get();
-            let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+            // Treat a path that's too long like a missing package.json and try the parent.
+            let Some(json_path) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
                 workdir,
                 &mut name_buf[..],
                 &[b"package.json".as_slice()],
-            );
+            ) else {
+                break 'body;
+            };
 
             log.msgs.clear();
             log.errors = 0;
@@ -387,7 +390,8 @@ impl<'a> PackageFilterIterator<'a> {
         })
     }
 
-    /// As in `bun install`, a `!` entry removes a glob match but never a path listed as is.
+    /// As in `bun install`, a `!` entry removes a glob match, but never a path that's listed
+    /// literally.
     fn is_excluded(&self, package_json_path: &[u8]) -> bool {
         glob::detect_glob_syntax(&self.patterns[self.pattern_idx])
             && self

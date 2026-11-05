@@ -14,7 +14,7 @@ use bun_lint::utils::estree_compat::last_sequence_expression;
 use smallvec::{SmallVec, smallvec};
 use std::ops::ControlFlow;
 
-/// `strict`: whether one branch of a `?:`, `&&`, `||` or `??` is enough, or it takes both.
+/// `strict`: with `Any`, one branch of a `?:`, `&&`, `||` or `??` is enough. With `All`, both have to match.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Branches {
     Any,
@@ -56,7 +56,7 @@ pub(crate) fn is_fragment(jsx: Jsx<'_>, react_pragma: &[u8], fragment_pragma: &[
     })
 }
 
-/// `isJSXValue` in `isReturningJSX`. Nothing in it has an effect, so the order does not show.
+/// `isJSXValue` in `isReturningJSX`. It has no side effects, so the evaluation order doesn't matter.
 fn is_jsx_value(node: Expr<'_>, pragma: &[u8], branches: Branches, nulls: Nulls) -> bool {
     let mut pending: SmallVec<[Expr<'_>; 8]> = smallvec![node];
     while let Some(e) = pending.pop() {
@@ -95,7 +95,7 @@ fn is_jsx_value(node: Expr<'_>, pragma: &[u8], branches: Branches, nulls: Nulls)
     branches == Branches::All
 }
 
-/// `isReturningJSX`, for what [`traverse_returns`] takes.
+/// `isReturningJSX`, for any node that [`traverse_returns`] accepts.
 pub(crate) fn is_returning_jsx(
     node: Node<'_>,
     pragma: &[u8],
@@ -113,8 +113,8 @@ pub(crate) fn is_returning_jsx(
     found
 }
 
-/// `isReturningOnlyNull`. A `?:` whose branches are not both `null` is looked into, its test too,
-/// and a literal that is not `null` counts for nothing.
+/// `isReturningOnlyNull`. It descends into a `?:` whose branches aren't both `null`, including its
+/// test, and it ignores literals other than `null`.
 pub(crate) fn is_returning_only_null(node: Node<'_>) -> bool {
     let (mut found, mut found_something_else) = (false, false);
     traverse_returns(node, &mut |argument| {

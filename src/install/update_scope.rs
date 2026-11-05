@@ -24,9 +24,9 @@ pub struct UpdateScope<'a> {
     pub targets: Option<&'a [UpdateTargetWorkspace]>,
     pub invoking: Option<PackageNameHash>,
     whole_workspace: bool,
-    /// `--depth 0`: no row of a non-workspace package is in scope.
+    /// `--depth 0`: only the dependencies of the root and of workspaces are in scope.
     direct_only: bool,
-    /// Walked by `plan_named` before the differ invalidates rows; otherwise `reachable()` walks the lockfile it is given.
+    /// Walked by `plan_named` before rows are invalidated; otherwise `reachable()` walks the lockfile it is given.
     planned: Option<&'a DynamicBitSet>,
     lazy: OnceCell<DynamicBitSet>,
 }
@@ -63,7 +63,7 @@ impl<'a> UpdateScope<'a> {
     }
 }
 
-/// Runs on the loaded lockfile before the differ invalidates the rows it re-enqueues, like `TransitiveUpdate::plan`.
+/// Runs before rows are invalidated: by the differ on the loaded lockfile, like `TransitiveUpdate::plan`, and by `reresolve_rows_outside_overrides` on the cleaned one.
 pub fn plan_named(manager: &mut PackageManager) {
     let reachable = {
         let scope = UpdateScope::of(manager);
@@ -144,7 +144,7 @@ impl UpdateScope<'_> {
                 lockfile.packages.items_name_hash()[id],
                 lockfile.packages.items_name()[id].slice(lockfile.buffers.string_bytes.as_slice()),
             ),
-            // Packages appended after the walk (ids past its end) were resolved for an in-scope row.
+            // Packages appended after the walk (ids past its end) count as in scope.
             _ => {
                 !self.direct_only
                     && (self.whole_workspace

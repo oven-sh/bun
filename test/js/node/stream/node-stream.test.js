@@ -4,6 +4,7 @@ import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdir
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { text } from "node:stream/consumers";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -627,6 +628,28 @@ it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web sourc
     message: "consumer-gone",
   });
 });
+
+it.each(["before the first read", "after a chunk"])(
+  "Readable.fromWeb: destroy() %s emits no 'error' if the source's cancel() rejects, as in Node",
+  async when => {
+    const web = new ReadableStream({
+      pull(c) {
+        c.enqueue(new Uint8Array(1));
+      },
+      cancel() {
+        return Promise.reject(new Error("cancel failed"));
+      },
+    });
+    const r = Readable.fromWeb(web);
+    const events = [];
+    r.on("error", err => events.push(err.message));
+    const closed = new Promise(resolve => r.once("close", resolve));
+    if (when === "after a chunk") await new Promise(resolve => r.once("data", resolve));
+    r.destroy();
+    await closed;
+    expect({ events, errored: r.errored }).toEqual({ events: [], errored: null });
+  },
+);
 
 // A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk
 // buffered when a 'data' listener runs, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
@@ -1434,6 +1457,40 @@ describe("webstreams adapters (Node v26 sync)", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  it("Duplex.toWeb doesn't throw when the duplex is destroyed with an error after the writer closed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { Duplex } from "node:stream";
+          const duplex = new Duplex({
+            allowHalfOpen: false,
+            read() {},
+            write(chunk, encoding, callback) { callback(); },
+            final(callback) { setImmediate(callback); },
+          });
+          const { readable, writable } = Duplex.toWeb(duplex);
+          duplex.on("error", e => console.log("duplex error:" + e.message));
+          duplex.on("close", () => console.log("close event, errored:" + duplex.errored?.message));
+          duplex.push(null);
+          const { done } = await readable.getReader().read();
+          await writable.getWriter().close();
+          console.log("close resolved, done:" + done);
+          duplex.destroy(new Error("boom"));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: stdout, err: stderr }).toEqual({
+      out: "close resolved, done:true\nduplex error:boom\nclose event, errored:boom\n",
+      err: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 for (const size of [0x10, 0xffff, 0x10000, 0x1f000, 0x20000, 0x20010, 0x7ffff, 0x80000, 0xa0000, 0xa0010]) {
@@ -1716,6 +1773,18 @@ describe("fromList string chunk boundary (nodejs/node#61884)", () => {
   });
 });
 
+it.each([
+  ["base64", "YWJjZA=="],
+  ["base64url", "YWJjZA"],
+  ["hex", "61626364"],
+])("setEncoding(%j) after the end keeps what the decoder holds back", (encoding, expected) => {
+  const r = new Readable({ read() {} });
+  r.push(Buffer.from("abcd"));
+  r.push(null);
+  r.setEncoding(encoding);
+  expect(r.read()).toBe(expected);
+});
+
 describe("maybeReadMore is a no-op while a read is in flight (nodejs/node#60454)", () => {
   it("does not schedule a redundant _read while kReading is set", async () => {
     let reads = 0;
@@ -1748,6 +1817,26 @@ describe("maybeReadMore is a no-op while a read is in flight (nodejs/node#60454)
     // setImmediate fires, so this is a deterministic ordering, not a timeout.
     await new Promise(resolve => setImmediate(resolve));
     expect(reads).toBe(1);
+  });
+});
+
+describe("Duplex.from(blob)", () => {
+  it("reads a File", async () => {
+    expect(await text(Duplex.from(new File(["from a File"], "file.txt")))).toBe("from a File");
+  });
+
+  it("reads an S3 file", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response("from " + new URL(req.url).pathname),
+    });
+    const s3 = new Bun.S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+      endpoint: server.url.href,
+    });
+    expect(await text(Duplex.from(s3.file("key.txt")))).toBe("from /bucket/key.txt");
   });
 });
 
@@ -1906,4 +1995,49 @@ it("internal FixedQueue backing list is not holey (test-fixed-queue.js)", () => 
   let holes = 0;
   for (let i = 0; i < list.length; i++) if (!(i in list)) holes++;
   expect(holes).toBe(0);
+});
+
+it("stream/consumers do not read Blob and TextDecoder from globalThis", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `globalThis.Blob = globalThis.TextDecoder = class {};
+       const consumers = require("node:stream/consumers");
+       const from = () => require("node:stream").Readable.from([Buffer.from("12")]);
+       Promise.all([
+         consumers.arrayBuffer(from()).then(arrayBuffer => arrayBuffer.byteLength),
+         consumers.blob(from()).then(blob => blob.text()),
+         consumers.buffer(from()).then(buffer => buffer.toString()),
+         consumers.json(from()),
+         consumers.text(from()),
+       ]).then(results => console.log(JSON.stringify(results)));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([2, "12", "12", 12, "12"]);
+  expect(exitCode).toBe(0);
+});
+
+it("Readable.fromWeb's native source accepts pull(view) without the flags array", async () => {
+  // The Blob source doesn't define setFlowing(), so the Readable calls this one with the native source as `this`.
+  const { promise, resolve } = Promise.withResolvers();
+  Object.defineProperty(Object.prototype, "setFlowing", {
+    configurable: true,
+    value() {
+      delete Object.prototype.setFlowing;
+      this.start(65536);
+      const view = new Uint8Array(64);
+      resolve(Buffer.from(view.subarray(0, this.pull(view))).toString());
+    },
+  });
+  try {
+    Readable.fromWeb(new Blob(["hello world"]).stream()).resume();
+    expect(await promise).toBe("hello world");
+  } finally {
+    delete Object.prototype.setFlowing;
+  }
 });

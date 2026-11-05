@@ -4283,6 +4283,14 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "", "if (1)\n  const enum A {}\n"],
     // `await` that is a name among the parameters, for TypeScript.
     ["a.tsx", "", "class A { set a(@dec {a} = await {}) {} }\n"],
+    // `new ()` in an interface is no method with the name `new`.
+    ["a.ts", "", "interface foo{\n bar():any\n new()\n}\n"],
+    // `{ " " }` is white space like `{" "}`.
+    [
+      "a.jsx",
+      "",
+      'x = <A>\n  <code>one two three four</code> a b;{" "}\n  { " " }\n  <code>a</code>{" "} a{" "}\n\t</A>\n',
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

@@ -4602,7 +4602,8 @@ impl Quick {
                 return if self.text_is(p, e, b"get") || self.text_is(p, e, b"set") {
                     MODIFIER_ACCESSOR
                 } else {
-                    if self.text_is(p, e, b"out") {
+                    // (`new ()` in an interface)
+                    if self.text_is(p, e, b"out") || self.text_is(p, e, b"new") {
                         MODIFIER_REFUSED
                     } else {
                         MODIFIER_NONE
@@ -6652,7 +6653,11 @@ impl Quick {
         if !self.begin(start, typed, await_operator) {
             return Ok(false);
         }
-        let d = self.t.at(start + 1);
+        let mut inside = start + 1;
+        while self.t.at(inside) == 32 {
+            inside += 1;
+        }
+        let d = self.t.at(inside);
         let mut p = if d == 34 || d == 39 {
             self.no(refusal::JsxText)
         } else {

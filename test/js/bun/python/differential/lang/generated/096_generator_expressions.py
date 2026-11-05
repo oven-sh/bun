@@ -310,6 +310,13 @@ try:
         try: compile(src, "<s>", "exec"); print("ok:", src.replace("\n", "\\n"))
         except SyntaxError as e: print("SyntaxError:", e.msg, "<-", src.replace("\n", "\\n"))
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: for src in ("f(x for x in y)", "f(x for x in y, 1)", "f(1, x for x in...')
+# With a star or `:=` in front. Only `x for ...`, or the last of several positional arguments and what follows it, is taken for a generator expression
+# that lacks parentheses.
+try:
+    for src in ('print(*a for a in x, 1)', 'print(a for a in x, 1)', 'print(1, *a for a in x)', 'print(1, a for a in x)', 'print(*a for a in x)', 'print(*a for a in x,)', 'print(a for a in x,)', 'print(**a for a in x, 1)', 'print(**a for a in x)', 'print(1, *a for a in x, 2)', 'print(b=1, *a for a in x)', 'print(b=1, a for a in x)', 'print(*a for a in x, b=1)', 'print(a for a in x, b=1)', 'print(*a for a in x, *b for b in y)', 'print(a for a in x, *b for b in y)', 'print(*a for a in x, b for b in y)', 'class C(*a for a in x, 1): pass', 'class C(a for a in x, 1): pass', 'class C(*a for a in x): pass', 'class C(1, *a for a in x): pass', 'f(*a, *b for b in y)', 'f(*a for a in x)(1)', 'f(x, *a async for a in x)', 'f(*a async for a in x, 1)', 'f(*(a) for a in x, 1)', 'f(* a for a in x if a, 1)', 'f(a := 1 for a in x, 1)', 'f(1, a := 1 for a in x)', 'f(*a := 1 for a in x, 1)'):
+        try: compile(src, "<s>", "exec"); print("ok:", src)
+        except SyntaxError as e: print("SyntaxError:", e.msg, e.offset, e.end_offset, "<-", src)
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: for src in ('print(*a for a in x, 1)', 'print(a for a in x, 1)', 'pri...")
 # Laziness in pipelines.
 try:
     def numbers():

@@ -4,11 +4,11 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "ha
 // These builds take seconds to start Python.
 if (isDebug || isASAN) setDefaultTimeout(60_000);
 
-async function run(main: string) {
+async function run(main: string, env: Record<string, string> = {}) {
   using dir = tempDir("python-gc", { "main.py": main });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "main.py"],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -293,6 +293,95 @@ print(len(suspended))
 });
 
 // It takes seconds of work for the difference to show, which these builds would make minutes.
+test.concurrent("a generator that has been suspended for long has no code block any more", async () => {
+  // The collector lets go of a code block that has not run for some seconds and is on no stack. With this option, at once.
+  const { stdout, stderr, exitCode } = await run(
+    `import gc, inspect, traceback
+
+def g():
+    a = 1
+    b = [2]
+    yield a
+    c = lambda: b
+    yield b
+    yield 3
+
+async def co(future):
+    x = 5
+    await future
+    return x
+
+async def ag():
+    y = 6
+    yield y
+    yield y + 1
+
+def outer():
+    z = 7
+    yield from g()
+
+class Future:
+    def __await__(self):
+        yield self
+    def __repr__(self):
+        return 'Future()'
+
+x = g(); next(x)
+o = outer(); next(o)
+c = co(Future()); c.send(None)
+a = ag()
+try:
+    a.asend(None).send(None)
+except StopIteration:
+    pass
+looped = g(); next(looped)
+closed = g(); next(closed)
+thrown = g(); next(thrown)
+fresh = g()
+del g, co, ag, outer
+for i in range(4):
+    gc.collect()
+
+for name, frame in (('x', x.gi_frame), ('o', o.gi_frame), ('c', c.cr_frame), ('a', a.ag_frame)):
+    print(name, frame.f_lineno, frame.f_lasti > 0, frame.f_locals, frame.f_code.co_name, frame.f_back)
+print('fresh', fresh.gi_frame.f_lineno, fresh.gi_frame.f_locals)
+print(inspect.getgeneratorlocals(x), inspect.getgeneratorstate(x), inspect.getcoroutinelocals(c), inspect.getcoroutinestate(c))
+print(o.gi_yieldfrom.gi_frame.f_lineno, o.gi_yieldfrom.gi_frame.f_locals)
+print(traceback.format_stack(x.gi_frame)[-1].split(', ', 1)[1].strip())
+x.gi_frame.f_locals['a'] = 10
+print(x.gi_frame.f_locals['a'], next(x), x.gi_frame.f_lineno, sorted(x.gi_frame.f_locals))
+print(next(o), c.cr_frame.f_lineno, [v for v in looped], list(fresh))
+try:
+    c.send(None)
+except StopIteration as e:
+    print('returned', e.value)
+print(closed.close(), closed.gi_frame)
+try:
+    thrown.throw(KeyError('k'))
+except KeyError as e:
+    print([(entry.name, entry.lineno) for entry in traceback.extract_tb(e.__traceback__)])
+`,
+    { BUN_JSC_forceCodeBlockToJettisonDueToOldAge: "1" },
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`x 6 True {'a': 1, 'b': [2]} g None
+o 23 True {'z': 7} outer None
+c 13 True {'future': Future(), 'x': 5} co None
+a 18 True {'y': 6} ag None
+fresh 3 {}
+{'a': 1, 'b': [2]} GEN_SUSPENDED {'future': Future(), 'x': 5} CORO_SUSPENDED
+6 {'a': 1, 'b': [2]}
+line 6, in g
+    yield a
+10 [2] 8 ['a', 'b', 'c']
+[2] 13 [[2], 3] [1, [2], 3]
+returned 5
+None None
+[('<module>', 62), ('g', 6)]
+`);
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isDebug || isASAN || isWindows)(
   "idle threads do not collect again and again beside a thread that works",
   async () => {

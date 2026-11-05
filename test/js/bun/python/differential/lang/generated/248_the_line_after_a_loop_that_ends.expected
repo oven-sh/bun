@@ -1,0 +1,724 @@
+status: 0
+script: b3957c38635e80c7
+source: e2c8087f619f7d99
+---
+name [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => return in for in with
+k [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => 0
+result [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => None
+seen [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('r', 1)]
+name [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => return in for in with
+k [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => 0
+monitoring seen [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => [1, 2, 3, 2, 3, 2]
+name [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => return in for in with
+k [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+result [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+seen [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => return in for in with
+k [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+monitoring seen [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => [1, 2, 3, 4, 1]
+name [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => return in for in with
+k [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+result [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+seen [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => return in for in with
+k [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+monitoring seen [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => [1, 2, 3, 2, 3, 4, 1]
+name [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => return in for in with
+k [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => 7
+result [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => None
+seen [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('r', 1)]
+name [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => return in for in with
+k [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => 7
+monitoring seen [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => [1, 2, 3, 2, 3, 2]
+name [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n'] => return in for in with
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='return in for in with', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n'] => [0, 1, 2, 3, 4]
+name [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=0] => and a statement after it
+k [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=0] => 0
+result [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=0] => None
+seen [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 5), ('r', 5)]
+name [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=0] => and a statement after it
+k [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=0] => 0
+monitoring seen [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=0] => [1, 2, 3, 2, 3, 2, 5]
+name [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=1] => and a statement after it
+k [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=1] => 1
+result [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=1] => 1
+seen [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=1] => and a statement after it
+k [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=1] => 1
+monitoring seen [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=1] => [1, 2, 3, 4, 1]
+name [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=2] => and a statement after it
+k [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=2] => 2
+result [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=2] => 2
+seen [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=2] => and a statement after it
+k [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=2] => 2
+monitoring seen [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=2] => [1, 2, 3, 2, 3, 4, 1]
+name [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=7] => and a statement after it
+k [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=7] => 7
+result [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=7] => None
+seen [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 5), ('r', 5)]
+name [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=7] => and a statement after it
+k [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=7] => 7
+monitoring seen [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n', k=7] => [1, 2, 3, 2, 3, 2, 5]
+name [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n'] => and a statement after it
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='and a statement after it', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n    return None\n'] => [0, 1, 2, 3, 4, 5]
+name [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=0] => break
+k [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=0] => 0
+result [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=0] => None
+seen [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=0] => break
+k [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=0] => 0
+monitoring seen [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=0] => [1, 2, 3, 2, 3, 2, 1]
+name [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=1] => break
+k [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=1] => 1
+result [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=1] => None
+seen [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=1] => break
+k [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=1] => 1
+monitoring seen [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=1] => [1, 2, 3, 4, 1]
+name [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=2] => break
+k [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=2] => 2
+result [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=2] => None
+seen [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=2] => break
+k [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=2] => 2
+monitoring seen [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=2] => [1, 2, 3, 2, 3, 4, 1]
+name [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=7] => break
+k [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=7] => 7
+result [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=7] => None
+seen [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=7] => break
+k [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=7] => 7
+monitoring seen [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n', k=7] => [1, 2, 3, 2, 3, 2, 1]
+name [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n'] => break
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                break\n'] => [0, 1, 2, 3, 4]
+name [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=0] => nothing leaves
+k [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=0] => 0
+result [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=0] => None
+seen [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=0] => nothing leaves
+k [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=0] => 0
+monitoring seen [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=0] => [1, 2, 3, 2, 3, 2, 1]
+name [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=1] => nothing leaves
+k [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=1] => 1
+result [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=1] => None
+seen [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=1] => nothing leaves
+k [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=1] => 1
+monitoring seen [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=1] => [1, 2, 3, 2, 3, 2, 1]
+name [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=2] => nothing leaves
+k [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=2] => 2
+result [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=2] => None
+seen [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=2] => nothing leaves
+k [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=2] => 2
+monitoring seen [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=2] => [1, 2, 3, 2, 3, 2, 1]
+name [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=7] => nothing leaves
+k [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=7] => 7
+result [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=7] => None
+seen [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=7] => nothing leaves
+k [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=7] => 7
+monitoring seen [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n', k=7] => [1, 2, 3, 2, 3, 2, 1]
+name [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n'] => nothing leaves
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='nothing leaves', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            pass\n'] => [0, 1, 2, 3]
+name [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=0] => while
+k [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=0] => 0
+result [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=0] => None
+seen [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 1), ('r', 1)]
+name [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=0] => while
+k [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=0] => 0
+monitoring seen [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=0] => [1, 2, 1]
+name [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=1] => while
+k [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=1] => 1
+result [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=1] => None
+seen [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 2), ('l', 1), ('r', 1)]
+name [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=1] => while
+k [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=1] => 1
+monitoring seen [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=1] => [1, 2, 3, 4, 2, 1]
+name [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=2] => while
+k [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=2] => 2
+result [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=2] => None
+seen [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 2), ('l', 3), ('l', 4), ('l', 2), ('l', 1), ('r', 1)]
+name [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=2] => while
+k [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=2] => 2
+monitoring seen [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=2] => [1, 2, 3, 4, 2, 3, 4, 2, 1]
+name [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=7] => while
+k [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=7] => 7
+result [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=7] => 5
+seen [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 1), ('r', 1)]
+name [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=7] => while
+k [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=7] => 7
+monitoring seen [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n', k=7] => [1, 2, 3, 4, 2, 3, 4, 5, 1]
+name [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n'] => while
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='while', source='\ndef f(k):\n    with CM() as c:\n        while k:\n            k -= 1\n            if k == 5:\n                return k\n'] => [0, 1, 2, 3, 4, 5]
+name [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=0] => finally
+k [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=0] => 0
+result [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=0] => None
+seen [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('r', 6)]
+name [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=0] => finally
+k [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=0] => 0
+monitoring seen [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=0] => [1, 2, 3, 2, 3, 2]
+name [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=1] => finally
+k [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=1] => 1
+result [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=1] => 1
+seen [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 6), ('r', 6)]
+name [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=1] => finally
+k [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=1] => 1
+monitoring seen [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=1] => [1, 2, 3, 4, 6]
+name [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=2] => finally
+k [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=2] => 2
+result [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=2] => 2
+seen [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 6), ('r', 6)]
+name [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=2] => finally
+k [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=2] => 2
+monitoring seen [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=2] => [1, 2, 3, 2, 3, 4, 6]
+name [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=7] => finally
+k [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=7] => 7
+result [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=7] => None
+seen [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('r', 6)]
+name [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=7] => finally
+k [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=7] => 7
+monitoring seen [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n', k=7] => [1, 2, 3, 2, 3, 2]
+name [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n'] => finally
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='finally', source='\ndef f(k):\n    try:\n        for x in [1, 2]:\n            if x == k:\n                return x\n    finally:\n        k = 0\n'] => [0, 1, 2, 3, 4, 6]
+name [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=0] => else
+k [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=0] => 0
+result [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=0] => None
+seen [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 6), ('l', 1), ('r', 1)]
+name [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=0] => else
+k [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=0] => 0
+monitoring seen [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=0] => [1, 2, 3, 2, 3, 2, 6, 1]
+name [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=1] => else
+k [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=1] => 1
+result [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=1] => 1
+seen [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=1] => else
+k [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=1] => 1
+monitoring seen [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=1] => [1, 2, 3, 4, 1]
+name [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=2] => else
+k [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=2] => 2
+result [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=2] => 2
+seen [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=2] => else
+k [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=2] => 2
+monitoring seen [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=2] => [1, 2, 3, 2, 3, 4, 1]
+name [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=7] => else
+k [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=7] => 7
+result [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=7] => None
+seen [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 6), ('l', 1), ('r', 1)]
+name [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=7] => else
+k [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=7] => 7
+monitoring seen [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n', k=7] => [1, 2, 3, 2, 3, 2, 6, 1]
+name [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n'] => else
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='else', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        else:\n            k = 1\n'] => [0, 1, 2, 3, 4, 6]
+name [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=0] => no loop
+k [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=0] => 0
+result [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=0] => None
+seen [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 1), ('r', 1)]
+name [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=0] => no loop
+k [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=0] => 0
+monitoring seen [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=0] => [1, 2, 1]
+name [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=1] => no loop
+k [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=1] => 1
+result [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=1] => 1
+seen [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 1), ('r', 1)]
+name [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=1] => no loop
+k [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=1] => 1
+monitoring seen [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=1] => [1, 2, 3, 1]
+name [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=2] => no loop
+k [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=2] => 2
+result [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=2] => 1
+seen [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 1), ('r', 1)]
+name [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=2] => no loop
+k [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=2] => 2
+monitoring seen [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=2] => [1, 2, 3, 1]
+name [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=7] => no loop
+k [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=7] => 7
+result [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=7] => 1
+seen [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 1), ('r', 1)]
+name [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=7] => no loop
+k [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=7] => 7
+monitoring seen [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n', k=7] => [1, 2, 3, 1]
+name [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n'] => no loop
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='no loop', source='\ndef f(k):\n    with CM() as c:\n        if k:\n            return 1\n'] => [0, 1, 2, 3]
+name [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => in a loop
+k [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => 0
+result [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => None
+seen [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 1), ('r', 1)]
+name [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => in a loop
+k [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => 0
+monitoring seen [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => [1, 2, 3, 4, 3, 4, 3, 1]
+name [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => in a loop
+k [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => 1
+result [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => 1
+seen [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 2), ('r', 2)]
+name [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => in a loop
+k [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => 1
+monitoring seen [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => [1, 2, 3, 4, 5, 2]
+name [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => in a loop
+k [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => 2
+result [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => 2
+seen [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 5), ('l', 2), ('r', 2)]
+name [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => in a loop
+k [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => 2
+monitoring seen [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => [1, 2, 3, 4, 3, 4, 5, 2]
+name [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => in a loop
+k [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => 7
+result [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => None
+seen [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 1), ('r', 1)]
+name [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => in a loop
+k [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => 7
+monitoring seen [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => [1, 2, 3, 4, 3, 4, 3, 1]
+name [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n'] => in a loop
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='in a loop', source='\ndef f(k):\n    for z in (1,):\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n'] => [0, 1, 2, 3, 4, 5]
+name [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => two with statements
+k [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => 0
+result [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => None
+seen [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => two with statements
+k [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => 0
+monitoring seen [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=0] => [1, 2, 3, 4, 3, 4, 3, 2, 1]
+name [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => two with statements
+k [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => 1
+result [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => 1
+seen [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => two with statements
+k [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => 1
+monitoring seen [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=1] => [1, 2, 3, 4, 5, 2, 1]
+name [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => two with statements
+k [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => 2
+result [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => 2
+seen [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 5), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => two with statements
+k [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => 2
+monitoring seen [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=2] => [1, 2, 3, 4, 3, 4, 5, 2, 1]
+name [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => two with statements
+k [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => 7
+result [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => None
+seen [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => two with statements
+k [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => 7
+monitoring seen [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n', k=7] => [1, 2, 3, 4, 3, 4, 3, 2, 1]
+name [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n'] => two with statements
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='two with statements', source='\ndef f(k):\n    with CM() as b:\n        with CM() as c:\n            for x in c:\n                if x == k:\n                    return x\n'] => [0, 1, 2, 3, 4, 5]
+name [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => two items
+k [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => 0
+result [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => None
+seen [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('r', 1)]
+name [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => two items
+k [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => 0
+monitoring seen [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => [1, 2, 3, 2, 3, 2]
+name [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => two items
+k [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+result [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+seen [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => two items
+k [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+monitoring seen [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => [1, 2, 3, 4, 1]
+name [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => two items
+k [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+result [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+seen [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => two items
+k [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+monitoring seen [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => [1, 2, 3, 2, 3, 4, 1]
+name [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => two items
+k [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => 7
+result [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => None
+seen [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('r', 1)]
+name [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => two items
+k [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => 7
+monitoring seen [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => [1, 2, 3, 2, 3, 2]
+name [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n'] => two items
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='two items', source='\ndef f(k):\n    with CM() as b, CM() as c:\n        for x in c:\n            if x == k:\n                return x\n'] => [0, 1, 2, 3, 4]
+name [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=0] => two items on two lines
+k [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=0] => 0
+result [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=0] => None
+seen [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=0] => two items on two lines
+k [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=0] => 0
+monitoring seen [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=0] => [1, 2, 3, 4, 3, 4, 3, 2, 1]
+name [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=1] => two items on two lines
+k [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+result [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+seen [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=1] => two items on two lines
+k [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+monitoring seen [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=1] => [1, 2, 3, 4, 5, 2, 1]
+name [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=2] => two items on two lines
+k [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+result [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+seen [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 5), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=2] => two items on two lines
+k [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+monitoring seen [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=2] => [1, 2, 3, 4, 3, 4, 5, 2, 1]
+name [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=7] => two items on two lines
+k [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=7] => 7
+result [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=7] => None
+seen [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=7] => two items on two lines
+k [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=7] => 7
+monitoring seen [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n', k=7] => [1, 2, 3, 4, 3, 4, 3, 2, 1]
+name [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n'] => two items on two lines
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='two items on two lines', source='\ndef f(k):\n    with (CM() as b,\n          CM() as c):\n        for x in c:\n            if x == k:\n                return x\n'] => [0, 1, 2, 3, 4, 5]
+name [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=0] => two loops
+k [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=0] => 0
+result [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=0] => None
+seen [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=0] => two loops
+k [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=0] => 0
+monitoring seen [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=0] => [1, 2, 3, 4, 3, 4, 3, 2, 3, 4, 3, 4, 3, 2, 1]
+name [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=1] => two loops
+k [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=1] => 1
+result [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=1] => 1
+seen [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 1), ('r', 1)]
+name [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=1] => two loops
+k [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=1] => 1
+monitoring seen [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=1] => [1, 2, 3, 4, 5, 1]
+name [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=2] => two loops
+k [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=2] => 2
+result [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=2] => 1
+seen [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 5), ('l', 1), ('r', 1)]
+name [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=2] => two loops
+k [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=2] => 2
+monitoring seen [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=2] => [1, 2, 3, 4, 3, 4, 5, 1]
+name [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=7] => two loops
+k [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=7] => 7
+result [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=7] => None
+seen [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=7] => two loops
+k [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=7] => 7
+monitoring seen [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n', k=7] => [1, 2, 3, 4, 3, 4, 3, 2, 3, 4, 3, 4, 3, 2, 1]
+name [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n'] => two loops
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='two loops', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            for y in c:\n                if y == k:\n                    return x\n'] => [0, 1, 2, 3, 4, 5]
+name [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=0] => a statement after the loop
+k [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=0] => 0
+result [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=0] => None
+seen [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 5), ('l', 1), ('r', 1)]
+name [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=0] => a statement after the loop
+k [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=0] => 0
+monitoring seen [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=0] => [1, 2, 3, 2, 3, 2, 5, 1]
+name [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=1] => a statement after the loop
+k [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=1] => 1
+result [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=1] => 1
+seen [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=1] => a statement after the loop
+k [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=1] => 1
+monitoring seen [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=1] => [1, 2, 3, 4, 1]
+name [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=2] => a statement after the loop
+k [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=2] => 2
+result [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=2] => 2
+seen [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=2] => a statement after the loop
+k [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=2] => 2
+monitoring seen [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=2] => [1, 2, 3, 2, 3, 4, 1]
+name [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=7] => a statement after the loop
+k [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=7] => 7
+result [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=7] => None
+seen [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 5), ('l', 1), ('r', 1)]
+name [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=7] => a statement after the loop
+k [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=7] => 7
+monitoring seen [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n', k=7] => [1, 2, 3, 2, 3, 2, 5, 1]
+name [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n'] => a statement after the loop
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='a statement after the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n        k = 3\n'] => [0, 1, 2, 3, 4, 5]
+name [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=0] => return and break
+k [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=0] => 0
+result [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=0] => None
+seen [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 5), ('l', 6), ('l', 1), ('r', 1)]
+name [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=0] => return and break
+k [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=0] => 0
+monitoring seen [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=0] => [1, 2, 3, 5, 6, 1]
+name [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=1] => return and break
+k [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=1] => 1
+result [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=1] => 1
+seen [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=1] => return and break
+k [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=1] => 1
+monitoring seen [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=1] => [1, 2, 3, 4, 1]
+name [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=2] => return and break
+k [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=2] => 2
+result [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=2] => 2
+seen [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 5), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=2] => return and break
+k [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=2] => 2
+monitoring seen [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=2] => [1, 2, 3, 5, 2, 3, 4, 1]
+name [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=7] => return and break
+k [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=7] => 7
+result [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=7] => None
+seen [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 5), ('l', 2), ('l', 3), ('l', 5), ('l', 2), ('l', 1), ('r', 1)]
+name [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=7] => return and break
+k [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=7] => 7
+monitoring seen [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n', k=7] => [1, 2, 3, 5, 2, 3, 5, 2, 1]
+name [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n'] => return and break
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='return and break', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            if x == k + 1:\n                break\n'] => [0, 1, 2, 3, 4, 5, 6]
+name [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=0] => continue
+k [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=0] => 0
+result [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=0] => None
+seen [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 5), ('l', 2), ('l', 3), ('l', 5), ('l', 2), ('r', 1)]
+name [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=0] => continue
+k [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=0] => 0
+monitoring seen [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=0] => [1, 2, 3, 5, 2, 3, 5, 2]
+name [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=1] => continue
+k [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=1] => 1
+result [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=1] => None
+seen [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 2), ('l', 3), ('l', 5), ('l', 2), ('r', 1)]
+name [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=1] => continue
+k [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=1] => 1
+monitoring seen [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=1] => [1, 2, 3, 4, 2, 3, 5, 2]
+name [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=2] => continue
+k [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=2] => 2
+result [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=2] => None
+seen [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 5), ('l', 2), ('l', 3), ('l', 4), ('l', 2), ('r', 1)]
+name [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=2] => continue
+k [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=2] => 2
+monitoring seen [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=2] => [1, 2, 3, 5, 2, 3, 4, 2]
+name [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=7] => continue
+k [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=7] => 7
+result [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=7] => None
+seen [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 5), ('l', 2), ('l', 3), ('l', 5), ('l', 2), ('r', 1)]
+name [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=7] => continue
+k [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=7] => 7
+monitoring seen [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n', k=7] => [1, 2, 3, 5, 2, 3, 5, 2]
+name [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n'] => continue
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='continue', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                continue\n            if x == k + 5:\n                return x\n'] => [0, 1, 2, 3, 4, 5, 6]
+name [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=0] => return first
+k [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=0] => 0
+result [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=0] => None
+seen [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 4), ('l', 5), ('l', 4), ('l', 5), ('l', 4), ('l', 1), ('r', 1)]
+name [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=0] => return first
+k [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=0] => 0
+monitoring seen [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=0] => [1, 2, 4, 5, 4, 5, 4, 1]
+name [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=1] => return first
+k [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=1] => 1
+result [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=1] => None
+seen [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 4), ('l', 5), ('l', 4), ('l', 5), ('l', 4), ('l', 1), ('r', 1)]
+name [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=1] => return first
+k [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=1] => 1
+monitoring seen [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=1] => [1, 2, 4, 5, 4, 5, 4, 1]
+name [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=2] => return first
+k [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=2] => 2
+result [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=2] => None
+seen [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 4), ('l', 5), ('l', 4), ('l', 5), ('l', 4), ('l', 1), ('r', 1)]
+name [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=2] => return first
+k [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=2] => 2
+monitoring seen [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=2] => [1, 2, 4, 5, 4, 5, 4, 1]
+name [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=7] => return first
+k [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=7] => 7
+result [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=7] => 7
+seen [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 1), ('r', 1)]
+name [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=7] => return first
+k [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=7] => 7
+monitoring seen [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n', k=7] => [1, 2, 3, 1]
+name [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n'] => return first
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='return first', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        for x in c:\n            k += 1\n'] => [0, 1, 2, 3, 4, 5]
+name [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=0] => the loop on the line of the with
+k [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=0] => 0
+result [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=0] => 2
+seen [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 2), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=0] => the loop on the line of the with
+k [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=0] => 0
+monitoring seen [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=0] => [1, 2, 3, 4, 3, 4, 1]
+name [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=1] => the loop on the line of the with
+k [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=1] => 1
+result [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=1] => None
+seen [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 2), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('r', 1)]
+name [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=1] => the loop on the line of the with
+k [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=1] => 1
+monitoring seen [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=1] => [1, 2, 3, 4, 3, 4, 3]
+name [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=2] => the loop on the line of the with
+k [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=2] => 2
+result [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=2] => None
+seen [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 2), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('r', 1)]
+name [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=2] => the loop on the line of the with
+k [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=2] => 2
+monitoring seen [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=2] => [1, 2, 3, 4, 3, 4, 3]
+name [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=7] => the loop on the line of the with
+k [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=7] => 7
+result [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=7] => None
+seen [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 2), ('l', 2), ('l', 3), ('l', 4), ('l', 3), ('l', 4), ('l', 3), ('r', 1)]
+name [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=7] => the loop on the line of the with
+k [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=7] => 7
+monitoring seen [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n', k=7] => [1, 2, 3, 4, 3, 4, 3]
+name [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n'] => the loop on the line of the with
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='the loop on the line of the with', source='\ndef f(k):\n    with CM() as c:\n        for x in c: k += 1\n        for x in c:\n            if x == k: return x\n'] => [0, 1, 2, 3, 4]
+name [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=0] => comprehension
+k [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=0] => 0
+result [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=0] => None
+seen [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 5), ('l', 4), ('l', 5), ('l', 4), ('l', 5), ('l', 4), ('l', 5), ('l', 1), ('r', 1)]
+name [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=0] => comprehension
+k [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=0] => 0
+monitoring seen [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=0] => [1, 2, 5, 4, 5, 4, 5, 4, 5, 1]
+name [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=1] => comprehension
+k [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=1] => 1
+result [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=1] => None
+seen [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 5), ('l', 4), ('l', 5), ('l', 4), ('l', 5), ('l', 4), ('l', 5), ('l', 1), ('r', 1)]
+name [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=1] => comprehension
+k [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=1] => 1
+monitoring seen [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=1] => [1, 2, 5, 4, 5, 4, 5, 4, 5, 1]
+name [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=2] => comprehension
+k [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=2] => 2
+result [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=2] => None
+seen [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 5), ('l', 4), ('l', 5), ('l', 4), ('l', 5), ('l', 4), ('l', 5), ('l', 1), ('r', 1)]
+name [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=2] => comprehension
+k [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=2] => 2
+monitoring seen [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=2] => [1, 2, 5, 4, 5, 4, 5, 4, 5, 1]
+name [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=7] => comprehension
+k [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=7] => 7
+result [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=7] => 7
+seen [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 1), ('r', 1)]
+name [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=7] => comprehension
+k [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=7] => 7
+monitoring seen [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n', k=7] => [1, 2, 3, 1]
+name [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n'] => comprehension
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='comprehension', source='\ndef f(k):\n    with CM() as c:\n        if k == 7:\n            return k\n        [x\n         for x in c]\n'] => [0, 1, 2, 3, 4, 5]
+name [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=0] => raise
+k [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=0] => 0
+result [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=0] => None
+seen [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=0] => raise
+k [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=0] => 0
+monitoring seen [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=0] => [1, 2, 3, 2, 3, 2, 1]
+name [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=1] => raise
+k [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=1] => 1
+result [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=1] => KeyError(1)
+seen [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('e', 4), ('l', 1), ('r', 4)]
+name [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=1] => raise
+k [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=1] => 1
+monitoring seen [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=1] => [1, 2, 3, 4, 1]
+name [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=2] => raise
+k [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=2] => 2
+result [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=2] => KeyError(2)
+seen [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('e', 4), ('l', 1), ('r', 4)]
+name [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=2] => raise
+k [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=2] => 2
+monitoring seen [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=2] => [1, 2, 3, 2, 3, 4, 1]
+name [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=7] => raise
+k [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=7] => 7
+result [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=7] => None
+seen [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('l', 1), ('r', 1)]
+name [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=7] => raise
+k [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=7] => 7
+monitoring seen [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n', k=7] => [1, 2, 3, 2, 3, 2, 1]
+name [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n'] => raise
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='raise', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                raise KeyError(x)\n'] => [0, 1, 2, 3, 4]
+name [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=0] => try in the loop
+k [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=0] => 0
+result [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=0] => None
+seen [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 7), ('l', 2), ('l', 3), ('l', 4), ('l', 7), ('l', 2), ('l', 1), ('r', 1)]
+name [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=0] => try in the loop
+k [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=0] => 0
+monitoring seen [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=0] => [1, 2, 3, 4, 7, 2, 3, 4, 7, 2, 1]
+name [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=1] => try in the loop
+k [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=1] => 1
+result [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=1] => 1
+seen [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 7), ('l', 1), ('r', 1)]
+name [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=1] => try in the loop
+k [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=1] => 1
+monitoring seen [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=1] => [1, 2, 3, 4, 5, 7, 1]
+name [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=2] => try in the loop
+k [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=2] => 2
+result [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=2] => 2
+seen [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 7), ('l', 2), ('l', 3), ('l', 4), ('l', 5), ('l', 7), ('l', 1), ('r', 1)]
+name [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=2] => try in the loop
+k [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=2] => 2
+monitoring seen [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=2] => [1, 2, 3, 4, 7, 2, 3, 4, 5, 7, 1]
+name [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=7] => try in the loop
+k [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=7] => 7
+result [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=7] => None
+seen [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 7), ('l', 2), ('l', 3), ('l', 4), ('l', 7), ('l', 2), ('l', 1), ('r', 1)]
+name [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=7] => try in the loop
+k [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=7] => 7
+monitoring seen [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n', k=7] => [1, 2, 3, 4, 7, 2, 3, 4, 7, 2, 1]
+name [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n'] => try in the loop
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='try in the loop', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            try:\n                if x == k:\n                    return x\n            finally:\n                k += 0\n'] => [0, 1, 2, 3, 4, 5, 7]
+name [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=0] => async for in with
+k [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=0] => 0
+result [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=0] => None
+seen [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('e', 2), ('l', 1), ('r', 1)]
+name [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=0] => async for in with
+k [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=0] => 0
+monitoring seen [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=0] => [1, 2, 3, 2, 3, 2, 1]
+name [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=1] => async for in with
+k [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=1] => 1
+result [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=1] => 1
+seen [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=1] => async for in with
+k [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=1] => 1
+monitoring seen [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=1] => [1, 2, 3, 4, 1]
+name [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=2] => async for in with
+k [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=2] => 2
+result [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=2] => 2
+seen [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=2] => async for in with
+k [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=2] => 2
+monitoring seen [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=2] => [1, 2, 3, 2, 3, 4, 1]
+name [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=7] => async for in with
+k [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=7] => 7
+result [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=7] => None
+seen [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('e', 2), ('l', 1), ('r', 1)]
+name [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=7] => async for in with
+k [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=7] => 7
+monitoring seen [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n', k=7] => [1, 2, 3, 2, 3, 2, 1]
+name [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n'] => async for in with
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='async for in with', source='\nasync def f(k):\n    with CM() as c:\n        async for x in agen(c):\n            if x == k:\n                return x\n'] => [0, 1, 2, 3, 4]
+name [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => for in async with
+k [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => 0
+result [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => None
+seen [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => [('c', 0), ('l', 1), ('e', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('e', 1), ('r', 1)]
+name [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => for in async with
+k [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => 0
+monitoring seen [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=0] => [1, 2, 3, 2, 3, 2]
+name [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => for in async with
+k [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+result [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+seen [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => [('c', 0), ('l', 1), ('e', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('e', 1), ('r', 1)]
+name [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => for in async with
+k [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => 1
+monitoring seen [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=1] => [1, 2, 3, 4, 1]
+name [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => for in async with
+k [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+result [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+seen [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => [('c', 0), ('l', 1), ('e', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('e', 1), ('r', 1)]
+name [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => for in async with
+k [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => 2
+monitoring seen [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=2] => [1, 2, 3, 2, 3, 4, 1]
+name [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => for in async with
+k [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => 7
+result [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => None
+seen [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => [('c', 0), ('l', 1), ('e', 1), ('l', 2), ('l', 3), ('l', 2), ('l', 3), ('l', 2), ('e', 1), ('r', 1)]
+name [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => for in async with
+k [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => 7
+monitoring seen [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n', k=7] => [1, 2, 3, 2, 3, 2]
+name [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n'] => for in async with
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='for in async with', source='\nasync def f(k):\n    async with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n'] => [0, 1, 2, 3, 4]
+name [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=0] => generator
+k [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=0] => 0
+result [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=0] => [1, 2]
+seen [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=0] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 5), ('r', 5), ('c', 5), ('l', 2), ('l', 3), ('l', 5), ('r', 5), ('c', 5), ('l', 2), ('l', 1), ('r', 1)]
+name [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=0] => generator
+k [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=0] => 0
+monitoring seen [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=0] => [1, 2, 3, 5, 2, 3, 5, 2, 1]
+name [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=1] => generator
+k [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=1] => 1
+result [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=1] => []
+seen [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=1] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=1] => generator
+k [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=1] => 1
+monitoring seen [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=1] => [1, 2, 3, 4, 1]
+name [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=2] => generator
+k [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=2] => 2
+result [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=2] => [1]
+seen [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=2] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 5), ('r', 5), ('c', 5), ('l', 2), ('l', 3), ('l', 4), ('l', 1), ('r', 1)]
+name [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=2] => generator
+k [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=2] => 2
+monitoring seen [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=2] => [1, 2, 3, 5, 2, 3, 4, 1]
+name [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=7] => generator
+k [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=7] => 7
+result [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=7] => [1, 2]
+seen [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=7] => [('c', 0), ('l', 1), ('l', 2), ('l', 3), ('l', 5), ('r', 5), ('c', 5), ('l', 2), ('l', 3), ('l', 5), ('r', 5), ('c', 5), ('l', 2), ('l', 1), ('r', 1)]
+name [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=7] => generator
+k [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=7] => 7
+monitoring seen [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n', k=7] => [1, 2, 3, 5, 2, 3, 5, 2, 1]
+name [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n'] => generator
+sorted({line - first for _, _, line in code.co_lines() if line is not... [name='generator', source='\ndef f(k):\n    with CM() as c:\n        for x in c:\n            if x == k:\n                return x\n            yield x\n'] => [0, 1, 2, 3, 4, 5]

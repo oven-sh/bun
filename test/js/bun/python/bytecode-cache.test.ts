@@ -318,6 +318,31 @@ for f in function, Class.method, generator, coroutine, fails:
     expect(await run(dir)).toEqual(cold);
   });
 
+  test("the same source gives the same file in every process", async () => {
+    // Whatever the compiler goes through in the order of a hash table that goes by addresses comes out differently from run to run.
+    const lines = ["import asyncio", "def f(a, b, c):"];
+    for (let i = 0; i < 12; i++) {
+      lines.push(
+        `    x${i} = [(p${i}, q${i}, r${i}, s${i}, lambda: t${i}) for p${i} in a for q${i} in b for r${i} in c for s${i} in a for t${i} in b]`,
+      );
+      lines.push(`    y${i} = {k${i}: v${i} for k${i}, v${i} in a if (w${i} := k${i})}`);
+    }
+    lines.push("    return {1, 'a', b'b', 2.5, None, ('c', 3)}, locals()");
+    lines.push(
+      "class C:",
+      "    one = two = three = four = 1",
+      "    def m(self, *, k1=1, k2=2, k3=3): return __class__, k1, k2, k3",
+    );
+    using tmp = tempDir("python-pyc", { "main.py": "import mod\n", "mod.py": lines.join("\n") + "\n" });
+    const dir = String(tmp);
+    const written = new Set<string>();
+    for (let i = 0; i < 4; i++) {
+      expect(await run(dir, ["main.py"], { PYTHONPYCACHEPREFIX: join(dir, `cache${i}`) })).toEqual(printed(""));
+      written.add(readFileSync(join(dir, `cache${i}`, dir, "mod.bun-315.pyc")).toString("hex"));
+    }
+    expect(written.size).toBe(1);
+  });
+
   test("a directory that has moved", async () => {
     using tmp = tempDir("python-pyc", {
       "main.py": "import sys; sys.path.insert(0, sys.argv[1]); import mod; mod.outer()()",

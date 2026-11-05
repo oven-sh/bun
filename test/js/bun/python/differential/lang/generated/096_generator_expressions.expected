@@ -1,6 +1,6 @@
 status: 0
-script: 2c58a50b9406a3ac
-source: f31f484c26935934
+script: 931c499c1cb4f597
+source: a11f7ebdbad09715
 ---
 type(g).__name__ => generator
 g.__name__ => <genexpr>
@@ -176,6 +176,36 @@ SyntaxError: invalid syntax <- (yield for x in y)
 SyntaxError: 'yield' inside generator expression <- ((yield) for x in y)
 SyntaxError: 'yield' outside function <- (x for x in (yield))
 ok: def f(): return (x for x in (yield))
+SyntaxError: invalid syntax 20 21 <- print(*a for a in x, 1)
+SyntaxError: Generator expression must be parenthesized 7 19 <- print(a for a in x, 1)
+SyntaxError: Generator expression must be parenthesized 10 23 <- print(1, *a for a in x)
+SyntaxError: Generator expression must be parenthesized 10 22 <- print(1, a for a in x)
+ok: print(*a for a in x)
+SyntaxError: invalid syntax 20 21 <- print(*a for a in x,)
+SyntaxError: Generator expression must be parenthesized 7 19 <- print(a for a in x,)
+SyntaxError: cannot use dict unpacking in generator expression 7 10 <- print(**a for a in x, 1)
+SyntaxError: cannot use dict unpacking in generator expression 7 10 <- print(**a for a in x)
+SyntaxError: Generator expression must be parenthesized 10 23 <- print(1, *a for a in x, 2)
+SyntaxError: invalid syntax 15 18 <- print(b=1, *a for a in x)
+SyntaxError: Generator expression must be parenthesized 12 24 <- print(b=1, a for a in x)
+SyntaxError: invalid syntax 20 21 <- print(*a for a in x, b=1)
+SyntaxError: Generator expression must be parenthesized 7 19 <- print(a for a in x, b=1)
+SyntaxError: invalid syntax 20 21 <- print(*a for a in x, *b for b in y)
+SyntaxError: Generator expression must be parenthesized 7 19 <- print(a for a in x, *b for b in y)
+SyntaxError: invalid syntax 20 21 <- print(*a for a in x, b for b in y)
+SyntaxError: invalid syntax 12 15 <- class C(*a for a in x, 1): pass
+SyntaxError: Generator expression must be parenthesized 9 21 <- class C(a for a in x, 1): pass
+SyntaxError: invalid syntax 12 15 <- class C(*a for a in x): pass
+SyntaxError: Generator expression must be parenthesized 12 25 <- class C(1, *a for a in x): pass
+SyntaxError: Generator expression must be parenthesized 7 20 <- f(*a, *b for b in y)
+ok: f(*a for a in x)(1)
+SyntaxError: Generator expression must be parenthesized 6 25 <- f(x, *a async for a in x)
+SyntaxError: invalid syntax 22 23 <- f(*a async for a in x, 1)
+SyntaxError: invalid syntax 18 19 <- f(*(a) for a in x, 1)
+SyntaxError: invalid syntax 22 23 <- f(* a for a in x if a, 1)
+SyntaxError: invalid syntax 20 21 <- f(a := 1 for a in x, 1)
+SyntaxError: Generator expression must be parenthesized 6 23 <- f(1, a := 1 for a in x)
+SyntaxError: invalid syntax 6 8 <- f(*a := 1 for a in x, 1)
 next(big) => 64
 next(big) => 100
 next(big) => 144

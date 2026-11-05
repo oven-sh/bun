@@ -463,6 +463,8 @@ impl WebWorker {
         let preload_modules: &[BunString] =
             unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) };
 
+        // SAFETY: the caller keeps the C++ BunString vector alive for this call;
+        // ffi::slice accepts a null pointer when its length is zero.
         let exec_argv_preload_modules: &[BunString] = unsafe {
             bun_core::ffi::slice(exec_argv_preload_modules_ptr, exec_argv_preload_modules_len)
         };

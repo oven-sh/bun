@@ -756,7 +756,7 @@ impl Quick {
     }
 
     /// Sets tok and tok_kw for the name T[s, s + len), len >= 2, which has been taken for a plain name so far.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn classify_name(&mut self, s: i32, len: i32) {
         let h = (self.t.at(s) * KW_A
             + self.t.at(s + 1) * KW_B

@@ -117,6 +117,7 @@ impl Quick {
         n
     }
 
+    #[inline]
     pub(crate) fn arena_adopt(&mut self, l: i32, n: i32) {
         // Most lists are short: the first three items without a loop. (Where there are fewer, the first one is told twice.)
         let [count, a, b, c] = self.n.several(l);
@@ -282,6 +283,7 @@ impl Quick {
     }
 
     /// Moves the items above `mark` of the side stack into the arena.
+    #[inline]
     pub(crate) fn list_finish(&mut self, mark: i32) -> i32 {
         let count = self.arena.ls_pos - mark;
         if count == 0 {

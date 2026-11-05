@@ -424,6 +424,7 @@ pub(crate) const NEVER: i32 = 100;
 impl Quick {
     // ------------------------------------------------------------------------------------------------------------ changes
     /// Copies the source up to `p`.
+    #[inline]
     pub(crate) fn flush(&mut self, p: i32) {
         let from = self.fast.run;
         let mut n = p - from;
@@ -647,6 +648,7 @@ impl Quick {
     }
 
     // ----------------------------------------------------------------------------------------------------------- literals
+    #[inline]
     pub(crate) fn number(&mut self, p: i32) -> i32 {
         let mut q = p;
         if self.t.at(q) == 48 {
@@ -5827,7 +5829,7 @@ impl Quick {
     }
 
     /// Gets ready to read what starts at `start`, behind so many columns of indentation.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn prepare(&mut self, start: i32, mut indentation: i32) -> bool {
         // The source may be indented by less than the output will be. By how much it is indented per level shows at the items whose level the lists say (the least
         // that is seen counts: an item can stand further in than its lists say). If that is less than the options ask for, the levels of the source count, whatever
@@ -5941,6 +5943,7 @@ impl Quick {
     }
 
     /// The text is what was read from `start` to p.
+    #[inline]
     pub(crate) fn finish_text(&mut self, start: i32, p: i32) {
         if self.fast.out == 0 {
             self.fast.ready_text = start;

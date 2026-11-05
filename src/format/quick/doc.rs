@@ -832,6 +832,7 @@ impl Quick {
         return h;
     }
 
+    #[inline]
     pub(crate) fn group_close_with(&mut self, h: i32, should_break: bool, id: i32) {
         let p = self.doc.d_pos;
         self.d.put(p, op::GroupClose);
@@ -866,6 +867,7 @@ impl Quick {
             .put_several(h, [op::GroupOpen | (flags << 5), p + 1 - h, width, id]);
     }
 
+    #[inline]
     pub(crate) fn group_close(&mut self, h: i32) {
         self.group_close_with(h, false, 0);
     }

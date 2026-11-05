@@ -411,6 +411,7 @@ impl Quick {
         return n;
     }
 
+    #[inline]
     pub(crate) fn identifier(&mut self) -> R<i32> {
         // `let` and `async` are the two names that can need parentheses
         let head = k::Identifier
@@ -1120,6 +1121,7 @@ impl Quick {
     }
 
     /// The item that fast.rs has read last stands: T[start, end), whose last line has `last_length` bytes. It goes on the text before it, or becomes a node.
+    #[inline]
     pub(crate) fn push_standing(
         &mut self,
         start: i32,

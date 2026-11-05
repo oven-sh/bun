@@ -37,7 +37,10 @@ impl Sections {
             words: Section::ALL.map(|_| Vec::new()),
             lengths: [0; Section::COUNT],
         };
-        empty.with(Section::Statistics, bun_core::slice_as_bytes(&[0u64; StatisticId::COUNT]))
+        empty.with(
+            Section::Statistics,
+            bun_core::slice_as_bytes(&[0u64; StatisticId::COUNT]),
+        )
     }
 
     pub(super) fn with(mut self, section: Section, bytes: &[u8]) -> Sections {

@@ -2956,15 +2956,14 @@ extern crate alloc;
 pub type RuntimeState = *mut c_void;
 
 /// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct WorkerExecArgvFlags {
     /// `!--no-addons`
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
-    /// Where a flag is that is the process's, which a Worker cannot be given
-    /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
-    pub invalid: Option<usize>,
+    /// First process-only flag a Worker cannot accept (`ERR_WORKER_INVALID_EXEC_ARGV`).
+    pub invalid: Option<bun_core::ZBox>,
 }
 
 #[derive(Copy, Clone, Default)]

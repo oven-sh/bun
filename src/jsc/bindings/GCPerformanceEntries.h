@@ -7,16 +7,12 @@
 #include <JavaScriptCore/Weak.h>
 #include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/SharedTask.h>
 #include <wtf/Vector.h>
 
 namespace Bun {
 
-// The source of node:perf_hooks' 'gc' entries. One per VM, made by its first 'gc' observer (JSVMClientData::gcPerformanceEntries).
-//
-// JSC notifies a heap observer inside the collection: on the JS thread in the middle of an allocation, or on the
-// collector thread while the JS thread is parked. So the observer half only takes the two timestamps, and the timer
-// half hands the records to JS at the JS thread's next tick, as Node's unrefed immediate does
-// (https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.cc#L208-L241).
+// The 'gc' entries of node:perf_hooks. JSC calls a heap observer inside the collection, on either thread, so a timer takes the records to the JS thread.
 class GCPerformanceEntries final : public JSC::JSRunLoopTimer, public JSC::HeapObserver {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(GCPerformanceEntries);
 
@@ -26,18 +22,15 @@ public:
 
     // Everything public is for the JS thread.
 
-    // `listener` is node:perf_hooks' emitGCEntry of `realm`, or null once the realm has no 'gc' observer. The heap is
-    // observed while a realm has one.
+    // One listener for each realm, and null removes it. The heap is observed while there is one.
     void setListener(JSC::JSGlobalObject* realm, JSC::JSObject* listener);
-    // The VM is going away: nothing more is recorded or handed to JS.
+    void discardRecords();
     void stop();
 
-    // How many collections were recorded so far.
-    uint64_t recordedCount();
-    // For the caller of a synchronous collection that the program asked for, with the count from before it. Such a
-    // request is not merged into another one and returns when its own collection has ended, so that collection is
-    // the last one recorded meanwhile.
-    void markLastRecordForced(uint64_t countBefore);
+    // For the request of a synchronous collection: what tells which record is its own. Null while the heap is not observed.
+    RefPtr<WTF::SharedTask<void()>> willCollectSynchronously();
+    // After a synchronous collection that the program asked for, once the memory is back.
+    void didForceCollection();
 
 private:
     explicit GCPerformanceEntries(JSC::VM&);
@@ -46,6 +39,7 @@ private:
     void didGarbageCollect(JSC::CollectionScope) final;
     void doWork(JSC::VM&) final;
     void setObservesHeap(bool);
+    void callListeners();
 
     struct Record {
         WTF::MonotonicTime start;
@@ -53,18 +47,18 @@ private:
         bool isFullCollection { false };
         bool forced { false };
     };
+    // With inline room for the few of one turn, the observer allocates nothing.
+    using Records = WTF::Vector<Record, 4>;
 
     JSC::VM& m_vm;
-    // The module of each realm keeps its function alive.
     WTF::Vector<JSC::Weak<JSC::JSObject>, 1> m_listeners;
     bool m_observesHeap { false };
-    // Set in the begin phase of a collection and taken in its end phase.
     std::optional<WTF::MonotonicTime> m_collectionStart;
+    RefPtr<WTF::SharedTask<void()>> m_synchronousCollectionDidEnd;
     WTF::Lock m_lock;
-    // The hand-off takes them at the next tick. With room for the few of one turn, the observer allocates nothing.
-    using Records = WTF::Vector<Record, 4>;
     Records m_records WTF_GUARDED_BY_LOCK(m_lock);
-    uint64_t m_recordedCount WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    // One past the record of the last synchronous collection, or 0.
+    unsigned m_synchronousRecordEnd WTF_GUARDED_BY_LOCK(m_lock) { 0 };
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetGCPerformanceEntryListener);

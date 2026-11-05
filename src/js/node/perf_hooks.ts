@@ -112,19 +112,6 @@ function eventLoopUtilization(_utilization1, _utilization2) {
   };
 }
 
-// What an observer has in $mode once it took `type`. One that took `entryTypes` has them there.
-const kTookType = Symbol("type");
-
-// Whether an observer that took `entryTypes` last observes nothing: it took none yet, or they name no type there is.
-// Node disconnects an observer at such a call, so it is free to take `type` next:
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/perf/observe.js#L334-L337
-function observesNothing(observer: PerformanceObserverForNodeTypes, entryTypes: unknown) {
-  if (entryTypes === undefined) return true;
-  if (!Array.isArray(entryTypes) || observer[kNodeObserver]?.types.size) return false;
-  const webEntryTypes: readonly string[] = PerformanceObserver.supportedEntryTypes;
-  return !entryTypes.some(type => webEntryTypes.includes(type));
-}
-
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
 
@@ -143,7 +130,6 @@ type ObserverCallback = (
 class PerformanceObserverForNodeTypes extends PerformanceObserver {
   declare [kNodeObserver]: NodeEntryObserver | undefined;
   declare [kObserverCallback]: ObserverCallback;
-  declare $mode: unknown;
 
   constructor(callback: ObserverCallback) {
     super(callback);
@@ -160,22 +146,10 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
     let isTypeMode = false;
     if (options != null && typeof options === "object") {
       const entryTypes = options.entryTypes;
-      const type = options.type;
-      // An observer takes `type` or `entryTypes`, and keeps to the one it took first until disconnect(). These are
-      // Node's checks, made before anything changes. The native class makes them only for the types it knows.
-      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/perf/observe.js#L273-L296
-      if (entryTypes != null && type != null) {
-        throw new TypeError("either entryTypes or type must be provided");
-      }
-      const mode = this.$mode;
-      if (mode === kTookType ? entryTypes !== undefined : type !== undefined && !observesNothing(this, mode)) {
-        throw new DOMException("observer type can't be changed once registered", "InvalidModificationError");
-      }
-      if (type !== undefined) this.$mode = kTookType;
-      else if (entryTypes !== undefined) this.$mode = entryTypes;
+      let type: string | undefined;
       if (entryTypes !== undefined && Array.isArray(entryTypes)) {
         requested = entryTypes;
-      } else if (type !== undefined) {
+      } else if ((type = options.type) !== undefined) {
         requested = [type];
         isTypeMode = true;
       }
@@ -187,7 +161,6 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
         registration = this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
       }
       if (registration) {
-        // The producer of 'gc' entries is loaded for the first registration that observes them.
         if (nodeTypes.includes("gc")) require("internal/perf_hooks/gc").observeGC(registration);
         if (isTypeMode) {
           // observe({type}) appends to the observed set per the spec.
@@ -225,7 +198,6 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
   disconnect() {
     this[kNodeObserver]?.disconnect();
     this[kNodeObserver] = undefined;
-    this.$mode = undefined;
     return super.disconnect();
   }
 }

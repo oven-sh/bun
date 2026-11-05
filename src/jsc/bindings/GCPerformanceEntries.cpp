@@ -3,6 +3,7 @@
 #include "GCPerformanceEntries.h"
 
 #include "BunClientData.h"
+#include "EventLoopTask.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
@@ -13,6 +14,7 @@
 
 extern "C" uint64_t Bun__readOriginTimer(void* bunVM);
 extern "C" bool Bun__VM__isEventLoopKeptAlive(void* bunVM);
+extern "C" void Bun__VM__queueTask(void* bunVM, WebCore::EventLoopTask*);
 
 namespace Bun {
 
@@ -44,22 +46,37 @@ void GCPerformanceEntries::didGarbageCollect(CollectionScope scope)
     {
         Locker locker { m_lock };
         m_records.append({ *start, MonotonicTime::now() - *start, scope == CollectionScope::Full, false });
-        ++m_recordedCount;
     }
     setTimeUntilFire(0_s);
 }
 
-uint64_t GCPerformanceEntries::recordedCount()
+RefPtr<SharedTask<void()>> GCPerformanceEntries::willCollectSynchronously()
 {
-    Locker locker { m_lock };
-    return m_recordedCount;
+    {
+        Locker locker { m_lock };
+        m_synchronousRecordEnd = 0;
+    }
+    if (!m_observesHeap)
+        return nullptr;
+    if (!m_synchronousCollectionDidEnd) {
+        // A request runs it in the end phase of its own collection, right after didGarbageCollect().
+        m_synchronousCollectionDidEnd = createSharedTask<void()>([this] {
+            Locker locker { m_lock };
+            m_synchronousRecordEnd = m_records.size();
+        });
+    }
+    return m_synchronousCollectionDidEnd;
 }
 
-void GCPerformanceEntries::markLastRecordForced(uint64_t countBefore)
+void GCPerformanceEntries::didForceCollection()
 {
     Locker locker { m_lock };
-    if (m_recordedCount != countBefore && !m_records.isEmpty())
-        m_records.last().forced = true;
+    if (auto end = std::exchange(m_synchronousRecordEnd, 0)) {
+        auto& record = m_records[end - 1];
+        record.forced = true;
+        // As in Node, the entry lasts as long as the call: the sweep after the collection is part of it.
+        record.duration = MonotonicTime::now() - record.start;
+    }
 }
 
 void GCPerformanceEntries::setObservesHeap(bool observesHeap)
@@ -80,36 +97,48 @@ void GCPerformanceEntries::setListener(JSGlobalObject* realm, JSObject* listener
     m_listeners.removeAllMatching([&](auto& existing) { return !existing || existing->globalObject() == realm; });
     if (listener)
         m_listeners.append(Weak<JSObject>(listener));
-    // The records stay. As in Node, the observers that exist when a collection reaches JS get its entry.
+    // The records stay: as in Node, the observers that exist when a record reaches JS get its entry.
     setObservesHeap(!m_listeners.isEmpty());
+}
+
+void GCPerformanceEntries::discardRecords()
+{
+    cancelTimer();
+    Locker locker { m_lock };
+    m_records.clear();
+    m_synchronousRecordEnd = 0;
 }
 
 void GCPerformanceEntries::stop()
 {
     m_listeners.clear();
     setObservesHeap(false);
-    cancelTimer();
-    Locker locker { m_lock };
-    m_records.clear();
+    discardRecords();
 }
 
+// https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.cc#L208-L241
 void GCPerformanceEntries::doWork(VM& vm)
 {
     cancelTimer();
-    auto* clientData = WebCore::clientData(vm);
-    if (!clientData->scriptAllowed())
-        return;
-    // The immediate that delivers an entry to its observers keeps the event loop alive, and a collection must not
-    // (`beforeExit` would fire again for one). So the records wait for a turn that something else asks for.
-    if (!Bun__VM__isEventLoopKeptAlive(clientData->bunVM)) {
+    auto* bunVM = WebCore::clientData(vm)->bunVM;
+    // An entry reaches its observers from a ref'd immediate, and a collection must not keep the loop alive: wait for a turn that something else asks for.
+    if (!Bun__VM__isEventLoopKeptAlive(bunVM)) {
         setTimeUntilFire(0_s);
         return;
     }
+    Bun__VM__queueTask(bunVM, new WebCore::EventLoopTask([&vm](WebCore::ScriptExecutionContext&) {
+        if (RefPtr entries = WebCore::clientData(vm)->gcPerformanceEntries)
+            entries->callListeners();
+    }));
+}
 
+void GCPerformanceEntries::callListeners()
+{
     Records records;
     {
         Locker locker { m_lock };
         records.swap(m_records);
+        m_synchronousRecordEnd = 0;
     }
     if (records.isEmpty())
         return;
@@ -126,14 +155,14 @@ void GCPerformanceEntries::doWork(VM& vm)
     }
 
     // performance.now() and the clock of the records, read together, put each start on the timeline of the first.
-    double performanceNow = static_cast<double>(Bun__readOriginTimer(clientData->bunVM)) / 1000000.0;
+    double performanceNow = static_cast<double>(Bun__readOriginTimer(WebCore::clientData(m_vm)->bunVM)) / 1000000.0;
     auto now = MonotonicTime::now();
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
     for (unsigned i = 0; i < listeners.size(); ++i) {
         auto* listener = asObject(listeners.at(i));
         auto* realm = listener->globalObject();
-        // A realm that `bun test --isolate` retired reports Stopped.
+        // Stopped once the VM's stop was requested.
         if (realm->globalObjectMethodTable()->scriptExecutionStatus(realm, listener) != ScriptExecutionStatus::Running)
             continue;
         auto callData = JSC::getCallData(listener);
@@ -145,10 +174,9 @@ void GCPerformanceEntries::doWork(VM& vm)
             arguments.append(jsBoolean(record.forced));
             JSC::profiledCall(realm, ProfilingReason::API, listener, callData, jsUndefined(), arguments);
             if (auto* exception = scope.exception()) [[unlikely]] {
-                if (vm.isTerminationException(exception)) {
-                    Bun::takeTerminationOutsideScript(vm, scope);
+                // The tick that runs this task takes a termination.
+                if (m_vm.hasPendingTerminationException())
                     return;
-                }
                 scope.clearException();
                 Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(realm, exception);
             }
@@ -159,27 +187,24 @@ void GCPerformanceEntries::doWork(VM& vm)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetGCPerformanceEntryListener, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue listener = callFrame->argument(0);
+    if (!listener.isUndefined() && !listener.isCallable())
+        return throwVMTypeError(globalObject, scope, "The listener must be a function or undefined"_s);
     auto& entries = WebCore::clientData(vm)->gcPerformanceEntries;
-    auto* listener = callFrame->argument(0).getObject();
     if (!entries) {
-        if (!listener)
+        if (listener.isUndefined())
             return JSValue::encode(jsUndefined());
         entries = GCPerformanceEntries::create(vm);
     }
-    entries->setListener(globalObject, listener);
+    entries->setListener(globalObject, listener.isUndefined() ? nullptr : asObject(listener));
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" uint64_t Bun__GCPerformanceEntries__recordedCount(JSC::VM* vm)
-{
-    auto* entries = WebCore::clientData(*vm)->gcPerformanceEntries.get();
-    return entries ? entries->recordedCount() : 0;
-}
-
-extern "C" void Bun__GCPerformanceEntries__markLastRecordForced(JSC::VM* vm, uint64_t countBefore)
+extern "C" void Bun__GCPerformanceEntries__didForceCollection(JSC::VM* vm)
 {
     if (auto* entries = WebCore::clientData(*vm)->gcPerformanceEntries.get())
-        entries->markLastRecordForced(countBefore);
+        entries->didForceCollection();
 }
 
 } // namespace Bun

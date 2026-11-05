@@ -1,6 +1,4 @@
-// The 'gc' entries of node:perf_hooks, loaded when an observer first asks for them. A heap observer
-// (GCPerformanceEntries.cpp) times each collection of JavaScriptCore while an observer wants 'gc' entries, and calls
-// emitGCEntry() for it on a later tick.
+// The 'gc' entries of node:perf_hooks, loaded by their first observer. GCPerformanceEntries.cpp calls emitGCEntry() for each collection, on a later tick.
 const { NodeEntryObserver, enqueueNodeEntry, hasObserver, PerformanceNodeEntry } = require("internal/shared");
 
 const setGCEntryListener: (listener: typeof emitGCEntry | undefined) => void = $newCppFunction(
@@ -10,8 +8,6 @@ const setGCEntryListener: (listener: typeof emitGCEntry | undefined) => void = $
 );
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
-// As in the constants of node:perf_hooks. JavaScriptCore has two kinds of collection: an eden one is Node's minor,
-// a full one its major.
 const NODE_PERFORMANCE_GC_MAJOR = 4;
 const NODE_PERFORMANCE_GC_MINOR = 1;
 const NODE_PERFORMANCE_GC_FLAGS_NO = 0;
@@ -38,8 +34,7 @@ function updateGCTracking() {
   setGCEntryListener(wanted ? emitGCEntry : undefined);
 }
 
-// A registration that observes 'gc'. The count of 'gc' observers changes in these two methods only: the registry
-// itself calls disconnect() for the observer of a disposed Bun.ModuleGraph.
+// The registry itself calls disconnect() for the observer of a disposed Bun.ModuleGraph, so the count of 'gc' observers is followed here.
 class GCEntryObserver extends NodeEntryObserver {
   observe(types: Iterable<string>) {
     super.observe(types);

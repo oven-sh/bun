@@ -915,10 +915,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
 
-    // Nothing disconnects the 'gc' observers of the finished file.
-    if (auto* gcPerformanceEntries = WebCore::clientData(vm)->gcPerformanceEntries.get())
-        gcPerformanceEntries->setListener(oldGlobal, nullptr);
-
     // The plugin registries hold Strong<> roots into the old realm; owned by the global itself,
     // they would keep it (and everything it loaded) alive for the rest of the run.
     oldGlobal->onLoadPlugins.clear();
@@ -5360,6 +5356,9 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
         if (derived)
             derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
     }
+    // Every 'gc' observer is the finished file's, and nothing disconnects them.
+    if (auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get())
+        gcPerformanceEntries->stop();
 }
 
 // `bun test --isolate=modules`: the global object is kept, but realms the finished file created from it are retired.
@@ -5367,10 +5366,17 @@ extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::Glob
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
+    auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get();
     for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
-        if (derived)
-            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+        if (!derived)
+            continue;
+        derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+        if (gcPerformanceEntries)
+            gcPerformanceEntries->setListener(derived.get(), nullptr);
     }
+    // The collections of the finished file are not the next one's.
+    if (gcPerformanceEntries)
+        gcPerformanceEntries->discardRecords();
 }
 
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)

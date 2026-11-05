@@ -105,6 +105,7 @@
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "ZigGlobalObject.h"
+#include "GCPerformanceEntries.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 
@@ -5519,10 +5520,13 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     vm->sourceProviderCacheMap.clear();
 
     if (sync) {
+        JSC::GCRequest request(JSC::CollectionScope::Full);
+        if (auto* gcPerformanceEntries = WebCore::clientData(*vm)->gcPerformanceEntries.get())
+            request.didFinishEndPhase = gcPerformanceEntries->willCollectSynchronously();
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
         clearStackBelowCaller();
-        vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+        vm->heap.collectNow(JSC::Sync, request);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif

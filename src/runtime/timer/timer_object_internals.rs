@@ -399,7 +399,7 @@ impl TimerObjectInternals {
             // keeping the event loop alive other than setImmediates
             || (!s.flags.get().is_keeping_event_loop_alive()
                 // SAFETY: `vm` live per hook contract.
-                && !unsafe { (*vm).is_event_loop_alive_excluding_immediates() });
+                && !unsafe { (*vm).is_event_loop_kept_alive() });
         if cleared {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.this_value.with_mut(|r| r.downgrade());

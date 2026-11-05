@@ -33,6 +33,8 @@ pub enum Reason {
     Language,
     /// Code in Markdown in which a text may have a line break, or which may be nothing but JSX.
     InMarkdown,
+    /// A comment may say that something stays as it is written.
+    IgnoreComment,
     SyntaxError,
     /// Something rare that is left to the long way, such as a template in another language.
     Rare,
@@ -42,10 +44,11 @@ pub enum Reason {
 }
 
 impl Reason {
-    pub const ALL: [Reason; 8] = [
+    pub const ALL: [Reason; 9] = [
         Reason::Options,
         Reason::Language,
         Reason::InMarkdown,
+        Reason::IgnoreComment,
         Reason::SyntaxError,
         Reason::Rare,
         Reason::Stack,
@@ -220,8 +223,8 @@ fn is_typescript(path: &[u8]) -> bool {
 
 /// Which parser of Prettier reads the text, if the quick way has it.
 fn language_of(code: &Code<'_>, options: &FormatOptions) -> Option<quick::Language> {
-    // The name says one thing to the parser and another to the printer.
-    if (options.filepath.as_deref()).is_some_and(|name| !name.is_empty() && name != code.path) {
+    // The name says one thing to the parser and another to the printer. A text without a name has the name "".
+    if (options.filepath.as_deref()).is_some_and(|name| name != code.path) {
         return None;
     }
     let is_typescript = is_typescript(code.path);
@@ -245,7 +248,7 @@ fn language_of(code: &Code<'_>, options: &FormatOptions) -> Option<quick::Langua
 }
 
 /// See `FormatOptions::is_in_markdown`: true if a text in `code` may have a line break in it (a template, a comment, a
-/// string, what is left as it is written), or if `code` may be nothing but JSX.
+/// string), or if `code` may be nothing but JSX.
 fn may_differ_in_markdown(code: &Code<'_>) -> bool {
     let text = code.text;
     let can_have_jsx = ![&b".ts"[..], b".mts", b".cts"]
@@ -254,7 +257,6 @@ fn may_differ_in_markdown(code: &Code<'_>) -> bool {
     strings::contains_char(text, b'`')
         || strings::contains_char(text, b'\\')
         || strings::contains(text, b"/*")
-        || strings::contains(text, b"prettier-ignore")
         || (can_have_jsx && strings::contains_char(text, b'<'))
 }
 
@@ -273,6 +275,11 @@ pub fn format(
     };
     if options.is_in_markdown && may_differ_in_markdown(&code) {
         return Err(scratch.refuse(Reason::InMarkdown, code.text));
+    }
+    // What is printed around code that stays as it is written (parentheses, semicolons, the comment itself) is where
+    // the long way corrects Prettier most often.
+    if strings::contains(code.text, b"prettier-ignore") {
+        return Err(scratch.refuse(Reason::IgnoreComment, code.text));
     }
     let quick = scratch.quick.get_or_insert_default();
     if quick

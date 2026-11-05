@@ -3603,12 +3603,17 @@ mod spawn_process_body {
             }
 
             let mut receipts: [libc::kevent; 5] = bun_core::ffi::zeroed();
-            match bun_sys::kevent(
-                kq_fd,
-                &changes_buf[..changes_len],
-                &mut receipts[..changes_len],
-                None,
-            ) {
+            // SAFETY: the loop below reads `udata` as a number. The one other reader of `kq_fd`,
+            // `NoOrphansTracker::killTracked`, throws the events away.
+            let registered = unsafe {
+                bun_sys::kevent(
+                    kq_fd,
+                    &changes_buf[..changes_len],
+                    &mut receipts[..changes_len],
+                    None,
+                )
+            };
+            match registered {
                 Err(err) => return Some(Err(err)),
                 Ok(_) => {}
             }
@@ -3652,7 +3657,8 @@ mod spawn_process_body {
             let mut child_exited = false;
             let mut child_status: Option<Status> = None;
             loop {
-                let got = match bun_sys::kevent(kq_fd, &[], &mut events[..], None) {
+                // SAFETY: an empty changelist registers nothing.
+                let got = match unsafe { bun_sys::kevent(kq_fd, &[], &mut events[..], None) } {
                     Err(err) => return Some(Err(err)),
                     Ok(c) => c,
                 };

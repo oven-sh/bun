@@ -435,7 +435,7 @@ pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
 }
 
 impl Symbol {
-    pub(crate) fn merge_contents_with(&mut self, old: &mut Symbol) {
+    pub(crate) fn merge_contents_with(&mut self, old: &Symbol) {
         self.use_count_estimate += old.use_count_estimate;
         if old.must_not_be_renamed() {
             self.original_name = old.original_name;
@@ -565,10 +565,10 @@ impl Map {
         let new_symbol = self.get(new).unwrap();
         // SAFETY: `old != new` (checked above) so the two slots are disjoint
         // elements of the NestedList; `get()` derives `*mut` from Vec's raw
-        // `NonNull` (write provenance preserved). Neither `&mut` outlives this
+        // `NonNull` (write provenance preserved). Neither reference outlives this
         // block (cf. split_at_mut).
         unsafe {
-            (&mut *new_symbol).merge_contents_with(&mut *old_symbol);
+            (&mut *new_symbol).merge_contents_with(&*old_symbol);
         }
         new
     }

@@ -72,6 +72,7 @@ impl Scratch {
         if let Some(others) = &mut self.guests.others {
             others.css.forget_other_files();
         }
+        self.as_written.forget_other_files();
     }
 }
 
@@ -336,6 +337,17 @@ fn parser_for(language: &[u8], options: &FormatOptions) -> Option<(&'static [u8]
     }
 }
 
+/// The name of the file that a code block in `language` is formatted as, if it's JavaScript or TypeScript.
+fn path_of_script(language: &[u8], options: &FormatOptions) -> Option<&'static [u8]> {
+    Some(match parser_for(language, options)? {
+        (_, oxfmt_file_name @ [_, ..]) => oxfmt_file_name,
+        (b"babel", _) => b"dummy.jsx",
+        (b"typescript", _) if language == b"tsx" => b"dummy.tsx",
+        (b"typescript", _) => b"dummy.ts",
+        _ => return None,
+    })
+}
+
 /// True if a code block in `language` is handed to a formatter.
 fn is_formatted(language: &[u8], options: &FormatOptions) -> bool {
     matches!(
@@ -345,7 +357,7 @@ fn is_formatted(language: &[u8], options: &FormatOptions) -> bool {
         && parser_for(language, options).is_some()
 }
 
-/// The options for the code in a text with `options`, but for the three that differ from one piece of code to the next.
+/// The options for the code in a text with `options`, but for the four that differ from one piece of code to the next.
 fn options_of_guests(options: &FormatOptions) -> FormatOptions {
     FormatOptions {
         line_ending: LineEnding::Lf,
@@ -362,12 +374,15 @@ fn options_of_guests(options: &FormatOptions) -> FormatOptions {
     }
 }
 
-/// Formats `code`, the content of a code block in `language`, for lines of `width` columns, and appends it to `out`.
-/// Returns `false` if the code stays as it is. `options` are [`options_of_guests`].
+/// Formats the content of a code block and appends it to `out`. Returns `false` if the code stays as it is. `options`
+/// are [`options_of_guests`].
 fn format_embedded(
-    language: &[u8],
-    code: &[u8],
-    width: usize,
+    &printer::Embedded {
+        language,
+        code,
+        width,
+        is_at_margin,
+    }: &printer::Embedded<'_>,
     options: &mut FormatOptions,
     is_in_template: bool,
     format_block: Option<&mut FormatBlock<'_>>,
@@ -379,7 +394,7 @@ fn format_embedded(
         return true;
     }
     let is_mdx_jsx = language == MDX_JSX;
-    let Some((parser, oxfmt_file_name)) = parser_for(language, options) else {
+    let Some((parser, _)) = parser_for(language, options) else {
         return false;
     };
     let in_fragment;
@@ -401,6 +416,7 @@ fn format_embedded(
     options.line_width = LineWidth(width.clamp(1, u32::MAX as usize) as u32);
     options.is_mdx_jsx = is_mdx_jsx;
     options.is_mdx_es_syntax = language == MDX_ES_SYNTAX;
+    options.is_at_margin = is_at_margin;
     let options = &*options;
     if let Some(parser) = crate::json::Parser::from_name(parser) {
         crate::json::format(code, parser, options, &mut guests.json, out).is_ok()
@@ -435,11 +451,8 @@ fn format_embedded(
                 format_in(code, options, scratch, out, mode, format_block).is_ok()
             }
             _ => {
-                let path: &[u8] = match parser {
-                    _ if !oxfmt_file_name.is_empty() => oxfmt_file_name,
-                    b"babel" => b"dummy.jsx",
-                    _ if language == b"tsx" => b"dummy.tsx",
-                    _ => b"dummy.ts",
+                let Some(path) = path_of_script(language, options) else {
+                    return false;
                 };
                 match (format_block, options.format_javascript) {
                     (Some(format), _) => format(path, code, options, out),
@@ -745,9 +758,7 @@ fn with_printer<R>(
         let written = out.len();
         let is_formatted = formats_embedded
             && format_embedded(
-                embedded.language,
-                embedded.code,
-                embedded.width,
+                embedded,
                 options_of_guests.get_or_insert_with(|| self::options_of_guests(options)),
                 mode.is_in_template,
                 format_block.as_deref_mut(),

@@ -15,7 +15,7 @@
 
 use crate::text::much_larger;
 use crate::width_table::{WIDE, WIDE_WITH_VS16, ZERO};
-use crate::{Quick, Words, zeros};
+use crate::{Bytes, Numbers, Quick, Words, zeros};
 
 static INITIAL_FILTER_BYTES: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -76,6 +76,8 @@ pub(crate) struct Doc {
     pub(crate) cache_count: i32,
     pub(crate) cache_log: Vec<i32>,
     pub(crate) cache_log_pos: i32,
+    /// Not 0 while the only parameter of a function and its return type are written, see print_parameters_and_return_type().
+    pub(crate) depends_on_what_breaks: i32,
 }
 impl Doc {
     pub(crate) fn new() -> Self {
@@ -108,6 +110,7 @@ impl Doc {
             cache_count: 0,
             cache_log: zeros(256),
             cache_log_pos: 0,
+            depends_on_what_breaks: 0,
         }
     }
 }
@@ -198,6 +201,8 @@ pub(crate) const G_FORCE_FLAT: i32 = 128;
 // Groups: there is a fill inside. A fill measures for itself. In a group that was measured and fits, all its measurements come out
 // as "fits"; in one that is flat because the group around it is (which may be flat only up to a forced line break) they may not.
 pub(crate) const G_HAS_FILL: i32 = 256;
+/// groups: see stays_expanded()
+pub(crate) const G_STAYS_EXPANDED: i32 = 512;
 /// the same in the second word of a detached doc
 pub(crate) const D_HAS_FILL: i32 = 1 << 16;
 pub(crate) const ALIGN_BIAS: i32 = 1024;
@@ -248,6 +253,7 @@ impl Quick {
         self.doc.group_ids = 0;
         self.doc.es_pos = 0;
         self.doc.label = 0;
+        self.doc.depends_on_what_breaks = 0;
     }
 
     #[cold]
@@ -322,7 +328,21 @@ impl Quick {
         return p < end;
     }
 
+    #[inline]
     pub(crate) fn text(&mut self, command: i32) {
+        if self.doc.narrow_filter != 0 && self.text_through_filter(command) {
+            return;
+        }
+        self.d.put(self.doc.d_pos, command);
+        self.doc.d_pos += 1;
+        self.doc.acc_w = self.doc.acc_w + ((command >> 5) & 255) + self.doc.pending;
+        self.doc.pending = 0;
+    }
+
+    /// Has the filter taken the text?
+    #[cold]
+    #[inline(never)]
+    fn text_through_filter(&mut self, command: i32) -> bool {
         if self.doc.narrow_filter != 0
             && (if (command & 31) == op::Short {
                 self.doc.pass_mask < 0
@@ -357,15 +377,13 @@ impl Quick {
                     ((command as u32) >> 13) as i32 + ((command >> 5) & 255),
                 );
             }
-            return;
+            return true;
         }
-        self.d.put(self.doc.d_pos, command);
-        self.doc.d_pos += 1;
-        self.doc.acc_w = self.doc.acc_w + ((command >> 5) & 255) + self.doc.pending;
-        self.doc.pending = 0;
+        false
     }
 
     /// T[start, end): printable ASCII only.
+    #[inline]
     pub(crate) fn slice(&mut self, start: i32, end: i32) {
         let len = end - start;
         if len <= 0 {
@@ -376,8 +394,7 @@ impl Quick {
             return;
         }
         let p = self.doc.d_pos;
-        self.d.put(p, op::Text | (len << 5));
-        self.d.put(p + 1, start);
+        self.d.put_several(p, [op::Text | (len << 5), start]);
         self.doc.d_pos = p + 2;
         self.doc.acc_w = self.doc.acc_w + len + self.doc.pending;
         self.doc.pending = 0;
@@ -388,8 +405,8 @@ impl Quick {
     /// it gives up (Redo), and the file is formatted again with `short_cuts` off.
     pub(crate) fn fitted(&mut self, start: i32, length: i32, behind: i32) {
         let p = self.doc.d_pos;
-        self.d.put(p, op::Nop | (behind << 5) | (length << 6));
-        self.d.put(p + 1, start);
+        self.d
+            .put_several(p, [op::Nop | (behind << 5) | (length << 6), start]);
         self.doc.d_pos = p + 2;
         self.doc.acc_w = self.doc.acc_w + length + self.doc.pending;
         self.doc.pending = 0;
@@ -399,8 +416,8 @@ impl Quick {
     #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn fitted_text(&mut self, start: i32, length: i32, behind: i32) {
         let p = self.doc.d_pos;
-        self.d.put(p, op::Nop | (behind << 5) | (length << 6));
-        self.d.put(p + 1, start);
+        self.d
+            .put_several(p, [op::Nop | (behind << 5) | (length << 6), start]);
         self.doc.d_pos = p + 2;
         self.doc.acc_w = self.doc.acc_w + length + self.doc.pending;
         self.doc.pending = 0;
@@ -422,9 +439,8 @@ impl Quick {
             return;
         }
         let p = self.doc.d_pos;
-        self.d.put(p, op::TextW | (len << 5));
-        self.d.put(p + 1, start);
-        self.d.put(p + 2, width);
+        self.d
+            .put_several(p, [op::TextW | (len << 5), start, width]);
         self.doc.d_pos = p + 3;
         self.doc.acc_w = self.doc.acc_w + width + self.doc.pending;
         self.doc.pending = 0;
@@ -442,9 +458,8 @@ impl Quick {
             return;
         }
         let p = self.doc.d_pos;
-        self.d.put(p, op::TextW | (len << 5));
-        self.d.put(p + 1, start);
-        self.d.put(p + 2, width);
+        self.d
+            .put_several(p, [op::TextW | (len << 5), start, width]);
         self.doc.d_pos = p + 3;
         self.doc.acc_w = self.doc.acc_w + width + self.doc.pending;
         self.doc.pending = 0;
@@ -513,6 +528,21 @@ impl Quick {
         let mut p = start;
         let mut previous_was_emoji = false;
         while p < end {
+            // eight bytes of printable ASCII at a time
+            while p + 8 <= end {
+                let v = self.t.u64_at(p);
+                let below_blank = v.wrapping_sub(0x2020_2020_2020_2020);
+                let delete = v.wrapping_add(0x0101_0101_0101_0101);
+                if ((v | below_blank | delete) & 0x8080_8080_8080_8080) != 0 {
+                    break;
+                }
+                p += 8;
+                width += 8;
+                previous_was_emoji = false;
+            }
+            if p >= end {
+                break;
+            }
             let c = self.t.at(p);
             if c < 0x80 {
                 p += 1;
@@ -782,18 +812,21 @@ impl Quick {
     // --------------------------------------------------------------------------------------------------------- groups
     pub(crate) fn group_open(&mut self) -> i32 {
         let h = self.doc.d_pos;
-        self.d.put(
+        let head = op::GroupOpen
+            | (if self.doc.pending != 0 {
+                G_OPEN_PENDING << 5
+            } else {
+                0
+            });
+        self.d.put_several(
             h,
-            op::GroupOpen
-                | (if self.doc.pending != 0 {
-                    G_OPEN_PENDING << 5
-                } else {
-                    0
-                }),
+            [
+                head,
+                self.doc.prop_count,
+                self.doc.acc_w,
+                self.doc.impure_count,
+            ],
         );
-        self.d.put(h + 1, self.doc.prop_count);
-        self.d.put(h + 2, self.doc.acc_w);
-        self.d.put(h + 3, self.doc.impure_count);
         self.doc.d_pos = h + 4;
         self.doc.pending = 0;
         return h;
@@ -803,13 +836,14 @@ impl Quick {
         let p = self.doc.d_pos;
         self.d.put(p, op::GroupClose);
         self.doc.d_pos = p + 1;
-        let width = self.doc.acc_w - self.d.at(h + 2);
+        let [head, prop_count, acc_w, impure_count] = self.d.several(h);
+        let width = self.doc.acc_w - acc_w;
         let mut flags = if self.doc.pending != 0 {
             G_END_PENDING
         } else {
             0
         };
-        if self.doc.impure_count == self.d.at(h + 3) {
+        if self.doc.impure_count == impure_count {
             flags |= G_PURE;
         }
         if self.doc.last_fill_at > h {
@@ -818,24 +852,39 @@ impl Quick {
         if should_break {
             flags = (flags | G_BREAK) & !G_PURE;
             self.break_parent();
-        } else if self.doc.prop_count != self.d.at(h + 1) {
+        } else if self.doc.prop_count != prop_count {
             flags |= G_BREAK;
         }
-        if (self.d.at(h) & (G_OPEN_PENDING << 5)) != 0 {
+        if (head & (G_OPEN_PENDING << 5)) != 0 {
             if width != 0 {
                 self.doc.acc_w += 1;
             } else {
                 self.doc.pending = 1;
             }
         }
-        self.d.put(h, op::GroupOpen | (flags << 5));
-        self.d.put(h + 1, p + 1 - h);
-        self.d.put(h + 2, width);
-        self.d.put(h + 3, id);
+        self.d
+            .put_several(h, [op::GroupOpen | (flags << 5), p + 1 - h, width, id]);
     }
 
     pub(crate) fn group_close(&mut self, h: i32) {
         self.group_close_with(h, false, 0);
+    }
+
+    /// For the group `h`, just closed, of an object or an object type, which is written to break the next time if it breaks now.
+    #[inline(always)]
+    pub(crate) fn stays_expanded(&mut self, h: i32) {
+        if self.doc.depends_on_what_breaks != 0 {
+            self.mark_stays_expanded(h);
+        }
+    }
+
+    /// The layout measures such a group step by step, and gives up if it does not fit.
+    #[cold]
+    fn mark_stays_expanded(&mut self, h: i32) {
+        if self.options.object_wrap_preserve {
+            self.d
+                .put(h, (self.d.at(h) | (G_STAYS_EXPANDED << 5)) & !(G_PURE << 5));
+        }
     }
 
     /// Closes a group that is printed flat even where it does not fit. Nothing in it may force a break.

@@ -67,6 +67,9 @@ pub struct FormatOptions {
     /// break that's part of a text (in a template, in a comment) is written as `\r\n` to tell it apart from the others,
     /// because Markdown indents what follows it differently.
     pub is_in_markdown: bool,
+    /// Where the text is printed nothing is indented, so a line break in a text is like any other there, and needs no
+    /// mark. See `is_in_markdown`.
+    pub is_at_margin: bool,
     /// The text is `<$>`, JSX from MDX, and `</$>`: Prettier's `rootMarker: "mdx"`. Only the part between the two is
     /// printed.
     pub is_mdx_jsx: bool,

@@ -10,11 +10,11 @@
 
 use crate::doc::{
     ALIGN_BIAS, ALIGN_MARK_ROOT, ALIGN_TO_ROOT, G_BREAK, G_END_PENDING, G_FORCE_FLAT, G_HAS_FILL,
-    G_PURE, LINE_HARD, LINE_LITERAL, LINE_NORMAL, STANDING_BELOW, op,
+    G_PURE, G_STAYS_EXPANDED, LINE_HARD, LINE_LITERAL, LINE_NORMAL, STANDING_BELOW, op,
 };
 use crate::options::{EOL_CR, EOL_CRLF, EOL_LF};
 use crate::text::much_larger;
-use crate::{Bytes, Quick, R, Stop, Words, why, zeros};
+use crate::{Bytes, Quick, R, Stop, Words, rare, why, zeros};
 
 pub(crate) struct Printer {
     pub(crate) out: Vec<u8>,
@@ -693,6 +693,14 @@ impl Quick {
         let mut pos: i32 = 0;
         let mut mode = BREAK;
         let mut ind = root_indent;
+        if self.options.indentation != 0 {
+            let mut levels = self.options.indentation;
+            while levels > 0 {
+                ind = self.make_indent(ind);
+                levels -= 1;
+            }
+            pos = self.printer.it.at(ind + IT_WIDTH);
+        }
         let mut remeasure: i32 = 0;
         let mut waiting: i32 = 0;
         loop {
@@ -736,12 +744,12 @@ impl Quick {
                                     break 's2;
                                 }
                                 let s = ((w as u32) >> 13) as i32;
-                                // Eight bytes at a time, and up to seven too many: what follows overwrites them.
-                                self.printer.out.put_u64(o, self.t.u64_at(s));
-                                let mut k: i32 = 8;
+                                // Sixteen bytes at a time, and up to fifteen too many: what follows overwrites them.
+                                self.printer.out.put_u128(o, self.t.u128_at(s));
+                                let mut k: i32 = 16;
                                 while k < len {
-                                    self.printer.out.put_u64(o + k, self.t.u64_at(s + k));
-                                    k += 8;
+                                    self.printer.out.put_u128(o + k, self.t.u128_at(s + k));
+                                    k += 16;
                                 }
                                 o += len;
                                 pos += len;
@@ -755,11 +763,11 @@ impl Quick {
                                 break 's2;
                             }
                             let s = self.d.at(pc + 1);
-                            self.printer.out.put_u64(o, self.t.u64_at(s));
-                            let mut k: i32 = 8;
+                            self.printer.out.put_u128(o, self.t.u128_at(s));
+                            let mut k: i32 = 16;
                             while k < len {
-                                self.printer.out.put_u64(o + k, self.t.u64_at(s + k));
-                                k += 8;
+                                self.printer.out.put_u128(o + k, self.t.u128_at(s + k));
+                                k += 16;
                             }
                             o += len;
                             pos += len;
@@ -1073,13 +1081,13 @@ impl Quick {
                                                 op::Static => {
                                                     let len = (v >> 5) & 255;
                                                     let s = ((v as u32) >> 13) as i32;
-                                                    self.printer.out.put_u64(o, self.t.u64_at(s));
-                                                    let mut k: i32 = 8;
+                                                    self.printer.out.put_u128(o, self.t.u128_at(s));
+                                                    let mut k: i32 = 16;
                                                     while k < len {
                                                         self.printer
                                                             .out
-                                                            .put_u64(o + k, self.t.u64_at(s + k));
-                                                        k += 8;
+                                                            .put_u128(o + k, self.t.u128_at(s + k));
+                                                        k += 16;
                                                     }
                                                     o += len;
                                                     pc += 1;
@@ -1088,13 +1096,13 @@ impl Quick {
                                                 op::Text => {
                                                     let len = ((v as u32) >> 5) as i32;
                                                     let s = self.d.at(pc + 1);
-                                                    self.printer.out.put_u64(o, self.t.u64_at(s));
-                                                    let mut k: i32 = 8;
+                                                    self.printer.out.put_u128(o, self.t.u128_at(s));
+                                                    let mut k: i32 = 16;
                                                     while k < len {
                                                         self.printer
                                                             .out
-                                                            .put_u64(o + k, self.t.u64_at(s + k));
-                                                        k += 8;
+                                                            .put_u128(o + k, self.t.u128_at(s + k));
+                                                        k += 16;
                                                     }
                                                     o += len;
                                                     pc += 2;
@@ -1106,11 +1114,11 @@ impl Quick {
                                                         let s = self.d.at(pc + 1);
                                                         let mut k: i32 = 0;
                                                         while k < len {
-                                                            self.printer.out.put_u64(
+                                                            self.printer.out.put_u128(
                                                                 o + k,
-                                                                self.t.u64_at(s + k),
+                                                                self.t.u128_at(s + k),
                                                             );
-                                                            k += 8;
+                                                            k += 16;
                                                         }
                                                         o += len;
                                                         pc += 1;
@@ -1179,8 +1187,8 @@ impl Quick {
                                                     while k < len {
                                                         self.printer
                                                             .out
-                                                            .put_u64(o + k, self.t.u64_at(s + k));
-                                                        k += 8;
+                                                            .put_u128(o + k, self.t.u128_at(s + k));
+                                                        k += 16;
                                                     }
                                                     o += len;
                                                     extra = extra + len - self.d.at(pc + 2);
@@ -1342,8 +1350,8 @@ impl Quick {
                             let s = self.d.at(pc + 1);
                             let mut k: i32 = 0;
                             while k < len {
-                                self.printer.out.put_u64(o + k, self.t.u64_at(s + k));
-                                k += 8;
+                                self.printer.out.put_u128(o + k, self.t.u128_at(s + k));
+                                k += 16;
                             }
                             o += len;
                             pos += len;
@@ -1737,8 +1745,12 @@ impl Quick {
                     let tabs = self.printer.it.at(r + IT_TABS);
                     let spaces = self.printer.it.at(r + IT_REAL_SPACES);
                     let prefix_length = self.printer.it.at(r + IT_PREFIX_LEN);
-                    if o + prefix_length + tabs + spaces + 2 > self.printer.out_cap - 32 {
+                    if o + prefix_length + tabs + spaces + 3 > self.printer.out_cap - 32 {
                         self.grow_out_to(o + prefix_length + tabs + spaces + 64)?;
+                    }
+                    if kind == LINE_LITERAL && self.options.marks_line_breaks_in_texts {
+                        self.printer.out.put(o, 13);
+                        o += 1;
                     }
                     if eol == EOL_CRLF {
                         self.printer.out.put(o, 13);
@@ -1809,6 +1821,10 @@ impl Quick {
                             sp,
                             (waiting & WAIT_SUFFIX) != 0,
                         );
+                    }
+                    if !ok && (flags & G_STAYS_EXPANDED) != 0 {
+                        // The long way goes back and lays out the parameters as it will the next time.
+                        return Err(self.rare(rare::RETURN_TYPE));
                     }
                     self.printer.st.put(sp, mode);
                     sp += 1;
@@ -2109,15 +2125,21 @@ impl Quick {
         self.d.put(p + 3, op::Ret);
         let saved_width = self.options.print_width;
         let saved_end_of_line = self.options.end_of_line;
+        let saved_marks = self.options.marks_line_breaks_in_texts;
+        let saved_indentation = self.options.indentation;
         self.set_print_width(width);
         // the text goes through the printer once more
         self.set_end_of_line(EOL_LF);
+        self.options.marks_line_breaks_in_texts = false;
+        self.options.indentation = 0;
         let v0 = (|| -> R<Option<()>> {
             self.print_doc(p, p + 2)?;
             Ok(None)
         })();
         self.set_print_width(saved_width);
         self.set_end_of_line(saved_end_of_line);
+        self.options.marks_line_breaks_in_texts = saved_marks;
+        self.options.indentation = saved_indentation;
         if let Some(v) = v0? {
             return Ok(v);
         }

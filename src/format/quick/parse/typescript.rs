@@ -13,7 +13,7 @@ use crate::ast::{
 use crate::fast::MEMBER_OF_INTERFACE;
 use crate::lexer::{PREC, kw, tk};
 use crate::words::w;
-use crate::{Quick, R, Stop, Words, why};
+use crate::{Quick, R, Stop, Words, rare, why};
 
 pub(crate) struct ParseTypescript {
     /// In the `extends` part of a conditional type another conditional type needs parentheses.
@@ -211,9 +211,11 @@ impl Quick {
         let saved = self.parse_typescript.no_conditional_types;
         self.parse_typescript.no_conditional_types = 0;
         let list_mark = self.arena.ls_pos;
-        if self.starts_with_gt() && self.parse.typed != FLOW {
+        let may_be_empty = self.parse_flow.may_be_empty;
+        self.parse_flow.may_be_empty = false;
+        if self.starts_with_gt() && !may_be_empty {
             // `<>`
-            return Err(self.unexpected());
+            return Err(self.text_refuse());
         }
         while !self.starts_with_gt() {
             let v0 = self.ts_parse_type()?;
@@ -294,8 +296,8 @@ impl Quick {
         let saved = self.parse_typescript.no_conditional_types;
         self.parse_typescript.no_conditional_types = 0;
         let list_mark = self.arena.ls_pos;
-        if self.starts_with_gt() && self.parse.typed != FLOW {
-            // `<>`
+        if self.starts_with_gt() {
+            // `<>` (which may start a fragment, for whoever tries this)
             return Err(self.unexpected());
         }
         while !self.starts_with_gt() {
@@ -1144,6 +1146,9 @@ impl Quick {
     // ------------------------------------------------------------------------------------------------------ type members
     pub(crate) fn type_member_semicolon(&mut self) -> R<()> {
         if self.lexer.tok == tk::Comma || self.lexer.tok == tk::Semi {
+            if self.lexer.tok_nl != 0 {
+                return Err(self.rare(rare::SEMICOLON));
+            }
             self.next()?;
         } else if self.lexer.tok != tk::BraceR && self.lexer.tok_nl == 0 {
             return Err(self.unexpected());
@@ -1585,6 +1590,11 @@ impl Quick {
             self.next()?;
             head |= F_GENERATOR;
         }
+        // the modifiers of TypeScript, which Flow's own parser reads, are printed in ways of their own
+        if !is_ts && (head & !(F_STATIC | F_ASYNC | F_GENERATOR | (MOD_DECLARE << SUB_SHIFT))) != 0
+        {
+            return Err(self.text_refuse());
+        }
         let variance = if self.parse.typed == FLOW {
             self.flow_parse_variance_of_member()?
         } else {
@@ -1627,6 +1637,10 @@ impl Quick {
         if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
             if method == M_METHOD && (head & F_STATIC) == 0 && is_constructor_key {
                 method = M_CONSTRUCTOR;
+            }
+            // Flow: `+a() {}`, `a?() {}`
+            if !is_ts && (variance != 0 || (head & F_OPTIONAL) != 0) {
+                return Err(self.text_refuse());
             }
             let member = self.parse_method_rest(
                 k::ClassMethod | head | (method << SUB_SHIFT),
@@ -1890,6 +1904,9 @@ impl Quick {
             id = self.identifier()?;
         } else {
             self.next()?;
+            if self.is_kw(kw::Enum) {
+                return Err(self.text_refuse());
+            }
             id = if self.lexer.tok == tk::String {
                 self.string_literal()?
             } else {
@@ -2063,8 +2080,10 @@ impl Quick {
                 tk::Function => {
                     let declaration =
                         self.parse_function(start, k::FunctionDeclaration, modifiers << SUB_SHIFT)?;
-                    // no body, and no generator
-                    if (self.n.at(declaration) & (0xff | F_GENERATOR)) != k::TSDeclareFunction {
+                    // no body, no generator, and a name
+                    if (self.n.at(declaration) & (0xff | F_GENERATOR)) != k::TSDeclareFunction
+                        || self.n.at(declaration + 4) == 0
+                    {
                         return Err(self.text_refuse());
                     }
                     return Ok(declaration);
@@ -2530,7 +2549,7 @@ impl Quick {
             let start = self.lexer.tok_start;
             self.expect_lt()?;
             self.parse_typescript.no_conditional_types = 0;
-            if self.starts_with_gt() && self.parse.typed != FLOW {
+            if self.starts_with_gt() {
                 // `a<>`, or nothing at all
                 return Err(self.text_refuse());
             }
@@ -2694,9 +2713,7 @@ impl Quick {
         };
         self.expect_gt()?;
         let expression = self.parse_maybe_unary()?;
-        if self.is_bare_arrow(expression) {
-            return Err(self.text_refuse());
-        }
+        self.check_operand(expression)?;
         return Ok(self.node2(
             k::TypeAssertion,
             start,

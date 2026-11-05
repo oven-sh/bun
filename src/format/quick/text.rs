@@ -12,7 +12,7 @@
 //! place: enter_source() puts a 0 before and behind the range and leave_source() puts the two bytes back. A lexer stops at
 //! a 0 and a scan to the left does too, so neither needs an "end of input" test, and nothing is copied.
 
-use crate::{Quick, Stop, Words, why, zeros};
+use crate::{Quick, Stop, Words, rare, why, zeros};
 
 pub(crate) struct Text {
     /// Somebody has written more than reserve_gen() was asked for: bytes are lost, and the file is refused.
@@ -42,9 +42,7 @@ impl Quick {
     /// Something that this way does not print.
     #[cold]
     pub(crate) fn text_refuse(&self) -> Stop {
-        self.failed_at
-            .set(self.lexer.tok_start - self.text.src_start);
-        return self.stop(why::RARE);
+        self.rare(rare::OTHER)
     }
 }
 // A buffer that is too small gives way to one that is much larger: memory that is not written to costs nothing.

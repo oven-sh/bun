@@ -586,6 +586,7 @@ impl Quick {
             self.text(if is_exact { BAR_RBRACE } else { RBRACE });
             if with_group {
                 self.group_close_with(g, should_break, 0);
+                self.stays_expanded(g);
             }
             return Ok(());
         }

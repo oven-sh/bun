@@ -102,6 +102,21 @@ pub(crate) mod why {
     pub(crate) const LOST: i32 = 9;
 }
 
+/// What is left to the long way: `Quick::which_rare` has the number, for those who count.
+pub(crate) mod rare {
+    /// None of the following.
+    pub(crate) const OTHER: i32 = 0;
+    /// An object type in the return type decides how the only parameter is laid out.
+    pub(crate) const RETURN_TYPE: i32 = 1;
+    /// White space other than blanks, tabs and line breaks between tokens or in a comment, a control character anywhere,
+    /// U+2028 or U+2029 anywhere, a "\r" without a "\n", bytes that are not UTF-8.
+    pub(crate) const ODD_BYTES: i32 = 2;
+    /// A `;` that is a statement or a member of its own, or that starts a line and is not the guard of what follows it (`;[a].b()`).
+    pub(crate) const SEMICOLON: i32 = 3;
+    /// A `,` that starts a line: an empty line behind it is looked for behind the item by one way and behind the comma by the other.
+    pub(crate) const COMMA: i32 = 4;
+}
+
 thread_local! {
     /// Something was written beyond the end of a buffer, or read beyond the end of a buffer of numbers, since forget_losses().
     static LOST: Cell<bool> = const { Cell::new(false) };
@@ -462,6 +477,8 @@ pub struct Quick {
     pub(crate) d: Vec<i32>,
     /// Why the work stopped.
     pub(crate) why: Cell<i32>,
+    /// One of [`rare`].
+    pub(crate) which_rare: Cell<i32>,
     stack_check: bun_core::StackCheck,
     pub(crate) dialect: Dialect,
     had_bom: bool,
@@ -519,6 +536,7 @@ impl Quick {
             n: zeros(1 << 16),
             d: zeros(1 << 16),
             why: Cell::new(why::NONE),
+            which_rare: Cell::new(rare::OTHER),
             stack_check: bun_core::StackCheck::default(),
             dialect: Dialect::of_name(Language::JavaScript, b""),
             had_bom: false,
@@ -565,6 +583,15 @@ impl Quick {
     pub(crate) fn stop(&self, why: i32) -> Stop {
         self.why.set(why);
         Stop
+    }
+
+    /// `which` is one of [`rare`].
+    #[cold]
+    pub(crate) fn rare(&self, which: i32) -> Stop {
+        self.which_rare.set(which);
+        self.failed_at
+            .set(self.lexer.tok_start - self.text.src_start);
+        self.stop(why::RARE)
     }
 
     /// Where the letters of ASCII, digits, `_` and `$` from `p` on end.

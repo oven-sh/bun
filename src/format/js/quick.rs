@@ -36,8 +36,6 @@ pub enum Reason {
     InHtml,
     /// A comment may say that something stays as it is written.
     IgnoreComment,
-    /// The text isn't UTF-8.
-    NotUtf8,
     SyntaxError,
     /// Something rare that is left to the long way.
     Rare,
@@ -51,12 +49,11 @@ pub enum Reason {
 }
 
 impl Reason {
-    pub const ALL: [Reason; 12] = [
+    pub const ALL: [Reason; 11] = [
         Reason::Options,
         Reason::Language,
         Reason::InHtml,
         Reason::IgnoreComment,
-        Reason::NotUtf8,
         Reason::SyntaxError,
         Reason::Rare,
         Reason::Guest,
@@ -428,10 +425,6 @@ fn format_as(
     // the long way corrects Prettier most often.
     if strings::contains(code.text, b"prettier-ignore") {
         return Err(scratch.refuse(Reason::IgnoreComment, code.text));
-    }
-    // How wide half a character is, and whether it can be in a name, is for the long way to say.
-    if !strings::is_valid_utf8(code.text) {
-        return Err(scratch.refuse(Reason::NotUtf8, code.text));
     }
     let quick = scratch.quick.get_or_insert_default();
     match file {

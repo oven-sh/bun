@@ -973,8 +973,7 @@ private:
         /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
         asyncSocket->flush();
 
-        /* The tail of a response that ended under backpressure may be out now;
-         * the resetTimeout() below arms what this leaves. */
+        /* The tail of a response that ended under backpressure may be out now. */
         reinterpret_cast<HttpResponse<SSL> *>(s)->endTimeoutOverrideIfDrained();
 
         /* node:http compat: reads were paused while pipelined responses were

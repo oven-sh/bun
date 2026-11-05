@@ -58,7 +58,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
-        /* Every caller arms the timer after markDone(), so it arms the value this leaves. */
         uwsRes->endTimeoutOverrideIfDrained();
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();

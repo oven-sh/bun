@@ -67,7 +67,8 @@ public:
 
     /* A setTimeout() override ends when its response is complete and
      * hasFullyDrained(): a response that ended under backpressure keeps it
-     * until onWritable has drained the tail. Does not arm. */
+     * until onWritable has drained the tail. Arms the server's value when it
+     * ends the override, so an end path's own arm may come before or after. */
     void endTimeoutOverrideIfDrained() {
         auto* data = getHttpResponseData();
         if ((data->state & (HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)) == HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN) [[unlikely]] {
@@ -77,6 +78,7 @@ public:
             if (Super::hasFullyDrained()) {
                 data->state &= ~HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN;
                 data->idleTimeoutInForce = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->idleTimeout;
+                Super::timeout(data->idleTimeoutInForce);
             }
         }
     }
@@ -365,21 +367,17 @@ public:
 
             /* Success is when we wrote the entire thing without any failures */
             bool success = written == data.length() && !failed;
+            /* Reset the timeout on each tryEnd */
+            this->resetTimeout();
 
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
                 httpResponseData->markDone(this);
-                /* After markDone(), which can end a setTimeout() override, and
-                 * before the close gate, which can destruct the ext. */
-                this->resetTimeout();
 
                 /* We need to check if we should close this socket here now */
                 if (uncorkCompletedResponse()) {
                     closeIfDoneAndMarked(httpResponseData);
                 }
-            } else {
-                /* Reset the timeout on each tryEnd */
-                this->resetTimeout();
             }
 
             return success;

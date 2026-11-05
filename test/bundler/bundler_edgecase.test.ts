@@ -4504,6 +4504,16 @@ describe("bundler", () => {
     minifySyntax: true,
     run: { stdout: `["A","D","B","C","E",1,1,1,1,"TypeError","TypeError"]` },
   });
+  itBundled("edgecase/UnparenthesizedOptionalChainInNewTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        new a?.b();
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ['Cannot use an unparenthesized optional chain inside the target of "new"'],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

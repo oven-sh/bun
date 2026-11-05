@@ -124,10 +124,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn sfx_t_question_dot(
         p: &mut Self,
-        level: Level,
+        level: &mut Level,
         optional_chain: &mut Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
+        // Only the target of `new` is parsed at `Level::Member`.
+        if level.gte(Level::Member) {
+            p.log().add_range_error(
+                Some(p.source),
+                p.lexer.range(),
+                b"Cannot use an unparenthesized optional chain inside the target of \"new\"",
+            );
+            // One report for each target. No other suffix tells `Member` from `Call`.
+            *level = Level::Call;
+        }
+        let level = *level;
         p.lexer.next()?;
         let mut optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
 
@@ -1451,7 +1462,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parse_suffix(
         &mut self,
         left: &mut Expr,
-        level: Level,
+        mut level: Level,
         mut errors: Option<&mut DeferredErrors>,
         flags: EFlags,
     ) -> Result<(), Error> {
@@ -1565,7 +1576,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
                 T::TQuestion => Self::sfx_t_question(p, level, errors.as_deref_mut(), left, flags),
-                T::TQuestionDot => Self::sfx_t_question_dot(p, level, &mut optional_chain, left),
+                T::TQuestionDot => {
+                    Self::sfx_t_question_dot(p, &mut level, &mut optional_chain, left)
+                }
                 T::TTemplateHead => Self::sfx_t_template_head(
                     p,
                     level,

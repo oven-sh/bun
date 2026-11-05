@@ -4134,6 +4134,7 @@ console.log(resolve.length)
     ts.expectPrinted_("(a?.b as any)`x`", "(a?.b)`x`");
     ts.expectPrinted_("(<any>a?.b)`x`", "(a?.b)`x`");
     ts.expectPrinted_("(a?.b satisfies any)`x`", "(a?.b)`x`");
+    expectPrinted_("class X extends (a?.b)`t` {}", "class X extends (a?.b)`t` {\n}");
     expectPrinted_("a.b`x`", "a.b`x`");
     expectPrinted_("a()`x`", "a()`x`");
   });
@@ -4149,6 +4150,8 @@ console.log(resolve.length)
     expectPrinted_("new (a.b?.().c)()", "new (a.b?.().c)");
     expectPrinted_("new ((a.h())?.c)", "new (a.h()?.c)");
     expectPrinted_("new ((a.arr[1])?.b)()", "new (a.arr[1]?.b)");
+    expectPrinted_("new (a()?.[0])()", "new (a()?.[0])");
+    expectPrinted_("new (new (a?.b)())()", "new new (a?.b)()");
     ts.expectPrinted_("new (a?.b)!()", "new (a?.b)");
     ts.expectPrinted_("new (a?.b as any)(2)", "new (a?.b)(2)");
     ts.expectPrinted_("new (a?.b!)()", "new (a?.b)");
@@ -4162,6 +4165,12 @@ console.log(resolve.length)
     expectPrinted_("new (a?.b().c).d()", "new (a?.b().c).d");
     expectPrinted_("new ((a?.b)[c])()", "new (a?.b)[c]");
     expectPrinted_("new ((a?.()).b)()", "new (a?.()).b");
+    expectPrinted_("new a()?.b", "new a()?.b");
+    expectPrinted_("new a()?.[b]", "new a()?.[b]");
+    expectPrinted_("new a()?.(b)", "new a()?.(b)");
+    expectPrinted_("new a.b()?.c", "new a.b()?.c");
+    expectPrinted_("new a.b()?.[c]", "new a.b()?.[c]");
+    expectPrinted_("new a.b()?.(c)", "new a.b()?.(c)");
   });
 
   it("tagged template as new callee", () => {
@@ -4175,7 +4184,49 @@ console.log(resolve.length)
     expectPrinted_("new ((a?.b)`x`.c)()", "new (a?.b)`x`.c");
     expectPrinted_("new (import(x)`y`)()", "new (import(x))`y`");
     expectPrinted_('new (require("m")`y`)()', 'new (require("m"))`y`');
+    expectPrinted_("(new foo)`bar`()", "new foo()`bar`()");
     expectPrinted_("a()`x`", "a()`x`");
+  });
+
+  it("optional chain under a conditional in a new callee", () => {
+    // The chain must stay whole: `(a.b?.()).c` is another program.
+    for (const code of [
+      "new ((a.b?.().c) ? y : z)()",
+      "new (y ? z : (a.b?.().c))()",
+      "new (((a.b?.().c) ? y : z)`x`)()",
+      "new ((y ? z : (a.b?.().c))`x`)()",
+    ]) {
+      expect(parsed(code)).toContain("a.b?.().c");
+    }
+  });
+
+  it("rejects an unparenthesized optional chain in the target of new", () => {
+    const message = 'Cannot use an unparenthesized optional chain inside the target of "new"';
+    for (const code of [
+      "new a?.b",
+      "new a?.[b]",
+      "new a?.(b)",
+      "new a.b?.c",
+      "new a.b?.[c]",
+      "new a.b?.(c)",
+      "new (a)?.b()",
+      "new new a?.b()()",
+      "new new a()?.b()",
+    ]) {
+      expectParseError(code, message);
+      ts.expectParseError(code, message);
+    }
+    ts.expectParseError("new a!?.b()", message);
+    expect(() => transpiler.scan("new a?.b()")).toThrow(message);
+
+    // One error for each target, not one for each `?.`. Two errors throw an AggregateError.
+    expect(() => transpiler.transformSync("new a?.b?.c()", "js")).toThrow(message);
+    expect(() => transpilerMinifySyntax.transformSync("new {}?.a?.b()", "js")).toThrow(message);
+
+    expectPrinted_("new a[b?.c]()", "new a[b?.c]");
+    expectPrinted_("new a(b?.c)", "new a(b?.c)");
+    expectPrinted_("new a`${b?.c}`", "new a`${b?.c}`");
+    expectPrinted_("new class { x = a?.b }", "new class {\n  x = a?.b;\n}");
   });
 
   // https://github.com/oven-sh/bun/issues/31812
@@ -4195,8 +4246,13 @@ console.log(resolve.length)
       await Promise.all([
         run("const foo = () => (args) => class A {}; console.log(new (foo()`bar`)());"),
         run("const baz = () => ({ qux: class A {} }); console.log(new (baz()?.qux)());"),
+        run("const f = r => { const C = r?.W; return new C(); }; console.log(f({ W: class A {} }));"),
+        run("const a = { b: null }; console.log(new ((a.b?.().c) ? class Y {} : class A {})());"),
+        run(
+          "const a = { b: null }, y = () => class Y {}, z = () => class A {}; console.log(new (((a.b?.().c) ? y : z)`x`)());",
+        ),
       ]),
-    ).toEqual([ok, ok]);
+    ).toEqual([ok, ok, ok, ok, ok]);
   });
 
   it("useDefineForConst TypeScript class initialization", () => {

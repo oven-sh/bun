@@ -3439,11 +3439,7 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"new");
                     self.print_space();
-                    self.print_expr(
-                        e.target,
-                        Level::New,
-                        ExprFlag::forbid_call() | ExprFlag::HasNonOptionalChainParent,
-                    );
+                    self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
                     let args = e.args.slice();
                     if !args.is_empty() || level.gte(Level::Postfix) {
                         self.print(b"(");
@@ -3677,12 +3673,13 @@ pub(crate) mod __gated_printer {
                             return;
                         }
                     } else {
-                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        let parent_ends_chain =
+                            ExprFlag::ForbidCall | ExprFlag::HasNonOptionalChainParent;
+                        if !flags.is_disjoint(parent_ends_chain) {
                             wrap = true;
                             self.print(b"(");
-                            flags.remove(ExprFlag::ForbidCall);
                         }
-                        flags.remove(ExprFlag::HasNonOptionalChainParent);
+                        flags.remove_all(parent_ends_chain);
                     }
                     flags &= ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall;
 
@@ -3742,12 +3739,13 @@ pub(crate) mod __gated_printer {
                             return;
                         }
                     } else {
-                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        let parent_ends_chain =
+                            ExprFlag::ForbidCall | ExprFlag::HasNonOptionalChainParent;
+                        if !flags.is_disjoint(parent_ends_chain) {
                             wrap = true;
                             self.print(b"(");
-                            flags.remove(ExprFlag::ForbidCall);
                         }
-                        flags.remove(ExprFlag::HasNonOptionalChainParent);
+                        flags.remove_all(parent_ends_chain);
                     }
 
                     // The index target is not directly followed by `of`.

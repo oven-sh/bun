@@ -3,12 +3,12 @@
 
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
-    F_ACCESSOR, F_ASSERTS, F_ASYNC, F_COMPUTED, F_CONST, F_DEFINITE, F_ESCAPE, F_EXTRA,
-    F_GENERATOR, F_IN, F_OPTIONAL, F_OUT, F_PAREN, F_STATIC, IK_SHIFT, IK_TYPE, M_CONSTRUCTOR,
-    M_GET, M_METHOD, M_SET, MK_GLOBAL, MK_MODULE, MK_NAMESPACE, MOD_ABSTRACT, MOD_DECLARE,
-    MOD_OVERRIDE, MOD_PRIVATE, MOD_PROTECTED, MOD_PUBLIC, MOD_READONLY, MT_MINUS, MT_NONE,
-    MT_PLAIN, MT_PLUS, NT_NON_NULLABLE, NT_NON_NULLABLE_POSTFIX, NT_NULLABLE, TO_KEYOF,
-    TO_READONLY, TO_UNIQUE, V_CONST, V_LET, V_VAR, k, type_keyword,
+    EXT_AT, F_ACCESSOR, F_ASSERTS, F_ASYNC, F_CHAIN, F_COMPUTED, F_CONST, F_DEFINITE, F_ESCAPE,
+    F_EXT, F_EXTRA, F_GENERATOR, F_IN, F_OPTIONAL, F_OUT, F_PAREN, F_STATIC, IK_SHIFT, IK_TYPE,
+    M_CONSTRUCTOR, M_GET, M_METHOD, M_SET, MK_GLOBAL, MK_MODULE, MK_NAMESPACE, MOD_ABSTRACT,
+    MOD_ACCESSIBILITY, MOD_DECLARE, MOD_OVERRIDE, MOD_PRIVATE, MOD_PROTECTED, MOD_PUBLIC,
+    MOD_READONLY, MT_MINUS, MT_NONE, MT_PLAIN, MT_PLUS, TO_KEYOF, TO_READONLY, TO_UNIQUE, V_CONST,
+    V_LET, V_USING, V_VAR, k, type_keyword,
 };
 use crate::fast::MEMBER_OF_INTERFACE;
 use crate::lexer::{PREC, kw, tk};
@@ -18,20 +18,50 @@ use crate::{Quick, R, Stop, Words, why};
 pub(crate) struct ParseTypescript {
     /// In the `extends` part of a conditional type another conditional type needs parentheses.
     pub(crate) no_conditional_types: i32,
+    /// How many parameters with modifiers or decorators there have been in the file.
+    pub(crate) odd_parameters: i32,
+    /// The parameters that were read last have modifiers or decorators that only a function with a body can have.
+    pub(crate) parameters_need_body: bool,
+    /// The class whose members are read is a declaration, not an expression.
+    pub(crate) in_class_declaration: bool,
+    /// In what stands before the first `;`, `in` or `of` in the head of a `for`, however deep.
+    pub(crate) in_head_of_for: bool,
+    /// Among the names that are exported is a word of the language behind `type`: only from another module.
+    pub(crate) export_needs_from: bool,
+    /// Where type arguments were tried, TypeScript may have gone on: behind the parameters of a function type there was no `=>`, but something with which a list of
+    /// types can go on, or there was a type of JSDoc.
+    pub(crate) trial_is_doubtful: bool,
 }
 impl ParseTypescript {
     pub(crate) fn new() -> Self {
         Self {
             no_conditional_types: 0,
+            odd_parameters: 0,
+            parameters_need_body: false,
+            in_class_declaration: false,
+            in_head_of_for: false,
+            export_needs_from: false,
+            trial_is_doubtful: false,
         }
     }
 }
+
+// Whose parameters are read: what can have parameters with decorators, and parameter properties.
+pub(crate) const PARAMETERS_PLAIN: i32 = 0;
+/// a method or a setter of a class
+pub(crate) const PARAMETERS_OF_METHOD: i32 = 1;
+pub(crate) const PARAMETERS_OF_CONSTRUCTOR: i32 = 2;
 
 /// TYPED_FLOW
 pub(crate) const FLOW: i32 = 2;
 impl Quick {
     pub(crate) fn ts_reset_context(&mut self) {
         self.parse_typescript.no_conditional_types = 0;
+        self.parse_typescript.odd_parameters = 0;
+        self.parse_typescript.parameters_need_body = false;
+        self.parse_typescript.in_class_declaration = false;
+        self.parse_typescript.in_head_of_for = false;
+        self.parse_typescript.export_needs_from = false;
         self.flow_reset_context();
     }
 
@@ -173,6 +203,10 @@ impl Quick {
         let saved = self.parse_typescript.no_conditional_types;
         self.parse_typescript.no_conditional_types = 0;
         let list_mark = self.arena.ls_pos;
+        if self.starts_with_gt() && self.parse.typed != FLOW {
+            // `<>`
+            return Err(self.unexpected());
+        }
         while !self.starts_with_gt() {
             let v0 = self.ts_parse_type()?;
             self.list_push(v0);
@@ -187,7 +221,8 @@ impl Quick {
         return Ok(self.node_l(k::TypeParameterInstantiation, start, end, v1));
     }
 
-    pub(crate) fn parse_type_parameter(&mut self) -> R<i32> {
+    /// `has_variance`: of a class, an interface or a type alias, where `in` and `out` can stand.
+    pub(crate) fn parse_type_parameter(&mut self, has_variance: bool) -> R<i32> {
         if self.parse.typed == FLOW {
             return self.flow_parse_type_parameter();
         }
@@ -195,23 +230,31 @@ impl Quick {
         let mut flags: i32 = 0;
         // const, in, out
         loop {
+            let modifier: i32;
             if self.lexer.tok == tk::Const {
-                flags |= F_CONST;
+                modifier = F_CONST;
             } else if self.lexer.tok == tk::In {
-                flags |= F_IN;
-            } else if self.word() == w::Out {
-                self.save();
-                self.next()?;
-                let is_modifier = self.lexer.tok == tk::Name || self.lexer.tok == tk::In;
-                self.restore();
-                if !is_modifier {
+                modifier = F_IN;
+            } else if self.lexer.tok == tk::Name {
+                let w = self.word();
+                if !is_modifier_word(w) || !self.next_can_follow_modifier(w == w::Static)? {
                     break;
                 }
-                flags |= F_OUT;
+                if w != w::Out {
+                    return Err(self.text_refuse());
+                }
+                modifier = F_OUT;
             } else {
                 break;
             }
+            if (flags & modifier) != 0 || (modifier != F_CONST && !has_variance) {
+                return Err(self.text_refuse());
+            }
+            flags |= modifier;
             self.next()?;
+            if self.lexer.tok_nl != 0 {
+                return Err(self.text_refuse());
+            }
         }
         let name = self.parse_ident()?;
         let mut constraint: i32 = 0;
@@ -234,13 +277,21 @@ impl Quick {
     }
 
     pub(crate) fn ts_parse_type_parameters(&mut self) -> R<i32> {
+        return self.ts_parse_type_parameters_of(false);
+    }
+
+    pub(crate) fn ts_parse_type_parameters_of(&mut self, has_variance: bool) -> R<i32> {
         let start = self.lexer.tok_start;
         self.expect_lt()?;
         let saved = self.parse_typescript.no_conditional_types;
         self.parse_typescript.no_conditional_types = 0;
         let list_mark = self.arena.ls_pos;
+        if self.starts_with_gt() && self.parse.typed != FLOW {
+            // `<>`
+            return Err(self.unexpected());
+        }
         while !self.starts_with_gt() {
-            let v0 = self.parse_type_parameter()?;
+            let v0 = self.parse_type_parameter(has_variance)?;
             self.list_push(v0);
             if !self.starts_with_gt() {
                 self.expect(tk::Comma)?;
@@ -346,6 +397,11 @@ impl Quick {
         };
         let params = self.parse_params()?;
         let arrow_start = self.lexer.tok_start;
+        if self.lexer.tok != tk::Arrow
+            && (self.lexer.tok == tk::Comma || self.starts_with_gt() || self.is_start_of_type())
+        {
+            self.parse_typescript.trial_is_doubtful = true;
+        }
         self.expect(tk::Arrow)?;
         let type_ = self.parse_type_or_type_predicate()?;
         let return_type = self.node1(k::TypeAnnotation, arrow_start, self.lexer.prev_end, type_);
@@ -398,9 +454,9 @@ impl Quick {
     }
 
     pub(crate) fn parse_constituent(&mut self, operator: i32) -> R<i32> {
-        // a function type here is an error that TypeScript recovers from
+        // a function type needs parentheses here
         if self.is_start_of_function_or_constructor_type()? {
-            return self.parse_function_or_constructor_type();
+            return Err(self.unexpected());
         }
         return Ok(if operator == tk::BitOr {
             self.parse_union_or_intersection(tk::BitAnd)?
@@ -513,28 +569,16 @@ impl Quick {
                 operator = TO_READONLY;
             }
             if operator != 0 {
-                // not an operator if it is the whole type: `keyof` can be the name of a type
-                self.save();
                 self.next()?;
-                let is_operator = self.is_start_of_type();
-                if is_operator {
-                    let type_ = self.parse_type_operator_or_higher()?;
-                    return Ok(self.node1(
-                        k::TypeOperator | (operator << SUB_SHIFT),
-                        start,
-                        self.lexer.prev_end,
-                        type_,
-                    ));
-                }
-                self.restore();
+                let type_ = self.parse_type_operator_or_higher()?;
+                return Ok(self.node1(
+                    k::TypeOperator | (operator << SUB_SHIFT),
+                    start,
+                    self.lexer.prev_end,
+                    type_,
+                ));
             } else if w == w::Infer {
-                self.save();
-                self.next()?;
-                let is_infer = self.lexer.tok == tk::Name;
-                self.restore();
-                if is_infer {
-                    return self.parse_infer_type();
-                }
+                return self.parse_infer_type();
             }
         }
         let saved = self.parse_typescript.no_conditional_types;
@@ -609,13 +653,8 @@ impl Quick {
                 }
                 type_ = self.node1(k::OptionalType, start, self.lexer.prev_end, type_);
             } else if self.lexer.tok == tk::Not {
-                self.next()?;
-                type_ = self.node1(
-                    k::NullableType | (NT_NON_NULLABLE_POSTFIX << SUB_SHIFT),
-                    start,
-                    self.lexer.prev_end,
-                    type_,
-                );
+                // a type of JSDoc
+                return Err(self.unexpected());
             } else {
                 break;
             }
@@ -636,6 +675,18 @@ impl Quick {
         return Ok(self.node0(k::KeywordType | (which << SUB_SHIFT), start, end));
     }
 
+    /// The current token stands behind a dot, on a new line. If it is a word and another word follows on its line, TypeScript takes the two for the start of a statement.
+    #[cold]
+    pub(crate) fn ts_check_name_on_new_line(&mut self) -> R<()> {
+        if self.parse.typed != FLOW && self.parse.typed != 0 && self.is_word() {
+            let after = self.peek_on_same_line()?;
+            if after == tk::Name || after >= tk::In {
+                return Err(self.text_refuse());
+            }
+        }
+        Ok(())
+    }
+
     /// `a.b.c`; with `allow_this`, `this.a`.
     pub(crate) fn parse_entity_name(&mut self, allow_this: bool) -> R<i32> {
         let start = self.lexer.tok_start;
@@ -650,11 +701,10 @@ impl Quick {
         };
         while self.lexer.tok == tk::Dot {
             self.next()?;
-            let right = if self.lexer.tok == tk::PrivateName {
-                self.leaf(k::PrivateName)?
-            } else {
-                self.parse_ident_name()?
-            };
+            if self.lexer.tok_nl != 0 {
+                self.ts_check_name_on_new_line()?;
+            }
+            let right = self.parse_ident_name()?;
             name = self.node2(k::QualifiedName, start, self.lexer.prev_end, name, right);
         }
         return Ok(name);
@@ -685,10 +735,9 @@ impl Quick {
         let list_mark = self.arena.ls_pos;
         let v0 = self.string_literal()?;
         self.list_push(v0);
-        if self.eat(tk::Comma)? && self.lexer.tok != tk::ParenR {
-            let v1 = self.parse_maybe_assign()?;
-            self.list_push(v1);
-            self.eat(tk::Comma)?;
+        if self.lexer.tok == tk::Comma {
+            // `{ with: { .. } }`, and nothing else
+            return Err(self.text_refuse());
         }
         self.expect(tk::ParenR)?;
         let args = self.list_finish(list_mark);
@@ -746,7 +795,7 @@ impl Quick {
             }
             if self.lexer.tok == tk::BracketL {
                 self.next()?;
-                if self.is_word() {
+                if self.lexer.tok == tk::Name {
                     self.next()?;
                     result = self.lexer.tok == tk::In;
                 }
@@ -801,9 +850,7 @@ impl Quick {
         if self.eat(tk::Colon)? {
             type_ = self.ts_parse_type()?;
         }
-        if self.lexer.tok == tk::Semi || self.lexer.tok == tk::Comma {
-            self.next()?;
-        }
+        self.eat(tk::Semi)?;
         self.expect(tk::BraceR)?;
         return Ok(self.node4(
             k::MappedType | ((readonly | (optional << 2)) << SUB_SHIFT),
@@ -845,6 +892,9 @@ impl Quick {
             };
             self.expect(tk::Colon)?;
             let type_ = self.ts_parse_type()?;
+            if (self.n.at(type_) & 0xff) == k::OptionalType {
+                return Err(self.unexpected());
+            }
             element = self.node3(
                 k::NamedTupleMember | flags,
                 label_start,
@@ -1058,46 +1108,9 @@ impl Quick {
                 return self.parse_import_type();
             }
             // the types of JSDoc, which TypeScript parses to complain about them
-            tk::Mul => {
-                self.next()?;
-                return Ok(self.node0(
-                    k::KeywordType | (type_keyword::All << SUB_SHIFT),
-                    start,
-                    self.lexer.prev_end,
-                ));
-            }
-            tk::Question => {
-                self.next()?;
-                if self.lexer.tok == tk::Comma
-                    || self.lexer.tok == tk::BraceR
-                    || self.lexer.tok == tk::ParenR
-                    || self.lexer.tok == tk::Gt
-                    || self.lexer.tok == tk::Eq
-                    || self.lexer.tok == tk::BitOr
-                {
-                    return Ok(self.node0(
-                        k::KeywordType | (type_keyword::JsdocUnknown << SUB_SHIFT),
-                        start,
-                        self.lexer.prev_end,
-                    ));
-                }
-                let type_ = self.ts_parse_type()?;
-                return Ok(self.node1(
-                    k::NullableType | (NT_NULLABLE << SUB_SHIFT),
-                    start,
-                    self.lexer.prev_end,
-                    type_,
-                ));
-            }
-            tk::Not => {
-                self.next()?;
-                let type_ = self.parse_non_array_type()?;
-                return Ok(self.node1(
-                    k::NullableType | (NT_NON_NULLABLE << SUB_SHIFT),
-                    start,
-                    self.lexer.prev_end,
-                    type_,
-                ));
+            tk::Mul | tk::Question | tk::Not => {
+                self.parse_typescript.trial_is_doubtful = true;
+                return Err(self.unexpected());
             }
             tk::BackQuote => {
                 let template = self.parse_template(true)?;
@@ -1108,9 +1121,6 @@ impl Quick {
                 });
             }
             _ => {}
-        }
-        if self.is_word() {
-            return self.parse_type_reference();
         }
         return Err(self.unexpected());
     }
@@ -1161,12 +1171,16 @@ impl Quick {
     pub(crate) fn parse_index_signature(&mut self, start: i32, head: i32) -> R<i32> {
         self.expect(tk::BracketL)?;
         let list_mark = self.arena.ls_pos;
+        let odd = self.parse_typescript.odd_parameters;
         while self.lexer.tok != tk::BracketR {
             let v0 = self.parse_binding_element()?;
             self.list_push(v0);
             if self.lexer.tok != tk::BracketR {
                 self.expect(tk::Comma)?;
             }
+        }
+        if self.parse_typescript.odd_parameters != odd {
+            return Err(self.text_refuse());
         }
         self.next()?;
         let parameters = self.list_finish(list_mark);
@@ -1230,15 +1244,22 @@ impl Quick {
         }
         let mut head: i32 = 0;
         let mut method = M_METHOD;
-        while self.lexer.tok == tk::Name {
+        if self.lexer.tok == tk::Name {
             let w = self.word();
-            let modifier = member_modifier(w);
-            if modifier == 0 || !self.next_can_follow_modifier(w == w::Static)? {
-                break;
+            if is_modifier_word(w) && self.next_can_follow_modifier(w == w::Static)? {
+                // `readonly`, once, is the only modifier here
+                if w != w::Readonly {
+                    return Err(self.text_refuse());
+                }
+                head = MOD_READONLY << SUB_SHIFT;
+                self.next()?;
+                let w = self.word();
+                if is_modifier_word(w) && self.next_can_follow_modifier(w == w::Static)? {
+                    return Err(self.text_refuse());
+                }
             }
-            head |= modifier;
-            self.next()?;
         }
+        self.ts_check_word_before_member()?;
         if self.lexer.tok == tk::Name
             && (self.lexer.tok_kw == kw::Get || self.lexer.tok_kw == kw::Set)
         {
@@ -1251,22 +1272,30 @@ impl Quick {
                 self.restore();
             }
         }
-        if self.lexer.tok == tk::BracketL && self.is_index_signature()? {
+        if self.lexer.tok == tk::BracketL && method == M_METHOD && self.is_index_signature()? {
             return self.parse_index_signature(start, head);
         }
         if self.lexer.tok == tk::BracketL {
             head |= F_COMPUTED;
         }
         let key = self.parse_property_name()?;
-        if self.eat(tk::Question)? {
+        if self.lexer.tok == tk::Question && method == M_METHOD {
+            self.next()?;
             head |= F_OPTIONAL;
         }
         if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
+            if (head & (MOD_READONLY << SUB_SHIFT)) != 0 {
+                return Err(self.text_refuse());
+            }
             return self.parse_signature(
                 k::MethodSignature | head | (method << SUB_SHIFT),
                 start,
                 key,
             );
+        }
+        // `get` and `set` announce an accessor
+        if method != M_METHOD {
+            return Err(self.unexpected());
         }
         let annotation = if self.lexer.tok == tk::Colon {
             self.ts_parse_type_annotation()?
@@ -1321,6 +1350,11 @@ pub(crate) fn is_parameter_modifier(w: i32) -> bool {
         || w == w::Override;
 }
 
+/// The words that TypeScript reads as modifiers wherever modifiers can stand, but for `const`, `default`, `export` and `in`, which are no names.
+pub(crate) fn is_modifier_word(w: i32) -> bool {
+    return member_modifier(w) != 0 || w == w::Accessor || w == w::Async || w == w::Out;
+}
+
 /// The bits of a modifier of a class member or type member in the head of the node; 0 if the word is none.
 pub(crate) fn member_modifier(w: i32) -> i32 {
     match w {
@@ -1362,10 +1396,56 @@ impl Quick {
             if !is_parameter_modifier(w) || !self.next_can_follow_modifier(false)? {
                 break;
             }
-            modifiers |= ((member_modifier(w) as u32) >> SUB_SHIFT) as i32;
+            let modifier = ((member_modifier(w) as u32) >> SUB_SHIFT) as i32;
+            if (modifiers
+                & (if (modifier & MOD_ACCESSIBILITY) != 0 {
+                    MOD_ACCESSIBILITY
+                } else {
+                    modifier
+                }))
+                != 0
+            {
+                return Err(self.text_refuse());
+            }
+            modifiers |= modifier;
             self.next()?;
         }
         return Ok(modifiers);
+    }
+
+    /// Among the parameters from `mark` on in the list at hand, or in what they hold, are some with modifiers or decorators.
+    #[cold]
+    pub(crate) fn ts_check_parameters(&mut self, mark: i32, owner: i32) -> R<()> {
+        let mut i = mark;
+        while i < self.arena.ls_pos {
+            let parameter = self.arena.ls.at(i);
+            let head = self.n.at(parameter);
+            let has_decorators: bool;
+            if (head & 0xff) == k::ParameterProperty {
+                // in a constructor, with a name
+                let mut name = self.n.at(parameter + 4);
+                if (self.n.at(name) & 0xff) == k::AssignmentPattern {
+                    name = self.n.at(name + 4);
+                }
+                if owner != PARAMETERS_OF_CONSTRUCTOR || (self.n.at(name) & 0xff) != k::Identifier {
+                    return Err(self.text_refuse());
+                }
+                has_decorators = self.n.at(parameter + 5) != 0;
+                self.parse_typescript.parameters_need_body = true;
+            } else {
+                has_decorators =
+                    (head & F_EXT) != 0 && self.n.at(parameter + EXT_AT.at(head & 0xff) + 1) != 0;
+            }
+            if has_decorators {
+                // in a method of a class that is a declaration
+                if owner == PARAMETERS_PLAIN || !self.parse_typescript.in_class_declaration {
+                    return Err(self.text_refuse());
+                }
+                self.parse_typescript.parameters_need_body = true;
+            }
+            i += 1;
+        }
+        Ok(())
     }
 
     // ----------------------------------------------------------------------------------------------------------- classes
@@ -1378,10 +1458,28 @@ impl Quick {
         return self.parse_heritage_list();
     }
 
+    /// `a`, `a.b.c`
+    pub(crate) fn is_entity_name(&self, mut n: i32) -> bool {
+        loop {
+            let head = self.n.at(n) & (0xff | F_PAREN | F_COMPUTED | F_CHAIN);
+            if head == k::Identifier {
+                return true;
+            }
+            if head != k::MemberExpression || (self.n.at(self.n.at(n + 5)) & 0xff) != k::Identifier
+            {
+                return false;
+            }
+            n = self.n.at(n + 4);
+        }
+    }
+
     pub(crate) fn parse_heritage_list(&mut self) -> R<i32> {
         let list_mark = self.arena.ls_pos;
         loop {
             let start = self.lexer.tok_start;
+            if self.word() == w::Implements {
+                return Err(self.text_refuse());
+            }
             let mut expression = self.parse_expr_subscripts()?;
             let mut type_arguments: i32 = 0;
             if (self.n.at(expression) & (0xff | F_PAREN)) == k::InstantiationExpression {
@@ -1389,6 +1487,9 @@ impl Quick {
                 expression = self.n.at(expression + 4);
             } else if self.lexer.tok == tk::Lt {
                 type_arguments = self.ts_parse_type_arguments()?;
+            }
+            if !self.is_entity_name(expression) {
+                return Err(self.text_refuse());
             }
             let v0 = self.node2(
                 k::Heritage,
@@ -1414,7 +1515,8 @@ impl Quick {
         };
         let mut head: i32 = 0;
         let mut method = M_METHOD;
-        // modifiers, in any order and number: what is wrong with them is not the business of a formatter
+        let is_ts = self.parse.typed != FLOW;
+        // modifiers, in any order
         while self.lexer.tok == tk::Name {
             let w = self.word();
             let mut modifier = member_modifier(w);
@@ -1444,8 +1546,22 @@ impl Quick {
             if !self.next_can_follow_modifier(w == w::Static)? {
                 break;
             }
+            if is_ts
+                && (head
+                    & (if (modifier & (MOD_ACCESSIBILITY << SUB_SHIFT)) != 0 {
+                        MOD_ACCESSIBILITY << SUB_SHIFT
+                    } else {
+                        modifier
+                    }))
+                    != 0
+            {
+                return Err(self.text_refuse());
+            }
             head |= modifier;
             self.next()?;
+        }
+        if is_ts {
+            self.ts_check_word_before_member()?;
         }
         if self.lexer.tok == tk::Mul {
             self.next()?;
@@ -1471,11 +1587,15 @@ impl Quick {
         }
         if self.lexer.tok == tk::BracketL
             && method == M_METHOD
-            && self.parse.typed != FLOW
+            && (head & F_GENERATOR) == 0
+            && is_ts
             && self.is_index_signature()?
         {
-            let signature = self.parse_index_signature(start, head & !F_ACCESSOR)?;
-            return Ok(signature);
+            // `static` and `readonly` are all that can stand before it
+            if (head & !(F_STATIC | (MOD_READONLY << SUB_SHIFT))) != 0 || decorators != 0 {
+                return Err(self.text_refuse());
+            }
+            return self.parse_index_signature(start, head);
         }
         if self.lexer.tok == tk::BracketL {
             head |= F_COMPUTED;
@@ -1485,25 +1605,34 @@ impl Quick {
             self.next()?;
             head |= F_OPTIONAL;
         }
+        let is_constructor_key = (head & F_COMPUTED) == 0 && self.is_constructor_key(key);
         if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
-            if method == M_METHOD
-                && (head & (F_STATIC | F_COMPUTED)) == 0
-                && self.is_constructor_key(key)
-            {
+            if method == M_METHOD && (head & F_STATIC) == 0 && is_constructor_key {
                 method = M_CONSTRUCTOR;
             }
-            return self.parse_method_rest(
+            let member = self.parse_method_rest(
                 k::ClassMethod | head | (method << SUB_SHIFT),
                 start,
                 key,
                 decorators,
-            );
+            )?;
+            if is_ts
+                && ((head
+                    & (((MOD_ABSTRACT | MOD_DECLARE | MOD_READONLY) << SUB_SHIFT) | F_ACCESSOR))
+                    != 0
+                    || decorators != 0
+                    || is_constructor_key
+                    || method != M_METHOD)
+            {
+                self.ts_check_method(member, is_constructor_key)?;
+            }
+            return Ok(member);
         }
         // `*`, `async`, `get` and `set` announce a method
         if (head & (F_GENERATOR | F_ASYNC)) != 0 || method != M_METHOD {
             return Err(self.unexpected());
         }
-        if self.lexer.tok == tk::Not && self.lexer.tok_nl == 0 {
+        if self.lexer.tok == tk::Not && self.lexer.tok_nl == 0 && (head & F_OPTIONAL) == 0 {
             head |= F_DEFINITE;
             self.next()?;
         }
@@ -1513,9 +1642,22 @@ impl Quick {
             0
         };
         let value = self.parse_class_property_value()?;
-        // both parsers go on without a semicolon
-        if self.lexer.tok == tk::Semi || self.mode.is_babel_flow {
-            self.semicolon()?;
+        self.semicolon()?;
+        if is_ts
+            && ((head & ((MOD_ABSTRACT << SUB_SHIFT) | F_DEFINITE | F_ACCESSOR)) != 0
+                || is_constructor_key)
+            && (is_constructor_key
+                // (whether the quotes stay is a matter of its own)
+                || ((head & ((MOD_ABSTRACT << SUB_SHIFT) | F_ACCESSOR)) != 0
+                    && (self.n.at(key) & 0xff) == k::StringLiteral
+                    && (head & F_COMPUTED) == 0)
+                || ((head & (MOD_ABSTRACT << SUB_SHIFT)) != 0
+                    && (value != 0
+                        || (head & F_DEFINITE) != 0
+                        || (decorators != 0 && !self.parse_typescript.in_class_declaration)))
+                || ((head & F_DEFINITE) != 0 && (value != 0 || annotation == 0)))
+        {
+            return Err(self.text_refuse());
         }
         return Ok(self.class_property_node(
             k::ClassProperty | head,
@@ -1527,6 +1669,60 @@ impl Quick {
             annotation,
             variance,
         ));
+    }
+
+    /// A word of the language where the key of a member is expected. `export` and `default` are modifiers for TypeScript if something like a key follows, on whatever line.
+    #[inline(always)]
+    pub(crate) fn ts_check_word_before_member(&mut self) -> R<()> {
+        if self.lexer.tok == tk::Export || self.lexer.tok == tk::Default {
+            return self.ts_check_export_before_member();
+        }
+        Ok(())
+    }
+
+    #[cold]
+    fn ts_check_export_before_member(&mut self) -> R<()> {
+        match self.peek()? {
+            tk::ParenL
+            | tk::Lt
+            | tk::Not
+            | tk::Colon
+            | tk::Eq
+            | tk::Question
+            | tk::Semi
+            | tk::Comma
+            | tk::BraceR => Ok(()),
+            _ => Err(self.text_refuse()),
+        }
+    }
+
+    /// What typescript-estree has to say about a method, an accessor or a constructor of a class.
+    #[cold]
+    fn ts_check_method(&mut self, member: i32, is_constructor_key: bool) -> R<()> {
+        let head = self.n.at(member);
+        let method = ((head as u32) >> SUB_SHIFT) as i32 & 3;
+        let has_body = self.n.at(member + 5) != 0;
+        let has_decorators = self.n.at(member + 7) != 0;
+        let is_wrong = (head & (((MOD_DECLARE | MOD_READONLY) << SUB_SHIFT) | F_ACCESSOR)) != 0
+            || ((head & (MOD_ABSTRACT << SUB_SHIFT)) != 0 && has_body)
+            || (has_decorators && !has_body)
+            // an accessor is not optional
+            || ((method == M_GET || method == M_SET) && (head & F_OPTIONAL) != 0)
+            // before a constructor, static or not: its accessibility
+            || (is_constructor_key
+                && method != M_GET
+                && method != M_SET
+                && (has_decorators
+                    || (head
+                        & (((MOD_ABSTRACT | MOD_OVERRIDE) << SUB_SHIFT)
+                            | F_ASYNC
+                            | F_GENERATOR
+                            | F_OPTIONAL))
+                        != 0));
+        if is_wrong {
+            return Err(self.text_refuse());
+        }
+        Ok(())
     }
 
     pub(crate) fn parse_static_block_in_class(&mut self, start: i32) -> R<i32> {
@@ -1546,7 +1742,7 @@ impl Quick {
         self.next()?;
         let id = self.parse_ident()?;
         let type_parameters = if self.lexer.tok == tk::Lt {
-            self.ts_parse_type_parameters()?
+            self.ts_parse_type_parameters_of(true)?
         } else {
             0
         };
@@ -1574,7 +1770,7 @@ impl Quick {
         self.next()?;
         let id = self.parse_ident()?;
         let type_parameters = if self.lexer.tok == tk::Lt {
-            self.ts_parse_type_parameters()?
+            self.ts_parse_type_parameters_of(true)?
         } else {
             0
         };
@@ -1585,13 +1781,7 @@ impl Quick {
             let type_start = self.lexer.tok_start;
             let type_end = self.lexer.tok_end;
             self.next()?;
-            if self.lexer.tok == tk::Dot
-                || self.lexer.tok == tk::Lt
-                || self.lexer.tok == tk::BracketL
-                || self.lexer.tok == tk::BitOr
-                || self.lexer.tok == tk::BitAnd
-                || self.lexer.tok == tk::Extends
-            {
+            if self.lexer.tok == tk::Dot {
                 self.restore();
             } else {
                 type_ = self.node0(
@@ -1623,6 +1813,10 @@ impl Quick {
         let list_mark = self.arena.ls_pos;
         while self.lexer.tok != tk::BraceR {
             let member_start = self.lexer.tok_start;
+            // a word or a string
+            if self.lexer.tok != tk::String && !self.is_word() {
+                return Err(self.text_refuse());
+            }
             let key = self.parse_property_name()?;
             let initializer = if self.eat(tk::Eq)? {
                 self.parse_maybe_assign()?
@@ -1687,6 +1881,9 @@ impl Quick {
         let mut body: i32 = 0;
         if self.lexer.tok == tk::BraceL {
             body = self.parse_module_block()?;
+        } else if (self.n.at(id) & 0xff) != k::StringLiteral {
+            // only `module "a";` has no body
+            return Err(self.text_refuse());
         } else {
             self.semicolon()?;
         }
@@ -1723,7 +1920,96 @@ impl Quick {
     /// A declaration that only TypeScript has, if one starts at the current token (a name, or `const`); else 0.
     /// `start` is where the statement starts: at the token, or at decorators before it.
     pub(crate) fn ts_parse_statement(&mut self, start: i32) -> R<i32> {
-        return self.parse_declaration(start, 0);
+        let declaration = self.parse_declaration(start, 0)?;
+        if (self.n.at(declaration) & 0xff) == k::ClassDeclaration && self.n.at(declaration + 4) == 0
+        {
+            // only a default export needs no name
+            return Err(self.text_refuse());
+        }
+        return Ok(declaration);
+    }
+
+    /// isValidAssignmentTarget() of typescript-estree
+    pub(crate) fn ts_is_valid_target(&self, mut n: i32) -> bool {
+        loop {
+            let head = self.n.at(n);
+            match head & 0xff {
+                k::Identifier => {
+                    return true;
+                }
+                k::MemberExpression => {
+                    return (head & F_CHAIN) == 0;
+                }
+                k::AsExpression
+                | k::SatisfiesExpression
+                | k::NonNullExpression
+                | k::InstantiationExpression => {
+                    n = self.n.at(n + 4);
+                }
+                k::TypeAssertion => {
+                    n = self.n.at(n + 5);
+                }
+                _ => {
+                    return false;
+                }
+            }
+        }
+    }
+
+    /// `init` is what stands first in the head of a `for`; `var_kind` is -1 if it is an expression. `is_for_in_or_of`: `in` or `of` follows.
+    pub(crate) fn ts_check_head_of_for(
+        &mut self,
+        init: i32,
+        var_kind: i32,
+        is_for_in_or_of: bool,
+    ) -> R<()> {
+        let is_right: bool;
+        if var_kind < 0 {
+            let head = self.n.at(init) & (0xff | F_PAREN);
+            is_right = !is_for_in_or_of
+                || head == k::ObjectExpression
+                || head == k::ArrayExpression
+                || self.ts_is_valid_target(init);
+        } else {
+            let list = self.n.at(init + 4);
+            let first = self.n.at(list + 1);
+            if is_for_in_or_of {
+                // one name or pattern, without a type and without a value
+                is_right = self.n.at(list) == 1
+                    && self.n.at(first + 5) == 0
+                    && (self.n.at(self.n.at(first + 4)) & F_EXT) == 0;
+            } else if var_kind >= V_USING {
+                let mut i: i32 = 1;
+                while i <= self.n.at(list) && self.n.at(self.n.at(list + i) + 5) != 0 {
+                    i += 1;
+                }
+                is_right = i > self.n.at(list);
+            } else {
+                is_right = true;
+            }
+        }
+        if !is_right {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
+    /// `declaration` stands behind `declare`: a value only for a `const` without a type, no `!`.
+    fn ts_check_ambient_variables(&mut self, declaration: i32, kind: i32) -> R<i32> {
+        let list = self.n.at(declaration + 4);
+        let mut i: i32 = 1;
+        while i <= self.n.at(list) {
+            let declarator = self.n.at(list + i);
+            let id = self.n.at(declarator + 4);
+            if (self.n.at(declarator) & F_DEFINITE) != 0
+                || (self.n.at(declarator + 5) != 0
+                    && (kind != V_CONST || (self.n.at(id) & F_EXT) != 0))
+            {
+                return Err(self.text_refuse());
+            }
+            i += 1;
+        }
+        return Ok(declaration);
     }
 
     pub(crate) fn parse_declaration(&mut self, start: i32, modifiers: i32) -> R<i32> {
@@ -1743,7 +2029,7 @@ impl Quick {
                 declaration,
                 self.n.at(declaration) | (modifiers << SUB_SHIFT),
             );
-            return Ok(declaration);
+            return self.ts_check_ambient_variables(declaration, V_CONST);
         }
         if modifiers != 0 {
             // behind `declare`
@@ -1754,24 +2040,21 @@ impl Quick {
                         declaration,
                         self.n.at(declaration) | (modifiers << SUB_SHIFT),
                     );
-                    return Ok(declaration);
+                    return self.ts_check_ambient_variables(declaration, V_VAR);
                 }
                 tk::Function => {
-                    return self.parse_function(
-                        start,
-                        k::FunctionDeclaration,
-                        modifiers << SUB_SHIFT,
-                    );
+                    let declaration =
+                        self.parse_function(start, k::FunctionDeclaration, modifiers << SUB_SHIFT)?;
+                    // no body, and no generator
+                    if (self.n.at(declaration) & (0xff | F_GENERATOR)) != k::TSDeclareFunction {
+                        return Err(self.text_refuse());
+                    }
+                    return Ok(declaration);
                 }
                 tk::Class => {
                     let v0 = k::ClassDeclaration | (modifiers << SUB_SHIFT);
                     let v1 = self.take_pending_decorators();
                     return self.parse_class(start, v0, v1);
-                }
-                tk::Import => {
-                    if self.peek()? == tk::String {
-                        return self.parse_import(start);
-                    }
                 }
                 _ => {}
             }
@@ -1781,15 +2064,7 @@ impl Quick {
                     declaration,
                     self.n.at(declaration) | (modifiers << SUB_SHIFT),
                 );
-                return Ok(declaration);
-            }
-            if self.is_kw(kw::Async) && self.peek_on_same_line()? == tk::Function {
-                self.next()?;
-                return self.parse_function(
-                    start,
-                    k::FunctionDeclaration,
-                    F_ASYNC | (modifiers << SUB_SHIFT),
-                );
+                return self.ts_check_ambient_variables(declaration, V_LET);
             }
         }
         's1: {
@@ -1823,6 +2098,10 @@ impl Quick {
                 w::Global => {
                     if self.peek_on_same_line()? == tk::BraceL {
                         return self.parse_module(start, modifiers, MK_GLOBAL);
+                    }
+                    if self.peek()? == tk::BraceL {
+                        // on the next line: still the body
+                        return Err(self.text_refuse());
                     }
                 }
                 w::Abstract => {
@@ -1862,8 +2141,32 @@ impl Quick {
                             self.unmark(m);
                             return Ok(declaration);
                         }
+                        // `declare` is a name if an expression goes on behind it
+                        if (self.is_word()
+                            && self.lexer.tok != tk::In
+                            && self.lexer.tok != tk::Instanceof
+                            && !(self.lexer.tok == tk::Name && self.ts_is_as_or_satisfies()))
+                            || self.lexer.tok == tk::BraceL
+                            || self.lexer.tok == tk::At
+                            || self.lexer.tok == tk::String
+                            || self.lexer.tok == tk::Num
+                            || self.lexer.tok == tk::BigInt
+                            || self.lexer.tok == tk::PrivateName
+                        {
+                            return Err(self.text_refuse());
+                        }
                     }
                     self.rewind(m);
+                }
+                // a modifier, whatever the line on which a declaration follows
+                w::Static => {
+                    return Err(self.text_refuse());
+                }
+                w::Public | w::Private | w::Protected | w::Readonly | w::Accessor => {
+                    let after = self.peek_on_same_line()?;
+                    if after == tk::Name || after >= tk::In {
+                        return Err(self.text_refuse());
+                    }
                 }
                 _ => {}
             }
@@ -1879,7 +2182,12 @@ impl Quick {
         if self.word() == w::Require && self.peek()? == tk::ParenL {
             let reference_start = self.lexer.tok_start;
             self.next()?;
-            let args = self.parse_arguments()?;
+            self.expect(tk::ParenL)?;
+            let list_mark = self.arena.ls_pos;
+            let v0 = self.string_literal()?;
+            self.list_push(v0);
+            self.expect(tk::ParenR)?;
+            let args = self.list_finish(list_mark);
             reference = self.call_node(
                 k::ExternalModuleReference,
                 reference_start,
@@ -1889,7 +2197,23 @@ impl Quick {
                 0,
             );
         } else {
-            reference = self.parse_entity_name(false)?;
+            // an alias cannot be only a type, and no word of the language is part of the name
+            if import_kind != 0 {
+                return Err(self.text_refuse());
+            }
+            let reference_start = self.lexer.tok_start;
+            let mut name = self.parse_ident()?;
+            while self.eat(tk::Dot)? {
+                let right = self.parse_ident()?;
+                name = self.node2(
+                    k::QualifiedName,
+                    reference_start,
+                    self.lexer.prev_end,
+                    name,
+                    right,
+                );
+            }
+            reference = name;
         }
         self.semicolon()?;
         return Ok(self.node2(
@@ -1950,17 +2274,17 @@ impl Quick {
             if self.lexer.tok == tk::BraceL || self.lexer.tok == tk::Mul {
                 return Ok(-1);
             }
+            if self.is_kw(kw::As) {
+                return Err(self.text_refuse());
+            }
             self.restore();
         }
         // a class starts at its decorators, also if they stand before `export`
-        return self.parse_declaration(
-            if self.parse.pending_decorators != 0 {
-                start
-            } else {
-                self.lexer.tok_start
-            },
-            0,
-        );
+        return self.ts_parse_statement(if self.parse.pending_decorators != 0 {
+            start
+        } else {
+            self.lexer.tok_start
+        });
     }
 
     /// `type a`, `type a as b`, and a specifier that is called `type`. The current token is `type`.
@@ -1968,6 +2292,7 @@ impl Quick {
         let start = self.lexer.tok_start;
         let is_import = kind == k::ImportSpecifier;
         let mut is_type_only = false;
+        let mut is_plain = true;
         // `type`
         let mut left = self.identifier()?;
         let mut right: i32 = 0;
@@ -2013,6 +2338,7 @@ impl Quick {
         } else if self.is_word() || self.lexer.tok == tk::String {
             // { type something ..? }
             is_type_only = true;
+            is_plain = self.lexer.tok == tk::Name;
             left = if self.lexer.tok == tk::String {
                 self.string_literal()?
             } else {
@@ -2020,12 +2346,22 @@ impl Quick {
             };
             if self.is_kw(kw::As) {
                 self.next()?;
+                if is_import {
+                    is_plain = self.lexer.tok == tk::Name;
+                }
                 right = if self.lexer.tok == tk::String {
                     self.string_literal()?
                 } else {
                     self.parse_ident_name()?
                 };
             }
+        }
+        if !is_plain {
+            // a word of the language or a string in the place of a name of this module
+            if is_import {
+                return Err(self.text_refuse());
+            }
+            self.parse_typescript.export_needs_from = true;
         }
         if right == 0 {
             right = self.node0(self.n.at(left), self.n.at(left + 1), self.n.at(left + 2));
@@ -2136,7 +2472,15 @@ impl Quick {
             tk::ParenL | tk::BackQuote => {
                 return true;
             }
-            tk::Lt | tk::Gt | tk::Add | tk::Sub => {
+            tk::Lt
+            | tk::Gt
+            | tk::Add
+            | tk::Sub
+            | tk::Shr
+            | tk::UShr
+            | tk::GtEq
+            | tk::ShrEq
+            | tk::UShrEq => {
                 return false;
             }
             tk::BraceL => {
@@ -2160,12 +2504,18 @@ impl Quick {
         let context = self.save_context();
         let depth = self.parse.speculating;
         let saved = self.parse_typescript.no_conditional_types;
+        let is_shift = self.lexer.tok == tk::Shl;
+        self.parse_typescript.trial_is_doubtful = false;
         self.set_speculating(depth + 1);
         let mut result: i32 = 0;
         let v0 = (|| -> R<Option<i32>> {
             let start = self.lexer.tok_start;
             self.expect_lt()?;
             self.parse_typescript.no_conditional_types = 0;
+            if self.starts_with_gt() && self.parse.typed != FLOW {
+                // `a<>`, or nothing at all
+                return Err(self.text_refuse());
+            }
             while !self.starts_with_gt() {
                 let v1 = self.ts_parse_type()?;
                 self.list_push(v1);
@@ -2203,6 +2553,21 @@ impl Quick {
             self.rewind(m);
             self.list_truncate(list_top);
             self.restore_context(context);
+            if self.parse_typescript.trial_is_doubtful && self.parse.typed != FLOW {
+                // `a < (b, c) > (d)`: TypeScript has taken `(b, c)` for parameters, and goes on without the `=>`; `a < !b > (c)`
+                return Err(self.text_refuse());
+            }
+            if is_shift && self.parse.typed != FLOW {
+                // `a << b >> (c)`: TypeScript takes `<b>` for the type parameters of a function type, and goes on without the rest of it
+                self.save();
+                self.next()?;
+                let is_name = self.lexer.tok == tk::Name;
+                self.next()?;
+                if is_name && self.starts_with_gt() {
+                    return Err(self.text_refuse());
+                }
+                self.restore();
+            }
         } else {
             self.unmark(m);
         }
@@ -2290,7 +2655,11 @@ impl Quick {
             if !self.is_generic_arrow_in_jsx()? {
                 return Ok(0);
             }
-            return self.try_parse_generic_arrow(start, flags);
+            let arrow = self.try_parse_generic_arrow(start, flags)?;
+            if arrow == 0 {
+                return Err(self.text_refuse());
+            }
+            return Ok(arrow);
         }
         let arrow = self.try_parse_generic_arrow(start, flags)?;
         if arrow != 0 || flags != 0 {
@@ -2304,6 +2673,9 @@ impl Quick {
         };
         self.expect_gt()?;
         let expression = self.parse_maybe_unary()?;
+        if self.is_bare_arrow(expression) {
+            return Err(self.text_refuse());
+        }
         return Ok(self.node2(
             k::TypeAssertion,
             start,

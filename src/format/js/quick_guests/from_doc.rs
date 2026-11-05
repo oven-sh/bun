@@ -58,12 +58,15 @@ pub(crate) struct FromDoc<'s, 'q> {
     /// How many groups and fills are around what is written. There the long way measures a line break in a string
     /// differently. For Markdown it's 1 from the start: the long way makes a `literalline` of every one.
     measured: u32,
+    /// The template has substitutions.
+    has_holes: bool,
     stack_check: bun_core::StackCheck,
 }
 
 impl<'s, 'q> FromDoc<'s, 'q> {
     pub(crate) fn new(sink: &'s mut Sink<'q>) -> Self {
         FromDoc {
+            has_holes: sink.hole_count() > 0,
             sink,
             groups: SmallVec::new(),
             measured: 0,
@@ -112,6 +115,14 @@ impl<'s, 'q> FromDoc<'s, 'q> {
                     // In `ir/`, a forced line break always breaks the groups around it.
                     if matches!(part, Doc::Line(Line::Hard | Line::Literal))
                         && !matches!(parts.peek(), Some(Doc::BreakParent))
+                    {
+                        return Err(Unwritten::Unknown);
+                    }
+                    // After a forced line break in what is printed on one line, a substitution is measured again, which
+                    // breaks one that Prettier has printed to a string.
+                    if matches!(part, Doc::Line(Line::Hard | Line::Literal))
+                        && self.measured > 0
+                        && self.has_holes
                     {
                         return Err(Unwritten::Unknown);
                     }

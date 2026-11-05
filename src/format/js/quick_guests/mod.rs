@@ -66,6 +66,10 @@ impl QuickGuests {
 
     fn style_sheet(&mut self, text: &[u8], sink: &mut Sink<'_>) -> Answer {
         let count = sink.hole_count().max(0) as usize;
+        // The long way indents what is in it differently.
+        if crate::front_matter::parse(text).is_some() {
+            return Answer::Refused;
+        }
         let document =
             crate::css::embed::document_of_template(text, count, &self.options, &mut self.css);
         match document.map(|document| FromDoc::new(sink).write(&document)) {
@@ -132,6 +136,8 @@ impl QuickGuests {
         // What the long way changes in the text before it's read, and what it takes for a placeholder.
         if strings::contains_char(text, b'\r')
             || has_lone_surrogate(text)
+            // Two line breaks in a row, or two blanks, of which the long way prints one.
+            || strings::trim_js_whitespace(text).is_empty()
             || strings::count(text, in_js::PLACEHOLDER_START) != sink.hole_count().max(0) as usize
         {
             return Answer::Refused;

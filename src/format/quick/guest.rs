@@ -11,7 +11,7 @@
 use crate::doc::{G_CAN_BREAK, G_WILL_BREAK, op};
 use crate::holes::FILTER_QUOT;
 use crate::lang::lang;
-use crate::{Quick, R, Stop, Words, why};
+use crate::{Quick, R, Words, why};
 use std::any::Any;
 
 /// The language of a text in a template: one of Prettier's parsers.
@@ -117,22 +117,17 @@ impl Quick {
             source_at: start,
             dollar_at: -1,
             is_uncertain: false,
-            has_stopped: false,
             q: self,
         };
         let answer = match (guests.format(guest, &text, &mut sink), sink.is_uncertain) {
             (Answer::Written, true) => Answer::Refused,
             (answer, _) => answer,
         };
-        let has_stopped = sink.has_stopped;
         while self.holes.level > level {
             self.pop();
         }
         self.guest.text = text;
         self.guest.guests = Some(guests);
-        if has_stopped {
-            return Err(Stop);
-        }
         match answer {
             Answer::Written => {
                 self.commit(mark);
@@ -180,8 +175,6 @@ pub struct Sink<'q> {
     dollar_at: i32,
     /// Two texts in a row are one text for Prettier, and the filter would have had to see them as one.
     is_uncertain: bool,
-    /// The work has stopped, and `Quick::why` says why.
-    has_stopped: bool,
 }
 
 impl Sink<'_> {
@@ -206,10 +199,6 @@ impl Sink<'_> {
             });
         }
         columns
-    }
-
-    fn note(&mut self, written: R<()>) {
-        self.has_stopped |= written.is_err();
     }
 
     /// `${` is escaped in a template. The filter sees one text at a time.
@@ -247,25 +236,21 @@ impl Sink<'_> {
             [] => {}
             [first] if (0x20..0x7f).contains(&first) => {
                 self.q.reserve();
-                let written = self
-                    .q
+                self.q
                     .text(op::Short | (1 << 5) | (i32::from(first) << 13));
-                self.note(written);
             }
             [first, second]
                 if (0x20..0x7f).contains(&first) && (0x20..0x7f).contains(&second) =>
             {
                 self.q.reserve();
-                let written = self.q.text(
+                self.q.text(
                     op::Short | (2 << 5) | (i32::from(first) << 13) | (i32::from(second) << 21),
                 );
-                self.note(written);
             }
             _ => {
                 let (start, end) = self.place(text);
                 self.q.reserve();
-                let written = self.q.slice_any(start, end);
-                self.note(written);
+                self.q.slice_any(start, end);
             }
         }
         self.note_ends(text, from);
@@ -276,8 +261,7 @@ impl Sink<'_> {
         let from = self.q.doc.d_pos;
         let (start, end) = self.place(text);
         self.q.reserve();
-        let written = self.q.slice_w(start, end, width);
-        self.note(written);
+        self.q.slice_w(start, end, width);
         self.note_ends(text, from);
     }
 
@@ -289,8 +273,7 @@ impl Sink<'_> {
         loop {
             let at = crate::Bytes::index_of(self.q.t.sub(0, end), 10, from);
             self.q.reserve();
-            let written = self.q.slice_any(from, if at < 0 { end } else { at });
-            self.note(written);
+            self.q.slice_any(from, if at < 0 { end } else { at });
             if at < 0 {
                 return self.note_ends(text, written_from);
             }
@@ -305,8 +288,7 @@ impl Sink<'_> {
 
     pub fn line(&mut self) {
         self.q.reserve();
-        let written = self.q.line();
-        self.note(written);
+        self.q.line();
     }
 
     pub fn softline(&mut self) {

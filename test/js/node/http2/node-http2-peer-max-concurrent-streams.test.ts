@@ -110,6 +110,64 @@ test("peerMaxConcurrentStreams caps the requests sent before the peer's SETTINGS
   }
 });
 
+test("the peer's first SETTINGS frame releases the requests queued behind the 100-stream seed", async () => {
+  // A server with default settings advertises no maxConcurrentStreams, so its SETTINGS lifts the
+  // seed to unlimited. The server holds every stream until all of them arrived: only the
+  // 'remoteSettings' dispatch can submit the requests over 100, a freed slot never does.
+  const TOTAL = 150;
+  const server = http2.createServer();
+  const held: http2.ServerHttp2Stream[] = [];
+  const allArrived = Promise.withResolvers<void>();
+  server.on("stream", stream => {
+    held.push(stream);
+    if (held.length === TOTAL) allArrived.resolve();
+  });
+  const port = await listen(server);
+  const client = http2.connect(`http://127.0.0.1:${port}`);
+  try {
+    const { reqs, results } = await requestAll(client, TOTAL);
+    await allArrived.promise;
+    expect(reqs.filter(req => req.pending).length).toBe(0);
+    expect(client.remoteSettings.maxConcurrentStreams).toBe(4294967295);
+    for (const stream of held) stream.respond({ ":status": 200 }, { endStream: true });
+    expect(await Promise.all(results)).toEqual(Array(TOTAL).fill(200));
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+test("a slot is freed when the stream closes on the wire, not when the response body is read", async () => {
+  // nghttp2 counts a stream until both sides sent END_STREAM. A response body that nothing reads
+  // keeps the Duplex open, but the peer already freed the slot, so the next request can go out.
+  const LIMIT = 100;
+  const TOTAL = 130;
+  const server = http2.createServer({ settings: { maxConcurrentStreams: LIMIT } });
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("x");
+  });
+  const port = await listen(server);
+  const client = http2.connect(`http://127.0.0.1:${port}`);
+  try {
+    const responses: Promise<number>[] = [];
+    for (let i = 0; i < TOTAL; i++) {
+      const req = client.request({ ":path": `/${i}` });
+      responses.push(
+        new Promise((resolve, reject) => {
+          req.on("response", headers => resolve(headers[":status"] as number));
+          req.on("error", reject);
+          req.end();
+        }),
+      );
+    }
+    expect(await Promise.all(responses)).toEqual(Array(TOTAL).fill(200));
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 test("remoteSettings reports the pre-SETTINGS limit like node", async () => {
   // A raw peer that never sends SETTINGS, so the session stays in the pre-SETTINGS window.
   const server = net.createServer(socket => socket.on("data", () => {}));
@@ -129,5 +187,26 @@ test("remoteSettings reports the pre-SETTINGS limit like node", async () => {
     }
   } finally {
     server.close();
+  }
+});
+
+test("a server session reports the pre-SETTINGS limit like node", async () => {
+  // 'session' fires before the client's preface is parsed, so its SETTINGS are not known yet.
+  for (const [options, expected] of [
+    [undefined, 100],
+    [{ peerMaxConcurrentStreams: 7 }, 7],
+  ] as const) {
+    const server = http2.createServer(options as http2.ServerOptions);
+    const seen = Promise.withResolvers<number>();
+    server.on("session", session => seen.resolve(session.remoteSettings.maxConcurrentStreams));
+    const port = await listen(server);
+    const socket = net.connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    try {
+      expect(await seen.promise).toBe(expected);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
   }
 });

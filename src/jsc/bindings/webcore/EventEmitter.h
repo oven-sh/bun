@@ -47,12 +47,13 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); };
 
     bool removeAllListeners();
-    WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
+    // How many listeners the event has after the add, like addListener. 0 when there is no listener to add.
+    WEBCORE_EXPORT unsigned addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
     WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
-    WEBCORE_EXPORT void addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT unsigned addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
@@ -68,10 +69,6 @@ public:
     bool hasEventListeners(JSC::VM& vm, ASCIILiteral eventType) const;
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
-
-    unsigned getMaxListeners() const { return m_maxListeners; };
-
-    void setMaxListeners(unsigned count);
 
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
@@ -106,7 +103,6 @@ private:
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
 
     EventEmitterData m_eventTargetData;
-    unsigned m_maxListeners { 10 };
 
     mutable JSC::Weak<JSC::JSObject> m_thisObject { nullptr };
 };
@@ -137,11 +133,6 @@ inline bool EventEmitter::hasEventListeners(const Identifier& eventType) const
 inline bool EventEmitter::hasEventListeners(JSC::VM& vm, ASCIILiteral eventType) const
 {
     return this->hasEventListeners(Identifier::fromString(vm, eventType));
-}
-
-inline void EventEmitter::setMaxListeners(unsigned count)
-{
-    this->m_maxListeners = count;
 }
 
 } // namespace WebCore

@@ -13,6 +13,7 @@ import {
   standardOutputCell,
   tickShownToHooksCell,
   versionsCell,
+  warnsOfTooManyListenersCell,
 } from "./native-cells.ts";
 import { handedOver } from "./native-code.ts";
 
@@ -104,23 +105,40 @@ const findsOrMakesEmitter = [
   b.definesName(["_events"], b.instance("EventEmitter").fresh),
 ];
 
-const onOtherReceiver = (firstParameter: string): b.FunctionField => ({
+const onOtherReceiver = (firstParameter: string, usesOfReceiver: readonly b.UseSpec[] = []): b.FunctionField => ({
   this: b.any,
   args: { [firstParameter]: b.any.optional, operands: b.any.rest },
   returns: b.any,
   capability: "js",
   throws: true,
   uses: {
-    this: findsOrMakesEmitter,
+    this: [...findsOrMakesEmitter, ...usesOfReceiver],
     [firstParameter]: [...handedOver, b.runsTransitively("ToPrimitive")],
     operands: handedOver,
   },
   implementation: b.generic,
 });
 
-const methodOfEventEmitter = (signature: b.SignatureOptions): b.FunctionField[] => [
+const methodOfEventEmitter = (
+  signature: b.SignatureOptions,
+  usesOfOtherReceiver: readonly b.UseSpec[] = [],
+): b.FunctionField[] => [
   { ...signature, this: nativeEmitter, implementation: b.generic },
-  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event"),
+  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event", usesOfOtherReceiver),
+];
+
+// The limit is the emitter's own `_maxListeners`, as in node:events: an ordinary property, read and stored as a program would.
+const limitOfListeners = b.keysNamed("_maxListeners");
+const limitHeldByEmitter: b.PlaceSpec = { place: "Member", operand: "this", path: ["_maxListeners"] };
+// JSEventEmitter::addListener: from the second listener of an event on it reads the limit and compares it with `>`, which converts a limit that is an object. For an event that is over the limit it calls the library's function once with the emitter, the event, the number of listeners and the limit.
+const warnsOfTooManyListeners = [
+  b.runsTransitively("ToPrimitive", b.named("_maxListeners")),
+  b.keptCalled(warnsOfTooManyListenersCell, {
+    times: "Once",
+    this: b.undefined,
+    args: [self, b.operand("event"), b.f64, limitHeldByEmitter],
+    result: "Ignored",
+  }),
 ];
 
 const addsListener = [
@@ -129,21 +147,28 @@ const addsListener = [
     returns: self,
     capability: "js",
     throws: true,
-    uses: { this: b.inspected, event: b.inspected, listener: [b.retained, calledWithWhatWasHandedOver] },
+    uses: {
+      this: warnsOfTooManyListeners,
+      event: b.inspected,
+      listener: [b.retained, calledWithWhatWasHandedOver],
+    },
     this: nativeEmitter,
     implementation: b.generic,
   },
-  ...methodOfEventEmitter({
-    args: { event: b.any, listener: b.any },
-    returns: self,
-    capability: "js",
-    throws: true,
-    uses: {
-      this: b.inspected,
-      event: [b.retained, b.runs("ToPrimitive")],
-      listener: [b.retained, calledWithEvents],
+  ...methodOfEventEmitter(
+    {
+      args: { event: b.any, listener: b.any },
+      returns: self,
+      capability: "js",
+      throws: true,
+      uses: {
+        this: warnsOfTooManyListeners,
+        event: [b.retained, b.runs("ToPrimitive")],
+        listener: [b.retained, calledWithEvents],
+      },
     },
-  }),
+    warnsOfTooManyListeners,
+  ),
 ] satisfies b.FunctionField[];
 
 const removesListener = methodOfEventEmitter({
@@ -165,14 +190,25 @@ const removesAllListeners = methodOfEventEmitter({
   writes: listenerLists,
 });
 
-const setsMaxListeners = methodOfEventEmitter({
-  args: { count: b.union(b.f64, b.notPassed) },
-  returns: b.undefined,
-  capability: "heap",
-  throws: true,
-  uses: { this: b.inspected },
-  writes: listenerLists,
-});
+const storesLimit = [b.storedByKey(limitOfListeners, b.operand("count"))];
+const setsMaxListeners = methodOfEventEmitter(
+  {
+    args: { count: b.f64 },
+    returns: self,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { this: storesLimit },
+  },
+  storesLimit,
+);
+
+// The limit, or the default of node:events while the emitter has none: a number.
+const answersLimit = [b.readByKey(limitOfListeners)];
+const getsMaxListeners = methodOfEventEmitter(
+  { returns: b.any, capability: "js", throws: true, runsOnlyOperandCode: true, uses: { this: answersLimit } },
+  answersLimit,
+);
 
 const readsListenerLists = (signature: Pick<b.SignatureOptions, "args" | "returns">) =>
   methodOfEventEmitter({
@@ -502,6 +538,7 @@ export default b.declarations(
     "process",
     {
       _exiting: b.property(b.bool, { mutability: "ChangesOnItsOwn" }),
+      _maxListeners: b.property(b.union(b.f64, b.undefined), { mutability: "ChangesOnItsOwn" }),
       ...declareEach(setByCommandLineFlag, b.property(b.union(b.bool, b.undefined), { mutability: "ChangesOnItsOwn" })),
       exit: endsProcessUnlessInWorker([formattedInErrorMessage]),
       reallyExit: replaceableFunction(calledWithExitCode, endsProcessUnlessInWorker(b.inspected)),
@@ -721,7 +758,7 @@ export default b.declarations(
       // Native code looks `emit` up on process for each event, so it calls what a program has stored there.
       emit: replaceableFunction(calledWithEvents, emitsEvent),
       eventNames: readsListenerLists({ returns: newArrayOf(b.union(b.string, b.symbol)) }),
-      getMaxListeners: readsListenerLists({ returns: b.f64 }),
+      getMaxListeners: getsMaxListeners,
       listenerCount: readsListenerLists({ args: { event: b.propertyKey.loose }, returns: b.f64 }),
       listeners: listsListeners,
       rawListeners: listsListeners,

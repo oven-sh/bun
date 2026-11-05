@@ -22,7 +22,7 @@ void IdentifierEventListenerMap::clear()
     Locker locker { m_lock };
 
     for (auto& entry : m_entries) {
-        for (auto& listener : entry.second)
+        for (auto& listener : entry.listeners)
             listener->markAsRemoved();
     }
 
@@ -32,40 +32,59 @@ void IdentifierEventListenerMap::clear()
 Vector<JSC::Identifier> IdentifierEventListenerMap::eventTypes() const
 {
     return m_entries.map([](auto& entry) {
-        return entry.first;
+        return entry.eventType;
     });
 }
 
-void IdentifierEventListenerMap::add(const JSC::Identifier& eventType, Ref<EventListener>&& listener, bool once)
+unsigned IdentifierEventListenerMap::insert(const JSC::Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
     Locker locker { m_lock };
 
-    if (auto* listeners = find(eventType)) {
-        listeners->append(SimpleRegisteredEventListener::create(WTF::move(listener), once));
-        return;
+    auto registration = SimpleRegisteredEventListener::create(WTF::move(listener), once);
+    auto* list = findList(eventType);
+    if (!list) {
+        m_entries.append({ eventType, SimpleEventListenerVector { WTF::move(registration) } });
+        return 1;
     }
 
-    m_entries.append({ eventType, SimpleEventListenerVector { SimpleRegisteredEventListener::create(WTF::move(listener), once) } });
+    if (prepend)
+        list->listeners.insert(0, WTF::move(registration));
+    else
+        list->listeners.append(WTF::move(registration));
+
+    // node keeps `warned` on the array of listeners, and a list of two is always a new array:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L570-L574 and #L722-L723
+    unsigned size = list->listeners.size();
+    if (size == 2)
+        list->warnedOfTooManyListeners = false;
+    return size;
 }
 
-void IdentifierEventListenerMap::prepend(const JSC::Identifier& eventType, Ref<EventListener>&& listener, bool once)
+unsigned IdentifierEventListenerMap::add(const JSC::Identifier& eventType, Ref<EventListener>&& listener, bool once)
 {
-    Locker locker { m_lock };
+    return insert(eventType, WTF::move(listener), once, false);
+}
 
-    if (auto* listeners = find(eventType)) {
-        listeners->insert(0, SimpleRegisteredEventListener::create(WTF::move(listener), once));
-        return;
-    }
+unsigned IdentifierEventListenerMap::prepend(const JSC::Identifier& eventType, Ref<EventListener>&& listener, bool once)
+{
+    return insert(eventType, WTF::move(listener), once, true);
+}
 
-    m_entries.append({ eventType, SimpleEventListenerVector { SimpleRegisteredEventListener::create(WTF::move(listener), once) } });
+unsigned IdentifierEventListenerMap::markWarnedOfTooManyListeners(const JSC::Identifier& eventType)
+{
+    auto* list = findList(eventType);
+    if (!list || list->warnedOfTooManyListeners)
+        return 0;
+    list->warnedOfTooManyListeners = true;
+    return list->listeners.size();
 }
 
 template<typename Matches>
 static bool removeLastMatching(EntriesVector& entries, const JSC::Identifier& eventType, const Matches& matches)
 {
     for (unsigned i = 0; i < entries.size(); ++i) {
-        if (entries[i].first == eventType) {
-            auto& listeners = entries[i].second;
+        if (entries[i].eventType == eventType) {
+            auto& listeners = entries[i].listeners;
             for (size_t j = listeners.size(); j > 0; --j) {
                 if (!matches(*listeners[j - 1]))
                     continue;
@@ -105,7 +124,7 @@ bool IdentifierEventListenerMap::removeAll(const JSC::Identifier& eventType)
     Locker locker { m_lock };
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {
-        if (m_entries[i].first == eventType) {
+        if (m_entries[i].eventType == eventType) {
             m_entries.removeAt(i);
             return true;
         }
@@ -114,14 +133,20 @@ bool IdentifierEventListenerMap::removeAll(const JSC::Identifier& eventType)
     return false;
 }
 
-SimpleEventListenerVector* IdentifierEventListenerMap::find(const JSC::Identifier& eventType)
+EventListenerList* IdentifierEventListenerMap::findList(const JSC::Identifier& eventType)
 {
     for (auto& entry : m_entries) {
-        if (entry.first == eventType)
-            return &entry.second;
+        if (entry.eventType == eventType)
+            return &entry;
     }
 
     return nullptr;
+}
+
+SimpleEventListenerVector* IdentifierEventListenerMap::find(const JSC::Identifier& eventType)
+{
+    auto* list = findList(eventType);
+    return list ? &list->listeners : nullptr;
 }
 
 } // namespace WebCore

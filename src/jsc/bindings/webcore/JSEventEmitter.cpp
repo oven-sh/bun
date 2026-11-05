@@ -1,9 +1,11 @@
 #include "config.h"
 #include "JSEventEmitter.h"
 
+#include "BunProcess.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
+#include "InternalModuleRegistry.h"
 #include "JSAddEventListenerOptions.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructorCallable.h"
@@ -23,8 +25,10 @@
 #include "JSEventListener.h"
 #include "JSEventListenerOptions.h"
 #include "JavaScriptCore/JSCJSValue.h"
+#include "NodeValidator.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/Identifier.h>
@@ -113,11 +117,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
 
-    JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    if (maxListeners && maxListeners.isUInt32()) {
-        object->setMaxListeners(maxListeners.asUInt32());
-    }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -139,11 +138,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     const auto object = EventEmitter::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>) {
         RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    if (maxListeners && maxListeners.isUInt32()) {
-        object->setMaxListeners(maxListeners.asUInt32());
     }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, object.copyRef());
@@ -172,7 +166,6 @@ template<> void JSEventEmitterDOMConstructor::initializeProperties(VM& vm, JSDOM
     JSString* nameString = jsNontrivialString(vm, "EventEmitter"_s);
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s), jsNumber(10), 0);
     putDirect(vm, vm.propertyNames->prototype, JSEventEmitter::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
@@ -256,6 +249,63 @@ JSC_DEFINE_CUSTOM_GETTER(jsEventEmitterConstructor, (JSGlobalObject * lexicalGlo
     return JSValue::encode(JSEventEmitter::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
+// `emitter._maxListeners`, or the default of node:events while that is undefined.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414
+static JSValue maxListenersOf(JSGlobalObject* lexicalGlobalObject, JSEventEmitter& wrapper, JSValue emitter)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue limit = emitter.get(lexicalGlobalObject, WebCore::builtinNames(vm)._maxListenersPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!limit.isUndefined())
+        return limit;
+
+    // node:events stores its `defaultMaxListeners` here when a program changes it.
+    auto* globalObject = wrapper.globalObject();
+    JSValue defaultLimit = globalObject->processObject()->getDirect(vm, WebCore::builtinNames(vm).defaultMaxListenersPrivateName());
+    return defaultLimit ? defaultLimit : jsNumber(10);
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L585-L595
+static void warnIfOverMaxListeners(JSGlobalObject* lexicalGlobalObject, JSEventEmitter& wrapper, JSValue emitter, const Identifier& eventType, JSValue type)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& listeners = wrapper.wrapped().eventListenerMap();
+
+    JSValue limit = maxListenersOf(lexicalGlobalObject, wrapper, emitter);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    // `m > 0 && existing.length > m` with the language's `>`: the limit is whatever the program stored.
+    bool isOver = jsLess<false>(lexicalGlobalObject, jsNumber(0), limit);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!isOver)
+        return;
+    // A getter or a valueOf of the limit is code of the program, which can change the list: it is looked up again.
+    auto* list = listeners.find(eventType);
+    if (!list)
+        return;
+    isOver = jsLess<false>(lexicalGlobalObject, limit, jsNumber(list->size()));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!isOver)
+        return;
+    unsigned count = listeners.markWarnedOfTooManyListeners(eventType);
+    if (!count)
+        return;
+
+    auto* globalObject = wrapper.globalObject();
+    JSValue warn = BUN_REQUIRE_INTERNAL_MODULE(globalObject, InternalMaxListenersWarning, "%EventEmitter%.prototype.on", "default"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    MarkedArgumentBuffer arguments;
+    arguments.append(emitter);
+    arguments.append(type);
+    arguments.append(jsNumber(count));
+    arguments.append(limit);
+    ASSERT(!arguments.hasOverflowed());
+    JSC::call(globalObject, warn, arguments, "internal/max_listeners_warning exports no function"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+}
+
 inline JSC::EncodedJSValue JSEventEmitter::addListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis, bool once, bool prepend)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -282,11 +332,17 @@ inline JSC::EncodedJSValue JSEventEmitter::addListener(JSC::JSGlobalObject* lexi
     // then, add the listener
     auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener"_s, "EventEmitter"_s, "addListener"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
-    JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addListenerForBindings(WTF::move(eventType), WTF::move(listener), once, prepend); }));
+    unsigned listenerCount = impl.addListenerForBindings(eventType, WTF::move(listener), once, prepend);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     impl.setThisObject(actualThis);
+
+    // node stores the first listener of an event bare and checks the limit from the second on.
+    if (listenerCount > 1) {
+        warnIfOverMaxListeners(lexicalGlobalObject, *castedThis, actualThis, eventType, argument0.value());
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
     RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
 }
 
@@ -295,28 +351,25 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_addListenerBod
     return JSEventEmitter::addListener(lexicalGlobalObject, callFrame, castedThis, false, false);
 }
 
-static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_setMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L404-L408
+static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_setMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter)
 {
-    auto& impl = castedThis->wrapped();
-    auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
-    if (callFrame->argumentCount() == 0) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    if (!argument0.value().isNumber()) {
-        throwTypeError(lexicalGlobalObject, throwScope, "The maxListeners argument must be a number"_s);
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-    unsigned maxListeners = JSC::toUInt32(argument0.value().asNumber());
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSValue emitter = callFrame->thisValue();
+    JSValue limit = callFrame->argument(0);
+    Bun::V::validateNumber(throwScope, lexicalGlobalObject, limit, "setMaxListeners"_s, jsNumber(0), jsUndefined());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
-    impl.setMaxListeners(maxListeners);
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    PutPropertySlot slot(emitter, true);
+    emitter.put(lexicalGlobalObject, WebCore::builtinNames(vm)._maxListenersPublicName(), limit, slot);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSC::JSValue::encode(emitter);
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_getMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
 {
-    auto& impl = castedThis->wrapped();
-    return JSC::JSValue::encode(JSC::jsNumber(impl.getMaxListeners()));
+    return JSC::JSValue::encode(maxListenersOf(lexicalGlobalObject, *castedThis, callFrame->thisValue()));
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_addOnceListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)

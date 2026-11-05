@@ -17,6 +17,8 @@ export const inspectOptionsCell = "GlobalObject.utilInspectOptions";
 export const nextTickQueueCell = "GlobalObject.nextTickQueue";
 export const drainMicrotasksCell = "Process.drainMicrotasks";
 export const tickShownToHooksCell = "Process.pushWithInitHooks";
+// The function of internal/max_listeners_warning: an add method of the native emitter calls it for an event that has more listeners than the emitter allows.
+export const warnsOfTooManyListenersCell = "EventEmitter.warnsOfTooManyListeners";
 export const onWarningCell = "Process.onWarning";
 export const setModuleWrapperCell = "NodeModule.setWrapperItem";
 export const writeWarningCell = "Process.writeWarning";

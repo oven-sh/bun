@@ -1020,6 +1020,16 @@ test("getMaxListeners", () => {
   expect(emitter.getMaxListeners()).toBe(20);
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414: only undefined means the default.
+test("getMaxListeners answers a limit of null", () => {
+  const emitter = new EventEmitter() as EventEmitter & { _maxListeners: unknown };
+  emitter._maxListeners = null;
+  expect(emitter.getMaxListeners()).toBeNull();
+  expect(getMaxListeners(emitter)).toBeNull();
+  emitter._maxListeners = undefined;
+  expect(emitter.getMaxListeners()).toBe(10);
+});
+
 test("setMaxListeners", () => {
   const emitter = new EventEmitter();
   expect(emitter.getMaxListeners()).toBe(10);
@@ -1206,6 +1216,71 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     nativeProto.emit.call(obj, "x");
     expect(fired).toBe(1);
   });
+});
+
+// The methods of process are native and serve any receiver. The limit is the receiver's own `_maxListeners`, as with the
+// methods of node:events, which node has in their place: each row but the last is what node v26.3.0 prints.
+test("the native EventEmitter keeps the limit of listeners on its receiver", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const events = require("node:events");
+       const native = Object.getPrototypeOf(process);
+       const NativeEmitter = native.constructor;
+       const receivers = {
+         "a plain object": {},
+         "Object.create(process)": Object.create(process),
+         "Object.create(prototype of process)": Object.create(native),
+         "new (constructor of process)()": new NativeEmitter(),
+         "(constructor of process)()": NativeEmitter(),
+       };
+       const warnings = [];
+       process.on("warning", warning => warnings.push(warning));
+       const out = {};
+       for (const [name, receiver] of Object.entries(receivers)) {
+         const row = [native.getMaxListeners.call(receiver)];
+         events.defaultMaxListeners = 3;
+         row.push(native.getMaxListeners.call(receiver));
+         events.defaultMaxListeners = 10;
+         row.push(native.setMaxListeners.call(receiver, 2) === receiver, Object.hasOwn(receiver, "_maxListeners") && receiver._maxListeners);
+         row.push(native.getMaxListeners.call(receiver), typeof receiver.getMaxListeners === "function" ? events.getMaxListeners(receiver) : "no method");
+         for (let i = 0; i < 3; i++) native.on.call(receiver, name, () => {});
+         out[name] = row;
+       }
+       setImmediate(() => {
+         for (const warning of warnings) {
+           const name = String(warning.type);
+           out[name].push(warning.emitter === receivers[name], warning.count, / MaxListeners is 2\\. /.test(warning.message));
+         }
+         out.process = [process.getMaxListeners(), Object.hasOwn(process, "_maxListeners"), process._maxListeners === undefined];
+         console.log(JSON.stringify(out));
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // [the default, the default after events.defaultMaxListeners = 3, setMaxListeners(2) returned the receiver, its own
+  //  _maxListeners, getMaxListeners(), events.getMaxListeners(receiver), and of the warning for its third listener:
+  //  the emitter is the receiver, the count, the limit is 2]
+  const row = [10, 3, true, 2, 2, 2, true, 3, true];
+  let printed: unknown;
+  try {
+    printed = JSON.parse(stdout);
+  } catch {
+    printed = { stdout, stderr };
+  }
+  expect(printed).toEqual({
+    "a plain object": row.with(5, "no method"),
+    "Object.create(process)": row,
+    "Object.create(prototype of process)": row,
+    "new (constructor of process)()": row,
+    "(constructor of process)()": row,
+    "process": [10, true, true],
+  });
+  expect(exitCode).toBe(0);
 });
 
 // The loop stands in module code, where the JIT enters it while it runs. An array of 48 or 64 bytes a call is 12 collections or more.

@@ -6271,6 +6271,8 @@ void Process::finishCreation(JSC::VM& vm)
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
+    // node's EventEmitter constructor leaves this own property on every emitter; setMaxListeners() stores the limit in it.
+    putDirect(vm, WebCore::builtinNames(vm)._maxListenersPublicName(), jsUndefined(), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
     // Compiled code reads the property as the table of built-ins describes it.
     if (isBunTest && !Bun::hasCompiledModules())

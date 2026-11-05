@@ -59,11 +59,12 @@ let FixedQueue: typeof import("internal/fixed_queue").default.FixedQueue | undef
 const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
+let warnOfTooManyListeners: $BunModules["internal/max_listeners_warning"] | undefined;
 
-interface MaxListenersExceededWarning extends Error {
-  emitter?: unknown;
-  type?: string | symbol;
-  count?: number;
+// `process` keeps its listeners in native code, which reads the default from this slot. Without the slot it is 10.
+function setDefaultMaxListeners(n: number) {
+  defaultMaxListeners = n;
+  $putByIdDirectPrivate(process as typeof process & { $defaultMaxListeners: number }, "defaultMaxListeners", n);
 }
 
 /** A list that has grown past the limit once carries `warned`, so that the warning is printed once. */
@@ -575,7 +576,8 @@ function _addListener(target: $Node.EventEmitter, type: $Node.EventName, fn: $No
   var m = _getMaxListeners(target);
   if (m > 0 && handlers.length > m && !(handlers as ListenerList).warned) {
     ("unlikely");
-    overflowWarning(target, type, handlers);
+    (handlers as ListenerList).warned = true;
+    (warnOfTooManyListeners ??= require("internal/max_listeners_warning"))(target, type, handlers.length, m);
   }
 }
 
@@ -612,19 +614,6 @@ function copyWithInserted(list: $Node.Listener[], fn: $Node.Listener, prepend: b
   }
   if ((list as ListenerList).warned) (copy as ListenerList).warned = true;
   return copy;
-}
-
-function overflowWarning(emitter: $Node.EventEmitter, type: $Node.EventName, handlers: $Node.Listener[]) {
-  if (!inspect) inspect = require("internal/util/inspect").inspect;
-  (handlers as ListenerList).warned = true;
-  const warn: MaxListenersExceededWarning = new Error(
-    `Possible EventEmitter memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect!(emitter, { depth: -1 })}. MaxListeners is ${_getMaxListeners(emitter)}. Use emitter.setMaxListeners() to increase limit`,
-  );
-  warn.name = "MaxListenersExceededWarning";
-  warn.emitter = emitter;
-  warn.type = type;
-  warn.count = handlers.length;
-  process.emitWarning(warn);
 }
 
 // A closure over (target, type, listener, fired) rather than a state object
@@ -1097,7 +1086,7 @@ function getEventListeners(emitter: EmitterOrTarget, type: $Node.EventName) {
 function setMaxListeners(n = defaultMaxListeners, ...eventTargets: EmitterOrTarget[]) {
   validateNumber(n, "setMaxListeners", 0);
   if (eventTargets.length === 0) {
-    defaultMaxListeners = n;
+    setDefaultMaxListeners(n);
   } else {
     for (let i = 0; i < eventTargets.length; i++) {
       const target = eventTargets[i];
@@ -1171,8 +1160,10 @@ function checkListener(listener: $Node.Listener) {
   if (typeof listener !== "function") validateFunction(listener, "listener");
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414
 function _getMaxListeners(emitter: { _maxListeners?: number }) {
-  return emitter?._maxListeners ?? defaultMaxListeners;
+  const limit = emitter?._maxListeners;
+  return limit === undefined ? defaultMaxListeners : limit;
 }
 
 type AsyncResourceClass = typeof import("./async_hooks").default.AsyncResource;
@@ -1309,7 +1300,7 @@ Object.defineProperties(EventEmitter, {
     },
     set: (arg: number) => {
       validateNumber(arg, "defaultMaxListeners", 0);
-      defaultMaxListeners = arg;
+      setDefaultMaxListeners(arg);
     },
   },
   kMaxEventTargetListeners: {

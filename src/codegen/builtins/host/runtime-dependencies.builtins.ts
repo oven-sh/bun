@@ -33,6 +33,7 @@ import {
   throwsWarningCell,
   tickShownToHooksCell,
   versionsCell,
+  warnsOfTooManyListenersCell,
   windowsEnvironmentNamesCell,
   windowsEnvironmentStorageCell,
   writeWarningCell,
@@ -59,7 +60,20 @@ const standardStreamModulesThatTestsCanWatch = standardStreamModules.map(load =>
   when: b.whenTestsReplaceBuiltins,
 }));
 
+const methodsAddingListeners = ["addListener", "on", "once", "prependListener", "prependOnceListener"];
+
+// JSEventEmitter::addListener is behind all five, and its one BUN_REQUIRE_INTERNAL_MODULE names `on`. The rows of the methods say what the function is called with.
+const warningOfTooManyListeners: readonly b.ModuleLoadSpec[] = [
+  {
+    module: "internal/max_listeners_warning",
+    exports: [b.exportRead("default", b.keptIn(warnsOfTooManyListenersCell))],
+  },
+];
+
 const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadSpec[]>> = {
+  ...Object.fromEntries(
+    methodsAddingListeners.map(name => [`%EventEmitter%.prototype.${name}`, warningOfTooManyListeners]),
+  ),
   "node:child_process": channelModules,
   "node:fs/promises": evaluates("internal/fifo"),
   "node:repl": standardStreamModules,
@@ -129,7 +143,7 @@ const channelUsers: readonly b.CallingEntrySpec[] = [
   "node:child_process",
   "node:cluster",
   ...functionsOfChannel.map(path => ({ path, when: b.whenCallRunsOtherCode })),
-  ...["addListener", "on", "once", "prependListener", "prependOnceListener"].map(name => ({
+  ...methodsAddingListeners.map(name => ({
     path: `%EventEmitter%.prototype.${name}`,
     when: whenChannelEvent,
   })),

@@ -25,6 +25,7 @@ use crate::ast::{
 };
 use crate::lexer::{KW_LENGTHS, kw, tk};
 use crate::options::{QUOTE_PROPS_AS_NEEDED, TRAILING_COMMA_ALL, TRAILING_COMMA_NONE};
+use crate::parse::core::{SCOPE_DERIVED_CONSTRUCTOR, SCOPE_FUNCTION, SCOPE_TOP};
 use crate::{Bytes, Quick, R, Words, bytes_before, div, where_byte_is, where_not_printable};
 
 pub(crate) struct Fast {
@@ -166,6 +167,12 @@ pub(crate) struct Fast {
     /// how many arrow functions with an element for a body have been read among the arguments of calls
     pub(crate) arrows_to_jsx: i32,
     pub(crate) jsx_is_on: bool,
+    /// not 0: what is read is the default value of a parameter, where `await` and `super` are not what they are around the function
+    pub(crate) in_parameters: i32,
+    /// `export { if }`: `from` has to follow
+    pub(crate) needs_from: bool,
+    /// among the parameters that were read last there is a pattern, a default value or `...`
+    pub(crate) odd_parameters: bool,
 }
 impl Fast {
     pub(crate) fn new() -> Self {
@@ -250,6 +257,9 @@ impl Fast {
             attribute_flags: 0,
             arrows_to_jsx: 0,
             jsx_is_on: false,
+            in_parameters: 0,
+            needs_from: false,
+            odd_parameters: false,
         }
     }
 }
@@ -307,6 +317,14 @@ pub(crate) const BLOCK_CLASS: i32 = 16;
 pub(crate) const BLOCK_INTERFACE: i32 = 32;
 /// no block: `(`, an element on lines of its own, `)`. See open_jsx().
 pub(crate) const BLOCK_JSX: i32 = 8;
+/// with BLOCK_FUNCTION: of an arrow function
+pub(crate) const BLOCK_ARROW: i32 = 64;
+/// with BLOCK_FUNCTION: of the constructor of a class
+pub(crate) const BLOCK_CONSTRUCTOR: i32 = 128;
+/// with BLOCK_CLASS: the class has a superclass
+pub(crate) const BLOCK_DERIVED: i32 = 256;
+/// with BLOCK_FUNCTION: the parameters are more than names
+pub(crate) const BLOCK_ODD_PARAMETERS: i32 = 512;
 impl Quick {
     pub(crate) fn set_verified(&mut self, start: i32, end: i32) {
         self.fast.verified_start = start;
@@ -434,6 +452,14 @@ impl Quick {
     pub(crate) fn put(&mut self, c: i32) {
         self.t.put(self.fast.out, c);
         self.fast.out += 1;
+    }
+
+    /// Where the blanks in front of p start.
+    pub(crate) fn blanks_back(&self, mut p: i32) -> i32 {
+        while self.t.at(p - 1) == 32 || self.t.at(p - 1) == 9 {
+            p -= 1;
+        }
+        return p;
     }
 
     pub(crate) fn blanks(&self, mut p: i32) -> i32 {
@@ -1218,7 +1244,11 @@ impl Quick {
             return self.no(refusal::Block);
         }
         self.fast.opened = q;
-        self.fast.opened_flags = flags;
+        self.fast.opened_flags = if (flags & BLOCK_FUNCTION) != 0 && self.fast.odd_parameters {
+            flags | BLOCK_ODD_PARAMETERS
+        } else {
+            flags
+        };
         return q;
     }
 
@@ -1289,9 +1319,9 @@ impl Quick {
             return Ok(self.open_jsx(
                 q,
                 if is_async {
-                    BLOCK_FUNCTION | BLOCK_ASYNC
+                    BLOCK_FUNCTION | BLOCK_ARROW | BLOCK_ASYNC
                 } else {
-                    BLOCK_FUNCTION
+                    BLOCK_FUNCTION | BLOCK_ARROW
                 },
             ));
         }
@@ -1301,9 +1331,9 @@ impl Quick {
                 return Ok(self.open_block(
                     q,
                     if is_async {
-                        BLOCK_FUNCTION | BLOCK_ASYNC
+                        BLOCK_FUNCTION | BLOCK_ARROW | BLOCK_ASYNC
                     } else {
-                        BLOCK_FUNCTION
+                        BLOCK_FUNCTION | BLOCK_ARROW
                     },
                 ));
             }
@@ -1371,6 +1401,7 @@ impl Quick {
             self.tight(p + 1)
         };
         if self.t.at(q) == 41 {
+            self.fast.odd_parameters = false;
             return Ok(if is_broken {
                 self.no(refusal::Paren)
             } else {
@@ -1378,6 +1409,7 @@ impl Quick {
             });
         }
         let first = q;
+        let mut odd = false;
         loop {
             if is_broken {
                 from = self.width_up_to(q);
@@ -1396,6 +1428,7 @@ impl Quick {
                 q += 3;
             }
             let c = self.t.at(q);
+            odd |= is_rest || (CC.at(c) & ID_START) == 0;
             if (CC.at(c) & ID_START) != 0 {
                 let e = self.word_end(q);
                 if (CC.at(self.t.at(e)) & BEYOND) != 0 {
@@ -1435,7 +1468,10 @@ impl Quick {
             if !is_rest && self.t.at(r) == 61 && self.assignment_operator(r) == 1 {
                 self.spaced(q);
                 let v1 = self.spaced(r + 1);
+                odd = true;
+                self.fast.in_parameters += 1;
                 q = self.expression(v1)?;
+                self.fast.in_parameters -= 1;
                 if q < 0 {
                     return Ok(-1);
                 }
@@ -1493,11 +1529,13 @@ impl Quick {
                 self.fast.parameters_from = self.width_up_to(q + 1);
                 self.fast.parameters_count = count;
                 self.fast.ready_flags |= F_DECIDED;
+                self.fast.odd_parameters = odd;
                 return Ok(q + 1);
             }
             q = self.tight(q);
             let d = self.t.at(q);
             if d == 41 {
+                self.fast.odd_parameters = odd;
                 return Ok(q + 1);
             }
             if d != 44 {
@@ -1507,7 +1545,11 @@ impl Quick {
             if self.t.at(s) == 41 {
                 self.flush(q);
                 self.fast.run = s;
+                self.fast.odd_parameters = odd;
                 return Ok(s + 1);
+            }
+            if is_rest {
+                return Ok(self.no(refusal::Paren));
             }
             q = self.spaced(q + 1);
         }
@@ -1562,6 +1604,7 @@ impl Quick {
                         self.flush(e);
                         self.put(32);
                         self.fast.run = arrow;
+                        self.fast.odd_parameters = false;
                         return self.arrow_body(arrow + 2, is_async);
                     }
                 }
@@ -2062,7 +2105,8 @@ impl Quick {
                     return Ok(-1);
                 }
                 if if is_pattern {
-                    self.fast.shape != SH_NAME
+                    // the last thing in the pattern
+                    self.fast.shape != SH_NAME || self.t.at(self.blanks(q)) != 125
                 } else {
                     self.fast.shape > SH_OBJECT
                 } {
@@ -2082,6 +2126,10 @@ impl Quick {
                 }
                 let r = self.blanks(e);
                 if self.t.at(r) == 58 {
+                    // there can be one `__proto__: a`: the parser counts
+                    if self.t.at(q) == 95 && e - q == 9 {
+                        return Ok(self.no(refusal::Key));
+                    }
                     self.tight(e);
                     let value = self.spaced(r + 1);
                     q = self.expression(value)?;
@@ -2269,6 +2317,20 @@ impl Quick {
             || (q - s == 6 && self.text_is(s, q, b"extend")));
     }
 
+    /// check_super() of the parser. `next`: what follows the `.` or `(`. In the head of a member of a class and among parameters the parser is somewhere else than what is read.
+    #[cold]
+    fn may_read_super(&self, is_call: bool, next: i32) -> bool {
+        if self.fast.ts {
+            return true;
+        }
+        let scope = self.parse.place.scope;
+        return self.fast.in_parameters == 0
+            && !self.fast.in_class
+            && next != 35
+            && (scope == SCOPE_TOP
+                || (scope != SCOPE_FUNCTION && (!is_call || scope == SCOPE_DERIVED_CONSTRUCTOR)));
+    }
+
     pub(crate) fn chain(&mut self, p: i32) -> R<i32> {
         self.stack()?;
         if p > self.fast.limit {
@@ -2317,7 +2379,9 @@ impl Quick {
                             sh = SH_LITERAL;
                         }
                         tk::Super => {
-                            if self.t.at(q) != 46 && self.t.at(q) != 40 {
+                            if (self.t.at(q) != 46 && self.t.at(q) != 40)
+                                || !self.may_read_super(self.t.at(q) == 40, self.t.at(q + 1))
+                            {
                                 return Ok(self.no(refusal::Word));
                             }
                             sh = SH_THIS;
@@ -2440,6 +2504,7 @@ impl Quick {
                                     self.put(41);
                                 }
                                 self.spaced(e);
+                                self.fast.odd_parameters = false;
                                 return self.arrow_body(arrow + 2, true);
                             }
                             return Ok(self.no(refusal::Word));
@@ -2467,6 +2532,7 @@ impl Quick {
                         self.put(41);
                     }
                     self.spaced(q);
+                    self.fast.odd_parameters = false;
                     return self.arrow_body(r + 2, false);
                 }
             }
@@ -2560,7 +2626,8 @@ impl Quick {
             if d == 46 {
                 let mut r = q + 1;
                 if (CC.at(self.t.at(r)) & ID_START) == 0 {
-                    if self.t.at(r) != 35 {
+                    // (TypeScript has no private name in an optional chain)
+                    if self.t.at(r) != 35 || (optional && self.fast.ts) {
                         return Ok(self.no(refusal::Member));
                     }
                     r += 1;
@@ -2781,7 +2848,12 @@ impl Quick {
                     if (CC.at(d) & (ID_START | DIGIT)) == 0 && d != 34 && d != 39 {
                         return Ok(self.no(refusal::Await));
                     }
-                    if !self.fast.ts && !self.fast.await_is_operator {
+                    if (!self.fast.ts
+                        && (!self.fast.await_is_operator
+                            || self.fast.in_parameters != 0
+                            || self.parse.place.in_parameters))
+                        || self.dialect.declaration_file
+                    {
                         return Ok(self.no(refusal::Await));
                     }
                     if p == self.fast.breakable_at {
@@ -2790,6 +2862,11 @@ impl Quick {
                     let q = self.unary(o)?;
                     if q < 0 {
                         return Ok(-1);
+                    }
+                    // (for a parser that will find out that it stands among the parameters of an arrow function)
+                    self.parse.suspensions += 1;
+                    if self.parse.in_async == 0 {
+                        self.need_module()?;
                     }
                     // a function that is awaited itself gets parentheses; one that is an argument does not
                     if self.fast.opened != 0 {
@@ -2822,6 +2899,16 @@ impl Quick {
                 || self.fast.shape == SH_UPDATE
             {
                 return Ok(self.no(refusal::Unary));
+            }
+            // `delete a.#b`
+            if c == 100 {
+                let mut name = q;
+                while (CC.at(self.t.at(name - 1)) & ID_PART) != 0 {
+                    name -= 1;
+                }
+                if self.t.at(name - 1) == 35 {
+                    return Ok(self.no(refusal::Unary));
+                }
             }
             self.fast.shape = SH_UNARY;
             // `!`, `~`, `+`, `-` before something simple are simple
@@ -3469,7 +3556,8 @@ impl Quick {
     pub(crate) fn array_pattern(&mut self, p: i32) -> i32 {
         let mut q = self.tight(p + 1);
         loop {
-            if self.t.at(q) == 46 && self.t.at(q + 1) == 46 && self.t.at(q + 2) == 46 {
+            let is_rest = self.t.at(q) == 46 && self.t.at(q + 1) == 46 && self.t.at(q + 2) == 46;
+            if is_rest {
                 q += 3;
             }
             if (CC.at(self.t.at(q)) & ID_START) == 0 {
@@ -3487,7 +3575,7 @@ impl Quick {
             if c == 93 {
                 return q + 1;
             }
-            if c != 44 {
+            if c != 44 || is_rest {
                 return self.no(refusal::Pattern);
             }
             let r = self.blanks(q + 1);
@@ -3556,8 +3644,19 @@ impl Quick {
         return Ok(self.terminate(q, false));
     }
 
+    /// Is the word T[p, e) one that cannot be bound? `kw` is what keyword_at() says.
+    fn is_word_of_language(kw: i32) -> bool {
+        (kw & 255) > tk::Name || (kw >> 8) == kw::Enum
+    }
+
+    /// T[p, e) is a name that is exported. False if it is `default` and the file exports another one.
+    fn may_export(&mut self, p: i32, e: i32) -> bool {
+        e - p != 7 || !self.text_is(p, e, b"default") || !self.is_second_default_export(p)
+    }
+
     /// `{ a, b as c }` of an import or export; p is at the `{`.
     pub(crate) fn specifiers(&mut self, p: i32, is_export: bool) -> i32 {
+        self.fast.needs_from = false;
         let mut q = self.blanks(p + 1);
         if self.t.at(q) == 125 {
             if !is_export {
@@ -3598,7 +3697,11 @@ impl Quick {
                     return self.no(refusal::Import);
                 }
             }
-            let is_word_of_language = (self.keyword_at(q, e - q) & 255) > tk::Name;
+            let is_word_of_language = Self::is_word_of_language(self.keyword_at(q, e - q));
+            if is_word_of_language {
+                self.fast.needs_from = true;
+            }
+            let mut name = q;
             q = e;
             let a = self.blanks(q);
             if a != q && self.word_is(a, b"as") {
@@ -3611,12 +3714,16 @@ impl Quick {
                 if (CC.at(self.t.at(e)) & BEYOND) != 0 {
                     return self.no(refusal::NotAscii);
                 }
-                if !is_export && (self.keyword_at(q, e - q) & 255) > tk::Name {
+                if !is_export && Self::is_word_of_language(self.keyword_at(q, e - q)) {
                     return self.no(refusal::Import);
                 }
+                name = q;
                 q = e;
             } else if is_word_of_language && !is_export {
                 return self.no(refusal::Import);
+            }
+            if is_export && !self.may_export(name, q) {
+                return self.no(refusal::Export);
             }
             let s = self.blanks(q);
             let c = self.t.at(s);
@@ -3654,6 +3761,7 @@ impl Quick {
         };
         let mut count: i32 = 0;
         let mut width = if self.options.bracket_spacing { 2 } else { 0 };
+        self.fast.needs_from = false;
         loop {
             if (CC.at(self.t.at(q)) & ID_START) == 0 {
                 return self.no(refusal::Import);
@@ -3686,7 +3794,11 @@ impl Quick {
                     return self.no(refusal::Import);
                 }
             }
-            let is_word_of_language = (self.keyword_at(q, e - q) & 255) > tk::Name;
+            let is_word_of_language = Self::is_word_of_language(self.keyword_at(q, e - q));
+            if is_word_of_language {
+                self.fast.needs_from = true;
+            }
+            let mut name = q;
             q = e;
             let a = self.blanks(q);
             if a != q && self.word_is(a, b"as") {
@@ -3699,12 +3811,16 @@ impl Quick {
                 if (CC.at(self.t.at(e)) & BEYOND) != 0 {
                     return self.no(refusal::NotAscii);
                 }
-                if !is_export && (self.keyword_at(q, e - q) & 255) > tk::Name {
+                if !is_export && Self::is_word_of_language(self.keyword_at(q, e - q)) {
                     return self.no(refusal::Import);
                 }
+                name = q;
                 q = e;
             } else if is_word_of_language && !is_export {
                 return self.no(refusal::Import);
+            }
+            if is_export && !self.may_export(name, q) {
+                return self.no(refusal::Export);
             }
             width = width + 2 + self.width_up_to(q) - before;
             let s = self.white(q);
@@ -3766,7 +3882,7 @@ impl Quick {
             return self.from_source(q);
         }
         // without a semicolon, `from` can follow on the next line
-        if c != 59 {
+        if c != 59 || self.fast.needs_from {
             return self.no(refusal::NoSemicolon);
         }
         return self.terminate(q, false);
@@ -3956,6 +4072,10 @@ impl Quick {
         if self.keyword_at(q, e - q) != 0 {
             return Ok(self.no(refusal::Declaration));
         }
+        // not the name of a type that is there already
+        if self.fast.flow && (self.is_keyword_type(q, e - q) || self.flow_type_word(q, e - q)) {
+            return Ok(self.no(refusal::Declaration));
+        }
         q = self.spaced(e);
         if self.t.at(q) != 61 || self.t.at(q + 1) == 61 || self.t.at(q + 1) == 62 {
             return Ok(self.no(refusal::Declaration));
@@ -4032,7 +4152,8 @@ impl Quick {
         }
         q = e;
         let mut r = self.blanks(q);
-        if r != q && self.word_is(r, b"extends") {
+        let is_derived = r != q && self.word_is(r, b"extends");
+        if is_derived {
             self.spaced(q);
             q = if is_interface {
                 self.dotted_names(r + 7)
@@ -4068,6 +4189,8 @@ impl Quick {
             r,
             if is_interface {
                 BLOCK_INTERFACE
+            } else if is_derived {
+                BLOCK_CLASS | BLOCK_DERIVED
             } else {
                 BLOCK_CLASS
             },
@@ -4121,9 +4244,13 @@ impl Quick {
                 if (CC.at(self.t.at(q)) & ID_START) == 0 {
                     return Ok(self.no(refusal::Export));
                 }
+                let name = q;
                 q = self.word_end(q);
                 if (CC.at(self.t.at(q)) & BEYOND) != 0 {
                     return Ok(self.no(refusal::NotAscii));
+                }
+                if !self.may_export(name, q) {
+                    return Ok(self.no(refusal::Export));
                 }
                 return Ok(self.from_source(q));
             }
@@ -4172,7 +4299,7 @@ return self.function_head(r + 8, true, true);
 }
 tk::Default => {
 {
-if self.t.at(e) != 32 && self.t.at(e) != 9 {
+if (self.t.at(e) != 32 && self.t.at(e) != 9) || !self.may_export(q, e) {
 return Ok(self.no(refusal::Export));
 }
 q = self.spaced(e);
@@ -4559,6 +4686,7 @@ impl Quick {
         let mut is_abstract = false;
         let mut is_accessor = false;
         let mut is_property_only = false;
+        let mut is_static = false;
         let mut e: i32;
         loop {
             let mut name_start = q;
@@ -4609,6 +4737,8 @@ impl Quick {
             }
             if modifier == MODIFIER_ASYNC {
                 is_async = true;
+            } else if modifier == MODIFIER_STATIC {
+                is_static = true;
             } else if modifier == MODIFIER_ABSTRACT {
                 is_abstract = true;
             } else if modifier == MODIFIER_ACCESSOR {
@@ -4624,6 +4754,43 @@ impl Quick {
         {
             return Ok(self.no(refusal::Start));
         }
+        // `constructor`, `prototype`, a private name: there are rules about those
+        let mut is_constructor = false;
+        if where_ == MEMBER_OF_CLASS
+            && (e - q == 11 || e - q == 9 || e - q == 6 || self.t.at(q) == 35)
+        {
+            if self.t.at(q) == 35 {
+                if !self.fast.ts {
+                    return Ok(self.no(refusal::Start));
+                }
+            } else if self.text_is(q, e, b"export") {
+                // a modifier for some
+                return Ok(self.no(refusal::Start));
+            } else if self.text_is(q, e, b"prototype") {
+                if is_static && !self.fast.ts {
+                    return Ok(self.no(refusal::Start));
+                }
+            } else if self.text_is(q, e, b"constructor") {
+                if self.t.at(e) != 40
+                    || ((is_async || is_accessor || self.t.at(p) == 64) && !is_static)
+                {
+                    return Ok(self.no(refusal::Start));
+                }
+                is_constructor = !is_static;
+            }
+        }
+        // a getter has no parameter, and a setter has one
+        if is_accessor && !self.fast.ts {
+            let first = self.blanks(e + 1);
+            let last = self.blanks(self.word_end(first));
+            if self.t.at(e) != 40
+                || self.t.at(last) != 41
+                || (first == last) != (self.t.at(self.blanks_back(q) - 3) == 103)
+            {
+                return Ok(self.no(refusal::Start));
+            }
+        }
+        let name = q;
         q = e;
         if self.t.at(q) == 63 && self.fast.ts {
             if is_accessor {
@@ -4656,6 +4823,9 @@ impl Quick {
                 }
                 self.fast.ready_kind = k::ClassMethod;
                 self.fast.tail = TAIL_NONE;
+                if is_constructor && !self.fast.ts && self.is_second_constructor(name) {
+                    return Ok(self.no(refusal::Start));
+                }
                 self.spaced(q);
                 let s = self.blanks(r + 1);
                 if self.t.at(s) != 125 {
@@ -4663,6 +4833,8 @@ impl Quick {
                         r,
                         if is_async {
                             BLOCK_FUNCTION | BLOCK_ASYNC
+                        } else if is_constructor {
+                            BLOCK_FUNCTION | BLOCK_CONSTRUCTOR
                         } else {
                             BLOCK_FUNCTION
                         },
@@ -4733,6 +4905,10 @@ impl Quick {
             q = self.initializer(q, r, 1, false)?;
             if q < 0 || self.fast.opened != 0 {
                 return Ok(q);
+            }
+            // there are no `arguments` here
+            if !self.fast.ts && bun_core::strings::contains(self.t.sub(r, q), b"arguments") {
+                return Ok(self.no(refusal::Start));
             }
         }
         return Ok(self.terminate(q, true));
@@ -4820,6 +4996,11 @@ impl Quick {
         }
         let r = self.blanks(q);
         if self.t.at(r) == 58 {
+            // there can be one `__proto__: a`: the parser counts
+            if self.t.at(p + 1) == 95 && bun_core::strings::contains(self.t.sub(p, q), b"__proto__")
+            {
+                return Ok(self.no(refusal::Key));
+            }
             // in @Component({ .. }) these are HTML and CSS
             if (q - p == 8 && self.text_is(p, q, b"template"))
                 || (q - p == 6 && self.text_is(p, q, b"styles"))
@@ -5491,9 +5672,15 @@ impl Quick {
                 if (CC.at(self.t.at(r)) & ID_START) != 0 {
                     let v2 = self.spaced(end);
                     q = self.word_end(v2);
-                    if (CC.at(self.t.at(q)) & BEYOND) != 0 || self.keyword_at(r, q - r) != 0 {
+                    // (the parser knows the labels)
+                    if (CC.at(self.t.at(q)) & BEYOND) != 0
+                        || self.keyword_at(r, q - r) != 0
+                        || !self.fast.ts
+                    {
                         return Ok(fast_refuse(refusal::Start, start));
                     }
+                } else if !self.can_jump(token == tk::Continue, 0) {
+                    return Ok(fast_refuse(refusal::Start, start));
                 }
                 p = self.terminate(q, false);
             }
@@ -5630,6 +5817,7 @@ impl Quick {
         self.fast.opened = 0;
         self.fast.pending_parens = 0;
         self.fast.scanned_at = 0;
+        self.fast.in_parameters = 0;
         return true;
     }
 
@@ -6056,18 +6244,29 @@ impl Quick {
         if q < 0 {
             return Ok(-1);
         }
-        while self.t.at(q) == 46 {
-            q = self.jsx_word(q + 1);
-            if q < 0 {
-                return Ok(-1);
+        if self.t.at(q) == 46 {
+            while self.t.at(q) == 46 {
+                q = self.jsx_word(q + 1);
+                if q < 0 {
+                    return Ok(-1);
+                }
+            }
+            // `a-b.c`
+            if bun_core::strings::contains_char(self.t.sub(p, q), b'-') {
+                return Ok(self.no(refusal::Jsx));
             }
         }
         let length = q - p - 1;
         self.fast.ready_name_length = length;
         // <fbt> has rules of its own; what is in <style jsx> can be CSS
         if (length == 3 && self.text_is(p + 1, q, b"fbt"))
-            || (length == 5 && self.text_is(p + 1, q, b"style"))
+            || (length == 5
+                && (self.text_is(p + 1, q, b"style") || self.text_is(p + 1, q, b"const")))
         {
+            return Ok(self.no(refusal::Jsx));
+        }
+        // `<A extends B>` may be the type parameters of a function
+        if self.word_is(self.blanks(q), b"extends") {
             return Ok(self.no(refusal::Jsx));
         }
         let mut count: i32 = 0;

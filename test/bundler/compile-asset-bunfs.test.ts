@@ -247,6 +247,125 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
     TIMEOUT,
   );
 
+  // A disk resolves an empty part, "." and ".." of a path one by one. The executable looks a path up as written,
+  // and then without those parts, as path.resolve() writes it.
+  test(
+    'a path with an empty part, "." or ".." names what path.resolve() of it names',
+    async () => {
+      using dir = tempDir("bunfs-spelled", {
+        "app/index.ts": /* ts */ `
+          import fs from "node:fs";
+          import path from "node:path";
+          import note from "../outside/note.txt" with { type: "file" };
+
+          const outcome = async (run: () => unknown) => {
+            try { return JSON.stringify(await run()) ?? "undefined"; } catch (e: any) { return "throws " + e.code; }
+          };
+          const apis: Record<string, (p: string) => unknown> = {
+            existsSync: p => fs.existsSync(p),
+            statSync: p => { const stats = fs.statSync(p); return [stats.isDirectory(), stats.size]; },
+            lstatSync: p => fs.lstatSync(p).isFile(),
+            accessSync: p => fs.accessSync(p),
+            readFileSync: p => fs.readFileSync(p, "utf8"),
+            readdirSync: p => fs.readdirSync(p).sort(),
+            readlinkSync: p => fs.readlinkSync(p),
+            writeFileSync: p => fs.writeFileSync(p, "x"),
+            mkdirSync: p => fs.mkdirSync(p),
+            unlinkSync: p => fs.unlinkSync(p),
+            "promises.stat": async p => (await fs.promises.stat(p)).size,
+            "promises.access": p => fs.promises.access(p),
+            "promises.readFile": p => fs.promises.readFile(p, "utf8"),
+            "promises.readdir": async p => (await fs.promises.readdir(p)).sort(),
+            "Bun.file().text": p => Bun.file(p).text(),
+            "Bun.file().size": p => Bun.file(p).size,
+            "Bun.file().exists": p => Bun.file(p).exists(),
+            "Bun.Glob": p => [...new Bun.Glob("*").scanSync(p)].sort(),
+          };
+          const client = path.join(import.meta.dir, "client");
+          const spelled = [
+            [client, ".", "index.html"],
+            [client, "", "index.html"],
+            [client, "sub", "..", "index.html"],
+            [client, "sub", ".", "", "app.css"],
+            [import.meta.dir, "..", path.basename(import.meta.dir), "client", "index.html"],
+            [client, "."],
+            [client, "sub", ".."],
+            [client, ".", "sub"],
+            [client, "", "sub", ""],
+            // The executable has no folder that the build left out, so ".." removes a name that it does not hold.
+            [client, "none", "..", "index.html"],
+            [client, "none", ".."],
+          ].map(parts => parts.join(path.sep));
+          // Windows takes "/" too.
+          spelled.push(client + "/./sub/../index.html");
+
+          const differing: string[] = [];
+          for (const name in apis) {
+            for (const p of spelled) {
+              const [asSpelled, asResolved] = [await outcome(() => apis[name](p)), await outcome(() => apis[name](path.resolve(p)))];
+              if (asSpelled !== asResolved) differing.push(name + "(" + p + "): " + asSpelled + ", resolved: " + asResolved);
+            }
+          }
+
+          const mod = [import.meta.dir, ".", "mod.js"].join(path.sep);
+          const modules = {
+            import: (await import(mod)).default,
+            require: require([import.meta.dir, "client", "..", "mod.js"].join(path.sep)).default,
+            resolveSync:
+              Bun.resolveSync([import.meta.dir, "", "mod.js"].join(path.sep), import.meta.dir) ===
+              Bun.resolveSync(path.join(import.meta.dir, "mod.js"), import.meta.dir),
+            worker: await new Promise(resolve => {
+              const worker = new Worker(mod);
+              worker.onmessage = event => { resolve(event.data); worker.terminate(); };
+              worker.onerror = event => resolve("error: " + event.message);
+            }),
+            // Every spelling names one module.
+            loads: (globalThis as any).loads,
+          };
+
+          const executable = process.execPath.slice(path.parse(process.execPath).root.length - 1);
+          console.log(JSON.stringify({
+            differing,
+            compared: Object.keys(apis).length * spelled.length,
+            content: fs.readFileSync(spelled[0], "utf8"),
+            entries: fs.readdirSync(spelled[5]).sort(),
+            modules,
+            // A key that holds ".." itself is found as written.
+            keyWithParent: { holdsParent: note.includes(".."), exists: fs.existsSync(note), text: await Bun.file(note).text() },
+            // ".." does not lead out of the root of the executable to a file on disk.
+            outsideTheRoot: fs.existsSync([import.meta.dir, "..", ".."].join(path.sep) + executable),
+          }));
+        `,
+        "app/mod.ts": /* ts */ `
+          (globalThis as any).loads = ((globalThis as any).loads ?? 0) + 1;
+          export default "mod";
+          if (!Bun.isMainThread) postMessage("mod in a worker");
+        `,
+        "app/client/index.html": "<h1>hi</h1>",
+        "app/client/sub/app.css": "body{}",
+        "outside/note.txt": "a note",
+      });
+      const app = join(String(dir), "app");
+
+      await compile(app, ["./mod.ts", "--asset", "./client", "--asset-naming", "[dir]/[name].[ext]"]);
+      const { stdout, stderr, code } = await run(app);
+      expect({ result: JSON.parse(stdout.trim() || "null"), stderr: stderr.trim(), code }).toEqual({
+        result: {
+          differing: [],
+          compared: 18 * 12,
+          content: "<h1>hi</h1>",
+          entries: ["index.html", "sub"],
+          modules: { import: "mod", require: "mod", resolveSync: true, worker: "mod in a worker", loads: 1 },
+          keyWithParent: { holdsParent: true, exists: true, text: "a note" },
+          outsideTheRoot: false,
+        },
+        stderr: "",
+        code: 0,
+      });
+    },
+    TIMEOUT,
+  );
+
   // One Bun.build() covers both the directory-asset and the single-file-asset
   // JS-API paths, including the index.js-does-not-collide-with-entry case.
   // These used to be two separate Bun.build() calls (each writes a ~1GB binary).

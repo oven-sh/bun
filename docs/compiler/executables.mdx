@@ -981,6 +981,8 @@ With `--aot`, those paths keep working after you ship the executable. If a path 
 
 Embedded files are read-only, and writing to one fails with `EROFS`. `process.chdir()` works on an embedded directory.
 
+An embedded path can contain `.`, `..` and repeated separators: `import.meta.dir + "/public/css/../index.html"` reads `public/index.html`. Bun resolves these parts from the text of the path, as `path.resolve()` does. After a name that the executable doesn't contain, `..` still removes that name, so `public/missing/../index.html` also reads `public/index.html`. A directory on disk fails with `ENOENT` there. A path that continues below a file, such as `public/index.html/..`, fails as it does on disk.
+
 You can also embed individual files via the `with { type: "file" }` import attribute or, for files that use the `file` loader (images, fonts, and so on) as well as `.wasm` and `.node` files, by adding them as extra entry points. With `--aot` an extra entry point is always compiled as code, so use `--asset` for these. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
 
 ```ts

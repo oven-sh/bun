@@ -9,7 +9,10 @@ const files = {
 import path from "node:path";
 const dir = path.join(import.meta.dirname, "client");
 const file = path.join(dir, "hello.txt");
-const streamed = options => new Promise((resolve, reject) => { let text = ""; fs.createReadStream(file, { encoding: "utf8", ...options }).on("data", chunk => (text += chunk)).on("end", () => resolve(text)).on("error", reject); });
+const streamed = (options, from = file) => new Promise((resolve, reject) => { let text = ""; fs.createReadStream(from, { encoding: "utf8", ...options }).on("data", chunk => (text += chunk)).on("end", () => resolve(text)).on("error", reject); });
+const code = run => { try { run(); return "fine"; } catch (error) { return error.code; } };
+// A path with an empty part, "." or ".." in it names what the path without them names.
+const spelled = [dir + "/./hello.txt", dir + "/sub/../hello.txt", dir + "//hello.txt"];
 const tries = {
   isStandalone: () => Bun.isStandaloneExecutable && file.startsWith("/$bunfs/"),
   createReadStream: () => streamed({}),
@@ -18,6 +21,18 @@ const tries = {
   promisesOpen: async () => { const handle = await fs.promises.open(file); try { return [(await handle.stat()).size, (await handle.readFile("utf8"))].join(); } finally { await handle.close(); } },
   open: () => new Promise((resolve, reject) => fs.open(file, (error, fd) => (error ? reject(error) : (fs.closeSync(fd), resolve(typeof fd))))),
   script: () => new Promise((resolve, reject) => { let text = ""; fs.createReadStream(path.join(dir, "sub", "app.js"), "utf8").on("data", chunk => (text += chunk)).on("end", () => resolve(text)).on("error", reject); }),
+  spelledOpenSync: () => spelled.map(from => { const fd = fs.openSync(from, "r"); const size = fs.fstatSync(fd).size; fs.closeSync(fd); return size; }).join(),
+  spelledReadFileSync: () => spelled.map(from => fs.readFileSync(from, "utf8")).join(),
+  spelledCreateReadStream: async () => (await Promise.all(spelled.map(from => streamed({}, from)))).join(),
+  spelledStat: () => spelled.map(from => [fs.statSync(from).size, fs.existsSync(from), code(() => fs.accessSync(from))].join()).join(" "),
+  spelledReaddirSync: () => ["/.", "/sub/..", "/./sub", "//sub"].map(rest => fs.readdirSync(dir + rest).sort().join("+")).join(),
+  spelledForWriting: () => spelled.map(from => code(() => fs.writeFileSync(from, "x"))).join(),
+  spelledRealpathNative: () => [...spelled.map(from => fs.realpathSync.native(from) === file), fs.realpathSync.native(dir + "/sub/..") === dir].join(),
+  // The executable has no folder that the build left out, so ".." removes a name that it does not hold.
+  pastAbsentName: () => [fs.readFileSync(dir + "/none/../hello.txt", "utf8"), fs.readdirSync(dir + "/none/..").sort().join("+")].join(),
+  belowFile: () => ["/", "/.", "/..", "/../hello.txt", "/none/.."].map(rest => [code(() => fs.openSync(file + rest, "r")), code(() => fs.statSync(file + rest)), code(() => fs.readdirSync(file + rest))].join()).join(" "),
+  outsideTheRoot: () => fs.existsSync(import.meta.dirname + "/../.." + process.execPath),
+  pathAsWritten: () => { try { fs.openSync(dir + "/./none.txt", "r"); } catch (error) { return [error.path === dir + "/./none.txt", fs.readdirSync(dir + "/./sub", { withFileTypes: true })[0].parentPath === dir + "/./sub"].join(); } },
   forWriting: () => fs.openSync(file, "w"),
   forAppending: () => fs.openSync(file, "a"),
   missing: () => fs.openSync(path.join(dir, "none.txt"), "r"),
@@ -50,6 +65,17 @@ openSync: true,17,5,from
 promisesOpen: 17,hello from a file
 open: number
 script: console.log("for the browser", window.location)
+spelledOpenSync: 17,17,17
+spelledReadFileSync: hello from a file,hello from a file,hello from a file
+spelledCreateReadStream: hello from a file,hello from a file,hello from a file
+spelledStat: 17,true,fine 17,true,fine 17,true,fine
+spelledReaddirSync: hello.txt+sub,hello.txt+sub,app.js,app.js
+spelledForWriting: EROFS,EROFS,EROFS
+spelledRealpathNative: true,true,true,true
+pastAbsentName: hello from a file,hello.txt+sub
+belowFile: ENOTDIR,ENOTDIR,ENOTDIR ENOTDIR,ENOTDIR,ENOTDIR ENOTDIR,ENOTDIR,ENOTDIR ENOTDIR,ENOTDIR,ENOTDIR ENOTDIR,ENOTDIR,ENOTDIR
+outsideTheRoot: false
+pathAsWritten: true,true
 forWriting: throws EROFS
 forAppending: throws EROFS
 missing: throws ENOENT

@@ -22,6 +22,7 @@ use bun_jsc::{
     StringJsc as _,
 };
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+use bun_standalone_graph::Entry;
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
 use bun_threading::UnboundedQueue;
@@ -373,7 +374,7 @@ fn graph_behind_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph
 /// The executable holds read-only data.
 fn change_in_executable(path: &[u8], syscall: sys::Tag) -> Option<sys::Error> {
     let graph = graph_in_front_of_disk(path)?;
-    let errno = if graph.contains_file(path) || graph.find_dir(path) {
+    let errno = if graph.find_entry(path).is_some() {
         E::EROFS
     } else {
         E::ENOENT
@@ -388,7 +389,7 @@ pub(crate) fn creation_in_executable(
     if_there: E,
 ) -> Option<sys::Error> {
     let graph = graph_in_front_of_disk(path)?;
-    let errno = if graph.contains_file(path) || graph.find_dir(path) {
+    let errno = if graph.find_entry(path).is_some() {
         if_there
     } else if graph
         .find_dir(bun_paths::dirname(strings::without_trailing_slash(path)).unwrap_or(b"/"))
@@ -401,8 +402,7 @@ pub(crate) fn creation_in_executable(
 }
 
 fn is_in_executable(path: &[u8]) -> bool {
-    graph_in_front_of_disk(path)
-        .is_some_and(|graph| graph.contains_file(path) || graph.find_dir(path))
+    graph_in_front_of_disk(path).is_some_and(|graph| graph.find_entry(path).is_some())
 }
 
 /// What the executable holds lies on the file system that holds the executable.
@@ -414,17 +414,7 @@ fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut PathBuffer) -> &'a Z
 }
 
 fn lies_below_embedded_file(path: &[u8]) -> bool {
-    let Some(graph) = graph_in_front_of_disk(path) else {
-        return false;
-    };
-    let mut rest = strings::without_trailing_slash(path);
-    while let Some(parent) = bun_paths::dirname(rest).filter(|parent| parent.len() < rest.len()) {
-        if graph.contains_file(parent) {
-            return true;
-        }
-        rest = strings::without_trailing_slash(parent);
-    }
-    false
+    graph_in_front_of_disk(path).is_some_and(|graph| graph.lies_below_file(path))
 }
 
 /// An error names each path as the caller wrote it, and nothing lies below a file: ENOTDIR, which Windows reports as ENOENT.
@@ -493,10 +483,7 @@ fn access_in_graph(
     path: &[u8],
     mode: c_int,
 ) -> Option<Maybe<ret::Access>> {
-    let is_dir = graph.find_dir(path);
-    if !is_dir && !graph.contains_file(path) {
-        return None;
-    }
+    let is_dir = matches!(graph.find_entry(path)?, Entry::Directory);
     if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
         return Some(Err(
             sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(path)
@@ -512,7 +499,7 @@ fn read_file_in_graph(
     encoding: Encoding,
     string_type: ReadFileStringType,
 ) -> Option<Maybe<ret::ReadFileWithOptions>> {
-    if let Some(file) = graph.find_ref(path) {
+    if let Entry::File(file) = graph.find_entry(path)? {
         let contents: &[u8] = file.utf8_contents();
         return Some(if encoding == Encoding::Buffer {
             Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
@@ -531,18 +518,19 @@ fn read_file_in_graph(
             ))
         });
     }
-    if graph.find_dir(path) {
-        return Some(Err(sys::Error::from_code(E::EISDIR, sys::Tag::read)));
-    }
-    None
+    Some(Err(sys::Error::from_code(E::EISDIR, sys::Tag::read)))
 }
 
 fn embedded_file_of_compiled_program(path: &[u8]) -> Option<&'static bun_standalone_graph::File> {
     compiled_program_graph()?.find_ref(path)
 }
 
-fn is_embedded_in_compiled_program(path: &[u8]) -> bool {
-    compiled_program_graph().is_some_and(|graph| graph.contains_file(path) || graph.find_dir(path))
+/// What `realpath` answers for a path that the disk does not have and the executable does.
+fn real_path_in_executable<'a>(path: &'a [u8], buffer: &'a mut PathBuffer) -> Option<&'a [u8]> {
+    if is_source_path(path) {
+        return Some(path);
+    }
+    compiled_program_graph()?.real_path(path, buffer)
 }
 
 /// For a path that the disk does not have: `Graph::source_path_kind`.
@@ -5791,9 +5779,8 @@ impl NodeFS {
             return Ok(false);
         };
 
-        let holds_path = |graph: &bun_standalone_graph::Graph| {
-            graph.contains_file(path.slice()) || graph.find_dir(path.slice())
-        };
+        let holds_path =
+            |graph: &bun_standalone_graph::Graph| graph.find_entry(path.slice()).is_some();
         if graph_in_front_of_disk(path.slice()).is_some_and(holds_path) {
             return Ok(true);
         }
@@ -6062,15 +6049,12 @@ impl NodeFS {
     pub(crate) fn mkdir(&mut self, args: &args::Mkdir, _: Flavor) -> Maybe<ret::Mkdir> {
         if let Some(graph) = graph_in_front_of_disk(args.path.slice()) {
             let path = args.path.slice();
-            if args.recursive && graph.find_dir(path) {
+            let entry = graph.find_entry(path);
+            if args.recursive && matches!(entry, Some(Entry::Directory)) {
                 return Ok(StringOrUndefined::None);
             }
             // `mkdir -p` makes the folders above too, so the first one that is missing is what the system refuses.
-            let errno = if graph.contains_file(path) || graph.find_dir(path) {
-                E::EEXIST
-            } else {
-                E::EROFS
-            };
+            let errno = if entry.is_some() { E::EEXIST } else { E::EROFS };
             let error = match args.recursive {
                 true => Some(sys::Error::from_code(errno, sys::Tag::mkdir).with_path(path)),
                 false => creation_in_executable(path, sys::Tag::mkdir, E::EEXIST),
@@ -8023,11 +8007,12 @@ impl NodeFS {
                 )
             };
             if let Some(err) = rc.to_error(sys::Tag::realpath) {
-                if err.get_errno() == E::ENOENT
-                    && (is_source_path(args.path.slice())
-                        || is_embedded_in_compiled_program(args.path.slice()))
-                {
-                    return Ok(encode_path_result(args.path.slice(), args.encoding));
+                if err.get_errno() == E::ENOENT {
+                    let mut buffer = bun_paths::path_buffer_pool::get();
+                    if let Some(real_path) = real_path_in_executable(args.path.slice(), &mut buffer)
+                    {
+                        return Ok(encode_path_result(real_path, args.encoding));
+                    }
                 }
                 return Err(err.with_path(args.path.slice()));
             }
@@ -8081,18 +8066,17 @@ impl NodeFS {
                 }
             };
 
-            let is_only_in_the_executable = |err: &sys::Error| {
-                err.get_errno() == E::ENOENT
-                    && (is_source_path(path.as_bytes())
-                        || is_embedded_in_compiled_program(path.as_bytes()))
-            };
-
             #[cfg(target_os = "macos")]
             let buf = match Syscall::get_full_path(path, &mut outbuf) {
-                Err(err) if is_only_in_the_executable(&err) => {
-                    return Ok(encode_path_result(path.as_bytes(), args.encoding));
+                Err(err) => {
+                    if err.get_errno() == E::ENOENT
+                        && let Some(real_path) =
+                            real_path_in_executable(path.as_bytes(), &mut outbuf)
+                    {
+                        return Ok(encode_path_result(real_path, args.encoding));
+                    }
+                    return Err(err);
                 }
-                Err(err) => return Err(err),
                 Ok(buf_) => buf_,
             };
             #[cfg(not(target_os = "macos"))]
@@ -8103,10 +8087,15 @@ impl NodeFS {
                 let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
                 let fd = match sys::open(path, flags, 0) {
-                    Err(err) if is_only_in_the_executable(&err) => {
-                        return Ok(encode_path_result(path.as_bytes(), args.encoding));
+                    Err(err) => {
+                        if err.get_errno() == E::ENOENT
+                            && let Some(real_path) =
+                                real_path_in_executable(path.as_bytes(), &mut outbuf)
+                        {
+                            return Ok(encode_path_result(real_path, args.encoding));
+                        }
+                        return Err(err.with_path(path));
                     }
-                    Err(err) => return Err(err.with_path(path)),
                     Ok(fd_) => fd_,
                 };
                 let _close = scopeguard::guard(fd, |fd| fd.close());

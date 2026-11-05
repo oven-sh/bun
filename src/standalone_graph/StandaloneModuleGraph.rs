@@ -21,6 +21,7 @@ use bun_paths::fs as bun_fs;
 use bun_paths::{self as path, PathBuffer, strings};
 use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
 use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, ImageFile};
+use bun_resolver::standalone_module_graph::{FoldedPath, fold_embedded_path};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
@@ -252,20 +253,127 @@ impl StandaloneModuleGraph {
             return self.find_at_source_path(name);
         }
         self.lookup_file(name)
+            .or_else(|| self.find_folded(name, |graph, key| graph.files.get(key)))
+    }
+
+    /// `find_ref` for the key of a module. The loader asks with the name that the resolver answered, and also for
+    /// modules that are no files of the graph.
+    fn find_module(&self, name: &[u8]) -> Option<&File> {
+        if !is_bun_standalone_file_path(name) {
+            return self.find_at_source_path(name);
+        }
+        self.lookup_file(name)
     }
 
     pub fn contains_file(&self, name: &[u8]) -> bool {
         self.find_ref(name).is_some()
     }
 
+    /// The file or the directory at `name`. Under the root it is looked for as written in both tables before its
+    /// parts are folded: a caller that asks `find_ref` and then `find_dir` folds the path of every directory.
+    pub fn find_entry(&self, name: &[u8]) -> Option<Entry<'_>> {
+        if !is_bun_standalone_file_path(name) {
+            return match self.find_at_source_path(name) {
+                Some(file) => Some(Entry::File(file)),
+                None => self.find_dir(name).then_some(Entry::Directory),
+            };
+        }
+        if let Some(file) = self.lookup_file(name) {
+            return Some(Entry::File(file));
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        if self.is_directory_key(Self::normalize_dir_path(name, &mut buffer)) {
+            return Some(Entry::Directory);
+        }
+        let FoldedPath::Shorter(key) = self.fold(name, &mut buffer) else {
+            return None;
+        };
+        match self.files.get(key) {
+            Some(file) => Some(Entry::File(file)),
+            None => self.is_directory_key(key).then_some(Entry::Directory),
+        }
+    }
+
     pub fn stat(&self, name: &[u8]) -> Option<Stat> {
-        if let Some(file) = self.find_ref(name) {
-            return Some(file.stat());
+        Some(match self.find_entry(name)? {
+            Entry::File(file) => file.stat(),
+            Entry::Directory => dir_stat(),
+        })
+    }
+
+    /// `name`, a path under the root, as a key. It is asked for a path that the tables do not hold as written. Most
+    /// of those name nothing and have no part to fold, which one pass over the path says.
+    #[cold]
+    fn fold<'a>(&self, name: &'a [u8], buffer: &'a mut PathBuffer) -> FoldedPath<'a> {
+        let below_root = &name[BASE_PATH.len() - 1..];
+        if cfg!(not(windows))
+            && !name.ends_with(b"/")
+            && bun_highway::index_of_untidy_slash(below_root).is_none()
+        {
+            return FoldedPath::AsWritten(name);
         }
-        if self.find_dir(name) {
-            return Some(dir_stat());
+        fold_embedded_path(name, &mut buffer[..], |key| self.files.contains_key(key))
+    }
+
+    /// `found` for the key of `name` where its parts had to be folded.
+    #[cold]
+    pub(crate) fn find_folded<'a, Found>(
+        &'a self,
+        name: &[u8],
+        found: impl FnOnce(&'a Self, &[u8]) -> Option<Found>,
+    ) -> Option<Found> {
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        match self.fold(name, &mut buffer) {
+            FoldedPath::Shorter(key) => found(self, key),
+            FoldedPath::AsWritten(_) | FoldedPath::Outside | FoldedPath::BelowFile => None,
         }
-        None
+    }
+
+    /// What `realpath` answers for `name`, if the graph holds a file or a directory there. The graph holds no links:
+    /// `name` itself, or the key that its parts fold to, with the separators of the platform.
+    pub fn real_path<'a>(&self, name: &'a [u8], buffer: &'a mut PathBuffer) -> Option<&'a [u8]> {
+        if !is_bun_standalone_file_path(name) {
+            return self.find_entry(name).map(|_| name);
+        }
+        if self.lookup_file(name).is_some()
+            || self.is_directory_key(Self::normalize_dir_path(name, &mut *buffer))
+        {
+            return Some(name);
+        }
+        let length = match self.fold(name, &mut *buffer) {
+            FoldedPath::Shorter(key)
+                if self.files.contains_key(key) || self.is_directory_key(key) =>
+            {
+                key.len()
+            }
+            _ => return None,
+        };
+        let key = &mut buffer[..length];
+        path::resolve_path::posix_to_platform_in_place(key);
+        Some(key)
+    }
+
+    /// Whether `name`, which names nothing, leads through a file. Nothing lies below a file.
+    pub fn lies_below_file(&self, name: &[u8]) -> bool {
+        if !is_bun_standalone_file_path(name) {
+            return false;
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let mut rest = match self.fold(name, &mut buffer) {
+            FoldedPath::AsWritten(key) | FoldedPath::Shorter(key) => key,
+            FoldedPath::BelowFile => return true,
+            FoldedPath::Outside => return false,
+        };
+        while let Some(separator) = strings::last_index_of_char(rest, b'/') {
+            rest = &rest[..separator];
+            if rest.len() < BASE_PUBLIC_PATH.len() {
+                break;
+            }
+            if self.files.contains_key(rest) {
+                return true;
+            }
+        }
+        false
     }
 
     pub(crate) fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
@@ -285,15 +393,20 @@ impl StandaloneModuleGraph {
         self.directory_key(name, &mut buf).is_some()
     }
 
+    /// The graph's own copy of the key of one of its directories.
+    pub(crate) fn stored_directory_key(&self, key: &[u8]) -> &[u8] {
+        match self.dirs.get_index(key) {
+            Some(index) => &self.dirs.keys()[index],
+            None => keep_key_of_directory_with_code_alone(key),
+        }
+    }
+
     /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
     /// the errno an `open(O_DIRECTORY)` of it would produce.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         let mut buf = bun_paths::path_buffer_pool::get();
         if let Some(key) = self.directory_key(name, &mut buf) {
-            return Ok(match self.dirs.get_index(key) {
-                Some(index) => &self.dirs.keys()[index],
-                None => keep_key_of_directory_with_code_alone(key),
-            });
+            return Ok(self.stored_directory_key(key));
         }
         let name = Self::normalize_dir_path(name, &mut buf);
         Err(if self.find_ref(name).is_some() {
@@ -418,7 +531,7 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn has_module_info(&self, name: &[u8]) -> bool {
-        self.find_ref(name)
+        self.find_module(name)
             .is_some_and(|file| !file.module_info.is_empty() || file.prelinked_index != u32::MAX)
     }
     fn prelinked_module_graph(&self) -> (&'static [u8], &'static [u8]) {
@@ -428,7 +541,7 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         if self.prelinked_module_graph.is_empty() {
             return u32::MAX;
         }
-        self.find_ref(name)
+        self.find_module(name)
             .map_or(u32::MAX, |file| file.prelinked_index)
     }
     fn prelinked_module_name(&self, index: u32) -> Option<&'static [u8]> {
@@ -900,6 +1013,12 @@ mod elf {
             hi - lo
         );
     }
+}
+
+/// What the graph holds at a path.
+pub enum Entry<'a> {
+    File(&'a File),
+    Directory,
 }
 
 pub struct File {

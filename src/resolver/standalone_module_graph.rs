@@ -25,6 +25,107 @@ pub struct BytecodeModule {
     pub bytecode_entry_offset: u32,
 }
 
+/// What [`fold_embedded_path`] makes of a path. Each key starts the buffer and has `/` between its parts.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FoldedPath<'a> {
+    /// No part of the path is empty, `.` or `..`.
+    AsWritten(&'a [u8]),
+    /// The path without those parts.
+    Shorter(&'a [u8]),
+    /// A `..` leads out of the root of the executable, or the path does not fit the buffer.
+    Outside,
+    /// One of those parts follows a file.
+    BelowFile,
+}
+
+/// `path`, which lies under the root of the executable, as a key of its graph. A disk resolves an empty part, `.`
+/// and `..` one by one. The graph has no folder that the build left out, so here `..` removes the part in front of
+/// it whether the graph holds that part or not, as `path.resolve()` does and as Node does for the files of a single
+/// executable (https://github.com/nodejs/node/blob/v26.13.0/lib/internal/vfs/file_system.js#L73-L75). Nothing lies
+/// below a file: `is_file` is asked for the key in front of each of those parts.
+pub fn fold_embedded_path<'a>(
+    path: &[u8],
+    buffer: &'a mut [u8],
+    mut is_file: impl FnMut(&[u8]) -> bool,
+) -> FoldedPath<'a> {
+    use bun_core::strings;
+    use bun_options_types::standalone_path::{BASE_PUBLIC_PATH, is_bun_standalone_file_path};
+
+    debug_assert!(is_bun_standalone_file_path(path));
+    let path = bun_paths::string_paths::without_nt_prefix::<u8>(path);
+    if path.len() > buffer.len() {
+        return FoldedPath::Outside;
+    }
+    let root = BASE_PUBLIC_PATH.as_bytes();
+    // A key has no `/` at its end, and neither has the root in front of the first part.
+    let root_length = root.len() - 1;
+    buffer[..root_length].copy_from_slice(&root[..root_length]);
+    let mut length = root_length;
+    let mut is_as_written = true;
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    for part in strings::split_any(&path[root.len()..], separators) {
+        if !matches!(part, b"" | b"." | b"..") {
+            buffer[length] = b'/';
+            buffer[length + 1..][..part.len()].copy_from_slice(part);
+            length += 1 + part.len();
+            continue;
+        }
+        is_as_written = false;
+        if is_file(&buffer[..length]) {
+            return FoldedPath::BelowFile;
+        }
+        if part == b".." {
+            if length == root_length {
+                return FoldedPath::Outside;
+            }
+            length = strings::last_index_of_char(&buffer[..length], b'/').unwrap_or(root_length);
+            if is_file(&buffer[..length]) {
+                return FoldedPath::BelowFile;
+            }
+        }
+    }
+    match is_as_written {
+        true => FoldedPath::AsWritten(&buffer[..length]),
+        false => FoldedPath::Shorter(&buffer[..length]),
+    }
+}
+
+/// The file of `graph` at the first `path_len` bytes of `buf`, or the one under the `.js` name that an entry point
+/// with a source extension, or with none, is embedded under.
+fn find_file_or_entry_point<Graph: StandaloneModuleGraph + ?Sized>(
+    graph: &Graph,
+    buf: &mut [u8],
+    path_len: usize,
+) -> Option<&'static [u8]> {
+    if let Some(name) = graph.find_assume_standalone_path(&buf[..path_len]) {
+        return Some(name);
+    }
+    // Entry points are embedded under a `.js` name whatever the (case-insensitive) source extension was.
+    let extension = bun_paths::extension(&buf[..path_len]);
+    let extension_len = extension.len();
+    let is_source_extension = extension.is_empty()
+        || [
+            b"ts".as_slice(),
+            b"tsx",
+            b"jsx",
+            b"mjs",
+            b"mts",
+            b"cjs",
+            b"cts",
+        ]
+        .iter()
+        .any(|source| extension[1..].eq_ignore_ascii_case(source));
+    if !is_source_extension {
+        return None;
+    }
+    let stem_len = path_len - extension_len;
+    if stem_len + 3 > buf.len() {
+        return None;
+    }
+    buf[stem_len..stem_len + 3].copy_from_slice(b".js");
+    graph.find_assume_standalone_path(&buf[..stem_len + 3])
+}
+
 /// Resolver's view of a compiled-standalone-binary module graph. The concrete
 /// `bun_standalone_graph::Graph` (which depends on `bun_bundler`) implements
 /// this; the resolver holds a trait object so it stays below both in the dep
@@ -56,7 +157,8 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// The embedded module `specifier` names when imported from `source_dir`: an absolute embedded path (in either
     /// path syntax), or a `./` / `../` specifier joined onto `source_dir`, looked up as spelled and then -- since every
     /// entry point is embedded under a `.js` name -- under the `.js` name for a source extension or no extension
-    /// (`./w.ts` -> `/$bunfs/root/w.js`). Returns the graph's own name for the module, which is what the module
+    /// (`./w.ts` -> `/$bunfs/root/w.js`). An absolute path that names no file as spelled is looked up once more
+    /// without its empty parts, `.` and `..`. Returns the graph's own name for the module, which is what the module
     /// loader keys on; `None` for anything else (bare specifiers, other absolute paths, misses).
     fn resolve(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
         let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
@@ -84,33 +186,19 @@ pub trait StandaloneModuleGraph: Send + Sync {
             )?
             .len()
         };
-        if let Some(name) = self.find_assume_standalone_path(&buf[..path_len]) {
+        if let Some(name) = find_file_or_entry_point(self, &mut buf[..], path_len) {
             return Some(name);
         }
-        // Entry points are embedded under a `.js` name whatever the (case-insensitive) source extension was.
-        let extension = bun_paths::extension(&buf[..path_len]);
-        let extension_len = extension.len();
-        let is_source_extension = extension.is_empty()
-            || [
-                b"ts".as_slice(),
-                b"tsx",
-                b"jsx",
-                b"mjs",
-                b"mts",
-                b"cjs",
-                b"cts",
-            ]
-            .iter()
-            .any(|source| extension[1..].eq_ignore_ascii_case(source));
-        if !is_source_extension {
+        // The join has folded a relative specifier. One that names a directory names no file.
+        if !is_embedded_path || Resolver::import_path_names_directory(specifier) {
             return None;
         }
-        let stem_len = path_len - extension_len;
-        if stem_len + 3 > buf.len() {
+        let FoldedPath::Shorter(folded) = fold_embedded_path(specifier, &mut buf[..], |_| false)
+        else {
             return None;
-        }
-        buf[stem_len..stem_len + 3].copy_from_slice(b".js");
-        self.find_assume_standalone_path(&buf[..stem_len + 3])
+        };
+        let folded_len = folded.len();
+        find_file_or_entry_point(self, &mut buf[..], folded_len)
     }
     /// The name of the file that an executable compiled in place holds for `path`, an absolute path that the disk no longer has.
     fn file_at_source_path(&self, _path: &[u8]) -> Option<&'static [u8]> {
@@ -425,5 +513,106 @@ mod tests {
         let graph = FakeGraph { program: None };
         assert_eq!(resolve_module(&graph, b"./worker"), Some(ENTRY_POINT));
         assert_eq!(resolve_module(&graph, b"./lib"), None);
+    }
+
+    #[test]
+    fn absolute_path_that_names_no_file_as_spelled_is_folded() {
+        let graph = FakeGraph { program: None };
+        for specifier in [
+            &b"/$bunfs/root/./worker.js"[..],
+            b"/$bunfs/root//worker.js",
+            b"/$bunfs//root/worker.js",
+            b"/$bunfs/root/lib/../worker.js",
+            b"/$bunfs/root/../root/worker.js",
+            b"/$bunfs/root/./worker.ts",
+            b"/$bunfs/root/./worker",
+        ] {
+            assert_eq!(
+                graph.resolve(ROOT, specifier),
+                Some(ENTRY_POINT),
+                "{}",
+                String::from_utf8_lossy(specifier)
+            );
+        }
+        for specifier in [
+            &b"/$bunfs/root/./absent.js"[..],
+            b"/$bunfs/root/../worker.js",
+            b"/$bunfs/root/../../$bunfs/root/worker.js",
+            b"/$bunfs/root/./worker.js/",
+            b"/$bunfs/root/./worker.js/.",
+            b"/$bunfs/root/./worker.js/lib/..",
+        ] {
+            assert_eq!(
+                graph.resolve(ROOT, specifier),
+                None,
+                "{}",
+                String::from_utf8_lossy(specifier)
+            );
+        }
+    }
+
+    fn fold(path: &str, files: &[&str]) -> String {
+        let mut buffer = [0u8; 48];
+        let is_file = |key: &[u8]| files.iter().any(|file| file.as_bytes() == key);
+        match fold_embedded_path(path.as_bytes(), &mut buffer, is_file) {
+            FoldedPath::AsWritten(key) => format!("as written: {}", String::from_utf8_lossy(key)),
+            FoldedPath::Shorter(key) => String::from_utf8_lossy(key).into_owned(),
+            FoldedPath::Outside => "outside".to_owned(),
+            FoldedPath::BelowFile => "below a file".to_owned(),
+        }
+    }
+
+    #[test]
+    fn empty_parts_and_dots_are_folded_out_of_an_embedded_path() {
+        for (path, expected) in [
+            ("/$bunfs/root/a/b.txt", "as written: /$bunfs/root/a/b.txt"),
+            (
+                "/$bunfs/root/.../..a/.b",
+                "as written: /$bunfs/root/.../..a/.b",
+            ),
+            ("/$bunfs/root/a/./b.txt", "/$bunfs/root/a/b.txt"),
+            ("/$bunfs/root/a//b.txt", "/$bunfs/root/a/b.txt"),
+            ("/$bunfs/root/a/c/../b.txt", "/$bunfs/root/a/b.txt"),
+            ("/$bunfs/root/a/c/d/../../b.txt", "/$bunfs/root/a/b.txt"),
+            ("/$bunfs//root/a", "/$bunfs/root/a"),
+            ("/$bunfs/./root/a", "/$bunfs/root/a"),
+            ("/$bunfs/root/../root/a", "/$bunfs/root/a"),
+            ("/$bunfs/root/a/", "/$bunfs/root/a"),
+            ("/$bunfs/root/a/.", "/$bunfs/root/a"),
+            ("/$bunfs/root/a/..", "/$bunfs/root"),
+            ("/$bunfs/root/..", "/$bunfs"),
+            ("/$bunfs/", "/$bunfs"),
+            ("/$bunfs/..", "outside"),
+            ("/$bunfs/root/../..", "outside"),
+            ("/$bunfs/root/../../etc/hostname", "outside"),
+            (
+                "/$bunfs/root/a/./a-name-that-is-longer-than-the-buffer-of-this-test",
+                "outside",
+            ),
+        ] {
+            assert_eq!(fold(path, &[]), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn nothing_lies_below_a_file_of_an_embedded_path() {
+        let files = ["/$bunfs/root/a/b.txt"];
+        for (path, expected) in [
+            ("/$bunfs/root/a/./b.txt", "/$bunfs/root/a/b.txt"),
+            // The graph does not hold `c`: it cannot tell a folder that is absent from one that the build left out.
+            ("/$bunfs/root/a/c/../b.txt", "/$bunfs/root/a/b.txt"),
+            // The lookup finds nothing at a part below a file that stays.
+            ("/$bunfs/root/a/./b.txt/d", "/$bunfs/root/a/b.txt/d"),
+            ("/$bunfs/root/a/b.txt/", "below a file"),
+            ("/$bunfs/root/a/b.txt/.", "below a file"),
+            ("/$bunfs/root/a/b.txt/..", "below a file"),
+            ("/$bunfs/root/a/b.txt//d", "below a file"),
+            ("/$bunfs/root/a/b.txt/../b.txt", "below a file"),
+            ("/$bunfs/root/a/b.txt/d/..", "below a file"),
+            ("/$bunfs/root/a/b.txt/d/../e", "below a file"),
+            ("/$bunfs/root/a/b.txt/d/e/../..", "below a file"),
+        ] {
+            assert_eq!(fold(path, &files), expected, "{path}");
+        }
     }
 }

@@ -44,9 +44,9 @@ pub mod standalone_path {
     pub(crate) const BASE_PATH: &str = "B:\\~BUN\\";
 
     #[cfg(not(windows))]
-    pub(crate) const BASE_PUBLIC_PATH: &str = "/$bunfs/";
+    pub const BASE_PUBLIC_PATH: &str = "/$bunfs/";
     #[cfg(windows)]
-    pub(crate) const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
+    pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 
     #[inline]
     fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {

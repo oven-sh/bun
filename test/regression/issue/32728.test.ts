@@ -34,8 +34,9 @@ test("compile preserves parent-segment entrypoint path for Worker resolution", a
   expect(buildErr).not.toContain("error:");
   expect(buildExit).toBe(0);
 
-  // A plain-string bunfs path reaches the standalone graph lookup verbatim
-  // (no `..` normalization), so it must match the embedded key byte-for-byte.
+  // The standalone graph looks a bunfs path up as written before it folds `..`
+  // out of it. The embedded key holds `..` itself, so only the path as written
+  // matches it.
   const prefix = isWindows ? "B:/~BUN/root/" : "/$bunfs/root/";
   await using run = Bun.spawn({
     cmd: [exe],

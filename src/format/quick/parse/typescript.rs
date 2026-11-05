@@ -31,6 +31,10 @@ pub(crate) struct ParseTypescript {
     /// Where type arguments were tried, TypeScript may have gone on: behind the parameters of a function type there was no `=>`, but something with which a list of
     /// types can go on, or there was a type of JSDoc.
     pub(crate) trial_is_doubtful: bool,
+    /// How many times `T?` was read where it is no element of a tuple: there it is a type of JSDoc.
+    pub(crate) stray_optional_types: i32,
+    /// What a class extends or implements, or an interface extends, is read.
+    pub(crate) in_heritage: bool,
 }
 impl ParseTypescript {
     pub(crate) fn new() -> Self {
@@ -42,6 +46,8 @@ impl ParseTypescript {
             in_head_of_for: false,
             export_needs_from: false,
             trial_is_doubtful: false,
+            stray_optional_types: 0,
+            in_heritage: false,
         }
     }
 }
@@ -62,6 +68,8 @@ impl Quick {
         self.parse_typescript.in_class_declaration = false;
         self.parse_typescript.in_head_of_for = false;
         self.parse_typescript.export_needs_from = false;
+        self.parse_typescript.stray_optional_types = 0;
+        self.parse_typescript.in_heritage = false;
         self.flow_reset_context();
     }
 
@@ -652,8 +660,13 @@ impl Quick {
                     return Ok(type_);
                 }
                 type_ = self.node1(k::OptionalType, start, self.lexer.prev_end, type_);
+                self.parse_typescript.stray_optional_types += 1;
             } else if self.lexer.tok == tk::Not {
                 // a type of JSDoc
+                self.next()?;
+                if self.lexer.tok == tk::Comma || self.starts_with_gt() {
+                    self.parse_typescript.trial_is_doubtful = true;
+                }
                 return Err(self.unexpected());
             } else {
                 break;
@@ -905,6 +918,9 @@ impl Quick {
             );
         } else {
             element = self.ts_parse_type()?;
+            if (self.n.at(element) & 0xff) == k::OptionalType {
+                self.parse_typescript.stray_optional_types -= 1;
+            }
         }
         if is_rest {
             return Ok(self.node2(k::RestType, start, self.lexer.prev_end, element, 0));
@@ -1480,7 +1496,9 @@ impl Quick {
             if self.word() == w::Implements {
                 return Err(self.text_refuse());
             }
+            self.parse_typescript.in_heritage = true;
             let mut expression = self.parse_expr_subscripts()?;
+            self.parse_typescript.in_heritage = false;
             let mut type_arguments: i32 = 0;
             if (self.n.at(expression) & (0xff | F_PAREN)) == k::InstantiationExpression {
                 type_arguments = self.n.at(expression + 5);
@@ -2530,6 +2548,9 @@ impl Quick {
                     let v2 = self.lexer.prev_end;
                     let v3 = self.list_finish(list_top);
                     result = self.node_l(k::TypeParameterInstantiation, start, v2, v3);
+                } else if self.parse.typed != FLOW && !self.parse_typescript.in_heritage {
+                    // `a < b > c`: two comparisons, which nobody writes. (`class A extends B<C> {`: whoever reads the head goes on.)
+                    return Err(self.text_refuse());
                 }
             }
             Ok(None)

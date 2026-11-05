@@ -366,6 +366,9 @@ impl Quick {
                 self.list_push(v0);
             }
         }
+        if self.parse_typescript.stray_optional_types != 0 {
+            return Err(self.text_refuse());
+        }
         let body = self.list_finish(mark);
         return Ok(self.node_ll(
             k::Program,
@@ -2597,7 +2600,9 @@ impl Quick {
             {
                 return Err(self.text_refuse());
             }
+            self.parse_typescript.in_heritage = true;
             super_class = self.parse_expr_subscripts()?;
+            self.parse_typescript.in_heritage = false;
             self.parse.no_record_expression = 0;
             if self.parse.typed != 0 {
                 if (self.n.at(super_class) & (0xff | F_PAREN)) == k::InstantiationExpression {
@@ -3029,6 +3034,8 @@ impl Quick {
         min_prec: i32,
     ) -> R<i32> {
         self.stack()?;
+        // the precedence of the operator of `left`, if it was read here
+        let mut last_prec = i32::MAX;
         loop {
             let op = self.lexer.tok;
             let prec = PREC.at(op);
@@ -3044,6 +3051,10 @@ impl Quick {
                     && self.ts_is_as_or_satisfies()
                 {
                     left = self.ts_parse_as_or_satisfies(left, left_start)?;
+                    if PREC.at(self.lexer.tok) > last_prec && self.parse.typed == TYPED_TS {
+                        // `a + b as T * c`
+                        return Err(self.text_refuse());
+                    }
                     continue;
                 }
                 return Ok(left);
@@ -3060,6 +3071,7 @@ impl Quick {
             let v0 = self.parse_maybe_unary()?;
             let right =
                 self.parse_expr_op(v0, right_start, if op == tk::Pow { prec - 1 } else { prec })?;
+            last_prec = prec;
             if op == tk::LOr || op == tk::LAnd || op == tk::Nullish {
                 left = self.make_logical(op, left_start, self.lexer.prev_end, left, right)?;
             } else {
@@ -3129,6 +3141,10 @@ impl Quick {
             tk::Inc | tk::Dec => {
                 let op = self.lexer.tok;
                 self.next()?;
+                if self.lexer.tok == tk::Lt && self.parse.typed == TYPED_TS {
+                    // `++<T>a`
+                    return Err(self.text_refuse());
+                }
                 let argument = self.parse_maybe_unary()?;
                 self.check_target(argument, false)?;
                 return Ok(self.node1(
@@ -4583,6 +4599,8 @@ impl Quick {
                         self.to_assignable(self.n.at(member + 5))?;
                     } else if kind == k::SpreadElement {
                         self.to_assignable(member)?;
+                    } else if kind == k::ObjectMethod && self.parse.typed == TYPED_TS {
+                        return Err(self.text_refuse());
                     } else if kind == k::Ready && (self.n.at(member) & F_EXTRA) == 0 {
                         return Err(self.redo());
                     }
@@ -5108,6 +5126,12 @@ impl Quick {
                         return Err(self.text_refuse());
                     }
                     declaration = self.parse_statement()?;
+                    if (self.n.at(declaration) & 0xff) != k::ClassDeclaration
+                        && self.parse.typed == TYPED_TS
+                    {
+                        // `export @a export class A {}`
+                        return Err(self.text_refuse());
+                    }
                 }
                 tk::Name => {
                     if self.lexer.tok_kw == kw::Let
@@ -5618,7 +5642,8 @@ impl Quick {
                     let comments_before = self.lexer.c_count;
                     self.next_jsx_tag()?;
                     if self.parse.typed == TYPED_TS
-                        && (self.lexer.tok == tk::Div) != (self.t.at(tag_start + 1) == 47)
+                        && ((self.lexer.tok == tk::Div) != (self.t.at(tag_start + 1) == 47)
+                            || self.lexer.tok_start != tag_start + 1)
                     {
                         // `</` is one token for TypeScript: `< /a>` closes nothing, and `</* */ a>` does
                         return Err(self.text_refuse());

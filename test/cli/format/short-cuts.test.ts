@@ -3284,6 +3284,14 @@ describe("TypeScript that the long way rejects", () => {
     "async (a?)",
     "async (a: b)",
     "async (a?: b)",
+    // `as` between operators
+    "x = 1 + 1 as number * 2",
+    "x = 1 + 1 as any as number * 2",
+    "x = 1 >> 1 as number + 2",
+    "x = 1 + 1 satisfies number * 2",
+    // a type assertion where only a left-hand side expression can stand
+    "++<T>a",
+    "--<T>a.b",
     // the head of a `for`
     "for (var a = 1 in b);",
     "for (let a = 1 of b);",
@@ -3357,6 +3365,7 @@ describe("TypeScript that the long way rejects", () => {
     "<a>< /a>",
     "<>< />",
     "<a></* c */b /></a>",
+    "<></* c *//>",
     "x = <// c\na />",
     "interface A<// c\nT> {}",
     "let a: B<// c\nT>",

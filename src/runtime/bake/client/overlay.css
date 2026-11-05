@@ -27,8 +27,6 @@
   --fg-muted: #525252;
   --fg-faint: #707070;
   --accent: #ff1f8f;
-  --accent-strong: #d60066;
-  --accent-tint: #ff1f8f12;
   --code-bg: #f6f6f6;
   --error: #d61f2d;
   --warn: #c27803;
@@ -73,8 +71,6 @@
     --fg-muted: #a8a8a5;
     --fg-faint: #80807e;
     --accent: #ff2e97;
-    --accent-strong: #ff5cb0;
-    --accent-tint: #ff2e9714;
     --code-bg: #080708;
     --error: #ff5a5a;
     --warn: #f5b43c;
@@ -97,7 +93,6 @@ pre,
 .code,
 .file-name,
 .function-name,
-.label,
 footer {
   font-family: var(--mono);
 }
@@ -250,11 +245,6 @@ nav code {
   font-size: 13px;
   font-weight: 700;
 }
-.file-name .dir {
-  color: var(--fg-faint);
-  font-weight: 500;
-}
-.label,
 .pill {
   font-family: var(--mono);
   font-size: 10.5px;

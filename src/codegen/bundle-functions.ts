@@ -451,16 +451,11 @@ export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: B
   let combinedSourceCode = "";
   // Compute source offsets
   {
-    for (const { basename, functions } of files) {
+    for (const { functions } of files) {
       for (const fn of functions) {
         checkAscii(fn.source);
         fn.sourceOffset = combinedSourceCode.length;
         combinedSourceCode += fn.source;
-
-        // If you want to see the individual function sources:
-        // if (true) {
-        //   Bun.write(CODEGEN_DIR + "/functions/" + low(basename) + cap(fn.name) + ".js", fn.source + "\n");
-        // }
       }
     }
   }

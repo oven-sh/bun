@@ -49,10 +49,7 @@ fn without_asterisks(value: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// oxlint's `normalize_comment_text`, which its `ignorePattern` is tested against: each line of the value without its
-/// leading whitespace (Rust's `str::trim_start`), one `*` and one space after the `*`. ESLint tests the value with only
-/// its asterisks removed, so an anchored pattern such as `^noinspection` matches `// noinspection` for oxlint and not
-/// for ESLint.
+/// oxlint's `normalize_comment_text`: the text its `ignorePattern` is tested against. ESLint's is `without_asterisks`.
 fn oxlint_normalized(value: &[u8]) -> Cow<'_, [u8]> {
     fn normalize_line(line: &[u8]) -> &[u8] {
         let line = strings::trim_unicode_whitespace_start(line);
@@ -64,8 +61,7 @@ fn oxlint_normalized(value: &[u8]) -> Cow<'_, [u8]> {
     if !strings::contains_char(value, b'\n') {
         return Cow::Borrowed(normalize_line(value));
     }
-    // The lines are those of Rust's `str::lines`, which oxlint uses: a `\n` ends a line and takes the `\r` before it
-    // with it, and a final `\n` starts no empty line. A `\r` that no `\n` follows stays.
+    // The lines of Rust's `str::lines`: `\r` goes with the `\n` after it, and a final `\n` starts no line.
     let (value, ends_with_line_break) = match value.strip_suffix(b"\n") {
         Some(value) => (value, true),
         None => (value, false),

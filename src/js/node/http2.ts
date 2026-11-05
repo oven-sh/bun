@@ -134,9 +134,7 @@ function initialLocalSettings(submitted: any) {
   return settings;
 }
 
-// The peer's settings until its first SETTINGS frame. nghttp2 seeds maxConcurrentStreams with
-// peerMaxConcurrentStreams (https://github.com/nghttp2/nghttp2/blob/v1.64.0/lib/nghttp2_session.c#L495),
-// a Uint32Array slot in node (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L253).
+// nghttp2's remote settings until the peer's first SETTINGS frame (nghttp2_session.c#L495, v1.64.0).
 function initialRemoteSettings(peerMaxConcurrentStreams: unknown): Settings {
   const settings = getUnpackedSettings();
   settings.maxConcurrentStreams = typeof peerMaxConcurrentStreams === "number" ? peerMaxConcurrentStreams >>> 0 : 100;
@@ -6569,8 +6567,7 @@ class ClientHttp2Session extends Http2Session {
     req.once("close", () => this.#releaseRequestSlot(req));
   }
 
-  // Runs at the native close report (the peer frees the slot at the wire close, not when the
-  // body is read), with 'close' as the backstop for a stream torn down from JS first.
+  // Called at the native close report (the peer frees the slot then), and from 'close' as a backstop.
   #releaseRequestSlot(req: ClientHttp2Stream, flush: boolean = true) {
     if ((req[bunHTTP2StreamStatus] & StreamState.HoldsRequestSlot) === 0) return;
     req[bunHTTP2StreamStatus] &= ~StreamState.HoldsRequestSlot;

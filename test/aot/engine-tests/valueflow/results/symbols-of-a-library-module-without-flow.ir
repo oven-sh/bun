@@ -1,0 +1,56 @@
+# `const kState = Symbol("kState")` in the body of a module of the library. The library declares fields under such symbols, and the run time finds a field by the symbol of its key.
+# The body of a module runs once, so without whole-program analysis the call still creates the symbol of the key.
+# A call in a loop, in another function of the library, or in the program creates a symbol like any other.
+# OPTIONS: disable=flow-results
+# RUN: pipeline ApplyFlowResults
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+entry module=m0
+variable g0 name="kState" module=m1 declared={type=anything|absent} initialization=Uninitialized
+variable g1 name="kLooped" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="make" module=m1 declared={type=anything} initialization=Undefined
+variable g3 name="kOwn" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="kOwn"
+    v2 = Call v0, -, v1 callNumber=300 @300
+    PutModuleVariable v2 variable=g3
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: KeyConstant
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="kState"
+    v2 = Call v0, -, v1 callNumber=100 @100
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f2
+    PutModuleVariable v4 variable=g2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = String string="kLooped"
+    v8 = Call v0, -, v7 callNumber=101 @101
+    PutModuleVariable v8 variable=g1
+    v10 = GetModuleVariable variable=g2
+    v11 = ToBoolean v10
+    Branch v11 -> taken b2(), notTaken b1()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1 name="readline"
+# CHECK: [[created]]: symbol("kState")@m1:100 = KeyConstant key=symbol("kState")@m1:100
+# CHECK-NEXT: PutModuleVariable [[created]] variable=g0
+# CHECK-NOT: KeyConstant
+function f2 name="make" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="kMade"
+    v2 = Call v0, -, v1 callNumber=200 @200
+    Return v2
+}
+# CHECK-LABEL: function f2 name="make"
+# CHECK-NOT: KeyConstant

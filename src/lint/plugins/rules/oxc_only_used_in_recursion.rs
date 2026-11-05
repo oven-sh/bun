@@ -6,7 +6,7 @@ use rustc_hash::FxHashSet;
 /// Checks for arguments that are only used in recursion with no side effects.
 pub struct OnlyUsedInRecursion;
 
-const ONLY_USED_IN_RECURSION: Message = Message::new("", "Parameter `{{param_name}}` is only used in recursive calls");
+const ONLY_USED_IN_RECURSION: &Message = &Message::new("", "Parameter `{{param_name}}` is only used in recursive calls");
 
 #[derive(Default)]
 pub struct State<'a> {

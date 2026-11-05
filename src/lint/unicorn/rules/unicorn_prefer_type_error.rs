@@ -6,8 +6,8 @@ use smallvec::SmallVec;
 /// Enforce throwing a `TypeError` instead of a generic `Error` after a type-checking if statement.
 pub struct PreferTypeError;
 
-const PREFER_TYPE_ERROR: Message =
-    Message::new("", "Prefer throwing a `TypeError` over a generic `Error` after a type checking if-statement");
+const PREFER_TYPE_ERROR: &Message =
+    &Message::new("", "Prefer throwing a `TypeError` over a generic `Error` after a type checking if-statement");
 
 impl Rule for PreferTypeError {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-type-error", Kind::Suggestion).fixable(Fixable::Code);

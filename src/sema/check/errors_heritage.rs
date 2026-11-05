@@ -601,7 +601,7 @@ impl Checker<'_, '_> {
                     && derived_property_flags != SymFlags::PROPERTY
                 {
                     2611
-                } else if self.p.files.options.use_define_for_class_fields
+                } else if self.module_options(file).use_define_for_class_fields
                     && !(base_declaration_flags | derived_declaration_flags)
                         .contains(Flags::ABSTRACT)
                     && self.is_redefined_without_initializer(file, c, derived, class_type)

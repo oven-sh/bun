@@ -32,28 +32,28 @@ struct Checks {
     arrays_outside_jsx: bool,
 }
 
-const MISSING_ITER_KEY: Message = Message::new("missingIterKey", "Missing \"key\" prop for element in iterator");
-const MISSING_ITER_KEY_USE_PRAG: Message = Message::new(
+const MISSING_ITER_KEY: &Message = &Message::new("missingIterKey", "Missing \"key\" prop for element in iterator");
+const MISSING_ITER_KEY_USE_PRAG: &Message = &Message::new(
     "missingIterKeyUsePrag",
     "Missing \"key\" prop for element in iterator. Shorthand fragment syntax does not support providing keys. Use {{reactPrag}}.{{fragPrag}} instead",
 );
-const MISSING_ARRAY_KEY: Message = Message::new("missingArrayKey", "Missing \"key\" prop for element in array");
-const MISSING_ARRAY_KEY_USE_PRAG: Message = Message::new(
+const MISSING_ARRAY_KEY: &Message = &Message::new("missingArrayKey", "Missing \"key\" prop for element in array");
+const MISSING_ARRAY_KEY_USE_PRAG: &Message = &Message::new(
     "missingArrayKeyUsePrag",
     "Missing \"key\" prop for element in array. Shorthand fragment syntax does not support providing keys. Use {{reactPrag}}.{{fragPrag}} instead",
 );
-const KEY_BEFORE_SPREAD: Message = Message::new(
+const KEY_BEFORE_SPREAD: &Message = &Message::new(
     "keyBeforeSpread",
     "`key` prop must be placed before any `{...spread}, to avoid conflicting with React’s new JSX transform: https://reactjs.org/blog/2020/09/22/introducing-the-new-jsx-transform.html`",
 );
-const NON_UNIQUE_KEYS: Message = Message::new("nonUniqueKeys", "`key` prop must be unique");
+const NON_UNIQUE_KEYS: &Message = &Message::new("nonUniqueKeys", "`key` prop must be unique");
 
-const MISSING_KEY_PROP_FOR_ELEMENT_IN_ARRAY: Message = Message::new("", "Missing \"key\" prop for element in array.");
-const MISSING_KEY_PROP_FOR_ELEMENT_IN_ITERATOR: Message =
-    Message::new("", "Missing \"key\" prop for element in iterator.");
-const KEY_PROP_MUST_BE_PLACED_BEFORE_SPREAD: Message =
-    Message::new("", "\"key\" prop must be placed before any `{...spread}`");
-const DUPLICATE_KEY_PROP: Message = Message::new("", "Duplicate key '{{key_value}}' found in JSX elements");
+const MISSING_KEY_PROP_FOR_ELEMENT_IN_ARRAY: &Message = &Message::new("", "Missing \"key\" prop for element in array.");
+const MISSING_KEY_PROP_FOR_ELEMENT_IN_ITERATOR: &Message =
+    &Message::new("", "Missing \"key\" prop for element in iterator.");
+const KEY_PROP_MUST_BE_PLACED_BEFORE_SPREAD: &Message =
+    &Message::new("", "\"key\" prop must be placed before any `{...spread}`");
+const DUPLICATE_KEY_PROP: &Message = &Message::new("", "Duplicate key '{{key_value}}' found in JSX elements");
 
 #[derive(Copy, Clone)]
 enum InsideArrayOrIterator {

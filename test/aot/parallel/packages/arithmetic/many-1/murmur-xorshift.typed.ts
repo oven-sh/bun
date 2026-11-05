@@ -1,0 +1,16 @@
+const show = (v: unknown): string => typeof v === "function" ? "fn:" + v.name : typeof v === "symbol" ? String(v) : typeof v === "bigint" ? v + "n" : v === undefined ? "undefined" : JSON.stringify(v, (k: string, x: unknown) => typeof x === "function" ? "fn:" + x.name : typeof x === "bigint" ? x + "n" : x === undefined ? "undef" : x);
+const said = (e: any): string => "THROWS " + (e && e.name) + (e && e.code ? " " + e.code : "") + (e && /\(bun compile/.test(String(e.message)) ? " [--aot: " + String(e.message).split(" (bun")[0]!.slice(0, 110) + "]" : "");
+const t = (name: string, f: () => unknown): void => { try { console.log(name, show(f())); } catch (e) { console.log(name, said(e)); } };
+const ta = async (name: string, f: () => unknown): Promise<void> => { try { console.log(name, show(await f())); } catch (e) { console.log(name, said(e)); } };
+const keys = (o: object): string => Object.keys(o).filter((k) => k !== "__esModule").sort().join();
+function murmur3(key: string, seed: number): number { let h = seed; const c1 = 0xcc9e2d51, c2 = 0x1b873593; const n = key.length & ~3; let i = 0;
+  for (; i < n; i += 4) { let k = (key.charCodeAt(i) & 255) | ((key.charCodeAt(i + 1) & 255) << 8) | ((key.charCodeAt(i + 2) & 255) << 16) | ((key.charCodeAt(i + 3) & 255) << 24); k = Math.imul(k, c1); k = (k << 15) | (k >>> 17); k = Math.imul(k, c2); h ^= k; h = (h << 13) | (h >>> 19); h = (Math.imul(h, 5) + 0xe6546b64) | 0; }
+  let k = 0; switch (key.length & 3) { case 3: k ^= (key.charCodeAt(i + 2) & 255) << 16; case 2: k ^= (key.charCodeAt(i + 1) & 255) << 8; case 1: k ^= key.charCodeAt(i) & 255; k = Math.imul(k, c1); k = (k << 15) | (k >>> 17); k = Math.imul(k, c2); h ^= k; }
+  h ^= key.length; h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0; }
+function imulByHand(a: number, b: number): number { const ah = (a >>> 16) & 0xffff, al = a & 0xffff, bh = (b >>> 16) & 0xffff, bl = b & 0xffff; return (al * bl + (((ah * bl + al * bh) << 16) >>> 0)) | 0; }
+function xorshift32(seed: number, n: number): number[] { let x = seed; const r: number[] = []; for (let i = 0; i < n; i++) { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; r.push(x >>> 0); } return r; }
+function mulberry(seed: number, n: number): number[] { let a = seed; const r: number[] = []; for (let i = 0; i < n; i++) { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; r.push(((t ^ (t >>> 14)) >>> 0) / 4294967296); } return r; }
+function lcg(seed: number, n: number): number[] { let s = seed; const r: number[] = []; for (let i = 0; i < n; i++) { s = (s * 1103515245 + 12345) % 2147483648; r.push(s); } return r; }
+function park(seed: number, n: number): number[] { let s = seed; const r: number[] = []; for (let i = 0; i < n; i++) { s = (s * 16807) % 2147483647; r.push(s); } return r; }
+function run(): unknown { return [murmur3("hello, world", 0), murmur3("abc", 0x9747b28c), murmur3("", 1), imulByHand(0xffffffff, 5), imulByHand(0x7fffffff, 0x7fffffff), Math.imul(0xffffffff, 5), xorshift32(2463534242, 4), mulberry(1, 3), lcg(42, 4), park(1, 5)]; }
+for (const x of run() as unknown[]) console.log(show(x));

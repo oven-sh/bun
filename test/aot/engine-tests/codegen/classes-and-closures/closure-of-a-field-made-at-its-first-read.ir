@@ -1,0 +1,55 @@
+# class Widget {
+#   count = 0;
+#   handler = () => ++this.count;
+# }
+# register(new Widget());
+# register(new Widget());
+# function take(widget) { return widget.handler; }
+# A constructor leaves the closure of a field unmade, also where code that runs often reads the field. The read that finds none made yet makes it as the constructor would have: by the stub that allocates closures. It stores the closure into the slot and calls no function of the run time.
+# FORM: AsRead
+# OPTIONS: references=narrow heat=EverythingIsHot
+# RUN: pipeline CheckPlacement
+# RUN(CALLS): generate-code calls
+# STATISTIC: FieldsDeferringClosures = 1
+# CHECK: NewClosure function=f2 {{*}}closureForm=Deferred [isMadeOnDemand]
+# CHECK: = GetDeferredClosureSlot
+# CALLS: stub MakeClosureOfField
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Widget" constructor=f1 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = Construct v2
+    v8 = Call v5, -, v7
+    v9 = NewClosure function=f3
+    v10 = Call v5, -, v9
+    Return v10
+}
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=0
+    PropDefine v2, v3 key="count"
+    v5 = NewClosure v2 function=f2
+    PropDefine v2, v5 key="handler"
+    Return v2
+}
+function f2 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    PropSet v0, v3 key="count"
+    Return v3
+}
+function f3 name="take" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="handler"
+    Return v1
+}

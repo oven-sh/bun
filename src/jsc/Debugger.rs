@@ -197,6 +197,16 @@ impl Debugger {
     /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
     /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            Debugger::wait_for_debugger,
+            this
+        )
+    }
+
+    #[inline(never)]
+    fn wait_for_debugger(this: *mut VirtualMachine) {
         // `this` is the live per-thread VM; same allocation as
         // `VirtualMachine::get()` — route through the safe thread-local
         // accessor instead of open-coding the backref deref. All subsequent
@@ -334,11 +344,11 @@ impl Debugger {
                     {
                         let pending_unref = this.take_pending_unref();
                         if pending_unref > 0 {
-                            this.uws_loop_mut().unref_count(pending_unref);
+                            this.uws_loop_ref().unref_count(pending_unref);
                         }
                     }
 
-                    this.uws_loop_mut()
+                    this.uws_loop_ref()
                         .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
 
                     if bun_core::Environment::ENABLE_LOGS {
@@ -368,6 +378,20 @@ impl Debugger {
     /// JSC inspector context, spawn the debugger VM thread, and arm the
     /// keep-alive on the parent loop.
     pub fn create(
+        this: *mut VirtualMachine,
+        global_object: &JSGlobalObject,
+    ) -> crate::CrateResult<()> {
+        bun_removable_features::call_removable!(
+            Inspector,
+            Abort,
+            Debugger::create_debugger,
+            this,
+            global_object
+        )
+    }
+
+    #[inline(never)]
+    fn create_debugger(
         this: *mut VirtualMachine,
         global_object: &JSGlobalObject,
     ) -> crate::CrateResult<()> {
@@ -885,13 +909,11 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `handle` is the live C++ agent just stored above.
-            dbg.test_reporter_agent.next_test_id = unsafe {
-                (hooks.retroactively_report_discovered_tests)(
-                    dbg.test_reporter_agent.handle,
-                    dbg.test_reporter_agent.next_test_id,
-                )
-            };
+            dbg.test_reporter_agent.next_test_id = (hooks.retroactively_report_discovered_tests)(
+                // SAFETY: `handle` is the live C++ agent just stored above.
+                unsafe { &mut *dbg.test_reporter_agent.handle },
+                dbg.test_reporter_agent.next_test_id,
+            );
         }
     }
 }
@@ -975,6 +997,17 @@ unsafe extern "C" {
 
 impl LifecycleHandle {
     pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            LifecycleHandle::report_error_to_agent,
+            self,
+            exception
+        )
+    }
+
+    #[inline(never)]
+    fn report_error_to_agent(&mut self, exception: &mut ZigException<'_>) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }

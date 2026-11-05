@@ -34,7 +34,7 @@ use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
-use bun_core::fmt::parse_hex_to_int;
+use bun_core::fmt::parse_hex_to_u64;
 
 pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
@@ -422,7 +422,7 @@ fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::K
         return None;
     }
     let hex = &after_prefix[after_prefix.len() - MIN_LEN..][..core::mem::size_of::<u64>() * 2];
-    Some(source_map_store::Key::init(parse_hex_to_int::<u64>(hex)?))
+    Some(source_map_store::Key::init(parse_hex_to_u64(hex)?))
 }
 
 /// Instead of decoding the entire file, just decode the desired section.

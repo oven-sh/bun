@@ -6,9 +6,8 @@
 // argv[2] names a group of cases. Each case reports the number of live native
 // contexts at the points its group names. One JSON report per run.
 //
-// Bun only: `expect().resolves` and `Bun.build` are what turn the event loop.
+// Bun only: `Bun.build` is what turns the event loop.
 import * as internals from "bun:internal-for-testing";
-import { expect } from "bun:test";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 
@@ -52,17 +51,13 @@ const connect = side =>
 // null on a build that has no counter.
 const live = () => internals.duplexTLSInternals?.liveCount() ?? null;
 
-const turns = {
-  // Runs the queued tasks, then the microtask that settles the promise.
-  matcher: () => expect(new Promise(resolve => queueMicrotask(resolve))).resolves.toBeUndefined(),
-  // Bun.build() waits for an async plugin setup() the same way.
-  build: () =>
-    void Bun.build({
-      entrypoints: ["/turn.js"],
-      files: { "/turn.js": "" },
-      plugins: [{ name: "turn", setup: async () => await null }],
-    }),
-};
+// Bun.build() waits for an async plugin setup(): it runs the queued tasks, then the microtask that settles the promise.
+const turn = () =>
+  void Bun.build({
+    entrypoints: ["/turn.js"],
+    files: { "/turn.js": "" },
+    plugins: [{ name: "turn", setup: async () => await null }],
+  });
 
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 
@@ -102,11 +97,6 @@ const callbacks = {
   data: {
     "server 'data'": c => {
       const server = wrap(c.serverSide).on("data", () => c.closeThenTurn(server));
-      const client = connect(c.clientSide).on("secureConnect", () => client.write("x"));
-      return [server, client];
-    },
-    "server 'data', turned by Bun.build()": c => {
-      const server = wrap(c.serverSide).on("data", () => c.closeThenTurn(server, turns.build));
       const client = connect(c.clientSide).on("secureConnect", () => client.write("x"));
       return [server, client];
     },
@@ -167,7 +157,7 @@ async function runCallback(arrange) {
   const canary = wrap(new Side());
   await nextTurn();
   const c = { serverSide, clientSide };
-  c.closeThenTurn = (socket, turn = turns.matcher) => {
+  c.closeThenTurn = socket => {
     if ("before" in report) return;
     // The peer learns nothing of the close, so its context stays for the whole turn.
     serverSide.cut = clientSide.cut = true;
@@ -239,7 +229,7 @@ const ends = {
       wrap(side).on("readable", () => {
         report.open = live();
         graph.dispose();
-        turns.matcher();
+        turn();
         report.afterTurn = live();
         side.emit("data", "a string after the release");
       }),

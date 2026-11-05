@@ -21,7 +21,7 @@ struct Wrapped {
     names: Box<[(Box<[u8]>, Box<[u8]>)]>,
 }
 
-const DIRECT_IMPORT: Message = Message::new("directImport", "Import from `{{module}}` instead of `{{package}}`.");
+const DIRECT_IMPORT: &Message = &Message::new("directImport", "Import from `{{module}}` instead of `{{package}}`.");
 
 impl Wrapped {
     fn exports_the_same_names(&self) -> bool {

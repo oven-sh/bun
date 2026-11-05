@@ -1,0 +1,35 @@
+# main.cjs: require("./child.cjs"); !module.parent; process.dlopen(0, 0)        child.cjs: module.exports = exportedByChild
+# Machine code that the program loads starts at the global object and reads by names that the build does not see. In a program that names a way between module objects it finds the module object of the
+# entry point under process.mainModule, and from it the one of the required file.
+# RUN: valueflow-why escaped=f2
+# CHECK: escaped=f2
+# CHECK-NEXT: n0 escaped
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    RecordRequire module=m1 referrer=m0
+    v2 = ModuleBuiltin builtin=ModuleObject module=m0
+    v3 = PropGet v2 key="parent"
+    v4 = ToBoolean v3
+    v5 = Builtin builtin=Process
+    v6 = PropGet v5 key="dlopen"
+    v7 = Integer integer=0
+    v8 = Call v6, v5, v7, v7
+    Return
+}
+function f1 name="child" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="exportedByChild" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

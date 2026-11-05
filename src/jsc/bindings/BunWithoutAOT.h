@@ -56,6 +56,8 @@ inline void hostDidCreateObjectOfGlobal(JSGlobalObject*, UniquedStringImpl*, JSO
 inline void hostDidFillObjectWithFoldedMembers(JSGlobalObject*, JSObject*, ASCIILiteral, std::span<const ASCIILiteral>) {}
 inline void hostDidReplaceProperty(JSGlobalObject*, UniquedStringImpl*) {}
 inline void hostDidLoadBuiltinModule(JSGlobalObject*, uint32_t, JSValue) {}
+inline void willHandBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t) {}
+inline void willHandExportOfBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t, ASCIILiteral) {}
 
 inline bool hasBuiltinModule(JSGlobalObject*, uint32_t) { return false; }
 inline bool refusesLibraryText() { return false; }

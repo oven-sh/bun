@@ -135,6 +135,9 @@ pub(crate) mod rare {
     pub(crate) const ASSERTION: i32 = 11;
     /// A comment in a place where the long way is not known to print it alike: see is_comment_taken().
     pub(crate) const COMMENT: i32 = 12;
+    /// Flow: a type guard as the return type of an arrow function, which gets no parentheses though there may be a function type in it;
+    /// a `declare module` with nothing in it, whose braces stand on two lines.
+    pub(crate) const FLOW: i32 = 13;
 }
 
 thread_local! {

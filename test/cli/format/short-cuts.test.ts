@@ -4306,6 +4306,10 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // Flow: a comment before or behind the parameters of a method of an object type.
     ["a.js.flow", "", "declare class M{static/* 1 */():void}\n"],
     ["a.js.flow", "", "type AndroidPlatform={get Version():/* @__PURE__ */{||}}\n"],
+    // Flow: a type guard as the return type of an arrow function.
+    ["a.js.flow", "", "a=():x is{a:()=>void}=>true\n"],
+    // Flow: a `declare module` with nothing in it.
+    ["a.js.flow", "", 'declare module"a"{}\n'],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

@@ -382,6 +382,14 @@ impl Storage {
                     {
                         return true;
                     }
+                    // A `literalline` in Prettier.
+                    FormatElement::SourceText(text) | FormatElement::OwnedText(text)
+                        if text.width.is_multiline()
+                            && !text.width.is_one_string()
+                            && !flavor.is_oxfmt() =>
+                    {
+                        return true;
+                    }
                     FormatElement::Interned(it) => rest.push(self.interned(*it)),
                     // oxfmt doesn't look into a `BestFitting`, and it has no `FlattestIfStable`.
                     FormatElement::BestFitting(it)

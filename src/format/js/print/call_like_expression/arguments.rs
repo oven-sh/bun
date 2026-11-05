@@ -828,14 +828,17 @@ fn write_grouped_arguments<'a>(
             &format_args!(
                 "(",
                 format_with(|f| {
-                    f.join_with(soft_line_break_or_space())
-                        .entries(grouped.iter().map(|&element| {
-                            format_with(move |f: &mut Formatter<'a>| {
-                                if let Some(element) = element {
-                                    f.write_element(element);
-                                }
-                            })
-                        }));
+                    for (index, &element) in grouped.iter().enumerate() {
+                        match index {
+                            0 => {}
+                            // Text in Prettier, which its `canBreak()` does not count.
+                            1 if group_layout.is_grouped_first() => write!(f, space()),
+                            _ => write!(f, soft_line_break_or_space()),
+                        }
+                        if let Some(element) = element {
+                            f.write_element(element);
+                        }
+                    }
                 }),
                 ")",
             ),

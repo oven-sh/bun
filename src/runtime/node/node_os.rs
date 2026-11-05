@@ -227,49 +227,16 @@ mod _impl {
             file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
             let contents = file_buf.as_slice();
 
-            let mut line_iter = strings::tokenize(contents, b"\n");
-
-            const KEY_PROCESSOR: &[u8] = b"processor\t: ";
-            const KEY_MODEL_NAME: &[u8] = b"model name\t: ";
-
-            let mut cpu_index: u32 = 0;
-            let mut has_model_name = true;
-            while let Some(line) = line_iter.next() {
-                if line.starts_with(KEY_PROCESSOR) {
-                    if !has_model_name {
-                        let cpu = values.get_index(global_this, cpu_index)?;
-                        cpu.put(
-                            global_this,
-                            b"model",
-                            global_this.common_strings().unknown(),
-                        );
+            let models = parse_cpuinfo_models(contents, num_cpus as usize);
+            for (cpu_index, model) in models.into_iter().enumerate() {
+                let cpu = values.get_index(global_this, cpu_index as u32)?;
+                let model = match model {
+                    Some(model) => {
+                        bun_string_jsc::create_utf8_for_js(global_this, model.as_slice())?
                     }
-                    // If this line starts a new processor, parse the index from the line
-                    let digits = strings::trim(&line[KEY_PROCESSOR.len()..], b" \t\n");
-                    cpu_index = parse_u32(digits)?;
-                    if cpu_index >= num_cpus {
-                        return Err(OsError::Any);
-                    }
-                    has_model_name = false;
-                } else if line.starts_with(KEY_MODEL_NAME) {
-                    // If this is the model name, extract it and store on the current cpu
-                    let model_name = &line[KEY_MODEL_NAME.len()..];
-                    let cpu = values.get_index(global_this, cpu_index)?;
-                    cpu.put(
-                        global_this,
-                        b"model",
-                        bun_string_jsc::create_utf8_for_js(global_this, model_name)?,
-                    );
-                    has_model_name = true;
-                }
-            }
-            if !has_model_name {
-                let cpu = values.get_index(global_this, cpu_index)?;
-                cpu.put(
-                    global_this,
-                    b"model",
-                    global_this.common_strings().unknown(),
-                );
+                    None => global_this.common_strings().unknown(),
+                };
+                cpu.put(global_this, b"model", model);
             }
 
             file_buf.clear();
@@ -1474,10 +1441,115 @@ impl NetmaskInt for u128 {
 fn parse_u64(s: &[u8]) -> crate::Result<u64> {
     bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
 }
+/// The model name of each CPU that `/proc/stat` reported, in index order.
+///
+/// `/proc/cpuinfo` does not have one fixed spelling: x86 puts the name in
+/// `model name`, while many ARM kernels only report the SoC in `Hardware`
+/// (and some put the per-core name in `model name`). Split each line at the
+/// first `:`, trim both sides, and let `model name` win over `Hardware`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-#[inline]
-fn parse_u32(s: &[u8]) -> crate::Result<u32> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
+fn parse_cpuinfo_models(contents: &[u8], num_cpus: usize) -> Vec<Option<Vec<u8>>> {
+    let mut models = vec![None; num_cpus];
+    let mut hardware: Option<Vec<u8>> = None;
+    let mut current: Option<usize> = None;
+
+    for line in contents.split(|&byte| byte == b'\n') {
+        let Some(colon) = line.iter().position(|&byte| byte == b':') else {
+            continue;
+        };
+        let key = bun_core::strings::trim(&line[..colon], b" \t\r");
+        let value = bun_core::strings::trim(&line[colon + 1..], b" \t\r");
+
+        match key {
+            b"processor" => {
+                current = bun_core::fmt::parse_int::<usize>(value, 10)
+                    .ok()
+                    .filter(|&index| index < num_cpus);
+            }
+            b"model name" => {
+                if let Some(index) = current {
+                    if !value.is_empty() {
+                        models[index] = Some(value.to_vec());
+                    }
+                }
+            }
+            b"Hardware" => {
+                if !value.is_empty() {
+                    hardware = Some(value.to_vec());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(hardware) = hardware {
+        for model in &mut models {
+            if model.is_none() {
+                *model = Some(hardware.clone());
+            }
+        }
+    }
+
+    models
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
+mod tests {
+    use super::parse_cpuinfo_models;
+
+    fn models(contents: &str, num_cpus: usize) -> Vec<Option<String>> {
+        parse_cpuinfo_models(contents.as_bytes(), num_cpus)
+            .into_iter()
+            .map(|model| model.map(|model| String::from_utf8(model).unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn reads_x86_model_name() {
+        let input = "processor\t: 0\nmodel name\t: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz\n";
+        assert_eq!(
+            models(input, 1),
+            vec![Some("Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz".into())]
+        );
+    }
+
+    #[test]
+    fn uses_hardware_when_the_core_has_no_model_name() {
+        let input = "processor\t: 0\nBogoMIPS\t: 48.00\nHardware\t: HUAWEI Kirin 9000\n";
+        assert_eq!(models(input, 1), vec![Some("HUAWEI Kirin 9000".into())]);
+    }
+
+    #[test]
+    fn model_name_wins_over_hardware() {
+        let input = "processor : 0\nmodel name : Cortex-A76\nHardware : HUAWEI Kirin 9000\n";
+        assert_eq!(models(input, 1), vec![Some("Cortex-A76".into())]);
+    }
+
+    #[test]
+    fn hardware_fills_only_the_cores_without_a_model_name() {
+        let input = "\
+processor : 0
+model name : Cortex-A55
+processor : 1
+Hardware : HUAWEI Kirin 9000
+";
+        assert_eq!(
+            models(input, 2),
+            vec![Some("Cortex-A55".into()), Some("HUAWEI Kirin 9000".into())]
+        );
+    }
+
+    #[test]
+    fn leaves_a_core_without_a_model_unknown() {
+        let input = "processor : 0\nBogoMIPS : 48.00\n";
+        assert_eq!(models(input, 1), vec![None]);
+    }
+
+    #[test]
+    fn ignores_processors_beyond_the_proc_stat_count() {
+        let input = "processor : 0\nmodel name : A\nprocessor : 1\nmodel name : B\n";
+        assert_eq!(models(input, 1), vec![Some("A".into())]);
+    }
 }
 
 #[cfg(windows)]

@@ -1,0 +1,17 @@
+status: 0
+script: ee8c8613d469dac3
+source: a4d6257a89b6c401
+---
+another argument raises, and the same call is made again: ['E', (0, 'x'), 'closed zip 1', 'after the loop', 'E', (0, 'x'), 'closed zip 3', 'after the loop']
+the same for a function: ['E', 'closed sum 1', 3, 'E', 'closed sum 3', 3]
+the same one level further in: ['E', 'closed inner 1', 'after the loop', 'E', 'closed inner 3', 'after the loop']
+the same call in the frames below: [(0, 0), 'closed depth 0', 'after 0', (1, 0), 'closed depth 1', 'after 1', (2, 0), 'closed depth 2', 'after 2', (3, 0), 'closed depth 3', 'after 3']
+frames that are suspended between the making and the use: [('second', 0, 'x'), ('second', 1, 'y'), ('second', 2, 'z'), 'closed second', 'after the loop in second', 'done', ('first', 0, 'x'), ('first', 1, 'y'), ('first', 2, 'z'), 'closed first', 'after the loop in first', 'done']
+the same with await: [('two', 0, 'x'), ('two', 1, 'y'), ('two', 2, 'z'), 'closed two', 'after the loop in two', ('one', 0, 'x'), ('one', 1, 'y'), ('one', 2, 'z'), 'closed one', 'after the loop in one']
+gc.get_objects() finds the iterator before it is used: ['after the loop', (1, 1)]
+and lets go of it: ['closed seen']
+the same for the generator: ['after the loop', [1]]
+and lets go of it: ['closed seen too']
+a thread that waits between the making and the use: ['closed main', 'after the loop in main', 'closed sum', 3, ('the thread', 0, 'x'), 'closed the thread', 'after the loop in the thread']
+and another thread gets hold of the generator meanwhile: [('the thread', 0, 'x'), 'after the loop in the thread', [1]]
+and lets go of it: ['closed the thread']

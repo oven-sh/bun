@@ -2726,7 +2726,10 @@ impl Quick {
             && kind == k::FunctionDeclaration
             && !self.mode.is_babel_flow
         {
-            // an overload, or `declare function`; in Flow, a function in `declare module` or a .js.flow file
+            // an overload, or `declare function`
+            if self.parse.typed == TYPED_FLOW {
+                return Err(self.text_refuse());
+            }
             self.parse.place.scope = outer_scope;
             self.semicolon()?;
             return Ok(self.function_node(
@@ -4265,6 +4268,12 @@ impl Quick {
                             let v0 = args + i;
                             let v1 = self.to_assignable_parameter(self.n.at(args + i))?;
                             self.n.put(v0, v1);
+                            if (self.n.at(v1) & 0xff) == k::RestElement
+                                && i != count
+                                && self.parse.typed != TYPED_TS
+                            {
+                                return Err(self.text_refuse());
+                            }
                             i += 1;
                         }
                         return self.parse_arrow_rest(start, args, F_ASYNC);
@@ -4349,11 +4358,18 @@ impl Quick {
                             quasi,
                             type_arguments,
                         );
-                    } else if self.lexer.tok == tk::BraceL
-                        && self.parse.typed == TYPED_FLOW
-                        && is_record_constructor != 0
-                    {
-                        return self.flow_parse_record_expression(start, base, type_arguments);
+                    } else if self.parse.typed == TYPED_FLOW && !no_calls {
+                        // In Flow type arguments are those of a call or a superclass. (What else the parsers take, they do not print alike.)
+                        if is_record_constructor != 0 {
+                            return Err(self.text_refuse());
+                        }
+                        return Ok(self.node2(
+                            k::InstantiationExpression,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            type_arguments,
+                        ));
                     } else {
                         base = self.node2(
                             k::InstantiationExpression,
@@ -4379,7 +4395,8 @@ impl Quick {
                         if k != k::Identifier && k != k::MemberExpression {
                             return Ok(base);
                         }
-                        return self.flow_parse_record_expression(start, base, 0);
+                        // R {a: 1}: the long way does not read it
+                        return Err(self.text_refuse());
                     }
                 }
                 tk::DoubleColon => {
@@ -4431,6 +4448,10 @@ impl Quick {
                                 let arrow = self.ts_parse_less_than_expression(start, F_ASYNC)?;
                                 if arrow != 0 {
                                     return Ok(arrow);
+                                }
+                                // `async<A>(b)`: no call for Flow's own parser
+                                if self.lang.lang == lang::Flow {
+                                    return Err(self.text_refuse());
                                 }
                             } else if self.lexer.tok == tk::Name {
                                 // async x => y
@@ -4764,6 +4785,19 @@ impl Quick {
             expression = self.arena.ls.at(mark);
             self.list_truncate(mark);
         } else {
+            // `(a: A, b)`: a cast has parentheses of its own
+            if self.parse.typed == TYPED_FLOW {
+                let mut i = mark;
+                while i < self.arena.ls_pos {
+                    let item = self.arena.ls.at(i);
+                    if (self.n.at(item) & 0xff) == k::TypeCastExpression
+                        && self.t.at(self.n.at(item + 1)) != 40
+                    {
+                        return Err(self.text_refuse());
+                    }
+                    i += 1;
+                }
+            }
             let v5 = self.list_finish(mark);
             expression = self.node_l(k::SequenceExpression, inner_start, inner_end, v5);
         }
@@ -4822,6 +4856,11 @@ impl Quick {
         {
             type_arguments = self.n.at(callee + 5);
             callee = self.n.at(callee + 4);
+        }
+        // new A {b: 1}
+        if self.parse.typed == TYPED_FLOW && self.lexer.tok == tk::BraceL && self.lexer.tok_nl == 0
+        {
+            return Err(self.text_refuse());
         }
         let args = if self.lexer.tok == tk::ParenL {
             self.parse_arguments()?
@@ -5303,6 +5342,10 @@ impl Quick {
                 let annotation = self.n.at(n + 5);
                 if EXT_AT.at(self.n.at(expression) & 0xff) == 0 {
                     return Err(self.unexpected());
+                }
+                // `((a): A) => 1`
+                if (self.n.at(expression) & F_PAREN) != 0 {
+                    return Err(self.text_refuse());
                 }
                 self.to_assignable(expression)?;
                 self.n.put(expression, self.n.at(expression) | F_EXT);
@@ -6052,6 +6095,12 @@ impl Quick {
                     }
                 }
                 if declaration == 0 {
+                    // (TypeScript's parser, which reads every file first, expects a declaration)
+                    if self.lexer.tok == tk::Name
+                        && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"interface")
+                    {
+                        return Err(self.text_refuse());
+                    }
                     declaration = self.parse_maybe_assign()?;
                     needs_semicolon = true;
                 }

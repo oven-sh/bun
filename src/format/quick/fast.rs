@@ -4054,6 +4054,10 @@ impl Quick {
         if self.keyword_at(q, e - q) != 0 {
             return Ok(self.no(refusal::Declaration));
         }
+        // not the name of a type that is there already
+        if self.fast.flow && (self.is_keyword_type(q, e - q) || self.flow_type_word(q, e - q)) {
+            return Ok(self.no(refusal::Declaration));
+        }
         q = self.spaced(e);
         if self.t.at(q) != 61 || self.t.at(q + 1) == 61 || self.t.at(q + 1) == 62 {
             return Ok(self.no(refusal::Declaration));

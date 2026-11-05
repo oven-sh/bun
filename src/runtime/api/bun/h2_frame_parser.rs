@@ -2106,8 +2106,7 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
-        // The RST_STREAM goes out before JS learns of the close: the handler can submit a
-        // request that waited for this stream's slot, and its HEADERS must follow the reset.
+        // Written before the dispatch: JS may submit a request that waited for this slot.
         let _ = self.write(&buffer);
         self.dispatch_with_2_extra(
             js::on_aborted_get_cached,
@@ -2146,7 +2145,7 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
-        // As in abort_stream: the RST_STREAM goes out before the close is dispatched.
+        // Written before the dispatch, as in abort_stream.
         let _ = self.write(&buffer);
         if rst_code == ErrorCode::NO_ERROR {
             self.dispatch_with_extra(

@@ -134,14 +134,9 @@ function initialLocalSettings(submitted: any) {
   return settings;
 }
 
-// The peer's settings before its first SETTINGS frame: nghttp2 starts every session with the
-// protocol defaults and maxConcurrentStreams set to the peerMaxConcurrentStreams session option
-// (default 100), and resets it to the protocol default when the first SETTINGS arrives:
-// https://github.com/nghttp2/nghttp2/blob/v1.64.0/lib/nghttp2_session.c#L495
-// https://github.com/nghttp2/nghttp2/blob/v1.64.0/lib/nghttp2_session.c#L4804
-// node writes the option into a Uint32Array without validation, so a number outside the uint32
-// range wraps like ToUint32:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L253
+// The peer's settings until its first SETTINGS frame. nghttp2 seeds maxConcurrentStreams with
+// peerMaxConcurrentStreams (https://github.com/nghttp2/nghttp2/blob/v1.64.0/lib/nghttp2_session.c#L495),
+// a Uint32Array slot in node (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L253).
 function initialRemoteSettings(peerMaxConcurrentStreams: unknown): Settings {
   const settings = getUnpackedSettings();
   settings.maxConcurrentStreams = typeof peerMaxConcurrentStreams === "number" ? peerMaxConcurrentStreams >>> 0 : 100;
@@ -5213,12 +5208,9 @@ class ClientHttp2Session extends Http2Session {
   // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
   // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
   #pendingSettingsCallbacks: Array<[SettingsCallback, number] | null> = [null];
-  // The peer's SETTINGS as the native engine last reported them, initialRemoteSettings() until
-  // its first SETTINGS frame arrives: requests made before that frame queue behind the same
-  // maxConcurrentStreams limit as later ones.
+  // initialRemoteSettings() until the peer's first SETTINGS frame arrives.
   #remoteSettings: Settings;
-  // The limit the request gate applies: the peer's maxConcurrentStreams as the engine reported
-  // it, kept apart from the object the remoteSettings getter hands to user code.
+  // The request gate's limit, kept apart from the object the remoteSettings getter exposes.
   #remoteMaxConcurrentStreams: number;
   #pingCallbacks: Array<[PingCallback, number]> | null = null;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
@@ -6541,8 +6533,7 @@ class ClientHttp2Session extends Http2Session {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-      // Tracked before the native call: a rejection it reports synchronously (streamError)
-      // releases the slot through the same handler as a rejection from the peer.
+      // Tracked first: a rejection the native call dispatches synchronously releases the slot.
       this.#trackActiveRequest(req);
       try {
         this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
@@ -6578,9 +6569,8 @@ class ClientHttp2Session extends Http2Session {
     req.once("close", () => this.#releaseRequestSlot(req));
   }
 
-  // The peer frees the slot when the stream closes on the wire, not when the consumer drains the
-  // response body, so the native close report releases it. 'close' is the backstop for a stream
-  // that is torn down from JS before the native side reports anything.
+  // Runs at the native close report (the peer frees the slot at the wire close, not when the
+  // body is read), with 'close' as the backstop for a stream torn down from JS first.
   #releaseRequestSlot(req: ClientHttp2Stream, flush: boolean = true) {
     if ((req[bunHTTP2StreamStatus] & StreamState.HoldsRequestSlot) === 0) return;
     req[bunHTTP2StreamStatus] &= ~StreamState.HoldsRequestSlot;

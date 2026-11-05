@@ -1,0 +1,43 @@
+status: 0
+oracle: none
+---
+named,raises<named
+named<not_looked_at_then_named,raises<named<not_looked_at_then_named
+asked_for,raises<asked_for
+named,through_two<named,raises<through_two<named
+named<not_looked_at_then_named,through_two<named<not_looked_at_then_named,raises<through_two<named<not_looked_at_then_named
+asked_for,through_two<asked_for,raises<through_two<asked_for
+named,raises<named
+named<not_looked_at_then_named,raises<named<not_looked_at_then_named
+asked_for,raises<asked_for
+named,through_two<named,raises<through_two<named
+named<not_looked_at_then_named,through_two<named<not_looked_at_then_named,raises<through_two<named<not_looked_at_then_named
+asked_for,through_two<asked_for,raises<through_two<asked_for
+named,rethrows,rethrows,raises<named
+named<not_looked_at_then_named,rethrows,rethrows,raises<named<not_looked_at_then_named
+asked_for,rethrows,rethrows,raises<asked_for
+named,rethrows,rethrows,through_two<named,raises<through_two<named
+named<not_looked_at_then_named,rethrows,rethrows,through_two<named<not_looked_at_then_named,raises<through_two<named<not_looked_at_then_named
+asked_for,rethrows,rethrows,through_two<asked_for,raises<through_two<asked_for
+finally
+named,withFinally,raises<named
+finally
+finally
+finally
+finally
+named<not_looked_at_then_named,withFinally,raises<named<not_looked_at_then_named
+finally
+asked_for,withFinally,raises<asked_for
+finally
+named,withFinally,through_two<named,raises<through_two<named
+finally
+finally
+finally
+finally
+named<not_looked_at_then_named,withFinally,through_two<named<not_looked_at_then_named,raises<through_two<named<not_looked_at_then_named
+finally
+asked_for,withFinally,through_two<asked_for,raises<through_two<asked_for
+<module>,raises
+<module>,through_two,raises<through_two
+<module>,calls,through_two<calls,raises<through_two<calls
+caught caught

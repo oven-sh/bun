@@ -1,0 +1,22 @@
+status: 0
+script: 1ce522285229e33f
+source: 22d4a4ec1d46aa0e
+---
+f.__name__ [f=function] => by_getframe
+f() [f=function] => (0, [], 1, [])
+f.__name__ [f=function] => by_f_back
+f() [f=function] => (0, [], 1, [])
+f.__name__ [f=function] => by_tb_frame
+f() [f=function] => (0, [], 1, [])
+f.__name__ [f=function] => by_gi_frame
+f() [f=function] => (0, [])
+f.__name__ [f=function] => any_with_a_kept_frame
+f() [f=function] => (True, [], 1, [])
+f.__name__ [f=function] => a_loop_with_a_kept_frame
+f() [f=function] => (0, [], 1, [])
+f.__name__ [f=function] => a_search_with_a_kept_frame
+f() [f=function] => (True, [], 1, [])
+f.__name__ [f=function] => a_tracer_that_keeps_nothing
+f() [f=function] => (0, ['finally'], [('<genexpr>', 'call'), ('g', 'call'), ('<genexpr>', 'call'), ('g', 'call')])
+f.__name__ [f=function] => nobody_keeps_it
+f() [f=function] => (0, ['finally'])

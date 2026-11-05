@@ -74,7 +74,9 @@ mod parse {
     pub(crate) mod typescript;
 }
 
-pub use root::{Dialect, EndOfLine, Language, Options, QuoteProps, Refused, TrailingComma, format};
+pub use root::{
+    Dialect, EndOfLine, Language, Options, QuoteProps, Refused, TrailingComma, format, stands,
+};
 use std::cell::Cell;
 
 /// The work has stopped; `Quick::why` says why.

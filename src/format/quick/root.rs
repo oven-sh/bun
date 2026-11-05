@@ -169,6 +169,14 @@ pub struct Options {
     pub embedded_language_formatting_auto: bool,
     /// `htmlWhitespaceSensitivity: "ignore"`, for HTML in templates.
     pub html_whitespace_sensitivity_ignore: bool,
+    /// The text is code in Markdown: a program that is nothing but an element of JSX gets no semicolon.
+    pub is_in_markdown: bool,
+    /// A line break that is part of a text (in a template, a comment, a string) is written as "\r\n": a host that indents the lines of the result tells
+    /// it from the others, behind which the indentation of the host goes. Only with `EndOfLine::Lf`.
+    pub marks_line_breaks_in_texts: bool,
+    /// The text is printed in a host that indents it by so many levels. The first line of the result starts behind its indentation, which the host
+    /// has written; the other lines have theirs, but for those that start in a text (a template, a comment).
+    pub indentation: i32,
     /// Everything goes through the tokens, the tree and the document.
     pub no_short_cuts: bool,
 }
@@ -193,6 +201,9 @@ impl Default for Options {
             operator_position_start: false,
             embedded_language_formatting_auto: true,
             html_whitespace_sensitivity_ignore: false,
+            is_in_markdown: false,
+            marks_line_breaks_in_texts: false,
+            indentation: 0,
             no_short_cuts: false,
         }
     }
@@ -200,6 +211,8 @@ impl Default for Options {
 
 /// A file that is longer is refused, so that sums of positions stay far from the largest number.
 const LONGEST_FILE: usize = 1 << 28;
+/// Columns are products of levels and the width of one.
+const DEEPEST_HOST: i32 = 1 << 12;
 
 /// Formats `text` and puts the result in the place of what `out` held. `scratch` lives from file to file; what it holds never changes what is printed.
 /// If the file is refused, `out` is empty.
@@ -211,7 +224,11 @@ pub fn format(
     out: &mut Vec<u8>,
 ) -> Result<(), Refused> {
     out.clear();
-    if text.len() > LONGEST_FILE || options.tab_width < 1 || options.print_width < 1 {
+    if text.len() > LONGEST_FILE
+        || options.tab_width < 1
+        || options.print_width < 1
+        || !(0..=DEEPEST_HOST).contains(&options.indentation)
+    {
         scratch.why.set(why::RARE);
         return Err(Refused);
     }
@@ -221,10 +238,52 @@ pub fn format(
                 out.extend_from_slice(b"\xef\xbb\xbf");
             }
             out.extend_from_slice(scratch.printer.out.sub(0, scratch.printer.out_length));
+            if options.indentation != 0 {
+                // the indentation behind the last line break
+                while let [.., b' ' | b'\t'] = out[..] {
+                    out.pop();
+                }
+            }
             Ok(())
         }
         Err(Stop) => Err(Refused),
     }
+}
+
+/// Would [`format`] print `text` and a line break? No is always a valid answer. It costs a fraction of what formatting costs: nothing is made of the text, it is
+/// only read. For a host whose guest starts at the left margin, and which then prints the guest as it is written.
+pub fn stands(text: &[u8], dialect: Dialect, options: &Options, scratch: &mut Quick) -> bool {
+    let language = match dialect.language {
+        Language::JavaScript => lang::Babel,
+        Language::TypeScript => lang::TypeScript,
+        Language::Flow | Language::BabelFlow => return false,
+    };
+    if text.len() > LONGEST_FILE
+        || options.tab_width < 1
+        || options.print_width < 1
+        || options.indentation != 0
+        || options.end_of_line != EndOfLine::Lf
+        || options.no_short_cuts
+        || dialect.name_ends_in_js_flow
+        || bun_core::strings::contains_char(text, b'\r')
+    {
+        return false;
+    }
+    let length = text.len() as i32;
+    scratch.why.set(why::NONE);
+    scratch.stack_check = bun_core::StackCheck::init();
+    scratch.set_options(options, dialect);
+    scratch.source_buffer(length, 0);
+    scratch.t.set_all(text, SRC_BASE);
+    scratch.set_source_length(length);
+    scratch.reset_filters();
+    scratch.set_may_break_lines(false);
+    scratch.set_short_cuts(true);
+    let stands = scratch.program_stands(language, SRC_BASE, SRC_BASE + length);
+    scratch.set_short_cuts(false);
+    // The text is gone when the parser comes.
+    scratch.set_verified(0, 0);
+    matches!(stands, Ok(true))
 }
 
 impl Quick {
@@ -264,6 +323,9 @@ impl Quick {
         } else {
             WHITESPACE_CSS
         };
+        to.is_in_markdown = o.is_in_markdown;
+        to.marks_line_breaks_in_texts = o.marks_line_breaks_in_texts;
+        to.indentation = o.indentation;
         to.name_ends_in_ts = dialect.name_ends_in_ts;
         to.name_ends_in_js_flow = dialect.name_ends_in_js_flow;
         self.dialect = dialect;

@@ -43,6 +43,10 @@ impl Quick {
         self.mode.is_babel_flow = language == lang::BabelFlow;
         self.mode.is_flow = language == lang::Flow || self.mode.is_babel_flow;
         self.mode.allows_non_null = self.mode.is_type_script;
-        self.mode.single_statement_mode = 0;
+        self.mode.single_statement_mode = if self.options.is_in_markdown {
+            SINGLE_JSX_IN_MARKDOWN
+        } else {
+            0
+        };
     }
 }

@@ -302,6 +302,11 @@ pub fn format(
         out.clear();
         return Err(scratch.refuse(Reason::TooLong, code.text));
     }
+    // Every text but the empty one ends with the end of a line. One that doesn't has been cut short.
+    if !matches!(out[..], [] | [0xEF, 0xBB, 0xBF] | [.., b'\n' | b'\r']) {
+        out.clear();
+        return Err(scratch.refuse(Reason::Other, code.text));
+    }
     if let Some(counts) = &mut scratch.counts {
         counts.printed.add(code.text);
     }

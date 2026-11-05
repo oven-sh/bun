@@ -47,13 +47,12 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); };
 
     bool removeAllListeners();
-    // How many listeners the event has after the add, like addListener. 0 when there is no listener to add.
-    WEBCORE_EXPORT unsigned addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
     WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
-    WEBCORE_EXPORT unsigned addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT void addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 

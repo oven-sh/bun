@@ -5502,6 +5502,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetDefaultMaxListeners, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSValue limit = callFrame->argument(0);
+    if (limit.isNumber())
+        defaultGlobalObject(globalObject)->processObject()->m_defaultMaxListeners = limit.asNumber();
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     // Node-compat: process._fatalException(err, fromPromise) runs the uncaught-exception

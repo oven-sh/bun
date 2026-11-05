@@ -1160,7 +1160,8 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
   // emitter; a throwing getter must propagate rather than become "invalid this".
   const nativeProto = Object.getPrototypeOf(process);
 
-  const cases: Array<[string, (obj: object) => void]> = [
+  // getMaxListeners reads `_maxListeners` and not `_events`, as node's does: that is the getter it propagates from.
+  const cases: Array<[string, (obj: object) => void, string?]> = [
     ["on", obj => nativeProto.on.call(obj, "foo", () => {})],
     ["addListener", obj => nativeProto.addListener.call(obj, "foo", () => {})],
     ["once", obj => nativeProto.once.call(obj, "foo", () => {})],
@@ -1170,13 +1171,13 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     ["eventNames", obj => nativeProto.eventNames.call(obj)],
     ["listenerCount", obj => nativeProto.listenerCount.call(obj, "foo")],
     ["listeners", obj => nativeProto.listeners.call(obj, "foo")],
-    ["getMaxListeners", obj => nativeProto.getMaxListeners.call(obj)],
+    ["getMaxListeners", obj => nativeProto.getMaxListeners.call(obj), "_maxListeners"],
   ];
 
-  test.each(cases)("%s", (_name, invoke) => {
+  test.each(cases)("%s", (_name, invoke, property = "_events") => {
     const sentinel = new Error("getter threw");
     const obj = {};
-    Object.defineProperty(obj, "_events", {
+    Object.defineProperty(obj, property, {
       get() {
         throw sentinel;
       },
@@ -1218,9 +1219,9 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
   });
 });
 
-// The methods of process are native and serve any receiver. The limit is the receiver's own `_maxListeners`, as with the
-// methods of node:events, which node has in their place: each row but the last is what node v26.3.0 prints.
-test("the native EventEmitter keeps the limit of listeners on its receiver", async () => {
+// setMaxListeners and getMaxListeners of process are native and serve any receiver. The limit is the receiver's own
+// `_maxListeners`, as with the two functions of node:events that node has in their place.
+test("the native setMaxListeners and getMaxListeners keep the limit on their receiver", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1233,39 +1234,34 @@ test("the native EventEmitter keeps the limit of listeners on its receiver", asy
          "Object.create(process)": Object.create(process),
          "Object.create(prototype of process)": Object.create(native),
          "new (constructor of process)()": new NativeEmitter(),
-         "(constructor of process)()": NativeEmitter(),
        };
-       const warnings = [];
-       process.on("warning", warning => warnings.push(warning));
        const out = {};
        for (const [name, receiver] of Object.entries(receivers)) {
          const row = [native.getMaxListeners.call(receiver)];
          events.defaultMaxListeners = 3;
          row.push(native.getMaxListeners.call(receiver));
          events.defaultMaxListeners = 10;
-         row.push(native.setMaxListeners.call(receiver, 2) === receiver, Object.hasOwn(receiver, "_maxListeners") && receiver._maxListeners);
+         row.push(native.setMaxListeners.call(receiver, 1.5) === receiver, Object.hasOwn(receiver, "_maxListeners") && receiver._maxListeners);
          row.push(native.getMaxListeners.call(receiver), typeof receiver.getMaxListeners === "function" ? events.getMaxListeners(receiver) : "no method");
-         for (let i = 0; i < 3; i++) native.on.call(receiver, name, () => {});
+         row.push(Object.hasOwn(receiver, "_events"));
          out[name] = row;
        }
-       setImmediate(() => {
-         for (const warning of warnings) {
-           const name = String(warning.type);
-           out[name].push(warning.emitter === receivers[name], warning.count, / MaxListeners is 2\\. /.test(warning.message));
-         }
-         out.process = [process.getMaxListeners(), Object.hasOwn(process, "_maxListeners"), process._maxListeners === undefined];
-         console.log(JSON.stringify(out));
-       });`,
+       const thrownBy = fn => { try { return fn(); } catch (error) { return error.name; } };
+       const frozen = Object.freeze({});
+       out.frozen = [native.getMaxListeners.call(frozen), thrownBy(() => native.setMaxListeners.call(frozen, 2))];
+       out.number = [native.getMaxListeners.call(5), thrownBy(() => native.setMaxListeners.call(5, 2))];
+       out.undefined = [thrownBy(() => native.getMaxListeners.call(undefined)), thrownBy(() => native.setMaxListeners.call(undefined, 2))];
+       out.process = [process.getMaxListeners(), Object.hasOwn(process, "_maxListeners"), process._maxListeners === undefined];
+       console.log(JSON.stringify(out));`,
     ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // [the default, the default after events.defaultMaxListeners = 3, setMaxListeners(2) returned the receiver, its own
-  //  _maxListeners, getMaxListeners(), events.getMaxListeners(receiver), and of the warning for its third listener:
-  //  the emitter is the receiver, the count, the limit is 2]
-  const row = [10, 3, true, 2, 2, 2, true, 3, true];
+  // [the default, the default after events.defaultMaxListeners = 3, setMaxListeners(1.5) returned the receiver, its own
+  //  _maxListeners, getMaxListeners(), events.getMaxListeners(receiver), the receiver has an own _events]
+  const row = [10, 3, true, 1.5, 1.5, 1.5, false];
   let printed: unknown;
   try {
     printed = JSON.parse(stdout);
@@ -1277,7 +1273,10 @@ test("the native EventEmitter keeps the limit of listeners on its receiver", asy
     "Object.create(process)": row,
     "Object.create(prototype of process)": row,
     "new (constructor of process)()": row,
-    "(constructor of process)()": row,
+    // [getMaxListeners(), what setMaxListeners(2) threw]
+    "frozen": [10, "TypeError"],
+    "number": [10, "TypeError"],
+    "undefined": ["TypeError", "TypeError"],
     "process": [10, true, true],
   });
   expect(exitCode).toBe(0);

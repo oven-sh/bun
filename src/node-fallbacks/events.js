@@ -43,8 +43,14 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
 
 EventEmitterPrototype.constructor = EventEmitter;
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414
+function _getMaxListeners(emitter) {
+  const limit = emitter?._maxListeners;
+  return limit === undefined ? defaultMaxListeners : limit;
+}
+
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
-  return this?._maxListeners ?? defaultMaxListeners;
+  return _getMaxListeners(this);
 };
 
 function emitError(emitter, args) {
@@ -180,7 +186,7 @@ EventEmitterPrototype.addListener = function addListener(type, fn) {
     this._eventsCount++;
   } else {
     handlers.push(fn);
-    var m = this._maxListeners ?? defaultMaxListeners;
+    var m = _getMaxListeners(this);
     if (m > 0 && handlers.length > m && !handlers.warned) {
       overflowWarning(this, type, handlers);
     }
@@ -205,7 +211,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
     this._eventsCount++;
   } else {
     handlers.unshift(fn);
-    var m = this._maxListeners ?? defaultMaxListeners;
+    var m = _getMaxListeners(this);
     if (m > 0 && handlers.length > m && !handlers.warned) {
       overflowWarning(this, type, handlers);
     }
@@ -449,7 +455,7 @@ function validateBoolean(value, name) {
 }
 
 function getMaxListeners(emitterOrTarget) {
-  return emitterOrTarget?._maxListeners ?? defaultMaxListeners;
+  return _getMaxListeners(emitterOrTarget);
 }
 
 // Copy-pasta from Node.js source code

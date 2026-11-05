@@ -24,23 +24,24 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
     return adoptRef(*new EventEmitter(context));
 }
 
-unsigned EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
+void EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
-    auto& map = ensureEventEmitterData().eventListenerMap;
-    unsigned count = prepend ? map.prepend(eventType, WTF::move(listener), once) : map.add(eventType, WTF::move(listener), once);
+    if (prepend)
+        ensureEventEmitterData().eventListenerMap.prepend(eventType, WTF::move(listener), once);
+    else
+        ensureEventEmitterData().eventListenerMap.add(eventType, WTF::move(listener), once);
 
     eventListenersDidChange();
     if (this->onDidChangeListener)
         this->onDidChangeListener(*this, eventType, true);
-    return count;
 }
 
-unsigned EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener, bool once, bool prepend)
+void EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener, bool once, bool prepend)
 {
     if (!listener)
-        return 0;
+        return;
 
-    return addListener(eventType, listener.releaseNonNull(), once, prepend);
+    addListener(eventType, listener.releaseNonNull(), once, prepend);
 }
 
 void EventEmitter::removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener)

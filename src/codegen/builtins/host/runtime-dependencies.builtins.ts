@@ -6,11 +6,9 @@ import {
   coercesEnvironmentValueCell,
   drainMicrotasksCell,
   editsWindowsEnvironmentCell,
-  emitterOverLimitCell,
   emitsProcessEventCell,
   emitsWarningCell,
   environmentCell,
-  eventOverLimitCell,
   featuresCell,
   flushesDirectStreamCell,
   handedWarningsCell,
@@ -61,31 +59,7 @@ const standardStreamModulesThatTestsCanWatch = standardStreamModules.map(load =>
   when: b.whenTestsReplaceBuiltins,
 }));
 
-const methodsAddingListeners = ["addListener", "on", "once", "prependListener", "prependOnceListener"];
-
-// JSEventEmitter::addListener is behind all five, and its one BUN_REQUIRE_INTERNAL_MODULE names `on`.
-// It calls the function with the emitter, the event, the number of listeners and the limit as a string. The rows of the methods say what the two cells hold.
-const warningOfTooManyListeners: readonly b.ModuleLoadSpec[] = [
-  {
-    module: "internal/max_listeners_warning",
-    exports: [
-      b.exportRead(
-        "warnOfTooManyListeners",
-        b.calledByHost({
-          times: "Repeatedly",
-          this: b.undefined,
-          args: [b.nativeCell(emitterOverLimitCell), b.nativeCell(eventOverLimitCell), b.f64, b.string],
-          result: b.dropped,
-        }),
-      ),
-    ],
-  },
-];
-
 const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadSpec[]>> = {
-  ...Object.fromEntries(
-    methodsAddingListeners.map(name => [`%EventEmitter%.prototype.${name}`, warningOfTooManyListeners]),
-  ),
   "node:child_process": channelModules,
   "node:fs/promises": evaluates("internal/fifo"),
   "node:repl": standardStreamModules,
@@ -155,7 +129,7 @@ const channelUsers: readonly b.CallingEntrySpec[] = [
   "node:child_process",
   "node:cluster",
   ...functionsOfChannel.map(path => ({ path, when: b.whenCallRunsOtherCode })),
-  ...methodsAddingListeners.map(name => ({
+  ...["addListener", "on", "once", "prependListener", "prependOnceListener"].map(name => ({
     path: `%EventEmitter%.prototype.${name}`,
     when: whenChannelEvent,
   })),

@@ -166,6 +166,23 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414: only a limit of undefined means the default.
+  itBundled("browser/NodeEventsMaxListenersOfNull", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter, getMaxListeners } from "node:events";
+        const e = new EventEmitter();
+        e._maxListeners = null;
+        console.log(String(e.getMaxListeners()), String(getMaxListeners(e)));
+        e._maxListeners = undefined;
+        console.log(e.getMaxListeners(), getMaxListeners(e));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "null null\n10 10",
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `

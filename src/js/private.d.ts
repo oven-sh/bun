@@ -1479,7 +1479,6 @@ interface $BunModules {
   "internal/http1_server_fallback": $ModuleValue<typeof import("./internal/http1_server_fallback")>;
   "internal/inspector/cdp": $ModuleValue<typeof import("./internal/inspector/cdp")>;
   "internal/linkedlist": $ModuleValue<typeof import("./internal/linkedlist")>;
-  "internal/max_listeners_warning": $ModuleValue<typeof import("./internal/max_listeners_warning")>;
   "internal/net/isIP": $ModuleValue<typeof import("./internal/net/isIP")>;
   "internal/net/server_abort_signal": $ModuleValue<typeof import("./internal/net/server_abort_signal")>;
   "internal/net/symbols": $ModuleValue<typeof import("./internal/net/symbols")>;

@@ -59,12 +59,18 @@ let FixedQueue: typeof import("internal/fixed_queue").default.FixedQueue | undef
 const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
-let warnOfTooManyListeners: $BunModules["internal/max_listeners_warning"]["warnOfTooManyListeners"] | undefined;
+let setNativeDefaultMaxListeners: ((n: number) => void) | undefined;
 
-// `process` keeps its listeners in native code, which reads the default from this slot. Without the slot it is 10.
+// `process` keeps its listeners in native code, which has a copy of the default.
 function setDefaultMaxListeners(n: number) {
   defaultMaxListeners = n;
-  $putByIdDirectPrivate(process as typeof process & { $defaultMaxListeners: number }, "defaultMaxListeners", n);
+  (setNativeDefaultMaxListeners ??= $newCppFunction("BunProcess.cpp", "jsFunctionSetDefaultMaxListeners", 1))(n);
+}
+
+interface MaxListenersExceededWarning extends Error {
+  emitter?: unknown;
+  type?: string | symbol;
+  count?: number;
 }
 
 /** A list that has grown past the limit once carries `warned`, so that the warning is printed once. */
@@ -576,13 +582,7 @@ function _addListener(target: $Node.EventEmitter, type: $Node.EventName, fn: $No
   var m = _getMaxListeners(target);
   if (m > 0 && handlers.length > m && !(handlers as ListenerList).warned) {
     ("unlikely");
-    (handlers as ListenerList).warned = true;
-    (warnOfTooManyListeners ??= require("internal/max_listeners_warning").warnOfTooManyListeners)(
-      target,
-      type,
-      handlers.length,
-      m,
-    );
+    overflowWarning(target, type, handlers);
   }
 }
 
@@ -619,6 +619,19 @@ function copyWithInserted(list: $Node.Listener[], fn: $Node.Listener, prepend: b
   }
   if ((list as ListenerList).warned) (copy as ListenerList).warned = true;
   return copy;
+}
+
+function overflowWarning(emitter: $Node.EventEmitter, type: $Node.EventName, handlers: $Node.Listener[]) {
+  if (!inspect) inspect = require("internal/util/inspect").inspect;
+  (handlers as ListenerList).warned = true;
+  const warn: MaxListenersExceededWarning = new Error(
+    `Possible EventEmitter memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect!(emitter, { depth: -1 })}. MaxListeners is ${_getMaxListeners(emitter)}. Use emitter.setMaxListeners() to increase limit`,
+  );
+  warn.name = "MaxListenersExceededWarning";
+  warn.emitter = emitter;
+  warn.type = type;
+  warn.count = handlers.length;
+  process.emitWarning(warn);
 }
 
 // A closure over (target, type, listener, fired) rather than a state object

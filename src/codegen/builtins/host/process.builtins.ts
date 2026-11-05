@@ -2,9 +2,7 @@ import * as b from "bun-builtins-table";
 import {
   argumentsCell,
   closesChannelCell,
-  emitterOverLimitCell,
   environmentCell,
-  eventOverLimitCell,
   featuresCell,
   handedWarningsCell,
   releaseCell,
@@ -106,45 +104,24 @@ const findsOrMakesEmitter = [
   b.definesName(["_events"], b.instance("EventEmitter").fresh),
 ];
 
-// What a method does with another receiver, and with its first operand there, beyond finding the emitter.
-interface OtherReceiverUses {
-  this?: readonly b.UseSpec[];
-  first?: readonly b.UseSpec[];
-}
-
-const onOtherReceiver = (firstParameter: string, uses: OtherReceiverUses = {}): b.FunctionField => ({
+const onOtherReceiver = (firstParameter: string): b.FunctionField => ({
   this: b.any,
   args: { [firstParameter]: b.any.optional, operands: b.any.rest },
   returns: b.any,
   capability: "js",
   throws: true,
   uses: {
-    this: [...findsOrMakesEmitter, ...(uses.this ?? [])],
-    [firstParameter]: [...handedOver, ...(uses.first ?? []), b.runsTransitively("ToPrimitive")],
+    this: findsOrMakesEmitter,
+    [firstParameter]: [...handedOver, b.runsTransitively("ToPrimitive")],
     operands: handedOver,
   },
   implementation: b.generic,
 });
 
-const methodOfEventEmitter = (signature: b.SignatureOptions, uses: OtherReceiverUses = {}): b.FunctionField[] => [
+const methodOfEventEmitter = (signature: b.SignatureOptions): b.FunctionField[] => [
   { ...signature, this: nativeEmitter, implementation: b.generic },
-  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event", uses),
+  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event"),
 ];
-
-// The limit is the emitter's own `_maxListeners`, as in node:events: an ordinary property, read and stored as a program would.
-const limitOfListeners = b.keysNamed("_maxListeners");
-const limitHeldByEmitter: b.PlaceSpec = { place: "Member", operand: "this", path: ["_maxListeners"] };
-// JSEventEmitter::addListener: from the second listener of an event on it reads the limit and compares it with `>`, and for an event that is over it makes a string of it. Of a limit that is an object those call these three and nothing else.
-const limitConverted = [
-  { name: "@@toPrimitive", args: [b.string] },
-  { name: "toString", args: [] },
-  { name: "valueOf", args: [] },
-].map(({ name, args }) =>
-  b.memberCalled(["_maxListeners", name], { times: "Repeatedly", this: limitHeldByEmitter, args, result: "Ignored" }),
-);
-// It then hands the emitter and the event to the library's function for the warning: runtime-dependencies.builtins.ts says what that is called with.
-const emitterOverLimit = [b.runs(b.named("_maxListeners")), b.storedIn(b.nativeCell(emitterOverLimitCell))];
-const eventOverLimit = b.storedIn(b.nativeCell(eventOverLimitCell));
 
 const addsListener = [
   {
@@ -152,28 +129,21 @@ const addsListener = [
     returns: self,
     capability: "js",
     throws: true,
-    uses: {
-      this: emitterOverLimit,
-      event: [eventOverLimit],
-      listener: [b.retained, calledWithWhatWasHandedOver],
-    },
+    uses: { this: b.inspected, event: b.inspected, listener: [b.retained, calledWithWhatWasHandedOver] },
     this: nativeEmitter,
     implementation: b.generic,
   },
-  ...methodOfEventEmitter(
-    {
-      args: { event: b.any, listener: b.any },
-      returns: self,
-      capability: "js",
-      throws: true,
-      uses: {
-        this: emitterOverLimit,
-        event: [b.retained, eventOverLimit, b.runs("ToPrimitive")],
-        listener: [b.retained, calledWithEvents],
-      },
+  ...methodOfEventEmitter({
+    args: { event: b.any, listener: b.any },
+    returns: self,
+    capability: "js",
+    throws: true,
+    uses: {
+      this: b.inspected,
+      event: [b.retained, b.runs("ToPrimitive")],
+      listener: [b.retained, calledWithEvents],
     },
-    { this: emitterOverLimit, first: [eventOverLimit] },
-  ),
+  }),
 ] satisfies b.FunctionField[];
 
 const removesListener = methodOfEventEmitter({
@@ -194,26 +164,6 @@ const removesAllListeners = methodOfEventEmitter({
   uses: { this: b.inspected },
   writes: listenerLists,
 });
-
-const storesLimit = [b.storedByKey(limitOfListeners, b.operand("count"))];
-const setsMaxListeners = methodOfEventEmitter(
-  {
-    args: { count: b.f64 },
-    returns: self,
-    capability: "js",
-    throws: true,
-    runsOnlyOperandCode: true,
-    uses: { this: storesLimit },
-  },
-  { this: storesLimit },
-);
-
-// The limit, or the default of node:events while the emitter has none: a number.
-const answersLimit = [b.readByKey(limitOfListeners)];
-const getsMaxListeners = methodOfEventEmitter(
-  { returns: b.any, capability: "js", throws: true, runsOnlyOperandCode: true, uses: { this: answersLimit } },
-  { this: answersLimit },
-);
 
 const readsListenerLists = (signature: Pick<b.SignatureOptions, "args" | "returns">) =>
   methodOfEventEmitter({
@@ -283,6 +233,40 @@ const refusal = (operands: readonly string[], implementation: b.ImplementationSp
     uses: Object.fromEntries(operands.map(name => [name, [formattedInErrorMessage]])),
     implementation,
   }) satisfies b.FunctionField;
+
+// The limit is `this._maxListeners`, as in node:events: an ordinary property of whatever the two functions are called on.
+const limitOfListeners = b.keysNamed("_maxListeners");
+
+const setsMaxListeners = [
+  {
+    this: b.any,
+    args: { count: b.f64 },
+    returns: self,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { this: [b.storedByKey(limitOfListeners, b.operand("count"))] },
+    implementation: b.generic,
+  },
+  // Any other count is refused before the receiver is read.
+  {
+    ...refusal(["count"], b.generic),
+    this: b.any,
+    uses: { this: b.inspected, count: [formattedInErrorMessage] },
+  },
+] satisfies b.FunctionField[];
+
+// While the limit is undefined the answer is `defaultMaxListeners` of node:events, a number. A limit that the program stored comes back as it is.
+const getsMaxListeners = {
+  this: b.any,
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  runsOnlyOperandCode: true,
+  uses: { this: [b.readByKey(limitOfListeners)] },
+  reads: externalState,
+  implementation: b.generic,
+} satisfies b.FunctionField;
 
 const endsProcessUnlessInWorker = (code: readonly b.UseSpec[]) =>
   ({
@@ -393,22 +377,6 @@ const emitsWarningOnNextTick = [
     capability: "js",
     throws: true,
     uses: warningOptionUses,
-    implementation: b.hostCall,
-  },
-  // An Error is the warning as it stands: no message of an error prints it. It reads the name, to tell a DeprecationWarning.
-  {
-    args: { warning: b.instance("Error"), ...warningOptions },
-    capability: "js",
-    throws: true,
-    uses: {
-      warning: [
-        b.retained,
-        b.storedIn(b.nativeCell(handedWarningsCell)),
-        b.definesName(["code", "detail"], b.string),
-        b.runs(b.named("name")),
-      ],
-      ...warningOptionUses,
-    },
     implementation: b.hostCall,
   },
   {

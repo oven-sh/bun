@@ -66,7 +66,6 @@ using namespace JSC;
     macro(ctimeMs) \
     macro(data) \
     macro(decode) \
-    macro(defaultMaxListeners) \
     macro(dest) \
     macro(detail) \
     macro(dirname) \

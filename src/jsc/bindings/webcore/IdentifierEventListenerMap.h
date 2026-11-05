@@ -37,14 +37,7 @@ private:
 };
 
 using SimpleEventListenerVector = Vector<RefPtr<SimpleRegisteredEventListener>, 2, CrashOnOverflow, 6>;
-
-struct EventListenerList {
-    JSC::Identifier eventType;
-    SimpleEventListenerVector listeners;
-    // node's `existing.warned`: a MaxListenersExceededWarning went out for this list.
-    bool warnedOfTooManyListeners { false };
-};
-using EntriesVector = Vector<EventListenerList, 4, CrashOnOverflow, 8>;
+using EntriesVector = Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>, 4, CrashOnOverflow, 8>;
 
 class IdentifierEventListenerMap {
 public:
@@ -59,9 +52,8 @@ public:
     void clear();
 
     // Like node:events and unlike EventTarget, the same function can be registered any number of times.
-    // Both answer how many listeners the event has now.
-    unsigned add(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
-    unsigned prepend(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
+    void add(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
+    void prepend(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
     // Removes the last registration of this callback, like node's removeListener.
     bool remove(const JSC::Identifier& eventType, EventListener&);
     // Removes exactly this registration.
@@ -69,17 +61,12 @@ public:
     bool removeAll(const JSC::Identifier& eventType);
     WEBCORE_EXPORT SimpleEventListenerVector* find(const JSC::Identifier& eventType);
     const SimpleEventListenerVector* find(const JSC::Identifier& eventType) const { return const_cast<IdentifierEventListenerMap*>(this)->find(eventType); }
-    // How many listeners the event has if this is the first warning for its list, otherwise 0.
-    unsigned markWarnedOfTooManyListeners(const JSC::Identifier& eventType);
     Vector<JSC::Identifier> eventTypes() const;
     template<typename Visitor> void visitJSEventListeners(Visitor&);
 
     Lock& lock() { return m_lock; }
 
 private:
-    EventListenerList* findList(const JSC::Identifier& eventType);
-    unsigned insert(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once, bool prepend);
-
     EntriesVector m_entries;
     Lock m_lock;
 };
@@ -89,7 +76,7 @@ void IdentifierEventListenerMap::visitJSEventListeners(Visitor& visitor)
 {
     Locker locker { m_lock };
     for (auto& entry : m_entries) {
-        for (auto& eventListener : entry.listeners)
+        for (auto& eventListener : entry.second)
             eventListener->callback().visitJSFunction(visitor);
     }
 }

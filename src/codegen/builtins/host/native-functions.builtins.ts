@@ -263,6 +263,15 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // node:events hands its `defaultMaxListeners` to native code, where getMaxListeners of `process` reads it.
+  b.static(cpp("BunProcess.cpp", "jsFunctionSetDefaultMaxListeners"), {
+    args: { limit: b.any },
+    returns: b.undefined,
+    capability: "none",
+    uses: { limit: b.inspected },
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
   b.static(cpp("streams/BunStreamConsumers.cpp", "jsFunctionTransferToNativeReadableStream"), {
     args: { stream: b.any.optional },
     returns: b.undefined,

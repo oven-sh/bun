@@ -163,6 +163,7 @@ impl Quick {
         let mode = self.mode_of_run();
         self.set_js_mode(mode);
         let root = self.parse_once()?;
+        self.nothing_lost()?;
         self.stage(0);
         if self.has_long_row_of_comments() {
             return Err(self.stop(why::RARE));
@@ -171,6 +172,7 @@ impl Quick {
         if self.comments.trailing_count == 0 {
             self.set_suffix_possible(false);
         }
+        self.nothing_lost()?;
         self.stage(1);
         self.print(root)
     }

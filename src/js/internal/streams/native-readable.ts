@@ -100,11 +100,7 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   return stream;
 }
 
-/**
- * Installs `_read` over the native source behind `readableStream` on a stream of another class (tty.ReadStream). The
- * caller's `_destroy` calls `cancelNativeSource`. The same setup stays inline in `constructNativeReadable`: a helper
- * shared by both costs every Readable of a compiled program 256 bytes a round in the koa budget of test/aot/servers.
- */
+// For tty.ReadStream. Not shared with constructNativeReadable: that costs every Readable of a compiled program.
 function attachNativeSource(stream: NativeReadable, readableStream: ReadableStream, highWaterMark: number) {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = readableStream.$bunNativePtr;
@@ -121,12 +117,6 @@ function attachNativeSource(stream: NativeReadable, readableStream: ReadableStre
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
   stream[kHighWaterMark] = highWaterMark;
-
-  // https://github.com/oven-sh/bun/pull/12801
-  // https://github.com/oven-sh/bun/issues/9555
-  // There may be a ReadableStream.Strong handle to the ReadableStream.
-  // We can't update those handles to point to the NativeReadable from JS
-  // So we instead mark it as no longer usable, and create a new NativeReadable
   transferToNativeReadable(readableStream);
 }
 

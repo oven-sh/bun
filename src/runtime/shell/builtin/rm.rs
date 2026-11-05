@@ -2,9 +2,10 @@ use core::ffi::{CStr, c_char};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
+use bun_collections::HashMap;
 use bun_core::{ZBox, ZStr, strings};
 use bun_paths::resolve_path::{self, Platform, platform};
-use bun_sys::{E, FdExt, dir_iterator};
+use bun_sys::{E, FdExt, S, dir_iterator};
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
@@ -397,31 +398,34 @@ impl Rm {
         }
     }
 
-    /// Writes an operand's error line; `Some` is its chunk when stderr is an fd.
-    fn write_err(interp: &Interpreter, cmd: NodeId, err: &bun_sys::Error) -> Option<Yield> {
-        // Formatted before `exec` is borrowed (formatting needs &mut interp).
-        let line = Builtin::task_error_to_string(interp, cmd, Kind::Rm, err).to_vec();
+    /// Writes the error lines of failed operands; `Some` is their chunk when stderr is an fd.
+    fn write_errs(
+        interp: &Interpreter,
+        cmd: NodeId,
+        lines: &[u8],
+        last: &bun_sys::Error,
+    ) -> Option<Yield> {
         let safeguard = Builtin::of(interp, cmd).stderr.needs_io();
         if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             // exec.err is only used as a did-anything-fail flag.
-            exec.err = Some(err.without_path());
+            exec.err = Some(last.without_path());
             if safeguard.is_some() {
                 exec.output_count.fetch_add(1, Ordering::SeqCst);
             }
         }
         let Some(safeguard) = safeguard else {
-            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &line);
+            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, lines);
             return None;
         };
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
         Some(
             Builtin::of_mut(interp, cmd)
                 .stderr
-                .enqueue(child, &line, safeguard),
+                .enqueue(child, lines, safeguard),
         )
     }
 
-    /// Writes what a queued `DirTask` brought: its `-v` lines, then its operand's error.
+    /// Writes what a queued `DirTask` brought: its `-v` lines, then the errors it counts.
     fn write_verbose(interp: &Interpreter, cmd: NodeId, verbose: *mut DirTask) -> Yield {
         debug_assert!(
             matches!(&Self::state_mut(interp, cmd).state, RmState::Exec(exec) if !exec.walk_done),
@@ -430,11 +434,11 @@ impl Rm {
         // SAFETY: `verbose` is a live DirTask posted via queue_for_write; main
         // thread, exclusive. Take the buffer up-front so the cleanup guard can
         // own the raw pointers without overlapping a borrow.
-        let (tm, buf, has_error) = unsafe {
+        let (tm, buf, errors) = unsafe {
             (
                 (*verbose).task_manager,
                 core::mem::take(&mut (*verbose).deleted_entries),
-                (*verbose).has_error,
+                (*verbose).errors as usize,
             )
         };
         let _guard = scopeguard::guard((tm, verbose), |(tm, v)| {
@@ -445,13 +449,22 @@ impl Rm {
                 ShellRmTask::decr_pending_and_maybe_deinit(tm);
             }
         });
-        // Roots are queued in operand order, as `errs` is filled: the front error is this root's.
-        let err = if has_error {
+        // Tasks are queued in the order in which `errs` is filled: the front errors are this task's.
+        let mut err_lines = Vec::new();
+        let mut last_err = None;
+        for _ in 0..errors {
             // SAFETY: the pending count keeps `tm` live.
-            unsafe { (*tm).errs.lock().pop_front() }
-        } else {
-            None
-        };
+            let Some(err) = (unsafe { (*tm).errs.lock().pop_front() }) else {
+                debug_assert!(
+                    false,
+                    "a queued task counts an error that was not committed"
+                );
+                break;
+            };
+            // Formatted before `exec` is borrowed (formatting needs &mut interp).
+            err_lines.extend_from_slice(Builtin::task_error_to_string(interp, cmd, Kind::Rm, &err));
+            last_err = Some(err);
+        }
 
         let out_chunk = if buf.is_empty() {
             None
@@ -469,9 +482,9 @@ impl Rm {
             }
             None
         };
-        let err_chunk = err
+        let err_chunk = last_err
             .as_ref()
-            .and_then(|err| Self::write_err(interp, cmd, err));
+            .and_then(|last| Self::write_errs(interp, cmd, &err_lines, last));
         match (out_chunk, err_chunk) {
             (Some(out_chunk), Some(err_chunk)) => {
                 out_chunk.run(interp);
@@ -580,17 +593,20 @@ pub(crate) enum EntryKindHint {
 /// A root takes its `-v` lines to the main thread once it holds this many bytes.
 const VERBOSE_FLUSH_BYTES: usize = 4096;
 
-/// One per `rm`: removes the operands one after another, in command-line order.
+/// One per `rm`: takes the operands in command-line order.
 pub(crate) struct ShellRmTask {
     pub(crate) cmd: NodeId,
     pub(crate) opts: Opts,
     pub(crate) cwd: bun_sys::Fd,
     /// The operands: argv entries of the `Builtin`, which outlives this task's time on the pool.
     operands: bun_ptr::RawSlice<*const c_char>,
-    /// Index of the operand being removed; stored only between two operands.
-    cursor: AtomicUsize,
-    /// The operand being removed has failed; cleared between two operands.
-    error_signal: AtomicBool,
+    /// `-r`, no `-v`, several operands: directory operands that [`Window`] tells apart walk at once.
+    windowed: bool,
+    /// With a window: 1 for the thread in [`run_window`], 1 per root that walks.
+    live: AtomicUsize,
+    window: bun_threading::Guarded<Window>,
+    /// The first error of each failed operand with its index, until [`commit_errors`].
+    held: bun_threading::Guarded<Vec<(usize, bun_sys::Error)>>,
     /// Backref into `Rm::ExecState.output_count` so [`verbose_deleted`] can
     /// bump it from worker threads.
     output_count: bun_ptr::BackRef<AtomicUsize>,
@@ -599,29 +615,79 @@ pub(crate) struct ShellRmTask {
     /// one per DirTask queued for `write_verbose`. Decremented by
     /// [`decr_pending_and_maybe_deinit`].
     pub(crate) pending_main_callbacks: AtomicU32,
-    /// The first error of each failed operand, in operand order, for the main thread.
+    /// The errors of failed operands in operand order, for the main thread.
     pub(crate) errs: bun_threading::Guarded<VecDeque<bun_sys::Error>>,
     pub(crate) event_loop: EventLoopHandle,
     pub task: ShellTask,
+}
+
+/// What a [`DirTask`] removes.
+enum Target {
+    /// A root: the operand with this index.
+    Operand(usize),
+    /// A directory that the walk found.
+    Entry(ZBox),
 }
 
 /// One per directory of the walk, and one per operand as the root of its walk.
 pub(crate) struct DirTask {
     pub(crate) task_manager: *mut ShellRmTask,
     pub(crate) parent_task: *mut DirTask,
-    /// `None` on a root: its path is the operand ([`DirTask::path`]).
-    path: Option<ZBox>,
+    /// The root of this task's operand. Null on a root.
+    root: *mut DirTask,
+    target: Target,
     pub(crate) is_absolute: bool,
     pub(crate) subtask_count: AtomicUsize,
     pub(crate) need_to_wait: AtomicBool,
     pub(crate) kind_hint: EntryKindHint,
-    /// On a queued root: its operand failed, and the front of [`ShellRmTask::errs`] is the error.
-    pub(crate) has_error: bool,
+    /// On a root: its operand has failed, and its walk stops.
+    error_signal: AtomicBool,
+    /// On a queued task: how many of [`ShellRmTask::errs`] the main thread writes after its lines.
+    pub(crate) errors: u32,
     pub(crate) deleted_entries: Vec<u8>,
     /// Intrusive node for the verbose-write bounce-back to the main thread.
     pub(crate) concurrent_task: bun_event_loop::EventLoopTask,
     /// Intrusive node for the thread-pool dispatch.
     pub(crate) work_task: WorkPoolTask,
+}
+
+// One is allocated per directory: it stays in the 128-byte size class.
+const _: () = assert!(core::mem::size_of::<DirTask>() <= 128);
+
+/// `(st_dev, st_ino)` of a directory.
+type DirId = (u64, u64);
+
+/// What [`ShellRmTask::run_window`] knows between two operands. Only its thread uses it.
+struct Window {
+    /// The next operand to look at.
+    next: usize,
+    /// The root for the operands that end in their turn.
+    root: Option<Box<DirTask>>,
+    /// The directories that walk.
+    own: HashMap<DirId, ()>,
+    /// The directories above them, below the cwd.
+    anc: HashMap<DirId, ()>,
+    /// A root walks that no look can tell apart from another operand.
+    alone: bool,
+    /// A root has started or an operand has failed since the last time no root walked.
+    unsettled: bool,
+    /// The dirname that `above` was read for.
+    above_of: Vec<u8>,
+    /// Its directories from the cwd down. `None`: one of them is not a directory.
+    above: Option<Vec<DirId>>,
+}
+
+/// What [`Window::step`] leaves to [`ShellRmTask::run_window`].
+enum Step {
+    /// The operand has ended in its turn.
+    Next,
+    /// A directory that cannot meet a root that walks: its walk goes to the pool.
+    Start(Box<DirTask>),
+    /// The last directory, or an operand that has to be alone: it runs on this thread.
+    Run(Box<DirTask>),
+    /// The operand can meet a root that walks: wait for the roots, then look again.
+    Join,
+    End,
 }
 
 // SAFETY: raw-pointer fields are only dereferenced on the threads that own
@@ -649,8 +715,19 @@ impl ShellRmTask {
             opts,
             cwd,
             operands,
-            cursor: AtomicUsize::new(0),
-            error_signal: AtomicBool::new(false),
+            windowed: opts.recursive && !opts.verbose && operands.len() > 1,
+            live: AtomicUsize::new(1),
+            window: bun_threading::Guarded::new(Window {
+                next: 0,
+                root: None,
+                own: HashMap::new(),
+                anc: HashMap::new(),
+                alone: false,
+                unsettled: false,
+                above_of: Vec::new(),
+                above: Some(Vec::new()),
+            }),
+            held: bun_threading::Guarded::new(Vec::new()),
             output_count,
             pending_main_callbacks: AtomicU32::new(1),
             errs: bun_threading::Guarded::new(VecDeque::new()),
@@ -690,27 +767,30 @@ impl ShellRmTask {
         // heap-allocated task that no other thread has yet.
         unsafe {
             let this = <Self as crate::shell::interpreter::ShellTaskCtx>::from_work_task(task);
-            Self::run_operands(this, None);
+            if (*this).windowed {
+                Self::run_window(this);
+            } else {
+                Self::run_operands(this, None);
+            }
         }
     }
 
-    /// Removes the operands in order; `finished` is the root of the operand that just ended.
+    /// Removes the operands one after another; `finished` is the root of the operand that just ended.
     unsafe fn run_operands(this: *mut ShellRmTask, mut finished: Option<Box<DirTask>>) {
         // SAFETY: `this` is live until `finish_concurrently`. One thread at a
         // time is here: this returns when a root goes to its child tasks, and
-        // only the thread that `post_run` gives that root to calls again. Every
-        // DirTask of an ended operand has released its count, so no other
-        // thread reads `cursor` or `error_signal` between two operands.
+        // only the thread that `post_run` gives that root to calls again.
         unsafe {
             loop {
                 let mut root = None;
+                let mut index = 0;
                 if let Some(mut ended) = finished.take() {
-                    let cursor = (*this).cursor.load(Ordering::SeqCst);
-                    let is_last = cursor + 1 == (*this).operands.len();
-                    let failed = (*this).error_signal.load(Ordering::SeqCst);
+                    index = DirTask::operand(&raw mut *ended) + 1;
+                    let is_last = index == (*this).operands.len();
+                    let failed = *ended.error_signal.get_mut();
                     let lines = ended.deleted_entries.len();
                     if failed || (lines > 0 && (is_last || lines >= VERBOSE_FLUSH_BYTES)) {
-                        ended.has_error = failed;
+                        ended.errors = (*this).commit_errors();
                         (*this)
                             .pending_main_callbacks
                             .fetch_add(1, Ordering::SeqCst);
@@ -723,22 +803,8 @@ impl ShellRmTask {
                         Self::finish_concurrently(this);
                         return;
                     }
-                    (*this).error_signal.store(false, Ordering::SeqCst);
-                    (*this).cursor.store(cursor + 1, Ordering::SeqCst);
                 }
-                let root = match root {
-                    Some(root) => {
-                        root.subtask_count.store(1, Ordering::SeqCst);
-                        root
-                    }
-                    None => DirTask::create(
-                        this,
-                        core::ptr::null_mut(),
-                        None,
-                        EntryKindHint::Idk,
-                        (*this).event_loop,
-                    ),
-                };
+                let root = DirTask::root(this, root, index);
                 finished = DirTask::run_from_thread_pool_impl(bun_core::heap::into_raw(root));
                 if finished.is_none() {
                     return;
@@ -747,27 +813,143 @@ impl ShellRmTask {
         }
     }
 
-    /// The operand being removed.
-    fn operand(&self) -> &ZStr {
-        let arg = self.operands[self.cursor.load(Ordering::SeqCst)];
-        // SAFETY: a NUL-terminated argv entry; `Rm` is done, and argv freed,
-        // only after this task has come back (`ExecState::walk_done`).
-        ZStr::from_cstr(unsafe { CStr::from_ptr(arg) })
+    /// Takes the operands of a command with a window in their turn.
+    /// SAFETY: `this` is live and the calling thread holds the driver's count on `live`.
+    unsafe fn run_window(this: *mut ShellRmTask) {
+        // SAFETY: caller contract. The count makes this the only thread that
+        // uses `window`. After a `fetch_sub` that did not return 1 another
+        // thread can be here and can end the task, so nothing is read after it.
+        unsafe {
+            loop {
+                let walking = (*this).live.load(Ordering::SeqCst) > 1;
+                let step = (*this).window.lock().step(this, walking);
+                match step {
+                    Step::Next => {}
+                    Step::Start(root) => {
+                        (*this).live.fetch_add(1, Ordering::SeqCst);
+                        DirTask::schedule(bun_core::heap::into_raw(root));
+                    }
+                    Step::Run(root) => {
+                        (*this).live.fetch_add(1, Ordering::SeqCst);
+                        let root = bun_core::heap::into_raw(root);
+                        if let Some(root) = DirTask::run_from_thread_pool_impl(root) {
+                            (*this).live.fetch_sub(1, Ordering::SeqCst);
+                            (*this).window.lock().root.get_or_insert(root);
+                        }
+                    }
+                    Step::Join => {
+                        if (*this).live.fetch_sub(1, Ordering::SeqCst) != 1 {
+                            return;
+                        }
+                        (*this).live.store(1, Ordering::SeqCst);
+                    }
+                    Step::End => {
+                        Self::finish_concurrently(this);
+                        return;
+                    }
+                }
+            }
+        }
     }
 
-    /// Queues `-v` lines for the main thread, ahead of the DirTasks that are started after this.
-    fn queue_lines(&self, task_manager: *mut ShellRmTask, lines: Vec<u8>) {
+    /// The thread that ended the root of an operand goes on with the operands.
+    /// SAFETY: `root` is the finished root that [`DirTask::post_run`] gave to this thread.
+    unsafe fn operand_ended(this: *mut ShellRmTask, root: Box<DirTask>) {
+        // SAFETY: `this` is live. Without a window no other thread has it
+        // between two operands. With one, the root holds a count on `live`
+        // until the `fetch_sub`, and taking it to 0 makes this thread the one
+        // in `run_window`: the thread that was there has left at its join.
+        unsafe {
+            if !(*this).windowed {
+                return Self::run_operands(this, Some(root));
+            }
+            drop(root);
+            if (*this).live.fetch_sub(1, Ordering::SeqCst) == 1 {
+                (*this).live.store(1, Ordering::SeqCst);
+                Self::run_window(this);
+            }
+        }
+    }
+
+    /// The operand with this index.
+    fn operand(&self, index: usize) -> &ZStr {
+        // SAFETY: a NUL-terminated argv entry; `Rm` is done, and argv freed,
+        // only after this task has come back (`ExecState::walk_done`).
+        ZStr::from_cstr(unsafe { CStr::from_ptr(self.operands[index]) })
+    }
+
+    /// Moves the held errors to `errs` in operand order. Returns how many.
+    fn commit_errors(&self) -> u32 {
+        let mut held = self.held.lock();
+        held.sort_unstable_by_key(|held| held.0);
+        let count = held.len() as u32;
+        self.errs.lock().extend(held.drain(..).map(|held| held.1));
+        count
+    }
+
+    /// Queues `-v` lines and `errors` committed errors for the main thread, ahead of what is queued later.
+    fn queue_output(&self, task_manager: *mut ShellRmTask, lines: Vec<u8>, errors: u32) {
         let mut carrier = DirTask::create(
             task_manager,
             core::ptr::null_mut(),
-            None,
+            Target::Operand(0),
             EntryKindHint::Idk,
             self.event_loop,
         );
         carrier.deleted_entries = lines;
+        carrier.errors = errors;
         self.pending_main_callbacks.fetch_add(1, Ordering::SeqCst);
         // SAFETY: a fresh DirTask, with the pending count taken above.
         unsafe { DirTask::queue_for_write(bun_core::heap::into_raw(carrier)) };
+    }
+
+    /// The driver's try at an operand in its turn. `Ok(true)`: a directory, and nothing of it is removed.
+    fn try_as_file(&self, root: *mut DirTask) -> bun_sys::Maybe<bool> {
+        let mut is_dir = false;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // SAFETY: the driver's thread owns a root that it has not started.
+        let path = unsafe { DirTask::path(root) };
+        let mut vtable = RemoveFileVTable {
+            task: self,
+            on_dir: OnDir::Report {
+                is_dir: &mut is_dir,
+            },
+        };
+        self.remove_entry_file(root, path, false, &mut buf, &mut vtable)?;
+        Ok(is_dir)
+    }
+
+    /// The id of each directory of `dirname`, from the cwd down. `None`: one of them is not a directory.
+    fn dirs_of(&self, dirname: &[u8]) -> Option<Vec<DirId>> {
+        let mut ids = Vec::new();
+        if dirname.is_empty() {
+            return Some(ids);
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut start = 0;
+        for end in 0..=dirname.len() {
+            if end < dirname.len() && !Platform::AUTO.is_separator(dirname[end]) {
+                continue;
+            }
+            if &dirname[start..end] != b"." {
+                buf[..end].copy_from_slice(&dirname[..end]);
+                buf[end] = 0;
+                ids.push(self.dir_id(ZStr::from_buf(&buf[..], end))?);
+            }
+            start = end + 1;
+        }
+        Some(ids)
+    }
+
+    /// The id of `path` if it is a directory. A symlink is not followed.
+    fn dir_id(&self, path: &ZStr) -> Option<DirId> {
+        Self::id_of(&shell_lstatat(self.cwd, path).ok()?)
+    }
+
+    /// An id with `st_ino == 0` (Windows, when the file system has none) is not one.
+    fn id_of(stat: &bun_sys::Stat) -> Option<DirId> {
+        (S::ISDIR(stat.st_mode as _) && stat.st_ino != 0)
+            .then_some((stat.st_dev as u64, stat.st_ino as u64))
     }
 
     /// Post this task to the main-thread
@@ -807,7 +989,7 @@ impl ShellRmTask {
         }
     }
 
-    /// Joins `path` onto `parent_dir.path` and spawns
+    /// Joins `path` onto the path of `parent_dir` and spawns
     /// a child DirTask.
     fn enqueue(
         &self,
@@ -816,7 +998,7 @@ impl ShellRmTask {
         is_absolute: bool,
         kind_hint: EntryKindHint,
     ) {
-        if self.error_signal.load(Ordering::SeqCst) {
+        if DirTask::has_failed(parent_dir) {
             return;
         }
         // SAFETY: `parent_dir` is live for the duration of its run_from_thread_pool_impl.
@@ -827,7 +1009,7 @@ impl ShellRmTask {
 
     /// Takes ownership of `path`.
     fn enqueue_no_join(&self, parent: *mut DirTask, path: ZBox, kind_hint: EntryKindHint) {
-        if self.error_signal.load(Ordering::SeqCst) {
+        if DirTask::has_failed(parent) {
             return;
         }
         // SAFETY: `parent` is live; reuse its `task_manager` (preserves the
@@ -840,13 +1022,13 @@ impl ShellRmTask {
         unsafe {
             if (*parent).parent_task.is_null() && !(*parent).deleted_entries.is_empty() {
                 let lines = core::mem::take(&mut (*parent).deleted_entries);
-                self.queue_lines(task_manager, lines);
+                self.queue_output(task_manager, lines, 0);
             }
         }
         let subtask = bun_core::heap::into_raw(DirTask::create(
             task_manager,
             parent,
-            Some(path),
+            Target::Entry(path),
             kind_hint,
             self.event_loop,
         ));
@@ -855,7 +1037,7 @@ impl ShellRmTask {
         unsafe {
             let count = (*parent).subtask_count.fetch_add(1, Ordering::Relaxed);
             debug_assert!(count > 0);
-            bun_threading::work_pool::WorkPool::schedule(&raw mut (*subtask).work_task);
+            DirTask::schedule(subtask);
         }
     }
 
@@ -954,8 +1136,8 @@ impl ShellRmTask {
     fn remove_entry(&self, dir_task: *mut DirTask, is_absolute: bool) -> bun_sys::Maybe<bool> {
         let mut waiting = false;
         let mut buf = bun_paths::path_buffer_pool::get();
-        // SAFETY: `dir_task` is live; this thread owns it. `kind_hint` /
-        // `path` are read-only after construction.
+        // SAFETY: `dir_task` is live; this thread owns it. `target` is
+        // written only by `DirTask::root`, between two operands.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, DirTask::path(dir_task)) };
         match kind_hint {
             EntryKindHint::Idk => {
@@ -1060,11 +1242,13 @@ impl ShellRmTask {
         // close it BEFORE we delete.
         let close_fd = scopeguard::guard(fd, |fd| fd.close());
 
-        if self.error_signal.load(Ordering::SeqCst) {
+        if DirTask::has_failed(dir_task) {
             return Ok(());
         }
 
-        let join_style = JoinStyle::from_path(self.operand().as_bytes());
+        // SAFETY: `dir_task` is live; this thread owns it.
+        let operand = self.operand(unsafe { DirTask::operand(dir_task) });
+        let join_style = JoinStyle::from_path(operand.as_bytes());
         let mut iterator = dir_iterator::iterate(fd);
         let mut child_vtable = RemoveFileVTable {
             task: self,
@@ -1087,7 +1271,7 @@ impl ShellRmTask {
                 Ok(Some(ent)) => ent,
             };
             // TODO this seems bad maybe better to listen to kqueue/epoll event
-            if (i & 3) == 0 && self.error_signal.load(Ordering::SeqCst) {
+            if (i & 3) == 0 && DirTask::has_failed(dir_task) {
                 break Ok(());
             }
             i += 1;
@@ -1131,7 +1315,7 @@ impl ShellRmTask {
         // mutex so it must not sit inside the hand-off below. The
         // `error_signal` check afterwards covers the no-children early-out.
         if let Err(e) = loop_result {
-            self.handle_err(e);
+            self.handle_err(dir_task, e);
         }
 
         // Closed before the hand-off: after it a child can remove this directory and end the operand.
@@ -1167,7 +1351,7 @@ impl ShellRmTask {
             *need_to_wait_out = false;
         }
 
-        if self.error_signal.load(Ordering::SeqCst) {
+        if DirTask::has_failed(dir_task) {
             return Ok(());
         }
 
@@ -1320,10 +1504,176 @@ impl ShellRmTask {
         }
     }
 
-    /// Keeps the first error of the operand being removed and stops its walk.
-    fn handle_err(&self, err: bun_sys::Error) {
-        if !self.error_signal.swap(true, Ordering::SeqCst) {
-            self.errs.lock().push_back(err);
+    /// Keeps the first error of the operand of `dir_task` and stops its walk.
+    fn handle_err(&self, dir_task: *mut DirTask, err: bun_sys::Error) {
+        // SAFETY: `dir_task` is live, and a root outlives the tasks below it:
+        // each of them holds a count on its parent until it has ended.
+        unsafe {
+            let root = DirTask::root_of(dir_task);
+            if !(*root).error_signal.swap(true, Ordering::SeqCst) {
+                self.held.lock().push((DirTask::operand(root), err));
+            }
+        }
+    }
+}
+
+// ── Window ─────────────────────────────────────────────────────────────────
+
+/// The dirname of an operand that [`Window`] can tell apart from others, and its length without trailing separators.
+fn plain_operand(operand: &[u8]) -> Option<(&[u8], usize)> {
+    let mut end = operand.len();
+    while end > 0 && Platform::AUTO.is_separator(operand[end - 1]) {
+        end -= 1;
+    }
+    if end == 0 || end >= bun_paths::MAX_PATH_BYTES || Platform::AUTO.is_absolute(operand) {
+        return None;
+    }
+    if cfg!(windows) && strings::contains_char(operand, b':') {
+        return None;
+    }
+    let mut dirname = &operand[..0];
+    let mut start = 0;
+    for at in 0..=end {
+        if at < end && !Platform::AUTO.is_separator(operand[at]) {
+            continue;
+        }
+        match &operand[start..at] {
+            b"" | b".." => return None,
+            b"." if at == end => return None,
+            _ => {}
+        }
+        if at < end {
+            dirname = &operand[..at];
+        }
+        start = at + 1;
+    }
+    Some((dirname, end))
+}
+
+impl Window {
+    /// Looks at the next operand. No removal syscall goes to an operand that can meet a root that walks.
+    /// SAFETY: `tm` is the live task that holds this window, and the caller is the thread in `run_window`.
+    unsafe fn step(&mut self, tm: *mut ShellRmTask, walking: bool) -> Step {
+        // SAFETY: caller contract.
+        let this = unsafe { &*tm };
+        if !walking && core::mem::take(&mut self.unsettled) {
+            self.own.deinit();
+            self.anc.deinit();
+            self.alone = false;
+            self.above_of.clear();
+            self.above = Some(Vec::new());
+            let errors = this.commit_errors();
+            if errors > 0 {
+                this.queue_output(tm, Vec::new(), errors);
+            }
+        }
+        let index = self.next;
+        if index == this.operands.len() {
+            return if walking { Step::Join } else { Step::End };
+        }
+        if self.alone {
+            return Step::Join;
+        }
+        let operand = this.operand(index);
+        let Some((dirname, end)) = plain_operand(operand.as_bytes()) else {
+            if walking {
+                return Step::Join;
+            }
+            self.alone = true;
+            let root = self.root.take();
+            return self.start(tm, root, index);
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let name = if end == operand.len() {
+            operand
+        } else {
+            buf[..end].copy_from_slice(&operand.as_bytes()[..end]);
+            buf[end] = 0;
+            ZStr::from_buf(&buf[..], end)
+        };
+        if walking {
+            if !self.read_above(this, dirname) || self.is_inside_a_root() {
+                return Step::Join;
+            }
+            match shell_lstatat(this.cwd, name) {
+                Ok(stat) if S::ISDIR(stat.st_mode as _) => {
+                    let Some(id) = ShellRmTask::id_of(&stat) else {
+                        return Step::Join;
+                    };
+                    if self.own.contains(&id) || self.anc.contains(&id) {
+                        return Step::Join;
+                    }
+                    self.admit(id);
+                    return self.start(tm, None, index);
+                }
+                Ok(stat) => {
+                    if end != operand.len() && S::ISLNK(stat.st_mode as _) {
+                        return Step::Join;
+                    }
+                }
+                Err(err) if err.get_errno() == E::ENOENT => {}
+                Err(_) => return Step::Join,
+            }
+        }
+        let mut root = DirTask::root(tm, self.root.take(), index);
+        let try_root: *mut DirTask = &raw mut *root;
+        match this.try_as_file(try_root) {
+            Ok(false) => {}
+            Err(err) => {
+                this.handle_err(try_root, err);
+                self.unsettled = true;
+            }
+            Ok(true) => {
+                if walking {
+                    self.root = Some(root);
+                    return Step::Join;
+                }
+                match this.dir_id(name) {
+                    Some(id) if self.read_above(this, dirname) => self.admit(id),
+                    _ => self.alone = true,
+                }
+                return self.start(tm, Some(root), index);
+            }
+        }
+        self.root = Some(root);
+        self.next += 1;
+        Step::Next
+    }
+
+    /// Reads `above` for `dirname`. `false`: one of its directories is not a directory.
+    fn read_above(&mut self, tm: &ShellRmTask, dirname: &[u8]) -> bool {
+        if self.above_of.as_slice() != dirname {
+            self.above_of.clear();
+            self.above_of.extend_from_slice(dirname);
+            self.above = tm.dirs_of(dirname);
+        }
+        self.above.is_some()
+    }
+
+    /// A directory of `above` is a root that walks.
+    fn is_inside_a_root(&self) -> bool {
+        let above = self.above.as_deref().unwrap_or_default();
+        above.iter().any(|id| self.own.contains(id))
+    }
+
+    /// The directory `id` below `above` starts to walk.
+    fn admit(&mut self, id: DirId) {
+        self.own.insert(id, ());
+        for &dir in self.above.as_deref().unwrap_or_default() {
+            self.anc.insert(dir, ());
+        }
+    }
+
+    /// The walk of operand `index` starts: on the pool, or on this thread when nothing can start beside it.
+    fn start(&mut self, tm: *mut ShellRmTask, reuse: Option<Box<DirTask>>, index: usize) -> Step {
+        self.unsettled = true;
+        self.next += 1;
+        let root = DirTask::root(tm, reuse, index);
+        // SAFETY: `tm` is the live task that holds this window.
+        if self.alone || self.next == unsafe { (*tm).operands.len() } {
+            Step::Run(root)
+        } else {
+            Step::Start(root)
         }
     }
 }
@@ -1334,19 +1684,25 @@ impl DirTask {
     fn create(
         task_manager: *mut ShellRmTask,
         parent_task: *mut DirTask,
-        path: Option<ZBox>,
+        target: Target,
         kind_hint: EntryKindHint,
         event_loop: EventLoopHandle,
     ) -> Box<DirTask> {
         Box::new(DirTask {
             task_manager,
             parent_task,
-            path,
+            root: if parent_task.is_null() {
+                core::ptr::null_mut()
+            } else {
+                Self::root_of(parent_task)
+            },
+            target,
             is_absolute: false,
             subtask_count: AtomicUsize::new(1),
             need_to_wait: AtomicBool::new(false),
             kind_hint,
-            has_error: false,
+            error_signal: AtomicBool::new(false),
+            errors: 0,
             deleted_entries: Vec::new(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
             work_task: WorkPoolTask {
@@ -1356,17 +1712,72 @@ impl DirTask {
         })
     }
 
+    /// The root of the operand that `this` is a part of.
+    fn root_of(this: *mut DirTask) -> *mut DirTask {
+        // SAFETY: `this` is a live DirTask, and `root` is not written after `create`.
+        let root = unsafe { (*this).root };
+        if root.is_null() { this } else { root }
+    }
+
+    /// A root for the operand `index`: `reuse`, a root whose operand has ended, or a new one.
+    fn root(
+        task_manager: *mut ShellRmTask,
+        reuse: Option<Box<DirTask>>,
+        index: usize,
+    ) -> Box<DirTask> {
+        let Some(mut root) = reuse else {
+            // SAFETY: `task_manager` is live; `event_loop` is not written after `create`.
+            let event_loop = unsafe { (*task_manager).event_loop };
+            let (target, kind_hint) = (Target::Operand(index), EntryKindHint::Idk);
+            return Self::create(
+                task_manager,
+                core::ptr::null_mut(),
+                target,
+                kind_hint,
+                event_loop,
+            );
+        };
+        root.target = Target::Operand(index);
+        *root.error_signal.get_mut() = false;
+        *root.subtask_count.get_mut() = 1;
+        root
+    }
+
     /// The path this task removes.
     unsafe fn path<'a>(this: *const DirTask) -> &'a ZStr {
-        // SAFETY: the caller runs `this`'s part of the walk: `path` and
-        // `task_manager` are not written after `create`, the ShellRmTask
-        // outlives its DirTasks, and `cursor` names this root's operand.
+        // SAFETY: the caller runs `this`'s part of the walk: `target` and
+        // `task_manager` are not written while a task of the operand is live,
+        // and the ShellRmTask outlives its DirTasks.
         unsafe {
-            match &(*this).path {
-                Some(path) => path.as_zstr(),
-                None => (*(*this).task_manager).operand(),
+            match &(*this).target {
+                Target::Entry(path) => path.as_zstr(),
+                Target::Operand(index) => (*(*this).task_manager).operand(*index),
             }
         }
+    }
+
+    /// The index of the operand that `this` is a part of.
+    unsafe fn operand(this: *mut DirTask) -> usize {
+        // SAFETY: `this` is live, and a root outlives the tasks below it. Its
+        // `target` is not written while one of them is live.
+        match unsafe { &(*Self::root_of(this)).target } {
+            Target::Operand(index) => *index,
+            Target::Entry(_) => unreachable!("the root of a walk is an operand"),
+        }
+    }
+
+    /// The operand of `this` has failed: its walk stops.
+    fn has_failed(this: *mut DirTask) -> bool {
+        // SAFETY: `this` is a live DirTask of a walk, and a root outlives the
+        // tasks below it: each holds a count on its parent until it has ended.
+        unsafe { (*Self::root_of(this)).error_signal.load(Ordering::SeqCst) }
+    }
+
+    /// Gives `this` to the pool.
+    /// SAFETY: `this` is a fresh heap-allocated DirTask that no other thread has.
+    unsafe fn schedule(this: *mut DirTask) {
+        // SAFETY: caller contract.
+        unsafe { bun_threading::work_pool::WorkPool::schedule(&raw mut (*this).work_task) };
     }
 
     /// Recover `*mut DirTask` from the intrusive `*WorkPoolTask`.
@@ -1377,8 +1788,8 @@ impl DirTask {
             Self::run_from_thread_pool_impl(bun_core::from_field_ptr!(DirTask, work_task, task))
         };
         if let Some(root) = finished {
-            // SAFETY: the ShellRmTask is live until `run_operands` ends the last operand.
-            unsafe { ShellRmTask::run_operands(root.task_manager, Some(root)) };
+            // SAFETY: this thread ended the operand's root.
+            unsafe { ShellRmTask::operand_ended(root.task_manager, root) };
         }
     }
 
@@ -1396,7 +1807,7 @@ impl DirTask {
         //
         // SAFETY: caller contract — `this` is a live DirTask; this worker
         // thread has exclusive access to its non-atomic fields (`task_manager`
-        // / `parent_task` / `path` / `is_absolute`). `tm_ptr` is live until
+        // / `parent_task` / `target` / `is_absolute`). `tm_ptr` is live until
         // `pending_main_callbacks` hits 0.
         let (tm_ptr, is_absolute): (*mut ShellRmTask, bool) = unsafe {
             let tm_ptr = (*this).task_manager;
@@ -1413,7 +1824,7 @@ impl DirTask {
         let waiting = match tm.remove_entry(this, is_absolute) {
             Ok(waiting) => waiting,
             Err(err) => {
-                tm.handle_err(err);
+                tm.handle_err(this, err);
                 // `need_to_wait` is only stored on the `Ok(())` return path
                 // of `remove_entry_dir`, so an `Err` return guarantees
                 // ownership of `this` was not handed off.
@@ -1517,9 +1928,9 @@ impl DirTask {
             (*this).subtask_count.store(1, Ordering::SeqCst);
             let tm = &*(*this).task_manager;
             let mut do_post_run = true;
-            if !tm.error_signal.load(Ordering::SeqCst) {
+            if !Self::has_failed(this) {
                 match tm.remove_entry_dir_after_children(this) {
-                    Err(e) => tm.handle_err(e),
+                    Err(e) => tm.handle_err(this, e),
                     Ok(deleted) => {
                         if !deleted {
                             do_post_run = false;
@@ -1657,6 +2068,8 @@ enum OnDir<'a> {
     /// `remove_entry` learn that `need_to_wait` was published without
     /// re-reading the (possibly already-freed) DirTask.
     Recurse { need_to_wait_out: &'a mut bool },
+    /// The entry is an operand in its turn ([`ShellRmTask::try_as_file`]): say so, and walk nothing.
+    Report { is_dir: &'a mut bool },
 }
 
 impl RemoveFileVTable<'_> {
@@ -1679,6 +2092,10 @@ impl RemoveFileVTable<'_> {
             OnDir::Recurse { need_to_wait_out } => {
                 self.task
                     .remove_entry_dir(parent, is_absolute, buf, need_to_wait_out)
+            }
+            OnDir::Report { is_dir } => {
+                **is_dir = true;
+                Ok(())
             }
         }
     }

@@ -589,7 +589,7 @@ impl Quick {
         t.set_all(&FIXED_TEXTS, 0);
         Self {
             t,
-            n: zeros(1 << 16),
+            n: zeros((1 << 16) + arena::SPARE),
             d: zeros(1 << 16),
             why: Cell::new(why::NONE),
             which_rare: Cell::new(rare::OTHER),

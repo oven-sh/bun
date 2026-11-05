@@ -6023,6 +6023,53 @@ exports.format = async text => "by Prettier";
     ]);
   });
 
+  test("a name that ends with .vue is a Vue file, whatever another language goes by is in front of that", async () => {
+    // Only in a Vue file is the value of `:a` code.
+    const text = '<template>\n<p :a="b+c">d</p>\n</template>\n';
+    const asVue = '<template>\n  <p :a="b + c">d</p>\n</template>\n';
+    const asHtml = '<template>\n  <p :a="b+c">d</p>\n</template>\n';
+    const kinds: Record<string, string> = {
+      "a.vue": asVue,
+      ".vue": asVue,
+      "A.VUE": asVue,
+      "a.Vue": asVue,
+      "package.json.vue": asVue,
+      "a.json.vue": asVue,
+      ".babelrc.vue": asVue,
+      "a.css.vue": asVue,
+      "a.scss.vue": asVue,
+      "a.yaml.vue": asVue,
+      "a.yml.mysql.vue": asVue,
+      ".prettierrc.vue": asVue,
+      "a.md.vue": asVue,
+      "README.vue": asVue,
+      "a.mdx.vue": asVue,
+      "a.graphql.vue": asVue,
+      "a.hbs.vue": asVue,
+      "a.html.vue": asVue,
+      "a.component.html.vue": asVue,
+      "a.mjml.vue": asVue,
+      "a.ts.vue": asVue,
+      "a.js.flow.vue": asVue,
+      "a.start.frag.vue": asVue,
+      "Jakefile.vue": asVue,
+      "a.toml.vue": asVue,
+      "a.svelte.vue": asVue,
+      "b.vue/c.vue": asVue,
+      "a.vue.html": asHtml,
+      "b.vue/c.html": asHtml,
+      "a.vue.md": text,
+      "a.vuex": text,
+      "a.vue~": text,
+      "avue": text,
+      "vue": text,
+    };
+    const names = Object.keys(kinds);
+    const result = await format(Object.fromEntries(names.map(name => [name, text])), [], { reads: names });
+    expect(result.files).toEqual(kinds);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("formats files under an .oxfmtrc.json like oxfmt, even if the run starts above it", async () => {
     const files = {
       "a.ts": "let a = // comment\n{\n  b: 1\n}\n",

@@ -34,13 +34,15 @@ impl Arena {
 }
 
 pub(crate) const SUB_SHIFT: i32 = 24;
+/// So many words stand behind the arena, for those who read or write a few words at once where fewer may be meant.
+pub(crate) const SPARE: i32 = 8;
 impl Quick {
     pub(crate) fn reset_ast(&mut self, expected_words: i32) {
         // (Some words more: the parsers ask for what they expect once more, on top of the few words that are taken by then. And at least twice what there was:
         // memory that is not written to costs nothing, a new array for every file that is larger than all before it does.)
         if expected_words + 64 > self.arena.n_cap {
             self.arena.n_cap = (expected_words + 64).max(much_larger(self.arena.n_cap));
-            self.n = zeros::<i32>(self.arena.n_cap);
+            self.n = zeros::<i32>(self.arena.n_cap + SPARE);
         }
         self.n.put(0, 0);
         self.n.put(1, 0);
@@ -57,7 +59,7 @@ impl Quick {
         while cap < need {
             cap = much_larger(cap);
         }
-        let mut next = zeros::<i32>(cap);
+        let mut next = zeros::<i32>(cap + SPARE);
         next.set_all(self.n.sub(0, self.arena.n_pos), 0);
         self.n = next;
         self.arena.n_cap = cap;
@@ -115,9 +117,17 @@ impl Quick {
         n
     }
 
+    #[inline]
     pub(crate) fn arena_adopt(&mut self, l: i32, n: i32) {
-        let count = self.n.at(l);
-        let mut i: i32 = 1;
+        // Most lists are short: the first three items without a loop. (Where there are fewer, the first one is told twice.)
+        let [count, a, b, c] = self.n.several(l);
+        if count == 0 {
+            return;
+        }
+        self.n.put(a + 3, n);
+        self.n.put((if count > 1 { b } else { a }) + 3, n);
+        self.n.put((if count > 2 { c } else { a }) + 3, n);
+        let mut i: i32 = 4;
         while i <= count {
             self.n.put(self.n.at(l + i) + 3, n);
             i += 1;
@@ -273,14 +283,15 @@ impl Quick {
     }
 
     /// Moves the items above `mark` of the side stack into the arena.
+    #[inline]
     pub(crate) fn list_finish(&mut self, mark: i32) -> i32 {
         let count = self.arena.ls_pos - mark;
         if count == 0 {
             return 0;
         }
         let l = self.arena.n_pos;
-        if l + count + 4 > self.arena.n_cap {
-            self.grow_ast(l + count + 4);
+        if l + count + 1 > self.arena.n_cap {
+            self.grow_ast(l + count + 1);
         }
         // three items at once, whether there are as many or not
         let [a, b, c] = self.arena.ls.several(mark);

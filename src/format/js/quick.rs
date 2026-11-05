@@ -457,8 +457,11 @@ pub(crate) struct Expression<'c> {
     pub(crate) is_typescript: bool,
     /// `__vue_expression`: `a | b` is a filter.
     pub(crate) has_filters: bool,
-    /// The name of the attribute whose value it is, and `="`. `None` for one between `{{` and `}}`.
+    /// The name of the attribute whose value it is, `="`, and what the value has in front of the expression (`a in `).
+    /// None of it can be broken. `None` for an expression between `{{` and `}}`.
     pub(crate) attribute: Option<&'c [u8]>,
+    /// `formatAttributeValue()` isn't given `shouldHugJsExpression()`: the right side of `v-for`.
+    pub(crate) hugs: bool,
     /// By how many levels the line is indented that it starts, together with the name of its attribute.
     pub(crate) indentation: u32,
 }
@@ -475,15 +478,19 @@ pub(crate) fn format_expression(
     let Some(of_host) = options_for(options, b"", true) else {
         return Err(scratch.refuse(Reason::Options, text));
     };
-    // A comment, which the long way has rules of its own for. In an attribute: what is written as an entity, and a string
-    // whose quotes may have to change. Between braces: what may end with `}}`.
+    // A comment, which the long way has rules of its own for. In an attribute: a quote that is written as an entity (no
+    // other entity is decoded there), and a string whose quotes may have to change. Between braces: what may end with `}}`.
     // Which keys get quotes together with the others depends on the name of the parser.
     let is_plain = of_host.quote_props != quick::QuoteProps::Consistent
         && !strings::contains(text, b"//")
         && !strings::contains(text, b"/*")
         && !strings::contains_char(text, 0)
         && match expression.attribute {
-            Some(_) => strings::index_of_any(text, b"\"\\&").is_none(),
+            Some(_) => {
+                strings::index_of_any(text, b"\"\\").is_none()
+                    && !strings::contains(text, b"&quot;")
+                    && !strings::contains(text, b"&apos;")
+            }
             None => !strings::contains_char(text, b'{'),
         };
     if !is_plain {
@@ -504,6 +511,7 @@ pub(crate) fn format_expression(
         has_vue_filters: expression.has_filters,
         is_mdx_jsx: false,
         wrap: match expression.attribute {
+            Some(_) if expression.hugs => quick::Wrap::Group,
             Some(_) => quick::Wrap::ByKind,
             None => quick::Wrap::Bare,
         },

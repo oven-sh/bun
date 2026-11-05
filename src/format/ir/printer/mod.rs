@@ -73,7 +73,7 @@ impl PrinterOptions {
             line_ending: options.line_ending.resolve(source),
             indent_style: options.indent_style,
             flavor: options.flavor,
-            marks_line_breaks_in_texts: options.is_in_markdown,
+            marks_line_breaks_in_texts: options.is_in_markdown && !options.is_at_margin,
         }
     }
 }

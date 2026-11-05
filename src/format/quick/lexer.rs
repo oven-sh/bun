@@ -756,7 +756,7 @@ impl Quick {
     }
 
     /// Sets tok and tok_kw for the name T[s, s + len), len >= 2, which has been taken for a plain name so far.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn classify_name(&mut self, s: i32, len: i32) {
         let h = (self.t.at(s) * KW_A
             + self.t.at(s + 1) * KW_B
@@ -1017,7 +1017,13 @@ impl Quick {
     }
 }
 /// The token that a byte is whatever follows it: ( ) [ ] { } ; , ~ @ and the backquote. 0 for all others.
-static ALONE: [u8; 128] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 13, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 0, 15, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 11, 45, 0];
+static ALONE: [u8; 128] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 12, 13, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0,
+    0, 0, 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 0,
+    15, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10,
+    0, 11, 45, 0,
+];
 impl Quick {
     /// Is the escape at p, a backslash before `x`, `u` or a digit, one that every parser takes? `legacy`: `\1` and the like are.
     #[cold]
@@ -1125,8 +1131,8 @@ impl Quick {
         // Most tokens follow the previous one at once or after one blank. Anything else is for skip_space().
         p += (self.t.at(p) == 32) as i32;
         let mut c = self.t.at(p);
-        self.lexer.pos = p;
         if c <= 32 || c == 47 || c >= 128 {
+            self.lexer.pos = p;
             self.skip_space()?;
             p = self.lexer.pos;
             c = self.t.at(p);
@@ -1146,27 +1152,36 @@ impl Quick {
         #[cfg(feature = "tally")]
         crate::tally::token(p);
         if (CT.at(c) & C_ASCII_START) != 0 {
-            // A name: nearly every second token.
-            let q = self.name_end(p + 1);
-            let e = self.t.at(q);
-            if e < 128 && e != 92 {
-                self.lexer.tok = tk::Name;
-                self.lexer.tok_kw = kw::None;
-                self.lexer.tok_end = q;
-                self.lexer.pos = q;
-                let len = q - p;
-                if (KW_LENGTHS.at(c).wrapping_shr(len as u32) & 1) != 0 {
-                    self.classify_name(p, len);
-                }
-                return Ok(());
-            }
+            // nearly every second token
+            return self.next_name(p, c);
         }
         let alone = ALONE.at(c);
         if alone != 0 {
             self.lexer_finish(alone, p + 1);
             return Ok(());
         }
+        self.lexer.pos = p;
         self.next_of_many_kinds(p, c)
+    }
+
+    /// next() for a name, which starts at p with the letter, `_` or `$` `c`.
+    #[inline(never)]
+    fn next_name(&mut self, p: i32, c: i32) -> R<()> {
+        let q = self.name_end(p + 1);
+        let e = self.t.at(q);
+        if e >= 128 || e == 92 {
+            self.lexer.pos = p;
+            return self.next_of_many_kinds(p, c);
+        }
+        self.lexer.tok = tk::Name;
+        self.lexer.tok_kw = kw::None;
+        self.lexer.tok_end = q;
+        self.lexer.pos = q;
+        let len = q - p;
+        if (KW_LENGTHS.at(c).wrapping_shr(len as u32) & 1) != 0 {
+            self.classify_name(p, len);
+        }
+        Ok(())
     }
 
     /// next() for what is neither a plain name nor a token of one byte: the token starts at p with `c`.

@@ -2297,6 +2297,18 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
     // A `<template>` that is not broken, is empty, is in another language, has attributes.
     "<template>a</template>\n",
     "<template>\n  a\n</template>\n",
+    "<template>\n  a\n  <div></div>\n</template>\n",
+    "<template>\n  a\n\n  <div></div>\n</template>\n",
+    "<template>\n  a <b>c</b>\n  <div></div>\n</template>\n",
+    "<template>\n  a\n  b\n  <div></div>\n</template>\n",
+    "<template>\n  a\n  {{ b }}\n</template>\n",
+    // An empty block has its end tag on the line of its start tag.
+    "<style scoped></style>\n",
+    '<script lang="ts" setup></script>\n<style>\na {\n}\n</style>\n',
+    '<script lang="ts"></script>\n\n<template>\n  <p :a="b  as c"></p>\n</template>\n',
+    "<script setup></script >\n",
+    "<script setup> </script>\n",
+    "<script setup></script>a\n",
     "<template>\n  {{ a }}\n</template>\n",
     "<template>\n  <!-- a -->\n</template>\n",
     "<template>\n  <b>a</b> c\n</template>\n",
@@ -2470,6 +2482,221 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
         color: blue;
       }
       </style>
+      "
+    `);
+  });
+});
+
+describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () => {
+  const wide = "a".repeat(30);
+  const values = [
+    "a  +  b",
+    "(a)",
+    "a ? (b) : c",
+    "[a,b]",
+    `[${wide}, ${wide}, ${wide}]`,
+    `[\n  ${wide},\n  b]`,
+    "{a:b}",
+    "{\n  a: b }",
+    `{ a: ${wide}, b: ${wide}, c: ${wide} }`,
+    `${wide}(${wide}, ${wide}, ${wide})`,
+    `${wide} || ${wide} || ${wide} || ${wide}`,
+    `${wide} ? ${wide} : ${wide} + ${wide}`,
+    "(a) => b(a)",
+    "a => { b(a) }",
+    "(a) => {\n  b(a);\n  c();\n}",
+    "a = b; c = d",
+    "a()",
+    "a as b",
+    "a!",
+    "(a: b) => c",
+    "<a>b",
+    "a | b",
+    "a | b(c)",
+    "`a${ b }`",
+    "`a\n${b}`",
+    "'a' + \"b\"",
+    "'a\\'b'",
+    "a && b",
+    "(a || b) && c",
+    "a &amp;&amp; b",
+    "a &foo; b",
+    // A reference without a name, without digits, or to no character is an error of the host.
+    "'&;'",
+    "'&#;'",
+    "'&#x;'",
+    "'&#x110000;'",
+    "'&#1;' + a  ",
+    "'&nbsp' + a  ",
+    "'&nbsp;' + a  ",
+    "a &b",
+    "a & b",
+    "a &&= b",
+    "a &quot;b&quot;",
+    "a // b",
+    "a /* b */",
+    "{{ a }}",
+    "a }} b",
+    "a\tb",
+    "'é' + a  ",
+    "'中文' +  a",
+    "",
+    " ",
+    "a b",
+    "(",
+    "function () {}",
+    "async () => await a",
+    "/a\\d/.test(b)",
+    "$emit('a',  b)",
+  ];
+  const names = [":a", ".a", "v-bind:a", "v-bind", "v-if", "v-model", "v-html", "@a", "v-on:a", "@a.b", ":[a]", "v-for", "#a", "v-slot:a", "slot-scope", "a", "onclick"];
+  // What is in front of a colon can be a namespace, and then the name that counts is another one than is written.
+  names.push("::a", ":a:b", ":a::b", "@a:b", "@:a", ".a:b", "a:b", "a::b", "v:a", "v-bind::a", "v-on::a", ":::a");
+  const scripts = [
+    "",
+    '\n<script setup lang="ts">\nlet a;\n</script>\n',
+    "\n<script setup lang='ts'>\nlet a;\n</script>\n",
+    '\n<script lang="typescript">\nlet a;\n</script>\n',
+    '\n<script lang="tsx">\nlet a;\n</script>\n',
+    '\n<script>\nlet a = \'<script lang="ts">\';\n</script>\n',
+    '\n<!-- <script lang="ts"> -->\n<script>\nlet a;\n</script>\n',
+    '\n<docs>\n<script lang="ts">\n</script>\n</docs>\n',
+    '\n<script lang="ts" src="a">\n</script>\n',
+  ];
+  const inputs = [
+    ...values.flatMap(value =>
+      names.map(name => `<template>\n  <div>\n    <p b="c" ${name}="${value}" d>e</p>\n  </div>\n</template>\n${scripts[1]}`),
+    ),
+    ...values.map(value => `<template>\n  <div>\n    {{ ${value} }}\n    <p>{{${value}}}</p>\n    <p>a {{ ${value} }} b</p>\n  </div>\n</template>\n${scripts[1]}`),
+    // Whether the code is TypeScript.
+    ...scripts.flatMap(script => [
+      `<template>\n  <p :a="b  as c" @d="(e: f) => g!">{{ h  as i }}</p>\n</template>\n${script}`,
+      `${script.trimStart()}\n<template>\n  <p :a="b  as c" @d="(e: f) => g!">{{ h  as i }}</p>\n</template>\n`,
+      // With something that goes the long way behind the code.
+      `<template>\n  <p :a="b  as c">{{ h  as i }}</p>\n  <p #j="{ k: { l } }"></p>\n</template>\n${script}`,
+    ]),
+    // Where the attribute is, and what follows it.
+    ...[
+      '<p :a="[b,c]"></p>',
+      '<p :a="[b,c]" />',
+      '<p\n  :a="[b,c]"\n/>',
+      `<p :a="[${wide},${wide},${wide}]" />`,
+      `<p :a="[${wide},${wide},${wide}]">d</p>`,
+      `<p :a="[${wide},${wide},${wide}]"\n  >d</p\n>`,
+      `<span :a="[${wide},${wide},${wide}]">d</span>`,
+      `<span :a="[${wide},${wide},${wide}]"><b>d</b></span>`,
+      `<component-with-a-long-name :a="[${wide},${wide}]" />`,
+      `<i :a="[${wide},${wide}, b]" />`,
+      `<pre :a="[${wide},${wide},${wide}]">d</pre>`,
+      '<pre :a="[b,c]">d</pre>',
+      '<textarea :a="[b,c]"></textarea>',
+      `<textarea :a="[${wide},${wide},${wide}]"></textarea>`,
+      '<svg :a="[b,c]"><g :d="[e,f]"></g></svg>',
+      'a <b :c="[d,e]">f</b> g',
+      `a <b :c="[${wide},${wide},${wide}]">f</b> g`,
+      '<input :a="[b,c]">',
+      '<br :a="[b,c]" /><br :a="[b,c]" />',
+    ].flatMap(element => [
+      `<template>\n  ${element}\n</template>\n`,
+      `<template>\n  <div>\n    <div>\n      ${element}\n    </div>\n  </div>\n</template>\n`,
+      `<template>\n  <span>${element}</span>\n</template>\n`,
+    ]),
+    // A `style` attribute, whatever is between its declarations.
+    ...[
+      "color: red;width: 1px",
+      "color: red ; width: 1px",
+      "\n  color: red;\n  width: 1px;\n",
+      "\n  color: red;\n\n  width: 1px;\n",
+      "\n\n  color: red;\n",
+      "color: red;;",
+      "color: red;\twidth: 1px",
+      `\n  color: var(--${wide});\n  width: 1px;\n  background: rgba(0, 0, 0, 0.5);\n`,
+      `color: var(--${wide}); width: 1px; background: rgba(0, 0, 0, 0.5); height: 100%`,
+      `color: var(--${wide}${wide}${wide})`,
+      `margin: ${"1px ".repeat(30)}1px`,
+      "color: red; /* a */ width: 1px",
+      "color: RED;\n width: 1px",
+      "color: red;\n font-family: a, b",
+      "--a: b;\n color: red",
+      "",
+      "\n",
+      ";",
+    ].flatMap(value => [
+      `<template>\n  <div>\n    <p a="b" style="${value}" c>d</p>\n  </div>\n</template>\n`,
+      `<template>\n  <i style="${value}" />\n  <component-with-a-long-name style="${value}" />\n</template>\n`,
+    ]),
+    // What is not as wide as it is long, next to `{{ }}`.
+    ...["Value：{{ a }}", "{{ a + 1 }}期", "中{{ a }}文{{ b }}字", "é{{ a }}", "́{{ a }}", "{{ a }}́", "{{ a }}️⃣", "😀{{ a }}😀 b"].flatMap(
+      words => [
+        `<template>\n  <div class="demonstration">${words}</div>\n</template>\n`,
+        `<template>\n  <p>${words} ${words} ${words} ${words}</p>\n  <span>c ${words}</span>\n</template>\n`,
+        `<template>\n  <div>\n    ${words}\n  </div>\n</template>\n`,
+      ],
+    ),
+    // A comment that starts with a tag is a comment like another, unless it ends a conditional comment.
+    ...["<!-- <a> -->", "<!--<a b>-->", "<!-- <a\n  b\n/> -->", "<!--<![endif]-->", "<!--<! [endif]-->", "<!-- <![endif] -->", "<!--<-->", "<!--<!-->"].map(
+      comment => `<template>\n  ${comment}\n  <div>\n      ${comment}\n    <p   a>b</p>\n  </div>\n</template>\n`,
+    ),
+    // Code behind something that goes the long way.
+    `<template>\n  <p #a="{ b: { c } }"></p>\n  <p :d="[e,f]" :g="[${wide},${wide},${wide}]">{{ h  ( i ) }}</p>\n</template>\n`,
+    `<template>\n  <div>\n    <p #a="{ b: { c } }"></p>\n    <p :d="e  as f">{{ g  as h }}</p>\n  </div>\n</template>\n\n<script lang="ts">\ni;\n</script>\n`,
+    // A tab is as wide as the options say, which matters on one line.
+    ...["M1,2\n\tz", "M1,2\tz", "\tM1\n", "a\t\nb"].flatMap(value =>
+      ["d", "class", ":d", "title"].map(name => `<template>\n  <path a="b" ${name}="${value}" />\n</template>\n`),
+    ),
+  ];
+  const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
+
+  test.concurrent.each([
+    [],
+    ["--print-width=40"],
+    ["--print-width=20", "--tab-width=4"],
+    ["--print-width=60", "--tab-width=8"],
+    ["--print-width=1"],
+    ["--print-width=100000", "--tab-width=0"],
+    ["--use-tabs", "--print-width=60"],
+    ["--single-quote", "--no-bracket-spacing", "--arrow-parens=avoid", "--no-semi"],
+    ["--quote-props=consistent", "--trailing-comma=none"],
+    ["--object-wrap=collapse", "--experimental-operator-position=start"],
+    ["--experimental-ternaries"],
+    ["--html-whitespace-sensitivity=strict"],
+    ["--html-whitespace-sensitivity=ignore", "--print-width=60"],
+    ["--bracket-same-line", "--print-width=60"],
+    ["--single-attribute-per-line"],
+    ["--embedded-language-formatting=off"],
+    ["--end-of-line=crlf"],
+    ["--vue-indent-script-and-style"],
+  ])("the same with and without short cuts: %j", async (...options: string[]) => {
+    const { short, long } = await bothWays(files, options);
+    expect(short).toEqual(long);
+  });
+
+  test("code in a file that is read from the bytes is formatted", async () => {
+    const { short, long } = await bothWays(
+      {
+        "a.vue": `<template>\n  <div :a="[b,c]" style="\n color: red;width: 1px;">\n    <p :class="[${wide},${wide}, d  as e]">{{ f  ( g ) }}</p>\n  </div>\n</template>\n\n<script lang="ts">\nh\n</script>\n`,
+      },
+      [],
+    );
+    expect(short).toEqual(long);
+    expect(short.written["a.vue"]).toMatchInlineSnapshot(`
+      "<template>
+        <div :a="[b, c]" style="color: red; width: 1px">
+          <p
+            :class="[
+              aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+              aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+              d as e,
+            ]"
+          >
+            {{ f(g) }}
+          </p>
+        </div>
+      </template>
+
+      <script lang="ts">
+      h;
+      </script>
       "
     `);
   });
@@ -3364,6 +3591,17 @@ describe("JavaScript and TypeScript in a host", () => {
       "'&quot;'",
       "'it\\'s'",
       "'a' + &quot;b&quot;",
+      "(a || b) && !c",
+      "[a && 'b', c]",
+      "a&&b",
+      "a & b",
+      "a &&= b",
+      "'&amp;'",
+      "'&nbsp;' + a",
+      "a == &apos;b&apos;",
+      "'&apos;'",
+      "a &lt; b",
+      `(aaaaaaaaaaaaaaaaaaaaaaaaaa === 'bbbbbbbbbbbbbbbbbb' || cccccccccccccccccccc) && (dddddddddddddddd || e < f)`,
       // Comments.
       "a // b",
       "a /* b */",
@@ -3383,23 +3621,86 @@ describe("JavaScript and TypeScript in a host", () => {
     ];
     const names = [":a", "v-if", "@a", "v-bind:a", ".a", ":class", "v-model", "v-for", "#a", ":aaaaaaaaaaaaaaaaaaaaaaaa"];
     const script = '\n<script setup lang="ts">\nlet a;\n</script>\n';
+    // Names on the left side, and what is more than a name.
+    const lefts = [
+      "a",
+      "(a)",
+      "(a, b)",
+      "(a,b)",
+      "( a , b )",
+      "a, b",
+      "(a, b, c)",
+      "(a, b, c, d)",
+      "(a, a)",
+      "(a, , b)",
+      "{ a }",
+      "({ a, b }, c)",
+      "[a, b]",
+      "(a = 1, b)",
+      "await",
+      "(let, b)",
+      "null",
+      "(a, true)",
+      "undefined",
+      "type",
+      "\u00e9",
+      `(${"a".repeat(20)}, ${"b".repeat(20)})`,
+      `(${"a".repeat(30)}, ${"b".repeat(30)})`,
+    ];
+    const rights = [
+      "b",
+      "10",
+      "a.b",
+      "f(c)",
+      "f( c )",
+      "a.concat([{} as any])",
+      "[1,2]",
+      "{ a: 1 }",
+      "a.slice(\n      b\n    )",
+      "a in b",
+      "a && b",
+      "a | b",
+      "",
+      "a b",
+      `${"c".repeat(30)}.${"d".repeat(30)}`,
+      `${"c".repeat(20)}.filter((it) => it.${"d".repeat(20)} && it.${"e".repeat(20)})`,
+      ...[22, 23, 24, 25, 26, 27, 28, 29, 30].map(length => `f(${"c".repeat(length)}, ${"d".repeat(30)})`),
+    ];
+    // One file for a shape, with an element for every expression: an expression that can't be read stays as it is written.
+    // What could end its attribute or its braces has a file of its own.
+    const file = (elements: string[], end: string) => `<template>\n${elements.join("\n")}\n</template>\n${end}`;
+    const shapes: [RegExp, string, (code: string) => string][] = [
+      ...names.map(name => [/"/, script, (code: string) => `  <div ${name}="${code}"></div>`] as [RegExp, string, any]),
+      [/"/, "", code => `  <div :a="${code}"></div>`],
+      [/"/, script, code => `  <a :b="${code}" />`],
+      [/"/, script, code => `  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>`],
+      [/"/, script, code => `  <span :b="${code}">c</span>d`],
+      [/"/, script, code => `  <pre :b="${code}">\nc</pre>`],
+      [/[{}<]/, script, code => `  <p>{{ ${code} }}</p>`],
+      [/[{}<]/, "", code => `  <p>{{ ${code} }}</p>`],
+      [/[{}<]/, script, code => `  <p>\n    {{ ${code} }}\n  </p>`],
+      [/[{}<]/, script, code => `  <p>a {{ ${code} }} b</p>`],
+      [/[{}<]/, script, code => `  <p>{{${code}}}<b>c</b></p>`],
+    ];
     expectSame(
       "a.vue",
       [
-        ...names.flatMap(name =>
-          expressions.map(code => `<template>\n  <div ${name}="${code}"></div>\n</template>\n${script}`),
-        ),
-        ...expressions.flatMap(code => [
-          `<template>\n  <div :a="${code}"></div>\n</template>\n`,
-          `<template>\n  <a :b="${code}" />\n</template>\n${script}`,
-          `<template>\n  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>\n</template>\n${script}`,
-          `<template>\n  <span :b="${code}">c</span>d\n</template>\n${script}`,
-          `<template>\n  <pre :b="${code}">\nc</pre>\n</template>\n${script}`,
-          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n${script}`,
-          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n`,
-          `<template>\n  <p>\n    {{ ${code} }}\n  </p>\n</template>\n${script}`,
-          `<template>\n  <p>a {{ ${code} }} b</p>\n</template>\n${script}`,
-          `<template>\n  <p>{{${code}}}<b>c</b></p>\n</template>\n${script}`,
+        ...lefts.flatMap(left => [
+          file(
+            rights.map(right => `  <div v-for="${left} in ${right}"></div>`),
+            script,
+          ),
+          file(
+            rights.map(right => `  <li v-for="${left}  of  ${right}" :key="a">b</li>`),
+            "",
+          ),
+        ]),
+        ...shapes.flatMap(([alone, end, element]) => [
+          file(
+            expressions.filter(code => !alone.test(code)).map(element),
+            end,
+          ),
+          ...expressions.filter(code => alone.test(code)).map(code => file([element(code)], end)),
         ]),
       ],
       [
@@ -3480,6 +3781,32 @@ describe("JavaScript and TypeScript in a host", () => {
       "```js\r\nconst a = 1;\r\n```\r\n",
       // Many that aren't, then some that are.
       "```js\nconst  a=1\n```\n\n".repeat(30) + "```js\nconst a = 1;\n```\n\n".repeat(30),
+      // HTML: below the root it is read like a file, but for what is no code in a text with a parent.
+      ...[
+        '<div class="a b">\n  <p>c</p>\n</div>',
+        '<div   class="a  b "><p>c</p></div>',
+        '<p style="color: red">a</p>\n<p style="color: red;">b</p>\n<p style="color:red">c</p>\n<p style=" color : red ; ">d</p>',
+        '<div>\n  <p style="color: red;width: 1px;">a</p>\n  <p style="\n    color: red;\n  ">a</p>\n  <p style="color: red; width: 1px">a</p>\n</div>',
+        '<img srcset="a.png 1x, b.png 2x" sizes="(min-width: 1px) 2px, 3px" />\n<iframe allow="a; b"></iframe>\n<a onclick="b( )">c</a>',
+        "<pre>\n  a\n    b\n</pre>\n<textarea>\n c\n</textarea>",
+        "<!-- a\n   b -->\n<p>c</p>",
+        '<p\n  title="a\n  b"\n>\n  c\n</p>',
+        "<script>\n  const  a = `\n  b`\n</script>\n<style>\n  a{color:red}\n</style>",
+        "<script>\n  const a = 1;\n</script>\n<style>\n  a {\n    color: red;\n  }\n</style>",
+        "<!DOCTYPE html>\n<html>\n  <head>\n    <title>a</title>\n  </head>\n  <body>\n    <p>b</p>\n  </body>\n</html>",
+        "<!doctype html>\n<p>a</p>",
+        "---\na: 1\n---\n\n<p>b</p>",
+        `<p>${"word ".repeat(30)}</p>`,
+        "<ul>\n  <li>a</li>\n  <li><b>c</b> d</li>\n</ul>\n\n\n<p>e</p>",
+        "<p>a",
+        "<p>{{ a }}</p>\n<p :b=\"c+d\"></p>",
+      ].flatMap(code => [
+        `\`\`\`html\n${code}\n\`\`\`\n`,
+        `a\n\n\`\`\`html\n${code}\n\`\`\`\n\nb\n`,
+        `- a\n\n  \`\`\`html\n${indented(code, "  ")}\n  \`\`\`\n`,
+        `> \`\`\`html\n${code.replace(/^/gm, "> ")}\n> \`\`\`\n`,
+        `\`\`\`vue\n${code}\n\`\`\`\n`,
+      ]),
     ];
     describe("Markdown", () => expectSame("a.md", texts, options));
     describe("MDX", () =>
@@ -4886,4 +5213,96 @@ describe("JavaScript and Flow that the long way rejects", () => {
     // ts-shared
     "await /a/;\n",
   ]);
+});
+
+describe("an `if` with a statement that is no block on its line", () => {
+  const clauses = [
+    "return",
+    "return;",
+    "return a && b;",
+    "return 'a';",
+    "return a, b;",
+    "return { a: 1 };",
+    "return () => {};",
+    "return (\n    a\n  );",
+    "return\n  a;",
+    "throw new Error('x');",
+    "throw",
+    "break",
+    "break;",
+    "break a;",
+    "continue;",
+    "a();",
+    "a()",
+    "a.b.c(d,e);",
+    "a = b",
+    "a=b;",
+    "a++;",
+    "++a;",
+    "a = b = c;",
+    "a = {\n    b: 1,\n  };",
+    "a = () => {};",
+    "this.a = b;",
+    "super.a();",
+    "new A();",
+    "await a();",
+    "yield a;",
+    "delete a.b;",
+    "let a;",
+    "let = 1;",
+    "const a = 1;",
+    "function g() {}",
+    "async();",
+    "type = 1;",
+    "type A = 1;",
+    "declare = 1;",
+    "module.exports = a;",
+    "a: b;",
+    ";",
+    "if (b) c();",
+    "if (b) c(); else d();",
+    "a(() => {\n    b();\n  });",
+    "a(\n    b,\n  );",
+    "a\n    .b();",
+    "a(); // c",
+    "a(); /* c */",
+    "/* c */ a();",
+    "return // c",
+    "a.b(x => x).c(y => y).d();",
+    "it('x', () => {});",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa();",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa();",
+    "return aaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbb(cccccccc, ddd);",
+  ];
+  const followers = [
+    "",
+    " else b();",
+    "\n  else b();",
+    "\n  // c\n  else b();",
+    "\n  (b)",
+    "\n  .b",
+    "\n\n  b();",
+    "\n  elsewhere();",
+  ];
+  const around: [string, string][] = [
+    ["async function* f() {\n  ", "\n}\n"],
+    ["a: for (;;) {\n  ", "\n}\n"],
+    ["class A extends B {\n  m() {\n  ", "\n  }\n}\n"],
+    ["function f() {\n  // prettier-ignore\n  ", "\n}\n"],
+  ];
+  const texts = around.flatMap(([before, after]) =>
+    clauses.flatMap(clause => followers.map(follower => `${before}if (!a) ${clause}${follower}${after}`)),
+  );
+  const heads = [
+    "if(a) b();\n",
+    "if (a)b();\n",
+    "if  ( a )  b();\n",
+    "if (a)\n  b();\n",
+    "if (a) /* c */ b();\n",
+    "if (a) // c\n  b();\n",
+  ];
+  const options = [[], ["--print-width=30"], ["--no-semi", "--single-quote"], ["--use-tabs", "--end-of-line=crlf"]];
+  describe("TypeScript", () => expectSame("a.ts", [...texts, ...heads], options));
+  describe("JavaScript", () => expectSame("a.js", [...texts, ...heads], options));
+  describe("Flow", () => expectSame("a.js.flow", [...texts, ...heads], [[]]));
 });

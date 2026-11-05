@@ -120,10 +120,77 @@ const fn table(bytes: &[u8], with_control_characters: bool) -> [bool; 256] {
     table
 }
 
-/// Where the loop over a line of text stops: at everything that the parser of inline content stops at, and at control
-/// characters.
-const STOPS_TEXT: [bool; 256] = table(b"\\`*_[]<~${:", true);
-/// The same where spaces and `www.` are looked at.
+/// A bit for each of 32 bytes that are 0 or 1.
+#[inline(always)]
+fn bits_of(found: [u8; 32]) -> u32 {
+    let (words, _) = found.as_chunks::<8>();
+    // The product has the lowest bits of the eight bytes in its highest byte.
+    words.iter().rev().fold(0, |bits, &word| {
+        let packed = u64::from_le_bytes(word).wrapping_mul(0x0102_0408_1020_4080) >> 56;
+        bits << 8 | packed as u32
+    })
+}
+
+/// Where the first control character or byte of `stops` is in `text` from `at` on, or the end of `text`.
+///
+/// Half of the time that is within a few bytes, so a loop over bytes ends where nobody can foresee it. This one looks at 32
+/// bytes at once, which compiles to comparisons of vectors, and has one branch for them.
+#[inline]
+fn first_of<const N: usize>(text: &[u8], at: usize, stops: &[u8; N]) -> usize {
+    let is_stop = |byte: u8| {
+        stops
+            .iter()
+            .fold(byte < 32 || byte == 127, |any, &stop| any | (byte == stop))
+    };
+    let rest = text.get(at..).unwrap_or_default();
+    let (chunks, tail) = rest.as_chunks::<32>();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let bits = bits_of(chunk.map(|byte| u8::from(is_stop(byte))));
+        if bits != 0 {
+            return at + index * 32 + bits.trailing_zeros() as usize;
+        }
+    }
+    let tail_start = at + rest.len() - tail.len();
+    tail_start + (tail.iter().position(|&byte| is_stop(byte))).unwrap_or(tail.len())
+}
+
+/// True if two spaces start between `from` and `to`. With `OR_ADDRESS`, the end of `www.` in either case too, with which
+/// an address without angle brackets can start.
+///
+/// Most lines are asked, and most indented lines have two spaces in front of them, so to remember where the next ones are
+/// comes to a search for every line.
+#[inline]
+fn has_two_spaces<const OR_ADDRESS: bool>(text: &[u8], from: usize, to: usize) -> bool {
+    let is_wanted = |first: u8, second: u8| {
+        (first == b' ' && second == b' ') || (OR_ADDRESS && first | 0x20 == b'w' && second == b'.')
+    };
+    let mut at = from;
+    while at < to {
+        let chunk_at = |at: usize| text.get(at..).and_then(|rest| rest.first_chunk::<32>());
+        let (Some(first), Some(second)) = (chunk_at(at), chunk_at(at + 1)) else {
+            let rest = text.get(at..(to + 1).min(text.len())).unwrap_or_default();
+            return rest
+                .array_windows()
+                .any(|&[first, second]| is_wanted(first, second));
+        };
+        let mut found = [0; 32];
+        for ((found, &first), &second) in found.iter_mut().zip(first).zip(second) {
+            *found = u8::from(is_wanted(first, second));
+        }
+        // What is behind `to` doesn't count.
+        let counted = u32::MAX >> (32 - (to - at).min(32));
+        if bits_of(found) & counted != 0 {
+            return true;
+        }
+        at += 32;
+    }
+    false
+}
+
+/// Where the loop over a line of text stops, besides control characters: at everything that the parser of inline content
+/// stops at.
+const STOPS_TEXT: &[u8; 11] = b"\\`*_[]<~${:";
+/// The same where spaces and `www.` are looked at. From one word to the next, a loop over bytes is the shorter way.
 const STOPS_TEXT_WITH_CARE: [bool; 256] = table(b"\\`*_[]<~${:. ", true);
 /// The same in a cell, which ends at a pipe.
 const STOPS_CELL: [bool; 256] = table(b"\\`*_[]<~${:.| ", true);
@@ -157,7 +224,7 @@ const IS_IN_ADDRESS: [bool; 256] = table(
 /// For MDX, where remark-parse 8 has other rules: a tokenizer looks for its end in the text as it's written (the `**`
 /// that ends strong emphasis can be in code), what it takes is read on its own, and what stays text is written anew if
 /// it has a `*` or a `_`.
-const STOPS_MDX_TEXT: [bool; 256] = table(b"\\`*_[<~${@:.", true);
+const STOPS_MDX_TEXT: &[u8; 12] = b"\\`*_[<~${@:.";
 const STOPS_MDX_CELL: [bool; 256] = table(b"\\`*_[<~${@:.| ", true);
 const STOPS_MDX_CODE: [bool; 256] = table(b"`|", true);
 const STOPS_CODE_WITH_PIPES: [bool; 256] = table(b"`", true);
@@ -446,9 +513,6 @@ pub(crate) struct Reader<'t> {
     /// isn't.
     safe_underscores: std::ops::Range<usize>,
     unsafe_underscores: std::ops::Range<usize>,
-    two_spaces: Next,
-    /// The end of `www.`, with which an address without angle brackets can start, in either case.
-    addresses: [Next; 2],
     /// Where the lines start that are being read.
     start: usize,
     /// Up to where they have been copied to `Memory::rewritten`. `None` as long as they are printed as they are
@@ -477,8 +541,6 @@ impl<'t> Reader<'t> {
             empty_line: Next::new(b"\n\n"),
             safe_underscores: 0..0,
             unsafe_underscores: 0..0,
-            two_spaces: Next::new(b"  "),
-            addresses: [Next::new(b"w."), Next::new(b"W.")],
             start: 0,
             copied: None,
         }
@@ -1749,8 +1811,8 @@ impl<'t> Reader<'t> {
 
     // ───────────────────────────── text ─────────────────────────────
 
-    fn has_two_spaces(&mut self, from: usize, to: usize) -> bool {
-        self.two_spaces.is_between(self.text, from, to)
+    fn has_two_spaces(&self, from: usize, to: usize) -> bool {
+        has_two_spaces::<false>(self.text, from, to)
     }
 
     /// Reads a line of text from `from`, its first character, on. Returns where it ends, if its output is known.
@@ -1763,11 +1825,7 @@ impl<'t> Reader<'t> {
         }
         let (mark, leaf_before) = (self.mark(), *leaf);
         let (end, _) = self.content::<false, false>(from, leaf)?;
-        let text = self.text;
-        if !self.text[from..end].ends_with(b" ")
-            && !self.has_two_spaces(from, end)
-            && !(self.addresses.iter_mut()).any(|it| it.is_between(text, from, end))
-        {
+        if !self.text[from..end].ends_with(b" ") && !has_two_spaces::<true>(self.text, from, end) {
             return Some(end);
         }
         // Once more, with a look at the spaces and at what could start an address.
@@ -1792,32 +1850,19 @@ impl<'t> Reader<'t> {
         };
         let skip = |at: usize, stops: &[bool; 256]| {
             let rest = text.get(at..).unwrap_or_default();
-            // Sixteen bytes with one branch.
-            let (chunks, _) = rest.as_chunks::<16>();
-            let plain = chunks
+            at + rest
                 .iter()
-                .take_while(|chunk| {
-                    !chunk
-                        .iter()
-                        .fold(false, |any, &byte| any | stops[byte as usize])
-                })
-                .count()
-                * 16;
-            let rest = &rest[plain..];
-            at + plain
-                + rest
-                    .iter()
-                    .position(|&byte| stops[byte as usize])
-                    .unwrap_or(rest.len())
+                .position(|&byte| stops[byte as usize])
+                .unwrap_or(rest.len())
         };
         let count = |at: usize, counted: u8| {
             let rest = text.get(at..).unwrap_or_default();
             rest.iter().take_while(|&&byte| byte == counted).count()
         };
-        let stops_text = match (CELL, WITH_CARE) {
-            (true, _) => &STOPS_CELL,
-            (false, true) => &STOPS_TEXT_WITH_CARE,
-            (false, false) => &STOPS_TEXT,
+        let skip_text = |at: usize| match (CELL, WITH_CARE) {
+            (true, _) => skip(at, &STOPS_CELL),
+            (false, true) => skip(at, &STOPS_TEXT_WITH_CARE),
+            (false, false) => first_of(text, at, STOPS_TEXT),
         };
         let mut at = from;
         // After a `[` or a `![` that waits for its `]`.
@@ -1826,7 +1871,7 @@ impl<'t> Reader<'t> {
         // The `[` follows a `]`, so what is between the brackets can be a label.
         let mut is_after_bracket = false;
         let end = loop {
-            at = skip(at, stops_text);
+            at = skip_text(at);
             if at >= text.len() {
                 break at;
             }
@@ -2199,14 +2244,13 @@ impl<'t> Reader<'t> {
                 .position(|&byte| stops[byte as usize])
                 .unwrap_or(rest.len())
         };
-        let stops_text = if CELL {
-            &STOPS_MDX_CELL
-        } else {
-            &STOPS_MDX_TEXT
+        let skip_text = |at: usize| match CELL {
+            true => skip(at, &STOPS_MDX_CELL),
+            false => first_of(text, at, STOPS_MDX_TEXT),
         };
         let mut at = from;
         let end = loop {
-            at = skip(at, stops_text);
+            at = skip_text(at);
             if at >= text.len() {
                 break at;
             }

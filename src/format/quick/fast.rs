@@ -424,6 +424,7 @@ pub(crate) const NEVER: i32 = 100;
 impl Quick {
     // ------------------------------------------------------------------------------------------------------------ changes
     /// Copies the source up to `p`.
+    #[inline]
     pub(crate) fn flush(&mut self, p: i32) {
         let from = self.fast.run;
         let mut n = p - from;
@@ -647,6 +648,7 @@ impl Quick {
     }
 
     // ----------------------------------------------------------------------------------------------------------- literals
+    #[inline]
     pub(crate) fn number(&mut self, p: i32) -> i32 {
         let mut q = p;
         if self.t.at(q) == 48 {
@@ -3428,32 +3430,32 @@ pub(crate) static TEST_START: [u8; 256] = [
 impl Quick {
     /// is_test_call() of Prettier: `it("..", () => {`, `describe.only("..", function () {`, `it("..", fakeAsync(() => {`, `beforeEach(waitForAsync(() => {`. The arguments of such a call
     /// are printed one behind the other, with nothing that could break but the body of the function: the head stays on its line however long it is. p is at the name, which ends at e.
-    /// Returns where the `{` is, or -1: then the statement may still be read as any other, from the start.
+    /// Returns where the `{` is, or -1: then the statement may still be read as any other, from the start; or -2: the same, and nothing has been touched.
     pub(crate) fn test_call(&mut self, p: i32, e: i32) -> R<i32> {
         let mut is_set_up = false;
         let mut may_have_dot = false;
         match e - p {
             2 => {
                 if !self.word_is(p, b"it") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
                 may_have_dot = true;
             }
             3 => {
                 if !self.word_is(p, b"xit") && !self.word_is(p, b"fit") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             4 => {
                 if self.word_is(p, b"test") {
                     may_have_dot = true;
                 } else if !self.word_is(p, b"skip") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             5 => {
                 if !self.word_is(p, b"xtest") && !self.word_is(p, b"ftest") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             8 => {
@@ -3462,40 +3464,40 @@ impl Quick {
                 } else if self.word_is(p, b"afterAll") {
                     is_set_up = true;
                 } else {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             9 => {
                 if self.word_is(p, b"afterEach") || self.word_is(p, b"beforeAll") {
                     is_set_up = true;
                 } else if !self.word_is(p, b"xdescribe") && !self.word_is(p, b"fdescribe") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             10 => {
                 if !self.word_is(p, b"beforeEach") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
                 is_set_up = true;
             }
             _ => {
-                return Ok(-1);
+                return Ok(-2);
             }
         }
         let mut q = e;
         if self.t.at(q) == 46 {
             if !may_have_dot || (!self.word_is(q + 1, b"only") && !self.word_is(q + 1, b"skip")) {
-                return Ok(-1);
+                return Ok(-2);
             }
             q += 5;
         }
         if self.t.at(q) != 40 {
-            return Ok(-1);
+            return Ok(-2);
         }
         q += 1;
         if !is_set_up {
             if self.t.at(q) != 34 && self.t.at(q) != 39 {
-                return Ok(-1);
+                return Ok(-2);
             }
             // (the room for generated texts that was reserved is 2048 bytes)
             self.fast.room = 1500;
@@ -3579,11 +3581,13 @@ impl Quick {
             if head >= 0 {
                 return Ok(head);
             }
-            // from the start
-            if !self.prepare_at(p, self.fast.column) {
-                return Ok(-1);
+            if head == -1 {
+                // from the start
+                if !self.prepare_at(p, self.fast.column) {
+                    return Ok(-1);
+                }
+                self.fast.why = 0;
             }
-            self.fast.why = 0;
         }
         self.fast.breakable_at = p;
         let mut q = self.open_expression(p)?;
@@ -4396,8 +4400,95 @@ _ => {}
         return Ok(self.no(refusal::Export));
     }
 
-    /// `(a) {` of `if` and `while`; p is behind the keyword.
-    pub(crate) fn condition_and_block(&mut self, p: i32) -> R<i32> {
+    /// What stands behind `if (a)` on its line, at p, if it is no block but a simple statement and no `else` follows: `return b;`, `throw c;`, `break;`, `continue;`, a call, an
+    /// assignment. The condition, a line and the statement are one group, so all of it is printed flat if it fits. Returns what terminate() returns.
+    fn plain_clause(&mut self, p: i32) -> R<i32> {
+        let first = self.t.at(p);
+        if (CC.at(first) & ID_START) == 0 {
+            return Ok(self.no(refusal::Block));
+        }
+        let end = self.name_end(p + 1);
+        if (CC.at(self.t.at(end)) & BEYOND) != 0 {
+            return Ok(self.no(refusal::NotAscii));
+        }
+        let word = if (KW_LENGTHS.at(first).wrapping_shr((end - p) as u32) & 1) != 0 {
+            self.keyword_at(p, end - p)
+        } else {
+            0
+        };
+        // nothing in here opens a block, and no list in here stands on lines of its own
+        self.fast.no_block += 1;
+        let mut q: i32;
+        match if word == 0 { tk::Name } else { word & 255 } {
+            tk::Return | tk::Throw => {
+                let r = self.blanks(end);
+                let c = self.t.at(r);
+                if c == 59 || c == 10 || c == 0 || (c == 47 && self.t.at(r + 1) == 47) {
+                    q = if (word & 255) == tk::Throw {
+                        self.no(refusal::Block)
+                    } else {
+                        end
+                    };
+                } else if r == end {
+                    q = self.no(refusal::Block);
+                } else {
+                    let argument = self.spaced(end);
+                    q = self.open_expression(argument)?;
+                }
+            }
+            tk::Break | tk::Continue => {
+                // (a label is for the parser)
+                q = if (CC.at(self.t.at(self.blanks(end))) & ID_START) != 0
+                    || !self.can_jump((word & 255) == tk::Continue, 0)
+                {
+                    self.no(refusal::Block)
+                } else {
+                    // see should_ignored_node_print_semicolon()
+                    self.fast.ready_flags |= F_EXTRA;
+                    end
+                };
+            }
+            tk::Name | tk::This | tk::Super | tk::New => {
+                if ((word & 255) == tk::Name && (word >> 8) != kw::Await)
+                    || (self.fast.ts && self.is_declaration_word(p, end - p))
+                    || (self.fast.flow && self.is_flow_declaration_word(p, end - p))
+                {
+                    q = self.no(refusal::Block);
+                } else {
+                    q = self.open_expression(p)?;
+                    if q >= 0 && self.fast.shape == SH_ARROW {
+                        q = self.no(refusal::Block);
+                    }
+                    if q >= 0 && self.t.at(q) != 59 {
+                        let r = self.blanks(q);
+                        let length = self.assignment_operator(r);
+                        if length != 0 {
+                            q = if self.fast.assignable {
+                                self.initializer(q, r, length, false)?
+                            } else {
+                                self.no(refusal::Target)
+                            };
+                        }
+                    }
+                }
+            }
+            _ => {
+                q = self.no(refusal::Block);
+            }
+        }
+        self.fast.no_block -= 1;
+        if q < 0 {
+            return Ok(-1);
+        }
+        q = self.terminate(q, false);
+        if q >= 0 && self.word_is(self.next_char_index(self.fast.ready_next), b"else") {
+            return Ok(self.no(refusal::Block));
+        }
+        return Ok(q);
+    }
+
+    /// `(a) {` of `if` and `while`; p is behind the keyword. With `may_be_plain`, a simple statement can stand in the place of the block.
+    pub(crate) fn condition_and_block(&mut self, p: i32, may_be_plain: bool) -> R<i32> {
         let mut q = self.spaced(p);
         if self.t.at(q) != 40 {
             return Ok(self.no(refusal::Start));
@@ -4413,6 +4504,9 @@ _ => {}
         }
         q = self.spaced(q + 1);
         if self.t.at(q) != 123 {
+            if may_be_plain {
+                return self.plain_clause(q);
+            }
             return Ok(self.no(refusal::Block));
         }
         return Ok(self.open_block(q, 0));
@@ -5618,12 +5712,12 @@ impl Quick {
             tk::If => {
                 self.fast.ready_kind = k::IfStatement;
                 self.fast.tail = TAIL_IF;
-                p = self.condition_and_block(end)?;
+                p = self.condition_and_block(end, true)?;
             }
             tk::While => {
                 self.fast.ready_kind = k::WhileStatement;
                 self.fast.tail = TAIL_NONE;
-                p = self.condition_and_block(end)?;
+                p = self.condition_and_block(end, false)?;
             }
             tk::For => {
                 self.fast.tail = TAIL_NONE;
@@ -5842,7 +5936,7 @@ impl Quick {
     }
 
     /// Gets ready to read what starts at `start`, behind so many columns of indentation.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn prepare(&mut self, start: i32, mut indentation: i32) -> bool {
         // The source may be indented by less than the output will be. By how much it is indented per level shows at the items whose level the lists say (the least
         // that is seen counts: an item can stand further in than its lists say). If that is less than the options ask for, the levels of the source count, whatever
@@ -5956,6 +6050,7 @@ impl Quick {
     }
 
     /// The text is what was read from `start` to p.
+    #[inline]
     pub(crate) fn finish_text(&mut self, start: i32, p: i32) {
         if self.fast.out == 0 {
             self.fast.ready_text = start;
@@ -6057,7 +6152,7 @@ impl Quick {
                     self.fast.tail = TAIL_NONE;
                     q = self.open_block(q, 0);
                 } else if self.word_is(q, b"if") {
-                    q = self.condition_and_block(q + 2)?;
+                    q = self.condition_and_block(q + 2, false)?;
                 } else {
                     return Ok(AFTER_REFUSED);
                 }

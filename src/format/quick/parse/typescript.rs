@@ -89,6 +89,7 @@ impl Quick {
     }
 
     /// The word that the current token is, if it is a name.
+    #[inline]
     pub(crate) fn word(&self) -> i32 {
         return if self.lexer.tok == tk::Name && (self.lexer.tok_flags & F_ESCAPE) == 0 {
             self.word_at(self.lexer.tok_start, self.lexer.tok_end)

@@ -51,7 +51,9 @@ async function requestAll(client: http2.ClientHttp2Session, total: number) {
     const req = client.request({ ":method": "POST", ":path": `/${i}` });
     reqs.push(req);
     const result = new Promise<number>((resolve, reject) => {
-      req.on("response", headers => resolve(headers[":status"] as number));
+      let status = 0;
+      req.on("response", headers => (status = headers[":status"] as number));
+      req.on("end", () => resolve(status));
       req.on("error", reject);
       req.resume();
       req.end("{}");
@@ -168,6 +170,48 @@ test("a slot is freed when the stream closes on the wire, not when the response 
   }
 });
 
+// The peer counts a stream until it sees the RST_STREAM. A request that waited for that slot must
+// send its HEADERS after the reset, or a server at its limit refuses it.
+for (const [how, cancel] of [
+  ["close(NGHTTP2_CANCEL)", (req: http2.ClientHttp2Stream) => req.close(http2.constants.NGHTTP2_CANCEL)],
+  ["an AbortSignal", (req: http2.ClientHttp2Stream, controller: AbortController) => controller.abort()],
+] as const) {
+  test(`a request queued behind a slot goes out after the RST_STREAM of ${how}`, async () => {
+    const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
+    const streams: http2.ServerHttp2Stream[] = [];
+    const secondArrived = Promise.withResolvers<void>();
+    server.on("stream", stream => {
+      streams.push(stream);
+      if (streams.length === 2) secondArrived.resolve();
+    });
+    const port = await listen(server);
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    try {
+      await once(client, "remoteSettings");
+      const controller = new AbortController();
+      const first = client.request({ ":path": "/1" }, { signal: controller.signal });
+      first.on("error", () => {});
+      first.end();
+      const second = client.request({ ":path": "/2" });
+      const answered = new Promise<number>((resolve, reject) => {
+        second.on("response", headers => resolve(headers[":status"] as number));
+        second.on("error", reject);
+        second.resume();
+        second.end();
+      });
+      expect(second.pending).toBe(true);
+      await once(first, "ready");
+      cancel(first, controller);
+      await secondArrived.promise;
+      streams[1].respond({ ":status": 200 }, { endStream: true });
+      expect(await answered).toBe(200);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+}
+
 test("remoteSettings reports the pre-SETTINGS limit like node", async () => {
   // A raw peer that never sends SETTINGS, so the session stays in the pre-SETTINGS window.
   const server = net.createServer(socket => socket.on("data", () => {}));
@@ -181,9 +225,12 @@ test("remoteSettings reports the pre-SETTINGS limit like node", async () => {
     ] as const) {
       const client = http2.connect(`http://127.0.0.1:${port}`, options as http2.ClientSessionOptions);
       client.on("error", () => {});
-      await once(client, "connect");
-      expect(client.remoteSettings.maxConcurrentStreams).toBe(expected);
-      client.destroy();
+      try {
+        await once(client, "connect");
+        expect(client.remoteSettings.maxConcurrentStreams).toBe(expected);
+      } finally {
+        client.destroy();
+      }
     }
   } finally {
     server.close();

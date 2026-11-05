@@ -136,8 +136,12 @@ function initialLocalSettings(submitted: any) {
 
 // The peer's settings before its first SETTINGS frame: nghttp2 starts every session with the
 // protocol defaults and maxConcurrentStreams set to the peerMaxConcurrentStreams session option
-// (default 100). node writes the option into a Uint32Array without validation, so a number
-// outside the uint32 range wraps like ToUint32.
+// (default 100), and resets it to the protocol default when the first SETTINGS arrives:
+// https://github.com/nghttp2/nghttp2/blob/v1.64.0/lib/nghttp2_session.c#L495
+// https://github.com/nghttp2/nghttp2/blob/v1.64.0/lib/nghttp2_session.c#L4804
+// node writes the option into a Uint32Array without validation, so a number outside the uint32
+// range wraps like ToUint32:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L253
 function initialRemoteSettings(peerMaxConcurrentStreams: unknown): Settings {
   const settings = getUnpackedSettings();
   settings.maxConcurrentStreams = typeof peerMaxConcurrentStreams === "number" ? peerMaxConcurrentStreams >>> 0 : 100;
@@ -5213,6 +5217,9 @@ class ClientHttp2Session extends Http2Session {
   // its first SETTINGS frame arrives: requests made before that frame queue behind the same
   // maxConcurrentStreams limit as later ones.
   #remoteSettings: Settings;
+  // The limit the request gate applies: the peer's maxConcurrentStreams as the engine reported
+  // it, kept apart from the object the remoteSettings getter hands to user code.
+  #remoteMaxConcurrentStreams: number;
   #pingCallbacks: Array<[PingCallback, number]> | null = null;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
   #maxReservedRemoteStreams: number = 200;
@@ -5465,6 +5472,7 @@ class ClientHttp2Session extends Http2Session {
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
       self.#remoteSettings = settings;
+      self.#remoteMaxConcurrentStreams = settings.maxConcurrentStreams;
       self.emit("remoteSettings", settings);
       // The peer may have raised maxConcurrentStreams: queued requests might fit now.
       self.#flushPendingRequests();
@@ -5893,6 +5901,7 @@ class ClientHttp2Session extends Http2Session {
     assertIsObject(url, "authority", ["string", "Object", "URL"]);
 
     this.#remoteSettings = initialRemoteSettings(options.peerMaxConcurrentStreams);
+    this.#remoteMaxConcurrentStreams = this.#remoteSettings.maxConcurrentStreams;
     if (options.maxReservedRemoteStreams !== undefined) {
       this.#maxReservedRemoteStreams = options.maxReservedRemoteStreams;
     }
@@ -6490,7 +6499,7 @@ class ClientHttp2Session extends Http2Session {
       if (
         !this.#connected ||
         (this.#pendingRequests !== null && this.#pendingRequests.length > 0) ||
-        this.#activeRequestCount >= this.#remoteSettings.maxConcurrentStreams
+        this.#activeRequestCount >= this.#remoteMaxConcurrentStreams
       ) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
@@ -6532,11 +6541,18 @@ class ClientHttp2Session extends Http2Session {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-      this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
+      // Tracked before the native call: a rejection it reports synchronously (streamError)
+      // releases the slot through the same handler as a rejection from the peer.
+      this.#trackActiveRequest(req);
+      try {
+        this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
+      } catch (e) {
+        this.#releaseRequestSlot(req, false);
+        throw e;
+      }
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }
-      this.#trackActiveRequest(req);
       // node corks every Http2Stream until its native handle is assigned (always at least one tick
       // after request() returns), so body chunks written synchronously after request() are buffered
       // and flushed together through _writev.
@@ -6565,11 +6581,11 @@ class ClientHttp2Session extends Http2Session {
   // The peer frees the slot when the stream closes on the wire, not when the consumer drains the
   // response body, so the native close report releases it. 'close' is the backstop for a stream
   // that is torn down from JS before the native side reports anything.
-  #releaseRequestSlot(req: ClientHttp2Stream) {
+  #releaseRequestSlot(req: ClientHttp2Stream, flush: boolean = true) {
     if ((req[bunHTTP2StreamStatus] & StreamState.HoldsRequestSlot) === 0) return;
     req[bunHTTP2StreamStatus] &= ~StreamState.HoldsRequestSlot;
     this.#activeRequestCount--;
-    this.#flushPendingRequests();
+    if (flush) this.#flushPendingRequests();
   }
 
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots
@@ -6588,7 +6604,7 @@ class ClientHttp2Session extends Http2Session {
         }
         continue;
       }
-      if (this.#activeRequestCount >= this.#remoteSettings.maxConcurrentStreams) {
+      if (this.#activeRequestCount >= this.#remoteMaxConcurrentStreams) {
         break;
       }
       const { req, headers, wireHeaders, sensitiveNames, options } = queue.shift()!;
@@ -6601,6 +6617,7 @@ class ClientHttp2Session extends Http2Session {
         continue;
       }
       req[kSetStreamId](stream_id);
+      this.#trackActiveRequest(req);
       try {
         if (typeof options === "undefined") {
           parser.request(stream_id, req, wireHeaders, sensitiveNames);
@@ -6615,6 +6632,7 @@ class ClientHttp2Session extends Http2Session {
         // never reached the wire either, so the teardown must not write RST_STREAM for an id the
         // peer considers idle.
         this.#connections--;
+        this.#releaseRequestSlot(req, false);
         req[kNeverAnnounced] = true;
         if (!req.destroyed) req.destroy(err as Error);
         continue;
@@ -6622,7 +6640,6 @@ class ClientHttp2Session extends Http2Session {
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }
-      this.#trackActiveRequest(req);
       process.nextTick(emitEventNT, req, "ready");
     }
   }

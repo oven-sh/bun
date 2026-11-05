@@ -2106,13 +2106,15 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
+        // The RST_STREAM goes out before JS learns of the close: the handler can submit a
+        // request that waited for this stream's slot, and its HEADERS must follow the reset.
+        let _ = self.write(&buffer);
         self.dispatch_with_2_extra(
             js::on_aborted_get_cached,
             identifier,
             abort_reason,
             JSValue::js_number(old_state as u8 as f64),
         );
-        let _ = self.write(&buffer);
     }
 
     pub(crate) fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
@@ -2144,11 +2146,13 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
+        // As in abort_stream: the RST_STREAM goes out before the close is dispatched.
+        let _ = self.write(&buffer);
         if rst_code == ErrorCode::NO_ERROR {
             self.dispatch_with_extra(
                 js::on_stream_end_get_cached,
                 identifier,
-                JSValue::js_number(stream.state as u8 as f64),
+                JSValue::js_number(StreamState::CLOSED as u8 as f64),
             );
         } else {
             self.dispatch_with_extra(
@@ -2157,8 +2161,6 @@ impl H2FrameParser {
                 JSValue::js_number(rst_code.0 as f64),
             );
         }
-
-        let _ = self.write(&buffer);
     }
 
     pub(crate) fn send_go_away(

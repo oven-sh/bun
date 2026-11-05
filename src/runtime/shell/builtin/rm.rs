@@ -9,7 +9,7 @@ use bun_sys::{E, FdExt, dir_iterator};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, NodeId, ShellTask, WorkPoolTask, shell_openat,
+    EventLoopHandle, Interpreter, NodeId, ShellTask, WorkPoolTask, shell_lstatat, shell_openat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -959,9 +959,10 @@ impl ShellRmTask {
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, DirTask::path(dir_task)) };
         match kind_hint {
             EntryKindHint::Idk => {
-                // POSIX: an operand whose last component is `.` or `..` is refused, not emptied.
+                // POSIX: an operand that exists and whose last component is `.` or `..` is refused.
                 if self.opts.recursive
                     && matches!(bun_paths::basename(path.as_bytes()), b"." | b"..")
+                    && shell_lstatat(self.cwd, path).is_ok()
                 {
                     return Err(bun_sys::Error::from_code(E::EINVAL, bun_sys::Tag::rmdir)
                         .with_path(path.as_bytes()));

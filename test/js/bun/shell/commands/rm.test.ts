@@ -531,13 +531,17 @@ const numbered = (prefix: string, count: number) =>
 const tree = (operand: string) => ["x", "s1/y", "s1/t/z", "s2/y", "s3/"].map(name => `${operand}/${name}`);
 const treeLines = (operand: string) =>
   ["", "/x", "/s1", "/s1/y", "/s1/t", "/s1/t/z", "/s2", "/s2/y", "/s3"].map(name => operand + name);
+// A directory operand whose walk takes a while.
+const bushy = (operand: string) =>
+  [0, 1, 2, 3].flatMap(s => [0, 1, 2, 3, 4, 5].map(f => `${operand}/s${s}/f${f}`)).concat(`${operand}/f0`);
+const bushes = (...operands: string[]) => operands.flatMap(bushy);
 
 // GNU rm takes its operands one after another, in the order given, and goes
 // on to the next operand after one fails. Every operand used to start on the
 // thread pool at once. With one operand inside another, the exit code and the
 // files left over changed from run to run, and the first error in any operand
 // stopped the walks of all the others.
-describe("rm takes its operands in the order given", () => {
+describe.concurrent("rm takes its operands in the order given", () => {
   type Case = {
     line: string;
     setup: string[];
@@ -641,12 +645,103 @@ describe("rm takes its operands in the order given", () => {
           },
           { line: "rm -rf link/sub link", setup: ["a/sub/k", "link -> a"], exitCode: 0, left: ["a/"] },
         ]),
+    // rm refuses "." only where it exists: a missing operand is a missing operand.
+    { line: "rm -rf missing/. b", setup: ["b/y"], exitCode: 0, left: [] },
+    { line: "rm -r missing/. b", setup: ["b/y"], exitCode: 1, left: [], stderr: missing("missing/.") },
+    // Directory operands whose walks would overlap if they started at once.
+    { line: "rm -r a b c", setup: bushes("a", "b", "c"), exitCode: 0, left: [] },
+    { line: "rm -r a b a/s1", setup: bushes("a", "b"), exitCode: 1, left: [], stderr: missing("a/s1") },
+    { line: "rm -r a/s1 a b", setup: bushes("a", "b"), exitCode: 0, left: [] },
+    { line: "rm -r a b a", setup: bushes("a", "b"), exitCode: 1, left: [], stderr: missing("a") },
+    { line: "rm -rf a b a", setup: bushes("a", "b"), exitCode: 0, left: [] },
+    { line: "rm -r p/a p/b p", setup: bushes("p/a", "p/b"), exitCode: 0, left: [] },
+    { line: "rm -r p/q/a p/q/b p", setup: bushes("p/q/a", "p/q/b"), exitCode: 0, left: [] },
+    { line: "rm -r p/a b p/a/s1", setup: bushes("p/a", "b"), exitCode: 1, left: ["p/"], stderr: missing("p/a/s1") },
+    {
+      line: "rm -r p p/a p/b",
+      setup: bushes("p/a", "p/b"),
+      exitCode: 1,
+      left: [],
+      stderr: missing("p/a") + missing("p/b"),
+    },
+    { line: "rm -r a b ./a c", setup: bushes("a", "b", "c"), exitCode: 1, left: [], stderr: missing("./a") },
+    { line: "rm -r a b a/s0/f1 c", setup: bushes("a", "b", "c"), exitCode: 1, left: [], stderr: missing("a/s0/f1") },
+    { line: "rm -r a b b/../a", setup: bushes("a", "b"), exitCode: 1, left: [], stderr: missing("b/../a") },
+    {
+      line: "rm -r a b s/../c c/s1 d e",
+      setup: [...bushes("a", "b", "c", "d", "e"), "s/"],
+      exitCode: 1,
+      left: ["s/"],
+      stderr: missing("c/s1"),
+    },
+    { line: "rm -rf a/ b/ a/ c/", setup: bushes("a", "b", "c"), exitCode: 0, left: [] },
+    { line: "rm -rf a f b g c", setup: [...bushes("a", "b", "c"), "f", "g"], exitCode: 0, left: [] },
+    { line: "rm -r a f a/f0 b", setup: [...bushes("a", "b"), "f"], exitCode: 1, left: [], stderr: missing("a/f0") },
+    // The shell expands the glob: each nested match is an operand inside an operand.
+    {
+      line: "rm -rf **/node_modules",
+      setup: bushes(
+        "node_modules",
+        "node_modules/a/node_modules",
+        "pkg/x/node_modules",
+        "pkg/x/node_modules/c/node_modules",
+        "pkg/y/node_modules",
+      ),
+      exitCode: 0,
+      left: ["pkg/", "pkg/x/", "pkg/y/"],
+    },
+    {
+      line: "rm -rf packages/*/dist",
+      setup: bushes(...numbered("packages/p", 8).map(name => `${name}/dist`)),
+      exitCode: 0,
+      left: ["packages/", ...numbered("packages/p", 8).map(name => `${name}/`)],
+    },
+    // Two spellings of one directory, on a file system that ignores case (macOS, Windows).
+    { line: "rm -r Dist dist", setup: bushes("Dist"), exitCode: 1, left: [], stderr: missing("dist") },
+    { line: "rm -rf Dist dist", setup: bushes("Dist"), exitCode: 0, left: [] },
+    // Error lines come in operand order, also between operands that take a while.
+    {
+      line: "rm -r a missing b c missing2 d",
+      setup: bushes("a", "b", "c", "d"),
+      exitCode: 1,
+      left: [],
+      stderr: missing("missing") + missing("missing2"),
+    },
+    {
+      line: "rm -r a missing b c missing2 d 2> err.txt",
+      setup: bushes("a", "b", "c", "d"),
+      exitCode: 1,
+      left: [],
+      files: { "err.txt": missing("missing") + missing("missing2") },
+    },
+    ...(isWindows
+      ? []
+      : [
+          { line: "rm -r a link b", setup: [...bushes("a", "b"), "link -> a"], exitCode: 0, left: [] },
+          {
+            line: "rm -r a b link/s2",
+            setup: [...bushes("a", "b"), "link -> a"],
+            exitCode: 1,
+            left: ["link@"],
+            stderr: missing("link/s2"),
+          },
+          { line: "rm -r link/s2 a b", setup: [...bushes("a", "b"), "link -> a"], exitCode: 0, left: ["link@"] },
+          // An absolute operand between relative ones, and before one that is inside it.
+          {
+            line: "rm -r a b $PWD/c c/s1 d e",
+            setup: bushes("a", "b", "c", "d", "e"),
+            exitCode: 1,
+            left: [],
+            stderr: missing("c/s1"),
+          },
+          { line: "rm -r $PWD/a a b", setup: bushes("a", "b"), exitCode: 1, left: [], stderr: missing("a") },
+        ]),
   ];
 
   test.each(cases)("$line", async ({ line, setup, ...expected }) => {
     using base = tempDir("rm-operand-order", {});
     const results = new Set<string>();
-    for (let round = 0; round < 20; round++) {
+    for (let round = 0; round < 6; round++) {
       const dir = path.join(String(base), String(round));
       mkdirSync(dir);
       makeTree(dir, setup);
@@ -660,10 +755,13 @@ describe("rm takes its operands in the order given", () => {
   });
 
   // `bun exec` runs the shell on its own event loop, with stdout and stderr as pipes.
-  test("through bun exec", async () => {
+  test.each([
+    { threads: "as many threads as cores", env: bunEnv },
+    { threads: "2 threads", env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" } },
+  ])("through bun exec, with $threads in the pool", async ({ env }) => {
     using base = tempDir("rm-operand-order-exec", {});
     const rounds = cases.flatMap((expected, index) =>
-      [0, 1, 2].map(round => ({ ...expected, dir: path.join(String(base), `${index}-${round}`) })),
+      [0, 1].map(round => ({ ...expected, dir: path.join(String(base), `${index}-${round}`) })),
     );
     for (const { dir, setup } of rounds) {
       mkdirSync(dir);
@@ -674,7 +772,7 @@ describe("rm takes its operands in the order given", () => {
       .join("\n");
     await using proc = Bun.spawn({
       cmd: [bunExe(), "exec", script],
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -744,7 +842,7 @@ describe("rm takes its operands in the order given", () => {
       ),
     };
     for (let batch = 0; batch < 2; batch++) {
-      const results = await Promise.all(Array.from({ length: 4 }, (_, i) => run(batch * 4 + i)));
+      const results = await Promise.all(Array.from({ length: 2 }, (_, i) => run(batch * 2 + i)));
       for (const result of results) expect(result).toEqual(expected);
     }
   });
@@ -769,55 +867,75 @@ describe("rm takes its operands in the order given", () => {
     const random = (n: number) => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32) * n;
     const pick = <T>(list: T[]) => list[Math.floor(random(list.length))];
     const failed = "an-operand-failed";
-    for (let round = 0; round < 100; round++) {
+    const rounds = Array.from({ length: 32 }, (_, round) => {
       const dirs: string[] = [];
       const files: string[] = [];
       const grow = (prefix: string, depth: number) => {
-        for (let i = Math.floor(random(4)); i > 0; i--) {
+        for (let i = depth === 0 ? 2 + Math.floor(random(4)) : Math.floor(random(4)); i > 0; i--) {
           dirs.push(`${prefix}d${i}`);
-          if (depth < 3 && random(1) < 0.7) grow(`${prefix}d${i}/`, depth + 1);
+          if (depth < 3 && random(1) < 0.6) grow(`${prefix}d${i}/`, depth + 1);
         }
-        for (let i = Math.floor(random(3)); i > 0; i--) files.push(`${prefix}f${i}`);
+        // Enough files in some directories that walks would overlap if operands started at once.
+        for (let i = Math.floor(random(3)) * (random(1) < 0.5 ? 1 : 8); i > 0; i--) files.push(`${prefix}f${i}`);
       };
       grow("", 0);
-      const link = !isWindows && dirs.length > 0 && random(1) < 0.3 ? pick(dirs) : undefined;
+      const link = !isWindows && random(1) < 0.35 ? pick(dirs) : undefined;
       const setup = [...dirs.map(dir => dir + "/"), ...files, ...(link ? [`link -> ${link}`] : [])];
-      const pool = [...dirs, ...files, ...dirs.map(dir => "./" + dir), "missing1", "missing2"];
+      // Mostly directories.
+      const pool = [...dirs, ...dirs, ...files.filter(() => random(1) < 0.3), "missing1", "missing2"];
+      for (const dir of dirs) {
+        if (random(1) < 0.15) pool.push("./" + dir);
+        if (random(1) < 0.1) pool.push(dir + "/");
+        if (random(1) < 0.1) pool.push(`${dir}/../${pick(dirs).split("/")[0]}`);
+        if (random(1) < 0.05) pool.push(dir + "/.");
+      }
       // Another spelling of what is below the target of the link.
       if (link)
         pool.push(
           "link",
-          ...pool.filter(name => name.startsWith(link + "/")).map(name => "link" + name.slice(link.length)),
+          "link/",
+          ...[...dirs, ...files]
+            .filter(name => name.startsWith(link + "/"))
+            .map(name => "link" + name.slice(link.length)),
         );
       const operands: string[] = [];
-      for (let i = 1 + Math.floor(random(6)); i > 0; i--) {
-        operands.push(operands.length > 0 && random(1) < 0.15 ? pick(operands) : pick(pool));
+      for (let i = 2 + Math.floor(random(9)); i > 0; i--) {
+        operands.push(operands.length > 0 && random(1) < 0.12 ? pick(operands) : pick(pool));
       }
-      const rm = "rm " + pick(["", "-f ", "-r ", "-r ", "-rf ", "-rf ", "-d ", "-df ", "-rv ", "-v ", "-rfv "]);
+      const rm = "rm " + pick(["-r ", "-r ", "-r ", "-rf ", "-rf ", "-rf ", "-rv ", "-rfv ", "-d ", "", "-f ", "-v "]);
+      return { round, setup, operands, rm };
+    });
 
-      const run = async (name: string, script: string) => {
-        const dir = path.join(String(base), `${round}-${name}`);
-        mkdirSync(dir);
-        makeTree(dir, setup);
-        const { exitCode, stdout, stderr } = await $`${{ raw: script }}`.cwd(dir).quiet().nothrow();
-        const lines = stdout.toString().split("\n").filter(Boolean);
-        return {
-          failed: exitCode !== 0 || lines.includes(failed),
-          // The lines of one tree come in any order.
-          removed: lines.filter(line => line !== failed).sort(),
-          stderr: stderr.toString(),
-          left: listTree(dir),
-        };
+    const run = async (name: string, setup: string[], script: string) => {
+      const dir = path.join(String(base), name);
+      mkdirSync(dir);
+      makeTree(dir, setup);
+      const { exitCode, stdout, stderr } = await $`${{ raw: script }}`.cwd(dir).quiet().nothrow();
+      const lines = stdout.toString().split("\n").filter(Boolean);
+      return {
+        failed: exitCode !== 0 || lines.includes(failed),
+        // The lines of one tree come in any order.
+        removed: lines.filter(line => line !== failed).sort(),
+        stderr: stderr.toString(),
+        left: listTree(dir),
       };
-      const [all, each] = await Promise.all([
-        run("all", rm + operands.join(" ")),
-        run("each", operands.map(operand => `${rm}${operand} || echo "${failed}"`).join("\n")),
-      ]);
-      expect({ line: rm + operands.join(" "), setup, ...all }).toEqual({
-        line: rm + operands.join(" "),
-        setup,
-        ...each,
-      });
+    };
+    for (let batch = 0; batch < rounds.length; batch += 4) {
+      const results = await Promise.all(
+        rounds.slice(batch, batch + 4).map(async ({ round, setup, operands, rm }) => ({
+          line: rm + operands.join(" "),
+          setup,
+          all: await run(`${round}-all`, setup, rm + operands.join(" ")),
+          each: await run(
+            `${round}-each`,
+            setup,
+            operands.map(operand => `${rm}${operand} || echo "${failed}"`).join("\n"),
+          ),
+        })),
+      );
+      for (const { line, setup, all, each } of results) {
+        expect({ line, setup, ...all }).toEqual({ line, setup, ...each });
+      }
     }
   });
 });
@@ -867,6 +985,36 @@ describe.serial.skipIf(isWindows)("rm with an operand that fails inside its walk
       left: ["ro/", "ro/locked/", "ro/locked/f", "ro2/", "ro2/locked/", "ro2/locked/f"],
       order: "rr" + "o".repeat(treeLines("ok").length),
       out: [...treeLines("ok"), denied("ro/locked/f").trimEnd(), denied("ro2/locked/f").trimEnd()].sort(),
+    },
+    // An operand below a directory that denies removal fails at once, and nothing inside it is removed.
+    {
+      line: "rm -rf ok ro/locked/sub",
+      setup: ["ro/locked/sub/f", ...bushy("ok")],
+      locked: ["ro/locked"],
+      left: ["ro/", "ro/locked/", "ro/locked/sub/", "ro/locked/sub/f"],
+      stderr: denied("ro/locked/sub"),
+    },
+    {
+      line: "rm -rf ro/locked/sub ok",
+      setup: ["ro/locked/sub/f", ...bushy("ok")],
+      locked: ["ro/locked"],
+      left: ["ro/", "ro/locked/", "ro/locked/sub/", "ro/locked/sub/f"],
+      stderr: denied("ro/locked/sub"),
+    },
+    {
+      line: "rm -rf ok f0 f1 f2 f3 f4 f5 locked/d",
+      setup: [...bushy("ok"), "f0", "f1", "f2", "f3", "f4", "f5", "locked/d/f"],
+      locked: ["locked"],
+      left: ["locked/", "locked/d/", "locked/d/f"],
+      stderr: denied("locked/d"),
+    },
+    // Two operands that fail inside their walks, the first one deeper, and one that is missing.
+    {
+      line: "rm -r ro2 ro missing",
+      setup: ["ro/locked/f", "ro2/sub/locked/f"],
+      locked: ["ro/locked", "ro2/sub/locked"],
+      left: ["ro/", "ro/locked/", "ro/locked/f", "ro2/", "ro2/sub/", "ro2/sub/locked/", "ro2/sub/locked/f"],
+      stderr: denied("ro2/sub/locked/f") + denied("ro/locked/f") + missing("missing"),
     },
     {
       // One operand that lists what it removed and then fails.

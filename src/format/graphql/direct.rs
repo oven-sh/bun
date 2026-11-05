@@ -17,6 +17,7 @@
 //!
 //! The grammar is `parser.rs`'s and the rules are `printer.rs`'s. Anything accepted here must be accepted there.
 
+use super::lines::Lines;
 use super::parser::{self, Tree};
 use super::printer::{Builder, write_string_with_escapes};
 use super::tokens::{Kind, NOT_ON_LINES, Token, end_of_comment, scan};
@@ -211,14 +212,26 @@ fn write(
     let len = out.len();
     out.reserve(text.len() + text.len() / 16 + 64);
     let stops = scratch.stops.find(text);
-    let count = scan(text, stops, &mut scratch.tokens);
+    let has_only_spaces = !options.indent_style.is_tab() && !strings::contains_char(text, b'\t');
+    let as_printed_to = match has_only_spaces {
+        true => Lines::new(text, stops, options).end_of_definitions_as_printed(),
+        false => 0,
+    };
+    if as_printed_to == text.len() {
+        out.extend_from_slice(text);
+        return !crate::is_too_long(out.len()) || {
+            out.truncate(len);
+            false
+        };
+    }
+    let count = scan(text, stops, as_printed_to, &mut scratch.tokens);
     let mut direct = Direct {
         text,
         options,
         width: options.line_width.value() as usize,
         tab_width: options.indent_width.value() as usize,
         use_tabs: options.indent_style.is_tab(),
-        has_only_spaces: !options.indent_style.is_tab() && !strings::contains_char(text, b'\t'),
+        has_only_spaces,
         bracket_spacing: options.bracket_spacing.value(),
         measures_like_prettier: !options.flavor.is_oxfmt(),
         can_print_definitions,
@@ -251,7 +264,8 @@ fn write(
         attached: &mut scratch.attached,
         document: &mut scratch.document,
     };
-    let is_done = direct.document().is_ok() && !crate::is_too_long(direct.printer.out.len());
+    let is_done =
+        direct.document(as_printed_to).is_ok() && !crate::is_too_long(direct.printer.out.len());
     if !is_done {
         out.truncate(len);
     }
@@ -915,17 +929,25 @@ impl<'t> Direct<'t, '_> {
 
     // ───────────────────────────── the grammar ─────────────────────────────
 
-    fn document(&mut self) -> Result {
+    /// The tokens start behind a definition that ends at `as_printed_to`, up to which the text is printed as it's
+    /// written. At the start of the text if that's 0.
+    fn document(&mut self, as_printed_to: usize) -> Result {
         self.load_token();
-        self.comments_before_first_item(false)?;
+        let mut follows_definition = as_printed_to > 0;
+        match follows_definition {
+            true => (self.last_end, self.run_end) = (as_printed_to as u32, as_printed_to),
+            false => self.comments_before_first_item(false)?,
+        }
         loop {
-            let mark = self.mark();
-            match self.definition() {
-                Ok(()) => {}
-                Err(Refusal::Text) => return Err(Refusal::Text),
-                Err(_) => {
-                    self.reset(&mark);
-                    self.print_definition()?;
+            if !std::mem::take(&mut follows_definition) {
+                let mark = self.mark();
+                match self.definition() {
+                    Ok(()) => {}
+                    Err(Refusal::Text) => return Err(Refusal::Text),
+                    Err(_) => {
+                        self.reset(&mark);
+                        self.print_definition()?;
+                    }
                 }
             }
             let is_last = self.is(Kind::End);

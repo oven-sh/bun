@@ -11,6 +11,7 @@
 mod comments;
 mod direct;
 pub(crate) mod embed;
+mod lines;
 mod parser;
 mod printer;
 mod range;

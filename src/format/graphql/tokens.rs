@@ -123,7 +123,7 @@ fn end_of_digits(text: &[u8], start: usize) -> Option<usize> {
     }
 }
 
-fn end_of_number(text: &[u8], start: usize) -> Option<usize> {
+pub(super) fn end_of_number(text: &[u8], start: usize) -> Option<usize> {
     let byte = |at: usize| text.get(at).copied();
     let mut at = start;
     if byte(at) == Some(b'-') {
@@ -170,7 +170,11 @@ fn end_of_long_name(stops: ScannerStops<'_>, start: usize) -> usize {
 
 /// Returns the end of the block string at `start`, and its [`Token::indentation`].
 #[inline(never)]
-fn end_of_block_string(text: &[u8], stops: ScannerStops<'_>, start: usize) -> Option<(usize, u16)> {
+pub(super) fn end_of_block_string(
+    text: &[u8],
+    stops: ScannerStops<'_>,
+    start: usize,
+) -> Option<(usize, u16)> {
     let content_start = start + 3;
     let mut is_on_lines = true;
     // Of the lines that are more than white space, behind the first line: how far the one is indented that's indented
@@ -265,10 +269,15 @@ fn long_token(
 /// The number of bytes that a word of a bitmap stands for.
 const WORD: usize = 64;
 
-/// Writes the tokens of `text` to the start of `tokens`, comments among them, and returns their number. The last one is
-/// [`Kind::End`]. `stops` are those of `text`, which is shorter than 4 GB.
+/// Writes the tokens of `text` from `from` on, where no token goes on, to the start of `tokens`, comments among them, and
+/// returns their number. The last one is [`Kind::End`]. `stops` are those of `text`, which is shorter than 4 GB.
 #[inline(never)]
-pub(super) fn scan(text: &[u8], stops: ScannerStops<'_>, tokens: &mut Vec<Token>) -> usize {
+pub(super) fn scan(
+    text: &[u8],
+    stops: ScannerStops<'_>,
+    from: usize,
+    tokens: &mut Vec<Token>,
+) -> usize {
     let word = |plane: &[u8], index: usize| {
         plane
             .get(index * 8..index * 8 + 8)
@@ -283,14 +292,15 @@ pub(super) fn scan(text: &[u8], stops: ScannerStops<'_>, tokens: &mut Vec<Token>
     // To `after_name` a `$` is part of a name. `in_string` stops at it, and at nothing else in a name.
     let not_name_at = |index: usize| word(after_name, index) | word(in_string, index);
     let mut count = 0;
-    let mut next_not_name = not_name_at(0);
+    let first_word = from / WORD;
+    let mut next_not_name = not_name_at(first_word);
     // Whether the last byte of the previous word is part of a name.
     let mut follows_name = 0;
     // The end of the last token that's more than a short name or a byte.
-    let mut resume_at = 0;
+    let mut resume_at = from;
     // For `Token::ignored_before`.
     let mut ignored = 0;
-    'words: for index in 0..text.len().div_ceil(WORD) {
+    'words: for index in first_word..text.len().div_ceil(WORD) {
         let not_name = next_not_name;
         next_not_name = not_name_at(index + 1);
         let mut starts = (!not_name & ((not_name << 1) | (follows_name ^ 1)))

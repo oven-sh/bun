@@ -1,5 +1,5 @@
 status: 0
-script: c8471f0a127fa32c
+script: 5185b832a36178ea
 ---
 for_loop True True
 for_loop True True
@@ -7,19 +7,21 @@ for_loop_over_the_call True True
 for_loop_over_the_call True True
 made_elsewhere True True
 made_elsewhere True True
+yield_from True True
+yield_from True True
+keyword True True
+keyword True True
+in_a_comprehension True True
+in_a_comprehension True True
 with_next True True
 with_next True True
 with_list True True
 with_list True True
-yield_from True True
-yield_from True True
 send True True
 send True True
-keyword True True
-keyword True True
 unpacked True True
 unpacked True True
-in_a_comprehension True True
-in_a_comprehension True True
+searched True True
+searched True True
 coroutine True True
 coroutine True True

@@ -1,0 +1,16 @@
+[package]
+name = "bun_format_quick"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+
+[features]
+# Keeps what each stage leaves behind. For tools, never for a build that ships.
+stages = []
+
+[lints]
+workspace = true

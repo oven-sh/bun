@@ -518,6 +518,10 @@ impl Quick {
         };
         // Prettier drops a union or intersection of one type
         if self.lexer.tok != operator {
+            if has_leading_operator {
+                // (for the long way there is a union where it asks what is around a type: `(| typeof a)[b]`, `A<| B>` that does not fit)
+                return Err(self.text_refuse());
+            }
             return Ok(first);
         }
         let list_mark = self.arena.ls_pos;

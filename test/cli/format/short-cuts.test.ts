@@ -3470,6 +3470,8 @@ describe("TypeScript that the long way rejects", () => {
         "if (a < (b = c)) {\n}\n",
         "x = a < b!.c ? d : e;\n",
         "class A extends (B) {}\n",
+        "type A = (| typeof b)[number];\n",
+        "export interface ScrollResponderEvent extends NativeSyntheticEvent<& NativeTouchEvent> {}\n",
         "[{...a as T}!] = x;\n",
         "({ a: <T>{...a as T} } = x);\n",
         "<T>class A { m() { @a class B {} } };\n",

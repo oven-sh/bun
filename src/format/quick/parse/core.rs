@@ -4498,12 +4498,8 @@ impl Quick {
                         }
                         self.list_truncate(list_mark);
                     }
-                    if are_typed
-                        || (maybe_async
-                            && self.lexer.tok == tk::BraceL
-                            && self.parse.typed == TYPED_TS)
-                    {
-                        // they were parameters, or are taken for them, and there is no function
+                    if are_typed {
+                        // they were parameters, and there is no function
                         return Err(self.text_refuse());
                     }
                     if maybe_async && self.parse.typed == TYPED_FLOW {

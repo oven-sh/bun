@@ -416,18 +416,19 @@ pub(crate) fn where_not_printable(v: u64) -> u64 {
     (v | v.wrapping_sub(ONES.wrapping_mul(32)) | v.wrapping_add(ONES)) & TOP_BITS
 }
 
-/// The same for the first byte that is no letter of ASCII, no digit, no `_` and no `$`.
+/// The same for the first byte that is no letter of ASCII.
 /// (x + (0x80 - low)) & !(x + (0x7f - high)) has the top bit set for low <= x <= high, for x below 0x80, without carries.
 #[inline(always)]
-pub(crate) fn where_name_ends(v: u64) -> u64 {
-    let x = v & !TOP_BITS;
-    let lower = x | ONES.wrapping_mul(0x20);
-    let is_part = (lower.wrapping_add(ONES.wrapping_mul(0x1f))
-        & !lower.wrapping_add(ONES.wrapping_mul(0x05)))
-        | (x.wrapping_add(ONES.wrapping_mul(0x50)) & !x.wrapping_add(ONES.wrapping_mul(0x46)))
-        | !(x ^ ONES.wrapping_mul(b'_' as u64)).wrapping_add(ONES.wrapping_mul(0x7f))
-        | !(x ^ ONES.wrapping_mul(b'$' as u64)).wrapping_add(ONES.wrapping_mul(0x7f));
-    !(is_part & !v) & TOP_BITS
+pub(crate) fn where_letters_end(v: u64) -> u64 {
+    let lower = (v & !TOP_BITS) | ONES.wrapping_mul(0x20);
+    !(lower.wrapping_add(ONES.wrapping_mul(0x1f)) & !lower.wrapping_add(ONES.wrapping_mul(0x05)) & !v)
+        & TOP_BITS
+}
+
+/// A digit, `_` or `$`.
+#[inline(always)]
+pub(crate) fn is_digit_or_sign_of_names(c: u8) -> bool {
+    c.is_ascii_digit() || c == b'_' || c == b'$'
 }
 
 /// How many bytes stand before the first one that is marked.
@@ -571,11 +572,19 @@ impl Quick {
     #[inline(always)]
     pub(crate) fn name_end(&self, mut p: i32) -> i32 {
         loop {
-            let ends = where_name_ends(self.t.u64_at(p));
-            if ends != 0 {
-                return p + bytes_before(ends);
+            let v = self.t.u64_at(p);
+            let ends = where_letters_end(v);
+            if ends == 0 {
+                p += 8;
+                continue;
             }
-            p += 8;
+            // most names are letters and no more
+            let bits = ends.trailing_zeros() & !7;
+            p += (bits >> 3) as i32;
+            if !is_digit_or_sign_of_names((v >> bits) as u8) {
+                return p;
+            }
+            p += 1;
         }
     }
 

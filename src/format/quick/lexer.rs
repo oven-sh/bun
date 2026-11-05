@@ -5,7 +5,7 @@ use crate::ast::{F_BLANK, F_BLANK_LINE, F_ESCAPE, F_QUOTE, F_SLOW_TEXT, F_TAIL};
 use crate::id_table::{ID_PART, ID_START};
 use crate::parse::core::TYPED_TS;
 use crate::{
-    Bytes, Quick, R, Words, bytes_before, where_byte_is, where_name_ends, where_not_printable, zeros,
+    Bytes, Quick, R, Words, bytes_before, where_byte_is, where_not_printable, zeros,
 };
 
 pub(crate) struct Lexer {
@@ -941,12 +941,7 @@ impl Quick {
         crate::tally::token(p);
         if (CT.at(c) & C_ASCII_START) != 0 {
             // A name: nearly every second token.
-            let ends = where_name_ends(first);
-            let q = if ends != 0 {
-                p + bytes_before(ends)
-            } else {
-                self.name_end(p + 8)
-            };
+            let q = self.name_end(p + 1);
             let e = self.t.at(q);
             if e < 128 && e != 92 {
                 self.lexer.tok = tk::Name;

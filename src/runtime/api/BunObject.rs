@@ -1022,23 +1022,24 @@ pub(crate) fn bun_validate_import_meta_package_config(
         ) {
             return Ok(JSValue::UNDEFINED);
         }
-        let vm = global.bun_vm_ptr();
-        // SAFETY: the resolver belongs to the live VM on its JS thread.
-        let resolver = unsafe { &raw mut (*vm).transpiler.resolver };
-        let mut log = bun_ast::Log::default();
-        // SAFETY: the VM and local log outlive the guard; it drops before the log.
-        let _log_scope = unsafe {
-            bun_resolver::Resolver::scoped_log(resolver, std::ptr::NonNull::from(&mut log))
+        let error = {
+            let mut log = bun_ast::Log::default();
+            let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+            let previous_log = resolver.log;
+            let mut scope = scopeguard::guard((resolver, &mut log), |(resolver, _log)| {
+                resolver.log = previous_log;
+            });
+            let (resolver, log) = &mut *scope;
+            resolver.log = std::ptr::NonNull::from(&mut **log);
+            let mut realpath_buffer = bun_paths::path_buffer_pool::get();
+            let selected_path = if resolver.opts.preserve_symlinks {
+                path.slice()
+            } else {
+                bun_sys::realpath(&path_z, &mut realpath_buffer).unwrap_or_else(|_| path.slice())
+            };
+            resolver.node_package_scope_error(selected_path, true)
         };
-        // SAFETY: the live VM resolver is exclusively used on its JS thread.
-        let resolver = unsafe { &mut *resolver };
-        let mut realpath_buffer = bun_paths::path_buffer_pool::get();
-        let selected_path = if resolver.opts.preserve_symlinks {
-            path.slice()
-        } else {
-            bun_sys::realpath(&path_z, &mut realpath_buffer).unwrap_or_else(|_| path.slice())
-        };
-        if let Some(error) = resolver.node_package_scope_error(selected_path, true) {
+        if let Some(error) = error {
             let error = jsc::ResolveMessage::from_node_module_error(global, &error, true, b"", b"");
             return Err(global.throw_value(error));
         }

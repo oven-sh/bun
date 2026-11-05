@@ -1987,9 +1987,29 @@ impl<'a> Scanner<'_, 'a> {
             self.put_end_tag_at(name, words.close, end);
             return Item::Ends(end);
         }
+        self.put_words_below_tag(start, element, width, open_end, words, end, room);
+        Item::Ends(end)
+    }
+
+    /// Writes such an element where it does not fit on a line: the words are on lines of their own. `room` is how many
+    /// columns there are for the start tag. Returns whether the end tag is `>` on a line of its own.
+    fn put_words_below_tag(
+        &mut self,
+        start: usize,
+        element: Element<'_>,
+        width: usize,
+        open_end: usize,
+        words: Words,
+        end: usize,
+        room: usize,
+    ) -> bool {
+        let (name, level) = (element.name, self.siblings.level);
+        // White space at the ends of the text counts in an inline element. Where there is none, none can be added, so
+        // the line breaks are in the tags.
+        let is_inline = element.display == Display::Inline;
         let (hugs_start, hugs_end) = (
-            is_inline && !has_space_in_front,
-            is_inline && !has_space_behind,
+            is_inline && words.start == open_end,
+            is_inline && words.end == words.close,
         );
         let is_broken = !self.attributes.is_empty() && width + usize::from(!hugs_start) > room;
         match hugs_start {
@@ -2017,7 +2037,7 @@ impl<'a> Scanner<'_, 'a> {
             self.put_line(level);
             self.put_end_tag_at(name, words.close, end);
         }
-        Item::Ends(end)
+        hugs_end
     }
 
     /// An element with texts and small elements in it and no line break that is forced between them. Its start tag starts
@@ -2554,15 +2574,34 @@ impl<'a> Scanner<'_, 'a> {
             }
             has_blank_to_write = false;
             fits = fits || column.saturating_add(needed) <= line_width;
-            if !fits && column.saturating_add(piece.width + own_suffix) > line_width {
-                return None;
+            let is_next_to_word = next.is_some_and(|it| !it.has_space_before);
+            // There is no line between `/>` and a word.
+            let is_broken = !fits
+                && ((piece.is_void && is_next_to_word)
+                    || column.saturating_add(piece.width + own_suffix) > line_width);
+            if is_broken {
+                // The word behind it prints the `>` of its end tag.
+                let fits_without_end = !piece.is_void
+                    && is_next_to_word
+                    && column.saturating_add(piece.width) <= line_width + 1;
+                let starts_line = match previous {
+                    Some(_) => piece.has_space_before && column == indentation,
+                    None => true,
+                };
+                if fits_without_end || !starts_line || own_suffix > 0 {
+                    return None;
+                }
+                column = self.put_broken_piece(piece, level, column, parent, is_next_to_word)?;
+            } else {
+                self.put_piece(index, parent)?;
+                column += piece.width;
             }
-            self.put_piece(index, parent)?;
-            column += piece.width;
             let Some(next) = next else {
                 continue;
             };
             match (fits, next.has_space_before) {
+                // What ends it is on a line of its own, in front of the word.
+                (false, false) if is_broken => {}
                 (true, false) => {}
                 (true, true) => {
                     column += 1;
@@ -2588,6 +2627,66 @@ impl<'a> Scanner<'_, 'a> {
         }
         self.ends_in_text = self.pieces.last().is_some_and(|it| it.ends_in_text);
         Some(())
+    }
+
+    /// Writes `piece`, an element that does not fit on a line, from `column` of a line at `level` on. Returns the column
+    /// behind it. `None` if the layout is not known.
+    #[cold]
+    #[inline(never)]
+    fn put_broken_piece(
+        &mut self,
+        piece: Piece,
+        level: usize,
+        column: usize,
+        parent: (&'static TagDefinition, bool),
+        is_next_to_word: bool,
+    ) -> Option<usize> {
+        // A tag is read and written for the level of the siblings.
+        let outer = std::mem::replace(&mut self.siblings.level, level);
+        let column = self.put_broken_sibling(piece, column, parent, is_next_to_word);
+        self.siblings.level = outer;
+        column
+    }
+
+    fn put_broken_sibling(
+        &mut self,
+        piece: Piece,
+        column: usize,
+        parent: (&'static TagDefinition, bool),
+        is_next_to_word: bool,
+    ) -> Option<usize> {
+        let (start, level) = (piece.start, self.siblings.level);
+        let element = self.element_at(start, parent)?;
+        let Element { name, name_end, .. } = element;
+        let (at, width) = self.read_tag(name, name_end, name_end - start, true)?;
+        let indentation = level * self.settings.indent_width;
+        if piece.is_void {
+            if self.attributes.is_empty() {
+                return None;
+            }
+            self.put_tag(start, name_end, true);
+            self.put_line(level);
+            self.out.put(b"/>");
+            self.siblings.has_broken_void_tag = true;
+            return Some(indentation + 2);
+        }
+        let open_end = at + 1;
+        let words = self.words(self.skip_space(open_end).0, level + 1)?;
+        // With white space in front of an end tag whose `>` the next word prints, there is a blank.
+        if self.end_tag(words.close, name, element.key) != Some(piece.end)
+            || (is_next_to_word && words.end != words.close)
+            || element.display != Display::Inline
+        {
+            return None;
+        }
+        let room = self.settings.line_width.saturating_sub(column);
+        Some(
+            match self.put_words_below_tag(start, element, width, open_end, words, piece.end, room)
+            {
+                true => indentation + 1,
+                false => indentation + name.len() + 3,
+            },
+        )
     }
 
     /// The word that starts at `start`: writes it. Returns where it ends, and how many bytes it is longer than it is
@@ -2817,7 +2916,9 @@ impl<'a> Scanner<'_, 'a> {
         let is_block = display.is_block_like()
             || self.settings.sensitivity == HtmlWhitespaceSensitivity::Ignore;
         let written_from = self.out.len();
-        let (mut at, width) = self.read_tag(name, to, to - start, false)?;
+        // A line break in a value breaks the tag.
+        let (mut at, width) =
+            (self.read_tag(name, to, to - start, true)).filter(|(_, width)| *width < TOO_WIDE)?;
         self.put_tag(start, to, false);
         self.ends_in_text = false;
         if self.at(at) == b'/' || definition.is_void {
@@ -2839,9 +2940,7 @@ impl<'a> Scanner<'_, 'a> {
         let (mut words, mut has_inner_space) = (0, false);
         loop {
             let space_start = at;
-            while matches!(self.at(at), b' ' | b'\t') {
-                at += 1;
-            }
+            at = self.skip_space(at).0;
             let has_space = at > space_start;
             has_inner_space |= has_space;
             if let Some(end) = self.end_tag(at, name, key) {

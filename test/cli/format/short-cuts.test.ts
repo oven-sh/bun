@@ -2490,6 +2490,36 @@ describe.skipIf(!hasFlag)("HTML", () => {
     `<p>a</p>\n<img ${attributes} />\n`,
     `<p>a</p>\n<img ${attributes} />`,
     `a\n<img\n  ${attributes.replaceAll(" ", "\n  ")}\n/>\nb\n`,
+    // An element among words that does not fit on a line, so it breaks in itself. The line breaks are in its tags where
+    // there is no white space.
+    ...[40, 62, 66, 68, 70, 74].flatMap(length => {
+      const href = "h".repeat(length);
+      return [
+        ...["text", words, " text ", "text ", "&lt;x&gt; é 日本"].flatMap(inner =>
+          ["", `${full} `, "(", "a\n  "].flatMap(before =>
+            ["", ".", ` ${full}`, ", b c", "\n  b", "<b>c</b>"].map(
+              after => `<p>\n  ${before}<a href="${href}">${inner}</a>${after}\n</p>\n`,
+            ),
+          ),
+        ),
+        ...["", `${full} `, "a"].flatMap(before =>
+          ["", " b", `b ${full}`, "\n  b", "<b>c</b>"].flatMap(after => [
+            `<span>\n  ${before}<img class="${href}" width="24" alt="" />${after}\n</span>\n`,
+            `<span>${before}<img class="${href}" width="24" alt="" />${after}</span>\n`,
+            `<div>\n  <p>x</p>\n  ${before}<img class="${href}" width="24" alt="" />${after}\n  <p>y</p>\n</div>\n`,
+            `<span>\n  ${before}<img class="${href}" width="24" alt="" />${after}\n  <b></b></span>\n`,
+          ]),
+        ),
+        `<p>\n  a <a href="${href}" target="_blank" rel="license noopener" class="one two three">MIT</a>, docs\n  <code class="${href}">&lt;x&gt;</code>.\n</p>\n`,
+        `<p>\n  a\n  <a\n    href="${href}"\n    target="_blank"\n    >MIT</a\n  >, docs\n  <code class="${href}"\n    >&lt;x&gt;</code\n  >.\n</p>\n`,
+        `<ul>\n  <li>\n    <del>Deleted</del> text should use\n    <code class="${href}"\n      >&lt;del&gt;</code\n    >\n    and <ins>inserted</ins> text\n  </li>\n</ul>\n`,
+        `<p>\n  a <button class="${href}">text</button>. <select class="${href}"><option>b</option></select> c\n</p>\n`,
+        `<p>a <a href="${href}">text</a>.</p>\n<p><a href="${href}">text</a>.</p>\n<p>a <a href="${href}">text</a></p>\n`,
+        `<span>a <a href="${href}">text</a>.</span>\n<span><a href="${href}">text</a>.</span>\n<span>a <a href="${href}">text</a></span>\n`,
+        `<p>\n  a <a href="${href}\n">text</a>. <a\n  href="b">c\n  d</a\n  > e\n</p>\n`,
+        `<p>\n  a <br class="${href}" />b <br />${href}${href} <wbr class="${href}">c\n</p>\n`,
+      ];
+    }),
     // Lines in an element in which white space counts.
     ...["pre", "textarea", "listing", "plaintext", "title", "xmp"].flatMap(name =>
       [

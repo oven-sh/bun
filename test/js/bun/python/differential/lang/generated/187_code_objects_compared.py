@@ -14,6 +14,14 @@ try: SOURCES = (
     'async def f():\n    async with a as b:\n        async for c in d:\n            yield c\n',
     'try:\n    a\nexcept* E as e:\n    b\nfinally:\n    c\n',
     'match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n',
+    'f(a=1)',
+    'f(a=x, b=y)',
+    'f(1, *a, b=1)',
+    'f(**d, e=2)',
+    'o.m(a=1)',
+    'class C(B, metaclass=M, k=1): pass',
+    'def g(*, k=1): pass',
+    "f(a=1)\ng(a=2)\nx = ('a',)\n",
 )
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: SOURCES = ( 'x = 5', 'if True:\\n pass\\n', 'for n in [1, 2, 3]:\\n prin...")
 try:

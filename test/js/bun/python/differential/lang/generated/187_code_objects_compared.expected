@@ -1,6 +1,6 @@
 status: 0
-script: a19415b9f79d8a1e
-source: 065eba73272b946d
+script: 6bb89a3e72840cc6
+source: 8d92790bb89cf545
 ---
 a == b [source='x = 5'] => True
 a == c [source='x = 5'] => True
@@ -92,6 +92,78 @@ list(a.co_positions()) == list(b.co_positions()) [source='match a:\n    case [1,
 a.co_consts == b.co_consts [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
 a.co_names == b.co_names [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
 list(a.co_lines()) == list(b.co_lines()) [source='match a:\n    case [1, *b] if c:\n        d\n    case {"k": v}:\n        e\n'] => True
+a == b [source='f(a=1)'] => True
+a == c [source='f(a=1)'] => True
+a != b [source='f(a=1)'] => False
+hash(a) == hash(b) [source='f(a=1)'] => True
+hash(a) == hash(c) [source='f(a=1)'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='f(a=1)'] => True
+a.co_consts == b.co_consts [source='f(a=1)'] => True
+a.co_names == b.co_names [source='f(a=1)'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='f(a=1)'] => True
+a == b [source='f(a=x, b=y)'] => True
+a == c [source='f(a=x, b=y)'] => True
+a != b [source='f(a=x, b=y)'] => False
+hash(a) == hash(b) [source='f(a=x, b=y)'] => True
+hash(a) == hash(c) [source='f(a=x, b=y)'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='f(a=x, b=y)'] => True
+a.co_consts == b.co_consts [source='f(a=x, b=y)'] => True
+a.co_names == b.co_names [source='f(a=x, b=y)'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='f(a=x, b=y)'] => True
+a == b [source='f(1, *a, b=1)'] => True
+a == c [source='f(1, *a, b=1)'] => True
+a != b [source='f(1, *a, b=1)'] => False
+hash(a) == hash(b) [source='f(1, *a, b=1)'] => True
+hash(a) == hash(c) [source='f(1, *a, b=1)'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='f(1, *a, b=1)'] => True
+a.co_consts == b.co_consts [source='f(1, *a, b=1)'] => True
+a.co_names == b.co_names [source='f(1, *a, b=1)'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='f(1, *a, b=1)'] => True
+a == b [source='f(**d, e=2)'] => True
+a == c [source='f(**d, e=2)'] => True
+a != b [source='f(**d, e=2)'] => False
+hash(a) == hash(b) [source='f(**d, e=2)'] => True
+hash(a) == hash(c) [source='f(**d, e=2)'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='f(**d, e=2)'] => True
+a.co_consts == b.co_consts [source='f(**d, e=2)'] => True
+a.co_names == b.co_names [source='f(**d, e=2)'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='f(**d, e=2)'] => True
+a == b [source='o.m(a=1)'] => True
+a == c [source='o.m(a=1)'] => True
+a != b [source='o.m(a=1)'] => False
+hash(a) == hash(b) [source='o.m(a=1)'] => True
+hash(a) == hash(c) [source='o.m(a=1)'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='o.m(a=1)'] => True
+a.co_consts == b.co_consts [source='o.m(a=1)'] => True
+a.co_names == b.co_names [source='o.m(a=1)'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='o.m(a=1)'] => True
+a == b [source='class C(B, metaclass=M, k=1): pass'] => True
+a == c [source='class C(B, metaclass=M, k=1): pass'] => True
+a != b [source='class C(B, metaclass=M, k=1): pass'] => False
+hash(a) == hash(b) [source='class C(B, metaclass=M, k=1): pass'] => True
+hash(a) == hash(c) [source='class C(B, metaclass=M, k=1): pass'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='class C(B, metaclass=M, k=1): pass'] => True
+a.co_consts == b.co_consts [source='class C(B, metaclass=M, k=1): pass'] => True
+a.co_names == b.co_names [source='class C(B, metaclass=M, k=1): pass'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='class C(B, metaclass=M, k=1): pass'] => True
+a == b [source='def g(*, k=1): pass'] => True
+a == c [source='def g(*, k=1): pass'] => True
+a != b [source='def g(*, k=1): pass'] => False
+hash(a) == hash(b) [source='def g(*, k=1): pass'] => True
+hash(a) == hash(c) [source='def g(*, k=1): pass'] => True
+list(a.co_positions()) == list(b.co_positions()) [source='def g(*, k=1): pass'] => True
+a.co_consts == b.co_consts [source='def g(*, k=1): pass'] => True
+a.co_names == b.co_names [source='def g(*, k=1): pass'] => True
+list(a.co_lines()) == list(b.co_lines()) [source='def g(*, k=1): pass'] => True
+a == b [source="f(a=1)\ng(a=2)\nx = ('a',)\n"] => True
+a == c [source="f(a=1)\ng(a=2)\nx = ('a',)\n"] => True
+a != b [source="f(a=1)\ng(a=2)\nx = ('a',)\n"] => False
+hash(a) == hash(b) [source="f(a=1)\ng(a=2)\nx = ('a',)\n"] => True
+hash(a) == hash(c) [source="f(a=1)\ng(a=2)\nx = ('a',)\n"] => True
+list(a.co_positions()) == list(b.co_positions()) [source="f(a=1)\ng(a=2)\nx = ('a',)\n"] => True
+a.co_consts == b.co_consts [source="f(a=1)\ng(a=2)\nx = ('a',)\n"] => True
+a.co_names == b.co_names [source="f(a=1)\ng(a=2)\nx = ('a',)\n"] => True
+list(a.co_lines()) == list(b.co_lines()) [source="f(a=1)\ng(a=2)\nx = ('a',)\n"] => True
 constants same('1', '1.0') => False
 same('1', 'True') => False
 same('0.0', '-0.0') => False

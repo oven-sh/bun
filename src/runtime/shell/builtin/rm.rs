@@ -959,13 +959,19 @@ impl ShellRmTask {
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, DirTask::path(dir_task)) };
         match kind_hint {
             EntryKindHint::Idk => {
-                // POSIX: an operand that exists and whose last component is `.` or `..` is refused.
+                // POSIX: a `.` or `..` operand is refused. One lstat decides, and nothing resolves the operand again.
                 if self.opts.recursive
                     && matches!(bun_paths::basename(path.as_bytes()), b"." | b"..")
-                    && shell_lstatat(self.cwd, path).is_ok()
                 {
-                    return Err(bun_sys::Error::from_code(E::EINVAL, bun_sys::Tag::rmdir)
-                        .with_path(path.as_bytes()));
+                    return match shell_lstatat(self.cwd, path) {
+                        Ok(_) => Err(bun_sys::Error::from_code(E::EINVAL, bun_sys::Tag::rmdir)
+                            .with_path(path.as_bytes())),
+                        Err(e) if self.opts.force && e.get_errno() == E::ENOENT => {
+                            self.verbose_deleted(dir_task, path.as_bytes())?;
+                            Ok(false)
+                        }
+                        Err(e) => Err(self.error_with_path(&e, path.as_bytes())),
+                    };
                 }
                 let mut vtable = RemoveFileVTable {
                     task: self,

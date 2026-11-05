@@ -1,0 +1,15 @@
+let a: abstract /* c */ new () => void;
+let b: abstract new /* c */ () => void;
+let c: abstract // c
+new () => void;
+let d: (abstract /* c */ new () => void) | (new () => void);
+interface E {
+  [f] /* c */ (): void;
+  g /* c */ (): void;
+  <T>
+  // prettier-ignore
+  (h: T): T;
+}
+let i: new <T>
+// prettier-ignore
+(j: T) => T;

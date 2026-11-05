@@ -1,0 +1,28 @@
+# process.versions is read and nobody takes the value. process adds the member where it is first read, and the value whose keys are listed could be process:
+# an InitializeBuiltin stands where the read stood. Nothing is read by name, and the value is not fetched.
+# FORM: AsRead
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="versions"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v0 key="argv"
+    v4 = Integer integer=2
+    v5 = ElemGet v3, v4
+    v6 = ElemGet v2, v5
+    v7 = Builtin builtin=Reflect
+    v8 = Builtin builtin=ReflectOwnKeys
+    v9 = Call v8, v7, v6
+    Return v9
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: key="versions"
+# CHECK-NOT: GetBuiltinValue builtin=ProcessVersions
+# CHECK: InitializeBuiltin builtin=ProcessVersions
+# CHECK-NOT: key="versions"
+# CHECK-NOT: GetBuiltinValue builtin=ProcessVersions

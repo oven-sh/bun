@@ -50,9 +50,7 @@ The `verify` function detects the algorithm from the input hash, whether PHC- or
 ```ts
 const password = "super-secure-pa$$word";
 
-const hash = await Bun.password.hash(password, {
-  /* config */
-});
+const hash = await Bun.password.hash(password, {/* config */});
 
 const isMatch = await Bun.password.verify(password, hash);
 // => true
@@ -63,9 +61,7 @@ Synchronous versions of all functions are also available. These functions are co
 ```ts
 const password = "super-secure-pa$$word";
 
-const hash = Bun.password.hashSync(password, {
-  /* config */
-});
+const hash = Bun.password.hashSync(password, {/* config */});
 
 const isMatch = Bun.password.verifySync(password, hash);
 // => true

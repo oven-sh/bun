@@ -150,8 +150,8 @@ exports[`bun <file.md> nested code span inside bold keeps outer bold 1`] = `
 `;
 
 exports[`bun <file.md> renders mixed inline styles with autolinks 1`] = `
-"Check \x1B[1m\x1B[34m\x1B[4mhttps://bun.com\x1B[24m\x1B[39m\x1B[1m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[1m\x1B[22m and \x1B[34m\x1B[4mme@example.com\x1B[24m\x1B[39m\x1B[2m (
-mailto:me@example.com\x1B[2m)\x1B[39m\x1B[22m!\x1B[0m
+"Check \x1B[1m\x1B[34m\x1B[4mhttps://bun.com\x1B[24m\x1B[39m\x1B[1m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[1m\x1B[22m and
+\x1B[34m\x1B[4mme@example.com\x1B[24m\x1B[39m\x1B[2m (mailto:me@example.com\x1B[2m)\x1B[39m\x1B[22m!\x1B[0m
 "
 `;
 
@@ -187,10 +187,10 @@ exports[`bun <file.md> renders .markdown extension too 1`] = `
 `;
 
 exports[`bun <file.md> wraps inline code spans within COLUMNS, never mid-word 1`] = `
-"After modifying \x1B[48;5;236m\x1B[38;5;215mcoreBeeps.ts\x1B[39m\x1B[49m, \x1B[48;5;236m\x1B[38;5;215mcontrolBoops.ts\x1B[39m\x1B[49m
-, or \x1B[48;5;236m\x1B[38;5;215mtoolBoops.ts\x1B[39m\x1B[49m, run \x1B[48;5;236m\x1B[38;5;215mbun run build:boop\x1B[39m\x1B[49m to
-regenerate. \x1B[1mDo not edit \x1B[48;5;236m\x1B[38;5;215m*.generated.ts\x1B[39m\x1B[49m\x1B[1m files
-directly.\x1B[22m\x1B[0m
+"After modifying \x1B[48;5;236m\x1B[38;5;215mcoreBeeps.ts\x1B[39m\x1B[49m,
+\x1B[48;5;236m\x1B[38;5;215mcontrolBoops.ts\x1B[39m\x1B[49m, or \x1B[48;5;236m\x1B[38;5;215mtoolBoops.ts\x1B[39m\x1B[49m, run
+\x1B[48;5;236m\x1B[38;5;215mbun run build:boop\x1B[39m\x1B[49m to regenerate. \x1B[1mDo not edit
+\x1B[48;5;236m\x1B[38;5;215m*.generated.ts\x1B[39m\x1B[49m\x1B[1m files directly.\x1B[22m\x1B[0m
 "
 `;
 

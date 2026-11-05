@@ -27,8 +27,5 @@ test("Object.setPrototypeOf works on globalThis", () => {
 
   Object.setPrototypeOf(globalThis, orig);
 
-  expect(
-    // @ts-expect-error
-    globalThis.a,
-  ).toBeUndefined();
+  expect(globalThis.a).toBeUndefined();
 });

@@ -1,0 +1,20 @@
+// A file of the program lies under another tsconfig.json, with aliases and a baseUrl of its own.
+const settled = () => new Promise(resolve => setTimeout(resolve, 1));
+console.log("# alias-of-the-other-package");
+await import("./alias-of-the-other-package/app/main.ts");
+await settled();
+console.log("# same-alias-in-both-packages");
+await import("./same-alias-in-both-packages/app/main.ts");
+await settled();
+console.log("# base-url-and-another-ending");
+await import("./base-url-and-another-ending/app/main.ts");
+await settled();
+console.log("# type-import-through-inherited-paths");
+await import("./type-import-through-inherited-paths/app/main.ts");
+await settled();
+console.log("# type-import-through-the-base-url");
+await import("./type-import-through-the-base-url/app/main.ts");
+await settled();
+console.log("# type-import-through-inherited-base-url");
+await import("./type-import-through-inherited-base-url/app/main.ts");
+await settled();

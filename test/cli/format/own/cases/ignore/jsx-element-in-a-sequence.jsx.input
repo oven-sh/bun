@@ -1,0 +1,3 @@
+<a /> /* prettier-ignore */ , // c
+<b />;
+(/* prettier-ignore */ <a   />, <b />);

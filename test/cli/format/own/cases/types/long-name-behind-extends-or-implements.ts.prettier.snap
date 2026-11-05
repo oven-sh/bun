@@ -1,0 +1,47 @@
+------------------
+{ printWidth: 80 }
+------------------
+export interface TypeMapCb<
+  GlobalOmitOptionsssssssssssssssssssss = {},
+> extends runtime.Types.Utils.Fn<
+  { extArgs: runtime.Types.Extensions.InternalArgs },
+  runtime.Types.Utils.Record<string, any>
+> {}
+class A<
+  GlobalOmitOptionsssssssssssssssssssssssssssssssssssss = {},
+> implements runtime.Types.Utils.Fnnnnnnn<
+  { extArgs: runtime.Types.Extensions.InternalArgs },
+  runtime.Types.Utils.Record<string, any>
+> {}
+interface B
+  extends aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccc {}
+interface C
+  extends
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccc,
+    d.e {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export interface TypeMapCb<GlobalOmitOptionsssssssssssssssssssss = {}> extends runtime.Types.Utils
+  .Fn<
+  { extArgs: runtime.Types.Extensions.InternalArgs },
+  runtime.Types.Utils.Record<string, any>
+> {}
+class A<GlobalOmitOptionsssssssssssssssssssssssssssssssssssss = {}> implements runtime.Types.Utils
+  .Fnnnnnnn<
+  { extArgs: runtime.Types.Extensions.InternalArgs },
+  runtime.Types.Utils.Record<string, any>
+> {}
+interface B
+  extends aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    .cccccccccccccccccccc {}
+interface C
+  extends
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      .cccccccccccccccccccc,
+    d.e {}
+
+===================== End =====================

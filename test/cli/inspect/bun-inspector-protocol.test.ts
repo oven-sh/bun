@@ -105,6 +105,8 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
       reportError(new Error("reported"));
       debugger;
       setInterval(() => {}, 60_000);
+      // The reported error ends the process once the entry point has been evaluated, timers or not.
+      await new Promise(() => {});
     `,
     "dep.cjs": `module.exports = 1;`,
   });

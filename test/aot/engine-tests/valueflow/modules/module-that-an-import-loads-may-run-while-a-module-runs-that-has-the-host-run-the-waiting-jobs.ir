@@ -1,0 +1,28 @@
+# main.mjs: import("./c.mjs"); require("bun:jsc").drainMicrotasks(); export var v = 1        c.mjs: import { v } from "./main.mjs"; export var seen = v
+# The call runs the jobs that wait, and one of them evaluates c.mjs, while the body of main.mjs runs: `v` may still be undefined where c.mjs reads it
+# RUN: valueflow-apply
+# CHECK: variable g0 name="v" {{*}}declared={type=undefined|1} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation
+# CHECK-NOT: variable g0 name="v" {{*}}initialization=StoredBeforeEveryRead
+# CHECK-LABEL: function f1 name="c"
+# CHECK: : undefined|1 = GetModuleVariable variable=g0
+
+variable g0 name="v" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="seen" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 exports=[{name="v" variable=g0}]
+module m1 path="/app/c.mjs" displayPath="c.mjs" flags=[KeepsError] body=f1 requests=[{target=m0 completes=true}] exports=[{name="seen" variable=g1}]
+module m2 path="bun:jsc" displayPath="bun:jsc" kind=Runtime exportRule=RuntimeModule runtimeModule=BunJsc
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    v1 = RequireModule module=m2 referrer=m0 specifier="bun:jsc"
+    v2 = PropGet v1 key="drainMicrotasks"
+    v3 = Call v2, v1
+    v4 = Integer integer=1
+    PutModuleVariable v4 variable=g0
+    Return
+}
+function f1 name="c" module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    PutModuleVariable v0 variable=g1
+    Return
+}

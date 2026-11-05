@@ -1,0 +1,57 @@
+# internal/util/inspect   const call = Function.prototype.call; function inspect(value) { return call }  exports = { inspect }
+# main                    printed[Symbol.for("nodejs.util.inspect.custom")] = custom; console.log(printed)
+# The program asks for no module of the library: native code requires the start-up module on its own, so the body of the module is no seen code.
+# Its read names the evaluator all the same and answers it, as the operation `Builtin` does there: what hangs from `Function` is followed. A read is no event.
+# evaluator-called-in-function-of-library-that-only-native-code-enters.ir has the call of an evaluator in such code
+# RUN: valueflow-why values=f1:v1 values=f1:v2 values=f1:v3
+# CHECK: values=f1:v1
+# CHECK: result {{*}} Function
+# CHECK: values=f1:v2
+# CHECK: result {{*}} 1 members: FunctionPrototype
+# CHECK: values=f1:v3
+# CHECK: result {{*}} 1 members: FunctionPrototypeCall
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN-NOT: unseen EvaluatesText
+# UNSEEN: unseen-code no
+# UNSEEN-NEXT: modules-by-name no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal/util/inspect" displayPath="internal/util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f1
+entry module=m0
+variable g0 name="call" module=m1 declared={type=anything} initialization=Undefined
+layout L0 name="Exports" fields=[{key="inspect" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Printed"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject layout=L1
+    v2 = Builtin builtin=SymbolFor
+    v3 = String string="nodejs.util.inspect.custom"
+    v4 = Call v2, -, v3
+    ElemSet v1, v4, v0
+    v6 = Builtin builtin=Console
+    v7 = Builtin builtin=ConsoleLog
+    v8 = Call v7, v6, v1
+    Return
+}
+function f1 name="inspectModule" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Function"
+    v2 = PropGet v1 key="prototype"
+    v3 = PropGet v2 key="call"
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f2
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    Return v6
+}
+function f2 name="inspect" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    Return v1
+}
+function f3 name="custom" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="printed"
+    Return v2
+}

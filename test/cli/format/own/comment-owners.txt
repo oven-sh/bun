@@ -671,6 +671,11 @@ comments/line-comment-behind-the-parenthesis-of-parameters.ts
 344 348 L Identifier 351 364 -
 417 449 T TSTypeParameterDeclaration 392 415 -
 476 480 L Identifier 483 493 -
+comments/member-that-does-not-fit-behind-a-line-comment.js
+4 14 T CallExpression 0 3 -
+141 151 T ObjectPattern 130 138 -
+273 283 T CallExpression 269 272 -
+399 409 T CallExpression 395 398 -
 comments/next-to-the-holes-of-an-array.js
 10 14 L Identifier 26 27 -
 19 23 L Identifier 26 27 -

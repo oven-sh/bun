@@ -235,6 +235,11 @@ struct Printer<'d> {
     /// just as they will when the output is formatted again.
     expanded_group: u32,
     has_empty_line: bool,
+    /// A [`FormatElement::LineSuffixBoundary`] has queued a line break, and itself behind that.
+    is_boundary_pending: bool,
+    /// The length of `out` behind the line break of a [`FormatElement::LineSuffixBoundary`]. The line that starts there
+    /// counts as one with something on it: Prettier's printer, which skips no line break, prints the next one too.
+    after_boundary: usize,
     line_width: usize,
     /// The run being printed.
     elements: Elements<'d>,
@@ -289,6 +294,8 @@ pub(crate) fn print(
         is_trying: false,
         expanded_group: u32::MAX,
         has_empty_line: false,
+        is_boundary_pending: false,
+        after_boundary: usize::MAX,
         line_width: 0,
         elements: Elements::new(Run::of(root), &storage.pool),
         mode: PrintMode::Expanded,
@@ -501,7 +508,21 @@ impl<'d> Printer<'d> {
                 // `document::Tracker` already handled it.
                 FormatElement::ExpandParent => {}
                 FormatElement::LineSuffixBoundary => {
-                    self.flush_line_suffixes(Some(line_break(LineMode::Hard)))
+                    if self.buffers.line_suffixes.is_empty() {
+                        if self.is_boundary_pending {
+                            self.is_boundary_pending = false;
+                            self.after_boundary = self.out.len();
+                        }
+                    } else {
+                        if !self.options.flavor.is_oxfmt() {
+                            self.is_boundary_pending = true;
+                            self.print_next(Interned {
+                                start: self.elements.at().saturating_sub(1),
+                                len: 1,
+                            });
+                        }
+                        self.flush_line_suffixes(Some(line_break(LineMode::Hard)));
+                    }
                 }
                 FormatElement::BestFitting(best_fitting) => {
                     self.print_best_fitting(*best_fitting)?
@@ -1168,7 +1189,8 @@ impl<'d> Printer<'d> {
     #[inline(never)]
     fn has_text_without_width(&self) -> bool {
         let printed = self.out.since(self.start);
-        !matches!(printed.last(), None | Some(b'\n' | b'\r')) && printed != b"\xEF\xBB\xBF"
+        self.out.len() == self.after_boundary
+            || (!matches!(printed.last(), None | Some(b'\n' | b'\r')) && printed != b"\xEF\xBB\xBF")
     }
 }
 

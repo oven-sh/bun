@@ -45,6 +45,8 @@ pub(crate) struct Settings {
     indents_blocks: bool,
     /// How long the front matter of the text is, which the lexer sees as white space.
     front_matter_len: usize,
+    /// Prettier's `parentParser`: the text is code in Markdown. The value of `style` is no code then.
+    has_parent_parser: bool,
 }
 
 impl Settings {
@@ -59,7 +61,8 @@ impl Settings {
             && matches!(parser, Parser::Html | Parser::Vue)
             && !options.bracket_same_line.value()
             && !matches!(options.attribute_position, AttributePosition::Multiline)
-            && !options.is_in_markdown
+            // Where Markdown indents the code, it has to be told which line breaks are in a text.
+            && (!options.is_in_markdown || (options.is_at_margin && parser == Parser::Html))
             && options.html_template_depth == 0;
         is_read.then(|| Settings {
             parser,
@@ -76,6 +79,7 @@ impl Settings {
                 .is_some_and(|path| path.ends_with(b".html") || path.ends_with(b".htm")),
             indents_blocks: options.vue_indent_script_and_style,
             front_matter_len,
+            has_parent_parser: options.is_in_markdown,
         })
     }
 }
@@ -2797,7 +2801,9 @@ impl<'a> Scanner<'_, 'a> {
             b"style" => {
                 return match value {
                     _ if canonical::is_style(value) => Printed::AsWrittenOnOneLine,
-                    [rest @ .., b';'] if canonical::is_style(rest) => {
+                    [rest @ .., b';']
+                        if !self.settings.has_parent_parser && canonical::is_style(rest) =>
+                    {
                         Printed::WithoutSemicolonOnOneLine
                     }
                     _ => Printed::Otherwise,

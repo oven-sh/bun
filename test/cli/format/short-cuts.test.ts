@@ -3554,6 +3554,31 @@ describe("JavaScript and TypeScript in a host", () => {
       "```js\r\nconst a = 1;\r\n```\r\n",
       // Many that aren't, then some that are.
       "```js\nconst  a=1\n```\n\n".repeat(30) + "```js\nconst a = 1;\n```\n\n".repeat(30),
+      // HTML: below the root it is read like a file, but for what is no code in a text with a parent.
+      ...[
+        '<div class="a b">\n  <p>c</p>\n</div>',
+        '<div   class="a  b "><p>c</p></div>',
+        '<p style="color: red">a</p>\n<p style="color: red;">b</p>\n<p style="color:red">c</p>\n<p style=" color : red ; ">d</p>',
+        '<img srcset="a.png 1x, b.png 2x" sizes="(min-width: 1px) 2px, 3px" />\n<iframe allow="a; b"></iframe>\n<a onclick="b( )">c</a>',
+        "<pre>\n  a\n    b\n</pre>\n<textarea>\n c\n</textarea>",
+        "<!-- a\n   b -->\n<p>c</p>",
+        '<p\n  title="a\n  b"\n>\n  c\n</p>',
+        "<script>\n  const  a = `\n  b`\n</script>\n<style>\n  a{color:red}\n</style>",
+        "<script>\n  const a = 1;\n</script>\n<style>\n  a {\n    color: red;\n  }\n</style>",
+        "<!DOCTYPE html>\n<html>\n  <head>\n    <title>a</title>\n  </head>\n  <body>\n    <p>b</p>\n  </body>\n</html>",
+        "<!doctype html>\n<p>a</p>",
+        "---\na: 1\n---\n\n<p>b</p>",
+        `<p>${"word ".repeat(30)}</p>`,
+        "<ul>\n  <li>a</li>\n  <li><b>c</b> d</li>\n</ul>\n\n\n<p>e</p>",
+        "<p>a",
+        "<p>{{ a }}</p>\n<p :b=\"c+d\"></p>",
+      ].flatMap(code => [
+        `\`\`\`html\n${code}\n\`\`\`\n`,
+        `a\n\n\`\`\`html\n${code}\n\`\`\`\n\nb\n`,
+        `- a\n\n  \`\`\`html\n${indented(code, "  ")}\n  \`\`\`\n`,
+        `> \`\`\`html\n${code.replace(/^/gm, "> ")}\n> \`\`\`\n`,
+        `\`\`\`vue\n${code}\n\`\`\`\n`,
+      ]),
     ];
     describe("Markdown", () => expectSame("a.md", texts, options));
     describe("MDX", () =>

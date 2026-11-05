@@ -11,17 +11,17 @@ use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::{Utf8Bytes, strings};
 use bun_node_path::{
-    CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathParsed, RelativePosixLatin1,
+    CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathCharCwd, PathParsed, RelativePosixLatin1,
     basename_posix_latin1, basename_posix_t, basename_windows_t,
     basename_without_suffix_posix_latin1, dirname_posix_latin1, dirname_posix_t, dirname_windows_t,
     extname_posix_latin1, extname_posix_t, extname_windows_t, format_t, is_absolute_posix_t,
     is_absolute_windows_t, is_ascii, is_resolved_ascii_posix, is_tidy_ascii_posix, join_buf_len,
     join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_latin1, normalize_posix_t,
     normalize_windows_t, parse_posix_latin1, parse_posix_t, parse_windows_t, path_size,
-    relative_buf_len, relative_posix_latin1, relative_posix_t, relative_windows_t,
-    resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t, resolve_posix_with_cwd,
-    resolve_windows_t, resolve_windows_with_cwd, to_namespaced_path_buf_len,
-    to_namespaced_path_windows_t,
+    posix_cwd_t, relative_buf_len, relative_posix_latin1, relative_posix_t,
+    relative_posix_with_cwd, relative_windows_with_cwd, resolve_absolute_posix_latin1,
+    resolve_buf_len, resolve_posix_t, resolve_posix_with_cwd, resolve_windows_t,
+    resolve_windows_with_cwd, to_namespaced_path_buf_len, to_namespaced_path_windows_t,
 };
 use bun_paths::MAX_PATH_BYTES;
 
@@ -793,16 +793,56 @@ fn relative_of_absolute_posix<'a>(
     )
 }
 
+enum NativePathError {
+    System(bun_sys::Error),
+    ObservableCwd,
+}
+
+impl From<bun_sys::Error> for NativePathError {
+    fn from(error: bun_sys::Error) -> Self {
+        Self::System(error)
+    }
+}
+
+// The native kernels invoke this only when resolution actually needs cwd.
+#[inline]
+fn native_cwd<'b, const WINDOWS: bool, const CHECK_CWD: bool>(
+    global: &JSGlobalObject,
+    buf: &'b mut [u8],
+) -> Result<&'b mut [u8], NativePathError> {
+    if CHECK_CWD && Process__isCwdObservable(global) {
+        return Err(NativePathError::ObservableCwd);
+    }
+    if WINDOWS {
+        Ok(<u8 as PathCharCwd>::get_cwd(buf)?)
+    } else {
+        Ok(posix_cwd_t(buf)?)
+    }
+}
+
+fn native_path_result<'a, R: Resolved<'a>>(
+    heap: &JsHeap<'a>,
+    result: Result<&[u8], NativePathError>,
+) -> bindgen::Result<'a, Option<R>> {
+    match result {
+        Ok(answer) => heap
+            .create_utf8_string(answer)
+            .map(|text| Some(R::from_text(text))),
+        Err(NativePathError::System(error)) => Ok(Some(R::from_error(heap, error))),
+        Err(NativePathError::ObservableCwd) => Ok(None),
+    }
+}
+
 #[inline(never)]
-fn relative_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
+fn relative_utf8_checked<'a, const WINDOWS: bool, const CHECK_CWD: bool, R: Resolved<'a>>(
     heap: &JsHeap<'a>,
     from: Text<'a>,
     to: Text<'a>,
-) -> bindgen::Result<'a, R> {
+) -> bindgen::Result<'a, Option<R>> {
     let from_view = from.view(heap)?;
     let to_view = to.view(heap)?;
     if from_view.is_empty() && to_view.is_empty() {
-        return Ok(R::from_text(from));
+        return Ok(Some(R::from_text(from)));
     }
     let (from, to) = (from_view.to_utf8(), to_view.to_utf8());
     let (from, to) = (from.slice(), to.slice());
@@ -810,14 +850,30 @@ fn relative_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     let mut scratch = PathScratch::new(heap, buf_len * 3);
     let (buf, rest) = scratch.slice().split_at_mut(buf_len);
     let (from_buf, tmp_buf) = rest.split_at_mut(buf_len);
-    match if WINDOWS {
-        relative_windows_t(from, to, buf, from_buf, tmp_buf)
-    } else {
-        relative_posix_t(from, to, buf, from_buf, tmp_buf)
-    } {
-        Ok(answer) => heap.create_utf8_string(answer).map(R::from_text),
-        Err(error) => Ok(R::from_error(heap, error)),
-    }
+    // SAFETY: the callback reads native state and never runs JavaScript.
+    let global = unsafe { heap.global() };
+    native_path_result(
+        heap,
+        if WINDOWS {
+            relative_windows_with_cwd(from, to, buf, from_buf, tmp_buf, |buf| {
+                native_cwd::<WINDOWS, CHECK_CWD>(global, buf)
+            })
+        } else {
+            relative_posix_with_cwd(from, to, buf, from_buf, tmp_buf, |buf| {
+                native_cwd::<WINDOWS, CHECK_CWD>(global, buf)
+            })
+        },
+    )
+}
+
+#[inline(never)]
+fn relative_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    heap: &JsHeap<'a>,
+    from: Text<'a>,
+    to: Text<'a>,
+) -> bindgen::Result<'a, R> {
+    Ok(relative_utf8_checked::<WINDOWS, false, R>(heap, from, to)?
+        .expect("native cwd does not request a callback"))
 }
 by_form_of_operands!(relative, relative_other, relative_latin1, relative_utf8, <R: Resolved<'a>>(from: Text<'a>, to: Text<'a>) -> R);
 
@@ -863,6 +919,10 @@ fn resolve_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     if matches!(joined.characters(), b"" | b"." | b"./") {
         return Ok(None);
     }
+    // SAFETY: this query only reads native state, without running JavaScript.
+    if Process__isCwdObservable(unsafe { heap.global() }) {
+        return Ok(None);
+    }
     #[cfg(not(windows))]
     {
         let working_directory = bun_node_path::posix_working_directory();
@@ -895,7 +955,7 @@ fn resolve_untidy_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Text<'a> {
 fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     heap: &JsHeap<'a>,
     paths: &'a [JsLocal<'a>],
-) -> bindgen::Result<'a, R> {
+) -> bindgen::Result<'a, Option<R>> {
     // SAFETY: it is passed to what throws, after which this returns, and to what reads the cached working directory.
     let global = unsafe { heap.global() };
     // From the last to the first that is absolute.
@@ -922,27 +982,33 @@ fn resolve_utf8<'a, const WINDOWS: bool, R: Resolved<'a>>(
     if !WINDOWS
         && (parts.is_empty() || (parts.len() == 1 && (parts[0] == b"." || parts[0] == b"./")))
     {
+        if Process__isCwdObservable(global) {
+            return Ok(None);
+        }
         // `process.cwd()`, which throws when `getcwd` fails (for example, a deleted working directory).
         let cwd = crate::jsc::call_zero_is_throw(global, || Process__getDefaultCwd(global))?;
         let Some(cwd) = JsLocal::new(heap, cwd).as_string() else {
             unreachable!("process.cwd() is a string");
         };
-        return Ok(R::from_text(cwd));
+        return Ok(Some(R::from_text(cwd)));
     }
 
     let buf_len = resolve_buf_len(WINDOWS, &parts);
     let mut scratch = PathScratch::new(heap, buf_len * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
-    match if WINDOWS {
-        resolve_windows_t(&parts, buf, buf2)
-    } else {
-        resolve_posix_t(&parts, buf, buf2)
-    } {
-        Ok(answer) => heap.create_utf8_string(answer).map(R::from_text),
-        Err(error) => Ok(R::from_error(heap, error)),
-    }
+    native_path_result(
+        heap,
+        if WINDOWS {
+            resolve_windows_with_cwd::<u8, _, _, false>(&parts, buf, buf2, MAX_PATH_BYTES, |buf| {
+                native_cwd::<WINDOWS, true>(global, buf)
+            })
+        } else {
+            resolve_posix_with_cwd::<u8, _, _, false>(&parts, buf, buf2, MAX_PATH_BYTES, |buf| {
+                native_cwd::<WINDOWS, true>(global, buf)
+            })
+        },
+    )
 }
-by_form_of_operands!(resolve, resolve_other, resolve_latin1, resolve_utf8, <R: Resolved<'a>>(paths: &'a [JsLocal<'a>]) -> R);
 
 fn format<'a, const WINDOWS: bool>(
     cx: &mut JsScope<'a>,
@@ -1270,12 +1336,53 @@ fn resolve_with_scope<'a, const WINDOWS: bool, R: Resolved<'a>>(
     cx: &mut JsScope<'a>,
     paths: &'a [JsLocal<'a>],
 ) -> bindgen::Result<'a, R> {
-    if !Process__isCwdObservable(cx.global()) {
-        return resolve::<WINDOWS, R>(&cx.heap, paths);
+    match resolve_latin1::<WINDOWS, true>(&cx.heap, paths) {
+        Ok(Some(answer)) => Ok(R::from_text(answer)),
+        _ => resolve_other_with_scope::<WINDOWS, R>(cx, paths),
+    }
+}
+
+#[inline(never)]
+fn resolve_other_with_scope<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    cx: &mut JsScope<'a>,
+    paths: &'a [JsLocal<'a>],
+) -> bindgen::Result<'a, R> {
+    if let Some(answer) = resolve_latin1::<WINDOWS, false>(&cx.heap, paths)? {
+        return Ok(R::from_text(answer));
+    }
+    if let Some(answer) = resolve_utf8::<WINDOWS, R>(&cx.heap, paths)? {
+        return Ok(answer);
     }
     let values: SmallVec<[JSValue; FEW]> = paths.iter().map(|path| path.to_js()).collect();
     let value = resolve_observable(cx.global(), WINDOWS, &values)?;
     Ok(R::from_value(&cx.heap, value))
+}
+
+#[inline(always)]
+fn relative_with_scope<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    cx: &mut JsScope<'a>,
+    from: Text<'a>,
+    to: Text<'a>,
+) -> bindgen::Result<'a, R> {
+    match relative_latin1::<WINDOWS, true>(&cx.heap, from, to) {
+        Ok(Some(answer)) => Ok(R::from_text(answer)),
+        _ => relative_other_with_scope::<WINDOWS, R>(cx, from, to),
+    }
+}
+
+#[inline(never)]
+fn relative_other_with_scope<'a, const WINDOWS: bool, R: Resolved<'a>>(
+    cx: &mut JsScope<'a>,
+    from: Text<'a>,
+    to: Text<'a>,
+) -> bindgen::Result<'a, R> {
+    if let Some(answer) = relative_latin1::<WINDOWS, false>(&cx.heap, from, to)? {
+        return Ok(R::from_text(answer));
+    }
+    if let Some(answer) = relative_utf8_checked::<WINDOWS, true, R>(&cx.heap, from, to)? {
+        return Ok(answer);
+    }
+    relative_observable::<WINDOWS, R>(cx, from, to)
 }
 
 #[cold]
@@ -1330,11 +1437,7 @@ pub(crate) fn relative_posix<'a>(
     from: Text<'a>,
     to: Text<'a>,
 ) -> TextResult<'a> {
-    if Process__isCwdObservable(cx.global()) {
-        relative_observable::<false, _>(cx, from, to)
-    } else {
-        relative::<false, _>(&cx.heap, from, to)
-    }
+    relative_with_scope::<false, _>(cx, from, to)
 }
 
 #[inline(always)]
@@ -1343,11 +1446,7 @@ pub(crate) fn relative_win32<'a>(
     from: Text<'a>,
     to: Text<'a>,
 ) -> bindgen::Result<'a, JsLocal<'a>> {
-    if Process__isCwdObservable(cx.global()) {
-        relative_observable::<true, _>(cx, from, to)
-    } else {
-        relative::<true, _>(&cx.heap, from, to)
-    }
+    relative_with_scope::<true, _>(cx, from, to)
 }
 
 #[inline(always)]

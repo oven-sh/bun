@@ -147,7 +147,7 @@ fn memmove<T: Copy>(dst: &mut [T], src: &[T]) {
 
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
-fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
+pub fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     let cwd = get_cwd_t(buf)?;
     let len = cwd.len();
     if len == 0 {
@@ -1746,6 +1746,21 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
     from_buf: &mut [T],
     tmp_buf: &mut [T],
 ) -> MaybeSlice<'a, T> {
+    relative_posix_with_cwd(from, to, buf, from_buf, tmp_buf, posix_cwd_t::<T>)
+}
+
+pub fn relative_posix_with_cwd<'a, T: PathCharCwd, E, F>(
+    from: &[T],
+    to: &[T],
+    buf: &'a mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    E: From<bun_sys::Error>,
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
         return Ok(&[]);
@@ -1753,7 +1768,13 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
 
     // Trim leading forward slashes.
     // Backed by from_buf.
-    let from_orig = resolve_posix_t(&[from], from_buf, tmp_buf)?;
+    let from_orig = resolve_posix_with_cwd::<T, _, _, false>(
+        &[from],
+        from_buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
@@ -1762,7 +1783,13 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
     // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
-            let r = resolve_posix_t(&[to], buf, tmp_buf)?;
+            let r = resolve_posix_with_cwd::<T, _, _, false>(
+                &[to],
+                buf,
+                tmp_buf,
+                MAX_PATH_SIZE_UPPER,
+                &mut get_cwd,
+            )?;
             (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
@@ -1892,13 +1919,34 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     from_buf: &mut [T],
     tmp_buf: &mut [T],
 ) -> MaybeSlice<'a, T> {
+    relative_windows_with_cwd(from, to, buf, from_buf, tmp_buf, get_cwd_t::<T>)
+}
+
+pub fn relative_windows_with_cwd<'a, T: PathCharCwd, E, F>(
+    from: &[T],
+    to: &[T],
+    buf: &'a mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    E: From<bun_sys::Error>,
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
         return Ok(&[]);
     }
 
     // Backed by from_buf.
-    let from_orig = resolve_windows_t(&[from], from_buf, tmp_buf)?;
+    let from_orig = resolve_windows_with_cwd::<T, _, _, false>(
+        &[from],
+        from_buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
@@ -1907,7 +1955,13 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
-            let r = resolve_windows_t(&[to], buf, tmp_buf)?;
+            let r = resolve_windows_with_cwd::<T, _, _, false>(
+                &[to],
+                buf,
+                tmp_buf,
+                MAX_PATH_SIZE_UPPER,
+                &mut get_cwd,
+            )?;
             (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {

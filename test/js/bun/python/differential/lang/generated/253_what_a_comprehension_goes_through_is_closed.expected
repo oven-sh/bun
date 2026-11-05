@@ -1,0 +1,42 @@
+status: 0
+script: 5c7b3e9204dd3e28
+source: 4c67a765b3ec1966
+---
+sum_raises: c sum_raises 0, l sum_raises 1, l sum_raises 2, c <genexpr> 0, l <genexpr> 0, c items 0, l items 1, l items 2, l items 3, r items 3, r <genexpr> 0, c <genexpr> 0, l <genexpr> 0, c items 3, l items 2, l items 3, r items 3, r <genexpr> 0, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c items 3, e items 3, l items 5, r items 5, e sum_raises 2, l sum_raises 3, l sum_raises 4, r sum_raises 4
+loop_is_left: c loop_is_left 0, l loop_is_left 1, c <genexpr> 0, l <genexpr> 0, c items 0, l items 1, l items 2, l items 3, r items 3, r <genexpr> 0, l loop_is_left 2, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c items 3, e items 3, l items 5, r items 5, l loop_is_left 3, r loop_is_left 3
+only_the_first: c only_the_first 0, l only_the_first 1, c <genexpr> 0, l <genexpr> 0, c items 0, l items 1, l items 2, l items 3, r items 3, r <genexpr> 0, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c items 3, e items 3, l items 5, r items 5, l only_the_first 2, r only_the_first 2
+function_returns: c function_returns 0, l function_returns 1, l function_returns 4, c inner 0, l inner 1, c <genexpr> 0, l <genexpr> 0, c items 0, l items 1, l items 2, l items 3, r items 3, r <genexpr> 0, l inner 2, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c items 3, e items 3, l items 5, r items 5, r inner 2, l function_returns 5, r function_returns 5
+body_raises: c body_raises 0, l body_raises 1, l body_raises 2, c <genexpr> 0, l <genexpr> 0, c items 0, l items 1, l items 2, l items 3, r items 3, r <genexpr> 0, l body_raises 3, e body_raises 3, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c items 3, e items 3, l items 5, r items 5, l body_raises 4, l body_raises 5, r body_raises 5
+any_is_decided: c any_is_decided 0, l any_is_decided 1, c <genexpr> 0, l <genexpr> 0, c items 0, l items 1, l items 2, l items 3, r items 3, r <genexpr> 0, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c items 3, e items 3, l items 5, r items 5, l any_is_decided 2, r any_is_decided 2
+one_in_another: c one_in_another 0, l one_in_another 1, c <genexpr> 0, l <genexpr> 0, c <genexpr> 0, l <genexpr> 0, c <genexpr> 0, l <genexpr> 0, c items 0, l items 1, l items 2, l items 3, r items 3, r <genexpr> 0, r <genexpr> 0, r <genexpr> 0, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c items 3, e items 3, l items 5, r items 5, l one_in_another 2, r one_in_another 2
+second_loop: c second_loop 0, l second_loop 1, c <genexpr> 0, l <genexpr> 0, c items 0, l items 1, l items 2, l items 3, r items 3, c items 0, l items 1, l items 2, l items 3, r items 3, r <genexpr> 0, c <genexpr> 0, e <genexpr> 0, c items 3, e items 3, l items 5, r items 5, r <genexpr> 0, c items 3, e items 3, l items 5, r items 5, l second_loop 2, r second_loop 2
+list_comprehension: c list_comprehension 0, l list_comprehension 1, l list_comprehension 2, c items 0, l items 1, l items 2, l items 3, r items 3, c half 0, l half 1, r half 1, l list_comprehension 2, c items 3, l items 2, l items 3, r items 3, c half 0, l half 1, e half 1, r half 1, e list_comprehension 2, c items 3, e items 3, l items 5, r items 5, l list_comprehension 2, l list_comprehension 3, l list_comprehension 4, r list_comprehension 4
+comprehension_with_two_loops: c comprehension_with_two_loops 0, l comprehension_with_two_loops 1, l comprehension_with_two_loops 2, c items 0, l items 1, l items 2, l items 3, r items 3, c items 0, l items 1, l items 2, l items 3, r items 3, c half 0, l half 1, r half 1, l comprehension_with_two_loops 2, c items 3, l items 2, l items 3, r items 3, c half 0, l half 1, e half 1, r half 1, e comprehension_with_two_loops 2, c items 3, e items 3, l items 5, r items 5, c items 3, e items 3, l items 5, r items 5, l comprehension_with_two_loops 2, l comprehension_with_two_loops 3, l comprehension_with_two_loops 4, r comprehension_with_two_loops 4
+closed_by_the_program: c closed_by_the_program 0, l closed_by_the_program 1, l closed_by_the_program 2, c <genexpr> 0, l <genexpr> 0, c items 0, l items 1, l items 2, l items 3, r items 3, r <genexpr> 0, l closed_by_the_program 3, c <genexpr> 0, e <genexpr> 0, r <genexpr> 0, c items 3, e items 3, l items 5, r items 5, l closed_by_the_program 4, r closed_by_the_program 4
+sum_raises: closed it, caught
+loop_is_left: closed it, after the loop
+only_the_first: closed it, 1, after next()
+key_raises: closed it, caught
+function_returns: closed it, 1, after the call
+body_raises: closed it, caught
+any_is_decided: closed it, True, after any()
+all_is_decided: closed it, False, after all()
+list_raises: caught, closed it, collected
+one_in_another: closed it, 1, after next()
+second_loop: closed inner, closed outer, (1, 1), after next()
+list_comprehension: closed it, caught
+set_comprehension: closed it, caught
+dict_comprehension: closed it, caught
+comprehension_with_two_loops: closed inner, closed outer, caught
+comprehension_in_comprehension: closed inner, closed outer, caught
+condition_raises: closed it, caught
+comprehension_over_generator_expression: closed it, caught
+closed_by_the_program: closed it, after close()
+thrown_into: caught, closed it, collected
+never_started: after close()
+gone_through: closed it, 3, closed it, [1, 2]
+in_a_variable: caught, 2, closed it
+in_a_variable_comprehension: caught, 2, closed it
+seen_in_the_frame: after close(), a, closed it
+seen_in_the_frame_before_it_starts: after close(), a, closed it
+seen_by_a_trace_function: after next(), a, closed it

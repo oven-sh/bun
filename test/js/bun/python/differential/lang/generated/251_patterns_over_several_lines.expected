@@ -1,0 +1,865 @@
+status: 0
+script: cf2c81bfe1cb8c9e
+source: 429269d693ea7132
+---
+the last statement: case [ 1, 1, ]
+    lines of the code: [1, 2, 3, 4, 5, 7]
+    l2 l3 r3
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 r5
+    l2 l3 l4 l3 r3
+the last statement: case P( None, y=None, )
+    lines of the code: [1, 2, 3, 4, 5, 7]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 r5
+the last statement: case {'a': v0, 'b': _,}
+    lines of the code: [1, 2, 3, 4, 5]
+    l2 l3 r3
+    l2 l3 l4 l3 l5 r5
+the last statement: case [_, int(),]
+    lines of the code: [1, 2, 3, 4, 5]
+    l2 l3 r3
+    l2 l3 l4 l5 r5
+    l2 l3 l4 l3 r3
+the last statement: case P( K.a, 'b', )
+    lines of the code: [1, 2, 3, 4, 5, 7]
+    l2 l3 r3
+    l2 l3 l4 l5 r5
+    l2 l3 l4 l3 r3
+the last statement: case { K.b: 'b', 'a': None, }
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 9]
+    l2 l3 r3
+    l2 l3 l4 l6 l3 l5 l3 r3
+    l2 l3 l4 l6 l3 l5 l7 l3 l9 r9
+the last statement: case [ *_, _, ]
+    lines of the code: [1, 2, 3, 7]
+    l2 l3 r3
+    l2 l3 l7 r7
+the last statement: case (K.a | K.a)
+    lines of the code: [1, 2, 3, 4, 5]
+    l2 l3 l5 r5
+    l2 l3 l4 l3 r3
+the last statement: case P( [ 1, v0, ], y=( 1 as v1 ), )
+    lines of the code: [1, 2, 3, 4, 5, 6, 9, 13]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l9 l3 r3
+the last statement: case [ [v0, 1,], *_, ([ _, 1, ] as v1), ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 8, 9, 13]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l3 l7 l8 l9 l7 l3 l13 r13
+    l2 l3 l4 l5 l3 r3
+the last statement: case [ { 'a': v0, }, [ v1, *v2, ], ]
+    lines of the code: [1, 2, 3, 4, 6, 8, 9, 10, 13]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l6 l4 l8 l3 r3
+the last statement: case { 'a': {'a': 1, 'b': _,}, 'b': 1, }
+    lines of the code: [1, 2, 3, 5, 6, 8, 10]
+    l2 l3 r3
+    l2 l3 l5 l3 r3
+the last statement: case P( P( v0, y=1, ), y=v1, )
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 10]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l8 l3 l10 r10
+the last statement: case [ ( 1 | None ), *_, _, ]
+    lines of the code: [1, 2, 3, 5, 6, 11]
+    l2 l3 r3
+    l2 l3 l5 l3 l11 r11
+    l2 l3 l5 l6 l5 l3 l11 r11
+    l2 l3 l5 l6 l5 l3 r3
+the last statement: case [ ( 1 as v0 ), [v1, 1,], ]
+    lines of the code: [1, 2, 3, 5, 8, 9, 11]
+    l2 l3 r3
+    l2 l3 l5 l8 l3 r3
+    l2 l3 l5 l3 r3
+    l2 l3 l5 l8 l9 l3 r3
+the last statement: case { 'a': ([ _, 1, ] as v0), 'b': { 'a': v1, }, }
+    lines of the code: [1, 2, 3, 5, 6, 7, 11, 13, 16]
+    l2 l3 r3
+    l2 l3 l5 l3 r3
+    l2 l3 l5 l6 l7 l5 l11 l3 r3
+the last statement: case P( [ 1, *_, v0, ], y={'a': 1, 'b': _,}, )
+    lines of the code: [1, 2, 3, 4, 5, 7, 9, 10, 12]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l4 l7 l4 l9 l3 r3
+the last statement: case [ [ v0, *v1, ], *_, P( v2, y=1, ), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 9, 10, 11, 14]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l3 l9 l3 r3
+the last statement: case [ 1, ('b' | int()), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8]
+    l2 l3 r3
+    l2 l3 l4 l5 l6 l5 l8 r8
+    l2 l3 l4 l5 l6 l5 r5
+    l2 l3 l4 l3 r3
+the last statement: case { 'a': v0, 'b': ( 1 as v1 ), }
+    lines of the code: [1, 2, 3, 5, 8, 12]
+    l2 l3 r3
+    l2 l3 l5 l8 l3 l12 r12
+    l2 l3 l5 l8 l3 r3
+the last statement: case P( _, y=([ _, 1, ] as v0), )
+    lines of the code: [1, 2, 3, 5, 6, 7, 11]
+    l2 l3 r3
+    l2 l3 l5 l3 r3
+    l2 l3 l5 l6 l7 l3 l11 r11
+another case: case { 'a': 1, 'b': None, }
+    lines of the code: [1, 2, 3, 5, 7, 9, 10, 11, 12]
+    l2 l3 l10 l12 r12
+    l2 l3 l5 l7 l3 l10 l12 r12
+    l2 l3 l5 l3 l10 l12 r12
+another case: case [ None, _, ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 8, 9, 10]
+    l2 l3 l8 l10 r10
+    l2 l3 l4 l3 l8 l10 r10
+    l2 l3 l4 l5 l7 l10 r10
+another case: case P( v0, y=K.a, )
+    lines of the code: [1, 2, 3, 4, 5, 7, 8, 9, 10]
+    l2 l3 l8 l10 r10
+    l2 l3 l4 l5 l3 l7 l10 r10
+    l2 l3 l4 l5 l3 l8 l10 r10
+another case: case {'a': _, 'b': 'b',}
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8]
+    l2 l3 l6 l8 r8
+    l2 l3 l4 l3 l6 l8 r8
+    l2 l3 l4 l3 l5 l8 r8
+another case: case [int(), None,]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8]
+    l2 l3 l6 l8 r8
+    l2 l3 l4 l6 l8 r8
+    l2 l3 l4 l5 l8 r8
+another case: case P( 'b', v0, )
+    lines of the code: [1, 2, 3, 4, 7, 8, 9, 10]
+    l2 l3 l8 l10 r10
+    l2 l3 l4 l3 l8 l10 r10
+    l2 l3 l4 l3 l7 l10 r10
+another case: case [ K.a, *_, ]
+    lines of the code: [1, 2, 3, 4, 7, 8, 9, 10]
+    l2 l3 l8 l10 r10
+    l2 l3 l4 l3 l7 l10 r10
+    l2 l3 l4 l3 l8 l10 r10
+another case: case ( int() | K.a )
+    lines of the code: [1, 2, 4, 5, 7, 8, 9, 10]
+    l2 l4 l7 l10 r10
+    l2 l4 l5 l4 l8 l10 r10
+another case: case [ [ 1, v0, ], *_, [ 1, *_, v1, ], ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 9, 10, 12, 15, 16, 17, 18]
+    l2 l3 l16 l18 r18
+    l2 l3 l4 l3 l16 l18 r18
+    l2 l3 l4 l5 l6 l3 l9 l10 l9 l12 l9 l3 l15 l18 r18
+    l2 l3 l4 l5 l6 l3 l9 l3 l16 l18 r18
+another case: case [ [v0, 1,], 1, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9, 10, 11]
+    l2 l3 l9 l11 r11
+    l2 l3 l4 l3 l9 l11 r11
+    l2 l3 l4 l5 l6 l3 l9 l11 r11
+    l2 l3 l4 l5 l3 l9 l11 r11
+another case: case { 'a': { 'a': v0, }, 'b': v1, }
+    lines of the code: [1, 2, 3, 5, 7, 10, 12, 13, 14, 15]
+    l2 l3 l13 l15 r15
+    l2 l3 l5 l3 l13 l15 r15
+    l2 l3 l5 l7 l5 l10 l3 l12 l15 r15
+another case: case P( {'a': 1, 'b': _,}, y=_, )
+    lines of the code: [1, 2, 3, 4, 5, 8, 9, 10, 11]
+    l2 l3 l9 l11 r11
+    l2 l3 l4 l3 l9 l11 r11
+another case: case [ ( 1 | None ), *_, [ 1, v0, ], ]
+    lines of the code: [1, 2, 3, 5, 6, 9, 10, 11, 14, 15, 16, 17]
+    l2 l3 l15 l17 r17
+    l2 l3 l5 l3 l9 l3 l15 l17 r17
+    l2 l3 l5 l6 l5 l3 l9 l3 l15 l17 r17
+    l2 l3 l5 l6 l5 l3 l15 l17 r17
+    l2 l3 l5 l3 l9 l10 l11 l3 l14 l17 r17
+another case: case [ ('b' | int()), { 'a': v0, }, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 11, 12, 13, 14]
+    l2 l3 l12 l14 r14
+    l2 l3 l4 l5 l4 l6 l3 l12 l14 r14
+    l2 l3 l4 l5 l4 l3 l12 l14 r14
+    l2 l3 l4 l6 l3 l12 l14 r14
+another case: case { 'a': ( 1 as v0 ), 'b': {'a': 1, 'b': _,}, }
+    lines of the code: [1, 2, 3, 6, 10, 11, 13, 14, 15, 16]
+    l2 l3 l14 l16 r16
+    l2 l3 l6 l10 l3 l14 l16 r16
+    l2 l3 l6 l3 l14 l16 r16
+another case: case P( ([ _, 1, ] as v0), y=P( v1, y=1, ), )
+    lines of the code: [1, 2, 3, 4, 5, 6, 9, 10, 11, 14, 15, 16, 17]
+    l2 l3 l15 l17 r17
+    l2 l3 l4 l3 l15 l17 r17
+    l2 l3 l4 l5 l6 l4 l9 l3 l15 l17 r17
+another case: case [ [ 1, *_, v0, ], *_, ( 1 | None ), ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 11, 12, 15, 16, 17, 18]
+    l2 l3 l16 l18 r18
+    l2 l3 l4 l3 l16 l18 r18
+    l2 l3 l4 l5 l4 l7 l4 l3 l11 l12 l11 l3 l16 l18 r18
+    l2 l3 l4 l5 l4 l7 l4 l3 l11 l3 l15 l18 r18
+another case: case [ [ v0, *v1, ], ( 1 as v2 ), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 9, 13, 14, 15, 16]
+    l2 l3 l14 l16 r16
+    l2 l3 l4 l3 l14 l16 r16
+    l2 l3 l4 l5 l6 l9 l3 l14 l16 r16
+    l2 l3 l4 l5 l6 l9 l3 l13 l16 r16
+another case: case { 'a': 1, 'b': ([ _, 1, ] as v0), }
+    lines of the code: [1, 2, 3, 5, 7, 8, 9, 13, 14, 15, 16]
+    l2 l3 l14 l16 r16
+    l2 l3 l5 l7 l3 l14 l16 r16
+    l2 l3 l5 l3 l14 l16 r16
+another case: case P( v0, y=[ 1, *_, v1, ], )
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 11, 12, 13, 14]
+    l2 l3 l12 l14 r14
+    l2 l3 l4 l5 l3 l12 l14 r14
+    l2 l3 l4 l5 l6 l5 l8 l5 l3 l11 l14 r14
+another case: case [ _, *_, [ v0, *v1, ], ]
+    lines of the code: [1, 2, 3, 6, 7, 8, 11, 12, 13, 14]
+    l2 l3 l12 l14 r14
+    l2 l3 l6 l3 l12 l14 r14
+    l2 l3 l6 l7 l8 l3 l11 l14 r14
+case _: case { K.b: 1, 'a': v0, }
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]
+    l2 l3 l10 l11 l12 r12
+    l2 l3 l4 l6 l3 l5 l7 l3 l9 l12 r12
+    l2 l3 l4 l6 l3 l5 l3 l10 l11 l12 r12
+case _: case { 'a': None, 'b': K.a, }
+    lines of the code: [1, 2, 3, 5, 7, 9, 10, 11, 12]
+    l2 l3 l10 l11 l12 r12
+    l2 l3 l5 l3 l10 l11 l12 r12
+    l2 l3 l5 l7 l3 l10 l11 l12 r12
+case _: case [ v0, 'b', ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 8, 9, 10]
+    l2 l3 l8 l9 l10 r10
+    l2 l3 l4 l5 l3 l8 l9 l10 r10
+    l2 l3 l4 l5 l3 l7 l10 r10
+case _: case P( K.a, y=1, )
+    lines of the code: [1, 2, 3, 4, 5, 7, 8, 9, 10]
+    l2 l3 l8 l9 l10 r10
+    l2 l3 l4 l5 l7 l10 r10
+    l2 l3 l4 l3 l8 l9 l10 r10
+    l2 l3 l4 l5 l8 l9 l10 r10
+case _: case {'a': int(), 'b': v0,}
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8]
+    l2 l3 l6 l7 l8 r8
+    l2 l3 l4 l3 l5 l8 r8
+case _: case ['b', K.a,]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8]
+    l2 l3 l6 l7 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+case _: case P( x=int(), )
+    lines of the code: [1, 2, 3, 4, 6, 7, 8, 9]
+    l2 l3 l7 l8 l9 r9
+    l2 l3 l4 l6 l9 r9
+    l2 l3 l4 l3 l7 l8 l9 r9
+case _: case ('b' | None)
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8]
+    l2 l3 l4 l3 l6 l7 l8 r8
+    l2 l3 l4 l3 l5 l8 r8
+    l2 l3 l5 l8 r8
+case _: case [ [ 1, v0, ], v1, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13]
+    l2 l3 l11 l12 l13 r13
+    l2 l3 l4 l3 l11 l12 l13 r13
+    l2 l3 l4 l5 l6 l8 l3 l10 l13 r13
+case _: case { 'a': [v0, 1,], 'b': _, }
+    lines of the code: [1, 2, 3, 5, 6, 8, 10, 11, 12, 13]
+    l2 l3 l11 l12 l13 r13
+    l2 l3 l5 l3 l11 l12 l13 r13
+    l2 l3 l5 l6 l8 l3 l10 l13 r13
+case _: case P( {'a': 1, 'b': _,}, y=[ 1, v0, ], )
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 11, 12, 13, 14]
+    l2 l3 l12 l13 l14 r14
+    l2 l3 l4 l3 l12 l13 l14 r14
+case _: case [ P( v0, y=1, ), *_, [v1, 1,], ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 9, 10, 12, 13, 14, 15]
+    l2 l3 l13 l14 l15 r15
+    l2 l3 l4 l3 l13 l14 l15 r15
+    l2 l3 l4 l5 l6 l3 l9 l3 l13 l14 l15 r15
+case _: case [ ( 1 | None ), {'a': 1, 'b': _,}, ]
+    lines of the code: [1, 2, 3, 5, 6, 8, 9, 11, 12, 13, 14]
+    l2 l3 l12 l13 l14 r14
+    l2 l3 l5 l8 l3 l12 l13 l14 r14
+    l2 l3 l5 l6 l5 l8 l3 l12 l13 l14 r14
+    l2 l3 l5 l6 l5 l3 l12 l13 l14 r14
+case _: case { 'a': ('b' | int()), 'b': P( v0, y=1, ), }
+    lines of the code: [1, 2, 3, 5, 6, 8, 9, 10, 13, 14, 15, 16]
+    l2 l3 l14 l15 l16 r16
+    l2 l3 l5 l6 l5 l8 l3 l14 l15 l16 r16
+    l2 l3 l5 l6 l5 l3 l14 l15 l16 r16
+    l2 l3 l5 l8 l3 l14 l15 l16 r16
+case _: case P( ( 1 as v0 ), y=( 1 | None ), )
+    lines of the code: [1, 2, 3, 5, 9, 10, 13, 14, 15, 16]
+    l2 l3 l14 l15 l16 r16
+    l2 l3 l5 l9 l3 l13 l16 r16
+    l2 l3 l5 l3 l14 l15 l16 r16
+    l2 l3 l5 l9 l10 l9 l3 l14 l15 l16 r16
+case _: case [ ([ _, 1, ] as v0), *_, ('b' | int()), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 10, 11, 13, 14, 15, 16]
+    l2 l3 l14 l15 l16 r16
+    l2 l3 l4 l3 l14 l15 l16 r16
+    l2 l3 l4 l5 l6 l4 l3 l10 l11 l10 l3 l14 l15 l16 r16
+    l2 l3 l4 l5 l6 l3 l14 l15 l16 r16
+case _: case [ [ 1, *_, v0, ], ([ _, 1, ] as v1), ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 9, 10, 11, 15, 16, 17, 18]
+    l2 l3 l16 l17 l18 r18
+    l2 l3 l4 l3 l16 l17 l18 r18
+    l2 l3 l4 l5 l4 l7 l4 l9 l10 l11 l9 l3 l15 l18 r18
+    l2 l3 l4 l5 l4 l7 l4 l9 l3 l16 l17 l18 r18
+case _: case { 'a': [ v0, *v1, ], 'b': [ 1, *_, v2, ], }
+    lines of the code: [1, 2, 3, 5, 6, 7, 10, 11, 13, 16, 17, 18, 19]
+    l2 l3 l17 l18 l19 r19
+    l2 l3 l5 l3 l17 l18 l19 r19
+    l2 l3 l5 l6 l7 l10 l11 l10 l13 l10 l3 l16 l19 r19
+case _: case P( 1, y=[ v0, *v1, ], )
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13]
+    l2 l3 l11 l12 l13 r13
+    l2 l3 l4 l5 l3 l11 l12 l13 r13
+    l2 l3 l4 l3 l11 l12 l13 r13
+case _: case [ v0, *_, 1, ]
+    lines of the code: [1, 2, 3, 4, 6, 8, 9, 10, 11]
+    l2 l3 l9 l10 l11 r11
+    l2 l3 l4 l3 l6 l3 l8 l11 r11
+    l2 l3 l4 l3 l6 l3 l9 l10 l11 r11
+case _: case [ _, _, ]
+    lines of the code: [1, 2, 3, 7, 8, 9, 10]
+    l2 l3 l8 l9 l10 r10
+    l2 l3 l7 l10 r10
+a guard: case P( 1, _, )
+    lines of the code: [1, 2, 3, 4, 6, 7, 8, 9]
+    l2 l3 l9 r9
+    l2 l3 l4 l3 l6 l7 l6 l8 l9 r9
+    l2 l3 l4 l3 l9 r9
+a guard: case { K.b: None, 'a': int(), }
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    l2 l3 l11 r11
+    l2 l3 l4 l6 l3 l5 l3 l11 r11
+    l2 l3 l4 l6 l3 l5 l7 l3 l11 r11
+a guard: case { 'a': _, 'b': 1, }
+    lines of the code: [1, 2, 3, 5, 7, 8, 9, 10, 11]
+    l2 l3 l11 r11
+    l2 l3 l5 l7 l3 l8 l9 l8 l10 l11 r11
+    l2 l3 l5 l7 l3 l11 r11
+a guard: case [ K.a, v0, ]
+    lines of the code: [1, 2, 3, 4, 6, 7, 8, 9]
+    l2 l3 l9 r9
+    l2 l3 l4 l3 l6 l7 l6 l8 l9 r9
+    l2 l3 l4 l3 l9 r9
+a guard: case P( int(), y=_, )
+    lines of the code: [1, 2, 3, 4, 6, 7, 8, 9]
+    l2 l3 l9 r9
+    l2 l3 l4 l3 l6 l7 l6 l8 l9 r9
+    l2 l3 l4 l3 l9 r9
+a guard: case {'a': 'b', 'b': int(),}
+    lines of the code: [1, 2, 3, 4, 5, 6, 7]
+    l2 l3 l7 r7
+    l2 l3 l4 l3 l4 l5 l4 l6 l7 r7
+a guard: case (1 as v0)
+    lines of the code: [1, 2, 3, 4, 5, 6, 7]
+    l2 l3 l4 l5 l4 l6 l7 r7
+    l2 l3 l7 r7
+a guard: case { **v0 }
+    lines of the code: [1, 2, 3, 5, 6, 7, 8]
+    l2 l3 l8 r8
+    l2 l3 l5 l6 l5 l7 l8 r8
+a guard: case { 'a': [v0, 1,], 'b': [ 1, v1, ], }
+    lines of the code: [1, 2, 3, 5, 6, 8, 9, 10, 12, 13, 14, 15]
+    l2 l3 l15 r15
+    l2 l3 l5 l3 l15 r15
+    l2 l3 l5 l6 l8 l9 l10 l3 l12 l13 l12 l14 l15 r15
+a guard: case P( { 'a': v0, }, y=[v1, 1,], )
+    lines of the code: [1, 2, 3, 4, 6, 8, 9, 10, 11, 12, 13]
+    l2 l3 l13 r13
+    l2 l3 l4 l3 l13 r13
+    l2 l3 l4 l6 l4 l8 l3 l13 r13
+a guard: case [ {'a': 1, 'b': _,}, *_, { 'a': v0, }, ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 9, 11, 12, 13, 14]
+    l2 l3 l14 r14
+    l2 l3 l4 l3 l14 r14
+    l2 l3 l4 l5 l4 l3 l7 l3 l14 r14
+a guard: case [ P( v0, y=1, ), P( v1, y=1, ), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15]
+    l2 l3 l15 r15
+    l2 l3 l4 l3 l15 r15
+    l2 l3 l4 l5 l6 l8 l3 l15 r15
+a guard: case { 'a': ( 1 | None ), 'b': ( 1 | None ), }
+    lines of the code: [1, 2, 3, 6, 7, 11, 12, 14, 15, 16, 17]
+    l2 l3 l17 r17
+    l2 l3 l6 l11 l3 l14 l15 l14 l16 l17 r17
+    l2 l3 l6 l7 l6 l11 l12 l11 l3 l17 r17
+    l2 l3 l6 l7 l6 l3 l17 r17
+a guard: case P( ('b' | int()), y=('b' | int()), )
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    l2 l3 l11 r11
+    l2 l3 l4 l5 l4 l6 l7 l6 l8 l9 l8 l10 l11 r11
+    l2 l3 l4 l5 l4 l3 l11 r11
+    l2 l3 l4 l6 l7 l6 l11 r11
+    l2 l3 l4 l5 l4 l6 l7 l6 l11 r11
+a guard: case [ ( 1 as v0 ), *_, ( 1 as v1 ), ]
+    lines of the code: [1, 2, 3, 5, 10, 13, 14, 15, 16]
+    l2 l3 l16 r16
+    l2 l3 l5 l3 l10 l3 l13 l14 l13 l15 l16 r16
+    l2 l3 l5 l3 l10 l3 l16 r16
+    l2 l3 l5 l3 l16 r16
+a guard: case [ ([ _, 1, ] as v0), [ 1, *_, v1, ], ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 9, 10, 12, 14, 15, 16, 17]
+    l2 l3 l17 r17
+    l2 l3 l4 l3 l17 r17
+    l2 l3 l4 l5 l6 l4 l9 l10 l9 l12 l9 l3 l14 l15 l14 l16 l17 r17
+    l2 l3 l4 l5 l6 l3 l17 r17
+a guard: case { 'a': [ 1, *_, v0, ], 'b': [ v1, *v2, ], }
+    lines of the code: [1, 2, 3, 5, 6, 8, 11, 12, 13, 15, 16, 17, 18]
+    l2 l3 l18 r18
+    l2 l3 l5 l3 l18 r18
+    l2 l3 l5 l6 l5 l8 l5 l11 l12 l13 l3 l15 l16 l15 l17 l18 r18
+a guard: case P( [ v0, *v1, ], y=1, )
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12]
+    l2 l3 l12 r12
+    l2 l3 l4 l3 l12 r12
+    l2 l3 l4 l5 l6 l8 l3 l12 r12
+a guard: case [ 1, *_, v0, ]
+    lines of the code: [1, 2, 3, 4, 6, 7, 8, 9, 10]
+    l2 l3 l10 r10
+    l2 l3 l4 l3 l6 l3 l7 l8 l7 l9 l10 r10
+    l2 l3 l4 l3 l10 r10
+a guard: case [ _, [ 1, v0, ], ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 9, 10, 11, 12]
+    l2 l3 l12 r12
+    l2 l3 l4 l5 l3 l12 r12
+    l2 l3 l4 l5 l6 l3 l9 l10 l9 l11 l12 r12
+a guard: case { 'a': { 'a': v0, }, **v1 }
+    lines of the code: [1, 2, 3, 5, 7, 10, 11, 12, 13]
+    l2 l3 l13 r13
+    l2 l3 l5 l3 l13 r13
+    l2 l3 l5 l7 l5 l3 l10 l11 l10 l12 l13 r13
+a guard, the last statement: case [1, int(),]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7]
+    l2 l3 r3
+    l2 l3 l4 r4
+    l2 l3 l4 l3 r3
+a guard, the last statement: case P( None, 'b', )
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l7 l8 l9 r9
+a guard, the last statement: case { K.b: _, 'a': None, }
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    l2 l3 r3
+    l2 l3 l4 l6 l3 l5 l7 l3 r3
+    l2 l3 l4 l6 l3 l5 l7 l3 l8 l9 l10 l11 r11
+a guard, the last statement: case { 'a': K.a, 'b': _, }
+    lines of the code: [1, 2, 3, 5, 7, 8, 9, 10, 11]
+    l2 l3 r3
+    l2 l3 l5 l7 l3 l8 l9 r9
+    l2 l3 l5 l3 r3
+a guard, the last statement: case [ int(), int(), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    l2 l3 r3
+    l2 l3 l4 l5 l6 r6
+    l2 l3 l4 l5 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l7 l8 l9 r9
+a guard, the last statement: case P( 'b', y='b', )
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 r5
+a guard, the last statement: case ( 1 | 1 )
+    lines of the code: [1, 2, 4, 5, 6, 7, 8, 9]
+    l2 l4 l6 l7 l8 l9 r9
+    l2 l4 l5 l4 r4
+a guard, the last statement: case { 'a': [ 1, v0, ], 'b': [v1, 1,], }
+    lines of the code: [1, 2, 3, 5, 6, 7, 10, 11, 12, 13, 14, 15]
+    l2 l3 r3
+    l2 l3 l5 l3 r3
+    l2 l3 l5 l6 l7 l10 l11 l3 l12 l13 l14 l15 r15
+a guard, the last statement: case P( [v0, 1,], y={ 'a': v1, }, )
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l3 r3
+a guard, the last statement: case [ { 'a': v0, }, *_, {'a': 1, 'b': _,}, ]
+    lines of the code: [1, 2, 3, 4, 6, 9, 10, 11, 12, 13, 14]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l6 l4 l3 l9 l3 r3
+a guard, the last statement: case [ {'a': 1, 'b': _,}, ( 1 | None ), ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 8, 10, 11, 12, 13]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l4 l7 l8 l7 r7
+a guard, the last statement: case { 'a': P( v0, y=1, ), 'b': ('b' | int()), }
+    lines of the code: [1, 2, 3, 5, 6, 7, 10, 11, 12, 13, 14, 15]
+    l2 l3 r3
+    l2 l3 l5 l3 r3
+    l2 l3 l5 l6 l7 l10 l11 l10 l3 r3
+a guard, the last statement: case P( ( 1 | None ), y=( 1 as v0 ), )
+    lines of the code: [1, 2, 3, 5, 6, 9, 12, 13, 14, 15]
+    l2 l3 r3
+    l2 l3 l5 l9 l3 l12 l13 l14 l15 r15
+    l2 l3 l5 l6 l5 l9 l3 r3
+    l2 l3 l5 l6 l5 l3 r3
+    l2 l3 l5 l9 l3 r3
+a guard, the last statement: case [ ('b' | int()), *_, ([ _, 1, ] as v0), ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 8, 9, 12, 13, 14, 15]
+    l2 l3 r3
+    l2 l3 l4 l5 l4 l3 l7 l3 r3
+    l2 l3 l4 l5 l4 l3 r3
+    l2 l3 l4 l3 l7 l3 r3
+    l2 l3 l4 l5 l4 l3 l7 l8 l9 l3 r3
+a guard, the last statement: case [ ( 1 as v0 ), [ v1, *v2, ], ]
+    lines of the code: [1, 2, 3, 5, 8, 9, 10, 12, 13, 14, 15]
+    l2 l3 r3
+    l2 l3 l5 l8 l3 r3
+    l2 l3 l5 l3 r3
+    l2 l3 l5 l8 l9 l10 l3 l12 l13 l14 l15 r15
+a guard, the last statement: case { 'a': ([ _, 1, ] as v0), 'b': 1, }
+    lines of the code: [1, 2, 3, 5, 6, 7, 11, 12, 13, 14, 15]
+    l2 l3 r3
+    l2 l3 l5 l3 r3
+    l2 l3 l5 l6 l7 l5 l11 l3 r3
+a guard, the last statement: case P( [ 1, *_, v0, ], y=v1, )
+    lines of the code: [1, 2, 3, 4, 5, 7, 9, 10, 11, 12, 13]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l4 l7 l4 l9 l3 l10 l11 l12 l13 r13
+a guard, the last statement: case [ [ v0, *v1, ], *_, _, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 10, 11, 12, 13]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l3 l10 l11 l12 l13 r13
+a guard, the last statement: case [ v0, [v1, 1,], ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    l2 l3 r3
+    l2 l3 l4 l5 l3 r3
+    l2 l3 l4 l5 l6 l3 l7 l8 l9 l10 r10
+    l2 l3 l4 l5 l6 l3 r3
+a guard, the last statement: case { 'a': _, 'b': { 'a': v0, }, }
+    lines of the code: [1, 2, 3, 5, 7, 9, 11, 12, 13, 14]
+    l2 l3 r3
+    l2 l3 l5 l7 l3 r3
+a guard, the last statement: case ( ( 1 as v0 ) as v1 )
+    lines of the code: [1, 2, 4, 5, 9, 10, 11, 12]
+    l2 l4 l5 l4 l9 l10 l11 l12 r12
+    l2 l4 l5 l4 r4
+a guard on the last line: case {'a': 1, 'b': 'b',}
+    lines of the code: [1, 2, 3, 4, 5]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+a guard on the last line: case [v0, None,]
+    lines of the code: [1, 2, 3, 4, 5]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l3 l4 l5 r5
+a guard on the last line: case P( _, v0, )
+    lines of the code: [1, 2, 3, 6, 7]
+    l2 l3 r3
+    l2 l3 l6 l7 r7
+a guard on the last line: case { K.b: K.a, 'a': K.a, }
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    l2 l3 r3
+    l2 l3 l4 l6 l3 l5 l7 l3 l8 l9 r9
+    l2 l3 l4 l6 l3 l5 l3 r3
+    l2 l3 l4 l6 l3 l5 l7 l3 r3
+a guard on the last line: case { 'a': int(), 'b': 'b', }
+    lines of the code: [1, 2, 3, 5, 7, 8, 9]
+    l2 l3 r3
+    l2 l3 l5 l7 l3 r3
+    l2 l3 l5 l3 r3
+a guard on the last line: case [ None, *v0, None, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l3 r3
+a guard on the last line: case (1 | 'b')
+    lines of the code: [1, 2, 3, 4, 5]
+    l2 l3 l4 l5 r5
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l3 l4 l5 r5
+a guard on the last line: case P( [ 1, v0, ], y={'a': 1, 'b': _,}, )
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9, 10, 11]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l8 l3 r3
+a guard on the last line: case [ [v0, 1,], *_, P( v1, y=1, ), ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 8, 9, 11, 12]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l3 l7 l3 r3
+    l2 l3 l4 l5 l3 r3
+a guard on the last line: case [ { 'a': v0, }, ('b' | int()), ]
+    lines of the code: [1, 2, 3, 4, 6, 8, 9, 10, 11]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l6 l4 l8 l9 l8 l3 r3
+a guard on the last line: case { 'a': {'a': 1, 'b': _,}, 'b': ( 1 as v0 ), }
+    lines of the code: [1, 2, 3, 5, 6, 9, 12, 13]
+    l2 l3 r3
+    l2 l3 l5 l3 r3
+a guard on the last line: case P( P( v0, y=1, ), y=([ _, 1, ] as v1), )
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 14]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l8 l3 r3
+a guard on the last line: case [ ( 1 | None ), *_, [ 1, *_, v0, ], ]
+    lines of the code: [1, 2, 3, 5, 6, 9, 10, 12, 14, 15]
+    l2 l3 r3
+    l2 l3 l5 l3 l9 l3 r3
+    l2 l3 l5 l6 l5 l3 l9 l3 r3
+    l2 l3 l5 l6 l5 l3 r3
+    l2 l3 l5 l3 l9 l10 l9 l12 l9 l3 l14 l15 r15
+a guard on the last line: case [ ('b' | int()), 1, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8]
+    l2 l3 r3
+    l2 l3 l4 l5 l4 l6 l7 r7
+    l2 l3 l4 l5 l4 l6 r6
+    l2 l3 l4 l5 l4 l3 r3
+    l2 l3 l4 l6 r6
+    l2 l3 l4 l5 l4 l6 l7 l8 r8
+a guard on the last line: case { 'a': ( 1 as v0 ), 'b': v1, }
+    lines of the code: [1, 2, 3, 6, 10, 11, 12]
+    l2 l3 r3
+    l2 l3 l6 l10 l3 l11 l12 r12
+    l2 l3 l6 l3 r3
+a guard on the last line: case P( ([ _, 1, ] as v0), y=_, )
+    lines of the code: [1, 2, 3, 4, 5, 6, 10, 11]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l4 l3 l10 l11 r11
+a guard on the last line: case [ [ v0, *v1, ], *_, [ 1, v2, ], ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 9, 10, 11, 13, 14]
+    l2 l3 r3
+    l2 l3 l4 l3 r3
+    l2 l3 l4 l5 l6 l3 l9 l10 l11 l3 l13 l14 r14
+    l2 l3 l4 l5 l6 l3 l9 l3 r3
+a guard on the last line: case [ 1, { 'a': v0, }, ]
+    lines of the code: [1, 2, 3, 4, 5, 7, 9, 10]
+    l2 l3 r3
+    l2 l3 l4 l5 l3 r3
+    l2 l3 l4 l3 r3
+a guard on the last line: case { 'a': v0, 'b': {'a': 1, 'b': _,}, }
+    lines of the code: [1, 2, 3, 5, 7, 8, 9, 10]
+    l2 l3 r3
+    l2 l3 l5 l7 l3 r3
+a guard on the last line: case P( _, y=P( v0, y=1, ), )
+    lines of the code: [1, 2, 3, 5, 6, 7, 9, 10]
+    l2 l3 r3
+    l2 l3 l5 l3 r3
+    l2 l3 l5 l6 l7 l3 l9 l10 r10
+a guard on the last line: case { 'a': 1, **v0 }
+    lines of the code: [1, 2, 3, 5, 7, 8]
+    l2 l3 r3
+    l2 l3 l5 l3 l7 l8 r8
+    l2 l3 l5 l3 r3
+in a loop: case P( None, y=1, )
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9]
+    l2 l3 l4 l2 l3 l4 l2 l9 r9
+    l2 l3 l4 l5 l4 l2 l3 l4 l5 l4 l2 l9 r9
+    l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l9 r9
+in a loop: case {'a': v0, 'b': v1,}
+    lines of the code: [1, 2, 3, 4, 5, 6, 7]
+    l2 l3 l4 l2 l3 l4 l2 l7 r7
+    l2 l3 l4 l5 l4 l6 l2 l3 l4 l5 l4 l6 l2 l7 r7
+in a loop: case [_, K.a,]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7]
+    l2 l3 l4 l2 l3 l4 l2 l7 r7
+    l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l7 r7
+    l2 l3 l4 l5 l2 l3 l4 l5 l2 l7 r7
+in a loop: case P( K.a, int(), )
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9]
+    l2 l3 l4 l2 l3 l4 l2 l9 r9
+    l2 l3 l4 l5 l6 l8 l2 l3 l4 l5 l6 l8 l2 l9 r9
+    l2 l3 l4 l5 l4 l2 l3 l4 l5 l4 l2 l9 r9
+    l2 l3 l4 l5 l6 l4 l2 l3 l4 l5 l6 l4 l2 l9 r9
+in a loop: case { K.b: 'b', 'a': 1, }
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 10, 11]
+    l2 l3 l4 l2 l3 l4 l2 l11 r11
+    l2 l3 l4 l5 l7 l4 l6 l4 l2 l3 l4 l5 l7 l4 l6 l4 l2 l11 r11
+    l2 l3 l4 l5 l7 l4 l6 l8 l4 l2 l3 l4 l5 l7 l4 l6 l8 l4 l2 l11 r11
+in a loop: case [ *_, v0, ]
+    lines of the code: [1, 2, 3, 4, 6, 8, 9]
+    l2 l3 l4 l2 l3 l4 l2 l9 r9
+    l2 l3 l4 l6 l4 l8 l2 l3 l4 l6 l4 l8 l2 l9 r9
+in a loop: case ( None | 'b' )
+    lines of the code: [1, 2, 3, 5, 6, 8, 9]
+    l2 l3 l5 l6 l5 l2 l3 l5 l6 l5 l2 l9 r9
+    l2 l3 l5 l8 l2 l3 l5 l8 l2 l9 r9
+    l2 l3 l5 l6 l5 l8 l2 l3 l5 l6 l5 l8 l2 l9 r9
+in a loop: case [ [ 1, v0, ], *_, ( 1 | None ), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 11, 12, 15, 16]
+    l2 l3 l4 l2 l3 l4 l2 l16 r16
+    l2 l3 l4 l5 l4 l2 l3 l4 l5 l4 l2 l16 r16
+    l2 l3 l4 l5 l6 l7 l4 l11 l12 l11 l4 l2 l3 l4 l5 l6 l7 l4 l11 l12 l11 l4 l2 l16 r16
+    l2 l3 l4 l5 l6 l7 l4 l11 l4 l15 l2 l3 l4 l5 l6 l7 l4 l11 l4 l15 l2 l16 r16
+in a loop: case [ [v0, 1,], ( 1 as v1 ), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 12, 13]
+    l2 l3 l4 l2 l3 l4 l2 l13 r13
+    l2 l3 l4 l5 l4 l2 l3 l4 l5 l4 l2 l13 r13
+    l2 l3 l4 l5 l6 l8 l4 l2 l3 l4 l5 l6 l8 l4 l2 l13 r13
+    l2 l3 l4 l5 l6 l4 l2 l3 l4 l5 l6 l4 l2 l13 r13
+in a loop: case { 'a': { 'a': v0, }, 'b': ([ _, 1, ] as v1), }
+    lines of the code: [1, 2, 3, 4, 6, 8, 11, 12, 13, 17, 18]
+    l2 l3 l4 l2 l3 l4 l2 l18 r18
+    l2 l3 l4 l6 l4 l2 l3 l4 l6 l4 l2 l18 r18
+    l2 l3 l4 l6 l8 l6 l11 l4 l2 l3 l4 l6 l8 l6 l11 l4 l2 l18 r18
+in a loop: case P( {'a': 1, 'b': _,}, y=[ 1, *_, v0, ], )
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 14]
+    l2 l3 l4 l2 l3 l4 l2 l14 r14
+    l2 l3 l4 l5 l4 l2 l3 l4 l5 l4 l2 l14 r14
+in a loop: case [ P( v0, y=1, ), *_, [ v1, *v2, ], ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 15, 16]
+    l2 l3 l4 l2 l3 l4 l2 l16 r16
+    l2 l3 l4 l5 l4 l2 l3 l4 l5 l4 l2 l16 r16
+    l2 l3 l4 l5 l6 l7 l4 l10 l4 l2 l3 l4 l5 l6 l7 l4 l10 l4 l2 l16 r16
+in a loop: case [ ( 1 | None ), v0, ]
+    lines of the code: [1, 2, 3, 4, 6, 7, 11, 12]
+    l2 l3 l4 l2 l3 l4 l2 l12 r12
+    l2 l3 l4 l6 l4 l11 l2 l3 l4 l6 l4 l11 l2 l12 r12
+    l2 l3 l4 l6 l7 l6 l4 l11 l2 l3 l4 l6 l7 l6 l4 l11 l2 l12 r12
+    l2 l3 l4 l6 l7 l6 l4 l2 l3 l4 l6 l7 l6 l4 l2 l12 r12
+in a loop: case { 'a': ('b' | int()), 'b': _, }
+    lines of the code: [1, 2, 3, 4, 6, 7, 9, 11, 12]
+    l2 l3 l4 l2 l3 l4 l2 l12 r12
+    l2 l3 l4 l6 l7 l6 l9 l4 l11 l2 l3 l4 l6 l7 l6 l9 l4 l11 l2 l12 r12
+    l2 l3 l4 l6 l7 l6 l4 l2 l3 l4 l6 l7 l6 l4 l2 l12 r12
+    l2 l3 l4 l6 l9 l4 l11 l2 l3 l4 l6 l9 l4 l11 l2 l12 r12
+in a loop: case P( ([ _, 1, ] as v0), y=[ 1, v1, ], )
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 15, 16]
+    l2 l3 l4 l2 l3 l4 l2 l16 r16
+    l2 l3 l4 l5 l4 l2 l3 l4 l5 l4 l2 l16 r16
+    l2 l3 l4 l5 l6 l7 l5 l10 l11 l12 l4 l15 l2 l3 l4 l5 l6 l7 l5 l10 l11 l12 l4 l15 l2 l16 r16
+in a loop: case [ [ 1, *_, v0, ], *_, [v1, 1,], ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 11, 12, 14, 15]
+    l2 l3 l4 l2 l3 l4 l2 l15 r15
+    l2 l3 l4 l5 l4 l2 l3 l4 l5 l4 l2 l15 r15
+    l2 l3 l4 l5 l6 l5 l8 l5 l4 l11 l12 l4 l14 l2 l3 l4 l5 l6 l5 l8 l5 l4 l11 l12 l4 l14 l2 l15 r15
+    l2 l3 l4 l5 l6 l5 l8 l5 l4 l11 l4 l2 l3 l4 l5 l6 l5 l8 l5 l4 l11 l4 l2 l15 r15
+in a loop: case [ [ v0, *v1, ], {'a': 1, 'b': _,}, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 9, 10, 12, 13]
+    l2 l3 l4 l2 l3 l4 l2 l13 r13
+    l2 l3 l4 l5 l4 l2 l3 l4 l5 l4 l2 l13 r13
+    l2 l3 l4 l5 l6 l7 l9 l4 l2 l3 l4 l5 l6 l7 l9 l4 l2 l13 r13
+in a loop: case { 'a': 1, 'b': P( v0, y=1, ), }
+    lines of the code: [1, 2, 3, 4, 6, 8, 9, 10, 13, 14]
+    l2 l3 l4 l2 l3 l4 l2 l14 r14
+    l2 l3 l4 l6 l8 l4 l2 l3 l4 l6 l8 l4 l2 l14 r14
+    l2 l3 l4 l6 l4 l2 l3 l4 l6 l4 l2 l14 r14
+in a loop: case P( v0, y=( 1 | None ), )
+    lines of the code: [1, 2, 3, 4, 5, 7, 8, 11, 12]
+    l2 l3 l4 l2 l3 l4 l2 l12 r12
+    l2 l3 l4 l5 l7 l4 l11 l2 l3 l4 l5 l7 l4 l11 l2 l12 r12
+    l2 l3 l4 l5 l7 l8 l7 l4 l2 l3 l4 l5 l7 l8 l7 l4 l2 l12 r12
+    l2 l3 l4 l5 l7 l8 l7 l4 l11 l2 l3 l4 l5 l7 l8 l7 l4 l11 l2 l12 r12
+in a loop: case [ _, *_, ('b' | int()), ]
+    lines of the code: [1, 2, 3, 4, 7, 8, 10, 11]
+    l2 l3 l4 l2 l3 l4 l2 l11 r11
+    l2 l3 l4 l7 l8 l7 l4 l10 l2 l3 l4 l7 l8 l7 l4 l10 l2 l11 r11
+    l2 l3 l4 l7 l8 l7 l4 l2 l3 l4 l7 l8 l7 l4 l2 l11 r11
+    l2 l3 l4 l7 l4 l10 l2 l3 l4 l7 l4 l10 l2 l11 r11
+before an else: case { 'a': 1, 'b': 1, }
+    lines of the code: [1, 2, 3, 4, 6, 8, 10, 12, 13]
+    l2 l3 l4 l13 r13
+    l2 l3 l4 l6 l8 l4 l10 l13 r13
+    l2 l3 l4 l6 l4 l13 r13
+before an else: case [ None, v0, ]
+    lines of the code: [1, 2, 3, 4, 5, 8, 10, 11]
+    l2 l3 l4 l11 r11
+    l2 l3 l4 l5 l4 l11 r11
+    l2 l3 l4 l5 l4 l8 l11 r11
+before an else: case P( v0, y=_, )
+    lines of the code: [1, 2, 3, 4, 5, 8, 10, 11]
+    l2 l3 l4 l11 r11
+    l2 l3 l4 l5 l4 l8 l11 r11
+before an else: case {'a': _, 'b': int(),}
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9]
+    l2 l3 l4 l9 r9
+    l2 l3 l4 l5 l4 l6 l9 r9
+    l2 l3 l4 l5 l4 l9 r9
+before an else: case [int(), 1,]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9]
+    l2 l3 l4 l9 r9
+    l2 l3 l4 l5 l6 l9 r9
+    l2 l3 l4 l5 l9 r9
+before an else: case P( 'b', None, )
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 10, 11]
+    l2 l3 l4 l11 r11
+    l2 l3 l4 l5 l4 l11 r11
+    l2 l3 l4 l5 l6 l8 l11 r11
+before an else: case [ _, *_, ]
+    lines of the code: [1, 2, 3, 4, 8, 10, 11]
+    l2 l3 l4 l11 r11
+    l2 l3 l4 l8 l11 r11
+before an else: case (K.a | int())
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 9]
+    l2 l3 l4 l6 l9 r9
+    l2 l3 l4 l5 l4 l9 r9
+    l2 l3 l4 l5 l4 l6 l9 r9
+before an else: case [ [ 1, v0, ], ([ _, 1, ] as v1), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 15, 17, 18]
+    l2 l3 l4 l18 r18
+    l2 l3 l4 l5 l4 l18 r18
+    l2 l3 l4 l5 l6 l7 l9 l10 l11 l9 l4 l15 l18 r18
+    l2 l3 l4 l5 l6 l7 l9 l4 l18 r18
+before an else: case { 'a': [v0, 1,], 'b': [ 1, *_, v1, ], }
+    lines of the code: [1, 2, 3, 4, 6, 7, 9, 10, 12, 15, 17, 18]
+    l2 l3 l4 l18 r18
+    l2 l3 l4 l6 l4 l18 r18
+    l2 l3 l4 l6 l7 l9 l10 l9 l12 l9 l4 l15 l18 r18
+before an else: case P( { 'a': v0, }, y=[ v1, *v2, ], )
+    lines of the code: [1, 2, 3, 4, 5, 7, 9, 10, 11, 14, 16, 17]
+    l2 l3 l4 l17 r17
+    l2 l3 l4 l5 l4 l17 r17
+    l2 l3 l4 l5 l7 l5 l9 l4 l17 r17
+before an else: case [ {'a': 1, 'b': _,}, *_, 1, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 10, 12, 13]
+    l2 l3 l4 l13 r13
+    l2 l3 l4 l5 l4 l13 r13
+    l2 l3 l4 l5 l6 l5 l4 l8 l4 l13 r13
+before an else: case [ P( v0, y=1, ), _, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 9, 11, 13, 14]
+    l2 l3 l4 l14 r14
+    l2 l3 l4 l5 l4 l14 r14
+    l2 l3 l4 l5 l6 l7 l9 l4 l11 l14 r14
+before an else: case { 'a': ('b' | int()), 'b': [ 1, v0, ], }
+    lines of the code: [1, 2, 3, 4, 6, 7, 9, 10, 11, 14, 16, 17]
+    l2 l3 l4 l17 r17
+    l2 l3 l4 l6 l7 l6 l9 l4 l17 r17
+    l2 l3 l4 l6 l7 l6 l4 l17 r17
+    l2 l3 l4 l6 l9 l4 l17 r17
+before an else: case P( ( 1 as v0 ), y=[v1, 1,], )
+    lines of the code: [1, 2, 3, 4, 6, 9, 10, 12, 14, 15]
+    l2 l3 l4 l15 r15
+    l2 l3 l4 l6 l9 l4 l15 r15
+    l2 l3 l4 l6 l4 l15 r15
+before an else: case [ ([ _, 1, ] as v0), *_, { 'a': v1, }, ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 11, 13, 16, 18, 19]
+    l2 l3 l4 l19 r19
+    l2 l3 l4 l5 l4 l19 r19
+    l2 l3 l4 l5 l6 l7 l5 l4 l11 l4 l19 r19
+    l2 l3 l4 l5 l6 l7 l4 l19 r19
+before an else: case [ [ 1, *_, v0, ], P( v1, y=1, ), ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 15, 17, 18]
+    l2 l3 l4 l18 r18
+    l2 l3 l4 l5 l4 l18 r18
+    l2 l3 l4 l5 l6 l5 l8 l5 l10 l4 l18 r18
+before an else: case { 'a': [ v0, *v1, ], 'b': ( 1 | None ), }
+    lines of the code: [1, 2, 3, 4, 6, 7, 8, 12, 13, 16, 18, 19]
+    l2 l3 l4 l19 r19
+    l2 l3 l4 l6 l4 l19 r19
+    l2 l3 l4 l6 l7 l8 l12 l13 l12 l4 l19 r19
+before an else: case P( 1, y=('b' | int()), )
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 9, 11, 12]
+    l2 l3 l4 l12 r12
+    l2 l3 l4 l5 l6 l7 l6 l9 l12 r12
+    l2 l3 l4 l5 l4 l12 r12
+    l2 l3 l4 l5 l6 l7 l6 l12 r12
+before an else: case [ v0, *_, ( 1 as v1 ), ]
+    lines of the code: [1, 2, 3, 4, 5, 8, 12, 14, 15]
+    l2 l3 l4 l15 r15
+    l2 l3 l4 l5 l4 l8 l4 l12 l15 r15
+    l2 l3 l4 l5 l4 l8 l4 l15 r15
+before an else: case [ _, [ 1, *_, v0, ], ]
+    lines of the code: [1, 2, 3, 4, 5, 6, 7, 9, 12, 14, 15]
+    l2 l3 l4 l15 r15
+    l2 l3 l4 l5 l6 l4 l15 r15
+    l2 l3 l4 l5 l6 l7 l6 l9 l6 l4 l12 l15 r15

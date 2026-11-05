@@ -1,0 +1,130 @@
+status: 0
+script: bf7612b8b7c5b868
+source: 9fc17c0d01e023cc
+---
+with_in_with
+    () l1 l2 l3 l2 l1 r1
+    (0,) l1 l2 l3 l4 l2 l1 r1
+    (1,) l1 l2 l3 l4 l2 l1 r1
+    (0, 0) l1 l2 l3 l4 l2 l1 r1
+    (0, 1) l1 l2 l3 l4 l2 l1 r1
+with_two_managers
+    () l1 l2 r1
+    (0,) l1 l2 l3 l1 r1
+    (1,) l1 l2 l3 l1 r1
+    (0, 0) l1 l2 l3 l1 r1
+    (0, 1) l1 l2 l3 l1 r1
+finally_is_a_with
+    () l1 l2 l6 l5 r5
+    (0,) l1 l2 l3 l5 l6 l5 r5
+    (1,) l1 l2 l3 l5 l6 l5 r5
+    (0, 0) l1 l2 l3 l5 l6 l5 r5
+    (0, 1) l1 l2 l3 l5 l6 l5 r5
+finally_is_a_with_on_one_line
+    () l1 l2 r5
+    (0,) l1 l2 l3 l5 r5
+    (1,) l1 l2 l3 l5 r5
+    (0, 0) l1 l2 l3 l5 r5
+    (0, 1) l1 l2 l3 l5 r5
+return_in_a_with
+    () l1 r1
+    (0,) l1 l2 l3 l2 r2
+    (1,) l1 l2 l3 l2 r2
+    (0, 0) l1 l2 l3 l2 r2
+    (0, 1) l1 l2 l3 l2 r2
+return_in_a_try
+    () l1 r1
+    (0,) l1 l2 l3 l5 r5
+    (1,) l1 l2 l3 l5 r5
+    (0, 0) l1 l2 l3 l5 r5
+    (0, 1) l1 l2 l3 l5 r5
+return_in_a_with_and_more
+    () l1 l4 r4
+    (0,) l1 l2 l3 l2 r2
+    (1,) l1 l2 l3 l2 r2
+    (0, 0) l1 l2 l3 l2 r2
+    (0, 1) l1 l2 l3 l2 r2
+return_in_a_try_and_more
+    () l1 l6 r6
+    (0,) l1 l2 l3 l5 r5
+    (1,) l1 l2 l3 l5 r5
+    (0, 0) l1 l2 l3 l5 r5
+    (0, 1) l1 l2 l3 l5 r5
+return_in_a_with_in_a_with
+    () l1 l2 r1
+    (0,) l1 l2 l3 l4 l3 l1 r1
+    (1,) l1 l2 l3 l4 l3 l1 r1
+    (0, 0) l1 l2 l3 l4 l3 l1 r1
+    (0, 1) l1 l2 l3 l4 l3 l1 r1
+return_in_a_try_in_a_try
+    () l1 l2 r8
+    (0,) l1 l2 l3 l4 l6 l8 r8
+    (1,) l1 l2 l3 l4 l6 l8 r8
+    (0, 0) l1 l2 l3 l4 l6 l8 r8
+    (0, 1) l1 l2 l3 l4 l6 l8 r8
+try_in_a_with
+    () l1 l2 l3 l6 l1 r1
+    (0,) l1 l2 l3 l4 l6 l1 r1
+    (1,) l1 l2 l3 l4 l6 l1 r1
+    (0, 0) l1 l2 l3 l4 l6 l1 r1
+    (0, 1) l1 l2 l3 l4 l6 l1 r1
+with_in_a_try
+    () l1 l2 l3 l2 l6 r6
+    (0,) l1 l2 l3 l4 l2 l6 r6
+    (1,) l1 l2 l3 l4 l2 l6 r6
+    (0, 0) l1 l2 l3 l4 l2 l6 r6
+    (0, 1) l1 l2 l3 l4 l2 l6 r6
+break_in_a_with
+    () l1 l2 l1 r1
+    (0,) l1 l2 l3 l4 l3 l1 r1
+    (1,) l1 l2 l3 l4 l3 l1 r1
+    (0, 0) l1 l2 l3 l4 l3 l1 r1
+    (0, 1) l1 l2 l3 l4 l3 l1 r1
+continue_in_a_with
+    () l1 l2 l1 r1
+    (0,) l1 l2 l3 l4 l3 l2 l1 r1
+    (1,) l1 l2 l3 l4 l3 l2 l1 r1
+    (0, 0) l1 l2 l3 l4 l3 l2 l3 l4 l3 l2 l1 r1
+    (0, 1) l1 l2 l3 l4 l3 l2 l3 l4 l3 l2 l1 r1
+loop_in_a_loop
+    () l1 l2 l1 r1
+    (0,) l1 l2 l3 l4 l1 r1
+    (1,) l1 l2 l3 l4 l1 r1
+    (0, 0) l1 l2 l3 l4 l1 r1
+    (0, 1) l1 l2 l3 l4 l1 r1
+return_behind_a_condition
+    () l1 l2 r1
+    (0,) l1 l2 l3 l2 r1
+    (1,) l1 l2 l3 l4 l1 r1
+    (0, 0) l1 l2 l3 l2 l3 l2 r1
+    (0, 1) l1 l2 l3 l2 l3 l4 l1 r1
+statement_behind_the_return
+    () l1 l2 l1 r1
+    (0,) l1 l2 l3 l5 l2 l1 r1
+    (1,) l1 l2 l3 l4 l1 r1
+    (0, 0) l1 l2 l3 l5 l2 l3 l5 l2 l1 r1
+    (0, 1) l1 l2 l3 l5 l2 l3 l4 l1 r1
+handler_before_the_end
+    () l1 l2 l1 r1
+    (0,) l1 l2 l3 l4 l5 l6 l1 r1
+    (1,) l1 l2 l3 l4 l2 l1 r1
+    (0, 0) l1 l2 l3 l4 l5 l6 l1 r1
+    (0, 1) l1 l2 l3 l4 l5 l6 l1 r1
+handler_and_more
+    () l1 l6 r6
+    (0,) l1 l2 l3 l4 l5 l1 l6 r6
+    (1,) l1 l2 l3 l1 l6 r6
+    (0, 0) l1 l2 l3 l4 l5 l1 l2 l3 l4 l5 l1 l6 r6
+    (0, 1) l1 l2 l3 l4 l5 l1 l2 l3 l1 l6 r6
+handler_in_front_of_the_same_line
+    () l1 l2 l3 r3
+    (0,) l1 l3 r3
+    (1,) l1 l3 r3
+    (0, 0) l1 l3 r3
+    (0, 1) l1 l3 r3
+in_a_generator
+    () l1 l2 l1 r1
+    (0,) l1 l2 l3 l5 r5 l2 l1 r1
+    (1,) l1 l2 l3 l4 l1 r1
+    (0, 0) l1 l2 l3 l5 r5 l2 l3 l5 r5 l2 l1 r1
+    (0, 1) l1 l2 l3 l5 r5 l2 l3 l4 l1 r1

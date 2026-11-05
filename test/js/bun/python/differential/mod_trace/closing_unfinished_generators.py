@@ -29,6 +29,26 @@ def f3():
     yield 2
 def g6():
     return any(f2()), min(f(), default=3), next(f2(), None)
+# The same for generator expressions.
+def g7():
+    next(x for x in (1, 2))
+def g8():
+    for x in (y for y in (1, 2)):
+        break
+def g9():
+    for x in (y for y in (1, 2)):
+        return x
+def g10():
+    try:
+        for x in (y for y in (1, 2)):
+            raise KeyError
+    except KeyError:
+        pass
+def g11():
+    try:
+        sum(x for x in (1, 'a', 2))
+    except TypeError:
+        pass
 ev = []
 # (Only what this file does: a collection may run a callback of a weak reference of importlib's at any time.)
 def prof(frame, event, arg):
@@ -40,7 +60,7 @@ def tr(frame, event, arg):
         return
     ev.append((event, frame.f_code.co_name, frame.f_lineno - frame.f_code.co_firstlineno, repr(arg)[:40]))
     return tr
-for fn in (g, g2, g3, g4, g5, g6):
+for fn in (g, g2, g3, g4, g5, g6, g7, g8, g9, g10, g11):
     sys.setprofile(prof); fn(); sys.setprofile(None)
     print(fn.__name__, 'profile', ev); del ev[:]
     sys.settrace(tr); fn(); sys.settrace(None)
@@ -51,7 +71,7 @@ sys.monitoring.use_tool_id(2, 't')
 for e in (E.PY_START, E.PY_RESUME, E.PY_RETURN, E.PY_YIELD, E.PY_THROW, E.PY_UNWIND, E.RAISE, E.RERAISE, E.EXCEPTION_HANDLED, E.STOP_ITERATION):
     sys.monitoring.register_callback(2, e, (lambda e: lambda code, *a: code.co_filename == __file__ and ev.append((names[e], code.co_name)))(e))
 # (Whether CPython closes the generator before or after it tells of an exception that the function raises depends on how often the call has run.)
-for fn in (g, g2, g3, g4, g6):
+for fn in (g, g2, g3, g4, g6, g7, g8, g9, g10):
     sys.monitoring.set_events(2, E.PY_START| E.PY_RESUME| E.PY_RETURN| E.PY_YIELD| E.PY_THROW| E.PY_UNWIND| E.RAISE| E.RERAISE| E.EXCEPTION_HANDLED| E.STOP_ITERATION)
     fn()
     sys.monitoring.set_events(2, 0)

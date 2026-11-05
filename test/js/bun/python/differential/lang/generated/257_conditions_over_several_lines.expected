@@ -1,0 +1,3752 @@
+status: 0
+script: 08475c608981756f
+source: f13420e3cd0f1114
+---
+if: (a / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l2 l3 l6 r6
+    l2 l3 l4 l5 l6 r6
+if: (a and / 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l2 l3 l6 r6
+    l2 l3 l4 l5 l6 r6
+if: (b / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l2 l3 l4 l6 r6
+    l2 l3 l5 l6 r6
+    l2 l3 l4 l5 l6 r6
+if: (b or / 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l2 l3 l4 l5 l6 r6
+    l2 l3 l5 l6 r6
+if: (0 / and b)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+if: (0 and / None)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+if: (1 / or b)
+    lines of the code: [[1, 2, 3, 5, 6]]
+    l2 l3 l5 l6 r6
+if: (1 or / None)
+    lines of the code: [[1, 2, 3, 5, 6]]
+    l2 l3 l5 l6 r6
+if: (None / and 0)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+if: (None and / 'x')
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+if: ('x' / or 0)
+    lines of the code: [[1, 2, 3, 5, 6]]
+    l2 l3 l5 l6 r6
+if: ('x' or / 'x')
+    lines of the code: [[1, 2, 3, 5, 6]]
+    l2 l3 l5 l6 r6
+if: (a / and a / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: ((a / and a) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l7 r7
+if: (a / and (a / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: (a / and b / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: ((a / and b) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l5 l6 l7 r7
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: (a / and (b / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: (a / or b / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+    l2 l3 l6 l7 r7
+if: ((a / or 0) / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l5 l6 l7 r7
+if: (a / or (0 / and b))
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l6 l7 r7
+if: (a / or 0 / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l6 l7 r7
+if: ((a / or 0) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l6 l7 r7
+    l2 l3 l6 l7 r7
+if: (a / or (1 / or a))
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l4 l6 l7 r7
+    l2 l3 l6 l7 r7
+if: (a / and 1 / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l7 r7
+if: ((a / and 1) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: (b / and (a / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: (b / and a / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: ((b / and a) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: (b / and (a / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: (b / or b / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l6 l7 r7
+if: ((b / or b) / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l5 l6 l7 r7
+if: (b / or (b / and 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l6 l7 r7
+if: (b / or b / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l6 l7 r7
+    l2 l3 l6 l7 r7
+if: ((b / or 0) / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l6 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: (b / or (0 / or b))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l6 l7 r7
+if: (b / and 0 / and 1)
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l7 r7
+if: ((b / and 1) / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: (b / and (1 / and b))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: (b / and 1 / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: ((b / and 1) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l6 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: (0 / and (a / or a))
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+if: (0 / or a / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: ((0 / or a) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l7 r7
+if: (0 / or (a / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: (0 / or b / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l6 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: ((0 / or b) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: (0 / or (b / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l6 l7 r7
+if: (0 / and 0 / and a)
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+if: ((0 / and 0) / and b)
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+if: (0 / and (0 / and 0))
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+if: (0 / and 0 / or 1)
+    lines of the code: [[1, 2, 3, 5, 6, 7]]
+    l2 l3 l5 l6 l7 r7
+if: ((0 / and 1) / or a)
+    lines of the code: [[1, 2, 3, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l5 l6 l7 r7
+if: (0 / and (1 / or b))
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+if: (0 / or 1 / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l4 l5 l7 r7
+if: ((0 / or 1) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l6 l7 r7
+if: (1 / or (a / and a))
+    lines of the code: [[1, 2, 3, 6, 7]]
+    l2 l3 l6 l7 r7
+if: (1 / or a / or b)
+    lines of the code: [[1, 2, 3, 6, 7]]
+    l2 l3 l6 l7 r7
+if: ((1 / or a) / or 0)
+    lines of the code: [[1, 2, 3, 6, 7]]
+    l2 l3 l6 l7 r7
+if: (1 / or (a / or 1))
+    lines of the code: [[1, 2, 3, 6, 7]]
+    l2 l3 l6 l7 r7
+if: (1 / and b / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: ((1 / and b) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l7 r7
+if: (1 / and (b / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: (1 / and 0 / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: ((1 / and 0) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+if: (1 / and (0 / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l4 l5 l7 r7
+if: (1 / or 0 / and 1)
+    lines of the code: [[1, 2, 3, 6, 7]]
+    l2 l3 l6 l7 r7
+if: ((1 / or 1) / and a)
+    lines of the code: [[1, 2, 3, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l5 l6 l7 r7
+if: (1 / or (1 / and b))
+    lines of the code: [[1, 2, 3, 6, 7]]
+    l2 l3 l6 l7 r7
+if: (1 / or 1 / or 0)
+    lines of the code: [[1, 2, 3, 6, 7]]
+    l2 l3 l6 l7 r7
+if: ((1 / or 1) / or 1)
+    lines of the code: [[1, 2, 3, 6, 7]]
+    l2 l3 l6 l7 r7
+if: (a / if a / else 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l4 l5 l7 r7
+    l2 l4 l3 l6 l7 r7
+if: (not / b / and 0)
+    lines of the code: [[1, 2, 4, 5, 7]]
+    l2 l4 l5 l7 r7
+    l2 l4 l7 r7
+if: (not (0 / or b))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l2 l3 l4 l5 l6 r6
+    l2 l3 l4 l6 r6
+if: (1 / if a / else b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l4 l5 l7 r7
+    l2 l4 l5 l6 l7 r7
+    l2 l4 l3 l6 l7 r7
+if: (a / if 1 / else 1)
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l4 l3 l7 r7
+    l2 l4 l3 l6 l7 r7
+if, else: (a / and b)
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l6 l7 r7
+    l2 l3 l6 l7 r7
+    l2 l3 l4 l7 r7
+if, else: (a and / None)
+    lines of the code: [[1, 2, 3, 6, 7]]
+    l2 l6 l7 r7
+    l2 l3 l6 l7 r7
+if, else: (b / or b)
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l6 l7 r7
+    l2 l4 l7 r7
+if, else: (b or / None)
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l6 l7 r7
+    l2 l4 l7 r7
+if, else: (0 / and 0)
+    lines of the code: [[1, 2, 6, 7]]
+    l2 l6 l7 r7
+if, else: (0 and / 'x')
+    lines of the code: [[1, 2, 6, 7]]
+    l2 l6 l7 r7
+if, else: (1 / or 0)
+    lines of the code: [[1, 2, 4, 7]]
+    l2 l4 l7 r7
+if, else: (1 or / 'x')
+    lines of the code: [[1, 2, 4, 7]]
+    l2 l4 l7 r7
+if, else: (None / and 1)
+    lines of the code: [[1, 2, 6, 7]]
+    l2 l6 l7 r7
+if, else: ('x' and / a)
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l6 l7 r7
+    l2 l3 l4 l7 r7
+if, else: ('x' / or 1)
+    lines of the code: [[1, 2, 4, 7]]
+    l2 l4 l7 r7
+if, else: (a / and a / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l4 l7 l8 r8
+    l2 l3 l5 l8 r8
+if, else: ((a / and a) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l4 l7 l8 r8
+    l2 l4 l5 l8 r8
+    l2 l3 l5 l8 r8
+if, else: (a / and (a / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l7 l8 r8
+    l2 l3 l5 l8 r8
+if, else: (a / or a / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l7 l8 r8
+    l2 l5 l8 r8
+if, else: ((a / or b) / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l7 l8 r8
+    l2 l3 l4 l7 l8 r8
+    l2 l4 l5 l8 r8
+if, else: (a / or (b / and b))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l7 l8 r8
+    l2 l3 l4 l5 l8 r8
+    l2 l5 l8 r8
+if, else: (a / or b / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l3 l5 l8 r8
+    l2 l5 l8 r8
+if, else: ((a / or b) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l5 l8 r8
+    l2 l5 l8 r8
+if, else: (a / or (0 / or a))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l5 l8 r8
+if, else: (a / and 0 / and 0)
+    lines of the code: [[1, 2, 3, 7, 8]]
+    l2 l7 l8 r8
+    l2 l3 l7 l8 r8
+if, else: ((a / and 0) / and 1)
+    lines of the code: [[1, 2, 3, 7, 8]]
+    l2 l7 l8 r8
+    l2 l3 l7 l8 r8
+if, else: (a / and (1 / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l7 l8 r8
+    l2 l3 l4 l5 l8 r8
+if, else: (a / and 1 / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l4 l7 l8 r8
+    l2 l4 l5 l8 r8
+    l2 l3 l5 l8 r8
+if, else: ((a / and 1) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l4 l7 l8 r8
+    l2 l3 l5 l8 r8
+if, else: (a / and (1 / or 1))
+    lines of the code: [[1, 2, 3, 5, 7, 8]]
+    l2 l7 l8 r8
+    l2 l3 l5 l8 r8
+if, else: (b / or a / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l7 l8 r8
+    l2 l5 l8 r8
+    l2 l3 l4 l5 l8 r8
+if, else: ((b / or a) / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l7 l8 r8
+    l2 l4 l5 l8 r8
+    l2 l3 l4 l7 l8 r8
+if, else: (b / or (a / and 0))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l7 l8 r8
+    l2 l5 l8 r8
+    l2 l3 l4 l7 l8 r8
+if, else: (b / or a / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l5 l8 r8
+    l2 l3 l5 l8 r8
+if, else: ((b / or b) / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l5 l8 r8
+    l2 l3 l4 l5 l8 r8
+if, else: (b / or (b / or b))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l5 l8 r8
+if, else: (b / and b / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l7 l8 r8
+    l2 l3 l4 l5 l8 r8
+if, else: ((b / and 0) / and a)
+    lines of the code: [[1, 2, 3, 7, 8]]
+    l2 l7 l8 r8
+    l2 l3 l7 l8 r8
+if, else: (b / and (0 / and b))
+    lines of the code: [[1, 2, 3, 7, 8]]
+    l2 l7 l8 r8
+    l2 l3 l7 l8 r8
+if, else: (b / and 0 / or 0)
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l4 l7 l8 r8
+    l2 l3 l4 l7 l8 r8
+if, else: ((b / and 0) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 8]]
+    l2 l4 l5 l8 r8
+    l2 l3 l4 l5 l8 r8
+if, else: (b / and (1 / or a))
+    lines of the code: [[1, 2, 3, 5, 7, 8]]
+    l2 l7 l8 r8
+    l2 l3 l5 l8 r8
+if, else: (b / or 1 / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l5 l8 r8
+if, else: ((b / or 1) / and 0)
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l4 l7 l8 r8
+if, else: (b / or (1 / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l5 l8 r8
+if, else: (0 / or a / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l3 l5 l8 r8
+if, else: ((0 / or a) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l5 l8 r8
+if, else: (0 / or (a / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l3 l5 l8 r8
+if, else: (0 / and b / and a)
+    lines of the code: [[1, 2, 7, 8]]
+    l2 l7 l8 r8
+if, else: ((0 / and b) / and b)
+    lines of the code: [[1, 2, 7, 8]]
+    l2 l7 l8 r8
+if, else: (0 / and (b / and 0))
+    lines of the code: [[1, 2, 7, 8]]
+    l2 l7 l8 r8
+if, else: (0 / and b / or 1)
+    lines of the code: [[1, 2, 4, 5, 8]]
+    l2 l4 l5 l8 r8
+if, else: ((0 / and 0) / or a)
+    lines of the code: [[1, 2, 4, 5, 7, 8]]
+    l2 l4 l7 l8 r8
+    l2 l4 l5 l8 r8
+if, else: (0 / and (0 / or b))
+    lines of the code: [[1, 2, 7, 8]]
+    l2 l7 l8 r8
+if, else: (0 / or 0 / and 0)
+    lines of the code: [[1, 2, 3, 7, 8]]
+    l2 l3 l7 l8 r8
+if, else: ((0 / or 0) / and 1)
+    lines of the code: [[1, 2, 3, 7, 8]]
+    l2 l3 l7 l8 r8
+if, else: (0 / or (1 / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l3 l4 l5 l8 r8
+if, else: (0 / or 1 / or b)
+    lines of the code: [[1, 2, 3, 5, 8]]
+    l2 l3 l5 l8 r8
+if, else: ((0 / or 1) / or 0)
+    lines of the code: [[1, 2, 3, 5, 8]]
+    l2 l3 l5 l8 r8
+if, else: (0 / or (1 / or 1))
+    lines of the code: [[1, 2, 3, 5, 8]]
+    l2 l3 l5 l8 r8
+if, else: (1 / and a / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l7 l8 r8
+    l2 l3 l4 l7 l8 r8
+    l2 l3 l4 l5 l8 r8
+if, else: ((1 / and a) / and 0)
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l7 l8 r8
+    l2 l3 l4 l7 l8 r8
+if, else: (1 / and (a / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l7 l8 r8
+    l2 l3 l4 l5 l8 r8
+if, else: (1 / and b / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l3 l5 l8 r8
+    l2 l3 l4 l5 l8 r8
+if, else: ((1 / and b) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l3 l5 l8 r8
+if, else: (1 / and (b / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+    l2 l3 l5 l8 r8
+if, else: (1 / or b / and 1)
+    lines of the code: [[1, 2, 5, 8]]
+    l2 l5 l8 r8
+if, else: ((1 / or 0) / and a)
+    lines of the code: [[1, 2, 4, 5, 7, 8]]
+    l2 l4 l7 l8 r8
+    l2 l4 l5 l8 r8
+if, else: (1 / or (0 / and b))
+    lines of the code: [[1, 2, 5, 8]]
+    l2 l5 l8 r8
+if, else: (1 / or 0 / or 0)
+    lines of the code: [[1, 2, 5, 8]]
+    l2 l5 l8 r8
+if, else: ((1 / or 0) / or 1)
+    lines of the code: [[1, 2, 5, 8]]
+    l2 l5 l8 r8
+if, else: (1 / or (1 / or a))
+    lines of the code: [[1, 2, 5, 8]]
+    l2 l5 l8 r8
+if, else: (1 / and 1 / and 0)
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l4 l7 l8 r8
+if, else: ((1 / and 1) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 8]]
+    l2 l3 l4 l5 l8 r8
+if, else: (a / if a / else b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l3 l4 l7 l8 r8
+    l3 l4 l5 l8 r8
+    l3 l2 l5 l8 r8
+if, else: (a / if a / else 1)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l3 l4 l5 l8 r8
+    l3 l2 l5 l8 r8
+if, else: (not / b / and 1)
+    lines of the code: [[1, 3, 4, 5, 7, 8]]
+    l3 l4 l5 l8 r8
+    l3 l7 l8 r8
+if, else: (not (0 / or 0))
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l7 r7
+if, else: (1 / if b / else b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l3 l4 l7 l8 r8
+    l3 l2 l5 l8 r8
+if, else: (not / b) == b
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l3 l2 l3 l2 l6 l7 r7
+if, last: (a / and 0)
+    lines of the code: [[1, 2, 3]]
+    l2 r2
+    l2 l3 r3
+if, last: (a and / 'x')
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 l4 r4
+if, last: (b / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 r3
+    l2 l4 r4
+if, last: (b or / 'x')
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 r4
+    l2 l4 r4
+if, last: (0 / and 1)
+    lines of the code: [[1, 2]]
+    l2 r2
+if, last: (1 and / a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 r3
+    l2 l3 l4 r4
+if, last: (1 / or 1)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 r4
+if, last: (None or / a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 r3
+    l2 l3 l4 r4
+if, last: (None / and None)
+    lines of the code: [[1, 2]]
+    l2 r2
+if, last: ('x' and / b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 r3
+    l2 l3 l4 r4
+if, last: ('x' / or None)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 r4
+if, last: ((a / or a) / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 r3
+    l2 l4 l5 r5
+if, last: (a / or (a / and b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 r3
+    l2 l5 r5
+if, last: (a / or a / or 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l5 r5
+if, last: ((a / or a) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 r5
+    l2 l5 r5
+if, last: (a / or (b / or a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l3 l5 r5
+    l2 l5 r5
+if, last: (a / and b / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 r3
+    l2 l3 l4 r4
+if, last: ((a / and b) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 r2
+    l2 l3 r3
+    l2 l3 l4 l5 r5
+if, last: (a / and (0 / and a))
+    lines of the code: [[1, 2, 3]]
+    l2 r2
+    l2 l3 r3
+if, last: (a / and 0 / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 r4
+    l2 l4 l5 r5
+    l2 l3 l4 r4
+    l2 l3 l4 l5 r5
+if, last: ((a / and 0) / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 r4
+    l2 l3 l4 r4
+if, last: (a / and (0 / or 1))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 r2
+    l2 l3 l4 l5 r5
+if, last: (a / or 1 / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l5 r5
+if, last: ((a / or 1) / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l3 l4 l5 r5
+    l2 l4 r4
+    l2 l4 l5 r5
+if, last: (a / or (1 / and 0))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l5 r5
+if, last: (a / or 1 / or 1)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+    l2 l5 r5
+if, last: ((b / or a) / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l5 r5
+    l2 l3 l5 r5
+if, last: (b / or (a / or b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l5 r5
+    l2 l3 l5 r5
+if, last: (b / and a / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 r2
+    l2 l3 r3
+    l2 l3 l4 l5 r5
+if, last: ((b / and b) / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 r2
+    l2 l3 l4 r4
+    l2 l3 l4 l5 r5
+if, last: (b / and (b / and b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 r2
+    l2 l3 l4 l5 r5
+if, last: (b / and b / or 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 r4
+    l2 l3 l5 r5
+if, last: ((b / and b) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l5 r5
+    l2 l3 l5 r5
+if, last: (b / and (0 / or a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 r2
+    l2 l3 l4 r4
+    l2 l3 l4 l5 r5
+if, last: (b / or 0 / and b)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 r3
+    l2 l5 r5
+if, last: ((b / or 0) / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 r3
+    l2 l4 r4
+if, last: (b / or (0 / and 1))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 r3
+    l2 l5 r5
+if, last: (b / or 1 / or a)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+    l2 l5 r5
+if, last: ((b / or 1) / or b)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+    l2 l5 r5
+if, last: (b / or (1 / or 0))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+    l2 l5 r5
+if, last: (0 / and a / and a)
+    lines of the code: [[1, 2]]
+    l2 r2
+if, last: ((0 / and a) / and b)
+    lines of the code: [[1, 2]]
+    l2 r2
+if, last: (0 / and (a / and 0))
+    lines of the code: [[1, 2]]
+    l2 r2
+if, last: (0 / and a / or 1)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l5 r5
+if, last: ((0 / and b) / or a)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 r4
+    l2 l4 l5 r5
+if, last: (0 / and (b / or b))
+    lines of the code: [[1, 2]]
+    l2 r2
+if, last: (0 / or b / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 r3
+    l2 l3 l4 r4
+if, last: ((0 / or b) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 r3
+    l2 l3 l4 l5 r5
+if, last: (0 / or (0 / and a))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 r3
+if, last: (0 / or 0 / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l3 l4 l5 r5
+if, last: ((0 / or 0) / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 r4
+if, last: (0 / or (0 / or 1))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 r5
+if, last: (0 / and 1 / and b)
+    lines of the code: [[1, 2]]
+    l2 r2
+if, last: ((0 / and 1) / and 0)
+    lines of the code: [[1, 2]]
+    l2 r2
+if, last: (0 / and (1 / and 1))
+    lines of the code: [[1, 2]]
+    l2 r2
+if, last: (1 / and a / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l3 l5 r5
+if, last: ((1 / and a) / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l3 l4 l5 r5
+    l2 l3 l5 r5
+if, last: (1 / and (a / or 0))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l3 l5 r5
+if, last: (1 / or a / and 1)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+if, last: ((1 / or b) / and a)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 r4
+    l2 l4 l5 r5
+if, last: (1 / or (b / and b))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+if, last: (1 / or b / or 0)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+if, last: ((1 / or b) / or 1)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+if, last: (1 / or (0 / or a))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+if, last: (1 / and 0 / and 0)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 r3
+if, last: ((1 / and 0) / and 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 r3
+if, last: (1 / and (1 / and a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 r4
+    l2 l3 l4 l5 r5
+if, last: (1 / and 1 / or b)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+if, last: ((1 / and 1) / or 0)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+if, last: (1 / and (1 / or 1))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+if, last: (a / if b / else b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l4 r4
+    l3 l2 r2
+    l3 l2 l5 r5
+if, last: (a / if b / else a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l4 r4
+    l3 l2 r2
+    l3 l4 l5 r5
+    l3 l2 l5 r5
+if, last: (not / 0 / and a)
+    lines of the code: [[1, 3, 4, 5]]
+    l3 l4 r4
+    l3 l4 l5 r5
+if, last: (not (0 / or 1))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 r3
+if, last: (1 / if 0 / else b)
+    lines of the code: [[1, 3, 4, 5]]
+    l3 l4 r4
+    l3 l4 l5 r5
+if, last: (not / 1) == b
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l2 l4 r4
+    l3 l2 l3 l2 r2
+if, in a loop: (a / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l3 l4 l3 l7 r7
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l7 r7
+if, in a loop: (b and / a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l3 l4 l3 l7 r7
+    l2 l3 l4 l5 l3 l4 l5 l3 l7 r7
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l7 r7
+if, in a loop: (b / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l7 r7
+    l2 l3 l4 l6 l3 l4 l6 l3 l7 r7
+if, in a loop: (0 or / a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l7 r7
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l7 r7
+if, in a loop: (0 / and None)
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l3 l4 l3 l7 r7
+if, in a loop: (1 and / b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l7 r7
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l7 r7
+if, in a loop: (1 / or None)
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l7 r7
+if, in a loop: (None or / b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l7 r7
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l7 r7
+if, in a loop: (None / and 'x')
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l3 l4 l3 l7 r7
+if, in a loop: ('x' and / 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l7 r7
+if, in a loop: ('x' / or 'x')
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l7 r7
+if, in a loop: (a / or (a / or a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (a / and a / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+if, in a loop: ((a / and a) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: (a / and (b / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: (a / and b / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+    l2 l3 l4 l6 l7 l3 l4 l6 l7 l3 l8 r8
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: ((a / and b) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: (a / and (b / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: (a / or 0 / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: ((a / or 0) / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+    l2 l3 l4 l6 l7 l3 l4 l6 l7 l3 l8 r8
+if, in a loop: (a / or (0 / and 0))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (a / or 0 / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: ((a / or 1) / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (a / or (1 / or b))
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (a / and 1 / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: ((b / and a) / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: (b / and (a / and b))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: (b / and a / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: ((b / and a) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l6 l7 l3 l4 l6 l7 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: (b / and (b / or a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: (b / or b / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: ((b / or b) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+if, in a loop: (b / or (b / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (b / or 0 / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: ((b / or 0) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (b / or (0 / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (b / and 1 / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: ((b / and 1) / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: (b / and (1 / and 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+if, in a loop: (b / and 1 / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l6 l7 l3 l4 l6 l7 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: ((0 / and a) / or a)
+    lines of the code: [[1, 2, 3, 4, 6, 7, 8]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+    l2 l3 l4 l6 l7 l3 l4 l6 l7 l3 l8 r8
+if, in a loop: (0 / and (a / or b))
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+if, in a loop: (0 / or a / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+if, in a loop: ((0 / or a) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: (0 / or (b / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: (0 / or b / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: ((0 / or b) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: (0 / or (b / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+    l2 l3 l4 l5 l7 l3 l4 l5 l7 l3 l8 r8
+if, in a loop: (0 / and 0 / and b)
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+if, in a loop: ((0 / and 0) / and 0)
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+if, in a loop: (0 / and (0 / and 1))
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+if, in a loop: (0 / and 1 / or a)
+    lines of the code: [[1, 2, 3, 4, 6, 7, 8]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+    l2 l3 l4 l6 l7 l3 l4 l6 l7 l3 l8 r8
+if, in a loop: ((0 / and 1) / or b)
+    lines of the code: [[1, 2, 3, 4, 6, 7, 8]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+    l2 l3 l4 l6 l7 l3 l4 l6 l7 l3 l8 r8
+if, in a loop: (0 / and (1 / or 0))
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l4 l3 l4 l3 l8 r8
+if, in a loop: (0 / or 1 / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: ((1 / or a) / and a)
+    lines of the code: [[1, 2, 3, 4, 6, 7, 8]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+    l2 l3 l4 l6 l7 l3 l4 l6 l7 l3 l8 r8
+if, in a loop: (1 / or (a / and b))
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (1 / or a / or 0)
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: ((1 / or a) / or 1)
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (1 / or (b / or a))
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (1 / and b / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+if, in a loop: ((1 / and b) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: (1 / and (0 / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 8]]
+    l2 l3 l4 l5 l3 l4 l5 l3 l8 r8
+if, in a loop: (1 / and 0 / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: ((1 / and 0) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 8]]
+    l2 l3 l4 l5 l6 l3 l4 l5 l6 l3 l8 r8
+if, in a loop: (1 / and (0 / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l7 l3 l4 l5 l6 l7 l3 l8 r8
+if, in a loop: (1 / or 1 / and a)
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: ((1 / or 1) / and b)
+    lines of the code: [[1, 2, 3, 4, 6, 7, 8]]
+    l2 l3 l4 l6 l3 l4 l6 l3 l8 r8
+    l2 l3 l4 l6 l7 l3 l4 l6 l7 l3 l8 r8
+if, in a loop: (1 / or (1 / and 0))
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (1 / or 1 / or 1)
+    lines of the code: [[1, 2, 3, 4, 7, 8]]
+    l2 l3 l4 l7 l3 l4 l7 l3 l8 r8
+if, in a loop: (a / if 0 / else b)
+    lines of the code: [[1, 2, 3, 5, 6, 7, 8]]
+    l2 l3 l5 l6 l3 l5 l6 l3 l8 r8
+    l2 l3 l5 l6 l7 l3 l5 l6 l7 l3 l8 r8
+if, in a loop: (a / if b / else b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l5 l6 l3 l5 l6 l3 l8 r8
+    l2 l3 l5 l4 l3 l5 l4 l3 l8 r8
+    l2 l3 l5 l4 l7 l3 l5 l4 l7 l3 l8 r8
+if, in a loop: (not / 0 / and b)
+    lines of the code: [[1, 2, 3, 5, 6, 7, 8]]
+    l2 l3 l5 l6 l3 l5 l6 l3 l8 r8
+    l2 l3 l5 l6 l7 l3 l5 l6 l7 l3 l8 r8
+if, in a loop: (not (1 / or a))
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l3 l4 l3 l7 r7
+if, in a loop: (1 / if 1 / else b)
+    lines of the code: [[1, 2, 3, 4, 5, 7, 8]]
+    l2 l3 l5 l4 l7 l3 l5 l4 l7 l3 l8 r8
+while: (a or / a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l5 l6 l7 r7
+while: (a / and None)
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l7 r7
+while: (b and / b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+while: (b / or None)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l5 l6 l7 r7
+while: (0 or / b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+while: (0 / and 'x')
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+while: (1 and / 0)
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l7 r7
+while: (1 / or 'x')
+    lines of the code: [[1, 2, 3, 5, 6, 7]]
+    l2 l3 l5 l6 l7 r7
+while: (None or / 0)
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l7 r7
+while: ('x' / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 l7 r7
+while: ('x' and / 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l6 l7 r7
+while: (a / and (a / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (a / and a / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l5 l8 r8
+    l2 l3 l5 l6 l7 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: ((a / and a) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l5 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: (a / and (a / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: (a / or b / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l6 l7 l8 r8
+while: ((a / or b) / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+    l2 l3 l5 l8 r8
+    l2 l3 l5 l6 l7 l8 r8
+while: (a / or (b / and 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l6 l7 l8 r8
+while: (a / or b / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l7 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+    l2 l3 l6 l7 l8 r8
+while: ((a / or 0) / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l6 l7 l8 r8
+while: (a / or (0 / or b))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+    l2 l3 l6 l7 l8 r8
+while: (a / and 0 / and 1)
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l8 r8
+while: ((a / and 1) / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (a / and (1 / and b))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (a / and 1 / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l5 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: ((a / and 1) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l5 l6 l7 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: (b / and (a / or a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: (b / or a / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l6 l7 l8 r8
+    l2 l3 l4 l5 l8 r8
+while: ((b / or a) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l5 l8 r8
+    l2 l3 l4 l5 l8 r8
+while: (b / or (a / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l6 l7 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (b / or b / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l6 l7 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: ((b / or b) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l6 l7 l8 r8
+while: (b / or (b / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l6 l7 l8 r8
+while: (b / and 0 / and a)
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l8 r8
+while: ((b / and 0) / and b)
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l8 r8
+while: (b / and (0 / and 0))
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l8 r8
+while: (b / and 0 / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l5 l6 l7 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: ((b / and 1) / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l5 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+    l2 l3 l5 l6 l7 l8 r8
+while: (b / and (1 / or b))
+    lines of the code: [[1, 2, 3, 4, 6, 7, 8]]
+    l2 l3 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: (b / or 1 / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l6 l7 l8 r8
+while: ((b / or 1) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l7 l8 r8
+    l2 l3 l5 l6 l7 l8 r8
+while: (0 / or (a / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (0 / or a / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: ((0 / or a) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: (0 / or (a / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l7 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: (0 / and b / and b)
+    lines of the code: [[1, 2, 3, 8]]
+    l2 l3 l8 r8
+while: ((0 / and b) / and 0)
+    lines of the code: [[1, 2, 3, 8]]
+    l2 l3 l8 r8
+while: (0 / and (b / and 1))
+    lines of the code: [[1, 2, 3, 8]]
+    l2 l3 l8 r8
+while: (0 / and 0 / or a)
+    lines of the code: [[1, 2, 3, 5, 6, 7, 8]]
+    l2 l3 l5 l8 r8
+    l2 l3 l5 l6 l7 l8 r8
+while: ((0 / and 0) / or b)
+    lines of the code: [[1, 2, 3, 5, 6, 7, 8]]
+    l2 l3 l5 l8 r8
+    l2 l3 l5 l6 l7 l8 r8
+while: (0 / and (0 / or 0))
+    lines of the code: [[1, 2, 3, 8]]
+    l2 l3 l8 r8
+while: (0 / or 0 / and 1)
+    lines of the code: [[1, 2, 3, 4, 8]]
+    l2 l3 l4 l8 r8
+while: ((0 / or 1) / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (0 / or (1 / and b))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (0 / or 1 / or 0)
+    lines of the code: [[1, 2, 3, 4, 6, 7, 8]]
+    l2 l3 l4 l6 l7 l8 r8
+while: ((0 / or 1) / or 1)
+    lines of the code: [[1, 2, 3, 4, 6, 7, 8]]
+    l2 l3 l4 l6 l7 l8 r8
+while: (1 / or (a / or a))
+    lines of the code: [[1, 2, 3, 6, 7, 8]]
+    l2 l3 l6 l7 l8 r8
+while: (1 / and a / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l4 l5 l8 r8
+while: ((1 / and a) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (1 / and (b / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l8 r8
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (1 / and b / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: ((1 / and b) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: (1 / and (b / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l7 l8 r8
+    l2 l3 l4 l6 l7 l8 r8
+while: (1 / or 0 / and a)
+    lines of the code: [[1, 2, 3, 6, 7, 8]]
+    l2 l3 l6 l7 l8 r8
+while: ((1 / or 0) / and b)
+    lines of the code: [[1, 2, 3, 5, 6, 7, 8]]
+    l2 l3 l5 l8 r8
+    l2 l3 l5 l6 l7 l8 r8
+while: (1 / or (0 / and 0))
+    lines of the code: [[1, 2, 3, 6, 7, 8]]
+    l2 l3 l6 l7 l8 r8
+while: (1 / or 0 / or 1)
+    lines of the code: [[1, 2, 3, 6, 7, 8]]
+    l2 l3 l6 l7 l8 r8
+while: ((1 / or 1) / or a)
+    lines of the code: [[1, 2, 3, 6, 7, 8]]
+    l2 l3 l6 l7 l8 r8
+while: (1 / or (1 / or b))
+    lines of the code: [[1, 2, 3, 6, 7, 8]]
+    l2 l3 l6 l7 l8 r8
+while: (1 / and 1 / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l3 l4 l5 l6 l7 l8 r8
+while: (not (a / or a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l6 l7 r7
+    l2 l3 l7 r7
+while: (a / if 1 / else b)
+    lines of the code: [[1, 2, 3, 4, 6, 7, 8]]
+    l2 l4 l3 l8 r8
+    l2 l4 l3 l6 l7 l8 r8
+while: (a / if b / else 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7, 8]]
+    l2 l4 l5 l8 r8
+    l2 l4 l3 l8 r8
+    l2 l4 l3 l6 l7 l8 r8
+while: (not / 0 / and 0)
+    lines of the code: [[1, 2, 4, 5, 8]]
+    l2 l4 l5 l8 r8
+while: (not (1 / or b))
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+while: (not / not / b)
+    lines of the code: [[1, 2, 5, 6, 7, 8]]
+    l2 l5 l8 r8
+    l2 l5 l6 l7 l8 r8
+assert: (a or / b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l3 l2 r2 AssertionError
+    l2 l3 l4 r4
+    l2 l4 r4
+assert: (a / and 'x')
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2 AssertionError
+    l2 l3 l4 r4
+assert: (b and / 0)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2 AssertionError
+    l2 l3 l2 l3 l2 r2 AssertionError
+assert: (b / or 'x')
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 r4
+    l2 l4 r4
+assert: (0 or / 0)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l3 l2 r2 AssertionError
+assert: (1 / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l3 l2 r2 AssertionError
+    l2 l3 l4 r4
+assert: (1 and / 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 r4
+assert: (None / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l3 l2 r2 AssertionError
+    l2 l3 l4 r4
+assert: (None or / 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 r4
+assert: ('x' / and b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l3 l2 r2 AssertionError
+    l2 l3 l4 r4
+assert: ('x' and / None)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l3 l2 r2 AssertionError
+assert: (a / or a / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+    l2 l5 r5
+assert: ((a / or a) / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+    l2 l4 l2 l4 l2 r2 AssertionError
+    l2 l4 l5 r5
+assert: (a / or (a / and 0))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+    l2 l5 r5
+assert: (a / or a / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 r5
+    l2 l5 r5
+assert: ((a / or b) / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l5 r5
+    l2 l5 r5
+assert: (a / or (b / or b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l5 r5
+    l2 l5 r5
+assert: (a / and b / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 r2 AssertionError
+    l2 l3 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+assert: ((a / and 0) / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2 AssertionError
+    l2 l3 l2 l4 l2 r2 AssertionError
+assert: (a / and (0 / and b))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2 AssertionError
+    l2 l3 l2 l4 l2 r2 AssertionError
+assert: (a / and 0 / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+assert: ((a / and 0) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l5 r5
+    l2 l3 l4 l5 r5
+assert: (a / and (1 / or a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 r2 AssertionError
+    l2 l3 l5 r5
+assert: (a / or 1 / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+    l2 l5 r5
+assert: ((a / or 1) / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l4 l2 l4 l2 r2 AssertionError
+assert: (a / or (1 / and 1))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 r5
+    l2 l5 r5
+assert: (b / or a / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l5 r5
+    l2 l3 l5 r5
+assert: ((b / or a) / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l5 r5
+    l2 l3 l5 r5
+assert: (b / or (a / or 0))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l5 r5
+    l2 l3 l5 r5
+assert: (b / and b / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+assert: ((b / and b) / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+assert: (b / and (b / and 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+assert: (b / and b / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l5 r5
+    l2 l3 l5 r5
+assert: ((b / and 0) / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l4 l5 r5
+    l2 l3 l4 l5 r5
+assert: (b / and (0 / or b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+assert: (b / or 0 / and 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+    l2 l5 r5
+assert: ((b / or 0) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+    l2 l4 l5 r5
+assert: (b / or (1 / and a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l5 r5
+    l2 l3 l4 l5 r5
+assert: (b / or 1 / or b)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+    l2 l5 r5
+assert: ((b / or 1) / or 0)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+    l2 l5 r5
+assert: (b / or (1 / or 1))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+    l2 l5 r5
+assert: (0 / and a / and b)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2 AssertionError
+assert: ((0 / and a) / and 0)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2 AssertionError
+assert: (0 / and (a / and 1))
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2 AssertionError
+assert: (0 / and b / or a)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l2 l4 l2 r2 AssertionError
+    l2 l4 l5 r5
+assert: ((0 / and b) / or b)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l2 l4 l2 r2 AssertionError
+    l2 l4 l5 r5
+assert: (0 / and (b / or 0))
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2 AssertionError
+assert: (0 / or b / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+assert: ((0 / or 0) / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+assert: (0 / or (0 / and b))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+assert: (0 / or 0 / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+assert: ((0 / or 0) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 r5
+assert: (0 / or (1 / or a))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+assert: (0 / and 1 / and 0)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2 AssertionError
+assert: ((0 / and 1) / and 1)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2 AssertionError
+assert: (1 / and (a / and a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+assert: (1 / and a / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+    l2 l3 l5 r5
+assert: ((1 / and a) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l5 r5
+assert: (1 / and (a / or 1))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 r5
+    l2 l3 l5 r5
+assert: (1 / or b / and a)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assert: ((1 / or b) / and b)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l2 l4 l2 r2 AssertionError
+    l2 l4 l5 r5
+assert: (1 / or (b / and 0))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assert: (1 / or b / or 1)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assert: ((1 / or 0) / or a)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assert: (1 / or (0 / or b))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assert: (1 / and 0 / and 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2 AssertionError
+assert: ((1 / and 1) / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+assert: (1 / and (1 / and b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l4 l2 r2 AssertionError
+    l2 l3 l4 l5 r5
+assert: (1 / and 1 / or 0)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+assert: ((1 / and 1) / or 1)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+assert: (not (a / or b))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 r4
+    l2 l3 l2 l3 l2 r2 AssertionError
+    l2 l3 l2 r2 AssertionError
+assert: (b / if a / else b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l4 l2 l4 l2 r2 AssertionError
+    l3 l4 l5 r5
+    l3 l2 l4 l2 r2 AssertionError
+    l3 l2 l5 r5
+assert: (a / if b / else 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l4 l5 r5
+    l3 l2 l4 l2 r2 AssertionError
+    l3 l2 l5 r5
+assert: (not / 0 / and 1)
+    lines of the code: [[1, 3, 4, 5]]
+    l3 l4 l5 r5
+assert: (not (1 / or 0))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2 AssertionError
+assert: (not / not / 1)
+    lines of the code: [[1, 4, 5]]
+    l4 l5 r5
+assigned: (a or / 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+    l2 l4 r4
+assigned: (b / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 r4
+    l2 l3 l2 l4 r4
+assigned: (b and / 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 r4
+    l2 l3 l2 l4 r4
+assigned: (0 / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+assigned: (0 or / 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+assigned: (1 / and b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+assigned: (1 and / None)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+assigned: (None / or b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+assigned: (None or / None)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+assigned: ('x' / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+assigned: ('x' and / 'x')
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+assigned: ((a / or a) / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 l5 r5
+    l2 l5 r5
+assigned: (a / or (a / or b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l5 r5
+    l2 l5 r5
+assigned: (a / and a / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+assigned: ((a / and b) / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+assigned: (a / and (b / and b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l2 l5 r5
+    l2 l3 l4 l2 l5 r5
+assigned: (a / and b / or 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+    l2 l3 l2 l5 r5
+assigned: ((a / and b) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+    l2 l3 l2 l5 r5
+assigned: (a / and (0 / or a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l4 l2 l5 r5
+assigned: (a / or 0 / and b)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l2 l5 r5
+    l2 l5 r5
+assigned: ((a / or 0) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l5 r5
+    l2 l4 l2 l5 r5
+assigned: (a / or (0 / and 1))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l2 l5 r5
+    l2 l5 r5
+assigned: (a / or 1 / or a)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l2 l5 r5
+    l2 l5 r5
+assigned: ((a / or 1) / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l5 r5
+    l2 l5 r5
+assigned: (a / or (1 / or 0))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l2 l5 r5
+    l2 l5 r5
+assigned: (b / and a / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+assigned: ((b / and a) / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+assigned: (b / and (a / and 0))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l2 l5 r5
+    l2 l3 l4 l2 l5 r5
+assigned: (b / and a / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+    l2 l3 l2 l5 r5
+assigned: ((b / and b) / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l2 l5 r5
+    l2 l3 l2 l5 r5
+assigned: (b / and (b / or b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l2 l5 r5
+assigned: (b / or b / and 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l5 r5
+    l2 l5 r5
+assigned: ((b / or b) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l5 r5
+    l2 l4 l2 l5 r5
+assigned: (b / or (0 / and a))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l2 l5 r5
+    l2 l5 r5
+assigned: (b / or 0 / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 l5 r5
+    l2 l5 r5
+assigned: ((b / or 0) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 l5 r5
+    l2 l5 r5
+assigned: (b / or (0 / or 1))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l5 r5
+    l2 l5 r5
+assigned: (b / and 1 / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+assigned: ((b / and 1) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+assigned: (b / and (1 / and 1))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 r5
+    l2 l3 l4 l2 l5 r5
+assigned: (0 / and a / or a)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l2 l5 r5
+assigned: ((0 / and a) / or b)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l2 l5 r5
+assigned: (0 / and (a / or 0))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: (0 / or a / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l5 r5
+    l2 l3 l4 l2 l5 r5
+assigned: ((0 / or b) / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+assigned: (0 / or (b / and b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l5 r5
+    l2 l3 l4 l2 l5 r5
+assigned: (0 / or b / or 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 l5 r5
+    l2 l3 l2 l5 r5
+assigned: ((0 / or b) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 l5 r5
+    l2 l3 l2 l5 r5
+assigned: (0 / or (0 / or a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l2 l5 r5
+assigned: (0 / and 0 / and 0)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: ((0 / and 0) / and 1)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l5 r5
+assigned: (0 / and (1 / and a))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: (0 / and 1 / or b)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l2 l5 r5
+assigned: ((0 / and 1) / or 0)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l2 l5 r5
+assigned: (0 / and (1 / or 1))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: (1 / or a / and a)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: ((1 / or a) / and b)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l2 l5 r5
+assigned: (1 / or (a / and 0))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: (1 / or a / or 1)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: ((1 / or b) / or a)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l5 r5
+assigned: (1 / or (b / or b))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: (1 / and b / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l5 r5
+    l2 l3 l2 l4 l2 l5 r5
+assigned: ((1 / and 0) / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l5 r5
+assigned: (1 / and (0 / and b))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l2 l5 r5
+assigned: (1 / and 0 / or 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 l5 r5
+assigned: ((1 / and 0) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l2 l4 l2 l5 r5
+assigned: (1 / and (1 / or a))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l2 l5 r5
+assigned: (1 / or 1 / and b)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: ((1 / or 1) / and 0)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l2 l5 r5
+assigned: (1 / or (1 / and 1))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 r5
+assigned: (not (a / or 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 r4
+    l2 l4 r4
+assigned: (b / if b / else b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l4 l2 l5 r5
+    l3 l2 l5 r5
+assigned: (a / if 0 / else a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l4 l2 l5 r5
+assigned: (not / 1 / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l5 r5
+assigned: (not (1 / or 1))
+    lines of the code: [[1, 2, 4]]
+    l2 l4 r4
+returned: (a / or a)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+    l2 r2
+returned: (a or / 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+    l2 r2
+returned: (b / and b)
+    lines of the code: [[1, 2, 3]]
+    l2 r2
+    l2 l3 l2 r2
+returned: (b and / None)
+    lines of the code: [[1, 2, 3]]
+    l2 r2
+    l2 l3 l2 r2
+returned: (0 / or b)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+returned: (0 or / None)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+returned: (1 / and 0)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+returned: (1 and / 'x')
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+returned: (None / or 0)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+returned: (None or / 'x')
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+returned: ('x' / and 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+returned: ((a / and a) / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 l2 l4 l2 r2
+returned: (a / and (a / and b))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 l4 l2 r2
+returned: (a / and a / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: ((a / and a) / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: (a / and (b / or a))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 l4 l2 r2
+    l2 l3 l2 r2
+returned: (a / or b / and b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l3 l4 l2 r2
+    l2 r2
+returned: ((a / or b) / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l3 l2 l4 l2 r2
+    l2 l4 l2 r2
+returned: (a / or (b / and 1))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l3 l4 l2 r2
+    l2 r2
+returned: (a / or 0 / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2
+    l2 r2
+returned: ((a / or 0) / or b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2
+    l2 r2
+returned: (a / or (0 / or 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+    l2 r2
+returned: (a / and 1 / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 l2 l4 l2 r2
+returned: ((a / and 1) / and b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 l2 l4 l2 r2
+returned: (a / and (1 / and 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 l4 l2 r2
+returned: (a / and 1 / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: ((b / and a) / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2
+    l2 l3 l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: (b / and (a / or b))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 l4 l2 r2
+    l2 l3 l2 r2
+returned: (b / or a / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 r2
+    l2 l3 l4 l2 r2
+returned: ((b / or a) / and 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l4 l2 r2
+    l2 l3 l2 l4 l2 r2
+returned: (b / or (b / and a))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 r2
+returned: (b / or b / or b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2
+    l2 r2
+returned: ((b / or b) / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2
+    l2 r2
+returned: (b / or (b / or 1))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+    l2 r2
+returned: (b / and 0 / and b)
+    lines of the code: [[1, 2, 3]]
+    l2 r2
+    l2 l3 l2 r2
+returned: ((b / and 0) / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 r2
+    l2 l3 l2 r2
+returned: (b / and (0 / and 1))
+    lines of the code: [[1, 2, 3]]
+    l2 r2
+    l2 l3 l2 r2
+returned: (b / and 1 / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: ((b / and 1) / or b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: (b / and (1 / or 0))
+    lines of the code: [[1, 2, 3]]
+    l2 r2
+    l2 l3 l2 r2
+returned: (b / or 1 / and 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+    l2 r2
+returned: ((0 / or a) / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l3 l2 l4 l2 r2
+returned: (0 / or (a / and b))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l3 l4 l2 r2
+returned: (0 / or a / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: ((0 / or a) / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: (0 / or (b / or a))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+    l2 l3 l2 r2
+returned: (0 / and b / and 0)
+    lines of the code: [[1, 2]]
+    l2 r2
+returned: ((0 / and b) / and 1)
+    lines of the code: [[1, 2, 4]]
+    l2 r2
+returned: (0 / and (0 / and a))
+    lines of the code: [[1, 2]]
+    l2 r2
+returned: (0 / and 0 / or b)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2
+returned: ((0 / and 0) / or 0)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2
+returned: (0 / and (0 / or 1))
+    lines of the code: [[1, 2]]
+    l2 r2
+returned: (0 / or 1 / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+returned: ((0 / or 1) / and b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2
+returned: (0 / or (1 / and 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+returned: (0 / or 1 / or 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+returned: ((1 / or a) / or a)
+    lines of the code: [[1, 2, 4]]
+    l2 r2
+returned: (1 / or (a / or b))
+    lines of the code: [[1, 2]]
+    l2 r2
+returned: (1 / and a / and 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l3 l2 l4 l2 r2
+returned: ((1 / and b) / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l3 l2 l4 l2 r2
+returned: (1 / and (b / and b))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l3 l4 l2 r2
+returned: (1 / and b / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: ((1 / and b) / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 r2
+    l2 l3 l2 r2
+returned: (1 / and (0 / or a))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+returned: (1 / or 0 / and b)
+    lines of the code: [[1, 2]]
+    l2 r2
+returned: ((1 / or 0) / and 0)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2
+returned: (1 / or (0 / and 1))
+    lines of the code: [[1, 2]]
+    l2 r2
+returned: (1 / or 1 / or a)
+    lines of the code: [[1, 2]]
+    l2 r2
+returned: ((1 / or 1) / or b)
+    lines of the code: [[1, 2, 4]]
+    l2 r2
+returned: (1 / or (1 / or 0))
+    lines of the code: [[1, 2]]
+    l2 r2
+returned: (not / a / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l4 l2 r2
+    l3 l2 r2
+returned: (not (a / or 1))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+    l2 r2
+returned: (b / if 0 / else b)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l4 l2 r2
+returned: (a / if 0 / else b)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l4 l2 r2
+returned: (not / 1 / and b)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 r2
+returned: (not / a) == b
+    lines of the code: [[1, 2, 3]]
+    l3 l2 l3 l2 r2
+conditional expression: (a / or b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+    l2 l3 l2 r2
+    l2 r2
+conditional expression: (a or / None)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+    l2 r2
+conditional expression: (b / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: (b and / 'x')
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2
+    l2 l3 l2 r2
+conditional expression: (0 / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+conditional expression: (0 or / 'x')
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+conditional expression: (1 / and 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+conditional expression: (None and / a)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 r2
+conditional expression: (None / or 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+conditional expression: ('x' or / a)
+    lines of the code: [[1, 2]]
+    l2 r2
+conditional expression: ('x' / and None)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+conditional expression: (a / and (a / or a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 l2 r2
+    l2 l3 l2 r2
+conditional expression: (a / or a / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l5 l2 r2
+    l2 r2
+conditional expression: ((a / or a) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l5 l2 r2
+    l2 l4 l5 l2 r2
+conditional expression: (a / or (a / and 1))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l5 l2 r2
+    l2 r2
+conditional expression: (a / or b / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 l3 l2 r2
+    l2 r2
+conditional expression: ((a / or b) / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 l3 l2 r2
+    l2 r2
+conditional expression: (a / or (b / or 0))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 l3 l2 r2
+    l2 r2
+conditional expression: (a / and 0 / and a)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l5 l2 r2
+    l2 l3 l5 l2 r2
+conditional expression: ((a / and 0) / and b)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l5 l2 r2
+    l2 l3 l5 l2 r2
+conditional expression: (a / and (0 / and 0))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l5 l2 r2
+    l2 l3 l5 l2 r2
+conditional expression: (a / and 0 / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: ((a / and 1) / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l5 l2 r2
+    l2 l3 l2 r2
+conditional expression: (a / and (1 / or b))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l5 l2 r2
+    l2 l3 l2 r2
+conditional expression: (a / or 1 / and 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 r2
+conditional expression: ((a / or 1) / and 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+    l2 l4 l2 r2
+conditional expression: (b / or (a / and a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l5 l2 r2
+    l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: (b / or a / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 r2
+    l2 l3 l2 r2
+conditional expression: ((b / or a) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 r2
+    l2 l3 l2 r2
+conditional expression: (b / or (a / or 1))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+    l2 r2
+    l2 l3 l2 r2
+conditional expression: (b / and b / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: ((b / and b) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 l2 r2
+    l2 l3 l4 l5 l2 r2
+conditional expression: (b / and (b / and 1))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: (b / and 0 / or a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l5 l2 r2
+    l2 l3 l4 l5 l2 r2
+    l2 l4 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: ((b / and 0) / or b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l4 l5 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: (b / and (0 / or 0))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l5 l2 r2
+    l2 l3 l4 l5 l2 r2
+conditional expression: (b / or 0 / and 1)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 l2 r2
+    l2 r2
+conditional expression: ((b / or 1) / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 l4 l5 l2 r2
+    l2 l3 l4 l2 r2
+    l2 l4 l2 r2
+conditional expression: (b / or (1 / and b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 r2
+conditional expression: (b / or 1 / or 0)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+    l2 r2
+conditional expression: ((b / or 1) / or 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+    l2 r2
+conditional expression: (0 / or (a / or a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 l3 l2 r2
+conditional expression: (0 / and a / and 0)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 l2 r2
+conditional expression: ((0 / and a) / and 1)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 l2 r2
+conditional expression: (0 / and (b / and a))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 l2 r2
+conditional expression: (0 / and b / or b)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l5 l2 r2
+    l2 l4 l2 r2
+conditional expression: ((0 / and b) / or 0)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l5 l2 r2
+conditional expression: (0 / and (b / or 1))
+    lines of the code: [[1, 2, 5]]
+    l2 l5 l2 r2
+conditional expression: (0 / or 0 / and a)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 l2 r2
+conditional expression: ((0 / or 0) / and b)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 l2 r2
+conditional expression: (0 / or (0 / and 0))
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 l2 r2
+conditional expression: (0 / or 0 / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+conditional expression: ((0 / or 1) / or a)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+conditional expression: (0 / or (1 / or b))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+conditional expression: (0 / and 1 / and 1)
+    lines of the code: [[1, 2, 5]]
+    l2 l5 l2 r2
+conditional expression: ((1 / and a) / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l5 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: (1 / and (a / and b))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l5 l2 r2
+    l2 l3 l4 l5 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: (1 / and a / or 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 l3 l2 r2
+conditional expression: ((1 / and a) / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 r2
+    l2 l3 l2 r2
+conditional expression: (1 / and (b / or a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 l3 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: (1 / or b / and b)
+    lines of the code: [[1, 2]]
+    l2 r2
+conditional expression: ((1 / or b) / and 0)
+    lines of the code: [[1, 2, 4, 5]]
+    l2 l4 l5 l2 r2
+conditional expression: (1 / or (b / and 1))
+    lines of the code: [[1, 2]]
+    l2 r2
+conditional expression: (1 / or 0 / or a)
+    lines of the code: [[1, 2]]
+    l2 r2
+conditional expression: ((1 / or 0) / or b)
+    lines of the code: [[1, 2]]
+    l2 r2
+conditional expression: (1 / or (0 / or 0))
+    lines of the code: [[1, 2]]
+    l2 r2
+conditional expression: (1 / and 1 / and a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: ((1 / and 1) / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: (1 / and (1 / and 0))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 l2 r2
+conditional expression: (1 / and 1 / or 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 r2
+conditional expression: (not / a / and b)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l4 l5 l2 r2
+    l3 l4 l2 r2
+    l3 l5 l2 r2
+conditional expression: (not (b / or a))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 r2
+    l2 l4 l2 r2
+    l2 l3 l4 l2 r2
+conditional expression: (b / if 1 / else b)
+    lines of the code: [[1, 2, 3, 5]]
+    l3 l2 l5 l2 r2
+    l3 l2 r2
+conditional expression: (a / if 0 / else 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l4 l5 l2 r2
+conditional expression: (not / 1 / and 0)
+    lines of the code: [[1, 2, 3, 5]]
+    l3 l5 l2 r2
+conditional expression: (not / 0) == b
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l2 l4 l2 r2
+    l3 l2 l3 l2 r2
+comprehension: (a / or 0)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (a or / 'x')
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (b / and 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (0 and / a)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (0 / or 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (1 or / a)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (1 / and None)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (None and / b)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (None / or None)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: ('x' or / b)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: ('x' / and 'x')
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (a / or a / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: ((a / or a) / or b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (a / or (a / or 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (a / and b / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+comprehension: ((a / and b) / and b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+comprehension: (a / and (b / and 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+comprehension: (a / and b / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: ((a / and 0) / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+comprehension: (a / and (0 / or b))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+comprehension: (a / or 0 / and 0)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: ((a / or 0) / and 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l4 l2 l2 l4 l2 l2 r2
+comprehension: (a / or (1 / and a))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (a / or 1 / or b)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: ((a / or 1) / or 0)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (a / or (1 / or 1))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (b / and a / and b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+comprehension: ((b / and a) / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+comprehension: (b / and (a / and 1))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+comprehension: (b / and b / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: ((b / and b) / or b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (b / and (b / or 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (b / or b / and 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: ((b / or 0) / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l4 l2 l2 l4 l2 l2 r2
+comprehension: (b / or (0 / and b))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (b / or 0 / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: ((b / or 0) / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (b / or (1 / or a))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (b / and 1 / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+comprehension: ((b / and 1) / and 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l2 l2 r2
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+comprehension: (0 / and (a / and a))
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (0 / and a / or b)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+comprehension: ((0 / and a) / or 0)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+comprehension: (0 / and (a / or 1))
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (0 / or b / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+comprehension: ((0 / or b) / and b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+comprehension: (0 / or (b / and 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+comprehension: (0 / or b / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: ((0 / or 0) / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+comprehension: (0 / or (0 / or b))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+comprehension: (0 / and 0 / and 1)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: ((0 / and 1) / and a)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (0 / and (1 / and b))
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (0 / and 1 / or 0)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+comprehension: ((0 / and 1) / or 1)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+comprehension: (1 / and (a / or a))
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (1 / or a / and b)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: ((1 / or a) / and 0)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+comprehension: (1 / or (a / and 1))
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (1 / or b / or a)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: ((1 / or b) / or b)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (1 / or (b / or 0))
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: (1 / and 0 / and a)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: ((1 / and 0) / and b)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (1 / and (0 / and 0))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (1 / and 0 / or 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+comprehension: ((1 / and 1) / or a)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (1 / and (1 / or b))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (1 / or 1 / and 0)
+    lines of the code: [[1, 2]]
+    l2 l2 l2 r2
+comprehension: ((1 / or 1) / and 1)
+    lines of the code: [[1, 2, 4]]
+    l2 l4 l2 l2 l4 l2 l2 r2
+comprehension: (not / a / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l2 l4 l2 l2 l3 l2 l4 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (not (b / or b))
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+    l2 l2 l2 r2
+comprehension: (0 / if a / else b)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension: (a / if 0 / else 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l2 l3 l4 l2 l2 l3 l4 l2 l2 r2
+comprehension: (not / 1 / and 1)
+    lines of the code: [[1, 2, 3]]
+    l2 l3 l2 l2 l3 l2 l2 r2
+comprehension over lines: (a and / a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r2
+comprehension over lines: (a / or 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (b or / a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (b / and None)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r2
+comprehension over lines: (0 and / b)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (0 / or None)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: (1 or / b)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (1 / and 'x')
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: (None and / 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (None / or 'x')
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: ('x' or / 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (a / and a / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l6 l2 l3 l4 l2 l5 l2 l6 l2 l3 r2
+comprehension over lines: ((a / and a) / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l6 l2 l3 l4 l2 l5 l2 l6 l2 l3 r2
+comprehension over lines: (a / and (a / and 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l6 l2 l3 l4 l2 l5 l2 l6 l2 l3 r2
+comprehension over lines: (a / and a / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: ((a / and b) / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: (a / and (b / or b))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l6 l2 l3 l4 l2 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r2
+comprehension over lines: (a / or b / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: ((a / or b) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r2
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+comprehension over lines: (a / or (0 / and a))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (a / or 0 / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: ((a / or 0) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (a / or (0 / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (a / and 1 / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l6 l2 l3 l4 l2 l5 l6 l2 l3 r2
+comprehension over lines: ((a / and 1) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l6 l2 l3 l4 l2 l5 l6 l2 l3 r2
+comprehension over lines: (a / and (1 / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l6 l2 l3 l4 l2 l5 l6 l2 l3 r2
+comprehension over lines: (b / and a / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: ((b / and a) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: (b / and (a / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l6 l2 l3 l4 l2 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r2
+comprehension over lines: (b / or a / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r2
+comprehension over lines: ((b / or b) / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+comprehension over lines: (b / or (b / and b))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (b / or b / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: ((b / or b) / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (b / or (0 / or a))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (b / and 0 / and 0)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r2
+comprehension over lines: ((b / and 0) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r2
+comprehension over lines: (b / and (1 / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l6 l2 l3 l4 l2 l5 l6 l2 l3 r2
+comprehension over lines: (b / and 1 / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: ((b / and 1) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: (b / and (1 / or 1))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+    l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r2
+comprehension over lines: (0 / or a / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r2
+comprehension over lines: ((0 / or a) / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r2
+comprehension over lines: (0 / or (a / and 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r2
+comprehension over lines: (0 / or a / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: ((0 / or b) / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: (0 / or (b / or b))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: (0 / and b / and 1)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: ((0 / and 0) / and a)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (0 / and (0 / and b))
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (0 / and 0 / or 0)
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+comprehension over lines: ((0 / and 0) / or 1)
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+comprehension over lines: (0 / and (1 / or a))
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (0 / or 1 / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+comprehension over lines: ((0 / or 1) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+comprehension over lines: (0 / or (1 / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+comprehension over lines: (1 / or a / or a)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: ((1 / or a) / or b)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (1 / or (a / or 0))
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (1 / and b / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r2
+comprehension over lines: ((1 / and b) / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r2
+comprehension over lines: (1 / and (b / and 0))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r2
+comprehension over lines: (1 / and b / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+    l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r2
+comprehension over lines: ((1 / and 0) / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+comprehension over lines: (1 / and (0 / or b))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r2
+comprehension over lines: (1 / or 0 / and 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: ((1 / or 0) / and 1)
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r2
+comprehension over lines: (1 / or (1 / and a))
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (1 / or 1 / or b)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: ((1 / or 1) / or 0)
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (1 / or (1 / or 1))
+    lines of the code: [[1, 2, 3, 4]]
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (not / a / and 1)
+    lines of the code: [[1, 2, 3, 5, 6]]
+    l3 l2 l3 l5 l2 l6 l2 l3 l5 l2 l6 l2 l3 r2
+    l3 l2 l3 l5 l2 l3 l5 l2 l3 r2
+comprehension over lines: (not (b / or 0))
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r2
+    l3 l2 l3 l4 l2 l3 l4 l2 l3 r2
+comprehension over lines: (0 / if b / else b)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l3 l2 l3 l5 l6 l2 l3 l5 l6 l2 l3 r2
+    l3 l2 l3 l5 l4 l2 l3 l5 l4 l2 l3 r2
+comprehension over lines: (a / if 1 / else a)
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l3 l2 l3 l5 l4 l2 l3 l5 l4 l2 l3 r2
+    l3 l2 l3 l5 l4 l2 l4 l2 l3 l5 l4 l2 l4 l2 l3 r2
+comprehension over lines: (not / not / a)
+    lines of the code: [[1, 2, 3, 6]]
+    l3 l2 l3 l6 l2 l3 l6 l2 l3 r2
+generator expression: (a and / b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 r2 l2 l3 l4 l2 l5 l2 r2 l2 l3 r3 r2
+generator expression: (a / or None)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (b or / b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (b / and 'x')
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 r2 l2 l3 l4 l2 l5 l2 r2 l2 l3 r3 r2
+generator expression: (0 and / 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+generator expression: (0 / or 'x')
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: (1 or / 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (None / and a)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+generator expression: (None and / 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+generator expression: ('x' / or a)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: ('x' or / 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: ((a / and a) / or a)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: (a / and (a / or b))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 r2 l2 l3 l4 l2 l5 l2 r2 l2 l3 r3 r2
+generator expression: (a / or a / and 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: ((a / or a) / and 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l6 l2 r2 l2 l3 l4 l6 l2 r2 l2 l3 r3 r2
+generator expression: (a / or (b / and a))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (a / or b / or b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: ((a / or b) / or 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (a / or (b / or 1))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (a / and 0 / and b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r3 r2
+generator expression: ((a / and 0) / and 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r3 r2
+generator expression: (a / and (0 / and 1))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r3 r2
+generator expression: (a / and 1 / or a)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: ((a / and 1) / or b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l6 l2 r2 l2 l3 l4 l6 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: (a / and (1 / or 0))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 r2 l2 l3 l4 l2 l5 l2 r2 l2 l3 r3 r2
+generator expression: (a / or 1 / and 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: ((b / or a) / and a)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 l6 l2 r2 l2 l3 l4 l5 l2 l6 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l6 l2 r2 l2 l3 l4 l6 l2 r2 l2 l3 r3 r2
+generator expression: (b / or (a / and b))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r3 r2
+generator expression: (b / or a / or 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: ((b / or a) / or 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: (b / or (b / or a))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+generator expression: (b / and b / and 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 l6 l2 l3 l4 l2 l5 l2 l6 l2 l3 r3 r2
+generator expression: ((b / and b) / and 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 l6 l2 r2 l2 l3 l4 l2 l5 l2 l6 l2 r2 l2 l3 r3 r2
+generator expression: (b / and (0 / and a))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r3 r2
+generator expression: (b / and 0 / or b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+generator expression: ((b / and 0) / or 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+generator expression: (b / and (0 / or 1))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l5 l6 l2 r2 l2 l3 l4 l2 l5 l6 l2 r2 l2 l3 r3 r2
+generator expression: (b / or 1 / and a)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+generator expression: ((b / or 1) / and b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l6 l2 r2 l2 l3 l4 l6 l2 r2 l2 l3 r3 r2
+generator expression: (b / or (1 / and 0))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (b / or 1 / or 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: ((0 / or a) / or a)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: (0 / or (a / or b))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: (0 / and a / and 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+generator expression: ((0 / and b) / and a)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+generator expression: (0 / and (b / and b))
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+generator expression: (0 / and b / or 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 6]]
+    l2 l3 l2 l3 l4 l6 l2 l3 l4 l6 l2 l3 r3 r2
+generator expression: ((0 / and b) / or 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 6]]
+    l2 l3 l2 l3 l4 l6 l2 r2 l2 l3 l4 l6 l2 r2 l2 l3 r3 r2
+generator expression: (0 / and (0 / or a))
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+generator expression: (0 / or 0 / and b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+generator expression: ((0 / or 0) / and 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+generator expression: (0 / or (0 / and 1))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+generator expression: (0 / or 1 / or a)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: ((0 / or 1) / or b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: (0 / or (1 / or 0))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: (1 / and a / and a)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 l6 l2 r2 l2 l3 l4 l5 l2 l6 l2 r2 l2 l3 r3 r2
+generator expression: ((1 / and a) / and b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 l6 l2 r2 l2 l3 l4 l5 l2 l6 l2 r2 l2 l3 r3 r2
+generator expression: (1 / and (a / and 0))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l2 l3 l4 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 l6 l2 l3 l4 l5 l2 l6 l2 l3 r3 r2
+generator expression: (1 / and a / or 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: ((1 / and b) / or a)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+generator expression: (1 / and (b / or b))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l2 r2 l2 l3 l4 l5 l2 r2 l2 l3 r3 r2
+generator expression: (1 / or b / and 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: ((1 / or b) / and 1)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 6]]
+    l2 l3 l2 l3 l4 l6 l2 r2 l2 l3 l4 l6 l2 r2 l2 l3 r3 r2
+generator expression: (1 / or (0 / and a))
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (1 / or 0 / or b)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: ((1 / or 0) / or 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (1 / or (0 / or 1))
+    lines of the code: [[1, 2, 3], [2, 3, 4]]
+    l2 l3 l2 l3 l4 l2 r2 l2 l3 l4 l2 r2 l2 l3 r3 r2
+generator expression: (1 / and 1 / and b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+generator expression: ((1 / and 1) / and 0)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 l3 l4 l5 l6 l2 l3 r3 r2
+generator expression: (1 / and (1 / and 1))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l4 l5 l6 l2 r2 l2 l3 l4 l5 l6 l2 r2 l2 l3 r3 r2
+generator expression: (a / if a / else a)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5, 6]]
+    l2 l3 l2 l3 l5 l6 l2 l3 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l5 l4 l2 l4 l2 r2 l2 l3 l5 l4 l2 l4 l2 r2 l2 l3 r3 r2
+generator expression: (not / b / and a)
+    lines of the code: [[1, 2, 3], [2, 3, 5, 6]]
+    l2 l3 l2 l3 l5 l2 l6 l2 l3 l5 l2 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l5 l2 l3 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l5 l2 l6 l2 r2 l2 l3 l5 l2 l6 l2 r2 l2 l3 r3 r2
+generator expression: (not (b / or 1))
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l4 l2 l5 l2 l3 l4 l2 l5 l2 l3 r3 r2
+    l2 l3 l2 l3 l4 l2 l3 l4 l2 l3 r3 r2
+generator expression: (0 / if 0 / else b)
+    lines of the code: [[1, 2, 3], [2, 3, 5, 6]]
+    l2 l3 l2 l3 l5 l6 l2 l3 l5 l6 l2 l3 r3 r2
+    l2 l3 l2 l3 l5 l6 l2 r2 l2 l3 l5 l6 l2 r2 l2 l3 r3 r2
+generator expression: (a / if 1 / else b)
+    lines of the code: [[1, 2, 3], [2, 3, 4, 5]]
+    l2 l3 l2 l3 l5 l4 l2 l3 l5 l4 l2 l3 r3 r2
+    l2 l3 l2 l3 l5 l4 l2 l4 l2 r2 l2 l3 l5 l4 l2 l4 l2 r2 l2 l3 r3 r2
+generator expression: (not / not / 0)
+    lines of the code: [[1, 2, 3], [2, 3, 6]]
+    l2 l3 l2 l3 l6 l2 l3 l6 l2 l3 r3 r2
+guard: (a and / 0)
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l2 l3 l6 r6
+    l2 l3 l4 l6 r6
+guard: (a / or 'x')
+    lines of the code: [[1, 2, 3, 4, 5]]
+    l2 l3 l4 l5 r5
+    l2 l3 l5 r5
+guard: (b or / 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l2 l3 l4 l6 r6
+    l2 l3 l5 r5
+guard: (0 / and a)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: (0 and / 1)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: (1 / or a)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+guard: (1 or / 1)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+guard: (None / and b)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: (None and / None)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: ('x' / or b)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+guard: ('x' or / None)
+    lines of the code: [[1, 2, 3, 5]]
+    l2 l3 l5 r5
+guard: (a / or (a / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l6 r6
+guard: (a / or a / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 r6
+    l2 l3 l6 r6
+guard: ((a / or a) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l6 r6
+guard: (a / or (a / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l2 l3 l4 l5 l6 r6
+    l2 l3 l6 r6
+guard: (a / and b / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: ((a / and b) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l7 r7
+guard: (a / and (b / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: (a / and 0 / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: ((a / and 0) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l5 l6 r6
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: (a / and (0 / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l7 r7
+guard: (a / or 0 / and 1)
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l6 r6
+guard: ((a / or 1) / and a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l5 l6 r6
+guard: (a / or (1 / and b))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 r6
+    l2 l3 l6 r6
+guard: (a / or 1 / or 0)
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l2 l3 l4 l6 r6
+    l2 l3 l6 r6
+guard: ((a / or 1) / or 1)
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l2 l3 l4 l6 r6
+    l2 l3 l6 r6
+guard: (b / or (a / or a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l6 r6
+    l2 l3 l4 l6 r6
+guard: (b / and a / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l7 r7
+guard: ((b / and a) / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: (b / and (b / and a))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: (b / and b / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l4 l6 r6
+guard: ((b / and b) / or 0)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l5 l7 r7
+    l2 l3 l4 l6 r6
+guard: (b / and (b / or 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l6 r6
+guard: (b / or 0 / and a)
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l6 r6
+guard: ((b / or 0) / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l5 l6 r6
+guard: (b / or (0 / and 0))
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l6 r6
+guard: (b / or 0 / or 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l2 l3 l4 l5 l6 r6
+    l2 l3 l6 r6
+guard: ((b / or 1) / or a)
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l2 l3 l4 l6 r6
+    l2 l3 l6 r6
+guard: (b / or (1 / or b))
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l2 l3 l4 l6 r6
+    l2 l3 l6 r6
+guard: (b / and 1 / and 1)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: ((0 / and a) / and a)
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+guard: (0 / and (a / and b))
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+guard: (0 / and a / or 0)
+    lines of the code: [[1, 2, 3, 5, 7]]
+    l2 l3 l5 l7 r7
+guard: ((0 / and a) / or 1)
+    lines of the code: [[1, 2, 3, 5, 6]]
+    l2 l3 l5 l6 r6
+guard: (0 / and (b / or a))
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+guard: (0 / or b / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: ((0 / or b) / and 0)
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l7 r7
+guard: (0 / or (b / and 1))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: (0 / or 0 / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: ((0 / or 0) / or b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 r6
+guard: (0 / or (0 / or 0))
+    lines of the code: [[1, 2, 3, 4, 5, 7]]
+    l2 l3 l4 l5 l7 r7
+guard: (0 / and 1 / and a)
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+guard: ((0 / and 1) / and b)
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+guard: (0 / and (1 / and 0))
+    lines of the code: [[1, 2, 3, 7]]
+    l2 l3 l7 r7
+guard: (0 / and 1 / or 1)
+    lines of the code: [[1, 2, 3, 5, 6]]
+    l2 l3 l5 l6 r6
+guard: ((1 / and a) / or a)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l6 r6
+guard: (1 / and (a / or b))
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 r6
+    l2 l3 l4 l6 r6
+guard: (1 / or a / and 0)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: ((1 / or a) / and 1)
+    lines of the code: [[1, 2, 3, 5, 6]]
+    l2 l3 l5 l6 r6
+guard: (1 / or (b / and a))
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: (1 / or b / or b)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: ((1 / or b) / or 0)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: (1 / or (b / or 1))
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: (1 / and 0 / and b)
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l7 r7
+guard: ((1 / and 0) / and 0)
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l7 r7
+guard: (1 / and (0 / and 1))
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l7 r7
+guard: (1 / and 1 / or a)
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l2 l3 l4 l6 r6
+guard: ((1 / and 1) / or b)
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l2 l3 l4 l6 r6
+guard: (1 / and (1 / or 0))
+    lines of the code: [[1, 2, 3, 4, 6]]
+    l2 l3 l4 l6 r6
+guard: (1 / or 1 / and 1)
+    lines of the code: [[1, 2, 3, 6]]
+    l2 l3 l6 r6
+guard: (a / if a / else b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l5 l6 r6
+    l2 l3 l4 l3 l6 r6
+guard: (not / b / and b)
+    lines of the code: [[1, 2, 3, 4, 5, 6, 7]]
+    l2 l3 l4 l5 l7 r7
+    l2 l3 l4 l7 r7
+guard: (not (0 / or a))
+    lines of the code: [[1, 2, 3, 4, 5, 6]]
+    l2 l3 l4 l5 r5
+    l2 l3 l4 l6 r6
+guard: (0 / if 1 / else b)
+    lines of the code: [[1, 2, 3, 4, 7]]
+    l2 l3 l4 l3 l7 r7
+guard: (a / if 1 / else 0)
+    lines of the code: [[1, 2, 3, 4, 6, 7]]
+    l2 l3 l4 l3 l7 r7
+    l2 l3 l4 l3 l6 r6

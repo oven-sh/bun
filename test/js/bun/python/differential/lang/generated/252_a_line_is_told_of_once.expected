@@ -1,0 +1,19 @@
+status: 0
+script: 8412a24e7a3fc77e
+source: 500108ad0020b934
+---
+skipped_by_or : l1 r1
+skipped_by_or_then_more : l1 l6 r6
+not_skipped_by_or : l1 l2 l2 l2 l1 r1
+skipped_by_and : l1 r1
+not_skipped_by_and : l1 l2 l2 l2 l1 r1
+one_of_two 0 : l2 l3 l3 l3 l1 l4 r4
+one_of_two 1 : l2 l1 l1 l4 r4
+as_an_argument : l1 r1
+in_a_condition : l1 l3 r3
+dead_statement_after_return : l1 l2 r1
+dead_assignment_after_return : l1 l2 r1
+dead_statement_after_return_over_two_lines : l1 l2 r1
+dead_statement_after_raise : l1 l2 l1 r1
+dead_statement_after_continue : l1 l2 l3 l2 l3 l2 l1 r1
+dead_statement_after_break : l1 l2 l3 l1 r1

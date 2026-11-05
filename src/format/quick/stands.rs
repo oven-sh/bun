@@ -417,7 +417,6 @@ impl Quick {
     }
 
     /// Is T[start, end), which is the window, printed as it stands at column 0?
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn program_stands(&mut self, language: i32, start: i32, end: i32) -> R<bool> {
         if !self.options.short_cuts
             || !self.options.guessing

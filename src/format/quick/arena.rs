@@ -13,7 +13,7 @@
 //! language that is embedded in another one appends its tree behind the host's.
 
 use crate::text::much_larger;
-use crate::{Quick, Words, zeros};
+use crate::{Numbers, Quick, Words, zeros};
 
 pub(crate) struct Arena {
     pub(crate) n_pos: i32,
@@ -50,6 +50,8 @@ impl Quick {
         self.arena.ls_pos = 0;
     }
 
+    #[cold]
+    #[inline(never)]
     pub(crate) fn grow_ast(&mut self, need: i32) {
         let mut cap = self.arena.n_cap;
         while cap < need {
@@ -90,12 +92,21 @@ impl Quick {
         if n + size > self.arena.n_cap {
             self.grow_ast(n + size);
         }
-        self.n.put(n, head);
-        self.n.put(n + 1, start);
-        self.n.put(n + 2, end);
-        self.n.put(n + 3, 0);
+        self.n.put_several(n, [head, start, end, 0]);
         self.arena.n_pos = n + size;
         return n;
+    }
+
+    /// A node of so many words.
+    #[inline(always)]
+    fn alloc_several<const COUNT: usize>(&mut self, words: [i32; COUNT]) -> i32 {
+        let n = self.arena.n_pos;
+        if n + COUNT as i32 > self.arena.n_cap {
+            self.grow_ast(n + COUNT as i32);
+        }
+        self.n.put_several(n, words);
+        self.arena.n_pos = n + COUNT as i32;
+        n
     }
 
     pub(crate) fn arena_adopt(&mut self, l: i32, n: i32) {
@@ -118,16 +129,13 @@ impl Quick {
     }
 
     pub(crate) fn node1(&mut self, head: i32, start: i32, end: i32, c0: i32) -> i32 {
-        let n = self.alloc(head, start, end, 5);
-        self.n.put(n + 4, c0);
+        let n = self.alloc_several([head, start, end, 0, c0]);
         self.n.put(c0 + 3, n);
         return n;
     }
 
     pub(crate) fn node2(&mut self, head: i32, start: i32, end: i32, c0: i32, c1: i32) -> i32 {
-        let n = self.alloc(head, start, end, 6);
-        self.n.put(n + 4, c0);
-        self.n.put(n + 5, c1);
+        let n = self.alloc_several([head, start, end, 0, c0, c1]);
         self.n.put(c0 + 3, n);
         self.n.put(c1 + 3, n);
         return n;
@@ -142,10 +150,7 @@ impl Quick {
         c1: i32,
         c2: i32,
     ) -> i32 {
-        let n = self.alloc(head, start, end, 7);
-        self.n.put(n + 4, c0);
-        self.n.put(n + 5, c1);
-        self.n.put(n + 6, c2);
+        let n = self.alloc_several([head, start, end, 0, c0, c1, c2]);
         self.n.put(c0 + 3, n);
         self.n.put(c1 + 3, n);
         self.n.put(c2 + 3, n);
@@ -162,11 +167,7 @@ impl Quick {
         c2: i32,
         c3: i32,
     ) -> i32 {
-        let n = self.alloc(head, start, end, 8);
-        self.n.put(n + 4, c0);
-        self.n.put(n + 5, c1);
-        self.n.put(n + 6, c2);
-        self.n.put(n + 7, c3);
+        let n = self.alloc_several([head, start, end, 0, c0, c1, c2, c3]);
         self.n.put(c0 + 3, n);
         self.n.put(c1 + 3, n);
         self.n.put(c2 + 3, n);
@@ -175,25 +176,20 @@ impl Quick {
     }
 
     pub(crate) fn node_l(&mut self, head: i32, start: i32, end: i32, l0: i32) -> i32 {
-        let n = self.alloc(head, start, end, 5);
-        self.n.put(n + 4, l0);
+        let n = self.alloc_several([head, start, end, 0, l0]);
         self.arena_adopt(l0, n);
         return n;
     }
 
     pub(crate) fn node_ll(&mut self, head: i32, start: i32, end: i32, l0: i32, l1: i32) -> i32 {
-        let n = self.alloc(head, start, end, 6);
-        self.n.put(n + 4, l0);
-        self.n.put(n + 5, l1);
+        let n = self.alloc_several([head, start, end, 0, l0, l1]);
         self.arena_adopt(l0, n);
         self.arena_adopt(l1, n);
         return n;
     }
 
     pub(crate) fn node1_l(&mut self, head: i32, start: i32, end: i32, c0: i32, l0: i32) -> i32 {
-        let n = self.alloc(head, start, end, 6);
-        self.n.put(n + 4, c0);
-        self.n.put(n + 5, l0);
+        let n = self.alloc_several([head, start, end, 0, c0, l0]);
         self.n.put(c0 + 3, n);
         self.arena_adopt(l0, n);
         return n;
@@ -208,10 +204,7 @@ impl Quick {
         l0: i32,
         l1: i32,
     ) -> i32 {
-        let n = self.alloc(head, start, end, 7);
-        self.n.put(n + 4, c0);
-        self.n.put(n + 5, l0);
-        self.n.put(n + 6, l1);
+        let n = self.alloc_several([head, start, end, 0, c0, l0, l1]);
         self.n.put(c0 + 3, n);
         self.arena_adopt(l0, n);
         self.arena_adopt(l1, n);
@@ -227,10 +220,7 @@ impl Quick {
         c1: i32,
         l0: i32,
     ) -> i32 {
-        let n = self.alloc(head, start, end, 7);
-        self.n.put(n + 4, c0);
-        self.n.put(n + 5, c1);
-        self.n.put(n + 6, l0);
+        let n = self.alloc_several([head, start, end, 0, c0, c1, l0]);
         self.n.put(c0 + 3, n);
         self.n.put(c1 + 3, n);
         self.arena_adopt(l0, n);
@@ -247,11 +237,7 @@ impl Quick {
         l0: i32,
         l1: i32,
     ) -> i32 {
-        let n = self.alloc(head, start, end, 8);
-        self.n.put(n + 4, c0);
-        self.n.put(n + 5, c1);
-        self.n.put(n + 6, l0);
-        self.n.put(n + 7, l1);
+        let n = self.alloc_several([head, start, end, 0, c0, c1, l0, l1]);
         self.n.put(c0 + 3, n);
         self.n.put(c1 + 3, n);
         self.arena_adopt(l0, n);
@@ -259,14 +245,21 @@ impl Quick {
         return n;
     }
 
+    #[inline]
     pub(crate) fn list_push(&mut self, item: i32) {
         if self.arena.ls_pos >= (self.arena.ls.len() as i32) {
-            let mut next = zeros::<i32>(self.arena.ls.len() as i32 * 2);
-            next.set_all(&self.arena.ls, 0);
-            self.arena.ls = next;
+            self.grow_list();
         }
         self.arena.ls.put(self.arena.ls_pos, item);
         self.arena.ls_pos += 1;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_list(&mut self) {
+        let mut next = zeros::<i32>(self.arena.ls.len() as i32 * 2);
+        next.set_all(&self.arena.ls, 0);
+        self.arena.ls = next;
     }
 
     pub(crate) fn list_truncate(&mut self, mark: i32) {

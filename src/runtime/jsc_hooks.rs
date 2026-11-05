@@ -4327,13 +4327,10 @@ fn transpile_file<const DATA_ONLY: bool>(
     }
 
     if matches!(lr.path.name().ext, b".js" | b".ts") {
-        // SAFETY: the resolver belongs to this live VM on its JS thread.
-        if let Some(error) = unsafe {
-            (*jsc_vm)
-                .transpiler
-                .resolver
-                .node_package_scope_error(lr.path.text, false)
-        } {
+        if let Some(error) = jsc_vm
+            .transpiler
+            .with_mut(|t| t.resolver.node_package_scope_error(lr.path.text, false))
+        {
             *ret = ErrorableResolvedSource::err(bun_jsc::ResolveMessage::from_node_module_error(
                 global, &error, false, b"", b"",
             ));

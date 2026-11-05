@@ -5660,12 +5660,15 @@ impl VirtualMachine {
         if resolve_result.is_ok()
             && jsc_vm
                 .transpiler
+                .get()
                 .resolver
                 .node_module_error
                 .as_ref()
                 .is_some_and(|error| !error.is_fatal())
         {
-            jsc_vm.transpiler.resolver.node_module_error = None;
+            jsc_vm
+                .transpiler
+                .with_mut(|t| t.resolver.node_module_error = None);
         }
         if resolve_result.is_ok()
             && mode.is_esm()

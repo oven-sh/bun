@@ -190,10 +190,10 @@ fn has_two_spaces<const OR_ADDRESS: bool>(text: &[u8], from: usize, to: usize) -
 /// Where the loop over a line of text stops, besides control characters: at everything that the parser of inline content
 /// stops at.
 const STOPS_TEXT: &[u8; 11] = b"\\`*_[]<~${:";
-/// The same where spaces and `www.` are looked at.
-const STOPS_TEXT_WITH_CARE: &[u8; 13] = b"\\`*_[]<~${:. ";
+/// The same where spaces and `www.` are looked at. From one word to the next, a loop over bytes is the shorter way.
+const STOPS_TEXT_WITH_CARE: [bool; 256] = table(b"\\`*_[]<~${:. ", true);
 /// The same in a cell, which ends at a pipe.
-const STOPS_CELL: &[u8; 14] = b"\\`*_[]<~${:.| ";
+const STOPS_CELL: [bool; 256] = table(b"\\`*_[]<~${:.| ", true);
 /// In words that are emphasized.
 const STOPS_WORDS: [bool; 256] = table(b"\\`*_[]<~${:.@|&!", true);
 const STOPS_CODE: [bool; 256] = table(b"`|", true);
@@ -225,7 +225,7 @@ const IS_IN_ADDRESS: [bool; 256] = table(
 /// that ends strong emphasis can be in code), what it takes is read on its own, and what stays text is written anew if
 /// it has a `*` or a `_`.
 const STOPS_MDX_TEXT: &[u8; 12] = b"\\`*_[<~${@:.";
-const STOPS_MDX_CELL: &[u8; 14] = b"\\`*_[<~${@:.| ";
+const STOPS_MDX_CELL: [bool; 256] = table(b"\\`*_[<~${@:.| ", true);
 const STOPS_MDX_CODE: [bool; 256] = table(b"`|", true);
 const STOPS_CODE_WITH_PIPES: [bool; 256] = table(b"`", true);
 const STOPS_MDX_LINK_TEXT: [bool; 256] = table(b"[\\]|", true);
@@ -1860,8 +1860,8 @@ impl<'t> Reader<'t> {
             rest.iter().take_while(|&&byte| byte == counted).count()
         };
         let skip_text = |at: usize| match (CELL, WITH_CARE) {
-            (true, _) => first_of(text, at, STOPS_CELL),
-            (false, true) => first_of(text, at, STOPS_TEXT_WITH_CARE),
+            (true, _) => skip(at, &STOPS_CELL),
+            (false, true) => skip(at, &STOPS_TEXT_WITH_CARE),
             (false, false) => first_of(text, at, STOPS_TEXT),
         };
         let mut at = from;
@@ -2245,7 +2245,7 @@ impl<'t> Reader<'t> {
                 .unwrap_or(rest.len())
         };
         let skip_text = |at: usize| match CELL {
-            true => first_of(text, at, STOPS_MDX_CELL),
+            true => skip(at, &STOPS_MDX_CELL),
             false => first_of(text, at, STOPS_MDX_TEXT),
         };
         let mut at = from;

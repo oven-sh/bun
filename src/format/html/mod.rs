@@ -349,6 +349,8 @@ struct DocumentSummary {
     top_level_count: usize,
     /// The document is of no use: the text has to be formatted without short cuts.
     has_wrong_short_cut: bool,
+    /// Why the document of the quick way is of no use, if that's what has been written.
+    unwritten: Option<crate::js::quick_guests::from_doc::Unwritten>,
 }
 
 /// Writes the document for `text`, where every line break is `\n`. Returns the number of top-level nodes.
@@ -376,14 +378,44 @@ pub(crate) fn write_document(
         None,
         &mut Scripts::default(),
         f,
+        None,
     )
     .map(|summary| summary.top_level_count)
+}
+
+/// Like `write_document` for a text in a template, but writes to the document of the quick way. Nothing is kept of what
+/// is written to `f`.
+pub(crate) fn write_document_to_quick<'w, 'f>(
+    text: &[u8],
+    parser: Parser,
+    options: &FormatOptions,
+    indent_level: u32,
+    f: &'w mut Formatter<'f>,
+    quick: writer::ToQuick<'w, 'f>,
+) -> Result<(usize, Option<crate::js::quick_guests::from_doc::Unwritten>), FormatError> {
+    // This is all that's ever checked about the file name.
+    let path = options.is_in_html_file.then_some(&b".html"[..]);
+    write_document_with_cursor(
+        text,
+        parser,
+        path,
+        options,
+        true,
+        Some(indent_level),
+        None,
+        Flavor::Prettier,
+        None,
+        &mut Scripts::default(),
+        f,
+        Some(quick),
+    )
+    .map(|summary| (summary.top_level_count, summary.unwritten))
 }
 
 /// Like `write_document`. `cursor_offset` is the cursor's offset in `text`, and `script_flavor` is the flavor that
 /// scripts are formatted in. `found` is what `Runs::whole` has left.
 #[allow(clippy::too_many_arguments)]
-fn write_document_with_cursor(
+fn write_document_with_cursor<'w, 'f>(
     text: &[u8],
     parser: Parser,
     path: Option<&[u8]>,
@@ -394,7 +426,8 @@ fn write_document_with_cursor(
     script_flavor: Flavor,
     found: Option<(runs::Runs, Vec<u8>)>,
     scripts: &mut Scripts,
-    f: &mut Formatter<'_>,
+    f: &'w mut Formatter<'f>,
+    quick: Option<writer::ToQuick<'w, 'f>>,
 ) -> Result<DocumentSummary, FormatError> {
     let (content, front_matter_len) = without_front_matter(text);
     let mut tree = ast::Tree::default();
@@ -433,7 +466,10 @@ fn write_document_with_cursor(
     let mut printer = printer::Printer {
         tree: &tree,
         options: &options,
-        out: writer::Writer::new(f, indent_level, !is_embedded),
+        out: match quick {
+            Some(quick) => writer::Writer::to_quick(f, quick, indent_level),
+            None => writer::Writer::new(f, indent_level, !is_embedded),
+        },
         ancestors: 0,
         stack_check: bun_core::StackCheck::init(),
         is_nested_too_deeply: false,
@@ -448,6 +484,7 @@ fn write_document_with_cursor(
     let is_nested_too_deeply = printer.is_nested_too_deeply;
     let has_wrong_short_cut = printer.has_wrong_short_cut;
     *scripts = std::mem::take(&mut printer.scripts);
+    let unwritten = printer.out.unwritten();
     printer.out.finish();
     match is_nested_too_deeply {
         true => Err(FormatError::NestedTooDeeply),
@@ -455,6 +492,7 @@ fn write_document_with_cursor(
             region: cursor.region(&tree),
             top_level_count: tree.children(tree.root).count(),
             has_wrong_short_cut,
+            unwritten,
         }),
     }
 }
@@ -745,6 +783,7 @@ fn format_once(
                 found.take(),
                 &mut scratch.scripts,
                 f,
+                None,
             )
             .map(|summary| {
                 has_wrong_short_cut = summary.has_wrong_short_cut;

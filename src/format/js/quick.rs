@@ -5,6 +5,7 @@
 //!
 //! Here is what it is not asked about at all: the options and the kinds of text that it does not know.
 
+use super::quick_guests::QuickGuests;
 use crate::options::*;
 use crate::text::ends_with_ignore_ascii_case;
 use bun_core::strings;
@@ -145,7 +146,7 @@ fn options_for(options: &FormatOptions, text: &[u8], is_host: bool) -> Option<qu
         experimental_operator_position,
         experimental_ternaries,
         embedded_language_formatting,
-        // For what is in a template in another language, which is refused.
+        // For what is in a template in another language: `QuickGuests`.
         prose_wrap: _,
         html_whitespace_sensitivity,
         vue_indent_script_and_style: _,
@@ -298,7 +299,8 @@ pub fn format(
         quick_options.marks_line_breaks_in_texts = !options.is_at_margin;
     }
     let dialect = quick::Dialect::of_name(language, code.path);
-    format_as(code.text, dialect, &quick_options, scratch, out)
+    let file = Some((options, code.path));
+    format_as(code.text, dialect, &quick_options, file, scratch, out)
 }
 
 /// All that is in a `<script>` of HTML or Vue.
@@ -353,7 +355,7 @@ pub(crate) fn format_script(
         name_ends_in_ts: name.ends_with(b".ts"),
         name_ends_in_js_flow: false,
     };
-    format_as(text, dialect, &quick_options, scratch, out)
+    format_as(text, dialect, &quick_options, None, scratch, out)
 }
 
 /// True if [`format`] leaves a code block of Markdown with `options` as it is written: `text`, without the line break at
@@ -396,10 +398,12 @@ pub(crate) fn block_stands(
     stands
 }
 
+/// `file`: the options and the name for what is in a template in another language.
 fn format_as(
     text: &[u8],
     dialect: quick::Dialect,
     quick_options: &quick::Options,
+    file: Option<(&FormatOptions, &[u8])>,
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), Refused> {
@@ -414,6 +418,22 @@ fn format_as(
         return Err(scratch.refuse(Reason::IgnoreComment, code.text));
     }
     let quick = scratch.quick.get_or_insert_default();
+    match file {
+        Some((options, path)) => {
+            if quick.guests_mut().is_none() {
+                quick.lend_guests(Some(Box::<QuickGuests>::default()));
+            }
+            if quick_options.embedded_language_formatting_auto
+                && let Some(guests) = quick.guests_mut()
+                && let Some(guests) =
+                    (guests as &mut dyn std::any::Any).downcast_mut::<QuickGuests>()
+            {
+                guests.start_file(options, path);
+            }
+        }
+        // Without them, a template that may be in another language is refused.
+        None => _ = quick.lend_guests(None),
+    }
     if quick::format(code.text, dialect, quick_options, quick, out).is_err() {
         let reason = match quick.why() {
             1 => Reason::SyntaxError,

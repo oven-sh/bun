@@ -29,6 +29,8 @@ static INITIAL_FILTER_BYTES: [u8; 256] = [
     0, 0,
 ];
 pub(crate) struct Doc {
+    /// Somebody has written more than reserve() promises: commands are lost, and the file is refused.
+    pub(crate) overflowed: bool,
     pub(crate) d_pos: i32,
     pub(crate) d_cap: i32,
     pub(crate) prop_count: i32,
@@ -78,6 +80,7 @@ pub(crate) struct Doc {
 impl Doc {
     pub(crate) fn new() -> Self {
         Self {
+            overflowed: false,
             d_pos: 0,
             d_cap: 65536,
             prop_count: 0,
@@ -231,6 +234,7 @@ impl Quick {
             kind += 1;
         }
         self.doc.d_pos = DOC_START;
+        self.doc.overflowed = false;
         self.doc.last_fill_at = 0;
         self.doc.suffix_possible = true;
         self.doc.line_count = 0;
@@ -246,7 +250,12 @@ impl Quick {
         self.doc.label = 0;
     }
 
+    #[cold]
+    #[inline(never)]
     pub(crate) fn grow_doc(&mut self) {
+        if self.doc.d_pos > self.doc.d_cap {
+            self.doc.overflowed = true;
+        }
         self.doc.d_cap = much_larger(self.doc.d_cap);
         let mut grown = zeros::<i32>(self.doc.d_cap);
         grown.set_all(self.d.sub(0, self.doc.d_pos), 0);
@@ -254,6 +263,7 @@ impl Quick {
     }
 
     /// Every writer below trusts that there is room. Whoever writes in a loop calls this once per turn.
+    #[inline(always)]
     pub(crate) fn reserve(&mut self) {
         if self.doc.d_pos + 1024 > self.doc.d_cap {
             self.grow_doc();
@@ -713,7 +723,6 @@ impl Quick {
         self.break_parent();
     }
 
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn hardline_without_break(&mut self) {
         self.d.put(self.doc.d_pos, op::Line | (LINE_HARD << 5));
         self.doc.d_pos += 1;
@@ -721,7 +730,6 @@ impl Quick {
         self.doc.impure_count += 1;
     }
 
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn literalline_without_break(&mut self) {
         self.d.put(self.doc.d_pos, op::Line | (LINE_LITERAL << 5));
         self.doc.d_pos += 1;
@@ -892,7 +900,6 @@ impl Quick {
         self.align_text_open(at, n);
     }
 
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn mark_as_root_open(&mut self) {
         self.align_open(ALIGN_MARK_ROOT);
     }
@@ -901,7 +908,6 @@ impl Quick {
         self.align_open(ALIGN_TO_ROOT);
     }
 
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn dedent_open(&mut self) {
         self.align_open(ALIGN_DEDENT);
     }
@@ -1110,7 +1116,6 @@ impl Quick {
     }
 
     /// True if nothing would be printed.
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn doc_is_empty(&self, h: i32) -> bool {
         return ((self.d.at(h) as u32) >> 5) as i32 == 3;
     }

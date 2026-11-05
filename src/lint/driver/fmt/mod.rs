@@ -1202,6 +1202,22 @@ pub fn format_for_tests_with(
     })
 }
 
+/// True if the script at `path` is printed the quick way with `options`. For the formatter's tests.
+pub fn goes_quick_way_for_tests(path: &[u8], text: &[u8], options: &FormatOptions) -> bool {
+    let options = FormatOptions {
+        format_javascript: Some(format_block),
+        parse_javascript: Some(parse_javascript),
+        parse_parts: Some(parse_parts),
+        ..options.clone()
+    };
+    let code = bun_format::quick::Code {
+        path,
+        text,
+        is_flow: false,
+    };
+    bun_format::quick::format(code, &options, &mut Default::default(), &mut Vec::new()).is_ok()
+}
+
 /// Returns one line per comment in the file at `path`, with the node that owns it. With `only_unprinted`, lists only
 /// the comments that no printer printed. `None` if the file has a syntax error.
 pub fn debug_comments(

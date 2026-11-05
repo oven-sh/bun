@@ -4232,15 +4232,12 @@ impl Formatter<'_> {
             out.extend_from_slice(name(matcher.flags, "StringMatching ", "StringNotMatching "));
             self.print_child(out, to_reg_exp(global, sample)?)?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-            let (Some(number), Some(digits)) =
-                (js_ExpectCloseTo::number_value_get_cached(value), js_ExpectCloseTo::digits_value_get_cached(value))
-            else {
+            let Some(expect::CloseToNumbers { number, precision }) = expect::ExpectCloseTo::numbers(value) else {
                 return Ok(false);
             };
             out.extend_from_slice(name(matcher.flags, "NumberCloseTo ", "NumberNotCloseTo "));
-            write_string(global, out, number)?;
-            let digits = digits.to_int32();
-            let _ = write!(out, " ({} digit{})", digits, if digits == 1 { "" } else { "s" });
+            let plural = if precision == 1.0 { "" } else { "s" };
+            let _ = write!(out, "{} ({} digit{plural})", bun_fmt::double(number), bun_fmt::double(precision));
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let (Some(arguments), Some(matcher_fn)) =
                 (js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value), js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value))

@@ -2402,6 +2402,21 @@ impl ExpectCloseTo {
         global_this.bun_vm().auto_garbage_collect();
         Ok(instance_jsvalue)
     }
+
+    /// The number and the precision that `create` stored.
+    pub(crate) fn numbers(this_value: JSValue) -> Option<CloseToNumbers> {
+        Some(CloseToNumbers {
+            number: js_ExpectCloseTo::number_value_get_cached(this_value)?.as_number(),
+            precision: js_ExpectCloseTo::digits_value_get_cached(this_value)?.as_number(),
+        })
+    }
+}
+
+/// The two arguments of `expect.closeTo(number, precision)`.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct CloseToNumbers {
+    pub(crate) number: f64,
+    pub(crate) precision: f64,
 }
 
 pub(crate) struct ExpectObjectContaining {

@@ -1110,6 +1110,10 @@ impl<'a> Scanner<'_, 'a> {
         start: usize,
         (parent_definition, parent_is_in_svg): (&'static TagDefinition, bool),
     ) -> Option<Element<'a>> {
+        // Anything else behind a `<` makes it text.
+        if !self.at(start + 1).is_ascii_alphabetic() {
+            return None;
+        }
         let is_case_sensitive = self.settings.parser == Parser::Vue;
         let plain = self.marks.after_name.window(start + 1).trailing_zeros() as usize;
         let mut name_end = start + 1 + plain.min(WINDOW);
@@ -2269,10 +2273,7 @@ impl<'a> Scanner<'_, 'a> {
         let (svg_open_end, svg_width) = (svg_tag.0 + 1, svg_tag.1);
         let has_svg_attributes = !self.attributes.is_empty();
         let (icon_start, line_breaks) = self.skip_space(svg_open_end);
-        if self.at(svg_tag.0) != b'>'
-            || self.at(icon_start) != b'<'
-            || !self.at(icon_start + 1).is_ascii_alphabetic()
-        {
+        if self.at(svg_tag.0) != b'>' || self.at(icon_start) != b'<' {
             return None;
         }
         let icon = self.element_at(icon_start, (svg.definition, true))?;

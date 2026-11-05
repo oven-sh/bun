@@ -2553,6 +2553,13 @@ describe.skipIf(!hasFlag)("HTML", () => {
         `<li>\n  <a href="#"><svg class="${c}\n"><use xlink:href="#t\n" /></svg></a>\n</li>\n`,
       ];
     }),
+    // A `<` with no letter behind it is text.
+    ...['<---use a="b" />', "<-a>b</-a>", "<1 />", "<-\n  a />", "<- a", "<_a />"].flatMap(text => [
+      `<li>\n  <button class="x">\n    <svg class="cccccccccccccccccccccccc" width="24">${text}\n    </svg>\n  </button>\n</li>\n`,
+      `<li>\n  <button class="x"> <svg class="cccccccccccccccccccccccc" width="24">${text}</svg></button>\n</li>\n`,
+      `<p>\n  a ${text} b\n  ${text}\n</p>\n<p>${text}</p>\n<span>${text} ${full} ${full}</span>\n${text}\n`,
+      `${text}\n<div>\n  <i>c</i\n  ><u>d</u>\n</div>\n`,
+    ]),
     // Lines in an element in which white space counts.
     ...["pre", "textarea", "listing", "plaintext", "title", "xmp"].flatMap(name =>
       [

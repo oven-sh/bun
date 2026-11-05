@@ -357,6 +357,14 @@ describe("bun <file.md>", () => {
     expect(await runMd("---\n\ntitle: Hello\n---\n" + body)).not.toBe(rendered);
   });
 
+  test("highlights fenced code behind a byte order mark", async () => {
+    const code = ["```js", "const a = 1;", "```", ""].join("\n");
+    const rendered = await runMd(code);
+    expect(rendered).toContain("\x1b[");
+    expect(await runMd("\uFEFF" + code)).toBe(rendered);
+    expect(await runMd("\uFEFF---\ntitle: Hello\n---\n" + code)).toBe(rendered);
+  });
+
   test.skipIf(!isPosix)("does not fetch an image that the front matter names", async () => {
     const requested: string[] = [];
     await using server = Bun.serve({

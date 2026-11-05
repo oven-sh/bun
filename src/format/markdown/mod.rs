@@ -154,6 +154,7 @@ pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Op
             markers: &[marker],
             blank_first_line: true,
             carriage_returns: false,
+            yaml_end: false,
         };
         bun_md::front_matter::detect(read, rule)
     });

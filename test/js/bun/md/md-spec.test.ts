@@ -268,14 +268,11 @@ for (const { name, file } of specFiles) {
     for (let i = 0; i < examples.length; i++) {
       const ex = examples[i];
       const flags = ex.flags.length > 0 ? ex.flags : undefined;
-      const withFrontMatter = startsWithFrontMatter.get(ex.markdown);
       test(`example ${i + 1} (line ${ex.line}): ${ex.section}`, () => {
-        const actual = renderMarkdown(ex.markdown, flags, withFrontMatter === undefined ? undefined : false);
+        const actual = renderMarkdown(ex.markdown, flags, false);
         expect(normalizeHtml(actual)).toBe(normalizeHtml(ex.expected));
-      });
-      if (withFrontMatter === undefined) continue;
-      test(`example ${i + 1} (line ${ex.line}) starts with front matter by default`, () => {
-        expect(renderMarkdown(ex.markdown, flags)).toBe(withFrontMatter);
+        // The default is the same, unless the example starts with front matter.
+        expect(renderMarkdown(ex.markdown, flags)).toBe(startsWithFrontMatter.get(ex.markdown) ?? actual);
       });
     }
   });

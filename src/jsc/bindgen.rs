@@ -179,7 +179,7 @@ impl<'a> JsHeap<'a> {
             .ok_or_else(|| self.string_too_long())
     }
 
-    /// The characters `start..end` of `string`. A WTF-backed one shares them with the result: nothing is copied.
+    /// The code units `start..end` of a WTF-backed `string`, which the result shares with it: nothing is copied.
     #[inline]
     pub fn create_substring(
         &self,
@@ -187,8 +187,13 @@ impl<'a> JsHeap<'a> {
         start: usize,
         end: usize,
     ) -> JsLocal<'a, JSString> {
-        assert!(start <= end && end <= string.length());
-        // SAFETY: `string` is live for the call, and the characters are in it.
+        // The length of a borrowed slice is in bytes, which are not code units.
+        let counts_code_units = matches!(
+            string.tag(),
+            bun_core::Tag::WTFStringImpl | bun_core::Tag::Empty
+        );
+        assert!(counts_code_units && start <= end && end <= string.length());
+        // SAFETY: `string` is live for the call, and `start..end` are code units of it.
         JsLocal::from_raw(unsafe {
             crate::cpp::BunString__substringToJS(self.global_ptr(), string, start, end - start)
         })

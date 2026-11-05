@@ -1071,7 +1071,7 @@ pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JS
         // returns without reading `input` again.
         let global = unsafe { cx.heap.global() };
         let text = input.get(&cx.heap);
-        let result = parse_to_values::<super::WholeText>(global, text, roots, &mut pending)?;
+        let result = parse_to_values(global, text, roots, &mut pending, |_| Ok(()))?;
         define_pending(cx.global(), pending)?;
         Ok(result)
     })
@@ -1102,31 +1102,36 @@ pub(crate) fn define_pending(
     Ok(())
 }
 
-/// The value of the YAML `input`, but for the properties that it leaves in `pending`. `roots` holds what it makes.
-pub(crate) fn parse_to_values<Caller: super::TextFormatCaller>(
+/// The value of the YAML `input`, less the properties left in `pending`. `check_root` sees the root first.
+pub(crate) fn parse_to_values(
     global: &JSGlobalObject,
     input: &[u8],
     roots: &mut MarkedArgumentBuffer,
     pending: &mut Vec<PendingProperty>,
+    check_root: impl FnOnce(&bun_ast::Expr) -> JsResult<()>,
 ) -> JsResult<JSValue> {
     super::with_text_format_source(global, input, b"input.yaml", |arena, log, source| {
         // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
         // once by pointer identity, so a cyclic graph is fine here.
-        let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
-            Ok(root) => root,
-            Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
-            Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
-            Err(YamlParseError::SyntaxError) => {
-                return Err(super::throw_parse_error(
-                    global,
-                    log,
-                    "YAML",
-                    "Unable to parse YAML string",
-                    Caller::LINES_BEFORE,
-                ));
-            }
-        };
-        Caller::check_root(global, &root)?;
+        let root =
+            match YAML::parse(source, log, arena, CyclicAliases::Allow) {
+                Ok(root) => root,
+                Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
+                Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
+                Err(YamlParseError::SyntaxError) => {
+                    if !log.msgs.is_empty() {
+                        let first_msg = &log.msgs[0];
+                        let error_text = &first_msg.data.text;
+                        return Err(global.throw_value(global.create_syntax_error_instance(
+                            format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
+                        )));
+                    }
+                    return Err(global.throw_value(global.create_syntax_error_instance(
+                        format_args!("YAML Parse error: Unable to parse YAML string"),
+                    )));
+                }
+            };
+        check_root(&root)?;
 
         let mut ctx = ParserCtx {
             seen_objects: HashMap::default(),

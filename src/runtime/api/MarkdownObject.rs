@@ -200,23 +200,15 @@ pub(crate) fn html<'a>(
         .map_err(|err| parser_err_to_js(cx.global(), err, input_len))
 }
 
-/// The metadata of `Bun.markdown.frontmatter`: the lines between the fences. The opening fence is the line before them.
-struct Metadata;
-
-impl super::TextFormatCaller for Metadata {
-    const LINES_BEFORE: Option<u32> = Some(1);
-
-    fn check_root(global: &JSGlobalObject, root: &bun_ast::Expr) -> JsResult<()> {
-        use bun_ast::expr::Data;
-        match root.data {
-            // A null root is metadata with nothing in it but comments.
-            Data::EObject(_) | Data::ENull(_) => Ok(()),
-            _ => Err(
-                global.throw_value(global.create_syntax_error_instance(format_args!(
-                    "YAML front matter must be a mapping"
-                ))),
-            ),
-        }
+/// Throws for YAML metadata whose root is a scalar or a sequence. A null root is metadata of comments alone.
+fn must_be_mapping(global: &JSGlobalObject, root: &bun_ast::Expr) -> JsResult<()> {
+    use bun_ast::expr::Data;
+    match root.data {
+        Data::EObject(_) | Data::ENull(_) => Ok(()),
+        _ => Err(global
+            .throw_value(global.create_syntax_error_instance(format_args!(
+                "YAML front matter must be a mapping"
+            )))),
     }
 }
 
@@ -232,10 +224,12 @@ fn parse_metadata<'a>(
     let global = unsafe { heap.global() };
     let data = match marker {
         b'-' => bun_removable_features::removable_body!(Yaml, Abort, {
-            yaml_object::parse_to_values::<Metadata>(global, utf8, roots, pending)
+            let check_root = |root: &bun_ast::Expr| must_be_mapping(global, root);
+            yaml_object::parse_to_values(global, utf8, roots, pending, check_root)
         })?,
+        // The root of a TOML document is a table.
         _ => bun_removable_features::removable_body!(Toml, Abort, {
-            toml_object::parse_text::<Metadata>(heap, utf8)
+            toml_object::parse(heap, utf8)
         })?,
     };
     Ok(match data.is_null() {

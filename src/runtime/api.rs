@@ -192,50 +192,6 @@ fn with_text_format_source<R>(
     f(arena, &mut log, &source)
 }
 
-/// A caller of the YAML or TOML parse. A type, so that each caller has its own copy of the parse inlined into it.
-pub(crate) trait TextFormatCaller {
-    /// The lines of the caller's text before what is parsed: a syntax error then names its line and column in that text.
-    const LINES_BEFORE: Option<u32> = None;
-
-    /// Sees the root before a value is made of it.
-    #[inline(always)]
-    fn check_root(_: &bun_jsc::JSGlobalObject, _: &bun_ast::Expr) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-}
-
-/// `Bun.YAML.parse` and `Bun.TOML.parse`.
-pub(crate) struct WholeText;
-impl TextFormatCaller for WholeText {}
-
-/// Throws the `SyntaxError` of a text that `format` cannot read: the first message of `log`, or `fallback`.
-#[cold]
-fn throw_parse_error(
-    global: &bun_jsc::JSGlobalObject,
-    log: &bun_ast::Log,
-    format: &str,
-    fallback: &str,
-    lines_before: Option<u32>,
-) -> bun_jsc::JsError {
-    let Some(first) = log.msgs.first() else {
-        return global.throw_value(
-            global.create_syntax_error_instance(format_args!("{format} Parse error: {fallback}")),
-        );
-    };
-    let text = bstr::BStr::new(&first.data.text);
-    let place = (first.data.location.as_ref())
-        .filter(|at| at.line > 0)
-        .zip(lines_before);
-    global.throw_value(match place {
-        Some((at, lines_before)) => global.create_syntax_error_instance(format_args!(
-            "{format} Parse error: {text} (line {}, column {})",
-            i64::from(at.line) + i64::from(lines_before),
-            at.column,
-        )),
-        None => global.create_syntax_error_instance(format_args!("{format} Parse error: {text}")),
-    })
-}
-
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────
 
 /// `Expr` → `JSValue` for the text-format parsers (TOML, JSON5), through the

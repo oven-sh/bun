@@ -42,6 +42,8 @@ mod printer;
 mod root;
 mod scan;
 mod stands;
+#[cfg(feature = "tally")]
+pub mod tally;
 mod text;
 #[path = "../ir/width_tables.rs"]
 #[expect(dead_code, reason = "one of the tables is for another flavor")]
@@ -287,7 +289,7 @@ impl Numbers for Vec<i32> {
     #[inline(always)]
     fn several<const COUNT: usize>(&self, i: i32) -> [i32; COUNT] {
         match self
-            .get(i as u32 as usize..)
+            .get(i as u32 as usize..i as u32 as usize + COUNT)
             .and_then(|s| s.first_chunk::<COUNT>())
         {
             Some(numbers) => *numbers,
@@ -300,7 +302,7 @@ impl Numbers for Vec<i32> {
     #[inline(always)]
     fn put_several<const COUNT: usize>(&mut self, i: i32, numbers: [i32; COUNT]) {
         match self
-            .get_mut(i as u32 as usize..)
+            .get_mut(i as u32 as usize..i as u32 as usize + COUNT)
             .and_then(|s| s.first_chunk_mut::<COUNT>())
         {
             Some(slots) => *slots = numbers,
@@ -326,7 +328,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn i32_at(&self, p: i32) -> i32 {
         match self
-            .get(p as u32 as usize..)
+            .get(p as u32 as usize..p as u32 as usize + 4)
             .and_then(|s| s.first_chunk::<4>())
         {
             Some(b) => i32::from_le_bytes(*b),
@@ -336,7 +338,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn u64_at(&self, p: i32) -> u64 {
         match self
-            .get(p as u32 as usize..)
+            .get(p as u32 as usize..p as u32 as usize + 8)
             .and_then(|s| s.first_chunk::<8>())
         {
             Some(b) => u64::from_le_bytes(*b),
@@ -346,7 +348,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn u128_at(&self, p: i32) -> u128 {
         match self
-            .get(p as u32 as usize..)
+            .get(p as u32 as usize..p as u32 as usize + 16)
             .and_then(|s| s.first_chunk::<16>())
         {
             Some(b) => u128::from_le_bytes(*b),
@@ -356,7 +358,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn put_u128(&mut self, p: i32, v: u128) {
         match self
-            .get_mut(p as u32 as usize..)
+            .get_mut(p as u32 as usize..p as u32 as usize + 16)
             .and_then(|s| s.first_chunk_mut::<16>())
         {
             Some(b) => *b = v.to_le_bytes(),
@@ -366,7 +368,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn put_u16(&mut self, p: i32, v: i32) {
         match self
-            .get_mut(p as u32 as usize..)
+            .get_mut(p as u32 as usize..p as u32 as usize + 2)
             .and_then(|s| s.first_chunk_mut::<2>())
         {
             Some(b) => *b = (v as u16).to_le_bytes(),
@@ -376,7 +378,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn put_u64(&mut self, p: i32, v: u64) {
         match self
-            .get_mut(p as u32 as usize..)
+            .get_mut(p as u32 as usize..p as u32 as usize + 8)
             .and_then(|s| s.first_chunk_mut::<8>())
         {
             Some(b) => *b = v.to_le_bytes(),
@@ -440,39 +442,60 @@ impl Bytes for Vec<u8> {
     }
 }
 
-const ONES: u64 = 0x0101_0101_0101_0101;
-const TOP_BITS: u64 = 0x8080_8080_8080_8080;
-
-/// Eight bytes at a time: the top bit of the first byte of `v` that is `byte` is set, none below it; what is set above it says nothing.
+/// Copies `COUNT` bytes from `from[s..]` to `to[o..]`, if both have as many. Whoever calls this has room for all of them, and wants some.
 #[inline(always)]
-pub(crate) fn where_byte_is(v: u64, byte: u8) -> u64 {
-    let x = v ^ ONES.wrapping_mul(byte as u64);
-    x.wrapping_sub(ONES) & !x & TOP_BITS
+pub(crate) fn copy_block<const COUNT: usize>(to: &mut [u8], o: i32, from: &[u8], s: i32) -> bool {
+    let (o, s) = (o as u32 as usize, s as u32 as usize);
+    match (
+        to.get_mut(o..o + COUNT)
+            .and_then(|block| block.first_chunk_mut::<COUNT>()),
+        from.get(s..s + COUNT)
+            .and_then(|block| block.first_chunk::<COUNT>()),
+    ) {
+        (Some(to), Some(from)) => {
+            *to = *from;
+            true
+        }
+        _ => false,
+    }
+}
+
+const ONES: u64 = 0x0101_0101_0101_0101;
+
+const fn all(byte: u8) -> u128 {
+    u128::from_le_bytes([byte; 16])
+}
+
+/// Sixteen bytes at a time: the top bit of the first byte of `v` that is `byte` is set, none below it; what is set above it says nothing.
+#[inline(always)]
+pub(crate) fn where_byte_is(v: u128, byte: u8) -> u128 {
+    let x = v ^ all(byte);
+    x.wrapping_sub(all(1)) & !x & all(0x80)
 }
 
 /// The same for the first byte that is not printable ASCII: below a blank, 127, or beyond.
 #[inline(always)]
-pub(crate) fn where_not_printable(v: u64) -> u64 {
-    (v | v.wrapping_sub(ONES.wrapping_mul(32)) | v.wrapping_add(ONES)) & TOP_BITS
+pub(crate) fn where_not_printable(v: u128) -> u128 {
+    (v | v.wrapping_sub(all(32)) | v.wrapping_add(all(1))) & all(0x80)
 }
 
-/// The same for the first byte that is no letter of ASCII, no digit, no `_` and no `$`.
+/// The same for the first byte that is no letter of ASCII, and nothing is set above it that is one.
 /// (x + (0x80 - low)) & !(x + (0x7f - high)) has the top bit set for low <= x <= high, for x below 0x80, without carries.
 #[inline(always)]
-pub(crate) fn where_name_ends(v: u64) -> u64 {
-    let x = v & !TOP_BITS;
-    let lower = x | ONES.wrapping_mul(0x20);
-    let is_part = (lower.wrapping_add(ONES.wrapping_mul(0x1f))
-        & !lower.wrapping_add(ONES.wrapping_mul(0x05)))
-        | (x.wrapping_add(ONES.wrapping_mul(0x50)) & !x.wrapping_add(ONES.wrapping_mul(0x46)))
-        | !(x ^ ONES.wrapping_mul(b'_' as u64)).wrapping_add(ONES.wrapping_mul(0x7f))
-        | !(x ^ ONES.wrapping_mul(b'$' as u64)).wrapping_add(ONES.wrapping_mul(0x7f));
-    !(is_part & !v) & TOP_BITS
+pub(crate) fn where_letters_end(v: u128) -> u128 {
+    let lower = (v & all(0x7f)) | all(0x20);
+    !(lower.wrapping_add(all(0x1f)) & !lower.wrapping_add(all(0x05)) & !v) & all(0x80)
+}
+
+/// A digit, `_` or `$`.
+#[inline(always)]
+pub(crate) fn is_digit_or_sign_of_names(c: u8) -> bool {
+    c.is_ascii_digit() || c == b'_' || c == b'$'
 }
 
 /// How many bytes stand before the first one that is marked.
 #[inline(always)]
-pub(crate) fn bytes_before(marks: u64) -> i32 {
+pub(crate) fn bytes_before(marks: u128) -> i32 {
     (marks.trailing_zeros() >> 3) as i32
 }
 
@@ -625,11 +648,53 @@ impl Quick {
     #[inline(always)]
     pub(crate) fn name_end(&self, mut p: i32) -> i32 {
         loop {
-            let ends = where_name_ends(self.t.u64_at(p));
-            if ends != 0 {
-                return p + bytes_before(ends);
+            let ends = where_letters_end(self.t.u128_at(p));
+            if ends == 0 {
+                p += 16;
+                continue;
+            }
+            // most names are letters and no more
+            p += bytes_before(ends);
+            if !is_digit_or_sign_of_names(self.t.at(p) as u8) {
+                return p;
+            }
+            p += 1;
+        }
+    }
+
+    /// Where the blanks from `p` on end.
+    #[inline(always)]
+    pub(crate) fn blanks_end(&self, mut p: i32) -> i32 {
+        loop {
+            let others = self.t.u64_at(p) ^ ONES.wrapping_mul(32);
+            if others != 0 {
+                return p + (others.trailing_zeros() >> 3) as i32;
             }
             p += 8;
+        }
+    }
+
+    /// Where the blanks that end at `p` start.
+    #[inline(always)]
+    pub(crate) fn blanks_start(&self, mut p: i32) -> i32 {
+        loop {
+            let others = self.t.u64_at(p - 8) ^ ONES.wrapping_mul(32);
+            if others != 0 {
+                return p - (others.leading_zeros() >> 3) as i32;
+            }
+            p -= 8;
+        }
+    }
+
+    /// Where the blanks and ends of lines from `p` on end.
+    #[inline(always)]
+    pub(crate) fn blank_lines_end(&self, mut p: i32) -> i32 {
+        loop {
+            p = self.blanks_end(p);
+            if self.t.at(p) != 10 {
+                return p;
+            }
+            p += 1;
         }
     }
 

@@ -378,6 +378,8 @@ pub(crate) mod refusal {
     pub(crate) const JsxBreaks: i32 = 47;
 }
 impl Quick {
+    #[cold]
+    #[inline(never)]
     pub(crate) fn no(&mut self, reason: i32) -> i32 {
         if self.fast.why == 0 {
             self.fast.why = reason;
@@ -434,11 +436,13 @@ impl Quick {
             self.fast.too_long = true;
             n = 0;
         }
-        // eight bytes at a time and up to seven too many, as in the printer
-        let mut k: i32 = 0;
+        // sixteen bytes at a time and up to 31 too many, as in the printer
+        self.t.put_u128(o, self.t.u128_at(from));
+        self.t.put_u128(o + 16, self.t.u128_at(from + 16));
+        let mut k: i32 = 32;
         while k < n {
-            self.t.put_u64(o + k, self.t.u64_at(from + k));
-            k += 8;
+            self.t.put_u128(o + k, self.t.u128_at(from + k));
+            k += 16;
         }
         self.fast.out = o + n;
         self.fast.run = p;
@@ -499,11 +503,17 @@ impl Quick {
     }
 
     /// Nothing is printed between the tokens around `p`. Returns where the next one starts.
+    #[inline]
     pub(crate) fn tight(&mut self, p: i32) -> i32 {
         let c = self.t.at(p);
         if c != 32 && c != 9 {
             return p;
         }
+        self.drop_blanks(p)
+    }
+
+    #[inline(never)]
+    fn drop_blanks(&mut self, p: i32) -> i32 {
         let q = self.blanks(p);
         self.flush(p);
         self.fast.run = q;
@@ -511,6 +521,7 @@ impl Quick {
     }
 
     /// One blank is printed between the tokens around `p`.
+    #[inline]
     pub(crate) fn spaced(&mut self, p: i32) -> i32 {
         if self.t.at(p) == 32 {
             let c = self.t.at(p + 1);
@@ -518,6 +529,11 @@ impl Quick {
                 return p + 1;
             }
         }
+        self.put_one_blank(p)
+    }
+
+    #[inline(never)]
+    fn put_one_blank(&mut self, p: i32) -> i32 {
         let q = self.blanks(p);
         self.flush(p);
         self.put(32);
@@ -564,9 +580,7 @@ impl Quick {
         if self.t.at(p) == 10 && q - p == indentation + 1 {
             // (nothing but blanks behind the line break?)
             let mut r = p + 1;
-            while self.t.at(r) == 32 {
-                r += 1;
-            }
+            r = self.blanks_end(r);
             if r == q {
                 return q;
             }
@@ -673,7 +687,7 @@ impl Quick {
         loop {
             // up to a quote, a backslash, or what is not printable ASCII
             loop {
-                let v = self.t.u64_at(q);
+                let v = self.t.u128_at(q);
                 let stops = where_not_printable(v)
                     | where_byte_is(v, b'"')
                     | where_byte_is(v, b'\'')
@@ -682,7 +696,7 @@ impl Quick {
                     q += bytes_before(stops);
                     break;
                 }
-                q += 8;
+                q += 16;
             }
             if q > end {
                 return self.no(refusal::Long);
@@ -1303,9 +1317,7 @@ impl Quick {
             return false;
         }
         let mut r = q + 2;
-        while self.t.at(r) == 32 || self.t.at(r) == 10 {
-            r += 1;
-        }
+        r = self.blank_lines_end(r);
         return self.t.at(r) == 60;
     }
 
@@ -1316,14 +1328,10 @@ impl Quick {
             return self.no(refusal::Paren);
         }
         let mut r = q + 2;
-        while self.t.at(r) == 32 || self.t.at(r) == 10 {
-            r += 1;
-        }
+        r = self.blank_lines_end(r);
         if self.t.at(r + 1) == 62 {
             let mut s = r + 2;
-            while self.t.at(s) == 32 || self.t.at(s) == 10 {
-                s += 1;
-            }
+            s = self.blank_lines_end(s);
             if self.t.at(s) == 40 {
                 return self.no(refusal::Less);
             }
@@ -1341,9 +1349,7 @@ impl Quick {
                 return self.no(refusal::Less);
             }
             let mut s = if c == 62 { e + 1 } else { e };
-            while self.t.at(s) == 32 || self.t.at(s) == 10 {
-                s += 1;
-            }
+            s = self.blank_lines_end(s);
             if if c == 62 {
                 self.t.at(s) == 40
             } else {
@@ -1529,9 +1535,7 @@ impl Quick {
                 let e = if has_comma { q + 1 } else { q };
                 // (an empty line between two of them is kept)
                 let mut s = e + 1;
-                while self.t.at(s) == 32 {
-                    s += 1;
-                }
+                s = self.blanks_end(s);
                 if self.t.at(e) != 10 || self.t.at(s) == 10 {
                     return Ok(self.no(refusal::Paren));
                 }
@@ -1874,9 +1878,7 @@ impl Quick {
         loop {
             // an empty line between two arguments is kept
             let mut r = q + 1;
-            while self.t.at(r) == 32 {
-                r += 1;
-            }
+            r = self.blanks_end(r);
             if self.t.at(q) != 10 || self.t.at(r) == 10 {
                 return Ok(self.no(refusal::Arguments));
             }
@@ -2007,6 +2009,7 @@ impl Quick {
     }
 
     /// Names whose calls are printed in ways of their own: tests, `require`, `define`.
+    #[inline(never)]
     pub(crate) fn is_special_callee(&self, p: i32, e: i32) -> bool {
         match e - p {
             2 => {
@@ -2309,6 +2312,7 @@ impl Quick {
     }
 
     /// Can T[p, q), names with dots between them, be the tag of a template that is printed as it stands? Not if it says that this is CSS, GraphQL, HTML, Markdown or a table.
+    #[inline(never)]
     pub(crate) fn is_plain_tag(&self, p: i32, q: i32) -> bool {
         let mut e = p;
         while e < q && self.t.at(e) != 46 {
@@ -2353,6 +2357,11 @@ impl Quick {
         }
         return !((q - s == 4 && self.text_is(s, q, b"each"))
             || (q - s == 6 && self.text_is(s, q, b"extend")));
+    }
+
+    #[inline(never)]
+    fn is_graphql(&self, p: i32) -> bool {
+        self.text_is(p, p + 7, b"graphql")
     }
 
     /// check_super() of the parser. `next`: what follows the `.` or `(`. In the head of a member of a class and among parameters the parser is somewhere else than what is read.
@@ -2681,8 +2690,7 @@ impl Quick {
                 target = true;
             } else if d == 40 {
                 // graphql(schema, `..`), graphql?.(schema, `..`)
-                if ((sh == SH_NAME && q - p == 7) || (optional && q - p == 9))
-                    && self.text_is(p, p + 7, b"graphql")
+                if ((sh == SH_NAME && q - p == 7) || (optional && q - p == 9)) && self.is_graphql(p)
                 {
                     self.fast.no_templates += 1;
                 }
@@ -3283,9 +3291,7 @@ impl Quick {
         if self.t.at(p) == 59 && self.t.at(p + 1) == 10 {
             // `;` and the end of the line
             let mut e = p + 2;
-            while self.t.at(e) == 32 {
-                e += 1;
-            }
+            e = self.blanks_end(e);
             let c = self.t.at(e);
             if c < 128 && c != 9 {
                 self.fast.ready_flags |= if c == 10 {
@@ -5321,9 +5327,7 @@ impl Quick {
     /// a lexer (a comment is in the way).
     pub(crate) fn word_behind_block(&self, p: i32) -> i32 {
         let mut q = p;
-        while self.t.at(q) == 32 || self.t.at(q) == 10 {
-            q += 1;
-        }
+        q = self.blank_lines_end(q);
         let c = self.t.at(q);
         if c == 101 {
             return if self.word_is(q, b"else") {
@@ -5389,9 +5393,7 @@ impl Quick {
                 q += 1;
                 line = q;
                 lines += 1;
-                while self.t.at(q) == 32 {
-                    q += 1;
-                }
+                q = self.blanks_end(q);
                 if !(self.t.at(q) == 10) {
                     break;
                 }
@@ -5410,7 +5412,7 @@ impl Quick {
                 loop {
                     // up to the end of a line, a 0, or the first byte of U+2028
                     loop {
-                        let v = self.t.u64_at(q);
+                        let v = self.t.u128_at(q);
                         let stops = where_byte_is(v, 10)
                             | where_byte_is(v, 13)
                             | where_byte_is(v, 0)
@@ -5419,7 +5421,7 @@ impl Quick {
                             q += bytes_before(stops);
                             break;
                         }
-                        q += 8;
+                        q += 16;
                     }
                     if self.t.at(q) == 10 {
                         break;
@@ -5450,7 +5452,7 @@ impl Quick {
                 loop {
                     // up to a `*`, the end of a line, or a 0
                     loop {
-                        let v = self.t.u64_at(q);
+                        let v = self.t.u128_at(q);
                         let stops = where_byte_is(v, b'*')
                             | where_byte_is(v, 10)
                             | where_byte_is(v, 13)
@@ -5459,7 +5461,7 @@ impl Quick {
                             q += bytes_before(stops);
                             break;
                         }
-                        q += 8;
+                        q += 16;
                     }
                     let c = self.t.at(q);
                     if c == 42 && self.t.at(q + 1) == 47 {
@@ -5472,9 +5474,7 @@ impl Quick {
                         }
                         last_line = q + 1 + column;
                         q += 1;
-                        while self.t.at(q) == 32 {
-                            q += 1;
-                        }
+                        q = self.blanks_end(q);
                         if q - last_line != 1 || self.t.at(q) != 42 {
                             return 0;
                         }
@@ -5560,9 +5560,7 @@ impl Quick {
         loop {
             q += 1;
             line = q;
-            while self.t.at(q) == 32 {
-                q += 1;
-            }
+            q = self.blanks_end(q);
             if !(self.t.at(q) == 10) {
                 break;
             }
@@ -5787,9 +5785,7 @@ impl Quick {
         self.fast.await_is_operator = await_operator;
         // It has to be the first thing on its line. Its indentation is the guess at where it will stand.
         let mut b = start;
-        while self.t.at(b - 1) == 32 {
-            b -= 1;
-        }
+        b = self.blanks_start(b);
         let mut indentation = start - b;
         self.fast.source_indent = if self.t.at(b - 1) == 9 {
             -1
@@ -5832,6 +5828,7 @@ impl Quick {
     }
 
     /// Gets ready to read what starts at `start`, behind so many columns of indentation.
+    #[inline]
     pub(crate) fn prepare(&mut self, start: i32, mut indentation: i32) -> bool {
         // The source may be indented by less than the output will be. By how much it is indented per level shows at the items whose level the lists say (the least
         // that is seen counts: an item can stand further in than its lists say). If that is less than the options ask for, the levels of the source count, whatever
@@ -5928,6 +5925,8 @@ impl Quick {
                 return fast_refuse(refusal::Wide, start);
             }
         }
+        #[cfg(feature = "tally")]
+        crate::tally::read(start, p, self.fast.out == 0);
         self.fast.ready_stands = self.fast.out == 0
             && self.fast.source_indent == self.fast.least_column
             && self.fast.column == self.fast.least_column
@@ -6584,9 +6583,7 @@ impl Quick {
     /// The next one, if nothing but white space stands between p and it.
     pub(crate) fn read_next_jsx_attribute(&mut self, p: i32, tag_column: i32) -> R<bool> {
         let mut q = p;
-        while self.t.at(q) == 32 || self.t.at(q) == 10 {
-            q += 1;
-        }
+        q = self.blank_lines_end(q);
         self.fast.ready_start = 0;
         if q == p || ((CC.at(self.t.at(q)) & ID_START) == 0 && self.t.at(q) != 123) {
             return Ok(false);
@@ -6672,5 +6669,7 @@ impl Quick {
     }
 }
 pub(crate) fn fast_refuse(_reason: i32, _start: i32) -> bool {
+    #[cfg(feature = "tally")]
+    crate::tally::refused(_reason, _start);
     return false;
 }

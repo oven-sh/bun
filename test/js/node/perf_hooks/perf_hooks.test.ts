@@ -1,4 +1,3 @@
-import { setGCPerformanceEntryListener } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, withoutAggressiveGC } from "harness";
@@ -1162,12 +1161,14 @@ describe("gc entries", () => {
           const giveUp = setTimeout(() => console.log(JSON.stringify({ gaveUp: true })), 15000);
           let waitsSince = Infinity;
           new PerformanceObserver((list, observer) => {
-            // The collection right after the entry point has loaded is not the idle one.
-            const entry = list.getEntries().find(entry => entry.startTime > waitsSince + 500);
+            // The idle collection is a full one. The full one right after the entry point has loaded is not it.
+            const entry = list.getEntries().find(
+              entry => entry.detail.kind === constants.NODE_PERFORMANCE_GC_MAJOR && entry.startTime > waitsSince + 500,
+            );
             if (!entry) return;
             observer.disconnect();
             clearTimeout(giveUp);
-            console.log(JSON.stringify({ ...entry.detail, live: live.length }));
+            console.log(JSON.stringify({ flags: entry.detail.flags, live: live.length }));
           }).observe({ type: "gc" });
           waitsSince = performance.now();
         `,
@@ -1187,11 +1188,7 @@ describe("gc entries", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
-        kind: perf.constants.NODE_PERFORMANCE_GC_MAJOR,
-        flags: perf.constants.NODE_PERFORMANCE_GC_FLAGS_NO,
-        live: 100000,
-      });
+      expect(JSON.parse(stdout)).toEqual({ flags: perf.constants.NODE_PERFORMANCE_GC_FLAGS_NO, live: 100000 });
       expect(exitCode).toBe(0);
     },
     30_000,
@@ -1199,6 +1196,7 @@ describe("gc entries", () => {
 
   // node:perf_hooks sets its own function. The tests of the built-in functions call the setter with every kind of value.
   test("what native code calls for each collection is a function", () => {
+    const { setGCPerformanceEntryListener } = require("bun:internal-for-testing");
     for (const listener of [{}, null, 1, "emitGCEntry"]) {
       expect(() => setGCPerformanceEntryListener(listener)).toThrow(
         new TypeError("The listener must be a function or undefined"),

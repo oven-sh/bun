@@ -93,7 +93,7 @@ impl Yes {
         // which matters for `yes` throughput.
         let err = {
             let cmd_node = interp.as_cmd_mut(cmd);
-            let shell = cmd_node.base.shell;
+            let shell = cmd_node.base.shell_mut();
             let Exec::Builtin(me) = &mut cmd_node.exec else {
                 unreachable!()
             };
@@ -101,8 +101,7 @@ impl Yes {
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
             for _ in 0..4 {
-                // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
-                if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
+                if let Err(e) = stdout.write_no_io_to(shell, chunk) {
                     err = Some(e);
                     break;
                 }
@@ -224,7 +223,7 @@ impl YesTask {
                 EventLoopHandle::Js { owner } => {
                     owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
-                EventLoopHandle::Mini(mut mini) => {
+                EventLoopHandle::Mini(mini) => {
                     (*mini.loop_).tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
@@ -233,7 +232,7 @@ impl YesTask {
                             }
                             EventLoopTask::Js(_) => unreachable!(),
                         });
-                    mini.get_mut().enqueue_task_concurrent(at);
+                    mini.enqueue_task_concurrent(at);
                 }
             }
         }

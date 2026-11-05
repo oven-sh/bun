@@ -1,10 +1,15 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
+use crate::generated_bindgen::markdown_object::{
+    AnsiTheme, Autolinks, ComponentOverrides, Headings, MarkdownOptions, ReactOptions,
+    RenderCallbacks,
+};
 use bun_core::StackCheck;
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer,
-    RangeErrorOptions, StringJsc as _,
+    JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer, RangeErrorOptions,
+    StringJsc as _,
 };
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
@@ -64,6 +69,69 @@ fn parser_err_to_js(
     }
 }
 
+/// `md::Options` of an `Option<&MarkdownOptions>` or an `Option<&ReactOptions>`, which have these members in common.
+macro_rules! parser_options {
+    ($given:expr) => {
+        parser_options!(
+            $given;
+            tables,
+            strikethrough,
+            tasklists,
+            hard_soft_breaks,
+            wiki_links,
+            underline,
+            latex_math,
+            collapse_whitespace,
+            permissive_atx_headers,
+            no_indented_code_blocks,
+            no_html_blocks,
+            no_html_spans,
+            tag_filter
+        )
+    };
+    ($given:expr; $($flag:ident),*) => {{
+        let mut options = md::Options::default();
+        if let Some(given) = $given {
+            match &given.autolinks {
+                Some(Autolinks::All(all)) => options.permissive_autolinks |= *all,
+                Some(Autolinks::Each(each)) => {
+                    if let Some(url) = each.url {
+                        options.permissive_url_autolinks = url;
+                    }
+                    if let Some(www) = each.www {
+                        options.permissive_www_autolinks = www;
+                    }
+                    if let Some(email) = each.email {
+                        options.permissive_email_autolinks = email;
+                    }
+                }
+                None => {}
+            }
+            match &given.headings {
+                Some(Headings::All(all)) => {
+                    options.heading_ids |= *all;
+                    options.autolink_headings |= *all;
+                }
+                Some(Headings::Each(each)) => {
+                    if let Some(ids) = each.ids {
+                        options.heading_ids = ids;
+                    }
+                    if let Some(autolink) = each.autolink {
+                        options.autolink_headings = autolink;
+                    }
+                }
+                None => {}
+            }
+            $(
+                if let Some(value) = given.$flag {
+                    options.$flag = value;
+                }
+            )*
+        }
+        options
+    }};
+}
+
 /// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
 fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
     let StringOrBuffer::Buffer(buffer) = input else {
@@ -75,209 +143,54 @@ fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<Pinne
     }
 }
 
-pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(
-        global_this,
-        &[
-            ("html", __jsc_host_render_to_html, 1),
-            ("ansi", __jsc_host_render_to_ansi, 2),
-            ("render", __jsc_host_render, 3),
-            ("react", __jsc_host_render_react, 3),
-        ],
-    )
-}
-
 /// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:
 /// shrink the parser's block-metadata cap so its `TooManyBlocks` error is
 /// testable without 4 GiB of input. Returns the previous limit.
-#[bun_jsc::host_fn]
-pub(crate) fn set_max_markdown_block_bytes_for_testing(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [limit_value] = callframe.arguments_as_array::<1>();
-    if !limit_value.is_number() {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "setMaxMarkdownBlockBytesForTesting expects a number"
-        )));
-    }
-    let limit = usize::try_from(limit_value.coerce_to_int64(global_this)?.max(0))
-        .expect("non-negative i64 fits usize");
-    let prev = bun_md::parser::set_max_block_bytes_for_testing(limit);
-    Ok(JSValue::js_number(prev as f64))
+pub(crate) fn set_max_markdown_block_bytes_for_testing(limit: f64) -> usize {
+    bun_md::parser::set_max_block_bytes_for_testing(limit as usize)
 }
 
 /// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
-/// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
-/// light?, columns? }`. By default colors are enabled, hyperlinks are
+/// terminal string. By default colors are enabled, hyperlinks are
 /// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
-#[bun_jsc::host_fn]
-pub(crate) fn render_to_ansi(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [input_value, theme_value] = callframe.arguments_as_array::<2>();
-
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    }
-
-    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
-
-    let pinned = pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
-
-    let mut theme = md::AnsiTheme {
-        colors: true,
-        hyperlinks: false,
-        kitty_graphics: false,
-        light: md::detect_light_background(),
-        columns: 80,
+pub(crate) fn ansi<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsBytes<'a>,
+    theme: &AnsiTheme,
+) -> JsResult<Box<[u8]>> {
+    let theme = md::AnsiTheme {
+        colors: theme.colors.unwrap_or(true),
+        hyperlinks: theme.hyperlinks.unwrap_or(false),
+        kitty_graphics: theme.kitty_graphics.unwrap_or(false),
+        light: theme.light.unwrap_or_else(md::detect_light_background),
+        columns: theme.columns.map_or(80, |columns| columns as u16),
         remote_image_paths: None,
         image_base_dir: None,
     };
-    if theme_value.is_object() {
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "colors")? {
-            theme.colors = v;
-        }
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "hyperlinks")? {
-            theme.hyperlinks = v;
-        }
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "kittyGraphics")? {
-            theme.kitty_graphics = v;
-        }
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "light")? {
-            theme.light = v;
-        }
-        if let Some(cols) = theme_value.get(global_this, "columns")? {
-            if cols.is_number() {
-                let n = cols.to_int32();
-                theme.columns = if n <= 0 {
-                    0
-                } else {
-                    u16::try_from(n.min(u16::MAX as i32)).expect("int cast")
-                };
-            }
-        }
-    }
 
-    let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
-        Ok(Some(r)) => r,
+    let input = input.get(&cx.heap);
+    let input_len = input.len();
+    match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
+        Ok(Some(r)) => Ok(r),
         Ok(None) => {
             // The parser can only return null via JSError
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
-            return Err(global_this.throw_out_of_memory());
+            Err(cx.global().throw_out_of_memory())
         }
-        Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
-    };
-
-    bun_string_jsc::create_utf8_for_js(global_this, &result)
+        Err(err) => Err(parser_err_to_js(cx.global(), err, input_len)),
+    }
 }
 
-#[bun_jsc::host_fn]
-fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, opts_value] = callframe.arguments_as_array::<2>();
-
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    }
-
-    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
-
-    let pinned = pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
-
-    let options = parse_options(global_this, opts_value)?;
-
-    let result = match md::render_to_html_with_options(input, options) {
-        Ok(r) => r,
-        Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
-    };
-
-    bun_string_jsc::create_utf8_for_js(global_this, &result)
-}
-
-fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
-    let mut options = md::Options::default();
-    if opts_value.is_object() {
-        // Handle compound autolinks: true | { url, www, email }
-        if let Some(autolinks_val) = opts_value.get(global_this, "autolinks")? {
-            if autolinks_val.is_boolean() {
-                if autolinks_val.to_boolean() {
-                    options.permissive_autolinks = true;
-                }
-            } else if autolinks_val.is_object() {
-                if let Some(v) = autolinks_val.get_boolean_loose(global_this, "url")? {
-                    options.permissive_url_autolinks = v;
-                }
-                if let Some(v) = autolinks_val.get_boolean_loose(global_this, "www")? {
-                    options.permissive_www_autolinks = v;
-                }
-                if let Some(v) = autolinks_val.get_boolean_loose(global_this, "email")? {
-                    options.permissive_email_autolinks = v;
-                }
-            }
-        }
-
-        // Handle compound headings: true | { ids, autolink }
-        if let Some(headings_val) = opts_value.get(global_this, "headings")? {
-            if headings_val.is_boolean() {
-                if headings_val.to_boolean() {
-                    options.heading_ids = true;
-                    options.autolink_headings = true;
-                }
-            } else if headings_val.is_object() {
-                if let Some(v) = headings_val.get_boolean_loose(global_this, "ids")? {
-                    options.heading_ids = v;
-                }
-                if let Some(v) = headings_val.get_boolean_loose(global_this, "autolink")? {
-                    options.autolink_headings = v;
-                }
-            }
-        }
-
-        // Handle remaining boolean options (autolinks/headings are only settable via
-        // compound options above). `md::Options::BOOL_FIELD_SETTERS` is a hand-maintained
-        // table in bun_md that carries each bool field's snake_case and camelCase names
-        // plus a setter.
-        for (snake, camel, set) in md::Options::BOOL_FIELD_SETTERS {
-            // skip the compound-only fields
-            if matches!(
-                *snake,
-                "permissive_autolinks"
-                    | "permissive_url_autolinks"
-                    | "permissive_www_autolinks"
-                    | "permissive_email_autolinks"
-                    | "heading_ids"
-                    | "autolink_headings"
-            ) {
-                continue;
-            }
-            if let Some(val) = opts_value.get_boolean_loose(global_this, camel)? {
-                set(&mut options, val);
-            } else if *camel != *snake {
-                if let Some(val) = opts_value.get_boolean_loose(global_this, snake)? {
-                    set(&mut options, val);
-                }
-            }
-        }
-    }
-    Ok(options)
+pub(crate) fn html<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsBytes<'a>,
+    options: Option<&MarkdownOptions>,
+) -> JsResult<Box<[u8]>> {
+    let input = input.get(&cx.heap);
+    let input_len = input.len();
+    md::render_to_html_with_options(input, parser_options!(options))
+        .map_err(|err| parser_err_to_js(cx.global(), err, input_len))
 }
 
 /// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
@@ -285,9 +198,14 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
 /// Each callback receives the accumulated children as a string plus an optional
 /// metadata object, and returns a string. The final result is the concatenation
 /// of all callback outputs.
-#[bun_jsc::host_fn]
-fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
+pub(crate) fn render<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsLocal<'a>,
+    callbacks: Option<&RenderCallbacks<'a>>,
+    options: Option<&MarkdownOptions>,
+) -> JsResult<Vec<u8>> {
+    let global_this = cx.global();
+    let input_value = input.to_js();
 
     if input_value.is_empty_or_undefined_or_null() {
         return Err(global_this
@@ -305,8 +223,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
         None => buffer.slice(),
     };
 
-    // Parse parser options from 3rd argument
-    let options = parse_options(global_this, opts_value)?;
+    let options = parser_options!(options);
 
     // Create JS callback renderer
     let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.heading_ids) {
@@ -314,30 +231,48 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
-    // Extract callbacks from 2nd argument
-    js_renderer.extract_callbacks(if callbacks_value.is_object() {
-        callbacks_value
-    } else {
-        JSValue::UNDEFINED
-    })?;
+    if let Some(callbacks) = callbacks {
+        js_renderer.extract_callbacks(callbacks);
+    }
 
     // Run parser with the JS callback renderer
     if let Err(err) = md::render_with_renderer(input, options, js_renderer.renderer()) {
         return Err(parser_err_to_js(global_this, err, input.len()));
     }
 
-    // Return accumulated result
-    let result = js_renderer.get_result();
-    bun_string_jsc::create_utf8_for_js(global_this, result)
+    Ok(js_renderer.into_result())
 }
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
 /// containing the parsed markdown as children.
 // The closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
 // accumulates stays GC-visible for the duration of the call.
-#[bun_jsc::host_fn]
-fn render_react(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
+pub(crate) fn react<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsLocal<'a>,
+    components: Option<&ComponentOverrides<'a>>,
+    options: Option<&ReactOptions>,
+) -> JsResult<JSValue> {
+    let global_this = cx.global();
+    let react_version: u8 = match options.and_then(|options| options.react_version) {
+        // react.element (React 18 and older)
+        Some(version) if version as i32 <= 18 => 0,
+        // react.transitional.element (React 19+)
+        _ => 1,
+    };
+    MarkedArgumentBuffer::new(|marked_args| {
+        let children = render_ast(
+            global_this,
+            input.to_js(),
+            components,
+            parser_options!(options),
+            marked_args,
+            Some(react_version),
+        )?;
+        let fragment = JSReactElement__createFragment(global_this, react_version, children);
+        marked_args.append(fragment);
+        Ok(fragment)
+    })
 }
 
 unsafe extern "C" {
@@ -348,40 +283,14 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-fn render_react_impl(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-    marked_args: &mut MarkedArgumentBuffer,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments_as_array::<3>();
-    let opts_value = args[2]; // options are the 3rd argument
-
-    let mut react_version: u8 = 1; // default: react.transitional.element (React 19+)
-    if opts_value.is_object() {
-        if let Some(rv) = opts_value.get(global_this, "reactVersion")? {
-            if rv.is_number() {
-                let num = rv.to_int32();
-                if num <= 18 {
-                    react_version = 0; // react.element (React 18 and older)
-                }
-            }
-        }
-    }
-
-    let children = render_ast(global_this, callframe, marked_args, Some(react_version))?;
-    let fragment = JSReactElement__createFragment(global_this, react_version, children);
-    marked_args.append(fragment);
-    Ok(fragment)
-}
-
 fn render_ast(
     global_this: &JSGlobalObject,
-    callframe: &CallFrame,
+    input_value: JSValue,
+    components: Option<&ComponentOverrides<'_>>,
+    options: md::Options,
     marked_args: &mut MarkedArgumentBuffer,
     react_version: Option<u8>,
 ) -> JsResult<JSValue> {
-    let [input_value, components_value, opts_value] = callframe.arguments_as_array::<3>();
-
     if input_value.is_empty_or_undefined_or_null() {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
@@ -397,9 +306,6 @@ fn render_ast(
         Some(p) => p.slice(),
         None => buffer.slice(),
     };
-
-    // Parse parser options from 3rd argument
-    let options = parse_options(global_this, opts_value)?;
 
     let mut renderer = match ParseRenderer::init(
         global_this,
@@ -412,12 +318,9 @@ fn render_ast(
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
-    // Extract component overrides from 2nd argument
-    renderer.extract_components(if components_value.is_object() {
-        components_value
-    } else {
-        JSValue::UNDEFINED
-    })?;
+    if let Some(components) = components {
+        renderer.extract_components(components);
+    }
 
     if let Err(err) = md::render_with_renderer(input, options, renderer.renderer()) {
         return Err(parser_err_to_js(global_this, err, input.len()));
@@ -580,16 +483,12 @@ impl<'a> ParseRenderer<'a> {
 
     // Note: deinit() dropped — Vec<ParseStackEntry> and HeadingIdTracker free via Drop.
 
-    /// Extract component overrides from options. Any non-boolean truthy value
-    /// (function, class, string, etc.) keyed by an HTML tag name is stored
+    /// Any non-boolean value (function, class, string, etc.) keyed by an HTML tag name is stored
     /// and used as the `type` field instead of the default string tag name.
-    fn extract_components(&mut self, opts: JSValue) -> JsResult<()> {
-        if opts.is_undefined_or_null() || !opts.is_object() {
-            return Ok(());
-        }
+    fn extract_components(&mut self, components: &ComponentOverrides<'_>) {
         macro_rules! extract {
             ($($name:ident),* $(,)?) => {$(
-                if let Some(val) = opts.get_truthy(self.global_object, stringify!($name))? {
+                if let Some(val) = components.$name.map(JsLocal::to_js) {
                     if !val.is_boolean() {
                         self.components.$name = val;
                         self.marked_args.append(val);
@@ -601,7 +500,6 @@ impl<'a> ParseRenderer<'a> {
             h1, h2, h3, h4, h5, h6, p, blockquote, ul, ol, li, pre, hr, html, table, thead, tbody,
             tr, th, td, em, strong, a, img, code, del, math, u, br,
         );
-        Ok(())
     }
 
     fn get_block_component(&self, block_type: md::BlockType, data: u32) -> JSValue {
@@ -1157,43 +1055,37 @@ impl<'a> JsCallbackRenderer<'a> {
         Ok(self_)
     }
 
-    fn extract_callbacks(&mut self, opts: JSValue) -> JsResult<()> {
-        if opts.is_undefined_or_null() || !opts.is_object() {
-            return Ok(());
-        }
+    fn extract_callbacks(&mut self, callbacks: &RenderCallbacks<'_>) {
         macro_rules! extract {
-            ($($field:ident => $key:literal),* $(,)?) => {$(
-                if let Some(val) = opts.get_truthy(self.global_object, $key)? {
-                    if val.is_callable() {
-                        self.callbacks.$field = val;
-                    }
+            ($($field:ident),* $(,)?) => {$(
+                if let Some(callback) = callbacks.$field {
+                    self.callbacks.$field = callback.to_js();
                 }
             )*};
         }
         extract!(
-            heading => "heading",
-            paragraph => "paragraph",
-            blockquote => "blockquote",
-            code => "code",
-            list => "list",
-            list_item => "listItem",
-            hr => "hr",
-            table => "table",
-            thead => "thead",
-            tbody => "tbody",
-            tr => "tr",
-            th => "th",
-            td => "td",
-            html => "html",
-            strong => "strong",
-            emphasis => "emphasis",
-            link => "link",
-            image => "image",
-            codespan => "codespan",
-            strikethrough => "strikethrough",
-            text => "text",
+            heading,
+            paragraph,
+            blockquote,
+            code,
+            list,
+            list_item,
+            hr,
+            table,
+            thead,
+            tbody,
+            tr,
+            th,
+            td,
+            html,
+            strong,
+            emphasis,
+            link,
+            image,
+            codespan,
+            strikethrough,
+            text,
         );
-        Ok(())
     }
 
     // Note: deinit() dropped — Vec<CallbackStackEntry> (with Vec<u8> buffers) and HeadingIdTracker free via Drop.
@@ -1271,11 +1163,12 @@ impl<'a> JsCallbackRenderer<'a> {
         Ok(())
     }
 
-    fn get_result(&self) -> &[u8] {
-        if self.stack.is_empty() {
-            return b"";
-        }
-        self.stack[0].buffer.as_slice()
+    fn into_result(self) -> Vec<u8> {
+        self.stack
+            .into_iter()
+            .next()
+            .map(|root| root.buffer)
+            .unwrap_or_default()
     }
 
     // ========================================

@@ -42,12 +42,18 @@ pub(crate) enum OverrideRule<'a> {
 }
 
 impl<'a> OverrideRule<'a> {
+    /// The rule as stored: the name in its key and its value. `catalog:` is the entry of that name.
+    #[inline]
+    pub(crate) fn dep(self) -> &'a Dependency {
+        match self {
+            OverrideRule::Flat(dep) => dep,
+            OverrideRule::Scoped(rule) => &rule.dep,
+        }
+    }
+
     #[inline]
     pub(crate) fn version(self) -> &'a dependency::Version {
-        match self {
-            OverrideRule::Flat(dep) => &dep.version,
-            OverrideRule::Scoped(rule) => &rule.dep.version,
-        }
+        &self.dep().version
     }
 }
 
@@ -208,7 +214,7 @@ struct ParseContext<'a, 'b> {
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
     log: &'a mut bun_ast::Log,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     workspace_names: &'a WorkspaceMap,
     builder: &'a mut StringBuilder<'b>,
 }
@@ -427,6 +433,11 @@ impl OverrideMap {
             .is_some_and(|dep| dep.name.slice(buf) == name)
     }
 
+    /// What every rule replaces a dependency with.
+    pub(crate) fn values(&self) -> impl Iterator<Item = &Dependency> {
+        (self.map.values().iter()).chain(self.scoped.iter().map(|rule| &rule.dep))
+    }
+
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.map.count() == 0 && self.scoped.is_empty()
@@ -471,8 +482,7 @@ impl OverrideMap {
         root: &Expr,
         has_workspaces: bool,
     ) {
-        let rules = (self.map.values().iter()).chain(self.scoped.iter().map(|rule| &rule.dep));
-        for dep in rules.filter(|dep| dep.version.tag == VersionTag::Catalog) {
+        for dep in (self.values()).filter(|dep| dep.version.tag == VersionTag::Catalog) {
             if (catalogs.get_ref(buf, *dep.version.catalog(), dep.name)).is_some() {
                 continue;
             }

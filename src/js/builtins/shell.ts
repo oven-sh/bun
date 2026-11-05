@@ -1,13 +1,21 @@
-export function createBunShellTemplateFunction(createShellInterpreter_, createParsedShellScript_) {
-  const createShellInterpreter = createShellInterpreter_ as (
-    resolve: (code: number, stdout: Buffer, stderr: Buffer) => void,
-    reject: (error: unknown) => void,
-    args: $ZigGeneratedClasses.ParsedShellScript,
-  ) => $ZigGeneratedClasses.ShellInterpreter;
-  const createParsedShellScript = createParsedShellScript_ as (
-    raw: string,
-    args: string[],
-  ) => $ZigGeneratedClasses.ParsedShellScript;
+// The bundler cuts this file up with regular expressions: a `type` ends at the first "$", and the parameters of an exported function at the first ")".
+interface ShellResolve {
+  (code: number, stdout: Buffer, stderr: Buffer): void;
+}
+type ShellReject = (error: unknown) => void;
+interface CreateShellInterpreter {
+  (resolve: ShellResolve, reject: ShellReject, args: $Bindgen.ParsedShellScript): $Bindgen.ShellInterpreter;
+}
+interface CreateParsedShellScript {
+  (raw: readonly string[], args: unknown[]): $Bindgen.ParsedShellScript;
+}
+
+export function createBunShellTemplateFunction(
+  createShellInterpreter_: CreateShellInterpreter,
+  createParsedShellScript_: CreateParsedShellScript,
+) {
+  const createShellInterpreter = createShellInterpreter_;
+  const createParsedShellScript = createParsedShellScript_;
 
   function lazyBufferToHumanReadableString(this: Buffer) {
     return this.toString();
@@ -16,9 +24,9 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   class ShellError extends Error {
     #output?: ShellOutput = undefined;
     info;
-    exitCode;
-    stdout;
-    stderr;
+    exitCode!: number;
+    stdout!: Buffer;
+    stderr!: Buffer;
 
     constructor() {
       super("");
@@ -50,7 +58,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       this.exitCode = code;
     }
 
-    text(encoding) {
+    text(encoding?: string) {
       return this.#output!.text(encoding);
     }
 
@@ -82,7 +90,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       this.exitCode = exitCode;
     }
 
-    text(encoding) {
+    text(encoding?: string) {
       return this.stdout.toString(encoding);
     }
 
@@ -104,19 +112,19 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   }
 
   class ShellPromise extends Promise<ShellOutput> {
-    #args: $ZigGeneratedClasses.ParsedShellScript | undefined = undefined;
+    #args: $Bindgen.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
-    #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
-    #reject: (error: unknown) => void;
+    #resolve: ShellResolve;
+    #reject: ShellReject;
 
-    constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
+    constructor(args: $Bindgen.ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
       // of the shell script's invocation. Just creating the error should be
       // relatively cheap, the costly work is actually computing the stacktrace
       // (`computeErrorInfo()` in ZigGlobalObject.cpp)
       let potentialError: ShellError | undefined = new ShellError();
-      let resolve, reject;
+      let resolve!: ShellResolve, reject!: ShellReject;
 
       super((res, rej) => {
         resolve = (code, stdout, stderr) => {
@@ -152,7 +160,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       if (typeof newCwd === "undefined" || newCwd === "." || newCwd === "" || newCwd === "./") {
         newCwd = defaultCwd ?? process.cwd();
       }
-      this.#args!.setCwd(newCwd);
+      this.#args!.setCwd(newCwd!);
       return this;
     }
 
@@ -202,7 +210,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return this;
     }
 
-    async text(encoding) {
+    async text(encoding?: string) {
       const { stdout } = (await this.#quiet(true)) as ShellOutput;
       return stdout.toString(encoding);
     }
@@ -309,7 +317,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
-  var BunShell = function BunShell(first, ...rest) {
+  var BunShell = function BunShell(first: TemplateStringsArray, ...rest: unknown[]) {
     if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
     const parsed_shell_script = createParsedShellScript(first.raw, rest);
 
@@ -329,7 +337,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       throw new TypeError("Class constructor Shell cannot be invoked without 'new'");
     }
 
-    var Shell = function Shell(first, ...rest) {
+    var Shell = function Shell(first: TemplateStringsArray, ...rest: unknown[]) {
       if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
       const parsed_shell_script = createParsedShellScript(first.raw, rest);
 

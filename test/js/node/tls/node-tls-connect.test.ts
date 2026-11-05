@@ -10,6 +10,7 @@ import {
   isASAN,
   isWindows,
   nodeExe,
+  nodeExeAtLeast,
   rejectUnauthorizedScope,
   tempDir,
 } from "harness";
@@ -5125,7 +5126,7 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
   });
 
   // Bun runs the functions of the fixture in this process. Node runs the same file as a
-  // script, so each expected report below is also node v26.3.0's.
+  // script, so each expected report below is also node v26.12.1's.
   async function underNode(mode: string) {
     await using proc = Bun.spawn({
       cmd: [nodeExe()!, join(import.meta.dir, "node-tls-client-wrap-fixture.mjs"), mode],
@@ -5143,7 +5144,7 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
   describe.concurrent.each([
     ["bun", false, clientWrap.shutdown, clientWrap.mysql, clientWrap.peerCloses, clientWrap.session],
     ["node", !nodeExe(), onNode("shutdown"), onNode("mysql"), onNode("peer-closes"), onNode("session")],
-  ] as const)("under %s", (_runtime, skip, shutdown, mysql, peerCloses, session) => {
+  ] as const)("under %s", (runtime, skip, shutdown, mysql, peerCloses, session) => {
     // Each cell calls the method and then destroy(): end() alone leaves a wrap open, on node too.
     it.skipIf(skip)(
       "end(), end(cb), destroySoon() and destroy() do not throw, and destroy() closes the wrap",
@@ -5178,7 +5179,9 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
       expect(await session()).toEqual({
         "tls.connect({ port, session })": true,
         "tls.connect({ socket, session })": true,
-        "new TLSSocket(socket, { session })": true,
+        // Since v26.3.1 node's getSession() puts the host in front of the session, and its constructor is the one
+        // place that does not take it off again.
+        "new TLSSocket(socket, { session })": runtime === "bun" || !nodeExeAtLeast("26.3.1"),
         "tls.connect({ port }), then setSession()": true,
       });
     });

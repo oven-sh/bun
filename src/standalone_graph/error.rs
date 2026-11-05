@@ -1,71 +1,7 @@
-/// Identifies the out-of-range field that made `StandaloneModuleGraph::from_bytes` reject the graph.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Corruption {
-    ByteCount,
-    ModuleList,
-    EntryPointId,
-    ModuleName,
-    ModuleContents,
-    ModuleSourceMap,
-    ModuleBytecode,
-    ModuleInfo,
-    BytecodeOriginPath,
-    CompileExecArgv,
-    SourceHashes,
-    BuiltinBytecode,
-    BytecodeStringTable,
-    StartupModuleCount,
-    ModuleInfoStringTable,
-    PrelinkedModuleGraph,
-    RuntimeOptions,
-    LinkedBytecodePayload,
-}
-
-impl Corruption {
-    pub const fn message(self) -> &'static str {
-        match self {
-            Self::ByteCount => "Corrupted module graph: byte count is out of range",
-            Self::ModuleList => "Corrupted module graph: module list is out of range",
-            Self::EntryPointId => {
-                "Corrupted module graph: entry point ID is out of range for the module list"
-            }
-            Self::ModuleName => "Corrupted module graph: module name is out of range",
-            Self::ModuleContents => "Corrupted module graph: module contents are out of range",
-            Self::ModuleSourceMap => "Corrupted module graph: module source map is out of range",
-            Self::ModuleBytecode => "Corrupted module graph: module bytecode is out of range",
-            Self::ModuleInfo => "Corrupted module graph: module info is out of range",
-            Self::BytecodeOriginPath => {
-                "Corrupted module graph: bytecode origin path is out of range"
-            }
-            Self::CompileExecArgv => "Corrupted module graph: compile exec argv is out of range",
-            Self::SourceHashes => "Corrupted module graph: source hashes are out of range",
-            Self::BuiltinBytecode => {
-                "Corrupted module graph: builtin bytecode table is out of range"
-            }
-            Self::BytecodeStringTable => {
-                "Corrupted module graph: bytecode string table is out of range"
-            }
-            Self::StartupModuleCount => {
-                "Corrupted module graph: startup module count is out of range"
-            }
-            Self::ModuleInfoStringTable => {
-                "Corrupted module graph: module info string table is out of range"
-            }
-            Self::PrelinkedModuleGraph => {
-                "Corrupted module graph: prelinked module graph is out of range"
-            }
-            Self::RuntimeOptions => "Corrupted module graph: runtime options are out of range",
-            Self::LinkedBytecodePayload => {
-                "Corrupted module graph: linked bytecode payload is out of range"
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("{}", .0.message())]
-    CorruptedModuleGraph(Corruption),
+    #[error("Corrupted module graph: entry point ID is greater than module list count")]
+    CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount,
     #[error("TargetNotFound")]
     TargetNotFound,
     #[error("NetworkError")]
@@ -80,6 +16,12 @@ pub enum Error {
     SourceMapTooLarge,
     #[error("embedded module graph would exceed 4 GiB (its offsets are 32-bit)")]
     ModuleGraphTooLarge,
+    #[error("invalid compiled image size or alignment")]
+    ImageMisaligned,
+    #[error("Corrupted module graph: invalid compiled program record")]
+    CorruptedCompiledProgram,
+    #[error("BUN_AOT_START_AT names no entry point of the executable")]
+    NoEntryPointToStartAt,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -92,12 +34,6 @@ pub enum Error {
     Options(#[from] bun_options_types::Error),
 }
 
-impl From<Corruption> for Error {
-    fn from(c: Corruption) -> Self {
-        Self::CorruptedModuleGraph(c)
-    }
-}
-
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
         Self::Sys(e.into())
@@ -108,7 +44,9 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::CorruptedModuleGraph(c) => c.message(),
+            Self::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount => {
+                "Corrupted module graph: entry point ID is greater than module list count"
+            }
             Self::TargetNotFound => "TargetNotFound",
             Self::NetworkError => "NetworkError",
             Self::InvalidResponse => "InvalidResponse",
@@ -117,6 +55,11 @@ impl Error {
             Self::SourceMapTooLarge => "SourceMapTooLarge",
             Self::ModuleGraphTooLarge => {
                 "embedded module graph would exceed 4 GiB (its offsets are 32-bit)"
+            }
+            Self::ImageMisaligned => "ImageMisaligned",
+            Self::CorruptedCompiledProgram => "CorruptedCompiledProgram",
+            Self::NoEntryPointToStartAt => {
+                "BUN_AOT_START_AT names no entry point of the executable"
             }
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",

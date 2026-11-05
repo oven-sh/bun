@@ -1409,6 +1409,58 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
   },
 });
 
+// HMR lowering merges the statements of one import path into the first one. The
+// import record of each later statement is never resolved.
+const abBarrel = `export { a } from './a.js'; export { b } from './b.js';`;
+const abPackage = (name: string, index: string) => ({
+  [`node_modules/${name}/package.json`]: JSON.stringify({
+    name,
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  [`node_modules/${name}/index.js`]: index,
+  [`node_modules/${name}/inner.js`]: abBarrel,
+  [`node_modules/${name}/a.js`]: `export const a = "A";`,
+  [`node_modules/${name}/b.js`]: `export function b() {}`,
+});
+
+devTest("barrel optimization: export star after another statement of the same path", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b as b1 } from 'named-first';
+      import { b as b2 } from 'star-first';
+      import { b as b3 } from 'star-twice';
+      import { b as b4 } from './import-first';
+      import { a as importLate } from 'parsed-first';
+      const { b: b5 } = await importLate();
+      console.log('got: ' + [b1, b2, b3, b4, b5].map(b => typeof b).join(' '));
+    `,
+    ...abPackage("named-first", `export { a } from './inner.js'; export * from './inner.js';`),
+    ...abPackage("star-first", `export * from './inner.js'; export { a } from './inner.js';`),
+    ...abPackage("star-twice", `import './inner.js'; export * from './inner.js'; export * from './inner.js';`),
+    "import-first.ts": `
+      import { a } from 'leaf';
+      export * from 'leaf';
+      export const own = a;
+    `,
+    ...abPackage("leaf", abBarrel),
+    // parsed-first has deferred b.js by the time its a.js leads to late.ts.
+    ...abPackage("parsed-first", abBarrel),
+    "node_modules/parsed-first/a.js": `export const a = () => import('../../late');`,
+    "late.ts": `
+      import { a } from 'parsed-first';
+      export * from 'parsed-first';
+      export const own = a;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function function function function function");
+  },
+});
+
 devTest("barrel optimization: namespace re-export cycle through a star-exported module", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

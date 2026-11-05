@@ -1,11 +1,13 @@
 //! HTML `FormData` parsing + JS bridge.
 
 use bun_core::{self, declare_scope, scoped_log};
-use bun_core::{EncodedSlice, Utf8Bytes, strings};
-use bun_jsc::{AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_core::{EncodedSlice, strings};
+use bun_jsc::bindgen::JsHeap;
+use bun_jsc::{AnyPromise, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
 
+use crate::generated_bindgen::blob::BlobOrBuildArtifact;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 
@@ -100,56 +102,33 @@ impl FormData {
     }
 }
 
-#[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
-pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, boundary_value] = frame.arguments_as_array::<2>();
-    let boundary_slice: Utf8Bytes;
-
-    let mut encoding = Encoding::URLEncoded;
-
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global.throw_invalid_arguments(format_args!("input must not be empty")));
-    }
-
-    if !boundary_value.is_empty_or_undefined_or_null() {
-        if let Some(array_buffer) = boundary_value.as_array_buffer(global) {
-            if !array_buffer.byte_slice().is_empty() {
-                encoding = Encoding::Multipart(Box::from(array_buffer.byte_slice()));
-            }
-        } else if boundary_value.is_string() {
-            boundary_slice = boundary_value.to_utf8(global)?;
-            if !boundary_slice.slice().is_empty() {
-                encoding = Encoding::Multipart(Box::from(boundary_slice.slice()));
-            }
-        } else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "boundary must be a string or ArrayBufferView"
-            )));
-        }
-    }
-    let input_slice: Utf8Bytes;
-    // Keep the `ArrayBuffer` view alive for the duration of `input`'s borrow.
-    let input_array_buffer;
-    let input: &[u8];
-
-    if let Some(array_buffer) = input_value.as_array_buffer(global) {
-        input_array_buffer = array_buffer;
-        input = input_array_buffer.byte_slice();
-    } else if input_value.is_string() {
-        input_slice = input_value.to_utf8(global)?;
-        input = input_slice.slice();
-    } else if let Some(blob) = input_value.as_class_ref::<Blob>() {
-        input = blob.shared_view();
-    } else {
-        return Err(global
-            .throw_invalid_arguments(format_args!("input must be a string or ArrayBufferView")));
-    }
+/// `FormData.from(input, boundary)`
+pub(crate) fn from_bytes(
+    heap: &JsHeap<'_>,
+    input: &[u8],
+    boundary: Option<&[u8]>,
+) -> JsResult<JSValue> {
+    let encoding = match boundary {
+        Some(boundary) if !boundary.is_empty() => Encoding::Multipart(Box::from(boundary)),
+        _ => Encoding::URLEncoded,
+    };
+    // SAFETY: parsing runs no JavaScript, and nor does making the `FormData` or appending to it. An append that throws
+    // ends the parse.
+    let global = unsafe { heap.global() };
 
     match FormData::to_js(global, input, &encoding) {
         Ok(v) => Ok(v),
         Err(crate::Error::JSError) => Err(JsError::Thrown),
         Err(e) => Err(global.throw_error(e, "while parsing FormData")),
     }
+}
+
+pub(crate) fn from_blob(
+    heap: &JsHeap<'_>,
+    input: BlobOrBuildArtifact<'_>,
+    boundary: Option<&[u8]>,
+) -> JsResult<JSValue> {
+    from_bytes(heap, input.blob().shared_view(), boundary)
 }
 
 pub(crate) fn to_js_from_multipart_data(
@@ -167,15 +146,15 @@ pub(crate) fn to_js_from_multipart_data(
     struct Wrapper<'a> {
         global: &'a JSGlobalObject,
         form: &'a mut DOMFormData,
-        /// True after an append throws. The remaining entries are skipped.
-        threw: bool,
     }
 
     impl<'a> Wrapper<'a> {
-        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
-            if wrap.threw {
-                return;
-            }
+        fn on_entry(
+            wrap: &mut Self,
+            name: bun_semver::String,
+            field: &Field<'_>,
+            buf: &[u8],
+        ) -> JsResult<()> {
             let value_str: &[u8] = field.value;
             let key = EncodedSlice::utf8(name.slice(buf));
 
@@ -219,7 +198,7 @@ pub(crate) fn to_js_from_multipart_data(
                 );
                 // `append_blob` dupes the content type; release this stack-local.
                 blob.detach();
-                wrap.threw = result.is_err();
+                result
             } else {
                 let value = EncodedSlice::utf8(
                     // > Each part whose `Content-Disposition` header does not
@@ -231,23 +210,15 @@ pub(crate) fn to_js_from_multipart_data(
                     // > `charset` parameter.
                     strings::without_utf8_bom(value_str),
                 );
-                wrap.threw = wrap.form.append(wrap.global, &key, &value).is_err();
+                wrap.form.append(wrap.global, &key, &value)
             }
         }
     }
 
     {
-        let mut wrap = Wrapper {
-            global,
-            form,
-            threw: false,
-        };
+        let mut wrap = Wrapper { global, form };
 
-        let parsed = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry);
-        if wrap.threw {
-            return Err(crate::Error::JSError);
-        }
-        if let Err(e) = parsed {
+        if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
             scoped_log!(FormData, "failed to parse multipart data");
             return Err(e);
         }
@@ -260,7 +231,7 @@ pub(crate) fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,
-    mut iterator: impl FnMut(&mut C, bun_semver::String, &Field<'_>, &[u8]),
+    mut iterator: impl FnMut(&mut C, bun_semver::String, &Field<'_>, &[u8]) -> JsResult<()>,
 ) -> crate::Result<()> {
     let mut slice = input;
     let subslicer = SlicedString::init(input, input);
@@ -407,7 +378,7 @@ pub(crate) fn for_each_multipart_entry<C>(
         field.filename = filename.unwrap_or_default();
         field.is_file = is_file;
 
-        iterator(ctx, name, &field, input);
+        iterator(ctx, name, &field, input).map_err(|_| crate::Error::JSError)?;
     }
 
     Ok(())

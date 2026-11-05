@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforce consistent cloning of `Date` objects without unnecessary `.getTime()` calls.
 pub struct ConsistentDateClone;
 
-const UNNECESSARY_GET_TIME: Message = Message::new("", "Unnecessary `.getTime()` call");
+const UNNECESSARY_GET_TIME: &Message = &Message::new("", "Unnecessary `.getTime()` call");
 
 impl Rule for ConsistentDateClone {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "consistent-date-clone", Kind::Suggestion).fixable(Fixable::Code);

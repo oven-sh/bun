@@ -60,8 +60,8 @@ impl HTMLBundle {
         })
     }
 
-    pub(crate) fn get_index(this: &Self) -> &[u8] {
-        &this.path
+    pub(crate) fn get_index(&self) -> &[u8] {
+        &self.path
     }
 
     /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.
@@ -160,7 +160,9 @@ impl Route {
         Self::on_any_request(this, req, resp, true);
     }
 
+    #[inline(never)]
     fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+        bun_removable_features::removable_definition!(Bundler, Self::on_any_request);
         let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
 
@@ -276,7 +278,7 @@ impl Route {
     /// on the route's behalf; the clients waiting in `pending_responses` only
     /// count as connections and can disconnect at any time. `finish_building`
     /// releases the pending request when the route leaves `State::Building`.
-    fn schedule_bundle(this: ThisPtr<Self>, mut server: AnyServer) -> Result<(), crate::Error> {
+    fn schedule_bundle(this: ThisPtr<Self>, server: AnyServer) -> Result<(), crate::Error> {
         match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(this)) {
             GetOrStartLoadResult::Err => {
                 this.state.set(State::Err(Log::init()));
@@ -465,7 +467,7 @@ impl Route {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
-                completion_task.log.clone_to_with_recycled(&mut log, true);
+                completion_task.log.append_to(&mut log);
                 self.set_build_error(server, log);
             }
             BundleV2Result::Value(bundle) => 'bundle: {

@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Prevent client components from being async functions.
 pub struct NoAsyncClientComponent;
 
-const NO_ASYNC_CLIENT_COMPONENT: Message = Message::new("", "Prevent client components from being async functions.");
+const NO_ASYNC_CLIENT_COMPONENT: &Message = &Message::new("", "Prevent client components from being async functions.");
 
 impl Rule for NoAsyncClientComponent {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-async-client-component", Kind::Problem);

@@ -9,6 +9,8 @@ path = "lib.rs"
 [features]
 # The `.types` and `.symbols` baseline writers. Test-only: enabled by `bun_sema_standalone`, never by the product.
 baselines = []
+# What only tests use, those of other crates too.
+test_support = []
 
 [dependencies]
 bun_alloc.workspace = true
@@ -26,7 +28,7 @@ bitflags.workspace = true
 
 [dev-dependencies]
 # The native symbols that Bun's C and C++ side provides to `bun_core`.
-bun_sema_standalone = { path = "standalone" }
+bun_sema_standalone = { path = "standalone", features = ["test_support"] }
 
 [lints]
 workspace = true

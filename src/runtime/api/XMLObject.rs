@@ -59,7 +59,7 @@ pub(crate) fn parse<'a>(
             } else {
                 let units = text.utf16();
                 utf16 = Some(units);
-                (bytemuck::cast_slice(units), xml::InputEncoding::Text)
+                (bun_core::slice_as_bytes(units), xml::InputEncoding::Text)
             }
         }
     };

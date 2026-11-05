@@ -242,7 +242,7 @@ static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, 
     return (void*)(uintptr_t)val.asDouble;
   }
 
-  // Accepts a JSCallback, an ArrayBuffer, a BigInt or an object with a `ptr`. Throws on anything else.
+  // Accepts a JSCallback, an ArrayBuffer, a BigInt or an object with its own `ptr` data property. Throws on anything else.
   return (void*)JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, val.asInt64);
 }
 

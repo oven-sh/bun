@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforce the use of `Math.trunc` instead of bitwise operators.
 pub struct PreferMathTrunc;
 
-const PREFER_MATH_TRUNC: Message = Message::new("", "Prefer `Math.trunc()` over instead of `{{bad_op}} 0`.");
+const PREFER_MATH_TRUNC: &Message = &Message::new("", "Prefer `Math.trunc()` over instead of `{{bad_op}} 0`.");
 
 const OPERATORS: [BinOp; 4] = [BinOp::BitOr, BinOp::Shr, BinOp::Shl, BinOp::BitXor];
 

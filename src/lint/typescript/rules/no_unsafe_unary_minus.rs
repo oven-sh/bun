@@ -5,7 +5,7 @@ use bun_lint::types::{TypeFlags, tsutils};
 /// Require unary negation to take a number.
 pub struct NoUnsafeUnaryMinus;
 
-const UNARY_MINUS: Message = Message::new(
+const UNARY_MINUS: &Message = &Message::new(
     "unaryMinus",
     "Argument of unary negation should be assignable to number | bigint but is {{type}} instead.",
 );

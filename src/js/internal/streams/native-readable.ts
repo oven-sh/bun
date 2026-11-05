@@ -56,27 +56,14 @@ interface NativePtr {
 let debugId = 0;
 
 function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
-  const stream = new Readable(options) as NativeReadable;
-  attachNativeSource(stream, readableStream, options.highWaterMark);
-  stream._destroy = destroy;
-  stream.ref = ref;
-  stream.unref = unref;
-  if (process.platform === "win32") {
-    // Only used by node:tty on Windows
-    stream.$start = ensureConstructed;
-  }
-  $debug(`[${stream.debugId}] constructed!`);
-  return stream;
-}
-
-/** Installs `_read` over the native source behind `readableStream`. The caller's `_destroy` calls `cancelNativeSource`. */
-function attachNativeSource(stream: NativeReadable, readableStream: ReadableStream, highWaterMark?: number | null) {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = readableStream.$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
   $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
 
+  const stream = new Readable(options) as NativeReadable;
   stream._read = read;
+  stream._destroy = destroy;
 
   if (!!$debug) {
     stream.debugId = ++debugId;
@@ -90,7 +77,50 @@ function attachNativeSource(stream: NativeReadable, readableStream: ReadableStre
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+
+  const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
+
+  stream.ref = ref;
+  stream.unref = unref;
+  if (process.platform === "win32") {
+    // Only used by node:tty on Windows
+    stream.$start = ensureConstructed;
+  }
+
+  // https://github.com/oven-sh/bun/pull/12801
+  // https://github.com/oven-sh/bun/issues/9555
+  // There may be a ReadableStream.Strong handle to the ReadableStream.
+  // We can't update those handles to point to the NativeReadable from JS
+  // So we instead mark it as no longer usable, and create a new NativeReadable
+  transferToNativeReadable(readableStream);
+
+  $debug(`[${stream.debugId}] constructed!`);
+
+  return stream;
+}
+
+/**
+ * Installs `_read` over the native source behind `readableStream` on a stream of another class (tty.ReadStream). The
+ * caller's `_destroy` calls `cancelNativeSource`. The same setup stays inline in `constructNativeReadable`: a helper
+ * shared by both costs every Readable of a compiled program 256 bytes a round in the koa budget of test/aot/servers.
+ */
+function attachNativeSource(stream: NativeReadable, readableStream: ReadableStream, highWaterMark: number) {
+  $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
+  const bunNativePtr = readableStream.$bunNativePtr;
+  $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
+
+  stream._read = read;
+  if (!!$debug) {
+    stream.debugId = ++debugId;
+  }
+  $putByIdDirectPrivate(stream, "bunNativePtr", bunNativePtr);
+  stream[kRefCount] = 0;
+  stream[kConstructed] = false;
+  stream[kPendingRead] = false;
+  stream[kHasResized] = !dynamicallyAdjustChunkSize();
+  stream[kCloseState] = [false];
+  stream[kHighWaterMark] = highWaterMark;
 
   // https://github.com/oven-sh/bun/pull/12801
   // https://github.com/oven-sh/bun/issues/9555

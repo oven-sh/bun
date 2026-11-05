@@ -574,6 +574,47 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a subclass with its own _read keeps it and the fs.ReadStream buffer size", async () => {
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        class Sub extends tty.ReadStream {
+          _read() { this.push("own"); this.push(null); }
+        }
+        const input = new Sub(fs.openSync("/dev/tty", "r"));
+        input.on("data", chunk => console.log("data " + chunk));
+        input.on("end", () => console.log("end " + input.readableHighWaterMark));
+      `,
+      () => {},
+    );
+    expect(lines).toEqual(["data own", "end 65536"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A write-only fd is not reopened for reading: the read fails, as it does on the fd itself.
+  test("a write-only terminal fd does not read the terminal", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        const input = new tty.ReadStream(fs.openSync("/dev/tty", "w"));
+        input.on("error", err => console.log("error " + err.code));
+        input.on("data", chunk => console.log("key " + JSON.stringify(String(chunk))));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && output.includes("ready")) {
+          wrote = true;
+          terminal.write("a\n");
+        }
+      },
+    );
+    expect(lines.filter(line => line !== "a")).toEqual(["ready", "error ESPIPE"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("destroy() with no key read closes the caller's fd and exits", async () => {
     const { lines, exitCode } = await runInTerminal(
       `${openTTY}

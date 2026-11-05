@@ -615,5 +615,5 @@ test("faked animation frames retain timer hook lifecycles", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }, stderr).toEqual({ stdout: "ok\n", exitCode: 0 });
+  expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({ stdout: "ok\n", exitCode: 0 });
 });

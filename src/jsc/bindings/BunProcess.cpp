@@ -5899,17 +5899,15 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSValue::decode(thisValue));
-    JSC::JSString* jsString = dynamicDowncast<JSC::JSString>(JSValue::decode(value));
-    if (!thisObject || !jsString) {
+    if (!JSValue::decode(thisValue).isObject())
         return false;
-    }
-    WTF::String wtfStr = jsString->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
+    WTF::String wtfStr = JSValue::decode(value).toWTFString(globalObject);
+    // Node still clears the native title when string conversion throws.
+    if (scope.exception())
+        wtfStr = emptyString();
 #if !OS(WINDOWS)
     BunString str = Bun::toString(wtfStr);
     Bun__Process__setTitle(globalObject, &str);
-    return true;
 #else
     // Update the store first so the getter reflects the assignment; the uv
     // call is best-effort (it fails in console-less processes).
@@ -5917,8 +5915,9 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     Bun__Process__setTitle(globalObject, &str);
     UTF8CString cstr = wtfStr.utf8();
     uv_set_process_title(cstr.legacyCStringPointer());
-    return true;
 #endif
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
 }
 
 JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
@@ -6220,7 +6219,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   allowedNodeEnvironmentFlags      constructAllowedNodeEnvironmentFlags                PropertyCallback
   loadEnvFile                      constructLoadEnvFile                                PropertyCallback
   finalization                     constructFinalization                               PropertyCallback
-  arch                             constructArch                                       PropertyCallback
+  arch                             constructArch                                       PropertyCallback|ReadOnly
   argv                             constructArgv                                       PropertyCallback
   argv0                            constructArgv0                                      PropertyCallback
   assert                           Process_functionAssert                              Function 1
@@ -6258,12 +6257,11 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback
   openStdin                        Process_functionOpenStdin                           Function 0
-  pid                              constructPid                                        PropertyCallback
-  platform                         constructPlatform                                   PropertyCallback
-  ppid                             processPpid                                         CustomAccessor
+  pid                              constructPid                                        PropertyCallback|ReadOnly
+  platform                         constructPlatform                                   PropertyCallback|ReadOnly
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
-  release                          constructProcessReleaseObject                       PropertyCallback
+  release                          constructProcessReleaseObject                       PropertyCallback|ReadOnly
   report                           constructProcessReportObject                        PropertyCallback
   resourceUsage                    Process_functionResourceUsage                       Function 0
   revision                         constructRevision                                   PropertyCallback
@@ -6273,12 +6271,11 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback
-  title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1
   unref                            Process_unref                                       Function 1
   uptime                           Process_functionUptime                              Function 1
-  version                          constructVersion                                    PropertyCallback
-  versions                         constructVersions                                   PropertyCallback
+  version                          constructVersion                                    PropertyCallback|ReadOnly
+  versions                         constructVersions                                   PropertyCallback|ReadOnly
 
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0
@@ -6305,6 +6302,8 @@ const JSC::ClassInfo Process::s_info
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "ppid"_s), CustomGetterSetter::create(vm, processPpid, setProcessPpid), PropertyAttribute::CustomValue | 0);
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "title"_s), CustomGetterSetter::create(vm, processTitle, setProcessTitle), PropertyAttribute::CustomValue | 0);
 
     // Before the hook below: onDidChangeListeners loads the signal tables on any add.
     installDefaultWarningListener(vm);

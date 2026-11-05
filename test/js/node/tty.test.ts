@@ -303,6 +303,9 @@ describe.concurrent("ReadStream destroy()", () => {
 // read(2) on the fd could not be retracted: the process stayed alive until the next key, and that key went
 // to the destroyed stream. Each child here opens /dev/tty itself, so the stream is not process.stdin.
 describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
+  // A marker line is complete once its newline arrived: a key typed before that interleaves with the echo.
+  const printed = (output: string, line: string) => output.includes(line + "\n") || output.includes(line + "\r\n");
+
   // Runs `script` under a pty. `onOutput` sees the accumulated output after every chunk and writes keys.
   async function runInTerminal(script: string, onOutput: (output: string, terminal: Bun.Terminal) => void) {
     let output = "";
@@ -350,7 +353,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         console.log("ready");
       `,
       (output, terminal) => {
-        if (!wrote && output.includes("ready")) {
+        if (!wrote && printed(output, "ready")) {
           wrote = true;
           terminal.write("a");
         }
@@ -388,10 +391,10 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         console.log("ready");
       `,
       (output, terminal) => {
-        if (wrote === 0 && output.includes("ready")) {
+        if (wrote === 0 && printed(output, "ready")) {
           wrote = 1;
           terminal.write("a");
-        } else if (wrote === 1 && output.includes("paused")) {
+        } else if (wrote === 1 && printed(output, "paused")) {
           wrote = 2;
           terminal.write("b");
         }
@@ -423,10 +426,10 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         console.log("ready");
       `,
       (output, terminal) => {
-        if (wrote === 0 && output.includes("ready")) {
+        if (wrote === 0 && printed(output, "ready")) {
           wrote = 1;
           terminal.write("a");
-        } else if (wrote === 1 && output.includes("paused")) {
+        } else if (wrote === 1 && printed(output, "paused")) {
           wrote = 2;
           terminal.write("b\n");
         }
@@ -456,7 +459,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         console.log("ready");
       `,
       (output, terminal) => {
-        if (!wrote && output.includes("ready")) {
+        if (!wrote && printed(output, "ready")) {
           wrote = true;
           terminal.write("a");
         }
@@ -486,7 +489,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         console.log("ready");
       `,
       (output, terminal) => {
-        if (!wrote && output.includes("ready")) {
+        if (!wrote && printed(output, "ready")) {
           wrote = true;
           terminal.write("a");
         }
@@ -518,7 +521,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         console.log("ready " + fdState());
       `,
       (output, terminal) => {
-        if (!wrote && output.includes("ready")) {
+        if (!wrote && printed(output, "ready EBADF")) {
           wrote = true;
           terminal.write("a");
         }
@@ -550,10 +553,10 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         })();
       `,
       (output, terminal) => {
-        if (wrote === 0 && output.includes("ready")) {
+        if (wrote === 0 && printed(output, "ready")) {
           wrote = 1;
           terminal.write("a");
-        } else if (wrote === 1 && output.includes("destroyed")) {
+        } else if (wrote === 1 && printed(output, "destroyed")) {
           wrote = 2;
           terminal.write("b\n");
         }
@@ -576,7 +579,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         console.log("ready");
       `,
       (output, terminal) => {
-        if (!wrote && output.includes("ready")) {
+        if (!wrote && printed(output, "ready")) {
           wrote = true;
           terminal.write("a");
         }
@@ -599,7 +602,7 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         console.log("ready");
       `,
       (output, terminal) => {
-        if (!wrote && output.includes("ready")) {
+        if (!wrote && printed(output, "ready")) {
           wrote = true;
           terminal.write("a");
         }

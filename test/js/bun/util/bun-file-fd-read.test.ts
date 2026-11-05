@@ -83,7 +83,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
         rows: 24,
         data(terminal, chunk: Uint8Array) {
           output += decoder.decode(chunk, { stream: true });
-          if (!wrote && output.includes("ready")) {
+          if (!wrote && output.includes("ready\r\n")) {
             wrote = true;
             terminal.write("hello\n");
           }

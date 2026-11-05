@@ -260,7 +260,8 @@ impl Quick {
             return self.is_identifier_named(tag, b"gql")
                 || self.is_identifier_named(tag, b"graphql");
         }
-        return self.is_plain_call(parent)
+        // `graphql?.()` too, as with the tree of TypeScript.
+        return (self.n.at(parent) & 0xff) == k::CallExpression
             && self.is_identifier_named(self.n.at(parent + 4), b"graphql");
     }
 
@@ -293,6 +294,22 @@ impl Quick {
             return EMBED_MARKDOWN;
         }
         return EMBED_NONE;
+    }
+
+    /// The long way asks one language after the other, so a template that the first one does not read goes to the next one that its tag or a comment names.
+    /// For Prettier the first one is the only one.
+    fn is_in_a_second_language(&self, n: i32, kind: i32) -> bool {
+        let parent = self.n.at(n + 3);
+        let tag = self.n.at(parent + 4);
+        return match kind {
+            EMBED_CSS => self.is_embed_graph_ql(n, parent),
+            EMBED_GRAPHQL | EMBED_HTML => {
+                (self.n.at(parent) & 0xff) == k::TaggedTemplateExpression
+                    && (self.is_identifier_named(tag, b"md")
+                        || self.is_identifier_named(tag, b"markdown"))
+            }
+            _ => false,
+        };
     }
 }
 // --------------------------------------------------------------------------------------------------------- the text
@@ -1125,6 +1142,9 @@ impl Quick {
                     self.commit(mark);
                 } else {
                     self.rollback(mark);
+                    if self.is_in_a_second_language(n, kind) {
+                        return Err(self.stop(why::GUEST));
+                    }
                 }
             }
         }

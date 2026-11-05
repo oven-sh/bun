@@ -518,7 +518,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return self
                 .print_attribute_with(attr, |printer| printer.print_angular_i18n(element, value));
         }
-        if split_at_interpolations(raw_value).len() > 1 {
+        if strings::contains(raw_value, b"{{") && split_at_interpolations(raw_value).len() > 1 {
             return self
                 .print_attribute_with(attr, |printer| printer.print_angular_interpolation(value));
         }

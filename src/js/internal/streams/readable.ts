@@ -1850,12 +1850,12 @@ const promiseOperatorLengths = { every: 1, forEach: 2, reduce: 3, toArray: 1, so
 let operators: Operators | undefined;
 
 function installOperator(key: string, length: number, call: (this: $Node.Readable, args: unknown[]) => unknown) {
-  function fn(this: $Node.Readable, ...args: unknown[]) {
+  const fn = function (this: $Node.Readable, ...args: unknown[]) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
     return call.$call(this, args);
-  }
+  };
   ObjectDefineProperty(fn, "name", { __proto__: null, value: key });
   ObjectDefineProperty(fn, "length", { __proto__: null, value: length });
   ObjectDefineProperty(Readable.prototype, key, {
@@ -1867,18 +1867,16 @@ function installOperator(key: string, length: number, call: (this: $Node.Readabl
   });
 }
 
-const streamOperatorKeys = ObjectKeys(streamOperatorLengths) as (keyof typeof streamOperatorLengths)[];
-for (let i = 0; i < streamOperatorKeys.length; i++) {
-  const key = streamOperatorKeys[i];
+for (const name in streamOperatorLengths) {
+  const key = name as keyof typeof streamOperatorLengths;
   let op: ((this: $Node.Readable, ...args: any[]) => AsyncIterable<unknown>) | undefined;
   installOperator(key, streamOperatorLengths[key], function (args) {
     op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key];
     return Stream.Readable.from(op.$apply(this, args));
   });
 }
-const promiseOperatorKeys = ObjectKeys(promiseOperatorLengths) as (keyof typeof promiseOperatorLengths)[];
-for (let i = 0; i < promiseOperatorKeys.length; i++) {
-  const key = promiseOperatorKeys[i];
+for (const name in promiseOperatorLengths) {
+  const key = name as keyof typeof promiseOperatorLengths;
   let op: ((this: $Node.Readable, ...args: any[]) => Promise<unknown>) | undefined;
   installOperator(key, promiseOperatorLengths[key], function (args) {
     op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key];

@@ -31,12 +31,12 @@ function runsAsPlain(title: string, printed: string, body: string, files: Record
 }
 
 runsAsPlain(
-  "node:zlib under an Object.keys that answers nonsense, and then under the real one",
+  "node:zlib under an Object.keys that throws, and then under the real one",
   "TypeError function\n",
   `
         const real = Object.keys;
         let first, second;
-        Object.keys = () => ["nonsense"];
+        Object.keys = () => { throw new TypeError("nonsense"); };
         try { first = typeof require("node:zlib").gzipSync; } catch (error) { first = error.name; } finally { Object.keys = real; }
         try { second = typeof require("node:zlib").gzipSync; } catch (error) { second = error.name; }
         console.log(first, second);`,
@@ -128,7 +128,7 @@ for (const [title, specifier] of [
             return error.name;
           }
         };
-        Object.keys = () => ["nonsense"];
+        Object.keys = () => { throw new TypeError("nonsense"); };
         const first = await imported();
         Object.keys = real;
         console.log(first, await imported(), load("node:zlib"), await imported());`,

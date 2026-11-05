@@ -5,6 +5,7 @@
 //!
 //! Here is what it is not asked about at all: the options and the kinds of text that it does not know.
 
+use super::quick_guests::QuickGuests;
 use crate::options::*;
 use crate::text::{BOM, ends_with_ignore_ascii_case};
 use bun_core::strings;
@@ -122,9 +123,9 @@ fn options_for(options: &FormatOptions, text: &[u8]) -> Option<quick::Options> {
         experimental_operator_position,
         experimental_ternaries,
         embedded_language_formatting,
-        // For what is in a template in another language, which is refused.
+        // For what is in a template in another language: `QuickGuests`.
         prose_wrap: _,
-        html_whitespace_sensitivity: _,
+        html_whitespace_sensitivity,
         vue_indent_script_and_style: _,
         svelte: _,
         embedded_html: _,
@@ -206,6 +207,8 @@ fn options_for(options: &FormatOptions, text: &[u8]) -> Option<quick::Options> {
         operator_position_start: !experimental_operator_position.is_end(),
         embedded_language_formatting_auto: *embedded_language_formatting
             == EmbeddedLanguageFormatting::Auto,
+        html_whitespace_sensitivity_ignore: *html_whitespace_sensitivity
+            == HtmlWhitespaceSensitivity::Ignore,
         no_short_cuts: false,
     })
 }
@@ -274,7 +277,17 @@ pub fn format(
     if options.is_in_markdown && may_differ_in_markdown(&code) {
         return Err(scratch.refuse(Reason::InMarkdown, code.text));
     }
-    let quick = scratch.quick.get_or_insert_default();
+    let quick = scratch.quick.get_or_insert_with(|| {
+        let mut quick = Box::<quick::Quick>::default();
+        quick.lend_guests(Some(Box::<QuickGuests>::default()));
+        quick
+    });
+    if quick_options.embedded_language_formatting_auto
+        && let Some(guests) = quick.guests_mut()
+        && let Some(guests) = (guests as &mut dyn std::any::Any).downcast_mut::<QuickGuests>()
+    {
+        guests.start_file(options, code.path);
+    }
     if quick
         .format(code.text, language, code.path, &quick_options)
         .is_err()

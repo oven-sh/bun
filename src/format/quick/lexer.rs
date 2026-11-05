@@ -4,7 +4,9 @@
 use crate::ast::{F_BLANK, F_BLANK_LINE, F_ESCAPE, F_QUOTE, F_SLOW_TEXT, F_TAIL};
 use crate::id_table::{ID_PART, ID_START};
 use crate::parse::core::TYPED_TS;
-use crate::{Bytes, Quick, R, Words, zeros};
+use crate::{
+    Bytes, Quick, R, Words, bytes_before, where_byte_is, where_name_ends, where_not_printable, zeros,
+};
 
 pub(crate) struct Lexer {
     // ---- state
@@ -456,28 +458,20 @@ impl Quick {
         return 0;
     }
 }
-// Four bytes at a time. With v the four bytes, a byte of `(v - LOW) | (v + ONES)` has its top bit set if that byte of v
-// is below 0x20 or above 0x7e (and, through a borrow or a carry, sometimes when it is not: then a closer look follows).
-pub(crate) const HIGH_BITS: i32 = -2139062144;
-pub(crate) const LOW: i32 = 0x20202020;
-pub(crate) const ONES: i32 = 0x01010101;
-pub(crate) const STARS: i32 = 0x2a2a2a2a;
 impl Quick {
     pub(crate) fn skip_space(&mut self) -> R<()> {
-        let end = self.text.src_end;
         let mut p = self.lexer.pos;
         let mut nl: i32 = 0;
         loop {
             let c = self.t.at(p);
+            if c > 47 && c < 128 {
+                break;
+            }
             if c == 32 || c == 9 {
                 p += 1;
             } else if c == 10 || c == 13 {
                 nl = 1;
-                p += 1;
-                while self.t.i32_at(p) == LOW {
-                    // indentation
-                    p += 4;
-                }
+                p = self.blanks_end(p + 1);
             } else if c == 47 {
                 let d = self.t.at(p + 1);
                 if d == 47 {
@@ -485,12 +479,13 @@ impl Quick {
                     let mut flags = CF_PLAIN;
                     p += 2;
                     loop {
-                        while p < end {
-                            let v = self.t.i32_at(p);
-                            if ((v.wrapping_sub(LOW) | v.wrapping_add(ONES)) & HIGH_BITS) != 0 {
+                        loop {
+                            let stops = where_not_printable(self.t.u64_at(p));
+                            if stops != 0 {
+                                p += bytes_before(stops);
                                 break;
                             }
-                            p += 4;
+                            p += 8;
                         }
                         let e = self.t.at(p);
                         if e < 0x20 || e > 0x7e {
@@ -530,18 +525,14 @@ impl Quick {
                     let mut indentable: i32 = 1;
                     p += 2;
                     loop {
-                        while p < end {
-                            let v = self.t.i32_at(p);
-                            let x = v ^ STARS;
-                            if ((v.wrapping_sub(LOW)
-                                | v.wrapping_add(ONES)
-                                | (x.wrapping_sub(ONES) & !x))
-                                & HIGH_BITS)
-                                != 0
-                            {
+                        loop {
+                            let v = self.t.u64_at(p);
+                            let stops = where_not_printable(v) | where_byte_is(v, b'*');
+                            if stops != 0 {
+                                p += bytes_before(stops);
                                 break;
                             }
-                            p += 4;
+                            p += 8;
                         }
                         let e = self.t.at(p);
                         if e == 42 {
@@ -551,10 +542,7 @@ impl Quick {
                         } else if e == 10 {
                             nl = 1;
                             flags |= CF_INDENTABLE;
-                            p += 1;
-                            while self.t.at(p) == 32 {
-                                p += 1;
-                            }
+                            p = self.blanks_end(p + 1);
                             if self.t.at(p) != 42 {
                                 indentable = 0;
                             }
@@ -667,6 +655,16 @@ pub(crate) static FOUR_TEXT: [i32; 128] = [
     149, 0,
 ];
 impl Quick {
+    /// Are the `len` bytes at a and at b the same? `len` is from 1 to 16.
+    #[inline(always)]
+    fn is_same_word(&self, a: i32, b: i32, len: i32) -> bool {
+        if len >= 8 {
+            return self.t.u64_at(a) == self.t.u64_at(b)
+                && self.t.u64_at(a + len - 8) == self.t.u64_at(b + len - 8);
+        }
+        (self.t.u64_at(a) ^ self.t.u64_at(b)).wrapping_shl(((8 - len) << 3) as u32) == 0
+    }
+
     /// Sets tok and tok_kw for the name T[s, s + len), len >= 2, which has been taken for a plain name so far.
     pub(crate) fn classify_name(&mut self, s: i32, len: i32) {
         let h = (self.t.at(s) * KW_A
@@ -678,13 +676,8 @@ impl Quick {
         if (info & 255) != len {
             return;
         }
-        let w = KW_TEXT.at(h);
-        let mut i: i32 = 0;
-        while i < len {
-            if self.t.at(s + i) != self.t.at(w + i) {
-                return;
-            }
-            i += 1;
+        if !self.is_same_word(s, KW_TEXT.at(h), len) {
+            return;
         }
         self.lexer.tok = (info >> 8) & 255;
         self.lexer.tok_kw = info >> 16;
@@ -704,13 +697,8 @@ impl Quick {
         if (info & 255) != len {
             return 0;
         }
-        let w = FOUR_TEXT.at(g);
-        let mut i: i32 = 4;
-        while i < len {
-            if self.t.at(s + i) != self.t.at(w + i) {
-                return 0;
-            }
-            i += 1;
+        if !self.is_same_word(s, FOUR_TEXT.at(g), len) {
+            return 0;
         }
         return info >> 8;
     }
@@ -873,17 +861,8 @@ impl Quick {
         Ok(())
     }
 }
-// 1 for what read_string() has to look at: quotes, the backslash, and whatever is not printable ASCII
-pub(crate) static STRING_SPECIAL: [u8; 256] = [
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-];
+/// The token that a byte is whatever follows it: ( ) [ ] { } ; , ~ @ and the backquote. 0 for all others.
+static ALONE: [u8; 128] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 13, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 0, 15, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 11, 45, 0];
 impl Quick {
     pub(crate) fn read_string(&mut self, quote: i32) -> R<()> {
         let end = self.text.src_end;
@@ -891,8 +870,18 @@ impl Quick {
         let mut p = start + 1;
         let mut flags: i32 = 0;
         loop {
-            while p < end && STRING_SPECIAL.at(self.t.at(p)) != 1 {
-                p += 1;
+            // up to a quote, a backslash, or what is not printable ASCII
+            while p < end {
+                let v = self.t.u64_at(p);
+                let stops = where_not_printable(v)
+                    | where_byte_is(v, b'"')
+                    | where_byte_is(v, b'\'')
+                    | where_byte_is(v, b'\\');
+                if stops != 0 {
+                    p += bytes_before(stops);
+                    break;
+                }
+                p += 8;
             }
             let c = self.t.at(p);
             if c == quote {
@@ -933,17 +922,16 @@ impl Quick {
     pub(crate) fn next(&mut self) -> R<()> {
         self.lexer.prev_end = self.lexer.tok_end;
         let mut p = self.lexer.pos;
-        let mut c = self.t.at(p);
         // Most tokens follow the previous one at once or after one blank. Anything else is for skip_space().
-        if c == 32 {
-            p += 1;
-            c = self.t.at(p);
-        }
+        p += (self.t.at(p) == 32) as i32;
+        let mut first = self.t.u64_at(p);
+        let mut c = (first & 255) as i32;
         self.lexer.pos = p;
         if c <= 32 || c == 47 || c >= 128 {
             self.skip_space()?;
             p = self.lexer.pos;
-            c = self.t.at(p);
+            first = self.t.u64_at(p);
+            c = (first & 255) as i32;
         } else {
             self.lexer.tok_nl = 0;
         }
@@ -953,25 +941,36 @@ impl Quick {
         crate::tally::token(p);
         if (CT.at(c) & C_ASCII_START) != 0 {
             // A name: nearly every second token.
-            let mut q = self.name_end(p + 1);
-            let mut e = self.t.at(q);
-            // "$", which the words do not know
-            while (CT.at(e) & C_ASCII_PART) != 0 {
-                q += 1;
-                e = self.t.at(q);
-            }
+            let ends = where_name_ends(first);
+            let q = if ends != 0 {
+                p + bytes_before(ends)
+            } else {
+                self.name_end(p + 8)
+            };
+            let e = self.t.at(q);
             if e < 128 && e != 92 {
                 self.lexer.tok = tk::Name;
                 self.lexer.tok_kw = kw::None;
+                self.lexer.tok_end = q;
+                self.lexer.pos = q;
                 let len = q - p;
                 if (KW_LENGTHS.at(c).wrapping_shr(len as u32) & 1) != 0 {
                     self.classify_name(p, len);
                 }
-                self.lexer.tok_end = q;
-                self.lexer.pos = q;
                 return Ok(());
             }
         }
+        let alone = ALONE.at(c);
+        if alone != 0 {
+            self.lexer_finish(alone, p + 1);
+            return Ok(());
+        }
+        self.next_of_many_kinds(p, c)
+    }
+
+    /// next() for what is neither a plain name nor a token of one byte: the token starts at p with `c`.
+    #[inline(never)]
+    fn next_of_many_kinds(&mut self, p: i32, c: i32) -> R<()> {
         match c {
             0 => {
                 if p >= self.text.src_end {
@@ -979,50 +978,6 @@ impl Quick {
                     return Ok(());
                 }
                 return Err(self.fail(p));
-            }
-            40 => {
-                self.lexer_finish(tk::ParenL, p + 1);
-                return Ok(());
-            }
-            41 => {
-                self.lexer_finish(tk::ParenR, p + 1);
-                return Ok(());
-            }
-            123 => {
-                self.lexer_finish(tk::BraceL, p + 1);
-                return Ok(());
-            }
-            125 => {
-                self.lexer_finish(tk::BraceR, p + 1);
-                return Ok(());
-            }
-            91 => {
-                self.lexer_finish(tk::BracketL, p + 1);
-                return Ok(());
-            }
-            93 => {
-                self.lexer_finish(tk::BracketR, p + 1);
-                return Ok(());
-            }
-            59 => {
-                self.lexer_finish(tk::Semi, p + 1);
-                return Ok(());
-            }
-            44 => {
-                self.lexer_finish(tk::Comma, p + 1);
-                return Ok(());
-            }
-            126 => {
-                self.lexer_finish(tk::Tilde, p + 1);
-                return Ok(());
-            }
-            64 => {
-                self.lexer_finish(tk::At, p + 1);
-                return Ok(());
-            }
-            96 => {
-                self.lexer_finish(tk::BackQuote, p + 1);
-                return Ok(());
             }
             58 => {
                 if self.t.at(p + 1) == 58 {

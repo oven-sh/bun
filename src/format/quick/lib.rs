@@ -247,7 +247,7 @@ impl Numbers for Vec<i32> {
     #[inline(always)]
     fn several<const COUNT: usize>(&self, i: i32) -> [i32; COUNT] {
         match self
-            .get(i as u32 as usize..)
+            .get(i as u32 as usize..i as u32 as usize + COUNT)
             .and_then(|s| s.first_chunk::<COUNT>())
         {
             Some(numbers) => *numbers,
@@ -260,7 +260,7 @@ impl Numbers for Vec<i32> {
     #[inline(always)]
     fn put_several<const COUNT: usize>(&mut self, i: i32, numbers: [i32; COUNT]) {
         match self
-            .get_mut(i as u32 as usize..)
+            .get_mut(i as u32 as usize..i as u32 as usize + COUNT)
             .and_then(|s| s.first_chunk_mut::<COUNT>())
         {
             Some(slots) => *slots = numbers,
@@ -286,7 +286,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn i32_at(&self, p: i32) -> i32 {
         match self
-            .get(p as u32 as usize..)
+            .get(p as u32 as usize..p as u32 as usize + 4)
             .and_then(|s| s.first_chunk::<4>())
         {
             Some(b) => i32::from_le_bytes(*b),
@@ -296,7 +296,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn u64_at(&self, p: i32) -> u64 {
         match self
-            .get(p as u32 as usize..)
+            .get(p as u32 as usize..p as u32 as usize + 8)
             .and_then(|s| s.first_chunk::<8>())
         {
             Some(b) => u64::from_le_bytes(*b),
@@ -306,7 +306,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn u128_at(&self, p: i32) -> u128 {
         match self
-            .get(p as u32 as usize..)
+            .get(p as u32 as usize..p as u32 as usize + 16)
             .and_then(|s| s.first_chunk::<16>())
         {
             Some(b) => u128::from_le_bytes(*b),
@@ -316,7 +316,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn put_u128(&mut self, p: i32, v: u128) {
         match self
-            .get_mut(p as u32 as usize..)
+            .get_mut(p as u32 as usize..p as u32 as usize + 16)
             .and_then(|s| s.first_chunk_mut::<16>())
         {
             Some(b) => *b = v.to_le_bytes(),
@@ -326,7 +326,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn put_u16(&mut self, p: i32, v: i32) {
         match self
-            .get_mut(p as u32 as usize..)
+            .get_mut(p as u32 as usize..p as u32 as usize + 2)
             .and_then(|s| s.first_chunk_mut::<2>())
         {
             Some(b) => *b = (v as u16).to_le_bytes(),
@@ -336,7 +336,7 @@ impl Bytes for [u8] {
     #[inline(always)]
     fn put_u64(&mut self, p: i32, v: u64) {
         match self
-            .get_mut(p as u32 as usize..)
+            .get_mut(p as u32 as usize..p as u32 as usize + 8)
             .and_then(|s| s.first_chunk_mut::<8>())
         {
             Some(b) => *b = v.to_le_bytes(),
@@ -574,6 +574,18 @@ impl Quick {
             let ends = where_name_ends(self.t.u64_at(p));
             if ends != 0 {
                 return p + bytes_before(ends);
+            }
+            p += 8;
+        }
+    }
+
+    /// Where the blanks from `p` on end.
+    #[inline(always)]
+    pub(crate) fn blanks_end(&self, mut p: i32) -> i32 {
+        loop {
+            let others = self.t.u64_at(p) ^ ONES.wrapping_mul(32);
+            if others != 0 {
+                return p + bytes_before(others);
             }
             p += 8;
         }

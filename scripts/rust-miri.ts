@@ -52,7 +52,6 @@ const MIRI_CRATES = [
   "bun_md",
   "bun_pod",
   "bun_ptr",
-  "bun_resolver",
   "bun_resolve_builtins",
   "bun_semver",
   "bun_shell_parser",
@@ -65,6 +64,7 @@ const MIRI_CRATES = [
 // their tests start other programs, or would take hours to interpret.
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
   bun_aot: ["ir::parallel"],
+  bun_resolver: ["compiled_program::tests", "data_url::tests", "fs_full::tests", "package_names::tests"],
 };
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {

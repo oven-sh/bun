@@ -429,3 +429,30 @@ print(full_collections_during(tokenizes), full_collections_during(hashes))
     expect(exitCode).toBe(0);
   },
 );
+
+test.skipIf(isDebug || isASAN || isWindows)(
+  "a thread that polls and drops something each time round does not collect all the time",
+  async () => {
+    const { stdout, stderr, exitCode } = await run(`
+import gc, time
+class C: pass
+class D:
+    def __del__(self):
+        global finalized
+        finalized += 1
+finalized = 0
+heap = [C() for _ in range(1000000)]   # So that a full collection takes a while.
+before = gc.get_stats()[2]["collections"]
+for i in range(700):
+    D()
+    time.sleep(0.001)
+print(gc.get_stats()[2]["collections"] - before, finalized > 0)
+`);
+    expect(stderr).toBe("");
+    const [collections, finalized] = stdout.trim().split(" ");
+    // The short waits add up to a long one, so it does collect. One collection for every 50 ms of waiting was 22 and more.
+    expect(finalized).toBe("True");
+    expect(Number(collections)).toBeLessThan(8);
+    expect(exitCode).toBe(0);
+  },
+);

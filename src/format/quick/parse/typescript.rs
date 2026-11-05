@@ -197,8 +197,12 @@ impl Quick {
             // x is T
             self.save();
             let start = self.lexer.tok_start;
+            let is_enum = self.is_kw(kw::Enum);
             let name = self.identifier()?;
             if self.lexer.tok_nl == 0 && self.word() == w::Is {
+                if is_enum {
+                    return Err(self.unexpected());
+                }
                 self.next()?;
                 let type_start = self.lexer.tok_start;
                 let type_ = self.ts_parse_type()?;
@@ -277,7 +281,7 @@ impl Quick {
                 return Err(self.text_refuse());
             }
         }
-        let name = self.parse_ident()?;
+        let name = self.ts_parse_declared_name()?;
         let mut constraint: i32 = 0;
         let mut default_type: i32 = 0;
         if self.eat(tk::Extends)? {
@@ -718,7 +722,7 @@ impl Quick {
             && (self.is_word() || self.lexer.tok == tk::PrivateName)
         {
             let after = self.peek_on_same_line()?;
-            if after == tk::Name || after >= tk::In {
+            if after == tk::Name || after == tk::PrivateName || after >= tk::In {
                 return Err(self.text_refuse());
             }
         }
@@ -809,12 +813,12 @@ impl Quick {
             return Ok(self.node2(k::TypeQuery, start, self.lexer.prev_end, type_, 0));
         }
         let name = self.parse_entity_name(true)?;
-        let type_arguments =
-            if self.lexer.tok_nl == 0 && (self.lexer.tok == tk::Lt || self.lexer.tok == tk::Shl) {
-                self.ts_parse_type_arguments()?
-            } else {
-                0
-            };
+        // (TypeScript does not split a `<<` here)
+        let type_arguments = if self.lexer.tok_nl == 0 && self.lexer.tok == tk::Lt {
+            self.ts_parse_type_arguments()?
+        } else {
+            0
+        };
         return Ok(self.node2(
             k::TypeQuery,
             start,
@@ -869,6 +873,9 @@ impl Quick {
             self.next()?;
         }
         self.expect(tk::BracketL)?;
+        if self.is_kw(kw::Enum) {
+            return Err(self.unexpected());
+        }
         let key = self.parse_ident_name()?;
         self.expect(tk::In)?;
         let constraint = self.ts_parse_type()?;
@@ -993,6 +1000,9 @@ impl Quick {
         let name = if self.lexer.tok == tk::This {
             self.this_type()?
         } else {
+            if self.is_kw(kw::Enum) {
+                return Err(self.unexpected());
+            }
             self.identifier()?
         };
         let mut annotation: i32 = 0;
@@ -1031,6 +1041,10 @@ impl Quick {
         match self.lexer.tok {
             tk::Name => {
                 match self.word() {
+                    // (a name where a type has to come, none where TypeScript asks whether one does)
+                    w::Enum => {
+                        return Err(self.unexpected());
+                    }
                     w::Any => {
                         return self.keyword_type(type_keyword::Any);
                     }
@@ -1820,9 +1834,17 @@ impl Quick {
         return self.parse_type_members(k::InterfaceBody);
     }
 
+    /// The name of a type, an enum or a type parameter. `await` is none in a module, and what makes the file one can still come.
+    fn ts_parse_declared_name(&mut self) -> R<i32> {
+        if self.is_kw(kw::Await) && self.parse.typed != FLOW {
+            return Err(self.text_refuse());
+        }
+        return self.parse_ident();
+    }
+
     pub(crate) fn parse_interface(&mut self, start: i32, modifiers: i32) -> R<i32> {
         self.next()?;
-        let id = self.parse_ident()?;
+        let id = self.ts_parse_declared_name()?;
         let type_parameters = if self.lexer.tok == tk::Lt {
             self.ts_parse_type_parameters_of(true)?
         } else {
@@ -1850,7 +1872,7 @@ impl Quick {
 
     pub(crate) fn parse_type_alias(&mut self, start: i32, modifiers: i32) -> R<i32> {
         self.next()?;
-        let id = self.parse_ident()?;
+        let id = self.ts_parse_declared_name()?;
         let type_parameters = if self.lexer.tok == tk::Lt {
             self.ts_parse_type_parameters_of(true)?
         } else {
@@ -1889,7 +1911,7 @@ impl Quick {
 
     pub(crate) fn parse_enum(&mut self, start: i32, head: i32) -> R<i32> {
         self.next()?;
-        let id = self.parse_ident()?;
+        let id = self.ts_parse_declared_name()?;
         let body_start = self.lexer.tok_start;
         self.expect(tk::BraceL)?;
         let list_mark = self.arena.ls_pos;
@@ -1954,7 +1976,7 @@ impl Quick {
             id = self.identifier()?;
         } else {
             self.next()?;
-            if self.is_kw(kw::Enum) {
+            if self.is_kw(kw::Enum) || self.is_kw(kw::Await) {
                 return Err(self.text_refuse());
             }
             id = if self.lexer.tok == tk::String {
@@ -2263,6 +2285,9 @@ impl Quick {
 
     /// `import a = require("b")`, `import a = b.c`. The current token is the name.
     pub(crate) fn ts_parse_import_equals(&mut self, start: i32, import_kind: i32) -> R<i32> {
+        if self.is_kw(kw::Enum) {
+            return Err(self.text_refuse());
+        }
         let id = self.identifier()?;
         self.expect(tk::Eq)?;
         let reference: i32;
@@ -2394,7 +2419,7 @@ impl Quick {
                     is_type_only = true;
                     left = first_as;
                     right = if is_import {
-                        self.parse_ident_name()?
+                        self.parse_ident()?
                     } else {
                         if self.lexer.tok == tk::String {
                             self.string_literal()?
@@ -2409,7 +2434,7 @@ impl Quick {
             } else if self.is_word() || self.lexer.tok == tk::String {
                 // { type as something }
                 right = if is_import {
-                    self.parse_ident_name()?
+                    self.parse_ident()?
                 } else {
                     if self.lexer.tok == tk::String {
                         self.string_literal()?
@@ -2425,7 +2450,7 @@ impl Quick {
         } else if self.is_word() || self.lexer.tok == tk::String {
             // { type something ..? }
             is_type_only = true;
-            is_plain = self.lexer.tok == tk::Name;
+            is_plain = self.lexer.tok == tk::Name && self.lexer.tok_kw != kw::Enum;
             left = if self.lexer.tok == tk::String {
                 self.string_literal()?
             } else {
@@ -2434,7 +2459,7 @@ impl Quick {
             if self.is_kw(kw::As) {
                 self.next()?;
                 if is_import {
-                    is_plain = self.lexer.tok == tk::Name;
+                    is_plain = self.lexer.tok == tk::Name && self.lexer.tok_kw != kw::Enum;
                 }
                 right = if self.lexer.tok == tk::String {
                     self.string_literal()?
@@ -2610,6 +2635,14 @@ impl Quick {
             while !self.starts_with_gt() {
                 type_start = self.lexer.tok_start;
                 type_token = self.lexer.tok;
+                if self.lexer.tok == tk::Name
+                    && self.lexer.tok_kw != 0
+                    && ((self.lexer.tok_kw == kw::Yield && self.parse.in_generator != 0)
+                        || (self.lexer.tok_kw == kw::Await && self.parse.in_async != 0))
+                {
+                    // no name here, so no type starts
+                    return Err(self.unexpected());
+                }
                 let v1 = self.ts_parse_type()?;
                 type_start = 0;
                 self.list_push(v1);

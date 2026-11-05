@@ -3943,6 +3943,13 @@ impl Quick {
                 }
                 left = self.make_logical(op, left_start, self.lexer.prev_end, left, right)?;
             } else {
+                if op == tk::Gt
+                    && self.parse.typed == TYPED_TS
+                    && (self.n.at(left) & !F_PAREN) == k::BinaryExpression | (tk::Lt << SUB_SHIFT)
+                {
+                    // `(a < b) > c`: printed without the parentheses, and then with no line break behind the `>`
+                    return Err(self.text_refuse());
+                }
                 left = self.node2(
                     k::BinaryExpression | (op << SUB_SHIFT),
                     left_start,
@@ -4617,10 +4624,9 @@ impl Quick {
                                 if arrow != 0 {
                                     return Ok(arrow);
                                 }
-                                // `async<A>(b)`: no call for Flow's own parser
-                                if self.lang.lang == lang::Flow {
-                                    return Err(self.text_refuse());
-                                }
+                                // `async<A>(b)`: no call for Flow's own parser, and a rare one for the others. (The trial has saved places of its own:
+                                // restore() would not lead back to `async`.)
+                                return Err(self.text_refuse());
                             } else if self.lexer.tok == tk::Name {
                                 // async x => y
                                 let kw = self.lexer.tok_kw;

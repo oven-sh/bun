@@ -919,7 +919,9 @@ impl Quick {
                     return Ok(self.no(refusal::NotAscii));
                 }
                 let kw = self.keyword_at(q, e - q);
-                if kw != 0 && (kw & 255) != tk::Name && (kw & 255) != tk::This {
+                if kw != 0
+                    && (((kw & 255) != tk::Name && (kw & 255) != tk::This) || (kw >> 8) == kw::Enum)
+                {
                     return Ok(self.no(refusal::FunctionType));
                 }
                 // `this` has a type and nothing else; `...a?` is printed in a way of its own
@@ -1030,7 +1032,12 @@ impl Quick {
             if (CC.at(self.t.at(q)) & BEYOND) != 0 {
                 return Ok(self.no(refusal::NotAscii));
             }
-            let kw = self.keyword_at(p, q - p) & 255;
+            let word = self.keyword_at(p, q - p);
+            // names of types in some places only
+            if matches!(word >> 8, kw::Enum | kw::Await | kw::Yield) {
+                return Ok(self.no(refusal::TypeWord));
+            }
+            let kw = word & 255;
             if kw > tk::Name {
                 if kw == tk::Typeof {
                     // `typeof a.b`; with `[` behind it Prettier adds parentheses

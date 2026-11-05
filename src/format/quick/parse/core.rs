@@ -23,7 +23,7 @@ use crate::lexer::{
 use crate::mode::SINGLE_JSX_IN_MARKDOWN;
 use crate::options::{EOL_LF, QUOTE_PROPS_CONSISTENT};
 use crate::parse::typescript::{PARAMETERS_OF_CONSTRUCTOR, PARAMETERS_OF_METHOD, PARAMETERS_PLAIN};
-use crate::{Bytes, Quick, R, Stop, Words, rare, why, zeros};
+use crate::{Bytes, Numbers, Quick, R, Stop, Words, rare, why, zeros};
 
 pub(crate) struct Parse {
     // ---- context
@@ -1133,22 +1133,29 @@ impl Quick {
         let last = self.parse.last_standing;
         let column = self.parse.list_depth.wrapping_mul(self.options.tab_width);
         let head = k::Ready | F_STANDS | self.fast.ready_flags | decided | (kind << SUB_SHIFT);
-        if last != 0
-            && self.arena.ls_pos > 0
-            && self.arena.ls.at(self.arena.ls_pos - 1) == last
-            && self.n.at(last + 6) == column
-        {
+        if last != 0 && self.arena.ls_pos > 0 && self.arena.ls.at(self.arena.ls_pos - 1) == last {
+            let [last_head, last_start, _, parent, text, length, last_column, _] =
+                self.n.several(last);
             // a line break, or two, and the indentation
-            let last_end = self.n.at(last + 4) + self.n.at(last + 5);
+            let last_end = text + length;
             let between = start - last_end - column;
-            if self.t.at(last_end) == 10
+            if last_column == column
+                && self.t.at(last_end) == 10
                 && (between == 1 || (between == 2 && self.t.at(last_end + 1) == 10))
             {
-                self.n
-                    .put(last, head | F_LINES | (self.n.at(last) & F_DECIDED));
-                self.n.put(last + 2, self.fast.ready_end);
-                self.n.put(last + 5, end - self.n.at(last + 4));
-                self.n.put(last + 7, last_length);
+                self.n.put_several(
+                    last,
+                    [
+                        head | F_LINES | (last_head & F_DECIDED),
+                        last_start,
+                        self.fast.ready_end,
+                        parent,
+                        text,
+                        end - text,
+                        column,
+                        last_length,
+                    ],
+                );
                 return;
             }
         }
@@ -1163,10 +1170,8 @@ impl Quick {
             self.fast.ready_end,
             4,
         );
-        self.n.put(n + 4, start);
-        self.n.put(n + 5, end - start);
-        self.n.put(n + 6, column);
-        self.n.put(n + 7, last_length);
+        self.n
+            .put_several(n + 4, [start, end - start, column, last_length]);
         self.list_push(n);
         self.parse.last_standing = n;
     }

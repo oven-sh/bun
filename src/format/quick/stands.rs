@@ -16,6 +16,7 @@ use crate::holes::FILTER_END_OF_LINE;
 use crate::lang::lang;
 use crate::lexer::tk;
 use crate::options::{QUOTE_PROPS_CONSISTENT, TRAILING_COMMA_NONE};
+use crate::parse::core::SCOPE_FUNCTION;
 use crate::{Quick, R, Words};
 
 pub(crate) struct Stands {
@@ -445,6 +446,8 @@ impl Quick {
         // Nobody keeps the place here: fast.rs finds itself outside of every loop, function and class, and leaves what depends on the place to the parser. Two things the parser
         // looks for in the text of a whole item or file: `arguments` in the value of a field, and a comment that names a file.
         self.forget_place();
+        // (at the top level `super` is let through)
+        self.parse.place.scope = SCOPE_FUNCTION;
         let text = self.t.get(start as usize..end as usize).unwrap_or(&[]);
         if bun_core::strings::contains(text, b"arguments")
             || bun_core::strings::contains(text, b"///")

@@ -4201,9 +4201,15 @@ describe("createReadStream", () => {
       expect(await fileStreamOutcome(createReadStream(path))).toEqual({ path, opened: true, data: "in a" });
     });
 
+    // Node has errorPath: "" in this case. Bun's open() error has no path for an empty path, from fs.open("") too.
     it("an empty path fails with ENOENT and does not open the cwd", async () => {
-      const { errorPath, ...outcome } = await fileStreamOutcome(createReadStream(""));
-      expect(outcome).toEqual({ path: "", opened: false, code: "ENOENT", syscall: "open" });
+      expect(await fileStreamOutcome(createReadStream(""))).toEqual({
+        path: "",
+        opened: false,
+        code: "ENOENT",
+        syscall: "open",
+        errorPath: undefined,
+      });
     });
 
     it("resolves a relative path when the stream opens", async () => {
@@ -4869,21 +4875,27 @@ describe("createWriteStream", () => {
       }).toEqual({ a: "written", b: "in b" });
     });
 
+    // errorPath: see the same case in createReadStream above.
     it("an empty path fails with ENOENT", async () => {
-      const { errorPath, ...outcome } = await fileStreamOutcome(createWriteStream(""));
-      expect(outcome).toEqual({ path: "", opened: false, code: "ENOENT", syscall: "open" });
+      expect(await fileStreamOutcome(createWriteStream(""))).toEqual({
+        path: "",
+        opened: false,
+        code: "ENOENT",
+        syscall: "open",
+        errorPath: undefined,
+      });
     });
   });
 
   it("accepts a Buffer path and keeps it", async () => {
     using dir = tempDir("write-stream-path", { "file.txt": "hello" });
     const file = join(String(dir), "file.txt");
-    expect(await fileStreamOutcome(createWriteStream(Buffer.from(file), { flags: "a" }))).toEqual({
+    expect(await fileStreamOutcome(createWriteStream(Buffer.from(file), { flags: "a" }), "!")).toEqual({
       path: Buffer.from(file),
       opened: true,
       finished: true,
     });
-    expect(readFileSync(file, "utf8")).toBe("hello");
+    expect(readFileSync(file, "utf8")).toBe("hello!");
   });
 
   it.todoIf(isBroken && isWindows)("simple write stream finishes", async () => {

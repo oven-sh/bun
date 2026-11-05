@@ -202,7 +202,7 @@ test.skipIf(isWindows)("process.stdin on a terminal can be read after the cwd wa
   let output = "";
   const decoder = new TextDecoder();
   const done = Promise.withResolvers<void>();
-  const proc = Bun.spawn({
+  await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
@@ -227,11 +227,12 @@ test.skipIf(isWindows)("process.stdin on a terminal can be read after the cwd wa
       },
     },
   });
-  await Promise.race([done.promise, proc.exited]);
-  proc.kill();
-  await proc.exited;
+  const [exitCode] = await Promise.all([proc.exited, done.promise]);
   proc.terminal?.close();
-  expect(Bun.stripANSI(output).match(/RESULT (\{.*?\})/)?.[1]).toBe('{"isTTY":true}');
+  expect({ result: Bun.stripANSI(output).match(/RESULT (\{.*?\})/)?.[1], exitCode }).toEqual({
+    result: '{"isTTY":true}',
+    exitCode: 0,
+  });
 });
 
 describe.concurrent("ReadStream destroy()", () => {

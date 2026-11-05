@@ -3148,6 +3148,17 @@ describe("JavaScript and TypeScript in a host", () => {
       "'&quot;'",
       "'it\\'s'",
       "'a' + &quot;b&quot;",
+      "(a || b) && !c",
+      "[a && 'b', c]",
+      "a&&b",
+      "a & b",
+      "a &&= b",
+      "'&amp;'",
+      "'&nbsp;' + a",
+      "a == &apos;b&apos;",
+      "'&apos;'",
+      "a &lt; b",
+      `(aaaaaaaaaaaaaaaaaaaaaaaaaa === 'bbbbbbbbbbbbbbbbbb' || cccccccccccccccccccc) && (dddddddddddddddd || e < f)`,
       // Comments.
       "a // b",
       "a /* b */",
@@ -3167,23 +3178,86 @@ describe("JavaScript and TypeScript in a host", () => {
     ];
     const names = [":a", "v-if", "@a", "v-bind:a", ".a", ":class", "v-model", "v-for", "#a", ":aaaaaaaaaaaaaaaaaaaaaaaa"];
     const script = '\n<script setup lang="ts">\nlet a;\n</script>\n';
+    // Names on the left side, and what is more than a name.
+    const lefts = [
+      "a",
+      "(a)",
+      "(a, b)",
+      "(a,b)",
+      "( a , b )",
+      "a, b",
+      "(a, b, c)",
+      "(a, b, c, d)",
+      "(a, a)",
+      "(a, , b)",
+      "{ a }",
+      "({ a, b }, c)",
+      "[a, b]",
+      "(a = 1, b)",
+      "await",
+      "(let, b)",
+      "null",
+      "(a, true)",
+      "undefined",
+      "type",
+      "\u00e9",
+      `(${"a".repeat(20)}, ${"b".repeat(20)})`,
+      `(${"a".repeat(30)}, ${"b".repeat(30)})`,
+    ];
+    const rights = [
+      "b",
+      "10",
+      "a.b",
+      "f(c)",
+      "f( c )",
+      "a.concat([{} as any])",
+      "[1,2]",
+      "{ a: 1 }",
+      "a.slice(\n      b\n    )",
+      "a in b",
+      "a && b",
+      "a | b",
+      "",
+      "a b",
+      `${"c".repeat(30)}.${"d".repeat(30)}`,
+      `${"c".repeat(20)}.filter((it) => it.${"d".repeat(20)} && it.${"e".repeat(20)})`,
+      ...[22, 23, 24, 25, 26, 27, 28, 29, 30].map(length => `f(${"c".repeat(length)}, ${"d".repeat(30)})`),
+    ];
+    // One file for a shape, with an element for every expression: an expression that can't be read stays as it is written.
+    // What could end its attribute or its braces has a file of its own.
+    const file = (elements: string[], end: string) => `<template>\n${elements.join("\n")}\n</template>\n${end}`;
+    const shapes: [RegExp, string, (code: string) => string][] = [
+      ...names.map(name => [/"/, script, (code: string) => `  <div ${name}="${code}"></div>`] as [RegExp, string, any]),
+      [/"/, "", code => `  <div :a="${code}"></div>`],
+      [/"/, script, code => `  <a :b="${code}" />`],
+      [/"/, script, code => `  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>`],
+      [/"/, script, code => `  <span :b="${code}">c</span>d`],
+      [/"/, script, code => `  <pre :b="${code}">\nc</pre>`],
+      [/[{}<]/, script, code => `  <p>{{ ${code} }}</p>`],
+      [/[{}<]/, "", code => `  <p>{{ ${code} }}</p>`],
+      [/[{}<]/, script, code => `  <p>\n    {{ ${code} }}\n  </p>`],
+      [/[{}<]/, script, code => `  <p>a {{ ${code} }} b</p>`],
+      [/[{}<]/, script, code => `  <p>{{${code}}}<b>c</b></p>`],
+    ];
     expectSame(
       "a.vue",
       [
-        ...names.flatMap(name =>
-          expressions.map(code => `<template>\n  <div ${name}="${code}"></div>\n</template>\n${script}`),
-        ),
-        ...expressions.flatMap(code => [
-          `<template>\n  <div :a="${code}"></div>\n</template>\n`,
-          `<template>\n  <a :b="${code}" />\n</template>\n${script}`,
-          `<template>\n  <div>\n    <div>\n      <el-button c="d" :b="${code}" e>f</el-button>\n    </div>\n  </div>\n</template>\n${script}`,
-          `<template>\n  <span :b="${code}">c</span>d\n</template>\n${script}`,
-          `<template>\n  <pre :b="${code}">\nc</pre>\n</template>\n${script}`,
-          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n${script}`,
-          `<template>\n  <p>{{ ${code} }}</p>\n</template>\n`,
-          `<template>\n  <p>\n    {{ ${code} }}\n  </p>\n</template>\n${script}`,
-          `<template>\n  <p>a {{ ${code} }} b</p>\n</template>\n${script}`,
-          `<template>\n  <p>{{${code}}}<b>c</b></p>\n</template>\n${script}`,
+        ...lefts.flatMap(left => [
+          file(
+            rights.map(right => `  <div v-for="${left} in ${right}"></div>`),
+            script,
+          ),
+          file(
+            rights.map(right => `  <li v-for="${left}  of  ${right}" :key="a">b</li>`),
+            "",
+          ),
+        ]),
+        ...shapes.flatMap(([alone, end, element]) => [
+          file(
+            expressions.filter(code => !alone.test(code)).map(element),
+            end,
+          ),
+          ...expressions.filter(code => alone.test(code)).map(code => file([element(code)], end)),
         ]),
       ],
       [

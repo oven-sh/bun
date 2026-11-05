@@ -172,6 +172,27 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let expression = in_html(HtmlRoot::JsExpression);
         if name == b"v-for" {
+            if let Some(v_for) = parse_vue_v_for_directive(value) {
+                let names = v_for.left.iter().take_while(|it| !it.is_empty()).count();
+                let names = v_for.left.get(..names).unwrap_or_default();
+                let left = Some((names, v_for.operator));
+                // The same name twice is an error.
+                let is_new =
+                    |(index, it): (usize, &&[u8])| !names.iter().take(index).any(|name| name == it);
+                if names.iter().all(|it| canonical::is_name(it))
+                    && names.iter().enumerate().all(is_new)
+                    && self.write_attribute_quickly(
+                        element,
+                        attr,
+                        left,
+                        v_for.right,
+                        is_typescript,
+                        false,
+                    )
+                {
+                    return true;
+                }
+            }
             return self.print_attribute_with(attr, |printer| {
                 printer.print_vue_v_for_directive(value, is_typescript, expression)
             });
@@ -211,7 +232,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             });
         }
         if name.starts_with(b"@") || name.starts_with(b"v-on:") {
-            if self.write_attribute_quickly(element, attr, value, is_typescript, false) {
+            if self.write_attribute_quickly(element, attr, None, value, is_typescript, false) {
                 return true;
             }
             // `printVueVOnDirective`
@@ -245,7 +266,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 return false;
             };
         let has_filters = root == HtmlRoot::VueExpression;
-        if self.write_attribute_quickly(element, attr, value, is_typescript, has_filters) {
+        if self.write_attribute_quickly(element, attr, None, value, is_typescript, has_filters) {
             return true;
         }
         self.print_attribute_with(attr, |printer| {

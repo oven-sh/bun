@@ -117,6 +117,13 @@ fn continues_name(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
 }
 
+/// A name of ASCII that something can be given in any of the parsers.
+pub(crate) fn is_name(text: &[u8]) -> bool {
+    matches!(text, [first, rest @ ..] if starts_name(*first) && rest.iter().all(|it| continues_name(*it)))
+        && !is_word_of_the_language(text)
+        && !matches!(text, b"true" | b"false" | b"null")
+}
+
 /// Reads code. Every function takes the place where its part starts and returns where it ends. None looks for the end
 /// of the code: behind it is a `"` or a `}`, which no part can have in it.
 struct Reader<'a> {

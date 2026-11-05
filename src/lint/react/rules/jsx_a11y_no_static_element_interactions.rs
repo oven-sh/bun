@@ -16,7 +16,7 @@ pub struct NoStaticElementInteractions {
     allow_expression_values: bool,
 }
 
-const NO_STATIC_ELEMENT_INTERACTIONS: Message = Message::new("", "Static HTML elements with event handlers require a role.");
+const NO_STATIC_ELEMENT_INTERACTIONS: &Message = &Message::new("", "Static HTML elements with event handlers require a role.");
 
 impl Rule for NoStaticElementInteractions {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-static-element-interactions", Kind::Problem);

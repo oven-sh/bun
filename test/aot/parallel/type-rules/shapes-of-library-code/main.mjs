@@ -1,0 +1,19 @@
+// Shapes of typed code as libraries write it.
+console.log("# type-guard-casts-before-it-tests");
+await import("./type-guard-casts-before-it-tests.ts");
+console.log("# handler-called-with-part-of-context");
+await import("./handler-called-with-part-of-context.ts");
+console.log("# overload-wider-than-implementation");
+await import("./overload-wider-than-implementation.ts");
+console.log("# draft-proxy-stands-for-an-array");
+await import("./draft-proxy-stands-for-an-array.ts");
+console.log("# cast-to-array-like-converts-primitives");
+await import("./cast-to-array-like-converts-primitives.ts");
+console.log("# constructor-of-a-generator-object");
+await import("./constructor-of-a-generator-object.ts");
+console.log("# argument-bound-by-a-conditional-type");
+await import("./argument-bound-by-a-conditional-type.ts");
+console.log("# conditional-bound-read-with-a-default");
+await import("./conditional-bound-read-with-a-default.ts");
+console.log("# object-from-entries-as-a-mapped-type");
+await import("./object-from-entries-as-a-mapped-type.ts");

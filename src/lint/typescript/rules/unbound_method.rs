@@ -9,11 +9,11 @@ pub struct UnboundMethod {
     ignore_static: bool,
 }
 
-const UNBOUND: Message = Message::new(
+const UNBOUND: &Message = &Message::new(
     "unbound",
     "A method that is not declared with `this: void` may cause unintentional scoping of `this` when separated from its object.\nConsider using an arrow function or explicitly `.bind()`ing the method to avoid calling the method with an unintended `this` value. ",
 );
-const UNBOUND_WITHOUT_THIS_ANNOTATION: Message = Message::new(
+const UNBOUND_WITHOUT_THIS_ANNOTATION: &Message = &Message::new(
     "unboundWithoutThisAnnotation",
     "A method that is not declared with `this: void` may cause unintentional scoping of `this` when separated from its object.\nConsider using an arrow function or explicitly `.bind()`ing the method to avoid calling the method with an unintended `this` value. \nIf a function does not access `this`, it can be annotated with `this: void`.",
 );
@@ -275,7 +275,7 @@ fn is_node_inside_type_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<
 }
 
 /// The message to report, if the method is dangerous.
-fn check_method(value_declaration: TsNode, ignore_static: bool) -> Option<Message> {
+fn check_method(value_declaration: TsNode, ignore_static: bool) -> Option<&'static Message> {
     let first_param = value_declaration.children().find(|child| child.kind() == SyntaxKind::Parameter);
     let first_param_is_this = first_param
         .and_then(|it| it.name())
@@ -291,7 +291,7 @@ fn check_method(value_declaration: TsNode, ignore_static: bool) -> Option<Messag
     })
 }
 
-fn check_if_method(symbol: TsSymbol, ignore_static: bool) -> Option<Message> {
+fn check_if_method(symbol: TsSymbol, ignore_static: bool) -> Option<&'static Message> {
     let value_declaration = symbol.value_declaration()?;
     match value_declaration.kind() {
         SyntaxKind::PropertyAssignment | SyntaxKind::PropertyDeclaration => {
@@ -307,7 +307,7 @@ fn check_if_method(symbol: TsSymbol, ignore_static: bool) -> Option<Message> {
 }
 
 /// [`check_if_method`]. tsgolint mistakes the first parameter of a function that's a class property's value for `this`.
-fn message_of(symbol: TsSymbol, ignore_static: bool, is_oxlint: bool) -> Option<Message> {
+fn message_of(symbol: TsSymbol, ignore_static: bool, is_oxlint: bool) -> Option<&'static Message> {
     let message = check_if_method(symbol, ignore_static)?;
     let declaration = symbol.value_declaration().filter(|_| is_oxlint);
     Some(match declaration.is_some_and(|it| it.kind() == SyntaxKind::PropertyDeclaration) {
@@ -422,7 +422,7 @@ impl UnboundMethod {
 
     /// tsgolint's diagnostic covers the whole `reference`. oxlint prints the location of its first label, which is the
     /// name.
-    fn report_reference(cx: &Cx<'_, Self>, name: Span, reference: Span, message: Message) {
+    fn report_reference(cx: &Cx<'_, Self>, name: Span, reference: Span, message: &'static Message) {
         cx.report(name, message).comments_apply_at(reference).labels_with(|labels| {
             labels.first("This reference may be unbound and lose `this` context");
             labels.push(reference, "");

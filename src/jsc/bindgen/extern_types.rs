@@ -169,6 +169,8 @@ unsafe extern "C" {
     pub(super) fn Bun__Bindgen__createObject(
         global: *mut JSGlobalObject,
         first_member_name_index: u32,
+        dictionary_index: u32,
+        has_every_member: bool,
         values: *const JSValue,
         count: usize,
     ) -> JSValue;
@@ -176,8 +178,8 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         index: u32,
     ) -> JSValue;
-    pub(super) fn Bun__Bindgen__exceptionPresenceMatches(
-        global: *mut JSGlobalObject,
+    pub(super) safe fn Bun__Bindgen__exceptionPresenceMatches(
+        global: &JSGlobalObject,
         should_have_exception: bool,
     ) -> bool;
     pub(super) fn Bun__Bindgen__putRecordEntry(

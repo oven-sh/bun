@@ -136,7 +136,8 @@ impl Checker<'_, '_> {
                     let declaration_name = self.declaration_name_to_string(file, hir.node(right));
                     let arg2 = suggested.map_or(Arg::Bytes(b""), |s| Arg::Sym(s.1));
                     let args = [Arg::Bytes(&arg0), Arg::Bytes(&declaration_name), arg2];
-                    self.error(file, right, 2724, &args);
+                    let subject = self.member_container(resolved);
+                    self.error(file, right, 2724, &args).subject = subject;
                 }
                 return;
             }
@@ -171,7 +172,8 @@ impl Checker<'_, '_> {
             let arg0 = fully_qualified_name(self, resolved, None);
             let declaration_name = self.declaration_name_to_string(file, hir.node(right));
             let args = [Arg::Bytes(&arg0), Arg::Bytes(&declaration_name)];
-            self.error(file, right, 2694, &args);
+            let subject = self.member_container(resolved);
+            self.error(file, right, 2694, &args).subject = subject;
             return;
         }
     }

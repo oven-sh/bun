@@ -1,0 +1,254 @@
+# What tsc emits for a namespace into a .js file: `{}` in a variable of the file, filled by a function that is made for one call. The members are fields of birth.
+# The function ends the birth behind its last store. A reader tests the cell once, and then each member is its constant: the cases of the switch compare with 0, 1 and 2.
+# (The front end makes a literal of what is printed for an enum. A member that is a function keeps this from being one.)
+# (NarrowConstantVariables sees that nobody comes between the birth of this object and the stores, and leaves no read to test the cell for. It is off here: the test is of objects that it cannot follow.)
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=pass:NarrowConstantVariables
+# RUN: pipeline FinishBirths
+# CHECK: layout L1 {{*}}key="Start" declared={type=0}{{*}}occupancy=FilledWithValueAtBirth
+# CHECK-LABEL: function f2 name="step"
+# CHECK: [[state]]: {{*}} = GetSlot v0, {{*}} key="state"
+# CHECK: [[namespace]]: L1 = RequireObjectCoercible
+# CHECK-NEXT: = HasBirthFieldsFilled [[namespace]]
+# CHECK: : 0 = Integer
+# CHECK-NEXT: = StrictEq [[state]],
+# CHECK: : 1 = Integer
+# CHECK: = StrictEq [[state]],
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK-NOT: IsSlotFilled
+# CHECK-LABEL: function f3
+# CHECK: PutSlot v0, -, {{*}} key="isLast"
+# CHECK-NEXT: TryFinishBirth v0
+# -- source: main.js
+# var State;
+# (function (State) {
+#   State.Start = 0;
+#   State.Middle = 1;
+#   State.End = 2;
+#   State.isLast = function (state) {
+#     return state === State.End;
+#   };
+# })(State || (State = {}));
+# class Machine {
+#   constructor() {
+#     this.state = State.Start;
+#     this.steps = 0;
+#   }
+#   step(more) {
+#     switch (this.state) {
+#       case State.Start:
+#         this.state = State.Middle;
+#         break;
+#       case State.Middle:
+#         this.state = more ? State.Start : State.End;
+#         break;
+#       case State.End:
+#         return false;
+#       default:
+#         throw new Error("unknown state");
+#     }
+#     this.steps++;
+#     return true;
+#   }
+# }
+# const machine = new Machine();
+# for (let i = 0; machine.step(i < 100); i++);
+# console.log(machine.steps, State.isLast(machine.state));
+# -- end of source
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Machine" module=m0 position=193 constructor=f1 fields=[{key="state" declared={type=anything} flags=[IsRequired]}, {key="steps" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 position=181
+data d0 root=Object{layout=L1} module=m0
+variable g0 name="State" module=m0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} initialization=Undefined
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Undefined @0
+    v1 = NewClosure function=f1 @187
+    v2 = NewClass v1 layout=L0 @187
+    PutModuleVariable v2 variable=g1 @187
+    v4 = NewClosure function=f2 @277
+    DefineMethod v2, v4 layout=L0 key="step" @277
+    v6 = FinishClass v2 layout=L0 @187
+    v7 = Convert v6 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @187
+    v8 = Convert v6 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @187
+    v9 = NewClosure function=f3 @12
+    v10 = GetModuleVariable variable=g0 @163
+    v11 = Convert v10 declared={type=undefined flags=[IsExpected]} @163
+    v12 = ToBoolean v11 @163
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @163
+  b2(v13):
+    Jump -> next b5(v13) @163
+  b3(v14):
+    Jump -> next b4() @163
+  b4():
+    v15 = Data data=d0 @181
+    v16 = Convert v15 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @173
+    PutModuleVariable v16 variable=g0 @173
+    Jump -> next b5(v15) @173
+  b5(v18):
+    v19 = Call v9, -, v18 @150
+    v20 = Construct v8 calleeName="Machine" @647
+    v21 = Convert v20 declared={type=undefined|null|L0 flags=[IsExpected]} @647
+    v22 = Integer @675
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @675
+    Jump -> next b6(v23) @671
+  b6(v24):
+    LoopHint @671
+    v26 = PropGet v21 key="step" @678
+    v27 = Convert v26 declared={type=undefined|null|function|f2 flags=[IsExpected]} @678
+    v28 = Integer integer=100 @695
+    v29 = Less v24, v28 @691
+    v30 = Call v27, v21, v29 calleeKey="step" calleeName="machine.step" @686
+    v31 = Convert v30 declared={type=boolean flags=[IsExpected]} @678
+    v32 = ToBoolean v31 @678
+    Branch v32 -> taken b7(| 0), notTaken b10(| 0) @678
+  b7(v33):
+    Jump -> next b8() @678
+  b8():
+    Jump -> next b9() @705
+  b9():
+    v34 = Increment v24 @686
+    v35 = Convert v34 declared={type=number flags=[IsExpected]} @701
+    Jump -> next b6(v35) @701
+  b10(v36):
+    Jump -> next b11() @678
+  b11():
+    v37 = Builtin builtin=GlobalThis @707
+    v38 = PropGet v37 key="console" [isFreeName] @707
+    v39 = Convert v38 declared={type=builtin(Console) flags=[IsExpected]} @707
+    v40 = PropGet v39 key="log" @707
+    v41 = Convert v40 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @707
+    v42 = PropGet v21 key="steps" @719
+    v43 = Convert v42 declared={type=number flags=[IsExpected]} @719
+    v44 = GetModuleVariable variable=g0 @734
+    v45 = PropGet v44 key="isLast" @734
+    v46 = PropGet v21 key="state" @747
+    v47 = Call v45, v44, v46 calleeKey="isLast" calleeName="State.isLast" @740
+    v48 = Call v41, v39, v43, v47 calleeKey="log" calleeName="console.log" @715
+    v49 = Undefined @707
+    Return v49 @707
+}
+function f1 name="Machine" module=m0 position=238 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @238
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @238
+    v2 = NewObject v1 layout=L0 @238
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @238
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]} @225
+    v5 = GetModuleVariable variable=g0 @238
+    v6 = PropGet v5 key="Start" @238
+    PropSet v4, v6 key="state" @225
+    v8 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]} @255
+    v9 = Integer @268
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @255
+    PropSet v8, v10 key="steps" @255
+    v12 = Undefined @255
+    v13 = TypeTest v12 testedType=object @255
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0) @255
+  b2(v14):
+    Jump -> next b4(v14) @255
+  b3(v15):
+    Jump -> next b4(v3) @255
+  b4(v16):
+    Return v16 @255
+}
+function f2 name="step" module=m0 position=277 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1() @277
+  b1():
+    v2 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @302
+    v3 = PropGet v2 key="state" @302
+    v4 = GetModuleVariable variable=g0 @327
+    v5 = PropGet v4 key="Start" @327
+    v6 = StrictEq v3, v5 @327
+    Branch v6 -> taken b2(), notTaken b3() @327
+  b2():
+    v7 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @348
+    v8 = GetModuleVariable variable=g0 @361
+    v9 = PropGet v8 key="Middle" @361
+    PropSet v7, v9 key="state" @348
+    Jump -> next b10() @383
+  b3():
+    v11 = GetModuleVariable variable=g0 @401
+    v12 = PropGet v11 key="Middle" @401
+    v13 = StrictEq v3, v12 @401
+    Branch v13 -> taken b4(), notTaken b11() @401
+  b4():
+    v14 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @423
+    v15 = ToBoolean v1 @436
+    Branch v15 -> taken b5(| 0), notTaken b7(| 0) @436
+  b5(v16):
+    Jump -> next b6() @436
+  b6():
+    v17 = GetModuleVariable variable=g0 @443
+    v18 = PropGet v17 key="Start" @443
+    Jump -> next b9(v18) @443
+  b7(v19):
+    Jump -> next b8() @436
+  b8():
+    v20 = GetModuleVariable variable=g0 @457
+    v21 = PropGet v20 key="End" @457
+    Jump -> next b9(v21) @457
+  b9(v22):
+    PropSet v14, v22 key="state" @423
+    Jump -> next b10() @476
+  b10():
+    v24 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @594
+    v25 = PropGet v24 key="steps" @594
+    v26 = Increment v25 @594
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @599
+    PropSet v24, v27 key="steps" @599
+    v29 = Boolean boolean=true @619
+    v30 = Convert v29 declared={type=boolean flags=[IsExpected]} @619
+    Return v30 @619
+  b11():
+    v31 = GetModuleVariable variable=g0 @494
+    v32 = PropGet v31 key="End" @494
+    v33 = StrictEq v3, v32 @494
+    Branch v33 -> taken b12(), notTaken b13() @494
+  b12():
+    v34 = Boolean @520
+    v35 = Convert v34 declared={type=boolean flags=[IsExpected]} @520
+    Return v35 @520
+  b13():
+    Jump -> next b14() @494
+  b14():
+    v36 = Builtin builtin=GlobalThis @560
+    v37 = PropGet v36 key="Error" [isFreeName] @560
+    v38 = Convert v37 declared={type=builtin(Error) flags=[IsExpected]} @560
+    v39 = String string="unknown state" @566
+    v40 = Construct v38, -, v39 calleeName="Error" @560
+    v41 = Convert v40 declared={type=undefined|null|Error flags=[IsExpected]} @556
+    Throw v41 @581
+}
+function f3 module=m0 position=12 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @12
+  b1():
+    v1 = Integer @47
+    PropSet v0, v1 key="Start" @33
+    v3 = Integer integer=1 @67
+    PropSet v0, v3 key="Middle" @52
+    v5 = Integer integer=2 @84
+    PropSet v0, v5 key="End" @72
+    v7 = NewClosure v0 function=f4 @104
+    PropSet v0, v7 key="isLast" @89
+    v9 = Undefined @89
+    Return v9 @89
+}
+function f4 module=m0 position=104 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @104
+  b1():
+    v2 = PropGet v0 key="End" @144
+    v3 = StrictEq v1, v2 @134
+    v4 = Convert v3 declared={type=boolean flags=[IsExpected]} @134
+    Return v4 @134
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

@@ -6,9 +6,9 @@ use bun_lint::rule::Plugin;
 /// Enforce the use of `new` for most builtins.
 pub struct NewForBuiltins;
 
-const ENFORCE: Message = Message::new("", "Use `new {{fn_name}}()` instead of `{{fn_name}}()`");
-const DISALLOW: Message = Message::new("", "Use `{{fn_name}}()` instead of `new {{fn_name}}()`");
-const ERROR_DATE: Message = Message::new("", "Use `String(new Date())` instead of `Date()`");
+const ENFORCE: &Message = &Message::new("", "Use `new {{fn_name}}()` instead of `{{fn_name}}()`");
+const DISALLOW: &Message = &Message::new("", "Use `{{fn_name}}()` instead of `new {{fn_name}}()`");
+const ERROR_DATE: &Message = &Message::new("", "Use `String(new Date())` instead of `Date()`");
 
 const ENFORCED: [&str; 29] = [
     "Array", "ArrayBuffer", "BigInt64Array", "BigUint64Array", "DataView", "Date", "Error", "FinalizationRegistry",

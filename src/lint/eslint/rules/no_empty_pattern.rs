@@ -5,7 +5,7 @@ pub struct NoEmptyPattern {
     allows_object_patterns_as_parameters: bool,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected empty {{type}} pattern.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected empty {{type}} pattern.");
 
 /// True for `{}` or `{} = {}` as a function parameter.
 fn is_allowed_parameter(pat: Pat) -> bool {
@@ -28,9 +28,9 @@ fn is_allowed_parameter(pat: Pat) -> bool {
 /// `is_property_value` means the pattern is a property's value, after the `:`.
 fn report<'a>(at: Span, kind: &'static str, is_property_value: bool, cx: &Cx<'a, NoEmptyPattern>) {
     let report = cx.report(at, UNEXPECTED).data("type", kind).hint(match (is_property_value, kind) {
-        (false, _) => "It declares no variables.",
-        (true, "array") => "It declares no variables. For a default value, write = [] instead of : [].",
-        (true, _) => "It declares no variables. For a default value, write = {} instead of : {}.",
+        (false, _) => "Declares no variables.",
+        (true, "array") => "Declares no variables. For a default value, write = [], not : [].",
+        (true, _) => "Declares no variables. For a default value, write = {}, not : {}.",
     });
     if cx.language().is_oxlint {
         report.help(match kind {

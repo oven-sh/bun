@@ -105,28 +105,33 @@ extern "C" void Bun__sqliteCheckpointForTermination(sqlite3*);
 // Database.setCustomSQLite(), and callers who read it before the first
 // open see the version the runtime actually uses (not the bundled
 // constant, which on macOS isn't linked into the binary at all).
+#if LAZY_LOAD_SQLITE && !OS(WINDOWS)
+static const char* probeSqliteVersion()
+{
+    void* h = dlopen(sqlite3_lib_path, RTLD_LAZY | RTLD_LOCAL);
+    if (!h) return nullptr;
+    auto fn = reinterpret_cast<const char* (*)()>(dlsym(h, "sqlite3_libversion"));
+    const char* out = nullptr;
+    if (fn) {
+        static char buf[24];
+        const char* v = fn();
+        size_t n = v ? strnlen(v, sizeof(buf) - 1) : 0;
+        memcpy(buf, v, n);
+        buf[n] = '\0';
+        out = buf;
+    }
+    dlclose(h);
+    return out;
+}
+#endif
+
 extern "C" const char* Bun__sqlite3_version()
 {
 #if LAZY_LOAD_SQLITE
     if (sqlite3_handle && lazy_sqlite3_libversion)
         return lazy_sqlite3_libversion();
 #if !OS(WINDOWS)
-    static const char* probed = []() -> const char* {
-        void* h = dlopen(sqlite3_lib_path, RTLD_LAZY | RTLD_LOCAL);
-        if (!h) return nullptr;
-        auto fn = reinterpret_cast<const char* (*)()>(dlsym(h, "sqlite3_libversion"));
-        const char* out = nullptr;
-        if (fn) {
-            static char buf[24];
-            const char* v = fn();
-            size_t n = v ? strnlen(v, sizeof(buf) - 1) : 0;
-            memcpy(buf, v, n);
-            buf[n] = '\0';
-            out = buf;
-        }
-        dlclose(h);
-        return out;
-    }();
+    static const char* probed = JSC::callRemovable<Bun::Feature::ProcessInformation, JSC::RemovedFeatureStub::ReturnDefault, probeSqliteVersion>();
     if (probed) return probed;
 #endif
 #endif

@@ -36,23 +36,23 @@ impl DirectiveConfig {
     }
 }
 
-const REPLACE_TS_IGNORE_WITH_TS_EXPECT_ERROR: Message = Message::new(
+const REPLACE_TS_IGNORE_WITH_TS_EXPECT_ERROR: &Message = &Message::new(
     "replaceTsIgnoreWithTsExpectError",
     "Replace \"@ts-ignore\" with \"@ts-expect-error\".",
 );
-const TS_DIRECTIVE_COMMENT: Message = Message::new(
+const TS_DIRECTIVE_COMMENT: &Message = &Message::new(
     "tsDirectiveComment",
     "Do not use \"@ts-{{directive}}\" because it alters compilation errors.",
 );
-const TS_DIRECTIVE_COMMENT_DESCRIPTION_NOT_MATCH_PATTERN: Message = Message::new(
+const TS_DIRECTIVE_COMMENT_DESCRIPTION_NOT_MATCH_PATTERN: &Message = &Message::new(
     "tsDirectiveCommentDescriptionNotMatchPattern",
     "The description for the \"@ts-{{directive}}\" directive must match the {{format}} format.",
 );
-const TS_DIRECTIVE_COMMENT_REQUIRES_DESCRIPTION: Message = Message::new(
+const TS_DIRECTIVE_COMMENT_REQUIRES_DESCRIPTION: &Message = &Message::new(
     "tsDirectiveCommentRequiresDescription",
     "Include a description after the \"@ts-{{directive}}\" directive to explain why the @ts-{{directive}} is necessary. The description must be {{minimumDescriptionLength}} characters or longer.",
 );
-const TS_IGNORE_INSTEAD_OF_EXPECT_ERROR: Message = Message::new(
+const TS_IGNORE_INSTEAD_OF_EXPECT_ERROR: &Message = &Message::new(
     "tsIgnoreInsteadOfExpectError",
     "Use \"@ts-expect-error\" instead of \"@ts-ignore\", as \"@ts-ignore\" will do nothing if the following line is error-free.",
 );

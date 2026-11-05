@@ -28,111 +28,111 @@ pub struct StrictBooleanExpressions {
     allow_string: bool,
 }
 
-const CONDITION_ERROR_ANY: Message = Message::new(
+const CONDITION_ERROR_ANY: &Message = &Message::new(
     "conditionErrorAny",
     "Unexpected any value in {{context}}. An explicit comparison or type conversion is required.",
 );
-const CONDITION_ERROR_NULLABLE_BOOLEAN: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_BOOLEAN: &Message = &Message::new(
     "conditionErrorNullableBoolean",
     "Unexpected nullable boolean value in {{context}}. Please handle the nullish case explicitly.",
 );
-const CONDITION_ERROR_NULLABLE_ENUM: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_ENUM: &Message = &Message::new(
     "conditionErrorNullableEnum",
     "Unexpected nullable enum value in {{context}}. Please handle the nullish/zero/NaN cases explicitly.",
 );
-const CONDITION_ERROR_NULLABLE_NUMBER: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_NUMBER: &Message = &Message::new(
     "conditionErrorNullableNumber",
     "Unexpected nullable number value in {{context}}. Please handle the nullish/zero/NaN cases explicitly.",
 );
-const CONDITION_ERROR_NULLABLE_OBJECT: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_OBJECT: &Message = &Message::new(
     "conditionErrorNullableObject",
     "Unexpected nullable object value in {{context}}. An explicit null check is required.",
 );
-const CONDITION_ERROR_NULLABLE_STRING: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_STRING: &Message = &Message::new(
     "conditionErrorNullableString",
     "Unexpected nullable string value in {{context}}. Please handle the nullish/empty cases explicitly.",
 );
-const CONDITION_ERROR_NULLISH: Message = Message::new(
+const CONDITION_ERROR_NULLISH: &Message = &Message::new(
     "conditionErrorNullish",
     "Unexpected nullish value in conditional. The condition is always false.",
 );
-const CONDITION_ERROR_NUMBER: Message = Message::new(
+const CONDITION_ERROR_NUMBER: &Message = &Message::new(
     "conditionErrorNumber",
     "Unexpected number value in {{context}}. An explicit zero/NaN check is required.",
 );
-const CONDITION_ERROR_OBJECT: Message = Message::new(
+const CONDITION_ERROR_OBJECT: &Message = &Message::new(
     "conditionErrorObject",
     "Unexpected object value in {{context}}. The condition is always true.",
 );
-const CONDITION_ERROR_OTHER: Message = Message::new(
+const CONDITION_ERROR_OTHER: &Message = &Message::new(
     "conditionErrorOther",
     "Unexpected value in conditional. A boolean expression is required.",
 );
-const CONDITION_ERROR_STRING: Message = Message::new(
+const CONDITION_ERROR_STRING: &Message = &Message::new(
     "conditionErrorString",
     "Unexpected string value in {{context}}. An explicit empty string check is required.",
 );
-const CONDITION_FIX_CAST_BOOLEAN: Message = Message::new(
+const CONDITION_FIX_CAST_BOOLEAN: &Message = &Message::new(
     "conditionFixCastBoolean",
     "Explicitly convert value to a boolean (`Boolean(value)`)",
 );
-const CONDITION_FIX_COMPARE_ARRAY_LENGTH_NONZERO: Message = Message::new(
+const CONDITION_FIX_COMPARE_ARRAY_LENGTH_NONZERO: &Message = &Message::new(
     "conditionFixCompareArrayLengthNonzero",
     "Change condition to check array's length (`value.length > 0`)",
 );
-const CONDITION_FIX_COMPARE_ARRAY_LENGTH_ZERO: Message = Message::new(
+const CONDITION_FIX_COMPARE_ARRAY_LENGTH_ZERO: &Message = &Message::new(
     "conditionFixCompareArrayLengthZero",
     "Change condition to check array's length (`value.length === 0`)",
 );
-const CONDITION_FIX_COMPARE_EMPTY_STRING: Message = Message::new(
+const CONDITION_FIX_COMPARE_EMPTY_STRING: &Message = &Message::new(
     "conditionFixCompareEmptyString",
     "Change condition to check for empty string (`value !== \"\"`)",
 );
-const CONDITION_FIX_COMPARE_FALSE: Message = Message::new(
+const CONDITION_FIX_COMPARE_FALSE: &Message = &Message::new(
     "conditionFixCompareFalse",
     "Change condition to check if false (`value === false`)",
 );
-const CONDITION_FIX_COMPARE_NAN: Message = Message::new(
+const CONDITION_FIX_COMPARE_NAN: &Message = &Message::new(
     "conditionFixCompareNaN",
     "Change condition to check for NaN (`!Number.isNaN(value)`)",
 );
-const CONDITION_FIX_COMPARE_NULLISH: Message = Message::new(
+const CONDITION_FIX_COMPARE_NULLISH: &Message = &Message::new(
     "conditionFixCompareNullish",
     "Change condition to check for null/undefined (`value != null`)",
 );
-const CONDITION_FIX_COMPARE_STRING_LENGTH: Message = Message::new(
+const CONDITION_FIX_COMPARE_STRING_LENGTH: &Message = &Message::new(
     "conditionFixCompareStringLength",
     "Change condition to check string's length (`value.length !== 0`)",
 );
-const CONDITION_FIX_COMPARE_TRUE: Message = Message::new(
+const CONDITION_FIX_COMPARE_TRUE: &Message = &Message::new(
     "conditionFixCompareTrue",
     "Change condition to check if true (`value === true`)",
 );
-const CONDITION_FIX_COMPARE_ZERO: Message = Message::new(
+const CONDITION_FIX_COMPARE_ZERO: &Message = &Message::new(
     "conditionFixCompareZero",
     "Change condition to check for 0 (`value !== 0`)",
 );
-const CONDITION_FIX_DEFAULT_EMPTY_STRING: Message = Message::new(
+const CONDITION_FIX_DEFAULT_EMPTY_STRING: &Message = &Message::new(
     "conditionFixDefaultEmptyString",
     "Explicitly treat nullish value the same as an empty string (`value ?? \"\"`)",
 );
-const CONDITION_FIX_DEFAULT_FALSE: Message = Message::new(
+const CONDITION_FIX_DEFAULT_FALSE: &Message = &Message::new(
     "conditionFixDefaultFalse",
     "Explicitly treat nullish value the same as false (`value ?? false`)",
 );
-const CONDITION_FIX_DEFAULT_ZERO: Message = Message::new(
+const CONDITION_FIX_DEFAULT_ZERO: &Message = &Message::new(
     "conditionFixDefaultZero",
     "Explicitly treat nullish value the same as 0 (`value ?? 0`)",
 );
-const EXPLICIT_BOOLEAN_RETURN_TYPE: Message = Message::new(
+const EXPLICIT_BOOLEAN_RETURN_TYPE: &Message = &Message::new(
     "explicitBooleanReturnType",
     "Add an explicit `boolean` return type annotation.",
 );
-const NO_STRICT_NULL_CHECK: Message = Message::new(
+const NO_STRICT_NULL_CHECK: &Message = &Message::new(
     "noStrictNullCheck",
     "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
 );
-const PREDICATE_CANNOT_BE_ASYNC: Message = Message::new(
+const PREDICATE_CANNOT_BE_ASYNC: &Message = &Message::new(
     "predicateCannotBeAsync",
     "Predicate function should not be 'async'; expected a boolean return type.",
 );
@@ -153,7 +153,7 @@ enum ConditionError {
 }
 
 impl ConditionError {
-    fn message(self) -> Message {
+    fn message(self) -> &'static Message {
         match self {
             ConditionError::Any => CONDITION_ERROR_ANY,
             ConditionError::NullableBoolean => CONDITION_ERROR_NULLABLE_BOOLEAN,
@@ -187,14 +187,14 @@ const TRUTHY_STRING: VariantTypes = 1 << 10;
 /// A call of `getWrappingFixer` whose `wrap` is `` code => `${before}${code}${after}` ``.
 #[derive(Copy, Clone)]
 struct Suggestion {
-    message: Message,
+    message: &'static Message,
     /// `node: node.parent, innerNode: node`, which also replaces the `!` around the node.
     replaces_negation: bool,
     before: &'static str,
     after: &'static str,
 }
 
-const fn wrap(message: Message, before: &'static str, after: &'static str) -> Suggestion {
+const fn wrap(message: &'static Message, before: &'static str, after: &'static str) -> Suggestion {
     Suggestion {
         message,
         replaces_negation: false,
@@ -204,7 +204,7 @@ const fn wrap(message: Message, before: &'static str, after: &'static str) -> Su
 }
 
 const fn wrap_in_place_of_negation(
-    message: Message,
+    message: &'static Message,
     before: &'static str,
     after: &'static str,
 ) -> Suggestion {

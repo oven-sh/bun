@@ -666,6 +666,7 @@ impl Quick {
     }
 
     /// Sets tok and tok_kw for the name T[s, s + len), len >= 2, which has been taken for a plain name so far.
+    #[inline]
     pub(crate) fn classify_name(&mut self, s: i32, len: i32) {
         let h = (self.t.at(s) * KW_A
             + self.t.at(s + 1) * KW_B
@@ -684,6 +685,7 @@ impl Quick {
     }
 
     /// For a reader of bytes (fast.rs): what the ASCII word T[s, s + len) is. 0 for a plain name, else its token | its contextual name << 8.
+    #[inline]
     pub(crate) fn keyword_at(&self, s: i32, len: i32) -> i32 {
         let mut four = self.t.i32_at(s);
         if len < 4 {

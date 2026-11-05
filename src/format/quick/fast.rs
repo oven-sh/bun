@@ -365,6 +365,8 @@ pub(crate) mod refusal {
     pub(crate) const JsxBreaks: i32 = 47;
 }
 impl Quick {
+    #[cold]
+    #[inline(never)]
     pub(crate) fn no(&mut self, reason: i32) -> i32 {
         if self.fast.why == 0 {
             self.fast.why = reason;
@@ -446,11 +448,17 @@ impl Quick {
     }
 
     /// Nothing is printed between the tokens around `p`. Returns where the next one starts.
+    #[inline]
     pub(crate) fn tight(&mut self, p: i32) -> i32 {
         let c = self.t.at(p);
         if c != 32 && c != 9 {
             return p;
         }
+        self.drop_blanks(p)
+    }
+
+    #[inline(never)]
+    fn drop_blanks(&mut self, p: i32) -> i32 {
         let q = self.blanks(p);
         self.flush(p);
         self.fast.run = q;
@@ -458,6 +466,7 @@ impl Quick {
     }
 
     /// One blank is printed between the tokens around `p`.
+    #[inline]
     pub(crate) fn spaced(&mut self, p: i32) -> i32 {
         if self.t.at(p) == 32 {
             let c = self.t.at(p + 1);
@@ -465,6 +474,11 @@ impl Quick {
                 return p + 1;
             }
         }
+        self.put_one_blank(p)
+    }
+
+    #[inline(never)]
+    fn put_one_blank(&mut self, p: i32) -> i32 {
         let q = self.blanks(p);
         self.flush(p);
         self.put(32);
@@ -5550,6 +5564,7 @@ impl Quick {
     }
 
     /// Gets ready to read what starts at `start`, behind so many columns of indentation.
+    #[inline]
     pub(crate) fn prepare(&mut self, start: i32, mut indentation: i32) -> bool {
         // The source may be indented by less than the output will be. By how much it is indented per level shows at the items whose level the lists say (the least
         // that is seen counts: an item can stand further in than its lists say). If that is less than the options ask for, the levels of the source count, whatever

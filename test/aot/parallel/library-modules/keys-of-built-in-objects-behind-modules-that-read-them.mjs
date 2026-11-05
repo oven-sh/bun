@@ -41,7 +41,7 @@ function show(name, holder, stored) {
 show(
   "Object",
   Object,
-  "length,name,prototype,hasOwn,groupBy,freeze,create,defineProperty,keys,setPrototypeOf,getPrototypeOf,defineProperties,assign,getOwnPropertyDescriptor,values,entries,getOwnPropertyNames,getOwnPropertySymbols,is,seal,getOwnPropertyDescriptors,preventExtensions,isSealed,isFrozen,isExtensible,fromEntries",
+  "length,name,prototype,hasOwn,groupBy,freeze,create,defineProperty,setPrototypeOf,getPrototypeOf,defineProperties,assign,keys,getOwnPropertyDescriptor,values,entries,getOwnPropertyNames,getOwnPropertySymbols,is,seal,getOwnPropertyDescriptors,preventExtensions,isSealed,isFrozen,isExtensible,fromEntries",
 );
 show(
   "Reflect",

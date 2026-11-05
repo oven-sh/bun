@@ -352,7 +352,8 @@ node:stream.Readable.prototype reduce()
 node:stream.Readable.prototype reduce("a", 1)
   object Promise <- every receiver
 node:stream.Readable.prototype toArray()
-  object Promise <- every receiver
+  object Promise <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string, undefined, null
+  object Promise, stores _events _eventsCount <- an heir of the prototype object, a proxy of such an heir, the prototype object
 node:stream.Readable.prototype toArray("a", 1)
   object Promise <- every receiver
 node:stream.Readable.prototype some()

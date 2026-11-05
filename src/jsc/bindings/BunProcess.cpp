@@ -1853,7 +1853,7 @@ static void readMembersThatMakingStandardErrorReads(Zig::GlobalObject* globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    static constexpr ASCIILiteral membersOfObject[] = { "freeze"_s, "create"_s, "defineProperty"_s, "keys"_s, "setPrototypeOf"_s, "getPrototypeOf"_s, "defineProperties"_s, "assign"_s, "getOwnPropertyDescriptor"_s, "is"_s };
+    static constexpr ASCIILiteral membersOfObject[] = { "freeze"_s, "create"_s, "defineProperty"_s, "setPrototypeOf"_s, "getPrototypeOf"_s, "defineProperties"_s, "assign"_s, "keys"_s, "getOwnPropertyDescriptor"_s, "is"_s };
     static constexpr ASCIILiteral membersOfReflect[] = { "getPrototypeOf"_s, "ownKeys"_s, "getOwnPropertyDescriptor"_s, "defineProperty"_s };
     static constexpr ASCIILiteral membersOfSymbol[] = { "for"_s };
     static constexpr ASCIILiteral membersOfNumber[] = { "isNaN"_s };

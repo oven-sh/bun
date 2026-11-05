@@ -2579,6 +2579,8 @@ stream[_uint8ArrayToBuffer] cew function
 stream[_uint8ArrayToBuffer]: function function name="_uint8ArrayToBuffer" length=1 above=Function extensible=true
 stream[_uint8ArrayToBuffer][length] c-- number
 stream[_uint8ArrayToBuffer][name] c-- string
+stream[Readable] cew function
+stream[Readable] = _stream_readable
 stream[isDestroyed] cew function
 stream[isDestroyed]: function function name="isDestroyed" length=1 above=Function extensible=true
 stream[isDestroyed][length] c-- number
@@ -2599,8 +2601,6 @@ stream[isWritable] cew function
 stream[isWritable]: function function name="isWritable" length=1 above=Function extensible=true
 stream[isWritable][length] c-- number
 stream[isWritable][name] c-- string
-stream[Readable] cew function
-stream[Readable] = _stream_readable
 stream[Writable] cew function
 stream[Writable] = _stream_writable
 stream[Duplex] cew function

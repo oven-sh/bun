@@ -173,10 +173,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             // `shouldHugJsExpression` never hugs this.
             Code::Printed(printed) => {
                 self.write_hugged(hug.should_hug_non_expression(), |printer| {
-                    printer.out.foreign(|f| {
-                        js::write_string(ignored.unwrap_or(printed), f);
-                        write_rest(f);
-                    });
+                    printer.out.string(ignored.unwrap_or(printed));
+                    printer.out.foreign(|f| write_rest(f));
                     true
                 })
             }

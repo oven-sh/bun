@@ -513,10 +513,7 @@ impl Quick {
 
     /// True if an escape in T[start, end) has made half of a surrogate pair.
     fn has_lone_surrogate(&self, start: i32, end: i32) -> bool {
-        self.t
-            .sub(start, end)
-            .windows(2)
-            .any(|pair| matches!(pair, [0xed, 0xa0..=0xff]))
+        (start..end - 1).any(|p| self.t.at(p) == 0xed && self.t.at(p + 1) >= 0xa0)
     }
 
     pub(crate) fn print_expressions(&mut self, n: i32) -> R<i32> {

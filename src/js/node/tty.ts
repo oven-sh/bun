@@ -64,14 +64,9 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
   // Only set isTTY to true if the fd is actually a TTY
   const isTTY = isatty(fd);
   if (isTTY && typeof fd === "number" && process.platform !== "win32") {
-    // Node reads a terminal through a TTY handle that readStop() and close()
-    // retract at once. A thread pool read(2) on the fd cannot be retracted: it
-    // would hold the process and swallow the next key. So a terminal fd is read
-    // through the polled native source process.stdin uses, and, as in Node,
-    // with readableHighWaterMark 0, so a pause() stops the poll after one chunk.
+    // A polled read that destroy() retracts, as Node's TTY handle. A thread pool read(2) cannot be retracted.
     const native = Bun.file(fd).stream();
-    // Already-open fd: skip the async _construct round-trip so the stream is
-    // born constructed, like Node's tty.ReadStream (a net.Socket).
+    // The fd is open: born constructed, as Node's tty.ReadStream.
     this._construct = undefined;
     require("internal/fs/streams").ReadStream.$apply(this, ["", { fd, highWaterMark: 0 }]);
     require("internal/streams/native-readable").attachNativeSource(this, native, 64 * 1024);

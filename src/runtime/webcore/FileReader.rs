@@ -147,9 +147,7 @@ impl Lazy {
                         break 'brk *pl_fd;
                     }
                 } else {
-                    // A terminal is polled through a private O_NONBLOCK reopen of
-                    // its device (as uv_tty_init does), so the caller's fd keeps
-                    // its flags and a cancel leaves no read parked on it.
+                    // A terminal is polled through a private O_NONBLOCK reopen, as uv_tty_init does.
                     #[cfg(unix)]
                     let reopened_tty: Option<Fd> = {
                         let stat = match sys::fstat(*pl_fd) {
@@ -177,8 +175,7 @@ impl Lazy {
                     if let Some(fd) = reopened_tty {
                         fd
                     } else {
-                        // The reader owns the duplicate and `Fd::close` skips 0 to 2:
-                        // a closed stdio number must not be taken.
+                        // The reader owns the duplicate, and `Fd::close` skips 0 to 2.
                         #[cfg(unix)]
                         let duped = sys::dup_at_least(*pl_fd, 3);
                         #[cfg(not(unix))]

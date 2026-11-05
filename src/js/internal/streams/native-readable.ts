@@ -72,12 +72,7 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   return stream;
 }
 
-/**
- * Makes `stream` read from the native source behind `readableStream`: installs
- * `_read` as an own property and takes the `ReadableStream` out of use. The
- * caller's `_destroy` calls `cancelNativeSource`. `highWaterMark` is the size
- * of one native pull, not the Readable's.
- */
+/** Installs `_read` over the native source behind `readableStream`. The caller's `_destroy` calls `cancelNativeSource`. */
 function attachNativeSource(readable: $Node.Readable, readableStream: ReadableStream, highWaterMark?: number | null) {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const stream = readable as NativeReadable;

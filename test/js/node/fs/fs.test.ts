@@ -4143,7 +4143,149 @@ it("streams and cp do not take a URL of another implementation whose pathname is
   expect(exitCode).toBe(0);
 });
 
+// What a file stream does with its path: the value it keeps, whether it opens,
+// and what it reads, or the error it reports.
+function fileStreamOutcome(stream: fs.ReadStream | fs.WriteStream, data?: string) {
+  const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+  const outcome: Record<string, unknown> = { path: stream.path, opened: false };
+  stream.on("open", () => (outcome.opened = true));
+  stream.on("error", (e: any) => resolve({ ...outcome, code: e.code, syscall: e.syscall, errorPath: e.path }));
+  if (stream instanceof fs.ReadStream) {
+    const chunks: Buffer[] = [];
+    stream.on("data", chunk => chunks.push(chunk as Buffer));
+    stream.on("end", () => resolve({ ...outcome, data: Buffer.concat(chunks).toString() }));
+  } else {
+    stream.on("finish", () => resolve({ ...outcome, finished: true }));
+    stream.end(data);
+  }
+  return promise;
+}
+
+// Node gives a stream path to open() as it was passed:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L179-L186
 describe("createReadStream", () => {
+  // On Windows a string path is still made absolute in the constructor (fileStreamPath in
+  // internal/fs/streams.ts says why), so these cases are for POSIX.
+  describe.skipIf(isWindows)("with a path that path.resolve() would change", () => {
+    it("keeps the path as given", async () => {
+      using dir = tempDir("read-stream-path", { "file.txt": "hello" });
+      const path = `${String(dir)}/./file.txt`;
+      expect(await fileStreamOutcome(createReadStream(path))).toEqual({ path, opened: true, data: "hello" });
+    });
+
+    it("does not collapse the path before open()", async () => {
+      using dir = tempDir("read-stream-path", { "file.txt": "hello" });
+      const missingParent = `${String(dir)}/nope/../file.txt`;
+      expect(await fileStreamOutcome(createReadStream(missingParent))).toEqual({
+        path: missingParent,
+        opened: false,
+        code: "ENOENT",
+        syscall: "open",
+        errorPath: missingParent,
+      });
+      const throughFile = `${String(dir)}/file.txt/`;
+      expect(await fileStreamOutcome(createReadStream(throughFile))).toEqual({
+        path: throughFile,
+        opened: false,
+        code: "ENOTDIR",
+        syscall: "open",
+        errorPath: throughFile,
+      });
+    });
+
+    it("reads the file the system finds through a symlink before '..'", async () => {
+      using dir = tempDir("read-stream-path", { "a/f.txt": "in a", "a/real/keep": "", "b/f.txt": "in b" });
+      symlinkSync(join(String(dir), "a", "real"), join(String(dir), "b", "link"));
+      const path = `${String(dir)}/b/link/../f.txt`;
+      expect(readFileSync(path, "utf8")).toBe("in a");
+      expect(await fileStreamOutcome(createReadStream(path))).toEqual({ path, opened: true, data: "in a" });
+    });
+
+    it("an empty path fails with ENOENT and does not open the cwd", async () => {
+      const { errorPath, ...outcome } = await fileStreamOutcome(createReadStream(""));
+      expect(outcome).toEqual({ path: "", opened: false, code: "ENOENT", syscall: "open" });
+    });
+
+    it("resolves a relative path when the stream opens", async () => {
+      using dir = tempDir("read-stream-path", { "g.txt": "top", "other/g.txt": "other" });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("fs");
+           const stream = fs.createReadStream("g.txt");
+           process.chdir("other");
+           stream.on("data", chunk => process.stdout.write(chunk)).on("error", e => process.stdout.write(e.code));`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "other", stderr: "", exitCode: 0 });
+    });
+  });
+
+  it.if(isWindows)("still makes a string path absolute on Windows", async () => {
+    using dir = tempDir("read-stream-path", { "file.txt": "hello" });
+    const path = `${String(dir)}/./file.txt`;
+    expect(await fileStreamOutcome(createReadStream(path))).toEqual({
+      path: resolve(path),
+      opened: true,
+      data: "hello",
+    });
+  });
+
+  it("accepts a Buffer path and keeps it", async () => {
+    using dir = tempDir("read-stream-path", { "file.txt": "hello" });
+    const file = join(String(dir), "file.txt");
+    expect(await fileStreamOutcome(createReadStream(Buffer.from(file)))).toEqual({
+      path: Buffer.from(file),
+      opened: true,
+      data: "hello",
+    });
+    expect(await fileStreamOutcome(createReadStream(Bun.pathToFileURL(file)))).toEqual({
+      path: file,
+      opened: true,
+      data: "hello",
+    });
+  });
+
+  // Node checks options.signal, then options.fs.open, then the path.
+  it("validates the path in the constructor, after options.signal and options.fs.open", () => {
+    const thrownBy = (create: Function, path: unknown, options?: object) => {
+      try {
+        create(path, options).on("error", () => {});
+      } catch (e: any) {
+        return {
+          code: e.code,
+          names: ["options.signal", "options.fs.open", "path"].filter(n => e.message.includes(n)),
+        };
+      }
+      return "no throw";
+    };
+    for (const create of [createReadStream, createWriteStream]) {
+      expect({
+        nullByte: thrownBy(create, "a\0b"),
+        nullByteInBuffer: thrownBy(create, Buffer.from("a\0b")),
+        number: thrownBy(create, 123),
+        nullByteAndOpen: thrownBy(create, "a\0b", { fs: { open: 1 } }),
+        numberAndOpen: thrownBy(create, 123, { fs: { open: 1 } }),
+        nullByteAndSignal: thrownBy(create, "a\0b", { signal: {} }),
+        allThree: thrownBy(create, "a\0b", { signal: {}, fs: { open: 1 } }),
+      }).toEqual({
+        nullByte: { code: "ERR_INVALID_ARG_VALUE", names: ["path"] },
+        nullByteInBuffer: { code: "ERR_INVALID_ARG_VALUE", names: ["path"] },
+        number: { code: "ERR_INVALID_ARG_TYPE", names: ["path"] },
+        nullByteAndOpen: { code: "ERR_INVALID_ARG_TYPE", names: ["options.fs.open"] },
+        numberAndOpen: { code: "ERR_INVALID_ARG_TYPE", names: ["options.fs.open"] },
+        nullByteAndSignal: { code: "ERR_INVALID_ARG_TYPE", names: ["options.signal"] },
+        allThree: { code: "ERR_INVALID_ARG_TYPE", names: ["options.signal"] },
+      });
+    }
+  });
+
   it("works (1 chunk)", async () => {
     return await new Promise((resolve, reject) => {
       var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {});
@@ -4687,6 +4829,63 @@ describe("fs.ReadStream", () => {
 });
 
 describe("createWriteStream", () => {
+  // POSIX only for the same reason as in createReadStream above.
+  describe.skipIf(isWindows)("with a path that path.resolve() would change", () => {
+    it("keeps the path as given", async () => {
+      using dir = tempDir("write-stream-path", { "file.txt": "hello" });
+      const path = `${String(dir)}/./file.txt`;
+      expect(await fileStreamOutcome(createWriteStream(path, { flags: "a" }))).toEqual({
+        path,
+        opened: true,
+        finished: true,
+      });
+    });
+
+    it("does not open and truncate a file through a missing directory", async () => {
+      using dir = tempDir("write-stream-path", { "file.txt": "hello" });
+      const missingParent = `${String(dir)}/nope/../file.txt`;
+      expect(await fileStreamOutcome(createWriteStream(missingParent))).toEqual({
+        path: missingParent,
+        opened: false,
+        code: "ENOENT",
+        syscall: "open",
+        errorPath: missingParent,
+      });
+      expect(readFileSync(join(String(dir), "file.txt"), "utf8")).toBe("hello");
+    });
+
+    it("writes the file the system finds through a symlink before '..'", async () => {
+      using dir = tempDir("write-stream-path", { "a/f.txt": "in a", "a/real/keep": "", "b/f.txt": "in b" });
+      symlinkSync(join(String(dir), "a", "real"), join(String(dir), "b", "link"));
+      const path = `${String(dir)}/b/link/../f.txt`;
+      expect(await fileStreamOutcome(createWriteStream(path), "written")).toEqual({
+        path,
+        opened: true,
+        finished: true,
+      });
+      expect({
+        a: readFileSync(join(String(dir), "a", "f.txt"), "utf8"),
+        b: readFileSync(join(String(dir), "b", "f.txt"), "utf8"),
+      }).toEqual({ a: "written", b: "in b" });
+    });
+
+    it("an empty path fails with ENOENT", async () => {
+      const { errorPath, ...outcome } = await fileStreamOutcome(createWriteStream(""));
+      expect(outcome).toEqual({ path: "", opened: false, code: "ENOENT", syscall: "open" });
+    });
+  });
+
+  it("accepts a Buffer path and keeps it", async () => {
+    using dir = tempDir("write-stream-path", { "file.txt": "hello" });
+    const file = join(String(dir), "file.txt");
+    expect(await fileStreamOutcome(createWriteStream(Buffer.from(file), { flags: "a" }))).toEqual({
+      path: Buffer.from(file),
+      opened: true,
+      finished: true,
+    });
+    expect(readFileSync(file, "utf8")).toBe("hello");
+  });
+
   it.todoIf(isBroken && isWindows)("simple write stream finishes", async () => {
     const streamPath = join(tmpdirSync(), "create-write-stream.txt");
     const { promise: done, resolve, reject } = Promise.withResolvers();

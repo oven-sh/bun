@@ -12,7 +12,7 @@ type ErrorCallback = (error?: Error | null) => void;
 /** `node:fs`, the `fs` option of a stream, or the operations of a `FileHandle`. */
 interface StreamFs {
   open?(
-    path: string | null | undefined,
+    path: string | Uint8Array | null | undefined,
     flags: string | number,
     mode: number,
     callback: (error: Error | null, fd?: number) => void,
@@ -63,7 +63,7 @@ declare global {
     interface FileStreamFields {
       fd: number | null;
       // null / undefined only for the internal fast-path WriteStream, which is given a FileSink and no path.
-      path: string | null | undefined;
+      path: string | Uint8Array | null | undefined;
       flags: string | number;
       mode: number;
       start: number | undefined;
@@ -94,7 +94,13 @@ declare global {
 }
 type FileStream = $Node.ReadStream | $Node.WriteStream;
 
-const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
+const {
+  validateInteger,
+  validateInt32,
+  validateFunction,
+  validateAbortSignal,
+  getValidatedFsPath,
+} = require("internal/validators");
 
 const isWindows = process.platform === "win32";
 const windowsHandleToFd = $bindgen("node_fs_binding.bind.ts", "windowsHandleToFd");
@@ -184,13 +190,14 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: ErrorCallback) {
   this.close().then(() => cb(), cb);
 }
 
-function getValidatedPath(p: string | URL | null | undefined): string {
-  if (typeof p !== "string") {
-    const path = require("internal/url").toPathIfFileURL(p);
-    if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
-    return path;
-  }
-  return require("node:path").resolve(p);
+// Node keeps the path as given and hands it to open():
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L179-L186
+function fileStreamPath(path: string | Uint8Array | URL | null | undefined): string | Uint8Array {
+  const given = getValidatedFsPath(path as string | Uint8Array | URL);
+  // On Windows Node's open() resolves every path (ToNamespacedPath). Here only an absolute path gets
+  // the long-path prefix (PathLike::slice_z_with_force_copy), so a string is still made absolute.
+  if (isWindows && typeof path === "string") return require("node:path").resolve(path);
+  return given;
 }
 
 function copyObject<T extends object>(source: T): T {
@@ -217,15 +224,12 @@ function getStreamOptions(
     throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], options);
   }
 
-  let { encoding, signal = true } = options;
+  const { encoding, signal } = options;
   if (encoding && encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
     throw $ERR_INVALID_ARG_VALUE("encoding", encoding, "is invalid encoding");
   }
 
-  // There is a real AbortSignal validation later but it doesnt catch falsy primatives.
-  if (signal !== true && !signal) {
-    throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
-  }
+  if (signal !== undefined) validateAbortSignal(signal, "options.signal");
 
   return options;
 }
@@ -254,7 +258,7 @@ function validateWindowsHandle(
 
 function ReadStream(
   this: $Node.ReadStream,
-  path: string | URL | null | undefined,
+  path: string | Uint8Array | URL | null | undefined,
   options?: FileStreamOptions | string | null,
 ): void {
   if (!(this instanceof ReadStream)) {
@@ -274,13 +278,13 @@ function ReadStream(
   } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    this.path = getValidatedPath(path);
-    const { flags, mode } = options;
-    this.flags = flags === undefined ? "r" : flags;
-    this.mode = mode === undefined ? 0o666 : mode;
     if (customFs) {
       validateFunction(customFs.open, "options.fs.open");
     }
+    this.path = fileStreamPath(path);
+    const { flags, mode } = options;
+    this.flags = flags === undefined ? "r" : flags;
+    this.mode = mode === undefined ? 0o666 : mode;
   } else if (typeof options.fd === "number") {
     // When fd is a raw descriptor, we must keep our fingers crossed
     // that the descriptor won't get closed, or worse, replaced with
@@ -337,7 +341,7 @@ function ReadStream(
   // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
   // when that validation throws. Wrapping after it leaves the caller owning the
   // HANDLE on those errors. The base constructor below still validates options
-  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
+  // such as highWaterMark, and a throw there leaks the fd, as in Node.
   if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
   Readable.$call(this, options);
@@ -508,7 +512,7 @@ function closeAfterSync(stream: FileStream, err: Error | null | undefined, cb: E
 
 function WriteStream(
   this: $Node.WriteStream,
-  path: string | URL | null | undefined,
+  path: string | Uint8Array | URL | null | undefined,
   options?: FileStreamOptions | string | null,
 ): void {
   if (!(this instanceof WriteStream)) {
@@ -529,16 +533,15 @@ function WriteStream(
   } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
-    // resolve it - path.resolve("") needs process.cwd(), which throws when
-    // the cwd has been deleted (Node still spawns children in that state).
-    this.path = fastPath ? (path as string | null | undefined) : getValidatedPath(path);
-    const { flags, mode } = options;
-    this.flags = flags === undefined ? "w" : flags;
-    this.mode = mode === undefined ? 0o666 : mode;
     if (customFs) {
       validateFunction(customFs.open, "options.fs.open");
     }
+    // Internal $fastPath callers give a placeholder and discard .path: "" from
+    // writableFromFileSink, null from tty.WriteStream.
+    this.path = fastPath ? (path as string | null | undefined) : fileStreamPath(path);
+    const { flags, mode } = options;
+    this.flags = flags === undefined ? "w" : flags;
+    this.mode = mode === undefined ? 0o666 : mode;
   } else if (typeof options.fd === "number") {
     // When fd is a raw descriptor, we must keep our fingers crossed
     // that the descriptor won't get closed, or worse, replaced with
@@ -630,7 +633,7 @@ function WriteStream(
   // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
   // when that validation throws. Wrapping after it leaves the caller owning the
   // HANDLE on those errors. The base constructor below still validates options
-  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
+  // such as highWaterMark, and a throw there leaks the fd, as in Node.
   if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
   Writable.$call(this, options);
@@ -775,7 +778,7 @@ function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: st
   }
   try {
     if (fileSink === true) {
-      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path!).writer() as FileSink;
+      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path as string).writer() as FileSink;
       this.fd = fileSink._getFd();
     }
 

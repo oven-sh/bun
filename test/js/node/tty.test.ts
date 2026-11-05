@@ -1,7 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { join } from "node:path";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -192,6 +193,45 @@ describe("ReadStream.prototype.setRawMode", () => {
     });
     expect(await proc.exited).toBe(0);
   });
+});
+
+// Windows does not let a process remove its working directory.
+test.skipIf(isWindows)("process.stdin on a terminal can be read after the cwd was removed", async () => {
+  using dir = tempDir("tty-stdin-removed-cwd", { "gone/keep": "" });
+  const cwd = join(String(dir), "gone");
+  let output = "";
+  const decoder = new TextDecoder();
+  const done = Promise.withResolvers<void>();
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("fs").rmSync(process.argv[1], { recursive: true });
+       let result;
+       try { result = { isTTY: process.stdin.isTTY }; } catch { result = { threw: true }; }
+       console.log("RESULT " + JSON.stringify(result));
+       process.exit(0);`,
+      cwd,
+    ],
+    cwd,
+    env: bunEnv,
+    terminal: {
+      cols: 200,
+      rows: 24,
+      data(_t, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (/RESULT \{.*\}/.test(output)) done.resolve();
+      },
+      exit() {
+        done.resolve();
+      },
+    },
+  });
+  await Promise.race([done.promise, proc.exited]);
+  proc.kill();
+  await proc.exited;
+  proc.terminal?.close();
+  expect(Bun.stripANSI(output).match(/RESULT (\{.*?\})/)?.[1]).toBe('{"isTTY":true}');
 });
 
 describe.concurrent("ReadStream destroy()", () => {

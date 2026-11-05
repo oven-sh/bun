@@ -52,4 +52,24 @@ describe("concat", () => {
     const b = Uint8Array.from([4, 5, 6]);
     expect(concatArrayBuffers([a, b], 4)).toEqual(Uint8Array.from([1, 2, 3, 4]).buffer);
   });
+
+  const all = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  it.each([
+    [0, []],
+    [3, [1, 2, 3]],
+    [3.9, [1, 2, 3]],
+    [2 ** 32 - 1, all],
+    [2 ** 32, all],
+    [2 ** 32 + 3, all],
+    [2 ** 33 + 7, all],
+    [2 ** 53, all],
+    [2 ** 64, all],
+    [Number.MAX_VALUE, all],
+    [Infinity, all],
+  ])("trims to a max length of %d", (maxLength, bytes) => {
+    const chunks = [Uint8Array.from([1, 2, 3, 4, 5]), Uint8Array.from([6, 7, 8, 9, 10])];
+    const expected = Uint8Array.from(bytes);
+    expect(concatArrayBuffers(chunks, maxLength, true)).toEqual(expected);
+    expect(concatArrayBuffers(chunks, maxLength)).toEqual(expected.buffer);
+  });
 });

@@ -2177,6 +2177,9 @@ impl Run<'_> {
                     for (sum, count) in counts.refused.iter_mut().zip(it.refused) {
                         sum.merge(count);
                     }
+                    for (sum, count) in counts.rare.iter_mut().zip(it.rare) {
+                        sum.merge(count);
+                    }
                 }
             }
             let _ = writeln!(
@@ -2189,6 +2192,15 @@ impl Run<'_> {
                     let _ = writeln!(
                         self.out.stderr,
                         "  refused, {reason:?}: {} scripts, {} bytes",
+                        count.texts, count.bytes
+                    );
+                }
+            }
+            for (which, count) in counts.rare.iter().enumerate() {
+                if count.texts > 0 {
+                    let _ = writeln!(
+                        self.out.stderr,
+                        "    rare thing {which}: {} scripts, {} bytes",
                         count.texts, count.bytes
                     );
                 }

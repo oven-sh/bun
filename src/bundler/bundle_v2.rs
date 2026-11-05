@@ -5214,12 +5214,16 @@ pub mod bv2_impl {
                     // path — so the file is made one path, the platform's, as the resolver's are.
                     // Not an external one: it is printed as the plugin wrote it (a URL, `/lib.js`).
                     // Only a Windows path (a drive or a share): `/virtual/x.ts` is the plugin's own
-                    // name, which its onLoad filter expects as written.
+                    // name, which its onLoad filter expects as written. And only a file read from
+                    // the disk: one an onLoad filter matches as written is the plugin's to load.
                     let windows_path = matches!(result.path.as_ref(), [d, b':', b'/' | b'\\', ..] if d.is_ascii_alphabetic())
                         || matches!(result.path.as_ref(), [b'\\' | b'/', b'\\' | b'/', ..]);
                     if !result.external
                         && (result.namespace.is_empty() || result.namespace.as_ref() == b"file")
                         && windows_path
+                        && !this
+                            .plugins_ref()
+                            .is_some_and(|plugins| plugins.has_any_matches(&Fs::Path::init(&result.path), true))
                     {
                         bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut result.path);
                     }

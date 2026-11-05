@@ -189,6 +189,38 @@ devTest("a file a plugin resolves to is not sent again when its importer changes
     await c.expectMessage("item s 3");
   },
 });
+devTest("a plugin's onLoad filter sees the path its onResolve gave", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["item.ts"],
+    }),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import * as path from "node:path";
+      export default {
+        name: "generated",
+        setup(build) {
+          // A file that is not on the disk, named with forward slashes and loaded by a filter written for them.
+          build.onResolve({ filter: /^generated$/ }, () => ({
+            path: path.join(import.meta.dir, "generated.ts").replaceAll("\\\\", "/"),
+          }));
+          build.onLoad({ filter: /\\/generated\\.ts$/ }, () => ({ contents: 'export default "g";', loader: "ts" }));
+        },
+      };
+    `,
+    "item.ts": `
+      import g from "generated";
+      console.log("item " + g);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("item g");
+  },
+});
 devTest("a file a plugin resolves to with forward slashes is watched", {
   files: {
     "index.html": emptyHtmlFile({

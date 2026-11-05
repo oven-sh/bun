@@ -4814,6 +4814,9 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // prettier-ignore before a statement in a statement that gets a semicolon.
     ["a.ts", "", "function f() {\n  // prettier-ignore\n  for (;;) break\n  l: var x  = 1\n}\n"],
     ["a.js", "", "for (;;) {\n  // prettier-ignore\n  while (a) continue\n  // prettier-ignore\n  l: debugger\n}\n"],
+    // A comment before the `in` or the `of` of a loop.
+    ["a.ts", "", "for(c//\nin``)z\n"],
+    ["a.ts", "", "for(c//\nof``){z()}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

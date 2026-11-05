@@ -4642,6 +4642,18 @@ describe("bundler", () => {
       run: { stdout: "1 undefined 2" },
     });
   }
+  // Only the bundler changes the head. The transpiler prints it as it is written.
+  itBundled("edgecase/ForHeadWithBareVarIsKeptNoBundle", {
+    files: { "/entry.js": "for (var i; !i; i = 1) {}\nconsole.log(i);" },
+    bundling: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("for (var i;");
+    },
+  });
+  test("edgecase/ForHeadWithBareVarIsKeptByTranspiler", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    expect(transpiler.transformSync("for (var i; c; ) {}")).toBe("for (var i;c; ) {}\nvar i;\n");
+  });
 
   // Without code splitting, each entry point gets its own output file, even when
   // entry points import each other. Each file runs its modules in the order that

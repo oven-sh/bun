@@ -10,9 +10,19 @@ const { BUN_PYTHON_STDLIB, PYTHONHOME, PYTHONPATH, ...env } = bunEnv;
 // These builds take seconds to start Python.
 if (isDebug || isASAN) setDefaultTimeout(60_000);
 
-type Options = { files?: Record<string, string>; env?: Record<string, string>; stdin?: string; name?: string };
+type Options = {
+  files?: Record<string, string>;
+  env?: Record<string, string>;
+  stdin?: string;
+  name?: string;
+  // Inside `files`.
+  cwd?: string;
+};
 
-async function python(args: string[], { files = {}, env: extraEnv = {}, stdin, name = "python3" }: Options = {}) {
+async function python(
+  args: string[],
+  { files = {}, env: extraEnv = {}, stdin, name = "python3", cwd = "" }: Options = {},
+) {
   using dir = tempDir("python-cli", files);
   using bin = tempDir("python-cli-bin", {});
   // A name with a directory is inside `files`.
@@ -23,7 +33,7 @@ async function python(args: string[], { files = {}, env: extraEnv = {}, stdin, n
     cmd: [program, ...args],
     // Whoever runs the tests may have a site-packages directory of their own, which would be on sys.path.
     env: { ...env, HOME: String(dir), ...extraEnv },
-    cwd: String(dir),
+    cwd: join(String(dir), cwd),
     stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
     stdout: "pipe",
     stderr: "pipe",
@@ -490,6 +500,51 @@ sys.exit(subprocess.run([sys.executable, "-c", "import inside"], env=environment
         }),
       ).toEqual({ stdout: "['-c'] None\n", stderr: "", exitCode: 0 });
     });
+
+    test("what is wrong with a package.json or a tsconfig.json is nothing to a program that loads no JavaScript", async () => {
+      expect(
+        await python(["-c", "print('hello')"], {
+          files: { "package.json": '{ "name": ', "tsconfig.json": '{ "compilerOptions": { "jsx": ', "sub/empty": "" },
+          cwd: "sub",
+        }),
+      ).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
+    });
+
+    test.each(
+      [undefined, "production", "development"].flatMap(mode =>
+        [undefined, "react-jsx", "react-jsxdev"].map(jsx => [mode, jsx] as const),
+      ),
+    )(
+      "JavaScript that a program loads goes by the tsconfig.json of the current directory, as under bun: NODE_ENV=%s, jsx: %s",
+      async (mode, jsx) => {
+        // The files lie outside that directory, so no tsconfig.json of their own comes first.
+        const files = {
+          "app/tsconfig.json": JSON.stringify({
+            compilerOptions: { jsx, jsxImportSource: "fake", experimentalDecorators: true },
+          }),
+          "lib/node_modules/fake/jsx-runtime.js": "export const jsx = tag => `jsx(${tag})`;",
+          "lib/node_modules/fake/jsx-dev-runtime.js": "export const jsxDEV = tag => `jsxDEV(${tag})`;",
+          "lib/view.tsx": `
+            // With the decorators of the standard the second argument is an object.
+            const decorator = (_: unknown, context: unknown) => { kind = typeof context; };
+            let kind = "";
+            class C { @decorator method() {} }
+            export const view = <b />;
+            export { kind };
+          `,
+          "app/main.py": "import sys; sys.path.append('../lib'); import view; print(view.view, view.kind)",
+          "app/main.js": "import { view, kind } from '../lib/view.tsx'; console.log(view, kind);",
+        };
+        const extraEnv = mode === undefined ? {} : { NODE_ENV: mode };
+        const underBun = await python(["main.js"], { files, env: extraEnv, cwd: "app", name: "bun" });
+        expect(underBun).toEqual({
+          stdout: expect.stringMatching(/^jsx(DEV)?\(b\) string\n$/),
+          stderr: "",
+          exitCode: 0,
+        });
+        expect(await python(["main.py"], { files, env: extraEnv, cwd: "app" })).toEqual(underBun);
+      },
+    );
   });
 
   describe("how it ends", () => {

@@ -512,6 +512,9 @@ unsafe fn init_runtime_state(
                     });
                     if !reads_tsconfig {
                         t.configure_linker_with_auto_jsx(false);
+                    } else if opts.reads_root_tsconfig_late {
+                        t.options.root_tsconfig_is_unread = true;
+                        t.configure_linker_with_auto_jsx(false);
                     } else {
                         t.configure_linker();
                     }
@@ -2311,9 +2314,20 @@ fn transpile_source_code_inner<const DATA_ONLY: bool>(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> crate::Result<ResolvedSource> {
+    read_root_tsconfig_if_unread(jsc_vm);
     let mut resolved_source = transpile_source_code_of_any_provenance::<DATA_ONLY>(jsc_vm, args)?;
     resolved_source.is_static |= is_input_static(jsc_vm, args);
     Ok(resolved_source)
+}
+
+/// Before anything looks at the options of `vm.transpiler` to transpile a file.
+#[inline]
+fn read_root_tsconfig_if_unread(jsc_vm: *mut VirtualMachine) {
+    // SAFETY: as for `transpile_source_code_inner` — `jsc_vm` is the live per-thread VM.
+    let transpiler = unsafe { &mut (*jsc_vm).transpiler };
+    if transpiler.options.root_tsconfig_is_unread {
+        transpiler.read_root_tsconfig();
+    }
 }
 
 #[inline(never)]
@@ -4941,6 +4955,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
+    read_root_tsconfig_if_unread(jsc_vm);
     let force_loader_type: Option<Loader> = force_loader_from_api_u8(force_loader);
 
     // Create a fresh parse log.

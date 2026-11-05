@@ -585,21 +585,51 @@ impl<'a> Transpiler<'a> {
         );
 
         if auto_jsx {
-            // Most of the time, this will already be cached
-            let top_level_dir = Fs::FileSystem::get().top_level_dir();
-            if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
-                    }
-                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    self.options.experimental_decorators = tsconfig.experimental_decorators;
-                    if let Some(v) = tsconfig.use_define_for_class_fields {
-                        self.options.use_define_for_class_fields = v;
-                    }
+            self.configure_from_root_tsconfig();
+        }
+    }
+
+    fn configure_from_root_tsconfig(&mut self) {
+        // Most of the time, this will already be cached
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
+            if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
+                // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                if self.options.transform_options.jsx.is_none() {
+                    self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                }
+                self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                self.options.experimental_decorators = tsconfig.experimental_decorators;
+                if let Some(v) = tsconfig.use_define_for_class_fields {
+                    self.options.use_define_for_class_fields = v;
                 }
             }
+        }
+    }
+
+    /// For a program that may never load a file of JavaScript: `python3`. To find the `tsconfig.json` of the top-level
+    /// directory is to list every directory from the root down to it and to parse each `package.json` and `tsconfig.json`
+    /// on the way, and what is wrong with them is reported. With `options.root_tsconfig_is_unread`,
+    /// `configure_linker_with_auto_jsx(false)` and [`Self::configure_defines`] leave that out, and this does it afterwards,
+    /// to the same effect.
+    #[cold]
+    pub fn read_root_tsconfig(&mut self) {
+        self.options.root_tsconfig_is_unread = false;
+        self.configure_from_root_tsconfig();
+        // `run_env_loader`
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir)
+            && let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir)
+        {
+            merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
+        }
+        // The end of `configure_defines`
+        match self.options.force_node_env {
+            options::ForceNodeEnv::Development => self.options.jsx.development = true,
+            options::ForceNodeEnv::Unspecified if self.options.production => {
+                self.options.jsx.development = false;
+            }
+            _ => {}
         }
     }
 
@@ -630,7 +660,17 @@ impl<'a> Transpiler<'a> {
         // for the duration of this call.
         let env: &mut dot_env::Loader = self.env_mut();
 
-        match self.options.env.behavior {
+        // The top-level directory has nothing to say but what its tsconfig.json says.
+        let reads_no_directory = self.options.root_tsconfig_is_unread
+            && skip_default_env
+            && self.options.env.files.is_empty();
+        let behavior = match self.options.env.behavior {
+            DotEnvBehavior::_none => DotEnvBehavior::_none,
+            _ if reads_no_directory => DotEnvBehavior::disable,
+            behavior => behavior,
+        };
+
+        match behavior {
             DotEnvBehavior::prefix
             | DotEnvBehavior::load_all
             | DotEnvBehavior::load_all_without_inlining => {

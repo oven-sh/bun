@@ -101,7 +101,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         trim_unused_imports: _, ignore_dce_annotations: _, public_path: _, chunk_naming: _,
         source_map: _, minify_whitespace: _, minify_syntax: _, is_library: _, minify_identifiers: _,
         keep_names: _, css_chunking: _, code_splitting: _, split_require: _, min_chunk_size: _,
-        fold_chunks: _, module_preload: _, react_fast_refresh: _, emit_dce_annotations: _,
+        fold_chunks: _, module_preload: _, react_fast_refresh: _, emit_dce_annotations: _, root_tsconfig_is_unread: _,
         tree_shaking: _, tree_shaking_override: _, dead_code_elimination: _, inlining: _,
         optimize_imports: _, out_extensions: _, compile_mode: _, production: _, env: _,
         log: _, origin: _, output_dir: _, output_dir_handle: _, write: _, preserve_extensions: _,

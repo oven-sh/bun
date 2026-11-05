@@ -1449,6 +1449,9 @@ pub struct BundleOptions<'a> {
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
+    /// Nobody has looked for the `tsconfig.json` of the top-level directory yet: [`Transpiler::read_root_tsconfig`] does,
+    /// before the first file is transpiled.
+    pub root_tsconfig_is_unread: bool,
     /// Namespace objects (`import *`, `export * as`) get a setter per export so
     /// assigning to them is silently accepted instead of throwing. Deprecated;
     /// off makes them getter-only like real module namespace objects.
@@ -1671,6 +1674,7 @@ impl<'a> BundleOptions<'a> {
             custom_conditions: self.custom_conditions.clone(),
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
+            root_tsconfig_is_unread: self.root_tsconfig_is_unread,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
@@ -1927,6 +1931,7 @@ impl<'a> BundleOptions<'a> {
             repl_mode: false,
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
+            root_tsconfig_is_unread: false,
             deprecated_namespace_object_setters: true,
             bytecode: false,
             bytecode_depth: u32::MAX,

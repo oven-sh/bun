@@ -98,6 +98,8 @@ pub struct InitOptions {
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
+    /// `BundleOptions::root_tsconfig_is_unread`
+    pub reads_root_tsconfig_late: bool,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -124,6 +126,7 @@ impl Default for InitOptions {
             owned_env_loader: None,
             graph: None,
             global_cache: bun_options_types::global_cache::GlobalCache::disable,
+            reads_root_tsconfig_late: false,
             smol: false,
             eval_mode: false,
             is_main_thread: false,

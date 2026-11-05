@@ -1063,6 +1063,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             global_cache: ctx.debug.global_cache,
+            reads_root_tsconfig_late: is_python_command_line,
             smol: ctx.runtime_options.smol,
             mini_mode: ctx.runtime_options.smol,
             eval_mode: ctx.runtime_options.eval.eval_and_print,

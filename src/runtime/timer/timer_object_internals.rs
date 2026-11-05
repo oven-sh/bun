@@ -1088,8 +1088,7 @@ impl TimerObjectInternals {
     /// contract. `vm.timer` resolved via `runtime_state()` (jsc/runtime crate cycle).
     pub(crate) fn cancel(&self, vm: *mut VirtualMachine) {
         if let Some(timer) = self.this_value.get().try_get() {
-            // SAFETY: `vm` is the live per-thread VM (caller contract).
-            let global = JSGlobalObject::opaque_ref(unsafe { (*vm).global });
+            let global = VirtualMachine::get().global();
             self.clear_callback(timer, global);
         }
         self.set_enable_keeping_event_loop_alive(vm, false);

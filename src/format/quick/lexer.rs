@@ -1,9 +1,12 @@
+//! The lexer. It hands out one token at a time, on demand, because `/`, `}` and `<` mean different things depending on
+//! what the parser expects. All of its state is module-level int32: under `bun compile` each is one load or store.
+
 use crate::ast::{F_BLANK, F_BLANK_LINE, F_ESCAPE, F_QUOTE, F_SLOW_TEXT, F_TAIL};
 use crate::id_table::{ID_PART, ID_START};
 use crate::{Bytes, Quick, R, Words, zeros};
 
 pub(crate) struct Lexer {
-    /// ---- state
+    // ---- state
     pub(crate) pos: i32,
     pub(crate) tok: i32,
     pub(crate) tok_start: i32,
@@ -17,7 +20,7 @@ pub(crate) struct Lexer {
     pub(crate) c: Vec<i32>,
     pub(crate) c_count: i32,
     pub(crate) c_base: i32,
-    /// ---- going back: a lookahead saves these and restores them
+    // ---- going back: a lookahead saves these and restores them
     pub(crate) saved_pos: i32,
     pub(crate) s_tok: i32,
     pub(crate) s_start: i32,
@@ -31,7 +34,7 @@ pub(crate) struct Lexer {
     pub(crate) marks: Vec<i32>,
     pub(crate) marks_top: i32,
     /// Length of the white space character that starts with the non-ASCII byte at p, or 0. Line separators count + 16.
-    /// Babel with the plugin "flowComments": what stands in `/*:: .. */`, `/*: .. */` and `/* flow-include .. */` is code.
+    /// Babel with the plugin "flow_comments": what stands in `/*:: .. */`, `/*: .. */` and `/* flow-include .. */` is code.
     pub(crate) flow_comments: bool,
     pub(crate) flow_comment_end: i32,
     /// flow-parser takes `>` and `}` in the text of an element for text.
@@ -101,6 +104,7 @@ pub(crate) mod tk {
     pub(crate) const Arrow: i32 = 23;
     pub(crate) const At: i32 = 24;
     pub(crate) const DoubleColon: i32 = 25;
+    // assignment operators
     pub(crate) const Eq: i32 = 26;
     pub(crate) const AddEq: i32 = 27;
     pub(crate) const SubEq: i32 = 28;
@@ -185,7 +189,7 @@ pub(crate) mod tk {
     pub(crate) const While: i32 = 103;
     pub(crate) const With: i32 = 104;
 }
-/// Names that mean something in some places. `tokKw` holds one of these when `tok` is Tk.Name.
+/// Names that mean something in some places. `tok_kw` holds one of these when `tok` is Tk.Name.
 #[allow(non_upper_case_globals)]
 pub(crate) mod kw {
     pub(crate) const None: i32 = 0;
@@ -280,7 +284,7 @@ impl Quick {
         self.lexer.c_count = count;
     }
 
-    /// Starts at the beginning of the window. The comments of this run are C[cBase .. cCount).
+    /// Starts at the beginning of the window. The comments of this run are C[c_base .. c_count).
     pub(crate) fn reset_lexer(&mut self) {
         self.lexer.pos = self.text.src_start;
         self.lexer.tok = tk::EOF;
@@ -599,12 +603,12 @@ impl Quick {
     }
 }
 // ---- keywords: a perfect hash of the first, the second and the last character and the length
-// (tools/find-keyword-hash.ts finds the multipliers)
 pub(crate) const KW_A: i32 = 7;
 pub(crate) const KW_B: i32 = 5;
 pub(crate) const KW_C: i32 = 34;
 pub(crate) const KW_D: i32 = 6;
 pub(crate) const KW_MASK: i32 = 127;
+/// length | token << 8 | contextual name << 16
 pub(crate) static KW_INFO: [i32; 128] = [
     131333, 0, 0, 0, 0, 0, 0, 0, 19717, 20744, 25859, 22023, 23558, 0, 0, 0, 0, 0, 25092, 22535, 0,
     0, 590084, 0, 524547, 0, 0, 0, 19460, 1048838, 0, 393474, 25349, 0, 0, 0, 0, 0, 0, 21766, 0, 0,
@@ -623,7 +627,7 @@ pub(crate) static KW_TEXT: [i32; 128] = [
     0, 0, 144, 86, 108, 0, 314, 0, 239, 0, 140, 0, 0, 0, 0, 0, 0, 73, 0, 204, 0, 0, 298, 120, 0, 0,
     0, 0,
 ];
-// by first character: bit n is set if a word of n characters starts with it (n counts modulo 32, classifyName() looks closer)
+// by first character: bit n is set if a word of n characters starts with it (n counts modulo 32, classify_name() looks closer)
 pub(crate) static KW_LENGTHS: [i32; 128] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -631,7 +635,7 @@ pub(crate) static KW_LENGTHS: [i32; 128] = [
     0, 292, 32, 304, 484, 208, 440, 8, 0, 1092, 0, 0, 8, 80, 24, 4, 0, 0, 64, 104, 120, 32, 24, 48,
     0, 32, 0, 0, 0, 0, 0, 0,
 ];
-// The same words by their first four bytes, which tell them all apart: one read and one multiplication, for keywordAt().
+// The same words by their first four bytes, which tell them all apart: one read and one multiplication, for keyword_at().
 pub(crate) const FOUR_MULTIPLIER: i32 = 0x7331f7b1;
 pub(crate) static FOUR_KEY: [i32; 128] = [
     0, 1701869940, 0, 0, 1701602660, 0, 0, 0, 1635018093, 0, 0, 0, 29537, 0, 1818847351, 0, 0,
@@ -662,7 +666,7 @@ pub(crate) static FOUR_TEXT: [i32; 128] = [
     149, 0,
 ];
 impl Quick {
-    /// Sets tok and tokKw for the name T[s, s + len), len >= 2, which has been taken for a plain name so far.
+    /// Sets tok and tok_kw for the name T[s, s + len), len >= 2, which has been taken for a plain name so far.
     pub(crate) fn classify_name(&mut self, s: i32, len: i32) {
         let h = (self.t.at(s) * KW_A
             + self.t.at(s + 1) * KW_B
@@ -685,7 +689,7 @@ impl Quick {
         self.lexer.tok_kw = info >> 16;
     }
 
-    /// For a reader of bytes (fast.ts): what the ASCII word T[s, s + len) is. 0 for a plain name, else its token | its contextual name << 8.
+    /// For a reader of bytes (fast.rs): what the ASCII word T[s, s + len) is. 0 for a plain name, else its token | its contextual name << 8.
     pub(crate) fn keyword_at(&self, s: i32, len: i32) -> i32 {
         let mut four = self.t.i32_at(s);
         if len < 4 {
@@ -754,8 +758,8 @@ impl Quick {
                     return Ok(p);
                 }
                 // one character of two to four bytes
-                let mut code: i32;
-                let mut length: i32;
+                let code: i32;
+                let length: i32;
                 if c < 0xe0 {
                     code = ((c & 0x1f) << 6) | (self.t.at(p + 1) & 0x3f);
                     length = 2;
@@ -868,7 +872,7 @@ impl Quick {
         Ok(())
     }
 }
-// 1 for what readString() has to look at: quotes, the backslash, and whatever is not printable ASCII
+// 1 for what read_string() has to look at: quotes, the backslash, and whatever is not printable ASCII
 pub(crate) static STRING_SPECIAL: [u8; 256] = [
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -886,7 +890,6 @@ impl Quick {
         let mut p = start + 1;
         let mut flags: i32 = 0;
         loop {
-            // a bound and `!==`: the form of loop that the compiler unrolls, with the arrays' headers read once
             while p < end && STRING_SPECIAL.at(self.t.at(p)) != 1 {
                 p += 1;
             }
@@ -916,6 +919,7 @@ impl Quick {
 
     // The token behind the end, at `p`, of a comment of Flow whose text is code.
     pub(crate) fn next_behind_flow_comment(&mut self, p: i32) -> R<()> {
+        self.stack()?;
         let end = self.lexer.tok_end;
         let nl = self.lexer.tok_nl;
         self.lexer.pos = p + 2;
@@ -929,7 +933,7 @@ impl Quick {
         self.lexer.prev_end = self.lexer.tok_end;
         let mut p = self.lexer.pos;
         let mut c = self.t.at(p);
-        // Most tokens follow the previous one at once or after one blank. Anything else is for skipSpace().
+        // Most tokens follow the previous one at once or after one blank. Anything else is for skip_space().
         if c == 32 {
             p += 1;
             c = self.t.at(p);
@@ -962,7 +966,7 @@ impl Quick {
                     continue;
                 }
                 let bad = ok ^ HIGH_BITS;
-                q += (31 - (bad & bad.wrapping_neg()).leading_zeros() as i32) >> 3;
+                q += (31 - (bad.isolate_lowest_one()).leading_zeros() as i32) >> 3;
                 break;
             }
             let mut e = self.t.at(q);
@@ -1058,7 +1062,7 @@ impl Quick {
                 self.read_string(c)?;
                 return Ok(());
             }
-            48 | 49 | 50 | 51 | 52 | 53 | 54 | 55 | 56 | 57 => {
+            48..=57 => {
                 self.read_number()?;
                 return Ok(());
             }
@@ -1295,7 +1299,7 @@ impl Quick {
         Ok(())
     }
 
-    /// Reads the characters of a template from `from` up to "`" or "${". tokStart..tokEnd become the raw text, tokFlags says
+    /// Reads the characters of a template from `from` up to "`" or "${". tok_start..tok_end become the raw text, tok_flags says
     /// whether it is the tail, and `pos` stands behind the delimiter.
     pub(crate) fn scan_template_chunk(&mut self, from: i32) -> R<()> {
         let mut p = from;

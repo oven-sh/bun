@@ -1,3 +1,4 @@
+// Pairs of first and last code point.
 // prettier-ignore
 pub(crate) static ID_START: [i32; 1364] = [
     170, 170, 181, 181, 186, 186, 192, 214, 216, 246, 248, 705, 710, 721, 736, 740, 748, 748, 750,

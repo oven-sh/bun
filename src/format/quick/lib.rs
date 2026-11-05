@@ -1,7 +1,10 @@
 //! The quick way for JavaScript and TypeScript.
 
-// Until what the long way keeps for itself has been taken out.
-#![allow(dead_code, unused_mut, unused_variables, unused_assignments)]
+#![allow(
+    clippy::needless_late_init,
+    clippy::if_same_then_else,
+    reason = "each branch says for itself what holds in it"
+)]
 
 mod arena;
 mod ast;
@@ -20,11 +23,11 @@ mod options;
 mod printer;
 mod root;
 mod scan;
+mod stands;
 mod text;
 mod width_table;
 mod words;
 mod print {
-    pub(crate) mod angular;
     pub(crate) mod array;
     pub(crate) mod arrow;
     pub(crate) mod assignment;
@@ -47,18 +50,17 @@ mod print {
     pub(crate) mod statics;
     pub(crate) mod template;
     pub(crate) mod ternary;
-    pub(crate) mod ternary_experimental;
     pub(crate) mod types;
     pub(crate) mod util;
 }
 mod parse {
     pub(crate) mod core;
     pub(crate) mod flow;
-    pub(crate) mod pipeline;
     pub(crate) mod typescript;
 }
 
-pub use root::{EndOfLine, Language, Options, QuoteProps, Refused, TrailingComma};
+pub use root::{Dialect, EndOfLine, Language, Options, QuoteProps, Refused, TrailingComma, format};
+use std::cell::Cell;
 
 /// The work has stopped; `Quick::why` says why.
 pub(crate) struct Stop;
@@ -68,12 +70,13 @@ pub(crate) mod why {
     pub(crate) const NONE: i32 = 0;
     pub(crate) const SYNTAX: i32 = 1;
     pub(crate) const REDO: i32 = 2;
-    pub(crate) const UNCHANGED: i32 = 3;
     pub(crate) const BUG: i32 = 4;
     pub(crate) const TOO_LARGE: i32 = 5;
     pub(crate) const STACK: i32 = 6;
     /// Something rare that is left to the long way.
     pub(crate) const RARE: i32 = 7;
+    /// There is code in another language in the file.
+    pub(crate) const GUEST: i32 = 8;
 }
 
 /// Reads and writes that have an answer for every index: a read beyond the end gives 0, a write there does nothing.
@@ -168,31 +171,16 @@ words!(i32);
 
 /// Reads and writes of more than one byte, in little-endian order.
 pub(crate) trait Bytes {
-    fn u16_at(&self, p: i32) -> i32;
     fn i32_at(&self, p: i32) -> i32;
     fn u64_at(&self, p: i32) -> u64;
     fn put_u16(&mut self, p: i32, v: i32);
     fn put_u64(&mut self, p: i32, v: u64);
-    /// The i-th pair of bytes.
-    fn at16(&self, i: i32) -> i32;
-    /// The i-th group of four bytes.
-    fn at32(&self, i: i32) -> i32;
     fn index_of(&self, byte: i32, from: i32) -> i32;
     /// The last place at or before `from`.
     fn last_index_of(&self, byte: i32, from: i32) -> i32;
 }
 
 impl Bytes for [u8] {
-    #[inline(always)]
-    fn u16_at(&self, p: i32) -> i32 {
-        match self
-            .get(p as u32 as usize..)
-            .and_then(|s| s.first_chunk::<2>())
-        {
-            Some(b) => u16::from_le_bytes(*b) as i32,
-            None => 0,
-        }
-    }
     #[inline(always)]
     fn i32_at(&self, p: i32) -> i32 {
         match self
@@ -231,19 +219,11 @@ impl Bytes for [u8] {
             *b = v.to_le_bytes();
         }
     }
-    #[inline(always)]
-    fn at16(&self, i: i32) -> i32 {
-        self.u16_at(i.wrapping_mul(2))
-    }
-    #[inline(always)]
-    fn at32(&self, i: i32) -> i32 {
-        self.i32_at(i.wrapping_mul(4))
-    }
     fn index_of(&self, byte: i32, from: i32) -> i32 {
         let from = clamp(from, self.len());
         match self
             .get(from..)
-            .and_then(|s| s.iter().position(|&b| b as i32 == byte))
+            .and_then(|s| bun_core::strings::index_of_char_usize(s, byte as u8))
         {
             Some(i) => (from + i) as i32,
             None => -1,
@@ -256,7 +236,7 @@ impl Bytes for [u8] {
         let end = clamp(from.saturating_add(1), self.len());
         match self
             .get(..end)
-            .and_then(|s| s.iter().rposition(|&b| b as i32 == byte))
+            .and_then(|s| bun_core::strings::last_index_of_char(s, byte as u8))
         {
             Some(i) => i as i32,
             None => -1,
@@ -264,10 +244,6 @@ impl Bytes for [u8] {
     }
 }
 impl Bytes for Vec<u8> {
-    #[inline(always)]
-    fn u16_at(&self, p: i32) -> i32 {
-        self.as_slice().u16_at(p)
-    }
     #[inline(always)]
     fn i32_at(&self, p: i32) -> i32 {
         self.as_slice().i32_at(p)
@@ -283,14 +259,6 @@ impl Bytes for Vec<u8> {
     #[inline(always)]
     fn put_u64(&mut self, p: i32, v: u64) {
         self.as_mut_slice().put_u64(p, v)
-    }
-    #[inline(always)]
-    fn at16(&self, i: i32) -> i32 {
-        self.as_slice().at16(i)
-    }
-    #[inline(always)]
-    fn at32(&self, i: i32) -> i32 {
-        self.as_slice().at32(i)
     }
     fn index_of(&self, byte: i32, from: i32) -> i32 {
         self.as_slice().index_of(byte, from)
@@ -324,17 +292,18 @@ pub struct Quick {
     pub(crate) n: Vec<i32>,
     /// The document.
     pub(crate) d: Vec<i32>,
-    pub(crate) why: i32,
-    /// Where the syntax error is, from the start of the text.
-    pub(crate) failed_at: i32,
+    /// Why the work stopped.
+    pub(crate) why: Cell<i32>,
+    stack_check: bun_core::StackCheck,
+    pub(crate) dialect: Dialect,
     had_bom: bool,
     redone: i32,
-    /// The name of the file ends in .cjs or .cts.
-    name_is_common_js: bool,
-    /// 1: the name of the file says that `<a>` is an element; 0: that it is not; -1: it says nothing.
-    name_says_jsx: i32,
+    /// Where the syntax error is, from the start of the text.
+    pub(crate) failed_at: Cell<i32>,
     #[cfg(feature = "stages")]
-    stages: [u64; 4],
+    pub(crate) no_guests: bool,
+    #[cfg(feature = "stages")]
+    stages: [u64; 3],
     #[cfg(feature = "stages")]
     keep_stages: bool,
     #[cfg(feature = "stages")]
@@ -350,7 +319,6 @@ pub struct Quick {
     pub(crate) lexer: lexer::Lexer,
     pub(crate) comments: comments::Comments,
     pub(crate) fast: fast::Fast,
-    pub(crate) parse_pipeline: parse::pipeline::ParsePipeline,
     pub(crate) parse_flow: parse::flow::ParseFlow,
     pub(crate) parse_typescript: parse::typescript::ParseTypescript,
     pub(crate) parse: parse::core::Parse,
@@ -362,6 +330,7 @@ pub struct Quick {
     pub(crate) print_call: print::call::PrintCall,
     pub(crate) print_jsx: print::jsx::PrintJsx,
     pub(crate) print: print::core::Print,
+    pub(crate) stands: stands::Stands,
 }
 
 impl Default for Quick {
@@ -378,14 +347,16 @@ impl Quick {
             t,
             n: zeros(1 << 16),
             d: zeros(1 << 16),
-            why: why::NONE,
-            failed_at: 0,
+            why: Cell::new(why::NONE),
+            stack_check: bun_core::StackCheck::default(),
+            dialect: Dialect::of_name(Language::JavaScript, b""),
             had_bom: false,
             redone: 0,
-            name_is_common_js: false,
-            name_says_jsx: -1,
+            failed_at: Cell::new(0),
             #[cfg(feature = "stages")]
-            stages: [0; 4],
+            no_guests: false,
+            #[cfg(feature = "stages")]
+            stages: [0; 3],
             #[cfg(feature = "stages")]
             keep_stages: false,
             #[cfg(feature = "stages")]
@@ -401,7 +372,6 @@ impl Quick {
             lexer: lexer::Lexer::new(),
             comments: comments::Comments::new(),
             fast: fast::Fast::new(),
-            parse_pipeline: parse::pipeline::ParsePipeline::new(),
             parse_flow: parse::flow::ParseFlow::new(),
             parse_typescript: parse::typescript::ParseTypescript::new(),
             parse: parse::core::Parse::new(),
@@ -413,11 +383,23 @@ impl Quick {
             print_call: print::call::PrintCall::new(),
             print_jsx: print::jsx::PrintJsx::new(),
             print: print::core::Print::new(),
+            stands: stands::Stands::new(),
         }
     }
 
-    pub(crate) fn stop(&mut self, why: i32) -> Stop {
-        self.why = why;
+    #[cold]
+    pub(crate) fn stop(&self, why: i32) -> Stop {
+        self.why.set(why);
         Stop
+    }
+
+    /// Whoever calls itself, directly or not, asks first whether there is room for that.
+    #[inline(always)]
+    pub(crate) fn stack(&self) -> R<()> {
+        if self.stack_check.is_safe_to_recurse() {
+            Ok(())
+        } else {
+            Err(self.stop(why::STACK))
+        }
     }
 }

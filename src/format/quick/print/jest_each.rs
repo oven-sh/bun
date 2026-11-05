@@ -1,8 +1,11 @@
+//! describe.each`table`: the template literal is printed as a table with aligned columns (print_jest_each_template_literal).
+
 use crate::ast::{F_CHAIN, k};
 use crate::print::statics::{_BAR_, BACKQUOTE};
 use crate::{Quick, R, Words, zeros};
 
 pub(crate) struct PrintJestEach {
+    /// Arrays of arrays do not break by themselves in a table.
     pub(crate) in_jest_each: bool,
     /// The table, on a stack: cells are [start, end, width], rows are [first cell, number of cells, has a line break].
     pub(crate) cells: Vec<i32>,
@@ -251,7 +254,7 @@ impl Quick {
             r += 3;
         }
         self.line_suffix_boundary();
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         self.indent_hardline();
         let mut is_first_row = true;
         let mut r = row_base;
@@ -272,13 +275,13 @@ impl Quick {
                     'c14: {
                         self.reserve();
                         if c > 0 {
-                            self.text(_BAR_);
+                            self.text(_BAR_)?;
                         }
                         let at = first_cell + c * 3;
                         self.slice_any(
                             self.print_jest_each.cells.at(at),
                             self.print_jest_each.cells.at(at + 1),
-                        );
+                        )?;
                         if self.print_jest_each.rows.at(r + 2) != 0 {
                             break 'c14;
                         }
@@ -286,7 +289,7 @@ impl Quick {
                             - self.print_jest_each.cells.at(at + 2);
                         while padding > 0 {
                             let chunk = if padding > 128 { 128 } else { padding };
-                            self.slice_w(PADDING, PADDING + chunk, chunk);
+                            self.slice_w(PADDING, PADDING + chunk, chunk)?;
                             padding -= 128;
                         }
                     }
@@ -296,7 +299,7 @@ impl Quick {
             r += 3;
         }
         self.dedent_hardline();
-        self.text(BACKQUOTE);
+        self.text(BACKQUOTE)?;
         self.print_jest_each.cell_top = cell_base;
         self.print_jest_each.row_top = row_base;
         return Ok(true);

@@ -1,3 +1,5 @@
+//! Questions about nodes and their comments that several printers ask.
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     F_COMMENTS, F_DANGLING, F_IGNORED, F_LEADING, F_NEXT_LINE_EMPTY, F_NEXT_LINE_KNOWN, F_PREFIX,
@@ -52,7 +54,7 @@ impl Quick {
         return (self.lexer.c.at(c * C_STRIDE + C_FLAGS) & (CF_LEADING | CF_TRAILING)) == 0;
     }
 
-    /// hasComment(node, CommentCheckFlags.Line)
+    /// has_comment(node, CommentCheckFlags.Line)
     pub(crate) fn has_line_comment(&self, n: i32) -> bool {
         let mut c = self.first_comment(n);
         while c >= 0 {
@@ -257,7 +259,7 @@ impl Quick {
     // ---- kinds
     pub(crate) fn is_binaryish(&self, n: i32) -> bool {
         let k = self.n.at(n) & 0xff;
-        return k == k::BinaryExpression || k == k::LogicalExpression || k == k::NGPipeExpression;
+        return k == k::BinaryExpression || k == k::LogicalExpression;
     }
 
     pub(crate) fn is_call_expression(&self, n: i32) -> bool {
@@ -349,7 +351,6 @@ impl Quick {
             | k::MemberExpression
             | k::SequenceExpression
             | k::TaggedTemplateExpression
-            | k::BindExpression
             | k::AsExpression
             | k::SatisfiesExpression
             | k::NonNullExpression => {
@@ -363,6 +364,7 @@ impl Quick {
         return false;
     }
 
+    /// get_left_side: 0 if there is none.
     pub(crate) fn get_left_side(&self, n: i32) -> i32 {
         match self.n.at(n) & 0xff {
             k::SequenceExpression => {
@@ -382,7 +384,6 @@ impl Quick {
             k::AssignmentExpression
             | k::BinaryExpression
             | k::LogicalExpression
-            | k::NGPipeExpression
             | k::AssignmentPattern
             | k::ConditionalExpression
             | k::CallExpression
@@ -417,7 +418,7 @@ impl Quick {
             | k::TypeCastExpression => {
                 return self.n.at(n + 4);
             }
-            k::BindExpression | k::TypeAssertion => {
+            k::TypeAssertion => {
                 return self.n.at(n + 5);
             }
             _ => {}
@@ -430,13 +431,6 @@ impl Quick {
         match self.n.at(n) & 0xff {
             k::SequenceExpression => {
                 return self.n.at(self.n.at(n + 4) + 1);
-            }
-            k::BindExpression => {
-                return if self.n.at(n + 4) != 0 {
-                    self.n.at(n + 4)
-                } else {
-                    self.n.at(n + 5)
-                };
             }
             _ => {}
         }
@@ -469,11 +463,6 @@ impl Quick {
                 }
                 k::UpdateExpression => {
                     if (self.n.at(p) & F_PREFIX) != 0 {
-                        return cur;
-                    }
-                }
-                k::BindExpression => {
-                    if self.n.at(p + 4) != cur {
                         return cur;
                     }
                 }
@@ -542,7 +531,7 @@ pub(crate) fn should_flatten(parent_op: i32, node_op: i32) -> bool {
 }
 
 impl Quick {
-    /// The kind of a node in a list of statements: of a statement that was read by fast.ts, what the parser would have made of it.
+    /// The kind of a node in a list of statements: of a statement that was read by fast.rs, what the parser would have made of it.
     pub(crate) fn statement_kind(&self, n: i32) -> i32 {
         let head = self.n.at(n);
         return if (head & 0xff) >= k::Ready {
@@ -598,7 +587,7 @@ impl Quick {
         return full != end && self.is_next_line_empty_after(full);
     }
 }
-// needsParens(): 0 for the kinds that never need parentheses, 1 for those that have to be looked at.
+// needs_parens(): 0 for the kinds that never need parentheses, 1 for those that have to be looked at.
 pub(crate) static MAY_NEED_PARENS: [u8; 222] = [
     0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0,
     0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1,
@@ -608,7 +597,7 @@ pub(crate) static MAY_NEED_PARENS: [u8; 222] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
-// [kind << 8 | kind of the parent]: 0 where needsParens() is false whatever else is true of the two nodes (but see its
+// [kind << 8 | kind of the parent]: 0 where needs_parens() is false whatever else is true of the two nodes (but see its
 // callers for the three exceptions). Each row lists the parents that the rules for that kind mention.
 pub(crate) static PARENS_LOOK: [u8; 56832] = [
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
@@ -2388,7 +2377,7 @@ pub(crate) static PARENS_LOOK: [u8; 56832] = [
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 ];
-// printNode(): 0 for the kinds that, without comments, go straight to their printer.
+// print_node(): 0 for the kinds that, without comments, go straight to their printer.
 pub(crate) static NEEDS_CARE: [u8; 222] = [
     0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0,
     0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1,

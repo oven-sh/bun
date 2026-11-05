@@ -1,15 +1,38 @@
-use crate::{Quick, R};
+//! The languages, and how one is run inside another.
+//!
+//! A language is a function (start, end) that reads the window T[start, end) and appends its doc to the command stream.
+//! It registers itself here; nobody imports a language but index.rs. That keeps the import graph free of cycles
+//! although Markdown holds JavaScript that holds CSS that .. (see README.md on what a cycle costs under `bun compile`).
+//!
+//! What Prettier does for embedded code: walk the whole tree once more before printing, cut the code out as a new string,
+//! normalize a new set of options, parse, print to a doc, strip its last line break, walk that doc to put expressions in
+//! the place of placeholders, and keep it in a map until the printer comes by. All of it asynchronous.
+//!
+//! Here there is no separate pass and no separate result. The printer of the host, when it stands at the node, calls
+//! embed(). The window is narrowed to the code in place (text.rs), the guest's tree goes behind the host's in the same
+//! arena, and the guest's printer appends to the same stream, between what the host wrote before and what it writes after.
+//! If the code does not parse, the stream is cut back to where it was and the host prints the node as plain text.
+
+use crate::{Quick, R, why};
 
 pub(crate) struct Lang {
     /// options.parser: the language that is running.
     pub(crate) lang: i32,
+    /// 0 for the file itself. A language prints the line break at the end of its output only at depth 0.
+    pub(crate) depth: i32,
+    pub(crate) guest_column: i32,
     pub(crate) next_guest_column: i32,
+    /// Prettier's `__onHtmlRoot`: HTML as a guest says how many children its root has.
+    pub(crate) top_level_count: i32,
 }
 impl Lang {
     pub(crate) fn new() -> Self {
         Self {
             lang: 0,
+            depth: 0,
+            guest_column: 0,
             next_guest_column: -1,
+            top_level_count: 0,
         }
     }
 }
@@ -23,12 +46,10 @@ pub(crate) mod lang {
     pub(crate) const Flow: i32 = 2;
     /// also babel-ts, oxc-ts
     pub(crate) const TypeScript: i32 = 3;
-    pub(crate) const NgBinding: i32 = 10;
     pub(crate) const Scss: i32 = 20;
     pub(crate) const GraphQL: i32 = 21;
     /// also remark
     pub(crate) const Markdown: i32 = 22;
-    pub(crate) const Mdx: i32 = 23;
     pub(crate) const Html: i32 = 25;
     pub(crate) const Angular: i32 = 27;
     /// babel-flow, and babel for a file with the @flow pragma: Flow as Babel reads it
@@ -44,17 +65,35 @@ impl Quick {
     pub(crate) fn set_guest_column(&mut self, column: i32) {
         self.lang.next_guest_column = column;
     }
+
+    #[expect(dead_code, reason = "for code in other languages")]
+    pub(crate) fn set_top_level_count(&mut self, count: i32) {
+        self.lang.top_level_count = count;
+    }
 }
 
 impl Quick {
     /// Appends the document of T[start, end), read as `language`, without a line break at its end.
     /// Returns false, and leaves the document as it was, if that text has a syntax error or the language is not there.
+    ///
+    /// No other language writes into this document so far: the file is left to the long way.
     pub(crate) fn embed(&mut self, _language: i32, _start: i32, _end: i32) -> R<bool> {
-        // No other language is here: the long way prints the file.
-        Err(self.stop(crate::why::RARE))
+        if self.has_no_guests() {
+            return Ok(false);
+        }
+        Err(self.stop(why::GUEST))
     }
 
     pub(crate) fn is_registered(&self, _language: i32) -> bool {
-        true
+        !self.has_no_guests()
+    }
+
+    /// For tools: code in other languages is printed as if nobody knew these languages.
+    #[inline(always)]
+    fn has_no_guests(&self) -> bool {
+        #[cfg(feature = "stages")]
+        return self.no_guests;
+        #[cfg(not(feature = "stages"))]
+        false
     }
 }

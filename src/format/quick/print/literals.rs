@@ -1,21 +1,25 @@
+//! Strings, numbers and regular expressions. The common case prints a slice of the source; only a literal that has to
+//! change is written anew, into the generated part of the text buffer.
+
 use crate::ast::{F_ESCAPE, F_QUOTE, F_SLOW_TEXT};
 use crate::print::statics::{DQUOTE, SQUOTE};
-use crate::{Quick, Words};
+use crate::{Quick, R, Words};
 
 impl Quick {
     /// Prints T[start, end) with a literal line break for every "\n" in it.
-    pub(crate) fn slice_with_newlines(&mut self, start: i32, end: i32) {
+    pub(crate) fn slice_with_newlines(&mut self, start: i32, end: i32) -> R<()> {
         let mut from = start;
         let mut p = start;
         while p < end {
             if self.t.at(p) == 10 {
-                self.slice_any(from, p);
+                self.slice_any(from, p)?;
                 self.literalline();
                 from = p + 1;
             }
             p += 1;
         }
-        self.slice_any(from, end);
+        self.slice_any(from, end)?;
+        Ok(())
     }
 
     /// getPreferredQuote over T[start, end). Returns the quote character.
@@ -42,7 +46,7 @@ impl Quick {
     }
 
     /// makeString: writes the content between new quotes into the generated area and prints it.
-    pub(crate) fn requote(&mut self, start: i32, end: i32, quote: i32) {
+    pub(crate) fn requote(&mut self, start: i32, end: i32, quote: i32) -> R<()> {
         self.reserve_gen((end - start) * 2 + 2);
         let from = self.text.gen_pos;
         let other = if quote == 34 { 39 } else { 34 };
@@ -76,10 +80,11 @@ impl Quick {
         }
         self.gen_byte(quote);
         if has_newline {
-            self.slice_with_newlines(from, self.text.gen_pos);
+            self.slice_with_newlines(from, self.text.gen_pos)?;
         } else {
-            self.slice_any(from, self.text.gen_pos);
+            self.slice_any(from, self.text.gen_pos)?;
         }
+        Ok(())
     }
 
     /// printString for the literal T[start, end) whose node flags are `flags`.
@@ -89,51 +94,63 @@ impl Quick {
         end: i32,
         flags: i32,
         prefer_single: bool,
-    ) {
+    ) -> R<()> {
         let original = self.t.at(start);
         if (flags & (F_ESCAPE | F_QUOTE)) == 0 {
             let preferred = if prefer_single { 39 } else { 34 };
             if original == preferred {
                 if (flags & F_SLOW_TEXT) == 0 {
-                    self.slice(start, end);
+                    self.slice(start, end)?;
                 } else {
-                    self.slice_any(start, end);
+                    self.slice_any(start, end)?;
                 }
-                return;
+                return Ok(());
             }
-            // The other quotes go into the source itself, and the literal is one text. Not in a guest: its host may still give up and
-            // print the source as it stood.
-            self.t.put(start, preferred);
-            self.t.put(end - 1, preferred);
+            if self.lang.depth == 0 {
+                // The other quotes go into the source itself, and the literal is one text. Not in a guest: its host may still give up and
+                // print the source as it stood.
+                self.t.put(start, preferred);
+                self.t.put(end - 1, preferred);
+                if (flags & F_SLOW_TEXT) == 0 {
+                    self.slice(start, end)?;
+                } else {
+                    self.slice_any(start, end)?;
+                }
+                return Ok(());
+            }
+            self.text(if prefer_single { SQUOTE } else { DQUOTE })?;
             if (flags & F_SLOW_TEXT) == 0 {
-                self.slice(start, end);
+                self.slice(start + 1, end - 1)?;
             } else {
-                self.slice_any(start, end);
+                self.slice_any(start + 1, end - 1)?;
             }
-            return;
+            self.text(if prefer_single { SQUOTE } else { DQUOTE })?;
+            return Ok(());
         }
         let quote = self.preferred_quote(start + 1, end - 1, prefer_single);
         if quote == original {
             if (flags & F_ESCAPE) != 0 {
-                self.slice_with_newlines(start, end);
+                self.slice_with_newlines(start, end)?;
             } else {
-                self.slice_any(start, end);
+                self.slice_any(start, end)?;
             }
-            return;
+            return Ok(());
         }
-        self.requote(start + 1, end - 1, quote);
+        self.requote(start + 1, end - 1, quote)?;
+        Ok(())
     }
 
-    pub(crate) fn print_string_literal(&mut self, n: i32) {
+    pub(crate) fn print_string_literal(&mut self, n: i32) -> R<()> {
         self.print_string_range(
             self.n.at(n + 1),
             self.n.at(n + 2),
             self.n.at(n),
             self.options.single_quote,
-        );
+        )?;
+        Ok(())
     }
 
-    pub(crate) fn print_directive_literal(&mut self, n: i32) {
+    pub(crate) fn print_directive_literal(&mut self, n: i32) -> R<()> {
         let start = self.n.at(n + 1);
         let end = self.n.at(n + 2);
         let mut has_quote = false;
@@ -145,20 +162,21 @@ impl Quick {
             p += 1;
         }
         if has_quote {
-            self.slice_any(start, end);
-            return;
+            self.slice_any(start, end)?;
+            return Ok(());
         }
         self.text(if self.options.single_quote {
             SQUOTE
         } else {
             DQUOTE
-        });
-        self.slice_any(start + 1, end - 1);
+        })?;
+        self.slice_any(start + 1, end - 1)?;
         self.text(if self.options.single_quote {
             SQUOTE
         } else {
             DQUOTE
-        });
+        })?;
+        Ok(())
     }
 }
 pub(crate) fn print_literals_is_digit(c: i32) -> bool {
@@ -167,7 +185,7 @@ pub(crate) fn print_literals_is_digit(c: i32) -> bool {
 
 impl Quick {
     /// printNumber
-    pub(crate) fn print_number_range(&mut self, start: i32, end: i32) {
+    pub(crate) fn print_number_range(&mut self, start: i32, end: i32) -> R<()> {
         let len = end - start;
         let mut simple = true;
         let mut p = start;
@@ -179,8 +197,8 @@ impl Quick {
             p += 1;
         }
         if simple || len == 1 {
-            self.slice(start, end);
-            return;
+            self.slice(start, end)?;
+            return Ok(());
         }
         // work on a lower case copy, with room for a "0" in front
         self.reserve_gen(len + 2);
@@ -317,14 +335,16 @@ impl Quick {
             p += 1;
         }
         self.set_gen_pos(e);
-        self.slice(s, e);
+        self.slice(s, e)?;
+        Ok(())
     }
 
-    pub(crate) fn print_numeric_literal(&mut self, n: i32) {
-        self.print_number_range(self.n.at(n + 1), self.n.at(n + 2));
+    pub(crate) fn print_numeric_literal(&mut self, n: i32) -> R<()> {
+        self.print_number_range(self.n.at(n + 1), self.n.at(n + 2))?;
+        Ok(())
     }
 
-    pub(crate) fn print_big_int_literal(&mut self, n: i32) {
+    pub(crate) fn print_big_int_literal(&mut self, n: i32) -> R<()> {
         let start = self.n.at(n + 1);
         let end = self.n.at(n + 2);
         let mut lower = true;
@@ -337,8 +357,8 @@ impl Quick {
             p += 1;
         }
         if lower {
-            self.slice(start, end);
-            return;
+            self.slice(start, end)?;
+            return Ok(());
         }
         self.reserve_gen(end - start);
         let from = self.text.gen_pos;
@@ -348,10 +368,11 @@ impl Quick {
             self.gen_byte(if c >= 65 && c <= 90 { c | 32 } else { c });
             p += 1;
         }
-        self.slice(from, self.text.gen_pos);
+        self.slice(from, self.text.gen_pos)?;
+        Ok(())
     }
 
-    pub(crate) fn print_reg_exp_literal(&mut self, n: i32) {
+    pub(crate) fn print_reg_exp_literal(&mut self, n: i32) -> R<()> {
         let start = self.n.at(n + 1);
         let end = self.n.at(n + 2);
         let mut flags_start = end;
@@ -369,16 +390,16 @@ impl Quick {
         let slow = (self.n.at(n) & F_SLOW_TEXT) != 0;
         if sorted {
             if slow {
-                self.slice_any(start, end);
+                self.slice_any(start, end)?;
             } else {
-                self.slice(start, end);
+                self.slice(start, end)?;
             }
-            return;
+            return Ok(());
         }
         if slow {
-            self.slice_any(start, flags_start);
+            self.slice_any(start, flags_start)?;
         } else {
-            self.slice(start, flags_start);
+            self.slice(start, flags_start)?;
         }
         let count = end - flags_start;
         self.reserve_gen(count);
@@ -396,6 +417,7 @@ impl Quick {
             self.set_gen_pos(self.text.gen_pos + 1);
             p += 1;
         }
-        self.slice(from, self.text.gen_pos);
+        self.slice(from, self.text.gen_pos)?;
+        Ok(())
     }
 }

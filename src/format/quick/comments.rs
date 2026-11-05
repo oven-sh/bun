@@ -1,3 +1,10 @@
+//! Gives every comment to a node, the way Prettier does (src/main/comments/attach.js and
+//! src/language-js/comments/handle-comments.js).
+//!
+//! Comments come in source order, so the search for the enclosing node does not start at the root each time: the path to
+//! the previous comment stays on a stack, together with the sorted children of each node on it. A node's children are
+//! collected at most once, and only for nodes that hold a comment.
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     CL_EXTENDS, CL_IMPLEMENTS, CL_MIXINS, CL_TYPE_PARAMETERS, EXT_AT, F_DANGLING, F_EXT, F_IGNORED,
@@ -10,7 +17,7 @@ use crate::lexer::{
 use crate::{Quick, R, Words, why, zeros};
 
 pub(crate) struct Comments {
-    /// ---- node -> its comments: an open addressing table of [node, first, last]
+    // ---- node -> its comments: an open addressing table of [node, first, last]
     /// It is emptied once per file. Code that is embedded in code that is embedded in this language adds its nodes to it.
     /// Every file starts with a small table at the front of the array, so that emptying it does not cost what the largest file so far
     /// needed.
@@ -18,18 +25,18 @@ pub(crate) struct Comments {
     pub(crate) map_mask: i32,
     /// how many more nodes it can take
     pub(crate) map_room: i32,
-    /// How many comments were attached behind a node since resetComments(). Only those are printed as line suffixes.
+    /// How many comments were attached behind a node since reset_comments(). Only those are printed as line suffixes.
     pub(crate) trailing_count: i32,
-    /// ---- children
+    // ---- children
     pub(crate) ch: Vec<i32>,
     pub(crate) ch_pos: i32,
     /// the path: [node, first child, behind the last child]
     pub(crate) path: Vec<i32>,
     pub(crate) path_pos: i32,
-    /// ---- ties
+    // ---- ties
     pub(crate) ties: Vec<i32>,
     pub(crate) tie_count: i32,
-    /// ---- the handlers. They read these instead of taking a context object.
+    // ---- the handlers. They read these instead of taking a context object.
     pub(crate) h_comment: i32,
     pub(crate) h_start: i32,
     pub(crate) h_end: i32,
@@ -108,7 +115,7 @@ impl Quick {
         let used = ((self.comments.map_mask + 1) >> 2) - self.comments.map_room;
         let mut size = self.comments.map_mask + 1;
         while (size >> 2) < used + count {
-            size = size * 2;
+            size *= 2;
         }
         if size * 3 > (self.comments.map.len() as i32) {
             self.comments.map = zeros::<i32>(size * 3);
@@ -934,15 +941,6 @@ impl Quick {
                 || self.comments.h_enclosing_kind == k::ConditionalType)
             && self.comments.h_following != 0
         {
-            if self.options.experimental_ternaries
-                && self.comments.h_enclosing_kind == k::ConditionalExpression
-                && self.n.at(self.comments.h_enclosing + 6) == self.comments.h_following
-                && !(self.comments.h_is_block
-                    && !self.has_newline_in_range(self.comments.h_start, self.comments.h_end))
-            {
-                self.add_dangling(self.comments.h_enclosing, self.comments.h_comment);
-                return true;
-            }
             self.add_leading(self.comments.h_following, self.comments.h_comment);
             return true;
         }
@@ -1213,7 +1211,7 @@ impl Quick {
         if self.comments.h_following == 0 {
             return false;
         }
-        let mut body: i32;
+        let body: i32;
         if k == k::ForInStatement || k == k::ForOfStatement {
             body = self.n.at(self.comments.h_enclosing + 6);
         } else if k == k::ForStatement {
@@ -1323,25 +1321,12 @@ impl Quick {
         }
         return false;
     }
+}
+pub(crate) fn handle_nested_conditional_expression_comments() -> bool {
+    return false;
+}
 
-    pub(crate) fn handle_nested_conditional_expression_comments(&mut self) -> bool {
-        if !self.options.experimental_ternaries {
-            return false;
-        }
-        if self.comments.h_enclosing_kind != k::ConditionalExpression
-            && self.comments.h_enclosing_kind != k::ConditionalType
-        {
-            return false;
-        }
-        if self.comments.h_following_kind == k::ConditionalExpression
-            || self.comments.h_following_kind == k::ConditionalType
-        {
-            self.add_dangling(self.comments.h_enclosing, self.comments.h_comment);
-            return true;
-        }
-        return false;
-    }
-
+impl Quick {
     pub(crate) fn is_type_cast_comment_at(&self, comment: i32) -> bool {
         let at = comment * C_STRIDE;
         if (self.lexer.c.at(at + C_FLAGS) & CF_BLOCK) == 0 {
@@ -1358,7 +1343,7 @@ impl Quick {
                 if self.t.at(p) != 64 {
                     break 'c1;
                 }
-                let mut after: i32;
+                let after: i32;
                 if self.t.at(p + 1) == 116
                     && self.t.at(p + 2) == 121
                     && self.t.at(p + 3) == 112
@@ -1611,7 +1596,7 @@ impl Quick {
             || self.handle_assignment_pattern_comments()
             || self.handle_method_name_comments()
             || self.handle_labeled_statement_comments()
-            || self.handle_nested_conditional_expression_comments()
+            || handle_nested_conditional_expression_comments()
             || self.handle_comments_in_destructuring_pattern()
             || self.handle_ts_mapped_type_comments()
             || self.handle_binary_cast_expression_comment()
@@ -1692,7 +1677,7 @@ impl Quick {
         return saw_newline;
     }
 
-    /// mergeNestledJsdocComments: a doc comment that starts where another ends is one comment with it.
+    /// merge_nestled_jsdoc_comments: a doc comment that starts where another ends is one comment with it.
     pub(crate) fn merge_nestled_jsdoc_comments(&mut self) {
         let mut i = self.lexer.c_count - 2;
         while i >= self.lexer.c_base {

@@ -1,3 +1,17 @@
+//! One byte buffer holds every text the formatter can print:
+//!
+//!   [0, SRC_BASE)          fixed texts: keywords, punctuation, spaces (filled once, at start-up)
+//!   [SRC_BASE, fileEnd)    the file, UTF-8
+//!   [fileEnd, .. + PAD)    zeros
+//!   [.., gen_pos)           texts made while formatting: requoted strings, normalized numbers, sources with placeholders
+//!
+//! So "a text" is (offset, length) everywhere, and every position in a tree is an offset into this buffer.
+//!
+//! The window [src_start, src_end) is what the running language takes for its whole input. At first that is the file. For
+//! code in another language inside it (a <style>, a fenced block, an attribute) the window is narrowed to that range, in
+//! place: enter_source() puts a 0 before and behind the range and leave_source() puts the two bytes back. A lexer stops at
+//! a 0 and a scan to the left does too, so neither needs an "end of input" test, and nothing is copied.
+
 use crate::{Quick, Stop, Words, why, zeros};
 
 pub(crate) struct Text {
@@ -21,6 +35,12 @@ impl Text {
 
 pub(crate) const SRC_BASE: i32 = 1 << 15;
 pub(crate) const PAD: i32 = 64;
+impl Quick {
+    /// Something that this way does not print.
+    pub(crate) fn text_refuse(&self) -> Stop {
+        return self.stop(why::RARE);
+    }
+}
 // A buffer that is too small gives way to one that is much larger: memory that is not written to costs nothing, and what was written to stays with the
 // process until its end (nothing gives it back), where the system takes 0.2 us to take back each page of it, one thread for all.
 pub(crate) fn much_larger(size: i32) -> i32 {
@@ -59,7 +79,7 @@ impl Quick {
     }
 }
 // ---- windows
-/// [srcStart, srcEnd, the byte before the new window, the byte behind it]
+/// [src_start, src_end, the byte before the new window, the byte behind it]
 pub(crate) static WS: [i32; 64] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -81,7 +101,7 @@ impl Quick {
     }
 
     // ---- generated texts
-    /// After this, `bytes` bytes can be written at genPos. It may replace T: read T again.
+    /// After this, `bytes` bytes can be written at gen_pos. It may replace T: read T again.
     pub(crate) fn reserve_gen(&mut self, bytes: i32) {
         if self.text.gen_pos + bytes + PAD + 8 > self.text.t_cap {
             self.grow_text(self.text.gen_pos + bytes + PAD + 8, self.text.gen_pos);
@@ -121,7 +141,7 @@ impl Quick {
     }
 
     /// For a source that has to be put together (a template literal with placeholders, a block without its indentation):
-    /// call this, write the bytes with genByte() .. and pass [the result, genPos) to enterSource(). Leaves a byte free in
+    /// call this, write the bytes with gen_byte() .. and pass [the result, gen_pos) to enter_source(). Leaves a byte free in
     /// front for the 0.
     pub(crate) fn gen_source_start(&mut self, expected_bytes: i32) -> i32 {
         self.reserve_gen(expected_bytes + 1);
@@ -157,8 +177,9 @@ impl Quick {
 
 impl Quick {
     /// A syntax error at `at`.
-    pub(crate) fn fail(&mut self, at: i32) -> Stop {
-        self.failed_at = at - self.text.src_start;
+    #[cold]
+    pub(crate) fn fail(&self, at: i32) -> Stop {
+        self.failed_at.set(at - self.text.src_start);
         self.stop(why::SYNTAX)
     }
 }

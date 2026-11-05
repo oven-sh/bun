@@ -1,3 +1,5 @@
+//! Objects, their properties and keys (object.js, property.js, key.js).
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     EB_BIGINT, EB_BOOLEAN, EB_NONE, EB_NUMBER, EB_STRING, F_COMPUTED, F_ESCAPE, F_EXT, F_INEXACT,
@@ -92,7 +94,7 @@ impl Quick {
                 continue;
             }
             // only the basic multilingual plane has ES5 identifier characters
-            let mut cp: i32;
+            let cp: i32;
             let first = p == start;
             if c < 0xe0 {
                 cp = ((c & 0x1f) << 6) | (self.t.at(p + 1) & 0x3f);
@@ -119,11 +121,11 @@ impl Quick {
         return true;
     }
 
-    pub(crate) fn round_trips_as_number(&mut self, _start: i32, _end: i32) -> R<bool> {
+    pub(crate) fn round_trips_as_number(&self, _start: i32, _end: i32) -> R<bool> {
         Err(self.stop(why::RARE))
     }
 
-    pub(crate) fn is_key_safe_to_unquote(&mut self, member: i32) -> R<bool> {
+    pub(crate) fn is_key_safe_to_unquote(&self, member: i32) -> R<bool> {
         let key = self.n.at(member + 4);
         if (self.n.at(key) & 0xff) != k::StringLiteral || (self.n.at(key) & F_ESCAPE) != 0 {
             return Ok(false);
@@ -151,7 +153,7 @@ impl Quick {
             && self.round_trips_as_number(start, end)?);
     }
 
-    pub(crate) fn is_key_safe_to_quote(&mut self, member: i32) -> R<bool> {
+    pub(crate) fn is_key_safe_to_quote(&self, member: i32) -> R<bool> {
         let key = self.n.at(member + 4);
         let k = self.n.at(key) & 0xff;
         if k == k::Identifier {
@@ -161,10 +163,10 @@ impl Quick {
             return Ok(false);
         }
         // String(value) === printNumber(raw), and that is a simple number. A rare question, so strings will do.
-        return Ok(self.number_is_printed_as_its_value(self.n.at(key + 1), self.n.at(key + 2))?);
+        return self.number_is_printed_as_its_value(self.n.at(key + 1), self.n.at(key + 2));
     }
 
-    pub(crate) fn number_is_printed_as_its_value(&mut self, _start: i32, _end: i32) -> R<bool> {
+    pub(crate) fn number_is_printed_as_its_value(&self, _start: i32, _end: i32) -> R<bool> {
         Err(self.stop(why::RARE))
     }
 
@@ -224,9 +226,9 @@ impl Quick {
     pub(crate) fn print_key(&mut self, member: i32) -> R<()> {
         let key = self.n.at(member + 4);
         if (self.n.at(member) & F_COMPUTED) != 0 {
-            self.text(LBRACKET);
+            self.text(LBRACKET)?;
             self.print(key)?;
-            self.text(RBRACKET);
+            self.text(RBRACKET)?;
             return Ok(());
         }
         let k = self.n.at(key) & 0xff;
@@ -236,17 +238,17 @@ impl Quick {
                     && !self.has_siblings_require_quoted(member)?))
                 && self.is_key_safe_to_unquote(member)?
             {
-                self.print_leading_comments(key);
+                self.print_leading_comments(key)?;
                 let start = self.n.at(key + 1) + 1;
                 let end = self.n.at(key + 2) - 1;
                 if print_object_is_digit(self.t.at(start)) {
-                    self.print_number_range(start, end);
+                    self.print_number_range(start, end)?;
                 } else if (self.n.at(key) & F_SLOW_TEXT) != 0 {
-                    self.slice_any(start, end);
+                    self.slice_any(start, end)?;
                 } else {
-                    self.slice(start, end);
+                    self.slice(start, end)?;
                 }
-                self.print_trailing_comments(key);
+                self.print_trailing_comments(key)?;
                 return Ok(());
             }
         } else if (k == k::Identifier || k == k::NumericLiteral)
@@ -254,20 +256,20 @@ impl Quick {
                 && self.has_siblings_require_quoted(member)?)
             && self.is_key_safe_to_quote(member)?
         {
-            self.print_leading_comments(key);
+            self.print_leading_comments(key)?;
             let quote = if self.options.single_quote {
                 SQUOTE
             } else {
                 DQUOTE
             };
-            self.text(quote);
+            self.text(quote)?;
             if k == k::NumericLiteral {
-                self.print_number_range(self.n.at(key + 1), self.n.at(key + 2));
+                self.print_number_range(self.n.at(key + 1), self.n.at(key + 2))?;
             } else {
-                self.print_name(key);
+                self.print_name(key)?;
             }
-            self.text(quote);
-            self.print_trailing_comments(key);
+            self.text(quote)?;
+            self.print_trailing_comments(key)?;
             return Ok(());
         }
         self.print(key)?;
@@ -286,17 +288,17 @@ impl Quick {
     /// `{ members }`. `braceStart` is where the `{` stands in the source.
     pub(crate) fn print_members(
         &mut self,
-        n: i32,
+        _n: i32,
         list: i32,
         should_break: bool,
         with_group: bool,
     ) -> R<()> {
         let count = self.n.at(list);
         let g = if with_group { self.group_open() } else { 0 };
-        self.text(LBRACE);
+        self.text(LBRACE)?;
         self.indent_open();
         if self.options.bracket_spacing {
-            self.line();
+            self.line()?;
         } else {
             self.softline();
         }
@@ -308,8 +310,8 @@ impl Quick {
             if i == count {
                 break;
             }
-            self.text(COMMA);
-            self.line();
+            self.text(COMMA)?;
+            self.line()?;
             if self.is_next_line_empty(member) {
                 self.hardline();
             }
@@ -318,28 +320,29 @@ impl Quick {
         if self.options.trailing_comma != TRAILING_COMMA_NONE
             && (self.n.at(self.n.at(list + count)) & 0xff) != k::RestElement
         {
-            self.if_break_text(COMMA, 0, 0);
+            self.if_break_text(COMMA, 0, 0)?;
         }
         if self.options.bracket_spacing {
-            self.dedent_line();
+            self.dedent_line()?;
         } else {
             self.dedent_softline();
         }
-        self.text(RBRACE);
+        self.text(RBRACE)?;
         if with_group {
             self.group_close_with(g, should_break, 0);
         }
         Ok(())
     }
 
+    /// The body of an enum of Flow: `of string {A, B, ...}`.
     pub(crate) fn print_flow_enum_body(&mut self, n: i32) -> R<()> {
         let list = self.n.at(n + 4);
         let count = self.n.at(list);
         let g = self.group_open();
-        self.text(LBRACE);
+        self.text(LBRACE)?;
         self.indent_open();
         if self.options.bracket_spacing {
-            self.line();
+            self.line()?;
         } else {
             self.softline();
         }
@@ -347,31 +350,31 @@ impl Quick {
         while i <= count {
             let member = self.n.at(list + i);
             self.print(member)?;
-            self.text(COMMA);
-            self.line();
+            self.text(COMMA)?;
+            self.line()?;
             if self.is_next_line_empty(member) {
                 self.hardline();
             }
             i += 1;
         }
         if self.has_dangling_comment(n) {
-            self.print_dangling_comments(n);
+            self.print_dangling_comments(n)?;
             if self.has_line_comment(n)
                 || self.has_newline(self.comment_end(self.last_dangling_comment(n)))
             {
                 self.hardline();
             } else {
-                self.line();
+                self.line()?;
             }
         }
-        self.text(ELLIPSIS);
+        self.text(ELLIPSIS)?;
         self.indent_close();
         if self.options.bracket_spacing {
-            self.line();
+            self.line()?;
         } else {
             self.softline();
         }
-        self.text(RBRACE);
+        self.text(RBRACE)?;
         self.group_close_with(g, true, 0);
         Ok(())
     }
@@ -382,7 +385,7 @@ impl Quick {
         if (self.n.at(n) & 0xff) == k::EnumBody {
             let explicit_type = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32;
             if explicit_type != EB_NONE {
-                self.text(OF_);
+                self.text(OF_)?;
                 self.text(if explicit_type == EB_BOOLEAN {
                     BOOLEAN
                 } else {
@@ -399,8 +402,8 @@ impl Quick {
                             }
                         }
                     }
-                });
-                self.text(SPACE);
+                })?;
+                self.text(SPACE)?;
             }
             if (self.n.at(n) & F_INEXACT) != 0 {
                 self.print_flow_enum_body(n)?;
@@ -409,9 +412,9 @@ impl Quick {
         }
         if count == 0 {
             let g = self.group_open();
-            self.text(LBRACE);
-            self.print_dangling_comments_in_list(n);
-            self.text(RBRACE);
+            self.text(LBRACE)?;
+            self.print_dangling_comments_in_list(n)?;
+            self.text(RBRACE)?;
             if (self.n.at(n) & (F_EXT | F_OPTIONAL)) != 0 {
                 self.print_binding_suffix(n, self.n.at(n) & 0xff)?;
             }

@@ -6,7 +6,7 @@
 //! Here is what it is not asked about at all: the options and the kinds of text that it does not know.
 
 use crate::options::*;
-use crate::text::{BOM, ends_with_ignore_ascii_case};
+use crate::text::ends_with_ignore_ascii_case;
 use bun_core::strings;
 use bun_format_quick as quick;
 
@@ -36,21 +36,24 @@ pub enum Reason {
     /// A comment may say that something stays as it is written.
     IgnoreComment,
     SyntaxError,
-    /// Something rare that is left to the long way, such as a template in another language.
+    /// Something rare that is left to the long way.
     Rare,
+    /// A template that may be in another language.
+    Guest,
     Stack,
     TooLong,
     Other,
 }
 
 impl Reason {
-    pub const ALL: [Reason; 9] = [
+    pub const ALL: [Reason; 10] = [
         Reason::Options,
         Reason::Language,
         Reason::InMarkdown,
         Reason::IgnoreComment,
         Reason::SyntaxError,
         Reason::Rare,
+        Reason::Guest,
         Reason::Stack,
         Reason::TooLong,
         Reason::Other,
@@ -127,7 +130,7 @@ fn options_for(options: &FormatOptions, text: &[u8]) -> Option<quick::Options> {
         embedded_language_formatting,
         // For what is in a template in another language, which is refused.
         prose_wrap: _,
-        html_whitespace_sensitivity: _,
+        html_whitespace_sensitivity,
         vue_indent_script_and_style: _,
         svelte: _,
         embedded_html: _,
@@ -205,10 +208,11 @@ fn options_for(options: &FormatOptions, text: &[u8]) -> Option<quick::Options> {
             LineEnding::Cr => quick::EndOfLine::Cr,
         },
         single_attribute_per_line: *attribute_position == AttributePosition::Multiline,
-        experimental_ternaries: false,
         operator_position_start: !experimental_operator_position.is_end(),
         embedded_language_formatting_auto: *embedded_language_formatting
             == EmbeddedLanguageFormatting::Auto,
+        html_whitespace_sensitivity_ignore: *html_whitespace_sensitivity
+            == HtmlWhitespaceSensitivity::Ignore,
         no_short_cuts: false,
     })
 }
@@ -260,7 +264,7 @@ fn may_differ_in_markdown(code: &Code<'_>) -> bool {
         || (can_have_jsx && strings::contains_char(text, b'<'))
 }
 
-/// Appends `code`, formatted, to `out`, which is left as it is if the text is refused.
+/// Puts `code`, formatted, in the place of what `out` held. If it's refused, `out` is empty.
 pub fn format(
     code: Code<'_>,
     options: &FormatOptions,
@@ -282,26 +286,22 @@ pub fn format(
         return Err(scratch.refuse(Reason::IgnoreComment, code.text));
     }
     let quick = scratch.quick.get_or_insert_default();
-    if quick
-        .format(code.text, language, code.path, &quick_options)
-        .is_err()
-    {
+    let dialect = quick::Dialect::of_name(language, code.path);
+    if quick::format(code.text, dialect, &quick_options, quick, out).is_err() {
         let reason = match quick.why() {
             1 => Reason::SyntaxError,
             5 => Reason::TooLong,
             6 => Reason::Stack,
             7 => Reason::Rare,
+            8 => Reason::Guest,
             _ => Reason::Other,
         };
         return Err(scratch.refuse(reason, code.text));
     }
-    let (printed, mark) = (quick.output(), if quick.had_bom() { BOM } else { b"" });
-    if crate::is_too_long(printed.len() + mark.len()) {
+    if crate::is_too_long(out.len()) {
+        out.clear();
         return Err(scratch.refuse(Reason::TooLong, code.text));
     }
-    out.reserve(printed.len() + mark.len());
-    out.extend_from_slice(mark);
-    out.extend_from_slice(printed);
     if let Some(counts) = &mut scratch.counts {
         counts.printed.add(code.text);
     }

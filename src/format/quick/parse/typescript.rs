@@ -1,3 +1,6 @@
+//! TypeScript: types, declarations, class members with modifiers, and the expressions that hold types. The grammar follows
+//! the parser of TypeScript itself, the tree is the one typescript-estree builds from it (as far as Prettier looks at it).
+
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     F_ACCESSOR, F_ASSERTS, F_ASYNC, F_COMPUTED, F_CONST, F_DEFINITE, F_ESCAPE, F_EXTRA,
@@ -121,7 +124,7 @@ impl Quick {
     /// `: type` or `: x is type` behind parameters.
     pub(crate) fn ts_parse_return_type(&mut self) -> R<i32> {
         if self.parse.typed == FLOW {
-            return Ok(self.flow_parse_return_type(false)?);
+            return self.flow_parse_return_type(false);
         }
         let start = self.lexer.tok_start;
         self.expect(tk::Colon)?;
@@ -132,9 +135,9 @@ impl Quick {
     /// The same behind the parameters of an arrow function.
     pub(crate) fn ts_parse_arrow_return_type(&mut self) -> R<i32> {
         if self.parse.typed == FLOW {
-            return Ok(self.flow_parse_return_type(true)?);
+            return self.flow_parse_return_type(true);
         }
-        return Ok(self.ts_parse_return_type()?);
+        return self.ts_parse_return_type();
     }
 
     pub(crate) fn parse_type_or_type_predicate(&mut self) -> R<i32> {
@@ -186,7 +189,7 @@ impl Quick {
 
     pub(crate) fn parse_type_parameter(&mut self) -> R<i32> {
         if self.parse.typed == FLOW {
-            return Ok(self.flow_parse_type_parameter()?);
+            return self.flow_parse_type_parameter();
         }
         let start = self.lexer.tok_start;
         let mut flags: i32 = 0;
@@ -313,7 +316,7 @@ impl Quick {
             return Ok(true);
         }
         if self.lexer.tok == tk::ParenL {
-            return Ok(self.is_unambiguously_start_of_function_type()?);
+            return self.is_unambiguously_start_of_function_type();
         }
         if self.word() == w::Abstract {
             self.save();
@@ -360,11 +363,12 @@ impl Quick {
     }
 
     pub(crate) fn ts_parse_type(&mut self) -> R<i32> {
+        self.stack()?;
         if self.parse.typed == FLOW {
-            return Ok(self.flow_parse_type()?);
+            return self.flow_parse_type();
         }
         if self.is_start_of_function_or_constructor_type()? {
-            return Ok(self.parse_function_or_constructor_type()?);
+            return self.parse_function_or_constructor_type();
         }
         let start = self.lexer.tok_start;
         let type_ = self.parse_union_or_intersection(tk::BitOr)?;
@@ -396,7 +400,7 @@ impl Quick {
     pub(crate) fn parse_constituent(&mut self, operator: i32) -> R<i32> {
         // a function type here is an error that TypeScript recovers from
         if self.is_start_of_function_or_constructor_type()? {
-            return Ok(self.parse_function_or_constructor_type()?);
+            return self.parse_function_or_constructor_type();
         }
         return Ok(if operator == tk::BitOr {
             self.parse_union_or_intersection(tk::BitAnd)?
@@ -406,6 +410,7 @@ impl Quick {
     }
 
     pub(crate) fn parse_union_or_intersection(&mut self, operator: i32) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         let has_leading_operator = self.eat(operator)?;
         let first = if has_leading_operator {
@@ -462,7 +467,7 @@ impl Quick {
             })();
             let v0 = match v0 {
                 Err(Stop) => (|| -> R<Option<i32>> {
-                    if !(self.why == why::SYNTAX) {
+                    if !(self.why.get() == why::SYNTAX) {
                         return Err(Stop);
                     }
                     constraint = 0;
@@ -495,6 +500,7 @@ impl Quick {
     }
 
     pub(crate) fn parse_type_operator_or_higher(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         if self.lexer.tok == tk::Name {
             let w = self.word();
@@ -527,7 +533,7 @@ impl Quick {
                 let is_infer = self.lexer.tok == tk::Name;
                 self.restore();
                 if is_infer {
-                    return Ok(self.parse_infer_type()?);
+                    return self.parse_infer_type();
                 }
             }
         }
@@ -625,12 +631,12 @@ impl Quick {
         self.next()?;
         if self.lexer.tok == tk::Dot {
             self.restore();
-            return Ok(self.parse_type_reference()?);
+            return self.parse_type_reference();
         }
         return Ok(self.node0(k::KeywordType | (which << SUB_SHIFT), start, end));
     }
 
-    /// `a.b.c`; with `allowThis`, `this.a`.
+    /// `a.b.c`; with `allow_this`, `this.a`.
     pub(crate) fn parse_entity_name(&mut self, allow_this: bool) -> R<i32> {
         let start = self.lexer.tok_start;
         let mut name = if allow_this && self.lexer.tok == tk::This {
@@ -828,7 +834,7 @@ impl Quick {
     pub(crate) fn parse_tuple_element(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
         let is_rest = self.eat(tk::Ellipsis)?;
-        let mut element: i32;
+        let element: i32;
         if self.is_tuple_element_name()? {
             let label_start = self.lexer.tok_start;
             let label = self.parse_ident_name()?;
@@ -917,39 +923,40 @@ impl Quick {
     }
 
     pub(crate) fn parse_non_array_type(&mut self) -> R<i32> {
+        self.stack()?;
         let start = self.lexer.tok_start;
         match self.lexer.tok {
             tk::Name => {
                 match self.word() {
                     w::Any => {
-                        return Ok(self.keyword_type(type_keyword::Any)?);
+                        return self.keyword_type(type_keyword::Any);
                     }
                     w::Unknown => {
-                        return Ok(self.keyword_type(type_keyword::Unknown)?);
+                        return self.keyword_type(type_keyword::Unknown);
                     }
                     w::String => {
-                        return Ok(self.keyword_type(type_keyword::String)?);
+                        return self.keyword_type(type_keyword::String);
                     }
                     w::Number => {
-                        return Ok(self.keyword_type(type_keyword::Number)?);
+                        return self.keyword_type(type_keyword::Number);
                     }
                     w::Bigint => {
-                        return Ok(self.keyword_type(type_keyword::BigInt)?);
+                        return self.keyword_type(type_keyword::BigInt);
                     }
                     w::Symbol => {
-                        return Ok(self.keyword_type(type_keyword::Symbol)?);
+                        return self.keyword_type(type_keyword::Symbol);
                     }
                     w::Boolean => {
-                        return Ok(self.keyword_type(type_keyword::Boolean)?);
+                        return self.keyword_type(type_keyword::Boolean);
                     }
                     w::Undefined => {
-                        return Ok(self.keyword_type(type_keyword::Undefined)?);
+                        return self.keyword_type(type_keyword::Undefined);
                     }
                     w::Never => {
-                        return Ok(self.keyword_type(type_keyword::Never)?);
+                        return self.keyword_type(type_keyword::Never);
                     }
                     w::Object => {
-                        return Ok(self.keyword_type(type_keyword::Object)?);
+                        return self.keyword_type(type_keyword::Object);
                     }
                     w::Asserts => {
                         self.save();
@@ -959,12 +966,12 @@ impl Quick {
                             && self.lexer.tok_nl == 0;
                         self.restore();
                         if is_predicate {
-                            return Ok(self.parse_asserts_type_predicate()?);
+                            return self.parse_asserts_type_predicate();
                         }
                     }
                     _ => {}
                 }
-                return Ok(self.parse_type_reference()?);
+                return self.parse_type_reference();
             }
             tk::String => {
                 let v0 = self.leaf(k::StringLiteral)?;
@@ -1030,16 +1037,16 @@ impl Quick {
                 return Ok(type_);
             }
             tk::Typeof => {
-                return Ok(self.parse_type_query()?);
+                return self.parse_type_query();
             }
             tk::BraceL => {
                 if self.is_start_of_mapped_type()? {
-                    return Ok(self.parse_mapped_type()?);
+                    return self.parse_mapped_type();
                 }
-                return Ok(self.parse_type_members(k::TypeLiteral)?);
+                return self.parse_type_members(k::TypeLiteral);
             }
             tk::BracketL => {
-                return Ok(self.parse_tuple_type()?);
+                return self.parse_tuple_type();
             }
             tk::ParenL => {
                 self.next()?;
@@ -1048,7 +1055,7 @@ impl Quick {
                 return Ok(type_);
             }
             tk::Import => {
-                return Ok(self.parse_import_type()?);
+                return self.parse_import_type();
             }
             // the types of JSDoc, which TypeScript parses to complain about them
             tk::Mul => {
@@ -1103,7 +1110,7 @@ impl Quick {
             _ => {}
         }
         if self.is_word() {
-            return Ok(self.parse_type_reference()?);
+            return self.parse_type_reference();
         }
         return Err(self.unexpected());
     }
@@ -1211,13 +1218,13 @@ impl Quick {
     pub(crate) fn parse_type_member(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
         if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
-            return Ok(self.parse_signature(k::CallSignature, start, 0)?);
+            return self.parse_signature(k::CallSignature, start, 0);
         }
         if self.lexer.tok == tk::New {
             self.save();
             self.next()?;
             if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
-                return Ok(self.parse_signature(k::ConstructSignature, start, 0)?);
+                return self.parse_signature(k::ConstructSignature, start, 0);
             }
             self.restore();
         }
@@ -1245,7 +1252,7 @@ impl Quick {
             }
         }
         if self.lexer.tok == tk::BracketL && self.is_index_signature()? {
-            return Ok(self.parse_index_signature(start, head)?);
+            return self.parse_index_signature(start, head);
         }
         if self.lexer.tok == tk::BracketL {
             head |= F_COMPUTED;
@@ -1255,11 +1262,11 @@ impl Quick {
             head |= F_OPTIONAL;
         }
         if self.lexer.tok == tk::ParenL || self.lexer.tok == tk::Lt {
-            return Ok(self.parse_signature(
+            return self.parse_signature(
                 k::MethodSignature | head | (method << SUB_SHIFT),
                 start,
                 key,
-            )?);
+            );
         }
         let annotation = if self.lexer.tok == tk::Colon {
             self.ts_parse_type_annotation()?
@@ -1368,7 +1375,7 @@ impl Quick {
             return Ok(0);
         }
         self.next()?;
-        return Ok(self.parse_heritage_list()?);
+        return self.parse_heritage_list();
     }
 
     pub(crate) fn parse_heritage_list(&mut self) -> R<i32> {
@@ -1430,7 +1437,7 @@ impl Quick {
                 self.save();
                 self.next()?;
                 if self.lexer.tok == tk::BraceL {
-                    return Ok(self.parse_static_block_in_class(start)?);
+                    return self.parse_static_block_in_class(start);
                 }
                 self.restore();
             }
@@ -1485,12 +1492,12 @@ impl Quick {
             {
                 method = M_CONSTRUCTOR;
             }
-            return Ok(self.parse_method_rest(
+            return self.parse_method_rest(
                 k::ClassMethod | head | (method << SUB_SHIFT),
                 start,
                 key,
                 decorators,
-            )?);
+            );
         }
         // `*`, `async`, `get` and `set` announce a method
         if (head & (F_GENERATOR | F_ASYNC)) != 0 || method != M_METHOD {
@@ -1532,7 +1539,7 @@ impl Quick {
 
     // ------------------------------------------------------------------------------------------------------ declarations
     pub(crate) fn ts_parse_interface_body(&mut self) -> R<i32> {
-        return Ok(self.parse_type_members(k::InterfaceBody)?);
+        return self.parse_type_members(k::InterfaceBody);
     }
 
     pub(crate) fn parse_interface(&mut self, start: i32, modifiers: i32) -> R<i32> {
@@ -1666,7 +1673,7 @@ impl Quick {
 
     /// The current token is `namespace`, `module` or `global`.
     pub(crate) fn parse_module(&mut self, start: i32, modifiers: i32, kind: i32) -> R<i32> {
-        let mut id: i32;
+        let id: i32;
         if kind == MK_GLOBAL {
             id = self.identifier()?;
         } else {
@@ -1716,15 +1723,16 @@ impl Quick {
     /// A declaration that only TypeScript has, if one starts at the current token (a name, or `const`); else 0.
     /// `start` is where the statement starts: at the token, or at decorators before it.
     pub(crate) fn ts_parse_statement(&mut self, start: i32) -> R<i32> {
-        return Ok(self.parse_declaration(start, 0)?);
+        return self.parse_declaration(start, 0);
     }
 
     pub(crate) fn parse_declaration(&mut self, start: i32, modifiers: i32) -> R<i32> {
+        self.stack()?;
         if self.lexer.tok == tk::Const {
             self.save();
             self.next()?;
             if self.is_kw(kw::Enum) {
-                return Ok(self.parse_enum(start, F_CONST | (modifiers << SUB_SHIFT))?);
+                return self.parse_enum(start, F_CONST | (modifiers << SUB_SHIFT));
             }
             self.restore();
             if modifiers == 0 {
@@ -1749,20 +1757,20 @@ impl Quick {
                     return Ok(declaration);
                 }
                 tk::Function => {
-                    return Ok(self.parse_function(
+                    return self.parse_function(
                         start,
                         k::FunctionDeclaration,
                         modifiers << SUB_SHIFT,
-                    )?);
+                    );
                 }
                 tk::Class => {
                     let v0 = k::ClassDeclaration | (modifiers << SUB_SHIFT);
                     let v1 = self.take_pending_decorators();
-                    return Ok(self.parse_class(start, v0, v1)?);
+                    return self.parse_class(start, v0, v1);
                 }
                 tk::Import => {
                     if self.peek()? == tk::String {
-                        return Ok(self.parse_import(start)?);
+                        return self.parse_import(start);
                     }
                 }
                 _ => {}
@@ -1777,44 +1785,44 @@ impl Quick {
             }
             if self.is_kw(kw::Async) && self.peek_on_same_line()? == tk::Function {
                 self.next()?;
-                return Ok(self.parse_function(
+                return self.parse_function(
                     start,
                     k::FunctionDeclaration,
                     F_ASYNC | (modifiers << SUB_SHIFT),
-                )?);
+                );
             }
         }
         's1: {
             match self.word() {
                 w::Type => {
                     if self.peek_on_same_line()? == tk::Name {
-                        return Ok(self.parse_type_alias(start, modifiers)?);
+                        return self.parse_type_alias(start, modifiers);
                     }
                 }
                 w::Interface => {
                     if self.peek_on_same_line()? == tk::Name {
-                        return Ok(self.parse_interface(start, modifiers)?);
+                        return self.parse_interface(start, modifiers);
                     }
                 }
                 w::Enum => {
                     if self.peek()? == tk::Name {
-                        return Ok(self.parse_enum(start, modifiers << SUB_SHIFT)?);
+                        return self.parse_enum(start, modifiers << SUB_SHIFT);
                     }
                 }
                 w::Namespace => {
                     if self.peek_on_same_line()? == tk::Name {
-                        return Ok(self.parse_module(start, modifiers, MK_NAMESPACE)?);
+                        return self.parse_module(start, modifiers, MK_NAMESPACE);
                     }
                 }
                 w::Module => {
                     let after = self.peek_on_same_line()?;
                     if after == tk::Name || after == tk::String {
-                        return Ok(self.parse_module(start, modifiers, MK_MODULE)?);
+                        return self.parse_module(start, modifiers, MK_MODULE);
                     }
                 }
                 w::Global => {
                     if self.peek_on_same_line()? == tk::BraceL {
-                        return Ok(self.parse_module(start, modifiers, MK_GLOBAL)?);
+                        return self.parse_module(start, modifiers, MK_GLOBAL);
                     }
                 }
                 w::Abstract => {
@@ -1822,7 +1830,7 @@ impl Quick {
                         self.next()?;
                         let v2 = k::ClassDeclaration | ((modifiers | MOD_ABSTRACT) << SUB_SHIFT);
                         let v3 = self.take_pending_decorators();
-                        return Ok(self.parse_class(start, v2, v3)?);
+                        return self.parse_class(start, v2, v3);
                     }
                     if (modifiers & MOD_ABSTRACT) == 0 && self.peek_on_same_line()? == tk::Name {
                         // abstract declare class
@@ -1867,7 +1875,7 @@ impl Quick {
     pub(crate) fn ts_parse_import_equals(&mut self, start: i32, import_kind: i32) -> R<i32> {
         let id = self.identifier()?;
         self.expect(tk::Eq)?;
-        let mut reference: i32;
+        let reference: i32;
         if self.word() == w::Require && self.peek()? == tk::ParenL {
             let reference_start = self.lexer.tok_start;
             self.next()?;
@@ -1914,7 +1922,7 @@ impl Quick {
             }
             if self.lexer.tok == tk::Name && self.peek()? == tk::Eq {
                 self.unmark(m);
-                return Ok(self.ts_parse_import_equals(import_start, import_kind)?);
+                return self.ts_parse_import_equals(import_start, import_kind);
             }
             self.rewind(m);
             return Ok(0);
@@ -1945,14 +1953,14 @@ impl Quick {
             self.restore();
         }
         // a class starts at its decorators, also if they stand before `export`
-        return Ok(self.parse_declaration(
+        return self.parse_declaration(
             if self.parse.pending_decorators != 0 {
                 start
             } else {
                 self.lexer.tok_start
             },
             0,
-        )?);
+        );
     }
 
     /// `type a`, `type a as b`, and a specifier that is called `type`. The current token is `type`.
@@ -2052,7 +2060,7 @@ impl Quick {
             k::SatisfiesExpression
         };
         self.next()?;
-        let mut type_: i32;
+        let type_: i32;
         if self.lexer.tok == tk::Const && kind == k::AsExpression {
             if self.parse.typed == FLOW {
                 // AsConstExpression: there is no node for the `const`
@@ -2075,7 +2083,7 @@ impl Quick {
                 self.ts_parse_type()?
             };
         }
-        // a name in this place can need parentheses: see needsParens()
+        // a name in this place can need parentheses: see needs_parens()
         if (self.n.at(left) & 0xff) == k::Identifier {
             self.n.put(left, self.n.at(left) | F_EXTRA);
         }
@@ -2178,7 +2186,7 @@ impl Quick {
         })();
         let v0 = match v0 {
             Err(Stop) => (|| -> R<Option<i32>> {
-                if !(self.why == why::SYNTAX) {
+                if !(self.why.get() == why::SYNTAX) {
                     return Err(Stop);
                 }
                 result = 0;
@@ -2227,7 +2235,7 @@ impl Quick {
         })();
         let v0 = match v0 {
             Err(Stop) => (|| -> R<Option<i32>> {
-                if !(self.why == why::SYNTAX) || self.parse.speculating == depth {
+                if !(self.why.get() == why::SYNTAX) || self.parse.speculating == depth {
                     return Err(Stop);
                 }
                 result = 0;
@@ -2276,13 +2284,13 @@ impl Quick {
     /// leaves an element of JSX. With F_ASYNC in `flags`, `async` stood before it and only the function will do.
     pub(crate) fn ts_parse_less_than_expression(&mut self, start: i32, flags: i32) -> R<i32> {
         if self.parse.typed == FLOW {
-            return Ok(self.try_parse_generic_arrow(start, flags)?);
+            return self.try_parse_generic_arrow(start, flags);
         }
         if self.parse.jsx_enabled {
             if !self.is_generic_arrow_in_jsx()? {
                 return Ok(0);
             }
-            return Ok(self.try_parse_generic_arrow(start, flags)?);
+            return self.try_parse_generic_arrow(start, flags);
         }
         let arrow = self.try_parse_generic_arrow(start, flags)?;
         if arrow != 0 || flags != 0 {

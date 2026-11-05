@@ -551,6 +551,29 @@ describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
     expect(exitCode).toBe(0);
   });
 
+  // As Node, where setRawMode() on a destroyed stream has no handle to act on.
+  test("setRawMode() after destroy() is a no-op", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => setTimeout(() => {
+          input.destroy();
+          input.setRawMode(false);
+          console.log("after " + JSON.stringify({ fd: input.fd, isRaw: input.isRaw, destroyed: input.destroyed }));
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && output.includes("ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', 'after {"fd":null,"isRaw":true,"destroyed":true}']);
+    expect(exitCode).toBe(0);
+  });
+
   test("destroy() with no key read closes the caller's fd and exits", async () => {
     const { lines, exitCode } = await runInTerminal(
       `${openTTY}

@@ -147,6 +147,8 @@ const prototypeOfReadStream = {
           }
         }
       } else {
+        // A destroyed stream has no fd: a no-op, as Node's `this._handle?.setRawMode(flag)`.
+        if (this.fd == null) return this;
         const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
         const err = ttySetMode(this.fd, flag, state);
         if (err) {

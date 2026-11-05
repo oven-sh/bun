@@ -41,9 +41,7 @@ pub(crate) use super::ref_defs::RefDef;
 pub(crate) struct Parser<'a> {
     pub(crate) text: &'a [u8],
     pub(crate) size: OFF,
-    /// Where the Markdown starts in `text`: behind a UTF-8 byte order mark and
-    /// the front matter. Offsets stay those of `text`, which the renderer
-    /// holds too.
+    /// Where the Markdown starts in `text`, which the renderer holds too: see `markdown_start`.
     pub(crate) doc_start: OFF,
     pub(crate) has_carriage_return: bool,
     pub(crate) flags: Flags,
@@ -496,8 +494,7 @@ impl<'a> Parser<'a> {
 // Silence unused-import warnings for the sibling modules referenced only in
 // the doc-comment above.
 
-/// Where the Markdown of `text` starts: behind a UTF-8 byte order mark, the
-/// front matter if it counts, and a byte order mark right behind that.
+/// Behind a UTF-8 byte order mark, the front matter if it counts, and a byte order mark right behind that.
 fn markdown_start(text: &[u8], frontmatter: bool) -> usize {
     let mut rest = strings::without_utf8_bom(text);
     if frontmatter && let Some(block) = front_matter::detect(rest, front_matter::Rule::MARKDOWN) {

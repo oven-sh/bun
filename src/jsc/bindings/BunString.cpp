@@ -425,8 +425,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC
     return JSValue::encode(result);
 }
 
-// `length` characters of `bunString` from `offset` on, as a JS string. A
-// WTF-backed string shares them with it.
+// `length` characters of `bunString` from `offset` on. A WTF-backed string shares them with the JS string.
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue BunString__substringToJS(JSC::JSGlobalObject* globalObject, const BunString* bunString, size_t offset, size_t length)
 {
     auto& vm = JSC::getVM(globalObject);

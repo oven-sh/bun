@@ -220,8 +220,7 @@ impl super::TextFormatCaller for Metadata {
     }
 }
 
-/// The value of the metadata `utf8` between fences of `marker`. The properties whose keys `ToString` runs JavaScript
-/// for wait in `pending`, and `roots` holds them.
+/// The value of the metadata `utf8` between `marker` fences, as `yaml_object::parse_to_values` gives it.
 fn parse_metadata<'a>(
     heap: &JsHeap<'a>,
     marker: u8,
@@ -245,8 +244,7 @@ fn parse_metadata<'a>(
     })
 }
 
-/// `Bun.markdown.frontmatter(input)`: the metadata that the document starts with, parsed, and the document behind it.
-/// Nothing else reads the metadata: a renderer skips it.
+/// `Bun.markdown.frontmatter(input)`: the parsed metadata the document starts with, and the document behind it.
 pub(crate) fn frontmatter<'a>(
     cx: &mut JsScope<'a>,
     input: StringOrJsBytes<'a>,

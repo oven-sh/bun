@@ -54,9 +54,7 @@ pub struct Options {
     /// See `compat.rs`: what a parser that follows micromark need not do.
     pub micromark_to_the_letter: bool,
     pub mdx: bool,
-    /// A `---` or `+++` block at the start of the document is metadata, not
-    /// Markdown: see `front_matter.rs`. Not for a renderer that
-    /// `wants_source`.
+    /// Skip the `front_matter` block the document starts with. A renderer that `wants_source` gets all of the text.
     pub frontmatter: bool,
 }
 

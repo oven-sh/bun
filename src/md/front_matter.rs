@@ -1,6 +1,4 @@
-//! Front matter: the metadata at the start of a document, between two lines
-//! of `---` (YAML) or `+++` (TOML). This finds where the block ends. Nothing
-//! here reads what is in it.
+//! Where front matter ends: the metadata a document starts with, between two `---` (YAML) or `+++` (TOML) lines.
 
 use bun_core::strings::{self, PathByte};
 
@@ -9,9 +7,7 @@ use bun_core::strings::{self, PathByte};
 pub struct Rule<'a> {
     /// What a fence can be three of.
     pub markers: &'a [u8],
-    /// Whether the line behind the opening fence can be blank, as it can for
-    /// micromark-extension-frontmatter. If not, `---`, a blank line, text and
-    /// `---` stay a thematic break and a heading.
+    /// micromark-extension-frontmatter takes a blank line behind the opening fence. `Bun.markdown` reads a thematic break.
     pub blank_first_line: bool,
 }
 
@@ -35,10 +31,7 @@ pub struct Block {
     pub end: usize,
 }
 
-/// The block that `text` starts with: a line of three equal markers, and the
-/// next line that is the same. Spaces and tabs can follow a fence, nothing
-/// else can. A line ends with `\n`, `\r\n` or `\r`. `T` is a byte of UTF-8 or
-/// Latin-1, or a unit of UTF-16.
+/// The block `text` starts with: a line of three markers (blanks can follow) up to the next such line. CR ends a line too.
 pub fn detect<T: PathByte>(text: &[T], rule: Rule<'_>) -> Option<Block> {
     let first = *text.first()?;
     let marker = *rule

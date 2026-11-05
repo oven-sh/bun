@@ -192,11 +192,9 @@ fn with_text_format_source<R>(
     f(arena, &mut log, &source)
 }
 
-/// Who has a text parsed by the code of `Bun.YAML.parse` or `Bun.TOML.parse`. It is a type and not a value, so that
-/// each caller has a copy of the parse for itself, inlined as it was when there was one caller.
+/// A caller of the YAML or TOML parse. A type, so that each caller has its own copy of the parse inlined into it.
 pub(crate) trait TextFormatCaller {
-    /// How many lines of the caller's own text are in front of what is parsed. A syntax error then says where in that
-    /// text it is. `None`: it names no place.
+    /// The lines of the caller's text before what is parsed: a syntax error then names its line and column in that text.
     const LINES_BEFORE: Option<u32> = None;
 
     /// Sees the root before a value is made of it.

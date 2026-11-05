@@ -1,5 +1,5 @@
 status: 0
-script: 11cd9ab28088a906
+script: 9052cedb9453deac
 ---
 --- every kind after every other
 0 | AttributeError: 'DictWithAttributes' object has no attribute 'a' | AttributeError: 'DictWithAttributes' object has no attribute 'k' | 'DictWithAttributes.m'
@@ -2067,3 +2067,122 @@ number
        ('of the instance', ())
        ('of the instance', ('arg',))
        the argument first
+--- a key that is no str, in the dict of a class, does things while a name is looked up
+x | the class is given the names | False [('...', 'new x', 'new x', 'new x', 'old x'), ('...', 'new p', 'new p', 'new p', ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+x | the class is given the names | True [('...', 'new x', 'new x', 'new x', 'old x'), ('...', 'new p', 'new p', 'new p', ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+x | a base is given the names | False [('...', 'new x', 'new x', 'new x', 'old x'), ('...', 'new p', 'new p', 'new p', ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+x | a base is given the names | True [('...', 'new x', 'new x', 'new x', 'old x'), ('...', 'new p', 'new p', 'new p', ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+x | the object is given the names | False [('...', 'own x', 'own x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'own m', 'own m', 'old m', 'old m')] (True, True, True)
+x | the object is given the names | True [('...', 'own x', 'own x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'own m', 'own m', 'old m', 'old m')] (True, True, True)
+x | the object loses what it has | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+x | the object loses what it has | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+x | the object is asked for its __dict__ | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+x | the object is asked for its __dict__ | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+x | the class of the object is changed | False [('...', 'x of Other', 'x of Other', 'old x', 'old x'), ('...', 'p of Other', 'p of Other', ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'm of Other', 'm of Other', 'old m', 'old m')] (True, True, True)
+x | the class of the object is changed | True [('...', 'x of Other', 'x of Other', 'old x', 'old x'), ('...', 'p of Other', 'p of Other', ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'm of Other', 'm of Other', 'old m', 'old m')] (True, True, True)
+x | the class is given a __getattr__ | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+x | the class is given a __getattr__ | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+x | the local is bound to another object | False [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+x | the local is bound to another object | True [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+m | the class is given the names | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+m | the class is given the names | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+m | a base is given the names | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+m | a base is given the names | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+m | the object is given the names | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'own m', 'own m', 'old m', 'old m')] (True, True, True)
+m | the object is given the names | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'own m', 'own m', 'old m', 'old m')] (True, True, True)
+m | the object loses what it has | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+m | the object loses what it has | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+m | the object is asked for its __dict__ | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+m | the object is asked for its __dict__ | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+m | the class of the object is changed | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'm of Other', 'm of Other', 'old m', 'old m')] (True, True, True)
+m | the class of the object is changed | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'm of Other', 'm of Other', 'old m', 'old m')] (True, True, True)
+m | the class is given a __getattr__ | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+m | the class is given a __getattr__ | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+m | the local is bound to another object | False [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+m | the local is bound to another object | True [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+p | the class is given the names | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', 'new p', 'new p', 'new p', ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+p | the class is given the names | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', 'new p', 'new p', 'new p', ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+p | a base is given the names | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', 'new p', 'new p', 'new p', ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+p | a base is given the names | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', 'new p', 'new p', 'new p', ('p of', 'Odd')), ('...', 'new m', 'new m', 'new m', 'old m')] (True, True, True)
+p | the object is given the names | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'own m', 'own m', 'old m', 'old m')] (True, True, True)
+p | the object is given the names | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'own m', 'own m', 'old m', 'old m')] (True, True, True)
+p | the object loses what it has | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+p | the object loses what it has | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+p | the object is asked for its __dict__ | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+p | the object is asked for its __dict__ | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+p | the class of the object is changed | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', 'p of Other', 'p of Other', ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'm of Other', 'm of Other', 'old m', 'old m')] (True, True, True)
+p | the class of the object is changed | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', 'p of Other', 'p of Other', ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'm of Other', 'm of Other', 'old m', 'old m')] (True, True, True)
+p | the class is given a __getattr__ | False [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+p | the class is given a __getattr__ | True [('...', 'old x', 'old x', 'old x', 'old x'), ('...', ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('...', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+p | the local is bound to another object | False [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+p | the local is bound to another object | True [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+__getattr__ | the class is given the names | False ... (True, True, True)
+__getattr__ | the class is given the names | True ... (True, True, True)
+__getattr__ | a base is given the names | False ... (True, True, True)
+__getattr__ | a base is given the names | True ... (True, True, True)
+__getattr__ | the object is given the names | False ... (True, True, True)
+__getattr__ | the object is given the names | True ... (True, True, True)
+__getattr__ | the object loses what it has | False ... (True, True, True)
+__getattr__ | the object loses what it has | True ... (True, True, True)
+__getattr__ | the object is asked for its __dict__ | False ... (True, True, True)
+__getattr__ | the object is asked for its __dict__ | True ... (True, True, True)
+__getattr__ | the class of the object is changed | False ... (True, True, True)
+__getattr__ | the class of the object is changed | True ... (True, True, True)
+__getattr__ | the class is given a __getattr__ | False ... (True, True, True)
+__getattr__ | the class is given a __getattr__ | True ... (True, True, True)
+__getattr__ | the local is bound to another object | False [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+__getattr__ | the local is bound to another object | True [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+__getattribute__ | the class is given the names | False ... (True, True, True)
+__getattribute__ | the class is given the names | True ... (True, True, True)
+__getattribute__ | a base is given the names | False ... (True, True, True)
+__getattribute__ | a base is given the names | True ... (True, True, True)
+__getattribute__ | the object is given the names | False ... (True, True, True)
+__getattribute__ | the object is given the names | True ... (True, True, True)
+__getattribute__ | the object loses what it has | False ... (True, True, True)
+__getattribute__ | the object loses what it has | True ... (True, True, True)
+__getattribute__ | the object is asked for its __dict__ | False ... (True, True, True)
+__getattribute__ | the object is asked for its __dict__ | True ... (True, True, True)
+__getattribute__ | the class of the object is changed | False ... (True, True, True)
+__getattribute__ | the class of the object is changed | True ... (True, True, True)
+__getattribute__ | the class is given a __getattr__ | False ... (True, True, True)
+__getattribute__ | the class is given a __getattr__ | True ... (True, True, True)
+__getattribute__ | the local is bound to another object | False [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+__getattribute__ | the local is bound to another object | True [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+__get__ | the class is given the names | False ... (True, True, True)
+__get__ | the class is given the names | True ... (True, True, True)
+__get__ | a base is given the names | False ... (True, True, True)
+__get__ | a base is given the names | True ... (True, True, True)
+__get__ | the object is given the names | False ... (True, True, True)
+__get__ | the object is given the names | True ... (True, True, True)
+__get__ | the object loses what it has | False ... (True, True, True)
+__get__ | the object loses what it has | True ... (True, True, True)
+__get__ | the object is asked for its __dict__ | False ... (True, True, True)
+__get__ | the object is asked for its __dict__ | True ... (True, True, True)
+__get__ | the class of the object is changed | False ... (True, True, True)
+__get__ | the class of the object is changed | True ... (True, True, True)
+__get__ | the class is given a __getattr__ | False ... (True, True, True)
+__get__ | the class is given a __getattr__ | True ... (True, True, True)
+__get__ | the local is bound to another object | False [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+__get__ | the local is bound to another object | True [('old x', 'old x', 'old x', 'old x', 'old x'), (('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd'), ('p of', 'Odd')), ('old m', 'old m', 'old m', 'old m', 'old m')] (True, True, True)
+--- a class as an attribute of a class, whose own class is given a __get__ later
+own own True True True
+True True True
+--- such a key changes the class on one occasion and gives it the name on the next
+stored True [None, None, None] [1, 1, 1] {}
+attr True ['new attr', 'new attr', 'new attr'] [] {}
+meth True ['new meth', 'new meth', 'new meth'] [] {}
+__enter__ True ['new enter', 'new enter', 'new enter'] [] {}
+--- a built-in type that can be changed is given a __get__, then a __set__
+error AST error
+error AST error
+error AST error
+got x got y got x got x
+got x got y got x got x
+got x got y got x got x
+set 3
+{}
+--- a module found in a class is given another class
+[True, True, True] True
+got got got
+set 3
+{}

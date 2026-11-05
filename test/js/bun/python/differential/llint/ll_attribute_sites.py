@@ -710,3 +710,249 @@ for name, value in found.items():
         print('  ', ', '.join(who))
         for part in result:
             print('      ', part)
+
+print('--- a key that is no str, in the dict of a class, does things while a name is looked up')
+import sys
+import warnings
+warnings.simplefilter('ignore')
+
+
+class OddKey:
+    action = None
+    names = ()
+
+    def __init__(self, name):
+        self.name = name
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __eq__(self, other):
+        action = OddKey.action
+        if action and other in OddKey.names:
+            OddKey.action = None
+            action()
+        return False
+
+
+def arm(names, action):
+    OddKey.names = names
+    OddKey.action = action
+
+
+def odd_classes():
+    base = type('Base', (), {'x': 'old x', 'm': lambda self: 'old m', 'p': property(lambda self: ('p of', type(self).__name__))})
+    middle = type('Middle', (base,), {OddKey(name): 1 for name in ('x', 'm', 'p', '__getattr__', '__getattribute__', '__get__', '__set__', '__delete__')})
+    return type('Odd', (middle,), {})
+
+
+odd_sites = '''
+def read_x(o): return o.x
+def read_p(o): return o.p
+def call_m(o): return o.m()
+'''
+
+
+class Other:
+    x = 'x of Other'
+    p = 'p of Other'
+
+    def m(self):
+        return 'm of Other'
+
+
+def rebind():
+    frame = sys._getframe(2)
+    if 'o' in frame.f_locals:
+        frame.f_locals['o'] = Other()
+
+
+# When the key is asked is not the same here and there, so the first answer is not shown where it depends on that.
+for names in (('x',), ('m',), ('p',), ('__getattr__',), ('__getattribute__',), ('__get__', '__set__', '__delete__')):
+    for what in ('the class is given the names', 'a base is given the names', 'the object is given the names', 'the object loses what it has',
+            'the object is asked for its __dict__', 'the class of the object is changed', 'the class is given a __getattr__', 'the local is bound to another object'):
+        for warm in (False, True):
+            Odd = odd_classes()
+            Odd2 = odd_classes()
+            o = Odd()
+            o.own = 1
+            scope = {}
+            exec(odd_sites, scope)
+            if warm:
+                for function in scope.values():
+                    if callable(function) and function.__name__ != 'OddKey':
+                        function(Other()), function(Other())
+            shows_first = what == 'the local is bound to another object'
+            action = {
+                'the class is given the names': lambda: (setattr(Odd, 'x', 'new x'), setattr(Odd, 'm', lambda self: 'new m'), setattr(Odd, 'p', 'new p')),
+                'a base is given the names': lambda: (setattr(Odd.__mro__[1], 'x', 'new x'), setattr(Odd.__mro__[1], 'm', lambda self: 'new m'), setattr(Odd.__mro__[1], 'p', 'new p')),
+                'the object is given the names': lambda: (setattr(o, 'x', 'own x'), setattr(o, 'm', lambda: 'own m')),
+                'the object loses what it has': lambda: delattr(o, 'own'),
+                'the object is asked for its __dict__': lambda: o.__dict__,
+                'the class of the object is changed': lambda: setattr(o, '__class__', Other),
+                'the class is given a __getattr__': lambda: setattr(Odd, '__getattr__', lambda self, name: 'hook'),
+                'the local is bound to another object': rebind,
+            }[what]
+            results = []
+            for name in ('read_x', 'read_p', 'call_m'):
+                arm(names, action)
+                first = scope[name](o)
+                arm((), None)
+                results.append((first if shows_first else '...', scope[name](o), scope[name](o), scope[name](Odd()), scope[name](Odd2())))
+            agree = (scope['read_x'](o) == getattr(o, 'x'), scope['read_p'](o) == getattr(o, 'p'), scope['call_m'](o) == getattr(o, 'm')())
+            # CPython does not look for the special methods by name when an attribute is read.
+            if names[0].startswith('__') and not shows_first:
+                results = '...'
+            print(names[0], '|', what, '|', warm, results, agree)
+
+print('--- a class as an attribute of a class, whose own class is given a __get__ later')
+
+
+class MetaOfValue(type):
+    pass
+
+
+class Value(metaclass=MetaOfValue):
+    pass
+
+
+class MetaHolder(type):
+    x = Value
+
+
+class Holder(metaclass=MetaHolder):
+    x = 'own'
+    y = Value
+
+
+def holder_x(c): return c.x
+def holder_y(c): return c.y
+
+
+print(holder_x(Holder), holder_x(Holder), holder_y(Holder) is Value, holder_y(Holder()) is Value, holder_y(Holder()) is Value)
+MetaOfValue.__get__ = lambda self, obj, cls=None: 'got'
+MetaOfValue.__set__ = lambda self, obj, value: None
+print(holder_x(Holder) == getattr(Holder, 'x'), holder_y(Holder) == getattr(Holder, 'y'), holder_y(Holder()) == getattr(Holder(), 'y'))
+
+print('--- such a key changes the class on one occasion and gives it the name on the next')
+# How often the key is asked differs, so each goes on until the class has the name, and what is shown is what happens after that.
+
+
+def staged(name, install):
+    state = {'asked': 0, 'armed': False}
+
+    class StagedKey:
+        def __hash__(self):
+            return hash(name)
+
+        def __eq__(self, other):
+            if state['armed']:
+                state['asked'] += 1
+                if state['asked'] % 2:
+                    Last.touched = state['asked']
+                else:
+                    install(Last)
+            return False
+
+    First = type('First', (), {'__enter__': lambda self: 'old enter', '__exit__': lambda self, *a: None, 'attr': 'old attr', 'meth': lambda self: 'old meth'})
+    Middle = type('Middle', (First,), {StagedKey(): 1})
+    Last = type('Last', (Middle,), {})
+    return Last, state
+
+
+staged_sites = '''
+def store(o, v): o.stored = v
+def read(o): return o.attr
+def call(o): return o.meth()
+def enter(o):
+    with o as x: return x
+'''
+setter_log = []
+for name, site, install in (
+        ('stored', lambda scope, o: scope['store'](o, 1), lambda cls: setattr(cls, 'stored', property(lambda self: 'property', lambda self, v: setter_log.append(v)))),
+        ('attr', lambda scope, o: scope['read'](o), lambda cls: setattr(cls, 'attr', 'new attr')),
+        ('meth', lambda scope, o: scope['call'](o), lambda cls: setattr(cls, 'meth', lambda self: 'new meth')),
+        ('__enter__', lambda scope, o: scope['enter'](o), lambda cls: setattr(cls, '__enter__', lambda self: 'new enter'))):
+    Last, state = staged(name, install)
+    scope = {}
+    exec(staged_sites, scope)
+    state['armed'] = True
+    for attempt_number in range(20):
+        site(scope, Last())
+        if name in Last.__dict__:
+            break
+        Last.again = attempt_number
+    state['armed'] = False
+    setter_log.clear()
+    o = Last()
+    print(name, name in Last.__dict__, [site(scope, o), site(scope, Last()), site(scope, Last())], setter_log, vars(o))
+
+print('--- a built-in type that can be changed is given a __get__, then a __set__')
+import ast
+import struct
+
+
+class HoldsBuiltins:
+    x = struct.error('e')
+    y = ast.AST()
+
+
+def read_hx(o): return o.x
+def read_hy(o): return o.y
+def read_hcx(): return HoldsBuiltins.x
+def store_hx(o, v): o.x = v
+
+
+o = HoldsBuiltins()
+for turn in range(3):
+    print(type(read_hx(o)).__name__, type(read_hy(o)).__name__, type(read_hcx()).__name__)
+store_hx(HoldsBuiltins(), 1)
+store_hx(HoldsBuiltins(), 2)
+struct.error.__get__ = lambda self, obj, cls: 'got x'
+ast.AST.__get__ = lambda self, obj, cls: 'got y'
+for turn in range(3):
+    print(read_hx(o), read_hy(o), read_hcx(), getattr(o, 'x'))
+struct.error.__set__ = lambda self, obj, value: print('set', value)
+o = HoldsBuiltins()
+store_hx(o, 3)
+print(vars(o))
+del struct.error.__get__, struct.error.__set__, ast.AST.__get__
+
+print('--- a module found in a class is given another class')
+held = types.ModuleType('held')
+
+
+class HoldsModule:
+    x = held
+
+
+def module_read(o): return o.x
+def module_read_class(): return HoldsModule.x
+def module_store(o, v): o.x = v
+
+
+o = HoldsModule()
+# (Read from the class more than once, CPython's instruction goes on giving the module.)
+print([module_read(o) is held for turn in range(3)], module_read_class() is held)
+module_store(HoldsModule(), 1)
+module_store(HoldsModule(), 2)
+
+
+class ModuleWithGet(types.ModuleType):
+    def __get__(self, obj, cls):
+        return 'got'
+
+
+held.__class__ = ModuleWithGet
+print(module_read(o), module_read_class(), getattr(o, 'x'))
+
+
+class ModuleWithSet(ModuleWithGet):
+    def __set__(self, obj, value):
+        print('set', value)
+
+
+held.__class__ = ModuleWithSet
+o = HoldsModule()
+module_store(o, 3)
+print(vars(o))

@@ -1134,10 +1134,7 @@ impl TimerObjectInternals {
 
         let previous_async_hooks_id = self.async_hooks_id.get();
         let restarted_async_hooks_id = if previous_async_hooks_id & ASYNC_HOOKS_DESTROYED != 0 {
-            let state = crate::jsc_hooks::runtime_state();
-            debug_assert!(!state.is_null(), "RuntimeState not installed");
-            // SAFETY: `state` is the live per-thread RuntimeState.
-            let id = unsafe { (*state).timer.next_async_hooks_id() };
+            let id = crate::jsc_hooks::timer_all_mut().next_async_hooks_id();
             self.async_hooks_id.set(id);
             Some(id)
         } else {
@@ -1228,8 +1225,7 @@ impl TimerObjectInternals {
     /// contract. `vm.timer` resolved via `runtime_state()` (jsc/runtime crate cycle).
     pub(crate) fn cancel(&self, vm: *mut VirtualMachine) {
         if let Some(timer) = self.this_value.get().try_get() {
-            // SAFETY: `vm` is the live per-thread VM (caller contract).
-            self.emit_async_hooks_destroy(timer, unsafe { (*vm).global });
+            self.emit_async_hooks_destroy(timer, VirtualMachine::get().global().as_ptr());
         }
         self.set_enable_keeping_event_loop_alive(vm, false);
         self.update_flags(|f| f.set_has_cleared_timer(true));

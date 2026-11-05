@@ -700,6 +700,8 @@ pub(crate) struct Runs {
     next: usize,
     /// Up to here the text has been looked at: no run starts here or before that is not in `found`.
     scanned_to: usize,
+    /// But for here: what is in the first child of the text, which has been read and is in no run after all.
+    unread: std::ops::Range<usize>,
     /// Nothing has been looked at.
     is_new: bool,
     levels: Vec<Level>,
@@ -725,6 +727,7 @@ impl Runs {
             found: Vec::new(),
             next: 0,
             scanned_to: 0,
+            unread: 0..0,
             is_new: true,
             levels: Vec::new(),
             attributes: Vec::new(),
@@ -742,12 +745,13 @@ impl Runs {
         self.settings = settings;
         self.found.clear();
         (self.next, self.scanned_to, self.is_new) = (0, 0, true);
+        self.unread = 0..0;
         (self.has_typescript_script, self.assumes_typescript) = (false, None);
     }
 
     /// True if the text has been looked at from `at` on.
     pub(crate) fn has_scanned(&self, at: usize) -> bool {
-        !self.is_new && at <= self.scanned_to
+        !self.is_new && at <= self.scanned_to && !self.unread.contains(&at)
     }
 
     /// Reads `text` from behind its front matter on, as the lexer would ask it to. If all of it is one run, returns where
@@ -795,6 +799,11 @@ impl Runs {
 
     /// Returns the run that starts at `at`, if one has been found.
     pub(crate) fn take(&mut self, at: usize) -> Option<Ready> {
+        // The lexer asks at the start of a line. Behind a text that goes the long way it does not know that it is there.
+        let passed = (self.found.get(self.next..)?.iter())
+            .take_while(|ready| (ready.span.start as usize) < at)
+            .count();
+        self.next += passed;
         let ready = *self.found.get(self.next)?;
         (ready.span.start as usize == at).then(|| {
             self.next += 1;
@@ -830,6 +839,7 @@ impl Runs {
             Some(Guests { options, scripts })
         });
         let definition = (parent.element).map_or(&data::DEFAULT_TAG_DEFINITION, |it| it.1);
+        let (is_read_again, found_so_far) = (self.unread.contains(&start), self.found.len());
         let printed_so_far = printed.len();
         let first = (start, printed_so_far);
         let mut scanner = Scanner {
@@ -866,15 +876,23 @@ impl Runs {
             measured: None,
             is_indented_too_far: false,
             has_typescript_script: false,
+            end_of_first_child_in_no_run: 0,
         };
         scanner.siblings.are_in_no_groups = (parent.element).is_some_and(|(name, _)| {
             let display = data::css_display_of_tag(name).unwrap_or(Display::Inline);
             breaks_its_content(name, display)
         });
-        self.scanned_to = scanner.run(start, &parent);
+        let scanned_to = scanner.run(start, &parent);
+        match is_read_again {
+            true => self.unread.start = scanned_to.saturating_add(1),
+            false => {
+                self.scanned_to = scanned_to;
+                self.unread = 1..scanner.end_of_first_child_in_no_run;
+            }
+        }
         self.has_typescript_script |= scanner.has_typescript_script;
         if scanner.is_indented_too_far {
-            self.scanned_to = usize::MAX;
+            (self.scanned_to, self.unread) = (usize::MAX, 0..0);
             return;
         }
         // Nothing has been copied: all that has been written is in the source, from `start` on.
@@ -927,6 +945,11 @@ impl Runs {
             }
         }
         self.found.extend(run_of(&innermost));
+        // They are in front of all that the lexer has not come by.
+        let count = self.found.len() - found_so_far;
+        if is_read_again && let Some(rest) = self.found.get_mut(self.next..) {
+            rest.rotate_right(count);
+        }
     }
 }
 
@@ -977,6 +1000,8 @@ struct Scanner<'s, 'a> {
     is_indented_too_far: bool,
     /// See `Runs::has_typescript_script`.
     has_typescript_script: bool,
+    /// See `Runs::unread`. 0 if there is none.
+    end_of_first_child_in_no_run: usize,
 }
 
 impl<'a> Scanner<'_, 'a> {
@@ -1314,15 +1339,39 @@ impl<'a> Scanner<'_, 'a> {
             let rest = self.text.get(self.siblings.last.at..).unwrap_or_default();
             let is_alone = self.levels.is_empty()
                 && (rest.iter()).all(|byte| matches!(byte, b' ' | b'\n' | b'\t'));
-            let outermost = match self.levels.first_mut() {
-                Some(level) => &mut level.siblings,
-                None => &mut self.siblings,
+            let outermost = match self.levels.first() {
+                Some(level) => level.siblings,
+                None => self.siblings,
             };
-            if outermost.count == 1 && outermost.last.at != 0 && !is_alone {
-                outermost.remove_last();
+            if outermost.count == 1
+                && outermost.last.at != 0
+                && !is_alone
+                && !self.is_next_to_block(outermost.last.at)
+            {
+                self.end_of_first_child_in_no_run = outermost.last.at;
+                match self.levels.first_mut() {
+                    Some(level) => level.siblings.remove_last(),
+                    None => self.siblings.remove_last(),
+                }
             }
         }
         scanned_to
+    }
+
+    /// True if the first child of the text, which ends at `end`, or the one behind it is an element in front of which
+    /// and behind which white space does not count, so that a line break is printed there.
+    fn is_next_to_block(&self, end: usize) -> bool {
+        let is_element = |at: usize| self.at(at) == b'<' && self.at(at + 1).is_ascii_alphabetic();
+        let is_block = |at: usize| {
+            is_element(at)
+                && (self.element_at(at, (&data::DEFAULT_TAG_DEFINITION, false)))
+                    .is_some_and(|element| element.display.is_block_like())
+        };
+        match self.settings.parser {
+            // `isVueSfcBlock`, given that it has been read.
+            Parser::Vue => is_element(0),
+            _ => is_block(0) || is_block(self.skip_space(end).0),
+        }
     }
 
     /// True if what starts at `next`, behind a child and white space, is another child of the same parent for sure.

@@ -2442,6 +2442,49 @@ describe.skipIf(!hasFlag)("HTML", () => {
     `<div>\n  <x-y a="b">checked?</x-y><br />\n  <x-y a="b">c</x-y> d<br>\n  e <b>f</b><br> g\n  <p>h<br>i <b>j</b><br /></p>\n  <p>${words}<br>\n  ${words} <b>k</b></p>\n</div>\n`,
     // A text over several lines in front of an element.
     `<p>\n  ${full}\n  tempor ${full}\n  tempor <b>a</b> ut\n</p>\n`,
+    // The first child of the text, in front of a child that goes the long way, or has one in it that does: whether a
+    // line break is printed behind it is a matter of the two. What is in it is read in any case.
+    ...[
+      "<div>\n  <p>a</p>\n  <p>b</p>\n</div>",
+      "<x-y>\n  <p>a</p>\n  <p>b</p>\n</x-y>",
+      "<x-y>\n  <x-z>\n    <b>a</b>\n    <i>c</i\n    ><u>d</u>\n    <b>e</b>\n  </x-z>\n  <p>b</p>\n</x-y>",
+      "<span>a</span>",
+      "<p>a</p>",
+      "a b",
+      "{{ a }}",
+      `${full}\ntempor`,
+      "<!-- a -->",
+      "<!doctype html>",
+      "<img />",
+      "<br />",
+      "<svg>\n  <g></g>\n</svg>",
+      "<pre>a</pre>",
+      "<script>\n  a;\n</script>",
+      "<select>\n  <option>a</option>\n</select>",
+      "<X-Y>\n  <p>a</p>\n</X-Y>",
+    ].flatMap(first =>
+      [
+        "<div>\n  <i>c</i\n  ><u>d</u>\n  <p>e</p>\n</div>",
+        "<x-y>\n  <i>c</i\n  ><u>d</u>\n  <p>e</p>\n</x-y>",
+        "<x-y>\n  <p>e</p>\n  <i>c</i\n  ><u>d</u>\n</x-y> f",
+        "<i>c</i\n><u>d</u>",
+        "<p>c<textarea>\n</textarea></p>",
+        "<span>c<textarea>\n</textarea></span>",
+        "<!-- prettier-ignore -->\n<p   a>b</p>",
+        "<!-- display: inline -->\n<p>b</p>",
+        "<!--[if IE]><p>a</p><![endif]-->",
+        "c &bogus <u>d</u\n>e",
+        "<table>\n  <tr>\n    <td>c<textarea>\n</textarea></td>\n  </tr>\n</table>",
+      ].flatMap(second => [
+        `${first}\n${second}\n`,
+        `${first}\n\n${second}\n<p>g</p>\n`,
+        `${first} ${second}\n`,
+        `${first}\n${second}`,
+      ]),
+    ),
+    // A run behind a text that goes the long way.
+    "a &bogus; b\n<div>\n  <p>c</p>\n  <p>d</p>\n  <i>e</i\n  ><u>f</u>\n  <p>g</p>\n</div>\n<p>h</p>\n",
+    "{{ a }}\n<x-y>\n  <div>\n    <p>c</p>\n    <i>e</i\n    ><u>f</u>\n    <p>g</p>\n  </div>\n  <p>h</p>\n</x-y>\n",
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

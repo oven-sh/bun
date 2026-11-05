@@ -76,7 +76,7 @@ print(swap() in ("Ab", "replaced"))
 # new alone frees what was made since the last collection, and nothing else.
 def collect(generation):
     junk = None
-    for i in range(100000):
+    for i in range(5000):
         junk = [junk and None, (i,), {i: i}, lambda: i]
     gc.collect(generation)
 

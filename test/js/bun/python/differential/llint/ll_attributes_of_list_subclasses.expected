@@ -1,0 +1,112 @@
+status: 0
+script: 8e9d1a4e904fcfac
+---
+--- contents of every kind: the same class, other ways of storing the items
+False ('L.method', 0, 1) L sm ('prop', 0) 0 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 3, 1) L sm ('prop', 3) 3 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 2, 1) L sm ('prop', 2) 2 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 2, 1) L sm ('prop', 2) 2 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 100, 1) L sm ('prop', 100) 100 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 2, 1) L sm ('prop', 2) 2 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 0, 1) L sm ('prop', 0) 0 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 3, 1) L sm ('prop', 3) 3 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 2, 1) L sm ('prop', 2) 2 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 2, 1) L sm ('prop', 2) 2 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 100, 1) L sm ('prop', 100) 100 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 2, 1) L sm ('prop', 2) 2 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+False ('L.method', 1, 1) L sm ('prop', 1) 1 L AttributeError: 'L' object has no attribute 'own' {}
+--- the items change under the same object
+False ('L.method', 1, 1) ('prop', 1) [1]
+False ('L.method', 2, 1) ('prop', 2) [1, 2]
+False ('L.method', 3, 1) ('prop', 3) [1, 2, 1.5]
+False ('L.method', 4, 1) ('prop', 4) [1, 2, 1.5, 'a']
+False ('L.method', 5, 1) ('prop', 5) [1, 2, 1.5, 'a', None]
+False ('L.method', 6, 1) ('prop', 6) [1, 2, 1.5, 'a', None, []]
+False ('L.method', 7, 1) ('prop', 7) [1, 2, 1.5, 'a', None, [], 1180591620717411303424]
+False ('L.method', 0, 1) ('prop', 0) []
+False ('L.method', 2000, 1) ('prop', 2000) 2000
+False ('L.method', 1000, 1) ('prop', 1000) [999, 998, 997]
+--- several classes at one place
+L False ('L.method', 1, 1) L ('prop', 1) 1 L
+[1, 2]
+M True ('M.method', 1, 1) AttributeError: 'M' object has no attribute 'cm' AttributeError: 'M' object has no attribute 'prop' 1 M
+[1, ('M', 2)]
+Derived False ('Derived.method', 1, 1) Derived ('prop', 1) 1 Derived
+[1, 2]
+Slotted AttributeError: 'Slotted' object has no attribute 'flag' ('Slotted.method', 1, 1) AttributeError: 'Slotted' object has no attribute 'cm' AttributeError: 'Slotted' object has no attribute 'prop' 1 Slotted
+[1, 2]
+Hooked hook flag TypeError: 'str' object is not callable TypeError: 'str' object is not callable hook prop 1 Hooked
+[1, 2]
+list AttributeError: 'list' object has no attribute 'flag' AttributeError: 'list' object has no attribute 'method' AttributeError: 'list' object has no attribute 'cm' AttributeError: 'list' object has no attribute 'prop' 1 list
+[1, 2]
+L False ('L.method', 1, 1) L ('prop', 1) 1 L
+[1, 2]
+M True ('M.method', 1, 1) AttributeError: 'M' object has no attribute 'cm' AttributeError: 'M' object has no attribute 'prop' 1 M
+[1, ('M', 2)]
+Derived False ('Derived.method', 1, 1) Derived ('prop', 1) 1 Derived
+[1, 2]
+Slotted AttributeError: 'Slotted' object has no attribute 'flag' ('Slotted.method', 1, 1) AttributeError: 'Slotted' object has no attribute 'cm' AttributeError: 'Slotted' object has no attribute 'prop' 1 Slotted
+[1, 2]
+Hooked hook flag TypeError: 'str' object is not callable TypeError: 'str' object is not callable hook prop 1 Hooked
+[1, 2]
+list AttributeError: 'list' object has no attribute 'flag' AttributeError: 'list' object has no attribute 'method' AttributeError: 'list' object has no attribute 'cm' AttributeError: 'list' object has no attribute 'prop' 1 list
+[1, 2]
+L False ('L.method', 1, 1) L ('prop', 1) 1 L
+[1, 2]
+M True ('M.method', 1, 1) AttributeError: 'M' object has no attribute 'cm' AttributeError: 'M' object has no attribute 'prop' 1 M
+[1, ('M', 2)]
+Derived False ('Derived.method', 1, 1) Derived ('prop', 1) 1 Derived
+[1, 2]
+Slotted AttributeError: 'Slotted' object has no attribute 'flag' ('Slotted.method', 1, 1) AttributeError: 'Slotted' object has no attribute 'cm' AttributeError: 'Slotted' object has no attribute 'prop' 1 Slotted
+[1, 2]
+Hooked hook flag TypeError: 'str' object is not callable TypeError: 'str' object is not callable hook prop 1 Hooked
+[1, 2]
+list AttributeError: 'list' object has no attribute 'flag' AttributeError: 'list' object has no attribute 'method' AttributeError: 'list' object has no attribute 'cm' AttributeError: 'list' object has no attribute 'prop' 1 list
+[1, 2]
+--- attributes of its own
+AttributeError: 'L' object has no attribute 'own' False ('L.method', 1, 1)
+own AttributeError: 'L' object has no attribute 'own' False ('L.method', 1, 1) {'own': 'own'} {}
+own flag False
+own method ('L.method', 1, 1) own method ('L.method', 1, 1)
+False ('L.method', 1, 1) {'own': 'own'}
+through the dict False
+False AttributeError: 'L' object has no attribute 'own'
+another dict False
+--- the class changes
+False ('L.method', 1, 1) L
+changed changed
+changed method ('Derived.method', 0, 1)
+AttributeError: 'L' object has no attribute 'flag'
+a property now
+False late hook own
+False AttributeError: 'L' object has no attribute 'own'
+--- the object is given another class
+M True ('M.method', 2, 1) M
+L False changed method L
+Derived False ('Derived.method', 4, 1) Derived
+M True ('M.method', 5, 1) M
+L False changed method L
+[1, 2, ('M', 0), 0, 0, ('M', 0), 0]
+TypeError: __class__ assignment: 'Slotted' object layout differs from 'L' TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+--- slots
+AttributeError: 'Slotted' object has no attribute 'a' ('Slotted.method', 1, 1) AttributeError: 'Slotted' object has no attribute '__dict__'
+a AttributeError: 'Slotted' object has no attribute 'a' AttributeError: 'Slotted' object has no attribute 'c' and no __dict__ for setting new attributes
+AttributeError: 'Slotted' object has no attribute 'a'
+--- what lists do goes on
+[1, 2, 3] [3, 1, 2, 4] [3, 1, 2, 3, 1, 2] [1, 2] True [2, 1, 3] True 1 [3, 1, 2] list list list
+L [3, 1, 2] 1 False
+L [3, 1, 2] 1
+L [3, 1, 2] 1 changed method
+3 [1, 2] [3, 1, 2] 3 6 3 False True
+True True list list

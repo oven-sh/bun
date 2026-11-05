@@ -1,0 +1,36 @@
+status: 0
+oracle: none
+---
+('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2]) ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2]) ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2]) ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+--- JS reads
+True 1 2 flag of the class ('method', 2, 5) 0,1
+--- JS adds items
+3 ('flag of the class', ('method', 3, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2, 3])
+('flag of the class', ('method', 4, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2, 3, 4])
+('flag of the class', ('method', 7, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2, 3, 4, None, None, 7])
+('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+('flag of the class', ('method', 0, 1), "AttributeError: 'L' object has no attribute 'own'", []) ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1.5, 'text'])
+--- JS sets what Python reads
+('flag of the class', ('method', 2, 1), 'set by JS', [1.5, 'text']) ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+('flag set by JS', ('method', 2, 1), 'set by JS', [1.5, 'text']) ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+flag set by JS set by JS 0,1,own,flag
+True ('flag of the class', ('method', 2, 1), 'set by JS', [1.5, 'text'])
+True ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1.5, 'text'])
+None ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1.5, 'text']) ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+AttributeError: 'L' object has no attribute 'flag' ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1.5, 'text'])
+--- Python sets what JS reads
+set by Python 0,1,own ('flag of the class', ('method', 2, 1), 'set by Python', [1.5, 'text'])
+None ('flag of the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1.5, 'text'])
+changed in the class ('changed in the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1.5, 'text']) ('changed in the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+--- another class
+flag of M ('method of M', 2, 5) ('flag of M', ('method of M', 2, 1), "AttributeError: 'M' object has no attribute 'own'", [1.5, 'text']) ('changed in the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2])
+changed in the class ('changed in the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1.5, 'text'])
+--- frozen
+frozen ('changed in the class', ('method', 2, 1), "AttributeError: 'L' object has no attribute 'own'", [1, 2]) JSTypeError: TypeError: Attempted to assign to readonly property. None ('changed in the class', ('method', 2, 1), 1, [1, 2])
+--- the same once the objects have been asked for their __dict__
+('changed in the class', ('method', 1, 1), "AttributeError: 'L' object has no attribute 'own'", [1]) {} ('changed in the class', ('method', 1, 1), "AttributeError: 'L' object has no attribute 'own'", [1])
+('changed in the class', ('method', 1, 1), 'set by JS', [1]) {'own': 'set by JS'}
+('through the dict', ('method', 1, 1), 'set by JS', [1]) through the dict {}

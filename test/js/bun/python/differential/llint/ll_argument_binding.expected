@@ -1,0 +1,1640 @@
+status: 0
+script: bb39b2aa8b042598
+---
+f()  <-  ():  ()
+f()  <-  (1):  TypeError: f() takes 0 positional arguments but 1 was given
+f()  <-  (1, 2):  TypeError: f() takes 0 positional arguments but 2 were given
+f()  <-  (1, 2, 3):  TypeError: f() takes 0 positional arguments but 3 were given
+f()  <-  (1, 2, 3, 4):  TypeError: f() takes 0 positional arguments but 4 were given
+f()  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 0 positional arguments but 5 were given
+f()  <-  (a=1):  TypeError: f() got an unexpected keyword argument 'a'
+f()  <-  (b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f()  <-  (a=1, b=2):  TypeError: f() got an unexpected keyword argument 'a'
+f()  <-  (b=2, a=1):  TypeError: f() got an unexpected keyword argument 'b'
+f()  <-  (1, a=1):  TypeError: f() got an unexpected keyword argument 'a'
+f()  <-  (1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f()  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f()  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f()  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f()  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f()  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f()  <-  (1, 2, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f()  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f()  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f()  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f()  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f()  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f()  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'a'
+f()  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'a'
+f()  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f()  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f()  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f()  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f()  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'a'
+f()  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'
+f()  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 0 positional arguments but 10 were given
+f()  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 0 positional arguments but 11 were given
+f()  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f()  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f()  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'a'
+f()  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f()  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f()  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'b'
+f()  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f()  <-  (*(1, 2)):  TypeError: f() takes 0 positional arguments but 2 were given
+f()  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f()  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f()  <-  (**{"b": 2, "a": 1}):  TypeError: f() got an unexpected keyword argument 'b'
+f()  <-  (1, **{}):  TypeError: f() takes 0 positional arguments but 1 was given
+f()  <-  (*(), **{}):  ()
+f(a)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a)  <-  (1):  (1,)
+f(a)  <-  (1, 2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a)  <-  (1, 2, 3):  TypeError: f() takes 1 positional argument but 3 were given
+f(a)  <-  (1, 2, 3, 4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 1 positional argument but 5 were given
+f(a)  <-  (a=1):  (1,)
+f(a)  <-  (b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (a=1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (b=2, a=1):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a)  <-  (1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (1, 2, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 1 positional argument but 10 were given
+f(a)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 1 positional argument but 11 were given
+f(a)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a)  <-  (*(1, 2)):  TypeError: f() takes 1 positional argument but 2 were given
+f(a)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a)  <-  (**{"b": 2, "a": 1}):  TypeError: f() got an unexpected keyword argument 'b'
+f(a)  <-  (1, **{}):  (1,)
+f(a)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b)  <-  ():  TypeError: f() missing 2 required positional arguments: 'a' and 'b'
+f(a, b)  <-  (1):  TypeError: f() missing 1 required positional argument: 'b'
+f(a, b)  <-  (1, 2):  (1, 2)
+f(a, b)  <-  (1, 2, 3):  TypeError: f() takes 2 positional arguments but 3 were given
+f(a, b)  <-  (1, 2, 3, 4):  TypeError: f() takes 2 positional arguments but 4 were given
+f(a, b)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 2 positional arguments but 5 were given
+f(a, b)  <-  (a=1):  TypeError: f() missing 1 required positional argument: 'b'
+f(a, b)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b)  <-  (a=1, b=2):  (1, 2)
+f(a, b)  <-  (b=2, a=1):  (1, 2)
+f(a, b)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, b)  <-  (1, b=2):  (1, 2)
+f(a, b)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, b)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 2 positional arguments but 10 were given
+f(a, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 2 positional arguments but 11 were given
+f(a, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, b)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b)  <-  (*(1, 2)):  (1, 2)
+f(a, b)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b)  <-  (**{"b": 2, "a": 1}):  (1, 2)
+f(a, b)  <-  (1, **{}):  TypeError: f() missing 1 required positional argument: 'b'
+f(a, b)  <-  (*(), **{}):  TypeError: f() missing 2 required positional arguments: 'a' and 'b'
+f(a, b=20)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20)  <-  (1):  (1, 20)
+f(a, b=20)  <-  (1, 2):  (1, 2)
+f(a, b=20)  <-  (1, 2, 3):  TypeError: f() takes from 1 to 2 positional arguments but 3 were given
+f(a, b=20)  <-  (1, 2, 3, 4):  TypeError: f() takes from 1 to 2 positional arguments but 4 were given
+f(a, b=20)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes from 1 to 2 positional arguments but 5 were given
+f(a, b=20)  <-  (a=1):  (1, 20)
+f(a, b=20)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20)  <-  (a=1, b=2):  (1, 2)
+f(a, b=20)  <-  (b=2, a=1):  (1, 2)
+f(a, b=20)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, b=20)  <-  (1, b=2):  (1, 2)
+f(a, b=20)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, b=20)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, b=20)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes from 1 to 2 positional arguments but 10 were given
+f(a, b=20)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes from 1 to 2 positional arguments but 11 were given
+f(a, b=20)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, b=20)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20)  <-  (*(1, 2)):  (1, 2)
+f(a, b=20)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20)  <-  (**{"b": 2, "a": 1}):  (1, 2)
+f(a, b=20)  <-  (1, **{}):  (1, 20)
+f(a, b=20)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a=10, b=20)  <-  ():  (10, 20)
+f(a=10, b=20)  <-  (1):  (1, 20)
+f(a=10, b=20)  <-  (1, 2):  (1, 2)
+f(a=10, b=20)  <-  (1, 2, 3):  TypeError: f() takes from 0 to 2 positional arguments but 3 were given
+f(a=10, b=20)  <-  (1, 2, 3, 4):  TypeError: f() takes from 0 to 2 positional arguments but 4 were given
+f(a=10, b=20)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes from 0 to 2 positional arguments but 5 were given
+f(a=10, b=20)  <-  (a=1):  (1, 20)
+f(a=10, b=20)  <-  (b=2):  (10, 2)
+f(a=10, b=20)  <-  (a=1, b=2):  (1, 2)
+f(a=10, b=20)  <-  (b=2, a=1):  (1, 2)
+f(a=10, b=20)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a=10, b=20)  <-  (1, b=2):  (1, 2)
+f(a=10, b=20)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a=10, b=20)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a=10, b=20)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a=10, b=20)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a=10, b=20)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a=10, b=20)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a=10, b=20)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a=10, b=20)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a=10, b=20)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a=10, b=20)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a=10, b=20)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a=10, b=20)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'c'
+f(a=10, b=20)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a=10, b=20)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=10, b=20)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=10, b=20)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=10, b=20)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=10, b=20)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=10, b=20)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a=10, b=20)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes from 0 to 2 positional arguments but 10 were given
+f(a=10, b=20)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes from 0 to 2 positional arguments but 11 were given
+f(a=10, b=20)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a=10, b=20)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a=10, b=20)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'c'
+f(a=10, b=20)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a=10, b=20)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a=10, b=20)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'c'
+f(a=10, b=20)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a=10, b=20)  <-  (*(1, 2)):  (1, 2)
+f(a=10, b=20)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a=10, b=20)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a=10, b=20)  <-  (**{"b": 2, "a": 1}):  (1, 2)
+f(a=10, b=20)  <-  (1, **{}):  (1, 20)
+f(a=10, b=20)  <-  (*(), **{}):  (10, 20)
+f(a, b, c, d)  <-  ():  TypeError: f() missing 4 required positional arguments: 'a', 'b', 'c', and 'd'
+f(a, b, c, d)  <-  (1):  TypeError: f() missing 3 required positional arguments: 'b', 'c', and 'd'
+f(a, b, c, d)  <-  (1, 2):  TypeError: f() missing 2 required positional arguments: 'c' and 'd'
+f(a, b, c, d)  <-  (1, 2, 3):  TypeError: f() missing 1 required positional argument: 'd'
+f(a, b, c, d)  <-  (1, 2, 3, 4):  (1, 2, 3, 4)
+f(a, b, c, d)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 4 positional arguments but 5 were given
+f(a, b, c, d)  <-  (a=1):  TypeError: f() missing 3 required positional arguments: 'b', 'c', and 'd'
+f(a, b, c, d)  <-  (b=2):  TypeError: f() missing 3 required positional arguments: 'a', 'c', and 'd'
+f(a, b, c, d)  <-  (a=1, b=2):  TypeError: f() missing 2 required positional arguments: 'c' and 'd'
+f(a, b, c, d)  <-  (b=2, a=1):  TypeError: f() missing 2 required positional arguments: 'c' and 'd'
+f(a, b, c, d)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, b, c, d)  <-  (1, b=2):  TypeError: f() missing 2 required positional arguments: 'c' and 'd'
+f(a, b, c, d)  <-  (1, c=3):  TypeError: f() missing 2 required positional arguments: 'b' and 'd'
+f(a, b, c, d)  <-  (1, b=2, c=3):  TypeError: f() missing 1 required positional argument: 'd'
+f(a, b, c, d)  <-  (1, c=3, b=2):  TypeError: f() missing 1 required positional argument: 'd'
+f(a, b, c, d)  <-  (1, d=4, c=3, b=2):  (1, 2, 3, 4)
+f(a, b, c, d)  <-  (1, b=2, d=4, c=3):  (1, 2, 3, 4)
+f(a, b, c, d)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, b, c, d)  <-  (1, 2, c=3):  TypeError: f() missing 1 required positional argument: 'd'
+f(a, b, c, d)  <-  (1, 2, d=4, c=3):  (1, 2, 3, 4)
+f(a, b, c, d)  <-  (1, 2, 3, d=4):  (1, 2, 3, 4)
+f(a, b, c, d)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got multiple values for argument 'd'
+f(a, b, c, d)  <-  (d=4, c=3, b=2, a=1):  (1, 2, 3, 4)
+f(a, b, c, d)  <-  (a=1, b=2, c=3, d=4):  (1, 2, 3, 4)
+f(a, b, c, d)  <-  (a=1, c=3):  TypeError: f() missing 2 required positional arguments: 'b' and 'd'
+f(a, b, c, d)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, b, c, d)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 4 positional arguments but 10 were given
+f(a, b, c, d)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 4 positional arguments but 11 were given
+f(a, b, c, d)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b, c, d)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b, c, d)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'e'
+f(a, b, c, d)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b, c, d)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, b, c, d)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'e'
+f(a, b, c, d)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b, c, d)  <-  (*(1, 2)):  TypeError: f() missing 2 required positional arguments: 'c' and 'd'
+f(a, b, c, d)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() missing 1 required positional argument: 'd'
+f(a, b, c, d)  <-  (1, *(2, 3), d=4):  (1, 2, 3, 4)
+f(a, b, c, d)  <-  (**{"b": 2, "a": 1}):  TypeError: f() missing 2 required positional arguments: 'c' and 'd'
+f(a, b, c, d)  <-  (1, **{}):  TypeError: f() missing 3 required positional arguments: 'b', 'c', and 'd'
+f(a, b, c, d)  <-  (*(), **{}):  TypeError: f() missing 4 required positional arguments: 'a', 'b', 'c', and 'd'
+f(a, b=20, c=30, d=40)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, c=30, d=40)  <-  (1):  (1, 20, 30, 40)
+f(a, b=20, c=30, d=40)  <-  (1, 2):  (1, 2, 30, 40)
+f(a, b=20, c=30, d=40)  <-  (1, 2, 3):  (1, 2, 3, 40)
+f(a, b=20, c=30, d=40)  <-  (1, 2, 3, 4):  (1, 2, 3, 4)
+f(a, b=20, c=30, d=40)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes from 1 to 4 positional arguments but 5 were given
+f(a, b=20, c=30, d=40)  <-  (a=1):  (1, 20, 30, 40)
+f(a, b=20, c=30, d=40)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, c=30, d=40)  <-  (a=1, b=2):  (1, 2, 30, 40)
+f(a, b=20, c=30, d=40)  <-  (b=2, a=1):  (1, 2, 30, 40)
+f(a, b=20, c=30, d=40)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, b=20, c=30, d=40)  <-  (1, b=2):  (1, 2, 30, 40)
+f(a, b=20, c=30, d=40)  <-  (1, c=3):  (1, 20, 3, 40)
+f(a, b=20, c=30, d=40)  <-  (1, b=2, c=3):  (1, 2, 3, 40)
+f(a, b=20, c=30, d=40)  <-  (1, c=3, b=2):  (1, 2, 3, 40)
+f(a, b=20, c=30, d=40)  <-  (1, d=4, c=3, b=2):  (1, 2, 3, 4)
+f(a, b=20, c=30, d=40)  <-  (1, b=2, d=4, c=3):  (1, 2, 3, 4)
+f(a, b=20, c=30, d=40)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, b=20, c=30, d=40)  <-  (1, 2, c=3):  (1, 2, 3, 40)
+f(a, b=20, c=30, d=40)  <-  (1, 2, d=4, c=3):  (1, 2, 3, 4)
+f(a, b=20, c=30, d=40)  <-  (1, 2, 3, d=4):  (1, 2, 3, 4)
+f(a, b=20, c=30, d=40)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got multiple values for argument 'd'
+f(a, b=20, c=30, d=40)  <-  (d=4, c=3, b=2, a=1):  (1, 2, 3, 4)
+f(a, b=20, c=30, d=40)  <-  (a=1, b=2, c=3, d=4):  (1, 2, 3, 4)
+f(a, b=20, c=30, d=40)  <-  (a=1, c=3):  (1, 20, 3, 40)
+f(a, b=20, c=30, d=40)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, c=30, d=40)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, c=30, d=40)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, c=30, d=40)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, c=30, d=40)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, c=30, d=40)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, b=20, c=30, d=40)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes from 1 to 4 positional arguments but 10 were given
+f(a, b=20, c=30, d=40)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes from 1 to 4 positional arguments but 11 were given
+f(a, b=20, c=30, d=40)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, c=30, d=40)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, c=30, d=40)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'e'
+f(a, b=20, c=30, d=40)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, c=30, d=40)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, b=20, c=30, d=40)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'e'
+f(a, b=20, c=30, d=40)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, c=30, d=40)  <-  (*(1, 2)):  (1, 2, 30, 40)
+f(a, b=20, c=30, d=40)  <-  (*(1, 2), **{"c": 3}):  (1, 2, 3, 40)
+f(a, b=20, c=30, d=40)  <-  (1, *(2, 3), d=4):  (1, 2, 3, 4)
+f(a, b=20, c=30, d=40)  <-  (**{"b": 2, "a": 1}):  (1, 2, 30, 40)
+f(a, b=20, c=30, d=40)  <-  (1, **{}):  (1, 20, 30, 40)
+f(a, b=20, c=30, d=40)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /)  <-  (1):  (1,)
+f(a, /)  <-  (1, 2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /)  <-  (1, 2, 3):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, /)  <-  (1, 2, 3, 4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, /)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 1 positional argument but 5 were given
+f(a, /)  <-  (a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, /)  <-  (a=1, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (1, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, /)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, /)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, /)  <-  (1, 2, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, /)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (a=1, c=3):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, /)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, /)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, /)  <-  (z=26, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (a=1, z=26, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'
+f(a, /)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 1 positional argument but 10 were given
+f(a, /)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 1 positional argument but 11 were given
+f(a, /)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, /)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, /)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, /)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, /)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, /)  <-  (*(1, 2)):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /)  <-  (**{"b": 2, "a": 1}):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /)  <-  (1, **{}):  (1,)
+f(a, /)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, b)  <-  ():  TypeError: f() missing 2 required positional arguments: 'a' and 'b'
+f(a, /, b)  <-  (1):  TypeError: f() missing 1 required positional argument: 'b'
+f(a, /, b)  <-  (1, 2):  (1, 2)
+f(a, /, b)  <-  (1, 2, 3):  TypeError: f() takes 2 positional arguments but 3 were given
+f(a, /, b)  <-  (1, 2, 3, 4):  TypeError: f() takes 2 positional arguments but 4 were given
+f(a, /, b)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 2 positional arguments but 5 were given
+f(a, /, b)  <-  (a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, b)  <-  (a=1, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (1, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (1, b=2):  (1, 2)
+f(a, /, b)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /, b)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /, b)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /, b)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, /, b)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /, b)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (a=1, c=3):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, /, b)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, /, b)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, /, b)  <-  (z=26, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (a=1, z=26, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'
+f(a, /, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 2 positional arguments but 10 were given
+f(a, /, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 2 positional arguments but 11 were given
+f(a, /, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, /, b)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, /, b)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, /, b)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /, b)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, /, b)  <-  (*(1, 2)):  (1, 2)
+f(a, /, b)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, /, b)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b)  <-  (**{"b": 2, "a": 1}):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b)  <-  (1, **{}):  TypeError: f() missing 1 required positional argument: 'b'
+f(a, /, b)  <-  (*(), **{}):  TypeError: f() missing 2 required positional arguments: 'a' and 'b'
+f(a, b=20, /, c=30)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, /, c=30)  <-  (1):  (1, 20, 30)
+f(a, b=20, /, c=30)  <-  (1, 2):  (1, 2, 30)
+f(a, b=20, /, c=30)  <-  (1, 2, 3):  (1, 2, 3)
+f(a, b=20, /, c=30)  <-  (1, 2, 3, 4):  TypeError: f() takes from 1 to 3 positional arguments but 4 were given
+f(a, b=20, /, c=30)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes from 1 to 3 positional arguments but 5 were given
+f(a, b=20, /, c=30)  <-  (a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, b=20, /, c=30)  <-  (b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (a=1, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a, b'
+f(a, b=20, /, c=30)  <-  (b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a, b'
+f(a, b=20, /, c=30)  <-  (1, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, b=20, /, c=30)  <-  (1, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (1, c=3):  (1, 20, 3)
+f(a, b=20, /, c=30)  <-  (1, b=2, c=3):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (1, c=3, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (1, d=4, c=3, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (1, b=2, d=4, c=3):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (1, 2, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (1, 2, c=3):  (1, 2, 3)
+f(a, b=20, /, c=30)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, /, c=30)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, /, c=30)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, /, c=30)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a, b'
+f(a, b=20, /, c=30)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a, b'
+f(a, b=20, /, c=30)  <-  (a=1, c=3):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, b=20, /, c=30)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, /, c=30)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, /, c=30)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, /, c=30)  <-  (z=26, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, b=20, /, c=30)  <-  (a=1, z=26, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a, b'
+f(a, b=20, /, c=30)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'
+f(a, b=20, /, c=30)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes from 1 to 3 positional arguments but 10 were given
+f(a, b=20, /, c=30)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes from 1 to 3 positional arguments but 11 were given
+f(a, b=20, /, c=30)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, /, c=30)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a, b'
+f(a, b=20, /, c=30)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a, b'
+f(a, b=20, /, c=30)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'b'
+f(a, b=20, /, c=30)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, /, c=30)  <-  (*(1, 2)):  (1, 2, 30)
+f(a, b=20, /, c=30)  <-  (*(1, 2), **{"c": 3}):  (1, 2, 3)
+f(a, b=20, /, c=30)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, /, c=30)  <-  (**{"b": 2, "a": 1}):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a, b'
+f(a, b=20, /, c=30)  <-  (1, **{}):  (1, 20, 30)
+f(a, b=20, /, c=30)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, b=20, *, c=30)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, b=20, *, c=30)  <-  (1):  (1, 20, 30)
+f(a, /, b=20, *, c=30)  <-  (1, 2):  (1, 2, 30)
+f(a, /, b=20, *, c=30)  <-  (1, 2, 3):  TypeError: f() takes from 1 to 2 positional arguments but 3 were given
+f(a, /, b=20, *, c=30)  <-  (1, 2, 3, 4):  TypeError: f() takes from 1 to 2 positional arguments but 4 were given
+f(a, /, b=20, *, c=30)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes from 1 to 2 positional arguments but 5 were given
+f(a, /, b=20, *, c=30)  <-  (a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, b=20, *, c=30)  <-  (a=1, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (1, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (1, b=2):  (1, 2, 30)
+f(a, /, b=20, *, c=30)  <-  (1, c=3):  (1, 20, 3)
+f(a, /, b=20, *, c=30)  <-  (1, b=2, c=3):  (1, 2, 3)
+f(a, /, b=20, *, c=30)  <-  (1, c=3, b=2):  (1, 2, 3)
+f(a, /, b=20, *, c=30)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b=20, *, c=30)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b=20, *, c=30)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, /, b=20, *, c=30)  <-  (1, 2, c=3):  (1, 2, 3)
+f(a, /, b=20, *, c=30)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b=20, *, c=30)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b=20, *, c=30)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b=20, *, c=30)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (a=1, c=3):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, /, b=20, *, c=30)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, /, b=20, *, c=30)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, /, b=20, *, c=30)  <-  (z=26, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (a=1, z=26, b=2):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'
+f(a, /, b=20, *, c=30)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes from 1 to 2 positional arguments but 10 were given
+f(a, /, b=20, *, c=30)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes from 1 to 2 positional arguments but 11 were given
+f(a, /, b=20, *, c=30)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, /, b=20, *, c=30)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, /, b=20, *, c=30)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, /, b=20, *, c=30)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b=20, *, c=30)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, /, b=20, *, c=30)  <-  (*(1, 2)):  (1, 2, 30)
+f(a, /, b=20, *, c=30)  <-  (*(1, 2), **{"c": 3}):  (1, 2, 3)
+f(a, /, b=20, *, c=30)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, /, b=20, *, c=30)  <-  (**{"b": 2, "a": 1}):  TypeError: f() got some positional-only arguments passed as keyword arguments: 'a'
+f(a, /, b=20, *, c=30)  <-  (1, **{}):  (1, 20, 30)
+f(a, /, b=20, *, c=30)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(*, a)  <-  ():  TypeError: f() missing 1 required keyword-only argument: 'a'
+f(*, a)  <-  (1):  TypeError: f() takes 0 positional arguments but 1 was given
+f(*, a)  <-  (1, 2):  TypeError: f() takes 0 positional arguments but 2 were given
+f(*, a)  <-  (1, 2, 3):  TypeError: f() takes 0 positional arguments but 3 were given
+f(*, a)  <-  (1, 2, 3, 4):  TypeError: f() takes 0 positional arguments but 4 were given
+f(*, a)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 0 positional arguments but 5 were given
+f(*, a)  <-  (a=1):  (1,)
+f(*, a)  <-  (b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (a=1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (b=2, a=1):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (1, a=1):  TypeError: f() takes 0 positional arguments but 1 positional argument (and 1 keyword-only argument) were given
+f(*, a)  <-  (1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (1, 2, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(*, a)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 0 positional arguments but 10 were given
+f(*, a)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 0 positional arguments but 11 were given
+f(*, a)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(*, a)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(*, a)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(*, a)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(*, a)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(*, a)  <-  (*(1, 2)):  TypeError: f() takes 0 positional arguments but 2 were given
+f(*, a)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a)  <-  (**{"b": 2, "a": 1}):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a)  <-  (1, **{}):  TypeError: f() takes 0 positional arguments but 1 was given
+f(*, a)  <-  (*(), **{}):  TypeError: f() missing 1 required keyword-only argument: 'a'
+f(*, a=10)  <-  ():  (10,)
+f(*, a=10)  <-  (1):  TypeError: f() takes 0 positional arguments but 1 was given
+f(*, a=10)  <-  (1, 2):  TypeError: f() takes 0 positional arguments but 2 were given
+f(*, a=10)  <-  (1, 2, 3):  TypeError: f() takes 0 positional arguments but 3 were given
+f(*, a=10)  <-  (1, 2, 3, 4):  TypeError: f() takes 0 positional arguments but 4 were given
+f(*, a=10)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 0 positional arguments but 5 were given
+f(*, a=10)  <-  (a=1):  (1,)
+f(*, a=10)  <-  (b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (a=1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (b=2, a=1):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (1, a=1):  TypeError: f() takes 0 positional arguments but 1 positional argument (and 1 keyword-only argument) were given
+f(*, a=10)  <-  (1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a=10)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a=10)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a=10)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (1, 2, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a=10)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a=10)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a=10)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a=10)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a=10)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a=10)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a=10)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a=10)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a=10)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a=10)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(*, a=10)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(*, a=10)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 0 positional arguments but 10 were given
+f(*, a=10)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 0 positional arguments but 11 were given
+f(*, a=10)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(*, a=10)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(*, a=10)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(*, a=10)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(*, a=10)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(*, a=10)  <-  (*(1, 2)):  TypeError: f() takes 0 positional arguments but 2 were given
+f(*, a=10)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(*, a=10)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(*, a=10)  <-  (**{"b": 2, "a": 1}):  TypeError: f() got an unexpected keyword argument 'b'
+f(*, a=10)  <-  (1, **{}):  TypeError: f() takes 0 positional arguments but 1 was given
+f(*, a=10)  <-  (*(), **{}):  (10,)
+f(a, *, b)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b)  <-  (1):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *, b)  <-  (1, 2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b)  <-  (1, 2, 3):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, *, b)  <-  (1, 2, 3, 4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, *, b)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 1 positional argument but 5 were given
+f(a, *, b)  <-  (a=1):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *, b)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b)  <-  (a=1, b=2):  (1, 2)
+f(a, *, b)  <-  (b=2, a=1):  (1, 2)
+f(a, *, b)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, *, b)  <-  (1, b=2):  (1, 2)
+f(a, *, b)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *, b)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *, b)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *, b)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b)  <-  (1, 2, b=2):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *, b)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *, b)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *, b)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, *, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 1 positional argument but 10 were given
+f(a, *, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 1 positional argument but 11 were given
+f(a, *, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *, b)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *, b)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *, b)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *, b)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, *, b)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *, b)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *, b)  <-  (*(1, 2)):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *, b)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b)  <-  (**{"b": 2, "a": 1}):  (1, 2)
+f(a, *, b)  <-  (1, **{}):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *, b)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=20, c)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=20, c)  <-  (1):  TypeError: f() missing 1 required keyword-only argument: 'c'
+f(a, *, b=20, c)  <-  (1, 2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=20, c)  <-  (1, 2, 3):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, *, b=20, c)  <-  (1, 2, 3, 4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, *, b=20, c)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 1 positional argument but 5 were given
+f(a, *, b=20, c)  <-  (a=1):  TypeError: f() missing 1 required keyword-only argument: 'c'
+f(a, *, b=20, c)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=20, c)  <-  (a=1, b=2):  TypeError: f() missing 1 required keyword-only argument: 'c'
+f(a, *, b=20, c)  <-  (b=2, a=1):  TypeError: f() missing 1 required keyword-only argument: 'c'
+f(a, *, b=20, c)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, *, b=20, c)  <-  (1, b=2):  TypeError: f() missing 1 required keyword-only argument: 'c'
+f(a, *, b=20, c)  <-  (1, c=3):  (1, 20, 3)
+f(a, *, b=20, c)  <-  (1, b=2, c=3):  (1, 2, 3)
+f(a, *, b=20, c)  <-  (1, c=3, b=2):  (1, 2, 3)
+f(a, *, b=20, c)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (1, 2, b=2):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=20, c)  <-  (1, 2, c=3):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=20, c)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (a=1, c=3):  (1, 20, 3)
+f(a, *, b=20, c)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=20, c)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=20, c)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=20, c)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=20, c)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=20, c)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, *, b=20, c)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 1 positional argument but 10 were given
+f(a, *, b=20, c)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 1 positional argument but 11 were given
+f(a, *, b=20, c)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *, b=20, c)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *, b=20, c)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *, b=20, c)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, *, b=20, c)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *, b=20, c)  <-  (*(1, 2)):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=20, c)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=20, c)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *, b=20, c)  <-  (**{"b": 2, "a": 1}):  TypeError: f() missing 1 required keyword-only argument: 'c'
+f(a, *, b=20, c)  <-  (1, **{}):  TypeError: f() missing 1 required keyword-only argument: 'c'
+f(a, *, b=20, c)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *, c=30, d=40)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *, c=30, d=40)  <-  (1):  (1, 20, 30, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, 2):  (1, 2, 30, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, 3):  TypeError: f() takes from 1 to 2 positional arguments but 3 were given
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, 3, 4):  TypeError: f() takes from 1 to 2 positional arguments but 4 were given
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes from 1 to 2 positional arguments but 5 were given
+f(a, b=20, *, c=30, d=40)  <-  (a=1):  (1, 20, 30, 40)
+f(a, b=20, *, c=30, d=40)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *, c=30, d=40)  <-  (a=1, b=2):  (1, 2, 30, 40)
+f(a, b=20, *, c=30, d=40)  <-  (b=2, a=1):  (1, 2, 30, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, b=20, *, c=30, d=40)  <-  (1, b=2):  (1, 2, 30, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, c=3):  (1, 20, 3, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, b=2, c=3):  (1, 2, 3, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, c=3, b=2):  (1, 2, 3, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, d=4, c=3, b=2):  (1, 2, 3, 4)
+f(a, b=20, *, c=30, d=40)  <-  (1, b=2, d=4, c=3):  (1, 2, 3, 4)
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, c=3):  (1, 2, 3, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, d=4, c=3):  (1, 2, 3, 4)
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, 3, d=4):  TypeError: f() takes from 1 to 2 positional arguments but 3 positional arguments (and 1 keyword-only argument) were given
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, 3, 4, d=4):  TypeError: f() takes from 1 to 2 positional arguments but 4 positional arguments (and 1 keyword-only argument) were given
+f(a, b=20, *, c=30, d=40)  <-  (d=4, c=3, b=2, a=1):  (1, 2, 3, 4)
+f(a, b=20, *, c=30, d=40)  <-  (a=1, b=2, c=3, d=4):  (1, 2, 3, 4)
+f(a, b=20, *, c=30, d=40)  <-  (a=1, c=3):  (1, 20, 3, 40)
+f(a, b=20, *, c=30, d=40)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *, c=30, d=40)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *, c=30, d=40)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *, c=30, d=40)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *, c=30, d=40)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes from 1 to 2 positional arguments but 10 were given
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes from 1 to 2 positional arguments but 11 were given
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, *, c=30, d=40)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, *, c=30, d=40)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'e'
+f(a, b=20, *, c=30, d=40)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, *, c=30, d=40)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, b=20, *, c=30, d=40)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'e'
+f(a, b=20, *, c=30, d=40)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, *, c=30, d=40)  <-  (*(1, 2)):  (1, 2, 30, 40)
+f(a, b=20, *, c=30, d=40)  <-  (*(1, 2), **{"c": 3}):  (1, 2, 3, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, *(2, 3), d=4):  TypeError: f() takes from 1 to 2 positional arguments but 3 positional arguments (and 1 keyword-only argument) were given
+f(a, b=20, *, c=30, d=40)  <-  (**{"b": 2, "a": 1}):  (1, 2, 30, 40)
+f(a, b=20, *, c=30, d=40)  <-  (1, **{}):  (1, 20, 30, 40)
+f(a, b=20, *, c=30, d=40)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(*args)  <-  ():  ((),)
+f(*args)  <-  (1):  ((1,),)
+f(*args)  <-  (1, 2):  ((1, 2),)
+f(*args)  <-  (1, 2, 3):  ((1, 2, 3),)
+f(*args)  <-  (1, 2, 3, 4):  ((1, 2, 3, 4),)
+f(*args)  <-  (1, 2, 3, 4, 5):  ((1, 2, 3, 4, 5),)
+f(*args)  <-  (a=1):  TypeError: f() got an unexpected keyword argument 'a'
+f(*args)  <-  (b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*args)  <-  (a=1, b=2):  TypeError: f() got an unexpected keyword argument 'a'
+f(*args)  <-  (b=2, a=1):  TypeError: f() got an unexpected keyword argument 'b'
+f(*args)  <-  (1, a=1):  TypeError: f() got an unexpected keyword argument 'a'
+f(*args)  <-  (1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*args)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(*args)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(*args)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(*args)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(*args)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(*args)  <-  (1, 2, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(*args)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(*args)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(*args)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(*args)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(*args)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(*args)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'a'
+f(*args)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'a'
+f(*args)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(*args)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(*args)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(*args)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(*args)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'a'
+f(*args)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'
+f(*args)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  ((1, 2, 3, 4, 5, 6, 7, 8, 9, 10),)
+f(*args)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  ((1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),)
+f(*args)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(*args)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(*args)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'a'
+f(*args)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(*args)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(*args)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'b'
+f(*args)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(*args)  <-  (*(1, 2)):  ((1, 2),)
+f(*args)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(*args)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(*args)  <-  (**{"b": 2, "a": 1}):  TypeError: f() got an unexpected keyword argument 'b'
+f(*args)  <-  (1, **{}):  ((1,),)
+f(*args)  <-  (*(), **{}):  ((),)
+f(a, *args)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args)  <-  (1):  (1, ())
+f(a, *args)  <-  (1, 2):  (1, (2,))
+f(a, *args)  <-  (1, 2, 3):  (1, (2, 3))
+f(a, *args)  <-  (1, 2, 3, 4):  (1, (2, 3, 4))
+f(a, *args)  <-  (1, 2, 3, 4, 5):  (1, (2, 3, 4, 5))
+f(a, *args)  <-  (a=1):  (1, ())
+f(a, *args)  <-  (b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (a=1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (b=2, a=1):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, *args)  <-  (1, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (1, 2, b=2):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, *args)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  (1, (2, 3, 4, 5, 6, 7, 8, 9, 10))
+f(a, *args)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  (1, (2, 3, 4, 5, 6, 7, 8, 9, 10, 11))
+f(a, *args)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, *args)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args)  <-  (*(1, 2)):  (1, (2,))
+f(a, *args)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args)  <-  (**{"b": 2, "a": 1}):  TypeError: f() got an unexpected keyword argument 'b'
+f(a, *args)  <-  (1, **{}):  (1, ())
+f(a, *args)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *args)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *args)  <-  (1):  (1, 20, ())
+f(a, b=20, *args)  <-  (1, 2):  (1, 2, ())
+f(a, b=20, *args)  <-  (1, 2, 3):  (1, 2, (3,))
+f(a, b=20, *args)  <-  (1, 2, 3, 4):  (1, 2, (3, 4))
+f(a, b=20, *args)  <-  (1, 2, 3, 4, 5):  (1, 2, (3, 4, 5))
+f(a, b=20, *args)  <-  (a=1):  (1, 20, ())
+f(a, b=20, *args)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *args)  <-  (a=1, b=2):  (1, 2, ())
+f(a, b=20, *args)  <-  (b=2, a=1):  (1, 2, ())
+f(a, b=20, *args)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, b=20, *args)  <-  (1, b=2):  (1, 2, ())
+f(a, b=20, *args)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20, *args)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20, *args)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20, *args)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, *args)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, *args)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, b=20, *args)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20, *args)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, *args)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, *args)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, *args)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, *args)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20, *args)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20, *args)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *args)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *args)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *args)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *args)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b=20, *args)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, b=20, *args)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  (1, 2, (3, 4, 5, 6, 7, 8, 9, 10))
+f(a, b=20, *args)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  (1, 2, (3, 4, 5, 6, 7, 8, 9, 10, 11))
+f(a, b=20, *args)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, *args)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, *args)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20, *args)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, *args)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, b=20, *args)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20, *args)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, b=20, *args)  <-  (*(1, 2)):  (1, 2, ())
+f(a, b=20, *args)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, b=20, *args)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, b=20, *args)  <-  (**{"b": 2, "a": 1}):  (1, 2, ())
+f(a, b=20, *args)  <-  (1, **{}):  (1, 20, ())
+f(a, b=20, *args)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, b)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, b)  <-  (1):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (1, 2):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (1, 2, 3):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (1, 2, 3, 4):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (1, 2, 3, 4, 5):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (a=1):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, b)  <-  (a=1, b=2):  (1, (), 2)
+f(a, *args, b)  <-  (b=2, a=1):  (1, (), 2)
+f(a, *args, b)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, *args, b)  <-  (1, b=2):  (1, (), 2)
+f(a, *args, b)  <-  (1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args, b)  <-  (1, b=2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args, b)  <-  (1, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args, b)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b)  <-  (1, 2, b=2):  (1, (2,), 2)
+f(a, *args, b)  <-  (1, 2, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args, b)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args, b)  <-  (a=1, c=3):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args, b)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, *args, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args, b)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args, b)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args, b)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args, b)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, *args, b)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args, b)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args, b)  <-  (*(1, 2)):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() got an unexpected keyword argument 'c'
+f(a, *args, b)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b)  <-  (**{"b": 2, "a": 1}):  (1, (), 2)
+f(a, *args, b)  <-  (1, **{}):  TypeError: f() missing 1 required keyword-only argument: 'b'
+f(a, *args, b)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, b=20, c=30)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, b=20, c=30)  <-  (1):  (1, (), 20, 30)
+f(a, *args, b=20, c=30)  <-  (1, 2):  (1, (2,), 20, 30)
+f(a, *args, b=20, c=30)  <-  (1, 2, 3):  (1, (2, 3), 20, 30)
+f(a, *args, b=20, c=30)  <-  (1, 2, 3, 4):  (1, (2, 3, 4), 20, 30)
+f(a, *args, b=20, c=30)  <-  (1, 2, 3, 4, 5):  (1, (2, 3, 4, 5), 20, 30)
+f(a, *args, b=20, c=30)  <-  (a=1):  (1, (), 20, 30)
+f(a, *args, b=20, c=30)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, b=20, c=30)  <-  (a=1, b=2):  (1, (), 2, 30)
+f(a, *args, b=20, c=30)  <-  (b=2, a=1):  (1, (), 2, 30)
+f(a, *args, b=20, c=30)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, *args, b=20, c=30)  <-  (1, b=2):  (1, (), 2, 30)
+f(a, *args, b=20, c=30)  <-  (1, c=3):  (1, (), 20, 3)
+f(a, *args, b=20, c=30)  <-  (1, b=2, c=3):  (1, (), 2, 3)
+f(a, *args, b=20, c=30)  <-  (1, c=3, b=2):  (1, (), 2, 3)
+f(a, *args, b=20, c=30)  <-  (1, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (1, b=2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (1, 2, b=2):  (1, (2,), 2, 30)
+f(a, *args, b=20, c=30)  <-  (1, 2, c=3):  (1, (2,), 20, 3)
+f(a, *args, b=20, c=30)  <-  (1, 2, d=4, c=3):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (1, 2, 3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (a=1, c=3):  (1, (), 20, 3)
+f(a, *args, b=20, c=30)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b=20, c=30)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b=20, c=30)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b=20, c=30)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b=20, c=30)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *args, b=20, c=30)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, *args, b=20, c=30)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  (1, (2, 3, 4, 5, 6, 7, 8, 9, 10), 20, 30)
+f(a, *args, b=20, c=30)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  (1, (2, 3, 4, 5, 6, 7, 8, 9, 10, 11), 20, 30)
+f(a, *args, b=20, c=30)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args, b=20, c=30)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args, b=20, c=30)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args, b=20, c=30)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, *args, b=20, c=30)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (1, 2, j=10, c=3):  TypeError: f() got an unexpected keyword argument 'j'
+f(a, *args, b=20, c=30)  <-  (*(1, 2)):  (1, (2,), 20, 30)
+f(a, *args, b=20, c=30)  <-  (*(1, 2), **{"c": 3}):  (1, (2,), 20, 3)
+f(a, *args, b=20, c=30)  <-  (1, *(2, 3), d=4):  TypeError: f() got an unexpected keyword argument 'd'
+f(a, *args, b=20, c=30)  <-  (**{"b": 2, "a": 1}):  (1, (), 2, 30)
+f(a, *args, b=20, c=30)  <-  (1, **{}):  (1, (), 20, 30)
+f(a, *args, b=20, c=30)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(**kw)  <-  ():  ({},)
+f(**kw)  <-  (1):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, 2):  TypeError: f() takes 0 positional arguments but 2 were given
+f(**kw)  <-  (1, 2, 3):  TypeError: f() takes 0 positional arguments but 3 were given
+f(**kw)  <-  (1, 2, 3, 4):  TypeError: f() takes 0 positional arguments but 4 were given
+f(**kw)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 0 positional arguments but 5 were given
+f(**kw)  <-  (a=1):  ({'a': 1},)
+f(**kw)  <-  (b=2):  ({'b': 2},)
+f(**kw)  <-  (a=1, b=2):  ({'a': 1, 'b': 2},)
+f(**kw)  <-  (b=2, a=1):  ({'b': 2, 'a': 1},)
+f(**kw)  <-  (1, a=1):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, b=2):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, c=3):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, b=2, c=3):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, c=3, b=2):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, d=4, c=3, b=2):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, b=2, d=4, c=3):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, 2, b=2):  TypeError: f() takes 0 positional arguments but 2 were given
+f(**kw)  <-  (1, 2, c=3):  TypeError: f() takes 0 positional arguments but 2 were given
+f(**kw)  <-  (1, 2, d=4, c=3):  TypeError: f() takes 0 positional arguments but 2 were given
+f(**kw)  <-  (1, 2, 3, d=4):  TypeError: f() takes 0 positional arguments but 3 were given
+f(**kw)  <-  (1, 2, 3, 4, d=4):  TypeError: f() takes 0 positional arguments but 4 were given
+f(**kw)  <-  (d=4, c=3, b=2, a=1):  ({'d': 4, 'c': 3, 'b': 2, 'a': 1},)
+f(**kw)  <-  (a=1, b=2, c=3, d=4):  ({'a': 1, 'b': 2, 'c': 3, 'd': 4},)
+f(**kw)  <-  (a=1, c=3):  ({'a': 1, 'c': 3},)
+f(**kw)  <-  (z=26):  ({'z': 26},)
+f(**kw)  <-  (1, z=26):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, 2, z=26, y=25):  TypeError: f() takes 0 positional arguments but 2 were given
+f(**kw)  <-  (z=26, a=1):  ({'z': 26, 'a': 1},)
+f(**kw)  <-  (a=1, z=26, b=2):  ({'a': 1, 'z': 26, 'b': 2},)
+f(**kw)  <-  (aa=1):  ({'aa': 1},)
+f(**kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 0 positional arguments but 10 were given
+f(**kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 0 positional arguments but 11 were given
+f(**kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() takes 0 positional arguments but 9 were given
+f(**kw)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  ({'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2, 'a': 1},)
+f(**kw)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  ({'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10},)
+f(**kw)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (1, 2, j=10, c=3):  TypeError: f() takes 0 positional arguments but 2 were given
+f(**kw)  <-  (*(1, 2)):  TypeError: f() takes 0 positional arguments but 2 were given
+f(**kw)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() takes 0 positional arguments but 2 were given
+f(**kw)  <-  (1, *(2, 3), d=4):  TypeError: f() takes 0 positional arguments but 3 were given
+f(**kw)  <-  (**{"b": 2, "a": 1}):  ({'b': 2, 'a': 1},)
+f(**kw)  <-  (1, **{}):  TypeError: f() takes 0 positional arguments but 1 was given
+f(**kw)  <-  (*(), **{}):  ({},)
+f(a, **kw)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, **kw)  <-  (1):  (1, {})
+f(a, **kw)  <-  (1, 2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, **kw)  <-  (1, 2, 3):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, **kw)  <-  (1, 2, 3, 4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, **kw)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 1 positional argument but 5 were given
+f(a, **kw)  <-  (a=1):  (1, {})
+f(a, **kw)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, **kw)  <-  (a=1, b=2):  (1, {'b': 2})
+f(a, **kw)  <-  (b=2, a=1):  (1, {'b': 2})
+f(a, **kw)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, **kw)  <-  (1, b=2):  (1, {'b': 2})
+f(a, **kw)  <-  (1, c=3):  (1, {'c': 3})
+f(a, **kw)  <-  (1, b=2, c=3):  (1, {'b': 2, 'c': 3})
+f(a, **kw)  <-  (1, c=3, b=2):  (1, {'c': 3, 'b': 2})
+f(a, **kw)  <-  (1, d=4, c=3, b=2):  (1, {'d': 4, 'c': 3, 'b': 2})
+f(a, **kw)  <-  (1, b=2, d=4, c=3):  (1, {'b': 2, 'd': 4, 'c': 3})
+f(a, **kw)  <-  (1, 2, b=2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, **kw)  <-  (1, 2, c=3):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, **kw)  <-  (1, 2, d=4, c=3):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, **kw)  <-  (1, 2, 3, d=4):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, **kw)  <-  (1, 2, 3, 4, d=4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, **kw)  <-  (d=4, c=3, b=2, a=1):  (1, {'d': 4, 'c': 3, 'b': 2})
+f(a, **kw)  <-  (a=1, b=2, c=3, d=4):  (1, {'b': 2, 'c': 3, 'd': 4})
+f(a, **kw)  <-  (a=1, c=3):  (1, {'c': 3})
+f(a, **kw)  <-  (z=26):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, **kw)  <-  (1, z=26):  (1, {'z': 26})
+f(a, **kw)  <-  (1, 2, z=26, y=25):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, **kw)  <-  (z=26, a=1):  (1, {'z': 26})
+f(a, **kw)  <-  (a=1, z=26, b=2):  (1, {'z': 26, 'b': 2})
+f(a, **kw)  <-  (aa=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 1 positional argument but 10 were given
+f(a, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 1 positional argument but 11 were given
+f(a, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() takes 1 positional argument but 9 were given
+f(a, **kw)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  (1, {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(a, **kw)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  (1, {'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10})
+f(a, **kw)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(a, **kw)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, {'k': 11, 'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(a, **kw)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  (1, {'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10, 'k': 11})
+f(a, **kw)  <-  (1, 2, j=10, c=3):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, **kw)  <-  (*(1, 2)):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, **kw)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, **kw)  <-  (1, *(2, 3), d=4):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, **kw)  <-  (**{"b": 2, "a": 1}):  (1, {'b': 2})
+f(a, **kw)  <-  (1, **{}):  (1, {})
+f(a, **kw)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, **kw)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, **kw)  <-  (1):  (1, 20, {})
+f(a, b=20, **kw)  <-  (1, 2):  (1, 2, {})
+f(a, b=20, **kw)  <-  (1, 2, 3):  TypeError: f() takes from 1 to 2 positional arguments but 3 were given
+f(a, b=20, **kw)  <-  (1, 2, 3, 4):  TypeError: f() takes from 1 to 2 positional arguments but 4 were given
+f(a, b=20, **kw)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes from 1 to 2 positional arguments but 5 were given
+f(a, b=20, **kw)  <-  (a=1):  (1, 20, {})
+f(a, b=20, **kw)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, **kw)  <-  (a=1, b=2):  (1, 2, {})
+f(a, b=20, **kw)  <-  (b=2, a=1):  (1, 2, {})
+f(a, b=20, **kw)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, b=20, **kw)  <-  (1, b=2):  (1, 2, {})
+f(a, b=20, **kw)  <-  (1, c=3):  (1, 20, {'c': 3})
+f(a, b=20, **kw)  <-  (1, b=2, c=3):  (1, 2, {'c': 3})
+f(a, b=20, **kw)  <-  (1, c=3, b=2):  (1, 2, {'c': 3})
+f(a, b=20, **kw)  <-  (1, d=4, c=3, b=2):  (1, 2, {'d': 4, 'c': 3})
+f(a, b=20, **kw)  <-  (1, b=2, d=4, c=3):  (1, 2, {'d': 4, 'c': 3})
+f(a, b=20, **kw)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, b=20, **kw)  <-  (1, 2, c=3):  (1, 2, {'c': 3})
+f(a, b=20, **kw)  <-  (1, 2, d=4, c=3):  (1, 2, {'d': 4, 'c': 3})
+f(a, b=20, **kw)  <-  (1, 2, 3, d=4):  TypeError: f() takes from 1 to 2 positional arguments but 3 were given
+f(a, b=20, **kw)  <-  (1, 2, 3, 4, d=4):  TypeError: f() takes from 1 to 2 positional arguments but 4 were given
+f(a, b=20, **kw)  <-  (d=4, c=3, b=2, a=1):  (1, 2, {'d': 4, 'c': 3})
+f(a, b=20, **kw)  <-  (a=1, b=2, c=3, d=4):  (1, 2, {'c': 3, 'd': 4})
+f(a, b=20, **kw)  <-  (a=1, c=3):  (1, 20, {'c': 3})
+f(a, b=20, **kw)  <-  (z=26):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, **kw)  <-  (1, z=26):  (1, 20, {'z': 26})
+f(a, b=20, **kw)  <-  (1, 2, z=26, y=25):  (1, 2, {'z': 26, 'y': 25})
+f(a, b=20, **kw)  <-  (z=26, a=1):  (1, 20, {'z': 26})
+f(a, b=20, **kw)  <-  (a=1, z=26, b=2):  (1, 2, {'z': 26})
+f(a, b=20, **kw)  <-  (aa=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes from 1 to 2 positional arguments but 10 were given
+f(a, b=20, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes from 1 to 2 positional arguments but 11 were given
+f(a, b=20, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() takes from 1 to 2 positional arguments but 9 were given
+f(a, b=20, **kw)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  (1, 2, {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3})
+f(a, b=20, **kw)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  (1, 2, {'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10})
+f(a, b=20, **kw)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3})
+f(a, b=20, **kw)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, {'k': 11, 'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3})
+f(a, b=20, **kw)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  (1, 2, {'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10, 'k': 11})
+f(a, b=20, **kw)  <-  (1, 2, j=10, c=3):  (1, 2, {'j': 10, 'c': 3})
+f(a, b=20, **kw)  <-  (*(1, 2)):  (1, 2, {})
+f(a, b=20, **kw)  <-  (*(1, 2), **{"c": 3}):  (1, 2, {'c': 3})
+f(a, b=20, **kw)  <-  (1, *(2, 3), d=4):  TypeError: f() takes from 1 to 2 positional arguments but 3 were given
+f(a, b=20, **kw)  <-  (**{"b": 2, "a": 1}):  (1, 2, {})
+f(a, b=20, **kw)  <-  (1, **{}):  (1, 20, {})
+f(a, b=20, **kw)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (1):  (1, {})
+f(a, /, **kw)  <-  (1, 2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /, **kw)  <-  (1, 2, 3):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, /, **kw)  <-  (1, 2, 3, 4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, /, **kw)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 1 positional argument but 5 were given
+f(a, /, **kw)  <-  (a=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (a=1, b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (b=2, a=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (1, a=1):  (1, {'a': 1})
+f(a, /, **kw)  <-  (1, b=2):  (1, {'b': 2})
+f(a, /, **kw)  <-  (1, c=3):  (1, {'c': 3})
+f(a, /, **kw)  <-  (1, b=2, c=3):  (1, {'b': 2, 'c': 3})
+f(a, /, **kw)  <-  (1, c=3, b=2):  (1, {'c': 3, 'b': 2})
+f(a, /, **kw)  <-  (1, d=4, c=3, b=2):  (1, {'d': 4, 'c': 3, 'b': 2})
+f(a, /, **kw)  <-  (1, b=2, d=4, c=3):  (1, {'b': 2, 'd': 4, 'c': 3})
+f(a, /, **kw)  <-  (1, 2, b=2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /, **kw)  <-  (1, 2, c=3):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /, **kw)  <-  (1, 2, d=4, c=3):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /, **kw)  <-  (1, 2, 3, d=4):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, /, **kw)  <-  (1, 2, 3, 4, d=4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, /, **kw)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (a=1, c=3):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (z=26):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (1, z=26):  (1, {'z': 26})
+f(a, /, **kw)  <-  (1, 2, z=26, y=25):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /, **kw)  <-  (z=26, a=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (a=1, z=26, b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (aa=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 1 positional argument but 10 were given
+f(a, /, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 1 positional argument but 11 were given
+f(a, /, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() takes 1 positional argument but 9 were given
+f(a, /, **kw)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(a, /, **kw)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, {'k': 11, 'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(a, /, **kw)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  (1, {'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10, 'k': 11})
+f(a, /, **kw)  <-  (1, 2, j=10, c=3):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /, **kw)  <-  (*(1, 2)):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /, **kw)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, /, **kw)  <-  (1, *(2, 3), d=4):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, /, **kw)  <-  (**{"b": 2, "a": 1}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, /, **kw)  <-  (1, **{}):  (1, {})
+f(a, /, **kw)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=20, **kw)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=20, **kw)  <-  (1):  (1, 20, {})
+f(a, *, b=20, **kw)  <-  (1, 2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=20, **kw)  <-  (1, 2, 3):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, *, b=20, **kw)  <-  (1, 2, 3, 4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, *, b=20, **kw)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 1 positional argument but 5 were given
+f(a, *, b=20, **kw)  <-  (a=1):  (1, 20, {})
+f(a, *, b=20, **kw)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=20, **kw)  <-  (a=1, b=2):  (1, 2, {})
+f(a, *, b=20, **kw)  <-  (b=2, a=1):  (1, 2, {})
+f(a, *, b=20, **kw)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, *, b=20, **kw)  <-  (1, b=2):  (1, 2, {})
+f(a, *, b=20, **kw)  <-  (1, c=3):  (1, 20, {'c': 3})
+f(a, *, b=20, **kw)  <-  (1, b=2, c=3):  (1, 2, {'c': 3})
+f(a, *, b=20, **kw)  <-  (1, c=3, b=2):  (1, 2, {'c': 3})
+f(a, *, b=20, **kw)  <-  (1, d=4, c=3, b=2):  (1, 2, {'d': 4, 'c': 3})
+f(a, *, b=20, **kw)  <-  (1, b=2, d=4, c=3):  (1, 2, {'d': 4, 'c': 3})
+f(a, *, b=20, **kw)  <-  (1, 2, b=2):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=20, **kw)  <-  (1, 2, c=3):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=20, **kw)  <-  (1, 2, d=4, c=3):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=20, **kw)  <-  (1, 2, 3, d=4):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, *, b=20, **kw)  <-  (1, 2, 3, 4, d=4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, *, b=20, **kw)  <-  (d=4, c=3, b=2, a=1):  (1, 2, {'d': 4, 'c': 3})
+f(a, *, b=20, **kw)  <-  (a=1, b=2, c=3, d=4):  (1, 2, {'c': 3, 'd': 4})
+f(a, *, b=20, **kw)  <-  (a=1, c=3):  (1, 20, {'c': 3})
+f(a, *, b=20, **kw)  <-  (z=26):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=20, **kw)  <-  (1, z=26):  (1, 20, {'z': 26})
+f(a, *, b=20, **kw)  <-  (1, 2, z=26, y=25):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=20, **kw)  <-  (z=26, a=1):  (1, 20, {'z': 26})
+f(a, *, b=20, **kw)  <-  (a=1, z=26, b=2):  (1, 2, {'z': 26})
+f(a, *, b=20, **kw)  <-  (aa=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=20, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 1 positional argument but 10 were given
+f(a, *, b=20, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 1 positional argument but 11 were given
+f(a, *, b=20, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() takes 1 positional argument but 9 were given
+f(a, *, b=20, **kw)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  (1, 2, {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3})
+f(a, *, b=20, **kw)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  (1, 2, {'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10})
+f(a, *, b=20, **kw)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3})
+f(a, *, b=20, **kw)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, {'k': 11, 'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3})
+f(a, *, b=20, **kw)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  (1, 2, {'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10, 'k': 11})
+f(a, *, b=20, **kw)  <-  (1, 2, j=10, c=3):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=20, **kw)  <-  (*(1, 2)):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=20, **kw)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=20, **kw)  <-  (1, *(2, 3), d=4):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, *, b=20, **kw)  <-  (**{"b": 2, "a": 1}):  (1, 2, {})
+f(a, *, b=20, **kw)  <-  (1, **{}):  (1, 20, {})
+f(a, *, b=20, **kw)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(*args, **kw)  <-  ():  ((), {})
+f(*args, **kw)  <-  (1):  ((1,), {})
+f(*args, **kw)  <-  (1, 2):  ((1, 2), {})
+f(*args, **kw)  <-  (1, 2, 3):  ((1, 2, 3), {})
+f(*args, **kw)  <-  (1, 2, 3, 4):  ((1, 2, 3, 4), {})
+f(*args, **kw)  <-  (1, 2, 3, 4, 5):  ((1, 2, 3, 4, 5), {})
+f(*args, **kw)  <-  (a=1):  ((), {'a': 1})
+f(*args, **kw)  <-  (b=2):  ((), {'b': 2})
+f(*args, **kw)  <-  (a=1, b=2):  ((), {'a': 1, 'b': 2})
+f(*args, **kw)  <-  (b=2, a=1):  ((), {'b': 2, 'a': 1})
+f(*args, **kw)  <-  (1, a=1):  ((1,), {'a': 1})
+f(*args, **kw)  <-  (1, b=2):  ((1,), {'b': 2})
+f(*args, **kw)  <-  (1, c=3):  ((1,), {'c': 3})
+f(*args, **kw)  <-  (1, b=2, c=3):  ((1,), {'b': 2, 'c': 3})
+f(*args, **kw)  <-  (1, c=3, b=2):  ((1,), {'c': 3, 'b': 2})
+f(*args, **kw)  <-  (1, d=4, c=3, b=2):  ((1,), {'d': 4, 'c': 3, 'b': 2})
+f(*args, **kw)  <-  (1, b=2, d=4, c=3):  ((1,), {'b': 2, 'd': 4, 'c': 3})
+f(*args, **kw)  <-  (1, 2, b=2):  ((1, 2), {'b': 2})
+f(*args, **kw)  <-  (1, 2, c=3):  ((1, 2), {'c': 3})
+f(*args, **kw)  <-  (1, 2, d=4, c=3):  ((1, 2), {'d': 4, 'c': 3})
+f(*args, **kw)  <-  (1, 2, 3, d=4):  ((1, 2, 3), {'d': 4})
+f(*args, **kw)  <-  (1, 2, 3, 4, d=4):  ((1, 2, 3, 4), {'d': 4})
+f(*args, **kw)  <-  (d=4, c=3, b=2, a=1):  ((), {'d': 4, 'c': 3, 'b': 2, 'a': 1})
+f(*args, **kw)  <-  (a=1, b=2, c=3, d=4):  ((), {'a': 1, 'b': 2, 'c': 3, 'd': 4})
+f(*args, **kw)  <-  (a=1, c=3):  ((), {'a': 1, 'c': 3})
+f(*args, **kw)  <-  (z=26):  ((), {'z': 26})
+f(*args, **kw)  <-  (1, z=26):  ((1,), {'z': 26})
+f(*args, **kw)  <-  (1, 2, z=26, y=25):  ((1, 2), {'z': 26, 'y': 25})
+f(*args, **kw)  <-  (z=26, a=1):  ((), {'z': 26, 'a': 1})
+f(*args, **kw)  <-  (a=1, z=26, b=2):  ((), {'a': 1, 'z': 26, 'b': 2})
+f(*args, **kw)  <-  (aa=1):  ((), {'aa': 1})
+f(*args, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  ((1, 2, 3, 4, 5, 6, 7, 8, 9, 10), {})
+f(*args, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  ((1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), {})
+f(*args, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  ((1, 2, 3, 4, 5, 6, 7, 8, 9), {'j': 10})
+f(*args, **kw)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  ((), {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2, 'a': 1})
+f(*args, **kw)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  ((), {'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10})
+f(*args, **kw)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  ((1,), {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(*args, **kw)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  ((1,), {'k': 11, 'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(*args, **kw)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  ((1,), {'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10, 'k': 11})
+f(*args, **kw)  <-  (1, 2, j=10, c=3):  ((1, 2), {'j': 10, 'c': 3})
+f(*args, **kw)  <-  (*(1, 2)):  ((1, 2), {})
+f(*args, **kw)  <-  (*(1, 2), **{"c": 3}):  ((1, 2), {'c': 3})
+f(*args, **kw)  <-  (1, *(2, 3), d=4):  ((1, 2, 3), {'d': 4})
+f(*args, **kw)  <-  (**{"b": 2, "a": 1}):  ((), {'b': 2, 'a': 1})
+f(*args, **kw)  <-  (1, **{}):  ((1,), {})
+f(*args, **kw)  <-  (*(), **{}):  ((), {})
+f(a, *args, **kw)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, **kw)  <-  (1):  (1, (), {})
+f(a, *args, **kw)  <-  (1, 2):  (1, (2,), {})
+f(a, *args, **kw)  <-  (1, 2, 3):  (1, (2, 3), {})
+f(a, *args, **kw)  <-  (1, 2, 3, 4):  (1, (2, 3, 4), {})
+f(a, *args, **kw)  <-  (1, 2, 3, 4, 5):  (1, (2, 3, 4, 5), {})
+f(a, *args, **kw)  <-  (a=1):  (1, (), {})
+f(a, *args, **kw)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, **kw)  <-  (a=1, b=2):  (1, (), {'b': 2})
+f(a, *args, **kw)  <-  (b=2, a=1):  (1, (), {'b': 2})
+f(a, *args, **kw)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, *args, **kw)  <-  (1, b=2):  (1, (), {'b': 2})
+f(a, *args, **kw)  <-  (1, c=3):  (1, (), {'c': 3})
+f(a, *args, **kw)  <-  (1, b=2, c=3):  (1, (), {'b': 2, 'c': 3})
+f(a, *args, **kw)  <-  (1, c=3, b=2):  (1, (), {'c': 3, 'b': 2})
+f(a, *args, **kw)  <-  (1, d=4, c=3, b=2):  (1, (), {'d': 4, 'c': 3, 'b': 2})
+f(a, *args, **kw)  <-  (1, b=2, d=4, c=3):  (1, (), {'b': 2, 'd': 4, 'c': 3})
+f(a, *args, **kw)  <-  (1, 2, b=2):  (1, (2,), {'b': 2})
+f(a, *args, **kw)  <-  (1, 2, c=3):  (1, (2,), {'c': 3})
+f(a, *args, **kw)  <-  (1, 2, d=4, c=3):  (1, (2,), {'d': 4, 'c': 3})
+f(a, *args, **kw)  <-  (1, 2, 3, d=4):  (1, (2, 3), {'d': 4})
+f(a, *args, **kw)  <-  (1, 2, 3, 4, d=4):  (1, (2, 3, 4), {'d': 4})
+f(a, *args, **kw)  <-  (d=4, c=3, b=2, a=1):  (1, (), {'d': 4, 'c': 3, 'b': 2})
+f(a, *args, **kw)  <-  (a=1, b=2, c=3, d=4):  (1, (), {'b': 2, 'c': 3, 'd': 4})
+f(a, *args, **kw)  <-  (a=1, c=3):  (1, (), {'c': 3})
+f(a, *args, **kw)  <-  (z=26):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, **kw)  <-  (1, z=26):  (1, (), {'z': 26})
+f(a, *args, **kw)  <-  (1, 2, z=26, y=25):  (1, (2,), {'z': 26, 'y': 25})
+f(a, *args, **kw)  <-  (z=26, a=1):  (1, (), {'z': 26})
+f(a, *args, **kw)  <-  (a=1, z=26, b=2):  (1, (), {'z': 26, 'b': 2})
+f(a, *args, **kw)  <-  (aa=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *args, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  (1, (2, 3, 4, 5, 6, 7, 8, 9, 10), {})
+f(a, *args, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  (1, (2, 3, 4, 5, 6, 7, 8, 9, 10, 11), {})
+f(a, *args, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  (1, (2, 3, 4, 5, 6, 7, 8, 9), {'j': 10})
+f(a, *args, **kw)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  (1, (), {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(a, *args, **kw)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  (1, (), {'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10})
+f(a, *args, **kw)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, (), {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(a, *args, **kw)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, (), {'k': 11, 'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4, 'c': 3, 'b': 2})
+f(a, *args, **kw)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  (1, (), {'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10, 'k': 11})
+f(a, *args, **kw)  <-  (1, 2, j=10, c=3):  (1, (2,), {'j': 10, 'c': 3})
+f(a, *args, **kw)  <-  (*(1, 2)):  (1, (2,), {})
+f(a, *args, **kw)  <-  (*(1, 2), **{"c": 3}):  (1, (2,), {'c': 3})
+f(a, *args, **kw)  <-  (1, *(2, 3), d=4):  (1, (2, 3), {'d': 4})
+f(a, *args, **kw)  <-  (**{"b": 2, "a": 1}):  (1, (), {'b': 2})
+f(a, *args, **kw)  <-  (1, **{}):  (1, (), {})
+f(a, *args, **kw)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *args, c=30, **kw)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *args, c=30, **kw)  <-  (1):  (1, 20, (), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2):  (1, 2, (), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, 3):  (1, 2, (3,), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, 3, 4):  (1, 2, (3, 4), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, 3, 4, 5):  (1, 2, (3, 4, 5), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (a=1):  (1, 20, (), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *args, c=30, **kw)  <-  (a=1, b=2):  (1, 2, (), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (b=2, a=1):  (1, 2, (), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, b=20, *args, c=30, **kw)  <-  (1, b=2):  (1, 2, (), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, c=3):  (1, 20, (), 3, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, b=2, c=3):  (1, 2, (), 3, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, c=3, b=2):  (1, 2, (), 3, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, d=4, c=3, b=2):  (1, 2, (), 3, {'d': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (1, b=2, d=4, c=3):  (1, 2, (), 3, {'d': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, c=3):  (1, 2, (), 3, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, d=4, c=3):  (1, 2, (), 3, {'d': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, 3, d=4):  (1, 2, (3,), 30, {'d': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, 3, 4, d=4):  (1, 2, (3, 4), 30, {'d': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (d=4, c=3, b=2, a=1):  (1, 2, (), 3, {'d': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (a=1, b=2, c=3, d=4):  (1, 2, (), 3, {'d': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (a=1, c=3):  (1, 20, (), 3, {})
+f(a, b=20, *args, c=30, **kw)  <-  (z=26):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *args, c=30, **kw)  <-  (1, z=26):  (1, 20, (), 30, {'z': 26})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, z=26, y=25):  (1, 2, (), 30, {'z': 26, 'y': 25})
+f(a, b=20, *args, c=30, **kw)  <-  (z=26, a=1):  (1, 20, (), 30, {'z': 26})
+f(a, b=20, *args, c=30, **kw)  <-  (a=1, z=26, b=2):  (1, 2, (), 30, {'z': 26})
+f(a, b=20, *args, c=30, **kw)  <-  (aa=1):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  (1, 2, (3, 4, 5, 6, 7, 8, 9, 10), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  (1, 2, (3, 4, 5, 6, 7, 8, 9, 10, 11), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  (1, 2, (3, 4, 5, 6, 7, 8, 9), 30, {'j': 10})
+f(a, b=20, *args, c=30, **kw)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  (1, 2, (), 3, {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  (1, 2, (), 3, {'d': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10})
+f(a, b=20, *args, c=30, **kw)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, (), 3, {'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, (), 3, {'k': 11, 'j': 10, 'i': 9, 'h': 8, 'g': 7, 'f': 6, 'e': 5, 'd': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  (1, 2, (), 3, {'d': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10, 'k': 11})
+f(a, b=20, *args, c=30, **kw)  <-  (1, 2, j=10, c=3):  (1, 2, (), 3, {'j': 10})
+f(a, b=20, *args, c=30, **kw)  <-  (*(1, 2)):  (1, 2, (), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (*(1, 2), **{"c": 3}):  (1, 2, (), 3, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, *(2, 3), d=4):  (1, 2, (3,), 30, {'d': 4})
+f(a, b=20, *args, c=30, **kw)  <-  (**{"b": 2, "a": 1}):  (1, 2, (), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (1, **{}):  (1, 20, (), 30, {})
+f(a, b=20, *args, c=30, **kw)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, b, c, d, e, f, g, h, i, j)  <-  ():  TypeError: f() missing 10 required positional arguments: 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1):  TypeError: f() missing 9 required positional arguments: 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2):  TypeError: f() missing 8 required positional arguments: 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, 3):  TypeError: f() missing 7 required positional arguments: 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, 3, 4):  TypeError: f() missing 6 required positional arguments: 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, 3, 4, 5):  TypeError: f() missing 5 required positional arguments: 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (a=1):  TypeError: f() missing 9 required positional arguments: 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (b=2):  TypeError: f() missing 9 required positional arguments: 'a', 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (a=1, b=2):  TypeError: f() missing 8 required positional arguments: 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (b=2, a=1):  TypeError: f() missing 8 required positional arguments: 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, b=2):  TypeError: f() missing 8 required positional arguments: 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, c=3):  TypeError: f() missing 8 required positional arguments: 'b', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, b=2, c=3):  TypeError: f() missing 7 required positional arguments: 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, c=3, b=2):  TypeError: f() missing 7 required positional arguments: 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, d=4, c=3, b=2):  TypeError: f() missing 6 required positional arguments: 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, b=2, d=4, c=3):  TypeError: f() missing 6 required positional arguments: 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, c=3):  TypeError: f() missing 7 required positional arguments: 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, d=4, c=3):  TypeError: f() missing 6 required positional arguments: 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, 3, d=4):  TypeError: f() missing 6 required positional arguments: 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got multiple values for argument 'd'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (d=4, c=3, b=2, a=1):  TypeError: f() missing 6 required positional arguments: 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (a=1, b=2, c=3, d=4):  TypeError: f() missing 6 required positional arguments: 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (a=1, c=3):  TypeError: f() missing 8 required positional arguments: 'b', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 10 positional arguments but 11 were given
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a, b, c, d, e, f, g, h, i, j)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a, b, c, d, e, f, g, h, i, j)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'k'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, 2, j=10, c=3):  TypeError: f() missing 6 required positional arguments: 'd', 'e', 'f', 'g', 'h', and 'i'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (*(1, 2)):  TypeError: f() missing 8 required positional arguments: 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() missing 7 required positional arguments: 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, *(2, 3), d=4):  TypeError: f() missing 6 required positional arguments: 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (**{"b": 2, "a": 1}):  TypeError: f() missing 8 required positional arguments: 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (1, **{}):  TypeError: f() missing 9 required positional arguments: 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a, b, c, d, e, f, g, h, i, j)  <-  (*(), **{}):  TypeError: f() missing 10 required positional arguments: 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', and 'j'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  ():  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, 3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, 3, 4):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, 3, 4, 5):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (a=1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (a=1, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (b=2, a=1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, b=2, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, c=3, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, d=4, c=3, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, b=2, d=4, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, b=2):  TypeError: f() got multiple values for argument 'b'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, d=4, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, 3, d=4):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, 3, 4, d=4):  TypeError: f() got multiple values for argument 'd'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (d=4, c=3, b=2, a=1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (a=1, b=2, c=3, d=4):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (a=1, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes from 0 to 10 positional arguments but 11 were given
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  TypeError: f() got an unexpected keyword argument 'k'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  TypeError: f() got an unexpected keyword argument 'k'
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, 2, j=10, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (*(1, 2)):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (*(1, 2), **{"c": 3}):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, *(2, 3), d=4):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (**{"b": 2, "a": 1}):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (1, **{}):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10)  <-  (*(), **{}):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  ():  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, 3):  TypeError: f() takes 1 positional argument but 3 were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, 3, 4):  TypeError: f() takes 1 positional argument but 4 were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, 3, 4, 5):  TypeError: f() takes 1 positional argument but 5 were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (a=1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (b=2):  TypeError: f() missing 1 required positional argument: 'a'
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (a=1, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (b=2, a=1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, a=1):  TypeError: f() got multiple values for argument 'a'
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, b=2, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, c=3, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, d=4, c=3, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, b=2, d=4, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, b=2):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, c=3):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, d=4, c=3):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 2 keyword-only arguments) were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, 3, d=4):  TypeError: f() takes 1 positional argument but 3 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, 3, 4, d=4):  TypeError: f() takes 1 positional argument but 4 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (d=4, c=3, b=2, a=1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (a=1, b=2, c=3, d=4):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (a=1, c=3):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, z=26):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, z=26, y=25):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (z=26, a=1):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (a=1, z=26, b=2):  TypeError: f() got an unexpected keyword argument 'z'
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (aa=1):  TypeError: f() got an unexpected keyword argument 'aa'. Did you mean 'a'?
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):  TypeError: f() takes 1 positional argument but 10 were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):  TypeError: f() takes 1 positional argument but 11 were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, 3, 4, 5, 6, 7, 8, 9, j=10):  TypeError: f() takes 1 positional argument but 9 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2, a=1):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, k=11, j=10, i=9, h=8, g=7, f=6, e=5, d=4, c=3, b=2):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, 2, j=10, c=3):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 2 keyword-only arguments) were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (*(1, 2)):  TypeError: f() takes 1 positional argument but 2 were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (*(1, 2), **{"c": 3}):  TypeError: f() takes 1 positional argument but 2 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, *(2, 3), d=4):  TypeError: f() takes 1 positional argument but 3 positional arguments (and 1 keyword-only argument) were given
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (**{"b": 2, "a": 1}):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (1, **{}):  (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+f(a, *, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=10, k=11)  <-  (*(), **{}):  TypeError: f() missing 1 required positional argument: 'a'
+--- the same place calls functions with other parameters in turn
+('p1', 1, 2, 30) ('p1', 1, 2, 30) ('p1', 1, 20, 30) ('p1', 1, 2, 30)
+('p2', 1, 2, 30) ('p2', 1, 2, 30) ('p2', 1, 20, 30) ('p2', 1, 2, 30)
+('p3', 1, 2, 30) ('p3', 1, 2, 30) ('p3', 1, 20, 30) ('p3', 1, 2, 30)
+('p4', 1, {'c': 30}) ('p4', 1, {'c': 30}) ('p4', 1, {'b': 20, 'c': 30}) ('p4', 1, {'c': 30})
+('p5', (1,), 30) ('p5', (1,), 30) TypeError: p5() got an unexpected keyword argument 'b' TypeError: p5() got an unexpected keyword argument 'a'
+TypeError: p6() got multiple values for argument 'c' TypeError: p6() got an unexpected keyword argument 'b' ('p6', 1, 30)
+('p1', 1, 2, 30) ('p1', 1, 2, 30) ('p1', 1, 20, 30) ('p1', 1, 2, 30)
+('p2', 1, 2, 30) ('p2', 1, 2, 30) ('p2', 1, 20, 30) ('p2', 1, 2, 30)
+('p3', 1, 2, 30) ('p3', 1, 2, 30) ('p3', 1, 20, 30) ('p3', 1, 2, 30)
+('p4', 1, {'c': 30}) ('p4', 1, {'c': 30}) ('p4', 1, {'b': 20, 'c': 30}) ('p4', 1, {'c': 30})
+('p5', (1,), 30) ('p5', (1,), 30) TypeError: p5() got an unexpected keyword argument 'b' TypeError: p5() got an unexpected keyword argument 'a'
+TypeError: p6() got multiple values for argument 'c' TypeError: p6() got an unexpected keyword argument 'b' ('p6', 1, 30)
+--- methods, and objects that are called
+(1, 2, (), 3, {}) (1, 20, (), 3, {}) (1, 20, (), 3, {}) (1, 2, (), 30, {}) (1, 20, (21, 22), 30, {'z': 26}) (1, 2, (), 3, {'z': 26}) (1, 20, (), 3, {})
+(1, 2, (), 3, {}) (1, 20, (), 3, {}) (1, 20, (), 3, {}) (1, 2, (), 30, {}) (1, 20, (21,), 30, {'z': 26}) (1, 20, (), 3, {})
+(1, 2) (10, 2) (1, 20) (10, 20) (10, 20)
+(1, 2, 3) (10, 2, 3) (1, 20, 3) (1, 2, 30) (10, 20, 30)
+('C', 1, 2, 3) ('C', 1, 2, 30) ('C', 1, 20, 3) (1, 2, 3) (1, 2, 30) (1, 20, 3)
+TypeError: C.m() missing 1 required positional argument: 'a' TypeError: C.m() got multiple values for argument 'self' TypeError: C.m() got multiple values for argument 'a' TypeError: C.d() takes from 1 to 3 positional arguments but 4 were given TypeError: C.__call__() takes from 1 to 3 positional arguments but 4 were given TypeError: C.m() missing 2 required positional arguments: 'self' and 'a' TypeError: C.d() missing 1 required positional argument: 'self'
+(1, 2, (), 3, {}) (1, 20, (), 3, {}) (1, 20, (), 3, {}) (1, 2, (), 30, {}) (1, 20, (21, 22), 30, {'z': 26}) (1, 2, (), 3, {'z': 26}) (1, 20, (), 3, {})
+(1, 2, (), 3, {}) (1, 20, (), 3, {}) (1, 20, (), 3, {}) (1, 2, (), 30, {}) (1, 20, (21,), 30, {'z': 26}) (1, 20, (), 3, {})
+(1, 2) (10, 2) (1, 20) (10, 20) (10, 20)
+(1, 2, 3) (10, 2, 3) (1, 20, 3) (1, 2, 30) (10, 20, 30)
+('C', 1, 2, 3) ('C', 1, 2, 30) ('C', 1, 20, 3) (1, 2, 3) (1, 2, 30) (1, 20, 3)
+TypeError: C.m() missing 1 required positional argument: 'a' TypeError: C.m() got multiple values for argument 'self' TypeError: C.m() got multiple values for argument 'a' TypeError: C.d() takes from 1 to 3 positional arguments but 4 were given TypeError: C.__call__() takes from 1 to 3 positional arguments but 4 were given TypeError: C.m() missing 2 required positional arguments: 'self' and 'a' TypeError: C.d() missing 1 required positional argument: 'self'
+--- the defaults are those the function has when it is called
+(1, 2, 3, 4, 5) (1, 2, 3, 4, 50)
+(1, 20, 30, 4, 5) TypeError: g() missing 1 required positional argument: 'a'
+(10, 20, 30, 4, 5) (1, 20, 30, 4, 5) (10, 20, 300, 4, 5)
+(10, 20, 30, 4, 5) (1, 20, 30, 4, 5) (1, 2, 30, 4, 5) (1, 2, 3, 4, 5)
+TypeError: g() missing 2 required positional arguments: 'a' and 'b' TypeError: g() missing 1 required positional argument: 'b' (1, 2, 30, 4, 5) TypeError: g() missing 1 required positional argument: 'a' TypeError: g() missing 1 required positional argument: 'b' (1, 2, 30, 4, 5)
+TypeError: g() missing 3 required positional arguments: 'a', 'b', and 'c' TypeError: g() missing 2 required positional arguments: 'b' and 'c' TypeError: g() missing 1 required positional argument: 'c' (1, 2, 3, 4, 5) TypeError: g() missing 2 required positional arguments: 'a' and 'b'
+TypeError: g() missing 1 required positional argument: 'c' (1, 2, 3, 4, 5)
+TypeError: g() missing 1 required keyword-only argument: 'd' (1, 2, 3, 400, 500) TypeError: g() missing 1 required keyword-only argument: 'd'
+TypeError: g() missing 2 required keyword-only arguments: 'd' and 'e' TypeError: g() missing 1 required keyword-only argument: 'e' (1, 2, 3, 4, 5)
+(1, 2, 3, 4, 5)
+(1, 2, 3, 44, 5)
+TypeError: g() missing 1 required keyword-only argument: 'd'
+--- the function is given other code
+["('h', 1, 2)", "('h', 1, 2)", "('h', 1, 2)", "TypeError: h() got an unexpected keyword argument 'y'", "TypeError: h() got an unexpected keyword argument 'w'"]
+["TypeError: h() missing 1 required positional argument: 'y'", "TypeError: h() missing 1 required keyword-only argument: 'w'", "TypeError: h() got an unexpected keyword argument 'b'", "TypeError: h() missing 1 required keyword-only argument: 'w'", "('other', 1, 2, 3, (4,), 5)"]
+["TypeError: h() missing 1 required positional argument: 'y'", "('other', 1, 2, 2, (), 40)", "TypeError: h() got an unexpected keyword argument 'b'", "('other', 1, 2, 2, (), 40)", "('other', 1, 2, 3, (4,), 5)"]
+["('h', 1, 2)", "('h', 1, 2)", "('h', 1, 2)", "TypeError: h() got an unexpected keyword argument 'y'", "TypeError: h() got an unexpected keyword argument 'w'"]
+--- names that are not plain strs
+(1, 2, 3, []) True
+(1, 20, 3, []) True
+(1, 2, 30, []) True
+(1, 2, 3, [('z', 26)]) True
+(1, 2, 3, [('d', 4)]) True
+TypeError: n() got multiple values for argument 'a' TypeError: <lambda>() got some positional-only arguments passed as keyword arguments: 'a' TypeError: <lambda>() got some positional-only arguments passed as keyword arguments: 'a'
+ZeroDivisionError
+TypeError: keywords must be strings TypeError: keywords must be strings
+--- names that are equal and not the same object
+(7, 2, 3, []) TypeError: n() got multiple values for argument 'a'
+TypeError: n() missing 1 required positional argument: 'a' (1, 7, 3, [])
+TypeError: n() missing 1 required positional argument: 'a' (1, 2, 7, [])
+TypeError: n() missing 1 required positional argument: 'a' (1, 2, 3, [('zz', 7)])
+--- generators, coroutines, lambdas, nested functions
+[(1, 2, (), 3, {})] [(1, 2, (), 30, {})] [(1, 20, (21,), 3, {'z': 26})] [(1, 20, (), 3, {})] TypeError: gen() missing 1 required positional argument: 'a' TypeError: gen() got multiple values for argument 'a'
+(1, 2, 3) (1, 2, 30) (1, 20, 3) TypeError: co() missing 1 required positional argument: 'a' TypeError: co() takes from 1 to 2 positional arguments but 3 were given
+(1, 2, (), 40, {}) ((), {}) 1
+(1, 5, 5, 5) (1, 5, 6, 5) (1, 7, 5, 5) TypeError: outer.<locals>.inner() missing 1 required positional argument: 'a'
+--- what is passed is let go of when the parameter is given something else
+  del a
+ a gone
+  del b
+ b gone
+  del args
+ args gone
+  del c
+ c gone
+  del kw
+ kw gone
+  del a
+ a gone
+  del b
+ b gone
+ args gone
+  del c
+ c gone
+  del kw
+ kw gone
+  del a
+ a gone
+  del b
+ b gone
+ args gone
+  del c
+ c gone
+  del kw
+ kw gone
+--- many at a time
+7 many backwards as expected
+7 many forwards as expected
+7 many half as expected
+7 many odd TypeError: many() missing 4 required positional arguments: 'p0', 'p2', 'p4', and 'p6'
+7 manyd backwards as expected
+7 manyd forwards as expected
+7 manyd half as expected
+7 manyd odd (-1, 1, -1, 3, -1, 5, -1)
+7 manyk backwards as expected
+7 manyk forwards as expected
+7 manyk half TypeError: manyk() takes 0 positional arguments but 3 positional arguments (and 4 keyword-only arguments) were given
+7 manyk odd (-1, 1, -1, 3, -1, 5, -1)
+8 many backwards as expected
+8 many forwards as expected
+8 many half as expected
+8 many odd TypeError: many() missing 4 required positional arguments: 'p0', 'p2', 'p4', and 'p6'
+8 manyd backwards as expected
+8 manyd forwards as expected
+8 manyd half as expected
+8 manyd odd (-1, 1, -1, 3, -1, 5, -1, 7)
+8 manyk backwards as expected
+8 manyk forwards as expected
+8 manyk half TypeError: manyk() takes 0 positional arguments but 4 positional arguments (and 4 keyword-only arguments) were given
+8 manyk odd (-1, 1, -1, 3, -1, 5, -1, 7)
+9 many backwards as expected
+9 many forwards as expected
+9 many half as expected
+9 many odd TypeError: many() missing 5 required positional arguments: 'p0', 'p2', 'p4', 'p6', and 'p8'
+9 manyd backwards as expected
+9 manyd forwards as expected
+9 manyd half as expected
+9 manyd odd (-1, 1, -1, 3, -1, 5, -1, 7, -1)
+9 manyk backwards as expected
+9 manyk forwards as expected
+9 manyk half TypeError: manyk() takes 0 positional arguments but 4 positional arguments (and 5 keyword-only arguments) were given
+9 manyk odd (-1, 1, -1, 3, -1, 5, -1, 7, -1)
+10 many backwards as expected
+10 many forwards as expected
+10 many half as expected
+10 many odd TypeError: many() missing 5 required positional arguments: 'p0', 'p2', 'p4', 'p6', and 'p8'
+10 manyd backwards as expected
+10 manyd forwards as expected
+10 manyd half as expected
+10 manyd odd (-1, 1, -1, 3, -1, 5, -1, 7, -1, 9)
+10 manyk backwards as expected
+10 manyk forwards as expected
+10 manyk half TypeError: manyk() takes 0 positional arguments but 5 positional arguments (and 5 keyword-only arguments) were given
+10 manyk odd (-1, 1, -1, 3, -1, 5, -1, 7, -1, 9)
+17 many backwards as expected
+17 many forwards as expected
+17 many half as expected
+17 many odd TypeError: many() missing 9 required positional arguments: 'p0', 'p2', 'p4', 'p6', 'p8', 'p10', 'p12', 'p14', and 'p16'
+17 manyd backwards as expected
+17 manyd forwards as expected
+17 manyd half as expected
+17 manyd odd (-1, 1, -1, 3, -1, 5, -1, 7, -1, 9, -1, 11, -1, 13, -1, 15, -1)
+17 manyk backwards as expected
+17 manyk forwards as expected
+17 manyk half TypeError: manyk() takes 0 positional arguments but 8 positional arguments (and 9 keyword-only arguments) were given
+17 manyk odd (-1, 1, -1, 3, -1, 5, -1, 7, -1, 9, -1, 11, -1, 13, -1, 15, -1)
+40 many backwards as expected
+40 many forwards as expected
+40 many half as expected
+40 many odd TypeError: many() missing 20 required positional arguments: 'p0', 'p2', 'p4', 'p6', 'p8', 'p10', 'p12', 'p14', 'p16', 'p18', 'p20', 'p22', 'p24', 'p26
+40 manyd backwards as expected
+40 manyd forwards as expected
+40 manyd half as expected
+40 manyd odd (-1, 1, -1, 3, -1, 5, -1, 7, -1, 9, -1, 11, -1, 13, -1, 15, -1, 17, -1, 19, -1, 21, -1, 23, -1, 25, -1, 27, -1, 29, -1, 31, -1, 33, -1, 35, -1, 37, -1
+40 manyk backwards as expected
+40 manyk forwards as expected
+40 manyk half TypeError: manyk() takes 0 positional arguments but 20 positional arguments (and 20 keyword-only arguments) were given
+40 manyk odd (-1, 1, -1, 3, -1, 5, -1, 7, -1, 9, -1, 11, -1, 13, -1, 15, -1, 17, -1, 19, -1, 21, -1, 23, -1, 25, -1, 27, -1, 29, -1, 31, -1, 33, -1, 35, -1, 37, -1

@@ -10,11 +10,11 @@
 
 use crate::doc::{
     ALIGN_BIAS, ALIGN_MARK_ROOT, ALIGN_TO_ROOT, G_BREAK, G_END_PENDING, G_FORCE_FLAT, G_HAS_FILL,
-    G_PURE, LINE_HARD, LINE_LITERAL, LINE_NORMAL, STANDING_BELOW, op,
+    G_PURE, G_STAYS_EXPANDED, LINE_HARD, LINE_LITERAL, LINE_NORMAL, STANDING_BELOW, op,
 };
 use crate::options::{EOL_CR, EOL_CRLF, EOL_LF};
 use crate::text::much_larger;
-use crate::{Bytes, Quick, R, Stop, Words, why, zeros};
+use crate::{Bytes, Quick, R, Stop, Words, rare, why, zeros};
 
 pub(crate) struct Printer {
     pub(crate) out: Vec<u8>,
@@ -1821,6 +1821,10 @@ impl Quick {
                             sp,
                             (waiting & WAIT_SUFFIX) != 0,
                         );
+                    }
+                    if !ok && (flags & G_STAYS_EXPANDED) != 0 {
+                        // The long way goes back and lays out the parameters as it will the next time.
+                        return Err(self.rare(rare::RETURN_TYPE));
                     }
                     self.printer.st.put(sp, mode);
                     sp += 1;

@@ -3093,6 +3093,13 @@ describe("templates in another language", () => {
     // Markdown.
     "const m = markdown`\n  # Title\n  * a\n  * b\n\n  some   text\n`;\nconst n = md`\n# Title\n\n\\`\\`\\`js\nlet  a\n\\`\\`\\`\n`;\n",
     "someFunction(markdown`>c\n`);\na.c(md`>c\n`).d();\nmd`a|||\n-|-|-`;\na=markdown` \\`\n\\``;\nconst b=await foo(async()=>md` this is a long long long long long long long long paragraph.`);\n",
+    // What is nearly a template in another language, or is one in two.
+    "graphql?.(`{a{b}}`);\nx=graphql?.(` `);\ngraphql?.(`${f()}`);\na?.graphql(`{a{b}}`);\nnew graphql(`{a}`);\ngraphql(a)(`{a}`);\n",
+    "x = /* GraphQL */ css`{ a }`;\nx = /* GraphQL */ css`a{`;\nx = /* GraphQL */ md`{ a`;\nx = /* HTML */ markdown`<a`;\nx = /* HTML */ gql`{a}`;\nx = /* HTML */ /* GraphQL */ `{a}`;\n",
+    "x = styled?.div`a{b:c}`;\nx = styled[\"div\"]`a{b:c}`;\nx = css.foo`a{b:c}`;\nx = (styled.div)`a{b:c}`;\nx = html.foo`<a></a>`;\nx = /*GraphQL*/ `{a}`;\nx = /** GraphQL */ `{a}`;\n",
+    "@Component({ 'template': `<a></a>` })\nclass A {}\n@ng.Component({ template: `<a></a>` })\nclass B {}\n@Component({ a: { template: `<a></a>` } })\nclass C {}\n@Component({ styles: [[`a{b:c}`]] })\nclass D {}\n@Component({ template: (`<a></a>`) })\nclass E {}\nComponent({ template: `<a></a>` });\n",
+    // A template in a substitution of a template, on another line.
+    "(html`<script type=\"text/x-handlebars-template\"><div><h1></h1><div></div></div></script><script>\n  ${(m>html`<`)}</script>`)\n",
     // A text without width.
     "/* HTML */` he fix happened. \u000b\n`;\n",
   ];
@@ -3668,4 +3675,525 @@ describe("what the quick way for scripts is asked about, and what is done around
       ],
       [[]],
     ));
+});
+
+describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them, or that are odd", () => {
+  // One row for each class of input: the name of the file, the flags, the text.
+  const rows: [name: string, flags: string, text: string][] = [
+    // The only parameter before a return type in which an object type doesn't fit (prettier#19968).
+    [
+      "a.ts",
+      "",
+      "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\nclass A {\n  method(this: A): Promise<[C, { aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccc: number }]> {}\n  abstract m({ a, b }: A): a is B & { aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccccc: number };\n}\ninterface I {\n  m(a: string): B<{ [K in keyof Taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]: Tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb[K] }>;\n  new (a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number, d: 1 }>;\n}\ntype F = (a: string) => B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number, d: 1 }>;\nfunction g(a = { b: 1 }): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\nfunction h(a: string): B<{ a: (b: string) => C<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccc: 1 }> }> {}\n",
+    ],
+    [
+      "a.ts",
+      "--object-wrap=collapse",
+      "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\n",
+    ],
+    [
+      "a.js.flow",
+      "",
+      "function f(a: string): B<{ aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, cccccccccccccccccc: number }> {}\ndeclare function f(a: string): B<{| aaaaaaaaaaaaaaa: number, bbbbbbbbbbbbbbbb: number, ccccccccccccccc: number |}>;\n",
+    ],
+    // White space that isn't a blank, a tab or a line break: at the end of a comment that stands alone on its line, ..
+    ["a.ts", "", "first();\n// c\u00a0\ni;\n"],
+    ["a.ts", "", "first();\n/**\n * e\u3000\n */\ni;\n"],
+    ["a.ts", "", "first(); // c\u00a0\ni;\n"],
+    // .. between tokens, ..
+    ["a.ts", "", "a(/* c */\ufeff/* c */ b);\n"],
+    ["a.ts", "", "function f() /* c */\u3000{}\n"],
+    ["a.js", "", "x1\f;\n\ny();\n"],
+    ["a.js", "", "foo = {\n  a\u00a0,\n\n  b,\n};\n"],
+    // .. on a line that is empty but for it.
+    ["a.js", "", "a = {\n  b: [],\n\u000b\n  d,\n};\n"],
+    // U+2028 and U+2029 are line breaks in some places.
+    ["a.ts", "", "var\u2028x;\n"],
+    ["a.tsx", "", "x = <a>\u2029</a>;\n"],
+    ["a.ts", "", "first();\nglobal\u2028{}\n"],
+    // What TypeScript's parser takes for a modifier, and drops, is a statement or a member of its own for another parser.
+    ["a.ts", "", "declare export = x;\n"],
+    ["a.ts", "", "declare import a = b;\n"],
+    ["a.ts", "", "class A {\n  export c;\n}\n"],
+    ["a.ts", "", "class A {\n  const a;\n}\n"],
+    ["a.ts", "", "class A {\n  default function() {}\n}\n"],
+    // A `;` that doesn't directly follow what it ends, or ends nothing: the empty lines around it, ..
+    [
+      "a.ts",
+      "",
+      "class A {\n  b = 1;\n\n;  /** a comment that is printed after the property */\n  d(e?: string) {}\n}\n",
+    ],
+    ["a.ts", "", "class C {\n  x() {}\n  ;\n\n  static;\n}\n"],
+    ["a.js", "", "for (a of b);\n;\n\na();\n"],
+    ["a.js", "", "a: ;\n;\n\na;\n"],
+    // .. and the comments behind it, which count for the width of the line before.
+    [
+      "a.ts",
+      "",
+      "class A {\n  someProperty: SomeType<WithArguments> = new SomeType<WithArguments>();\n; /** a comment that is printed after the property */\n}\n",
+    ],
+    [
+      "a.ts",
+      "",
+      "class A {\n  @a() b: string;\n; /** a comment that is printed after the property, and makes its line too wide */\n}\n",
+    ],
+    ["a.ts", "", "type T = {\n  a: string // c\n; /* d */\n}\n"],
+    ["a.js", "", "a // b\n;/* c *//* c */\n"],
+    // The guard of code without semicolons is none of these.
+    ["a.js", "--no-semi", "const a = 1\n;[1, 2].forEach(f)\n\n;(function () {})()\nfunction g() {}\n;`t`.length\n"],
+    // A `,` that starts a line, and an empty line behind it.
+    ["a.js", "", "({\n  a\n  ,\n\n  b,\n});\n"],
+    ["a.js", "", "const {\n  A\n  ,\n\n  B,\n} = c;\n"],
+    ["a.js", "", "foo = {a\n\n  ,\n  b: 'b'};\n"],
+    ["a.js.flow", "", "type A = {|\n  a: number\n  ,\n\n  b: boolean,\n|};\n"],
+  ];
+  const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
+  test.concurrent.each([...groups])("%s", async (_, group) => {
+    const [[name, flags]] = group;
+    const texts = group.map(row => row[2]);
+    const { different, said, expected } = await differences(name, texts, flags.split(" ").filter(Boolean));
+    expect(different).toEqual([]);
+    expect(said).toEqual(expected);
+  });
+});
+
+describe("JavaScript and Flow that the long way rejects", () => {
+  /** Nothing is printed, with or without the short cuts, and the messages are the same. */
+  function expectRejected(title: string, name: string, texts: string[]) {
+    test.skipIf(!hasFlag).concurrent(title, async () => {
+      const { different, said, expected } = await differences(name, texts, []);
+      expect(different).toEqual([]);
+      expect(said).toEqual(expected);
+      expect(texts.filter((_, index) => !String(said[0]).includes(` ${index}/${name}:`))).toEqual([]);
+    });
+  }
+  expectRejected("a.js", "a.js", [
+    // jumps
+    "function f() {\n  a();\n  break;\n}\n",
+    "function f() {\n  if (a) {\n    continue;\n  }\n}\n",
+    "for (const a of b) {\n  c(() => {\n    break;\n  });\n}\n",
+    "while (a) {\n  function f() {\n    continue;\n  }\n}\n",
+    "switch (a) {\n  case 1:\n    continue;\n}\n",
+    "if (a) {\n  break;\n}\n",
+    "class A {\n  m() {\n    break;\n  }\n}\n",
+    "for (;;) {\n  class A {\n    a = () => {\n      break;\n    };\n  }\n}\n",
+    // labels
+    "a: for (;;) {\n  break b;\n}\n",
+    "a: {\n  continue a;\n}\n",
+    "a: for (;;) {\n  a: for (;;) {\n    b();\n  }\n}\n",
+    "a: for (;;) {\n  function f() {\n    break a;\n  }\n}\n",
+    // super
+    "function f() {\n  super.a();\n}\n",
+    "class A {\n  constructor() {\n    super();\n  }\n}\n",
+    "class A extends B {\n  m() {\n    super();\n  }\n}\n",
+    "class A extends B {\n  constructor() {\n    function f() {\n      super();\n    }\n  }\n}\n",
+    "const a = {\n  b: function () {\n    super.c();\n  },\n};\n",
+    "class A extends B {\n  a = super();\n}\n",
+    // constructor
+    "class A {\n  constructor() {\n    a();\n  }\n  constructor() {\n    b();\n  }\n}\n",
+    "class A {\n  get constructor() {\n    return 1;\n  }\n}\n",
+    "class A {\n  async constructor() {\n    a();\n  }\n}\n",
+    "class A {\n  *constructor() {\n    a();\n  }\n}\n",
+    "class A {\n  constructor = 1;\n}\n",
+    "class A {\n  static prototype = 1;\n}\n",
+    "class A {\n  static prototype() {\n    a();\n  }\n}\n",
+    // private
+    "class A {\n  #a = 1;\n  #a = 2;\n}\n",
+    "class A {\n  #a() {\n    b();\n  }\n  #a = 1;\n}\n",
+    "class A {\n  #constructor = 1;\n}\n",
+    "class A {\n  #a = 1;\n  m() {\n    delete this.#a;\n  }\n}\n",
+    "class A {\n  get #a() {\n    return 1;\n  }\n  get #a() {\n    return 2;\n  }\n}\n",
+    // accessors
+    "class A {\n  get a(b) {\n    return b;\n  }\n}\n",
+    "class A {\n  set a() {\n    b();\n  }\n}\n",
+    "class A {\n  set a(b, c) {\n    d();\n  }\n}\n",
+    "const a = {\n  get b(c) {\n    return c;\n  },\n};\n",
+    "const a = {\n  set b(...c) {\n    d();\n  },\n};\n",
+    // default
+    "export default a;\nexport default b;\n",
+    "export default function f() {\n  a();\n}\nexport default class A {}\n",
+    "export default a;\nexport { b as default };\n",
+    'export { a as default };\nexport { b as default } from "c";\n',
+    // strict
+    'function f(a = 1) {\n  "use strict";\n  b();\n}\n',
+    'function f({ a }) {\n  "use strict";\n  b();\n}\n',
+    'function f(...a) {\n  "use strict";\n  b();\n}\n',
+    'const f = (a = 1) => {\n  "use strict";\n  b();\n};\n',
+    'class A {\n  m([a]) {\n    "use strict";\n    b();\n  }\n}\n',
+    'const a = {\n  m(b = 1) {\n    "use strict";\n    c();\n  },\n};\n',
+    // rest
+    "function f(...a, b) {\n  c();\n}\n",
+    "const f = (...a, b) => {\n  c();\n};\n",
+    "const [...a, b] = c;\n",
+    "const { ...a, b } = c;\n",
+    "f(async (a, ...b, c) => {\n  d();\n});\n",
+    "class A {\n  m(...a, b) {\n    c();\n  }\n}\n",
+    // proto
+    "const a = {\n  __proto__: b,\n  __proto__: c,\n};\n",
+    'f({\n  __proto__: a,\n  "__proto__": b,\n});\n',
+    // await
+    "async function f(a = await b) {\n  c();\n}\n",
+    "const f = async (a = await b) => {\n  c();\n};\n",
+    "class A {\n  static {\n    await;\n  }\n}\n",
+    // yield
+    "function* f(a = yield) {\n  b();\n}\n",
+    "function* f() {\n  function* g(a = yield) {\n    b();\n  }\n}\n",
+    // arguments
+    "class A {\n  a = arguments;\n}\n",
+    "class A {\n  a = () => {\n    b(arguments);\n  };\n}\n",
+    "class A {\n  static {\n    a(arguments);\n  }\n}\n",
+    // exports
+    "export { if };\n",
+    "export { a, default };\n",
+    'export { "a" };\n',
+    'export { "a" as b };\n',
+    "export { enum };\n",
+    // imports
+    'import { if } from "a";\n',
+    'import { a as if } from "b";\n',
+    'import { "a" } from "b";\n',
+    'import { enum } from "a";\n',
+    'import { default } from "a";\n',
+    // names
+    "const enum = 1;\n",
+    "function f(enum) {\n  a();\n}\n",
+    "const a = {\n  enum,\n};\n",
+    "const { if } = a;\n",
+    "let let = 1;\n",
+    "const let = 1;\n",
+    // targets
+    "function f() {\n  a() = 1;\n}\n",
+    "function f() {\n  a()++;\n}\n",
+    "function f() {\n  ++a?.b;\n}\n",
+    "for (a() of b) {\n  c();\n}\n",
+    // operands
+    "function f() {\n  return -a ** b;\n}\n",
+    "function f() {\n  return a ?? b || c;\n}\n",
+    "function f() {\n  return a && b ?? c;\n}\n",
+    "function f() {\n  return a || () => b;\n}\n",
+    "function f() {\n  return typeof () => a;\n}\n",
+    "function f() {\n  return new a?.b();\n}\n",
+    "function f() {\n  return a?.b`c`;\n}\n",
+    "function f() {\n  return new.a;\n}\n",
+    'function f() {\n  return new import("a");\n}\n',
+    // bodies
+    "if (a) const b = 1;\n",
+    "if (a) class B {}\n",
+    "for (;;) let a = 1;\n",
+    "if (a) {\n  b();\n} else const c = 1;\n",
+    "a: class B {}\n",
+    "function f() {\n  if (a) let b = 1;\n}\n",
+    // statements
+    "function f() {\n  throw;\n}\n",
+    "switch (a) {\n  default:\n    b();\n  default:\n    c();\n}\n",
+    "function () {\n  a();\n}\n",
+    "for await (a in b) {\n  c();\n}\n",
+    "for (async of a) {\n  b();\n}\n",
+    "for (let.a of b) {\n  c();\n}\n",
+    // objects
+    "const a = {\n  b = 1,\n};\n",
+    "f({\n  a = 1,\n});\n",
+    "const a = {\n  get b,\n};\n",
+    "const a = {\n  async b: 1,\n};\n",
+    // numbers
+    "const a = 1_;\n",
+    "const a = 1__0;\n",
+    "const a = 0x;\n",
+    "const a = 0b2;\n",
+    "const a = 01n;\n",
+    // strings
+    'const a = "\\u{110000}";\n',
+    'const a = "\\u12";\n',
+    'const a = "\\x1";\n',
+    "const \\u0061 = 1;\nconst cl\\u0061ss = 1;\n",
+    // regexes
+    "const a = /b/gg;\n",
+    "const a = /b/x;\n",
+    "const a = /b/uv;\n",
+    // jsx
+    "const a = <b.c-d />;\n",
+    "const a = <b c={d, e} />;\n",
+    "const a = <b c={...d} />;\n",
+    // decorators
+    "@a\nexport @b class C {}\n",
+    "class A {\n  @a\n  constructor() {\n    b();\n  }\n}\n",
+    "const a = () => @b class {};\n",
+    // using
+    "switch (a) {\n  case 1:\n    using b = c;\n}\n",
+    "for (using a in b) {\n  c();\n}\n",
+    // quirks
+    "static\nvar a;\n",
+    "class A extends {}.B {}\n",
+    "class A {\n  export\n  a;\n}\n",
+    "export default interface;\n",
+    // ts-shared
+    "var\ufeff\n",
+    "function f() {\n  break\u00a0;\n}\n",
+  ]);
+  expectRejected("a.js.flow", "a.js.flow", [
+    // jumps
+    "function f() {\n  a();\n  break;\n}\n",
+    // super
+    "function f() {\n  super.a();\n}\n",
+    // constructor
+    "class A {\n  constructor() {\n    a();\n  }\n  constructor() {\n    b();\n  }\n}\n",
+    // private
+    "class A {\n  #a = 1;\n  #a = 2;\n}\n",
+    // accessors
+    "class A {\n  get a(b) {\n    return b;\n  }\n}\n",
+    // default
+    "export default a;\nexport default b;\n",
+    // strict
+    'function f(a = 1) {\n  "use strict";\n  b();\n}\n',
+    // rest
+    "function f(...a, b) {\n  c();\n}\n",
+    // proto
+    "const a = {\n  __proto__: b,\n  __proto__: c,\n};\n",
+    // await
+    "async function f(a = await b) {\n  c();\n}\n",
+    // yield
+    "function* f(a = yield) {\n  b();\n}\n",
+    // exports
+    "export { if };\n",
+    // imports
+    'import { if } from "a";\n',
+    // names
+    "const enum = 1;\n",
+    "function f(enum) {\n  a();\n}\n",
+    // targets
+    "function f() {\n  a() = 1;\n}\n",
+    // operands
+    "function f() {\n  return -a ** b;\n}\n",
+    // bodies
+    "if (a) const b = 1;\n",
+    // objects
+    "const a = {\n  b = 1,\n};\n",
+    // numbers
+    "const a = 1_;\n",
+    // strings
+    'const a = "\\u{110000}";\n',
+    // regexes
+    "const a = /b/gg;\n",
+    // flow-names
+    "type string = a;\n",
+    "type if = a;\n",
+    "export type number = a;\n",
+    "interface void {}\n",
+    "opaque type null = a;\n",
+    "declare class false {}\n",
+    "declare function if(): void;\n",
+    'import { type if } from "a";\n',
+    'import type { typeof } from "a";\n',
+    "component as() {}\n",
+    "enum enum {}\n",
+    // flow-lines
+    "export type\nA = b;\n",
+    "declare\nfunction f(): void;\n",
+    "declare export type\nA = b;\n",
+    // flow-lists
+    "a<>;\n",
+    "type A<> = b;\n",
+    "function f<>() {}\n",
+    "class A<> {}\n",
+    "const a = <>() => b;\n",
+    // flow-arguments
+    "a<b>;\n",
+    "const a = b<c>.d;\n",
+    "class A extends B<c>.d {}\n",
+    "async<a>(b);\n",
+    // flow-records
+    "const a = b {};\n",
+    "const a = b { c: 1 };\n",
+    "const a = new B { c: 1 };\n",
+    // flow-casts
+    "(a: b, c);\n",
+    "((a: b)) => c;\n",
+    "((a): b) => c;\n",
+    "async (a: b);\n",
+    "const f = ({ a() {} }: b) => c;\n",
+    "const f = ({ a: 1 }: b) => c;\n",
+    // flow-bodies
+    "function f();\n",
+    "function f(): a;\n",
+    "export function f(): a;\n",
+    // flow-objects
+    "type A = {| a: 1 };\n",
+    "type A = { a: 1 |};\n",
+    "type A = { +a(): 1 };\n",
+    "type A = { +...a };\n",
+    "type A = {\n  a: 1,\n  ...\n    | B\n    | C,\n};\n",
+    "type A = { get a: 1 };\n",
+    "type A = { in a: 1 };\n",
+    // flow-types
+    "let a: keyof;\n",
+    "let a: interface;\n",
+    "let a: component;\n",
+    "let a: number.b;\n",
+    "let a: string<>;\n",
+    // flow-this
+    "function f(this = 1) {}\n",
+    "function f(this?: a) {}\n",
+    "function f(...this) {}\n",
+    "class A {\n  set a(this: b) {}\n}\n",
+    // flow-members
+    "class A {\n  +a() {}\n}\n",
+    "class A {\n  +get a() {}\n}\n",
+    "class A {\n  a b;\n}\n",
+    "class A {\n  constructor?() {}\n}\n",
+    "class A {\n  writeonly a: b;\n}\n",
+    // flow-heritage
+    "class A implements null {}\n",
+    "declare class A extends B, C {}\n",
+    // flow-jsx
+    "const a = <b>}</b>;\n",
+    "const a = <b>c > d</b>;\n",
+    // flow-match
+    "const a = match (b) {\n  x[y] => c,\n};\n",
+    "const a = match (b) {\n  -c => d,\n};\n",
+    "const a = match (b) {\n  let => d,\n};\n",
+    // flow-declare
+    "declare opaque a b;\n",
+    "component A('a': c) {}\n",
+    "component A(...a: b\n",
+    "export default a;\ndeclare export default b;\n",
+    "declare export { if };\n",
+    "module as A;\n",
+    'import type defer * as a from "b";\n',
+    "component A(@a b) {}\n",
+  ]);
+  expectRejected("a.mjs", "a.mjs", [
+    // default
+    "export default a;\nexport default b;\n",
+  ]);
+  expectRejected("a.jsx", "a.jsx", [
+    // default
+    "export default a;\nexport default b;\n",
+    // jsx
+    "const a = <b.c-d />;\n",
+    "const a = <b c={d, e} />;\n",
+    "const a = <b c={...d} />;\n",
+  ]);
+  expectRejected("a.ts", "a.ts", [
+    // await
+    'import a from "b";\nconst c = await;\n',
+    "const c = await;\nexport { c };\n",
+    // targets
+    "function f() {\n  a()++;\n}\n",
+    // operands
+    "function f() {\n  return -a ** b;\n}\n",
+    // statements
+    "function f() {\n  throw;\n}\n",
+    "switch (a) {\n  default:\n    b();\n  default:\n    c();\n}\n",
+    // numbers
+    "const a = 1_;\n",
+    "const a = 1__0;\n",
+    "const a = 0x;\n",
+    "const a = 0b2;\n",
+    "const a = 01n;\n",
+    "const a = 010;\n",
+    "const a = 09;\n",
+    // strings
+    'const a = "\\u{110000}";\n',
+    'const a = "\\u12";\n',
+    'const a = "\\x1";\n',
+    'const a = "\\01";\n',
+    "const \\u0061 = 1;\nconst cl\\u0061ss = 1;\n",
+    // ts-shared
+    "a?.#b;\n",
+    "class A {\n  #b = 1;\n  m() {\n    return a?.c.#b;\n  }\n}\n",
+    "new import.meta();\n",
+    "<a>b ** c;\n",
+    "namespace enum {}\n",
+    "declare function (): void;\n",
+    "let a: [enum];\n",
+    "type A = B<enum>;\n",
+    "type A = (enum) => void;\n",
+    'import { type enum } from "a";\n',
+    "yield as any;\n",
+    "await in a;\n",
+    "a << b.c > (d);\n",
+    "var\ufeff\n",
+    "enum A {\n  a = await\n  b,\n}\n",
+    "namespace N {\n  await {};\n}\n",
+    "await\n** a;\n",
+    "f<unique>(a);\n",
+    "f<a | <T>(b)>(c);\n",
+  ]);
+  expectRejected("a.tsx", "a.tsx", [
+    // jsx
+    "const a = <b.c-d />;\n",
+  ]);
+  expectRejected("a.cjs", "a.cjs", [
+    // using
+    "using a = b;\n",
+  ]);
+  expectRejected(
+    "a.js with @flow",
+    "a.js",
+    [
+      // flow-names
+      "type string = a;\n",
+      "type if = a;\n",
+      "export type number = a;\n",
+      "interface void {}\n",
+      "opaque type null = a;\n",
+      "declare class false {}\n",
+      "declare function if(): void;\n",
+      'import { type if } from "a";\n',
+      'import type { typeof } from "a";\n',
+      // flow-lines
+      "export type\nA = b;\n",
+      "declare export type\nA = b;\n",
+      // flow-lists
+      "a<>;\n",
+      "type A<> = b;\n",
+      "function f<>() {}\n",
+      "class A<> {}\n",
+      "const a = <>() => b;\n",
+      // flow-arguments
+      "a<b>;\n",
+      "const a = b<c>.d;\n",
+      "class A extends B<c>.d {}\n",
+      "new A<b>c;\n",
+      // flow-casts
+      "(a: b, c);\n",
+      "((a: b)) => c;\n",
+      "((a): b) => c;\n",
+      "async (a: b);\n",
+      "const a = b ? ((c: d)) => {} : e;\n",
+      "const f = ({ a() {} }: b) => c;\n",
+      "const f = ({ a: 1 }: b) => c;\n",
+      // flow-objects
+      "type A = {| a: 1 };\n",
+      "type A = { a: 1 |};\n",
+      "type A = { +a(): 1 };\n",
+      "type A = { +...a };\n",
+      "type A = {\n  a: 1,\n  ...\n    | B\n    | C,\n};\n",
+      "type A = { get a: 1 };\n",
+      // flow-types
+      "let a: keyof;\n",
+      "let a: interface;\n",
+      "let a: component;\n",
+      "let a: number.b;\n",
+      "let a: string<>;\n",
+      // flow-this
+      "function f(this = 1) {}\n",
+      "function f(this?: a) {}\n",
+      "function f(...this) {}\n",
+      "class A {\n  set a(this: b) {}\n}\n",
+      // flow-members
+      "class A {\n  +a() {}\n}\n",
+      "class A {\n  +get a() {}\n}\n",
+      // flow-heritage
+      "class A implements null {}\n",
+      "declare class A extends B, C {}\n",
+      // flow-declare
+      'import type defer * as a from "b";\n',
+      "export type as = a;\n",
+    ].map(text => `// @flow\n${text}`),
+  );
+  expectRejected("a.d.ts", "a.d.ts", [
+    // ts-shared
+    "await /a/;\n",
+  ]);
 });

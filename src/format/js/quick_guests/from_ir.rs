@@ -197,7 +197,7 @@ impl<'s, 'q, 'd> FromIr<'s, 'q, 'd> {
         if std::mem::take(&mut self.has_pending_blank) {
             self.sink.text(b" ");
         }
-        self.sink.text_of_width(token, token.len() as i32);
+        self.sink.text(token);
         self.last = Last::Text;
     }
 
@@ -427,8 +427,7 @@ impl<'s, 'q, 'd> FromIr<'s, 'q, 'd> {
                 FormatElement::TokenIfBreaks(token) => {
                     self.write_pending_blank();
                     let open = self.sink.if_break_open(0);
-                    self.sink
-                        .text_of_width(token.as_bytes(), token.len() as i32);
+                    self.sink.text(token.as_bytes());
                     self.sink.if_break_else(open);
                     self.sink.if_break_close(open);
                     self.last = self.last.join(Last::Text);

@@ -1,0 +1,254 @@
+status: 0
+script: 245589a179a4b290
+source: 6005a6357da6bf75
+---
+== the traceback, and what the frame in it has
+label [label='generator', make=function] => generator
+entries(e)[1:] [label='generator', make=function] => [('g', 17)]
+variables(last.tb_frame) [label='generator', make=function] => [('a', 5), ('k', 7), ('rest', (6,))]
+last.tb_frame.f_back [label='generator', make=function] => None
+    attribute [label='generator', make=function, attribute='gi_frame'] => gi_frame
+getattr(x, attribute) [label='generator', make=function, attribute='gi_frame'] => None
+    attribute [label='generator', make=function, attribute='gi_running'] => gi_running
+getattr(x, attribute) [label='generator', make=function, attribute='gi_running'] => False
+    attribute [label='generator', make=function, attribute='gi_suspended'] => gi_suspended
+getattr(x, attribute) [label='generator', make=function, attribute='gi_suspended'] => False
+    again type(e).__name__ [label='generator', make=function] => StopIteration
+e [label='generator', make=function] => 
+label [label='cell', make=function] => cell
+entries(e)[1:] [label='cell', make=function] => [('with_cell', 27)]
+variables(last.tb_frame) [label='cell', make=function] => [('a', 1), ('b', 2)]
+last.tb_frame.f_back [label='cell', make=function] => None
+    attribute [label='cell', make=function, attribute='gi_frame'] => gi_frame
+getattr(x, attribute) [label='cell', make=function, attribute='gi_frame'] => None
+    attribute [label='cell', make=function, attribute='gi_running'] => gi_running
+getattr(x, attribute) [label='cell', make=function, attribute='gi_running'] => False
+    attribute [label='cell', make=function, attribute='gi_suspended'] => gi_suspended
+getattr(x, attribute) [label='cell', make=function, attribute='gi_suspended'] => False
+    again type(e).__name__ [label='cell', make=function] => StopIteration
+e [label='cell', make=function] => 
+label [label='closure', make=function] => closure
+entries(e)[1:] [label='closure', make=function] => [('closes_over', 36)]
+variables(last.tb_frame) [label='closure', make=function] => [('free', 'f'), ('x', 3)]
+last.tb_frame.f_back [label='closure', make=function] => None
+    attribute [label='closure', make=function, attribute='gi_frame'] => gi_frame
+getattr(x, attribute) [label='closure', make=function, attribute='gi_frame'] => None
+    attribute [label='closure', make=function, attribute='gi_running'] => gi_running
+getattr(x, attribute) [label='closure', make=function, attribute='gi_running'] => False
+    attribute [label='closure', make=function, attribute='gi_suspended'] => gi_suspended
+getattr(x, attribute) [label='closure', make=function, attribute='gi_suspended'] => False
+    again type(e).__name__ [label='closure', make=function] => StopIteration
+e [label='closure', make=function] => 
+label [label='coroutine', make=function] => coroutine
+entries(e)[1:] [label='coroutine', make=function] => [('co', 43)]
+variables(last.tb_frame) [label='coroutine', make=function] => [('a', 4)]
+last.tb_frame.f_back [label='coroutine', make=function] => None
+    attribute [label='coroutine', make=function, attribute='cr_frame'] => cr_frame
+getattr(x, attribute) [label='coroutine', make=function, attribute='cr_frame'] => None
+    attribute [label='coroutine', make=function, attribute='cr_running'] => cr_running
+getattr(x, attribute) [label='coroutine', make=function, attribute='cr_running'] => False
+    attribute [label='coroutine', make=function, attribute='cr_suspended'] => cr_suspended
+getattr(x, attribute) [label='coroutine', make=function, attribute='cr_suspended'] => False
+    again type(e).__name__ [label='coroutine', make=function] => RuntimeError
+e [label='coroutine', make=function] => cannot reuse already awaited coroutine
+label [label='delegating', make=function] => delegating
+entries(e)[1:] [label='delegating', make=function] => [('delegating', 55)]
+variables(last.tb_frame) [label='delegating', make=function] => [('a', 8)]
+last.tb_frame.f_back [label='delegating', make=function] => None
+    attribute [label='delegating', make=function, attribute='gi_frame'] => gi_frame
+getattr(x, attribute) [label='delegating', make=function, attribute='gi_frame'] => None
+    attribute [label='delegating', make=function, attribute='gi_running'] => gi_running
+getattr(x, attribute) [label='delegating', make=function, attribute='gi_running'] => False
+    attribute [label='delegating', make=function, attribute='gi_suspended'] => gi_suspended
+getattr(x, attribute) [label='delegating', make=function, attribute='gi_suspended'] => False
+    again type(e).__name__ [label='delegating', make=function] => StopIteration
+e [label='delegating', make=function] => 
+label [label='genexpr', make=function] => genexpr
+entries(e)[1:] [label='genexpr', make=function] => [('<genexpr>', 62)]
+variables(last.tb_frame) [label='genexpr', make=function] => [('.0', 'list')]
+last.tb_frame.f_back [label='genexpr', make=function] => None
+    attribute [label='genexpr', make=function, attribute='gi_frame'] => gi_frame
+getattr(x, attribute) [label='genexpr', make=function, attribute='gi_frame'] => None
+    attribute [label='genexpr', make=function, attribute='gi_running'] => gi_running
+getattr(x, attribute) [label='genexpr', make=function, attribute='gi_running'] => False
+    attribute [label='genexpr', make=function, attribute='gi_suspended'] => gi_suspended
+getattr(x, attribute) [label='genexpr', make=function, attribute='gi_suspended'] => False
+    again type(e).__name__ [label='genexpr', make=function] => StopIteration
+e [label='genexpr', make=function] => 
+== the frame object that was there before
+frame.f_lineno => 17
+variables(frame) => [('a', 5), ('k', 2), ('rest', ())]
+e.__traceback__.tb_next.tb_frame is frame => True
+variables(frame) => [('a', 5), ('k', 2), ('rest', ())]
+frame.f_back => None
+e.__traceback__.tb_next.tb_lineno => 17
+== an exception with a traceback of its own, and one with a context
+[('<module>', 156), ('g', 17), ('<module>', 148)]
+repr(e.__context__) => None
+entries(e) => [('<module>', 167), ('g', 17)]
+== StopIteration, GeneratorExit
+label [exception=StopIteration, label='generator', make=function] => generator
+label [exception=StopIteration, label='generator', make=function] => generator
+type(e).__name__ [exception=StopIteration, label='generator', make=function] => StopIteration
+e [exception=StopIteration, label='generator', make=function] => s
+repr(e.__cause__) [exception=StopIteration, label='generator', make=function] => None
+entries(e)[1:] [exception=StopIteration, label='generator', make=function] => [('g', 17)]
+label [exception=StopIteration, label='coroutine', make=function] => coroutine
+label [exception=StopIteration, label='coroutine', make=function] => coroutine
+type(e).__name__ [exception=StopIteration, label='coroutine', make=function] => StopIteration
+e [exception=StopIteration, label='coroutine', make=function] => s
+repr(e.__cause__) [exception=StopIteration, label='coroutine', make=function] => None
+entries(e)[1:] [exception=StopIteration, label='coroutine', make=function] => [('co', 43), ('<module>', 182), ('g', 17)]
+label [exception=GeneratorExit, label='generator', make=function] => generator
+label [exception=GeneratorExit, label='generator', make=function] => generator
+type(e).__name__ [exception=GeneratorExit, label='generator', make=function] => GeneratorExit
+e [exception=GeneratorExit, label='generator', make=function] => x
+repr(e.__cause__) [exception=GeneratorExit, label='generator', make=function] => None
+entries(e)[1:] [exception=GeneratorExit, label='generator', make=function] => [('g', 17)]
+label [exception=GeneratorExit, label='coroutine', make=function] => coroutine
+label [exception=GeneratorExit, label='coroutine', make=function] => coroutine
+type(e).__name__ [exception=GeneratorExit, label='coroutine', make=function] => GeneratorExit
+e [exception=GeneratorExit, label='coroutine', make=function] => x
+repr(e.__cause__) [exception=GeneratorExit, label='coroutine', make=function] => None
+entries(e)[1:] [exception=GeneratorExit, label='coroutine', make=function] => [('co', 43), ('<module>', 182), ('g', 17)]
+label [exception=StopAsyncIteration, label='generator', make=function] => generator
+label [exception=StopAsyncIteration, label='generator', make=function] => generator
+type(e).__name__ [exception=StopAsyncIteration, label='generator', make=function] => StopAsyncIteration
+e [exception=StopAsyncIteration, label='generator', make=function] => a
+repr(e.__cause__) [exception=StopAsyncIteration, label='generator', make=function] => None
+entries(e)[1:] [exception=StopAsyncIteration, label='generator', make=function] => [('g', 17)]
+label [exception=StopAsyncIteration, label='coroutine', make=function] => coroutine
+label [exception=StopAsyncIteration, label='coroutine', make=function] => coroutine
+type(e).__name__ [exception=StopAsyncIteration, label='coroutine', make=function] => StopAsyncIteration
+e [exception=StopAsyncIteration, label='coroutine', make=function] => a
+repr(e.__cause__) [exception=StopAsyncIteration, label='coroutine', make=function] => None
+entries(e)[1:] [exception=StopAsyncIteration, label='coroutine', make=function] => [('co', 43), ('<module>', 182), ('g', 17)]
+== sys.monitoring
+label [label='generator', make=function] => generator
+log [label='generator', make=function] => [('PY_THROW', 'g', 'Thrown'), ('RAISE', 'g', 'Thrown'), ('PY_UNWIND', 'g', 'Thrown')]
+label [label='cell', make=function] => cell
+log [label='cell', make=function] => [('PY_THROW', 'with_cell', 'Thrown'), ('RAISE', 'with_cell', 'Thrown'), ('PY_UNWIND', 'with_cell', 'Thrown')]
+label [label='closure', make=function] => closure
+log [label='closure', make=function] => [('PY_THROW', 'closes_over', 'Thrown'), ('RAISE', 'closes_over', 'Thrown'), ('PY_UNWIND', 'closes_over', 'Thrown')]
+label [label='coroutine', make=function] => coroutine
+log [label='coroutine', make=function] => [('PY_THROW', 'co', 'Thrown'), ('RAISE', 'co', 'Thrown'), ('PY_UNWIND', 'co', 'Thrown')]
+label [label='delegating', make=function] => delegating
+log [label='delegating', make=function] => [('PY_THROW', 'delegating', 'Thrown'), ('RAISE', 'delegating', 'Thrown'), ('PY_UNWIND', 'delegating', 'Thrown')]
+label [label='genexpr', make=function] => genexpr
+log [label='genexpr', make=function] => [('PY_THROW', '<genexpr>', 'Thrown'), ('RAISE', '<genexpr>', 'Thrown'), ('PY_UNWIND', '<genexpr>', 'Thrown')]
+local events
+label [label='generator', make=function] => generator
+log [label='generator', make=function] => [('PY_THROW', 'g', 'Thrown'), ('RAISE', 'g', 'Thrown'), ('PY_UNWIND', 'g', 'Thrown')]
+a callback that raises
+type(e).__name__ => LookupError
+e => from the tool
+repr(e.__context__) => None
+[name for name, line in entries(e)] => ['<module>', 'g', 'raises']
+None
+== sys.settrace, sys.setprofile
+setter.__name__ [setter=builtin_function_or_method, label='generator', make=function] => settrace
+label [setter=builtin_function_or_method, label='generator', make=function] => generator
+    event [setter=builtin_function_or_method, label='generator', make=function, event=tuple] => ('call', 'g', 17, '<module>', [('a', 5), ('k', 7), ('rest', (6,))], None)
+    event [setter=builtin_function_or_method, label='generator', make=function, event=tuple] => ('exception', 'g', 17, '<module>', [('a', 5), ('k', 7), ('rest', (6,))], 'Thrown')
+    event [setter=builtin_function_or_method, label='generator', make=function, event=tuple] => ('return', 'g', 17, '<module>', [('a', 5), ('k', 7), ('rest', (6,))], None)
+setter.__name__ [setter=builtin_function_or_method, label='cell', make=function] => settrace
+label [setter=builtin_function_or_method, label='cell', make=function] => cell
+    event [setter=builtin_function_or_method, label='cell', make=function, event=tuple] => ('call', 'with_cell', 27, '<module>', [('a', 1), ('b', 2)], None)
+    event [setter=builtin_function_or_method, label='cell', make=function, event=tuple] => ('exception', 'with_cell', 27, '<module>', [('a', 1), ('b', 2)], 'Thrown')
+    event [setter=builtin_function_or_method, label='cell', make=function, event=tuple] => ('return', 'with_cell', 27, '<module>', [('a', 1), ('b', 2)], None)
+setter.__name__ [setter=builtin_function_or_method, label='closure', make=function] => settrace
+label [setter=builtin_function_or_method, label='closure', make=function] => closure
+    event [setter=builtin_function_or_method, label='closure', make=function, event=tuple] => ('call', 'closes_over', 36, '<module>', [('free', 'f'), ('x', 3)], None)
+    event [setter=builtin_function_or_method, label='closure', make=function, event=tuple] => ('exception', 'closes_over', 36, '<module>', [('free', 'f'), ('x', 3)], 'Thrown')
+    event [setter=builtin_function_or_method, label='closure', make=function, event=tuple] => ('return', 'closes_over', 36, '<module>', [('free', 'f'), ('x', 3)], None)
+setter.__name__ [setter=builtin_function_or_method, label='coroutine', make=function] => settrace
+label [setter=builtin_function_or_method, label='coroutine', make=function] => coroutine
+    event [setter=builtin_function_or_method, label='coroutine', make=function, event=tuple] => ('call', 'co', 43, '<module>', [('a', 4)], None)
+    event [setter=builtin_function_or_method, label='coroutine', make=function, event=tuple] => ('exception', 'co', 43, '<module>', [('a', 4)], 'Thrown')
+    event [setter=builtin_function_or_method, label='coroutine', make=function, event=tuple] => ('return', 'co', 43, '<module>', [('a', 4)], None)
+setter.__name__ [setter=builtin_function_or_method, label='delegating', make=function] => settrace
+label [setter=builtin_function_or_method, label='delegating', make=function] => delegating
+    event [setter=builtin_function_or_method, label='delegating', make=function, event=tuple] => ('call', 'delegating', 55, '<module>', [('a', 8)], None)
+    event [setter=builtin_function_or_method, label='delegating', make=function, event=tuple] => ('exception', 'delegating', 55, '<module>', [('a', 8)], 'Thrown')
+    event [setter=builtin_function_or_method, label='delegating', make=function, event=tuple] => ('return', 'delegating', 55, '<module>', [('a', 8)], None)
+setter.__name__ [setter=builtin_function_or_method, label='genexpr', make=function] => settrace
+label [setter=builtin_function_or_method, label='genexpr', make=function] => genexpr
+    event [setter=builtin_function_or_method, label='genexpr', make=function, event=tuple] => ('call', '<genexpr>', 62, '<module>', [('.0', 'list')], None)
+    event [setter=builtin_function_or_method, label='genexpr', make=function, event=tuple] => ('exception', '<genexpr>', 62, '<module>', [('.0', 'list')], 'Thrown')
+    event [setter=builtin_function_or_method, label='genexpr', make=function, event=tuple] => ('return', '<genexpr>', 62, '<module>', [('.0', 'list')], None)
+setter.__name__ [setter=builtin_function_or_method, label='generator', make=function] => setprofile
+label [setter=builtin_function_or_method, label='generator', make=function] => generator
+    event [setter=builtin_function_or_method, label='generator', make=function, event=tuple] => ('call', 'g', 17, '<module>', [('a', 5), ('k', 7), ('rest', (6,))], None)
+    event [setter=builtin_function_or_method, label='generator', make=function, event=tuple] => ('return', 'g', 17, '<module>', [('a', 5), ('k', 7), ('rest', (6,))], None)
+setter.__name__ [setter=builtin_function_or_method, label='cell', make=function] => setprofile
+label [setter=builtin_function_or_method, label='cell', make=function] => cell
+    event [setter=builtin_function_or_method, label='cell', make=function, event=tuple] => ('call', 'with_cell', 27, '<module>', [('a', 1), ('b', 2)], None)
+    event [setter=builtin_function_or_method, label='cell', make=function, event=tuple] => ('return', 'with_cell', 27, '<module>', [('a', 1), ('b', 2)], None)
+setter.__name__ [setter=builtin_function_or_method, label='closure', make=function] => setprofile
+label [setter=builtin_function_or_method, label='closure', make=function] => closure
+    event [setter=builtin_function_or_method, label='closure', make=function, event=tuple] => ('call', 'closes_over', 36, '<module>', [('free', 'f'), ('x', 3)], None)
+    event [setter=builtin_function_or_method, label='closure', make=function, event=tuple] => ('return', 'closes_over', 36, '<module>', [('free', 'f'), ('x', 3)], None)
+setter.__name__ [setter=builtin_function_or_method, label='coroutine', make=function] => setprofile
+label [setter=builtin_function_or_method, label='coroutine', make=function] => coroutine
+    event [setter=builtin_function_or_method, label='coroutine', make=function, event=tuple] => ('call', 'co', 43, '<module>', [('a', 4)], None)
+    event [setter=builtin_function_or_method, label='coroutine', make=function, event=tuple] => ('return', 'co', 43, '<module>', [('a', 4)], None)
+setter.__name__ [setter=builtin_function_or_method, label='delegating', make=function] => setprofile
+label [setter=builtin_function_or_method, label='delegating', make=function] => delegating
+    event [setter=builtin_function_or_method, label='delegating', make=function, event=tuple] => ('call', 'delegating', 55, '<module>', [('a', 8)], None)
+    event [setter=builtin_function_or_method, label='delegating', make=function, event=tuple] => ('return', 'delegating', 55, '<module>', [('a', 8)], None)
+setter.__name__ [setter=builtin_function_or_method, label='genexpr', make=function] => setprofile
+label [setter=builtin_function_or_method, label='genexpr', make=function] => genexpr
+    event [setter=builtin_function_or_method, label='genexpr', make=function, event=tuple] => ('call', '<genexpr>', 62, '<module>', [('.0', 'list')], None)
+    event [setter=builtin_function_or_method, label='genexpr', make=function, event=tuple] => ('return', '<genexpr>', 62, '<module>', [('.0', 'list')], None)
+== asynchronous generators
+drive(a.athrow(Thrown('t'))) => ('Thrown', 't', [('ag', 49)])
+a.ag_frame => None
+a.ag_running => False
+('StopAsyncIteration', '', [])
+drive(a.aclose()) => ('StopIteration', '', [])
+a.ag_frame => None
+drive(a.athrow(GeneratorExit)) => ('GeneratorExit', '', [('ag', 49)])
+a.ag_frame => None
+== a coroutine that something was thrown into has been awaited
+[]
+== close() is another matter: nobody is told, nothing is run
+events => []
+x.gi_frame => None
+== through yield from, next to a delegate that has not started
+[('late', 409)]
+== a generator expression is passed what was written
+label [label='list', expression=generator] => list
+[(name, type(value).__name__, value) for name, value in expression.gi... [label='list', expression=generator] => [('.0', 'list', [1, 2])]
+expression.gi_code.co_consts [label='list', expression=generator] => (None,)
+label [label='set', expression=generator] => set
+[(name, type(value).__name__, value) for name, value in expression.gi... [label='set', expression=generator] => [('.0', 'set', {1, 2})]
+expression.gi_code.co_consts [label='set', expression=generator] => (None,)
+label [label='names', expression=generator] => names
+[(name, type(value).__name__, value) for name, value in expression.gi... [label='names', expression=generator] => [('.0', 'list', [1, 1])]
+expression.gi_code.co_consts [label='names', expression=generator] => (None,)
+label [label='empty', expression=generator] => empty
+[(name, type(value).__name__, value) for name, value in expression.gi... [label='empty', expression=generator] => [('.0', 'list', [])]
+expression.gi_code.co_consts [label='empty', expression=generator] => (None,)
+label [label='tuple', expression=generator] => tuple
+[(name, type(value).__name__, value) for name, value in expression.gi... [label='tuple', expression=generator] => [('.0', 'tuple', (1, 2))]
+expression.gi_code.co_consts [label='tuple', expression=generator] => (None,)
+label [label='inner', expression=generator] => inner
+[(name, type(value).__name__, value) for name, value in expression.gi... [label='inner', expression=generator] => [('.0', 'tuple', (1,))]
+expression.gi_code.co_consts [label='inner', expression=generator] => (1, (1, 2))
+constants(lambda: (x for x in [1, 2])) => []
+constants(lambda: [x for x in [1, 2]]) => [1]
+constants(lambda: {x for x in {1, 2}}) => [1]
+constants(lambda: (x for x in {1, 2})) => []
+constants(lambda: sum(x for x in [1, 2])) => []
+constants(lambda: list(x for x in [1, 2])) => []
+constants(lambda: (x for x in [])) => []
+constants(lambda: all(x for x in [1, 2])) => []
+== no instruction of it is run, and nothing of this shows where one is started in the usual way
+['PY_THROW', 'RAISE', 'PY_UNWIND']
+['PY_START', 'LINE', 'LINE']
+== a trace function that raises when it is told of the call
+type(e).__name__ => LookupError
+e => call
+repr(e.__context__) => None
+x.gi_frame => None
+[name for name, line in entries(e)] => ['<module>', 'g', 'refuses']

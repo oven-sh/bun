@@ -514,11 +514,13 @@ impl Quick {
         self.expect(tk::ParenR)?;
         self.expect(tk::Colon)?;
         let return_type = self.flow_parse_type_or_guard()?;
-        // The type starts where the member starts, so that a comment before or behind the parameters has two nodes to go to.
+        // The type starts where the member starts, so that a comment before or behind the parameters has two nodes to go to; and one
+        // among them too, if the member starts before its key.
+        let is_static = self.text_is(start, start + 6, b"static");
         let mut c = self.lexer.c_count - 1;
         while c >= self.lexer.c_base && self.lexer.c.at(c * C_STRIDE + C_START) >= start {
             let at = self.lexer.c.at(c * C_STRIDE + C_START);
-            if at < open || (at > close && at < self.lexer.prev_end) {
+            if at < open || (at < self.lexer.prev_end && (at > close || is_static)) {
                 return Err(self.rare(rare::COMMENT));
             }
             c -= 1;

@@ -927,7 +927,8 @@ impl Quick {
             | k::JsExpressionRoot
             | k::NewExpression
             | k::CallExpression
-            | k::ConditionalExpression => {
+            | k::ConditionalExpression
+            | k::MatchExpressionCase => {
                 wrap = false;
             }
             _ => {}

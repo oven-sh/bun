@@ -4358,6 +4358,18 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "",
       "export interface Spec {\n  +getParentNode: (shadowNode: mixed /* ShadowNode */) => mixed /* ?InstanceHandle */;\n  +getChildNodes: () => void;\n}\n",
     ],
+    // Flow: a comment among the parameters of a static method of a declared class.
+    [
+      "a.js.flow",
+      "",
+      "declare class A {\n  static createNext<U>(/* c */value: U): B<U>;\n  static createComplete(/* c */): B<any>;\n}\n",
+    ],
+    // Flow: JSX that breaks gets no parentheses as the body of a case of `match`.
+    [
+      "a.js.flow",
+      "",
+      "const getIcon = (type: 'confirm' | 'error') =>\n  match (type) {\n    'confirm' =>\n      <ListenLaterAddedSVG\n        color=\"var(--color-core-confirm)\"\n        size=\"large\"\n        {...iconProps}\n      />,\n  3 => (\n    <div>\n    </div>\n  ),\n};\n",
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

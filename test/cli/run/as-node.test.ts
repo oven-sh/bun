@@ -115,6 +115,24 @@ describe("fake node cli", () => {
     });
   });
 
+  test.each([
+    { flag: "-e", args: ["first", "--flag", "second"] },
+    { flag: "-pe", args: ["first", "second"] },
+  ])("preserves node $flag arguments $args", async ({ flag, args }) => {
+    using temp = tempDir("fake-node-extra-eval-args", {});
+    const expression = "JSON.stringify(process.argv.slice(1))";
+    const source = flag === "-pe" ? expression : `console.log(${expression})`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "node", flag, source, ...args],
+      cwd: String(temp),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${JSON.stringify(args)}\n`, stderr: "", exitCode: 0 });
+  });
+
   test("process args work", () => {
     using temp = tempDir("fake-node", {
       "index.js": "console.log(JSON.stringify(process.argv.slice(1)))",

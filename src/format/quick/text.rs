@@ -38,6 +38,8 @@ pub(crate) const PAD: i32 = 64;
 impl Quick {
     /// Something that this way does not print.
     pub(crate) fn text_refuse(&self) -> Stop {
+        self.failed_at
+            .set(self.lexer.tok_start - self.text.src_start);
         return self.stop(why::RARE);
     }
 }

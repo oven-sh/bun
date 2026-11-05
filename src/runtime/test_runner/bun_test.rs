@@ -781,6 +781,8 @@ pub(crate) struct BunTest {
     pub(crate) is_reporting_uncaught: bool,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
+    /// True while the loop in `TestCommand::run` waits for this file. That loop queues a `RunTestsTask` for a result that no drain took.
+    pub(crate) in_wait_loop: bool,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
     file_end: Option<Box<ExecutionEntry>>,
     pub(crate) unclaimed: super::expect::expect_deferred::Unclaimed,
@@ -825,6 +827,7 @@ impl BunTest {
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
             is_loading: true,
+            in_wait_loop: false,
             file_end: None,
             unclaimed: Default::default(),
         }
@@ -1117,7 +1120,7 @@ impl BunTest {
             return true;
         };
         // The report of rejected promises charges the entry that is current then, so the runner stays on this one while a promise waits for that report, and then until a task steps. A `RunTestsTask` that is already queued still steps first, because the event loop runs its queued tasks before it reports.
-        if strong.get().execution.step_was_left || has_unreported_rejections(global_this) {
+        if (strong.get().execution.step_was_left || has_unreported_rejections(global_this)) && strong.get().has_due_step() {
             strong.get().execution.step_was_left = true;
             // The poll of this turn comes before the report. It must not sleep while this step is due.
             global_this.bun_vm().as_mut().wakeup();
@@ -1136,6 +1139,11 @@ impl BunTest {
 
     pub(crate) fn add_result(&mut self, result: RefDataValue) {
         let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
+    }
+
+    /// Whether `run_pending_step` may leave the queued step to a `RunTestsTask`: the loop in `TestCommand::run` queues one for it in every iteration. Not inside `run`, which reads the queue itself and would judge time limits by `timer_fired_at` after a decline.
+    pub(crate) fn has_due_step(&self) -> bool {
+        self.in_wait_loop && !self.in_run_loop && self.result_queue.readable_length() > 0
     }
 
     pub(crate) fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {

@@ -2616,6 +2616,18 @@ async function runFilesWithEnv(env: Record<string, string>, files: Record<string
   };
 }
 
+// For a fixture: runs the event loop under JS. Bun.build() waits there while a plugin sets up.
+const tickUnderJS = `
+  function tickUnderJS() {
+    try {
+      Bun.build({
+        entrypoints: ["./nope.ts"],
+        plugins: [{ name: "waits", setup: () => new Promise((_, reject) => setTimeout(reject, 1)) }],
+      });
+    } catch {}
+  }
+`;
+
 // No test has started yet, so no test timeout can end these waits.
 describe.concurrent("a test file that can never finish loading", () => {
   const nothingLeft = "note: the event loop is empty, so nothing can settle it anymore";
@@ -3264,6 +3276,56 @@ describe.concurrent("the runner sleeps while it waits", () => {
     );
     expect(cpuMs(stdout)).toBeLessThan(waitMs / 2);
     expect({ counts, exitCode }).toEqual({ counts: [" 0 pass", " 1 fail"], exitCode: 1 });
+  });
+
+  // The runner keeps the event loop awake for a step that it left to a task, while a rejected promise waits for its
+  // report. Here no task can take a step: the file still loads when the second promise rejects.
+  test("for a load that rejected promises with no handler", async () => {
+    const { stdout, errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test } from "bun:test";
+        Promise.reject(new Error("first"));
+        setImmediate(() => void Promise.reject(new Error("second")));
+        const start = process.cpuUsage();
+        await new Promise(resolve => setTimeout(resolve, ${waitMs}));
+        ${printCpu};
+        test("passes", () => {});
+      `,
+    });
+    expect(cpuMs(stdout)).toBeLessThan(waitMs / 2);
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: ["error: first", "error: second"],
+      counts: [" 1 pass", " 0 fail"],
+      exitCode: 1,
+    });
+  });
+
+  // Here the file is done, and BUN_TEST_DRAIN_EVENT_LOOP runs the event loop until it is empty. The task of the late
+  // result fired under JS, inside Bun.build(), and nothing queues another one.
+  test("for a file that is done while BUN_TEST_DRAIN_EVENT_LOOP drains the event loop", async () => {
+    const { stdout, counts, exitCode } = await runFilesWithEnv(
+      { BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+      {
+        "a.test.ts": `
+          import { test } from "vitest";
+          process.on("unhandledRejection", () => {});
+          ${tickUnderJS}
+          let settle;
+          test("times out", () => new Promise<void>(resolve => void (settle = resolve)), 20);
+          test("passes", () => {
+            setTimeout(() => {
+              settle();
+              tickUnderJS();
+              Promise.reject(new Error("left"));
+              const start = process.cpuUsage();
+              setTimeout(() => ${printCpu}, ${waitMs});
+            }, 50);
+          });
+        `,
+      },
+    );
+    expect(cpuMs(stdout)).toBeLessThan(waitMs / 2);
+    expect({ counts, exitCode }).toEqual({ counts: [" 1 pass", " 1 fail"], exitCode: 1 });
   });
 });
 
@@ -4121,6 +4183,44 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       });
     });
 
+    // The drain after that task calls then(), which rejects a promise. No step is due then, so the runner has nothing
+    // to wait with, and the test keeps that order. The listener keeps both promises from the runner.
+    test("runs the afterEach() hook of a test whose then() rejects a promise before a later immediate", async () => {
+      const { stdout, stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { afterEach, test } from "vitest";
+          process.on("unhandledRejection", () => {});
+          afterEach(() => console.log("afterEach"));
+          test("leaves", async () => {
+            await new Promise<void>(resolve => {
+              setImmediate(() => {
+                Promise.reject(new Error("left"));
+                resolve();
+              });
+            });
+          });
+          test("settles", () => ({
+            then(resolve) {
+              Promise.reject(new Error("from then()"));
+              setImmediate(resolve);
+              setImmediate(() => console.log("later immediate"));
+            },
+          }));
+        `,
+      });
+      expect({
+        stdout: stdout.match(/^(afterEach|later immediate)$/gm),
+        results: results(stderr),
+        errors,
+        exitCode,
+      }).toEqual({
+        stdout: ["afterEach", "afterEach", "later immediate"],
+        results: ["(pass) leaves", "(pass) settles"],
+        errors: [],
+        exitCode: 0,
+      });
+    });
+
     // The other direction: the timer of the runner fires for a test that has not settled, after the step of another
     // test of the group was left. That fire is what the task judges by.
     test("times out a concurrent test that ran past its limit while a step waited", async () => {
@@ -4156,6 +4256,38 @@ describe.concurrent("a rejection left by the callback that settles", () => {
         exitCode: 1,
       });
       expect(stderr).toContain("timed out after 300ms");
+    });
+
+    // No step waits here. The hooks leave their promises inside one call of the runner, which reads the queue itself,
+    // so that call judges "overruns" by its own clock.
+    test("times out a test that overran after hooks left rejected promises in the same call of the runner", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          const leave = () => void Promise.reject(new Error("left by a hook"));
+          beforeEach(leave);
+          afterEach(leave);
+          let release;
+          test("first", async () => {
+            await new Promise<void>(resolve => {
+              setImmediate(resolve);
+              setImmediate(() => release());
+            });
+          });
+          test("overruns", async () => {
+            // Past the time limit of this test before it returns its promise.
+            const end = performance.now() + 60;
+            while (performance.now() < end);
+            await new Promise<void>(resolve => void (release = resolve));
+          }, 20);
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) first", "(fail) overruns"],
+        errors: Array(4).fill("error: left by a hook"),
+        exitCode: 1,
+      });
+      expect(stderr).toContain("timed out after 20ms");
     });
 
     // The report fails the attempt that left it, and the next attempt of the test starts after that.
@@ -4234,14 +4366,7 @@ describe.concurrent("a rejection left by the callback that settles", () => {
             import { afterAll, test } from "bun:test";
             let later;
             afterAll(() => clearTimeout(later));
-            function tickUnderJS() {
-              try {
-                Bun.build({
-                  entrypoints: ["./nope.ts"],
-                  plugins: [{ name: "waits", setup: () => new Promise((_, reject) => setTimeout(reject, 1)) }],
-                });
-              } catch {}
-            }
+            ${tickUnderJS}
             test("leaves", done => {
               later = setTimeout(() => console.log("later timer"), 3000);
               ${body}
@@ -4253,6 +4378,99 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       expect({ stdout: stdout.match(/^(next|later timer)$/gm), results: results(stderr), errors, exitCode }).toEqual({
         ...expected,
         stdout: ["next"],
+      });
+    });
+  });
+
+  // With nothing left on the event loop, the runner reports an entry with no timeout as never settled, and gives up
+  // the file if that error doesn't end the entry. In a Vitest file a listener takes the error.
+  describe("after the runner reported that a test or hook never settled", () => {
+    const stuck = `test("stuck", () => new Promise<void>(resolve => void (settle = resolve)), 0);`;
+
+    // The step waits for the report that is under way, so the test is still the current one after that tick.
+    test("the file runs on when the listener settles the test as a promise of its first call is reported", async () => {
+      const { stderr, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { expect, test } from "vitest";
+          let settle;
+          let calls = 0;
+          process.on("unhandledRejection", () => {
+            if (++calls === 1) Promise.reject(new Error("left by the listener"));
+            else settle();
+          });
+          ${stuck}
+          test("next", () => {
+            expect(1).toBe(2);
+          });
+        `,
+      });
+      expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) stuck", "(fail) next"], exitCode: 1 });
+    });
+
+    // No step waits for a report here. The listener is gone when the promise that it rejected is reported, so that
+    // report fails the test after the tasks of the tick ran, and the step is still queued after that tick.
+    test("the file runs on when a promise that the listener rejected fails the test", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { test } from "vitest";
+          let settle;
+          process.once("unhandledRejection", () => void Promise.reject(new Error("left by the listener")));
+          ${stuck}
+          ${next}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(fail) stuck", "(pass) next"],
+        errors: ["error: left by the listener"],
+        exitCode: 1,
+      });
+    });
+
+    // The immediate runs after the runner gave up the file. No task takes a step from there on.
+    test("the file runs on when an immediate of the listener settles the test and leaves a rejected promise", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { test } from "vitest";
+          let settle;
+          let calls = 0;
+          process.on("unhandledRejection", () => {
+            if (++calls > 1) return;
+            setImmediate(() => {
+              Promise.reject(new Error("left"));
+              settle();
+            });
+          });
+          ${stuck}
+          ${next}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) stuck", "(pass) next"],
+        errors: [],
+        exitCode: 0,
+      });
+    });
+
+    // What the listener throws is an error between tests, which ends no hook. The runner reports the hook once.
+    test("the runner gives up the file after one report when the errors that follow end nothing", async () => {
+      const { errors, counts, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { beforeAll, test } from "vitest";
+          let calls = 0;
+          process.on("unhandledRejection", error => {
+            // A runner that reports the hook again and again ends here.
+            if (++calls > 4) process.exit(3);
+            if (String(error.message).includes("never settled")) Promise.reject(new Error("left"));
+            else throw new Error("thrown by the listener");
+          });
+          beforeAll(() => new Promise(() => {}), 0);
+          test("never runs", () => {});
+        `,
+      });
+      expect({ errors, counts, exitCode }).toEqual({
+        errors: ["error: thrown by the listener"],
+        counts: [" 0 pass", " 0 fail"],
+        exitCode: 1,
       });
     });
   });

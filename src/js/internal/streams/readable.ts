@@ -1865,7 +1865,7 @@ function installOperator(key: string, length: number, returnsPromise: boolean) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
     if (returnsPromise) {
-      return Promise.$resolve().then(() => {
+      return Promise.$resolve().$then(() => {
         op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key] as Operator;
         return op.$apply(this, args);
       });

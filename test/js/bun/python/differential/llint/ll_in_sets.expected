@@ -1,0 +1,663 @@
+status: 0
+script: b749edf12aa99080
+---
+set of strs: 'alpha' |  | (True, False, False, True)
+set of strs: 'gamma' |  | (False, True, True, False)
+set of strs: '' |  | (True, False, False, True)
+set of strs: 'alpha' |  | (True, False, False, True)
+set of strs: 'beta' |  | (True, False, False, True)
+set of strs: 'beta' | hSH eSH hSH eSH hSH eSH hSH eSH | (True, False, False, True)
+set of strs: 'delta' | hSH hSH hSH hSH | (False, True, True, False)
+set of strs: b'alpha' |  | (False, True, True, False)
+set of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' |  | (False, True, True, False)
+set of numbers: 1 |  | (True, False, False, True)
+set of numbers: 1.0 |  | (True, False, False, True)
+set of numbers: True |  | (True, False, False, True)
+set of numbers: 2.5 |  | (True, False, False, True)
+set of numbers: 0 |  | (True, False, False, True)
+set of numbers: 0.0 |  | (True, False, False, True)
+set of numbers: -0.0 |  | (True, False, False, True)
+set of numbers: False |  | (True, False, False, True)
+set of numbers: 1180591620717411303424 |  | (True, False, False, True)
+set of numbers: 1.1805916207174113e+21 |  | (True, False, False, True)
+set of numbers: -1 |  | (True, False, False, True)
+set of numbers: -2 |  | (False, True, True, False)
+set of numbers: 3 |  | (False, True, True, False)
+set of numbers: nan |  | (False, True, True, False)
+set of numbers: inf |  | (False, True, True, False)
+set of numbers: (1+0j) |  | (True, False, False, True)
+set of numbers: None |  | (False, True, True, False)
+set of tuples: (1, 2) |  | (True, False, False, True)
+set of tuples: (1.0, 2) |  | (True, False, False, True)
+set of tuples: () |  | (True, False, False, True)
+set of tuples: (2, 1) |  | (False, True, True, False)
+set of tuples: ('a', (b'b', None)) |  | (True, False, False, True)
+set of tuples: ('a', [1]) |  | TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')
+set of tuples: [1, 2] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+set of objects: Ka | ha ha ha ha | (True, False, False, True)
+set of objects: Kb | hb ea:b hb ea:b hb ea:b hb ea:b | (True, False, False, True)
+set of objects: Kc | hc hc hc hc | (False, True, True, False)
+set of objects: Ka | ha ea:a ha ea:a ha ea:a ha ea:a | (True, False, False, True)
+set of objects: Ka | ha ha ha ha | (False, True, True, False)
+set of objects: Kd | hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d | (False, True, True, False)
+set of sets: frozenset({1, 2}) |  | (True, False, False, True)
+set of sets: {1, 2} |  | (True, False, False, True)
+set of sets: set() |  | (True, False, False, True)
+set of sets: {3} |  | (False, True, True, False)
+set of sets: Plain({1, 2}) |  | (True, False, False, True)
+set of sets: PlainFrozen({1, 2}) |  | (True, False, False, True)
+set of sets: {1: 2} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+set of sets: dict_keys([(1,)]) |  | TypeError: cannot use 'dict_keys' as a set element (unhashable type: 'dict_keys')
+set of nothing: 'alpha' |  | (False, True, True, False)
+set of nothing: 1 |  | (False, True, True, False)
+set of nothing: () |  | (False, True, True, False)
+set of nothing: Ka | ha ha ha ha | (False, True, True, False)
+set of nothing: None |  | (False, True, True, False)
+set of nothing: [] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+set of nothing: {} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+set of nothing: set() |  | (False, True, True, False)
+frozenset of strs: 'alpha' |  | (True, False, False, True)
+frozenset of strs: 'gamma' |  | (False, True, True, False)
+frozenset of strs: '' |  | (True, False, False, True)
+frozenset of strs: 'alpha' |  | (True, False, False, True)
+frozenset of strs: 'beta' |  | (True, False, False, True)
+frozenset of strs: 'beta' | hSH eSH hSH eSH hSH eSH hSH eSH | (True, False, False, True)
+frozenset of strs: 'delta' | hSH hSH hSH hSH | (False, True, True, False)
+frozenset of strs: b'alpha' |  | (False, True, True, False)
+frozenset of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' |  | (False, True, True, False)
+frozenset of numbers: 1 |  | (True, False, False, True)
+frozenset of numbers: 1.0 |  | (True, False, False, True)
+frozenset of numbers: True |  | (True, False, False, True)
+frozenset of numbers: 2.5 |  | (True, False, False, True)
+frozenset of numbers: 0 |  | (True, False, False, True)
+frozenset of numbers: 0.0 |  | (True, False, False, True)
+frozenset of numbers: -0.0 |  | (True, False, False, True)
+frozenset of numbers: False |  | (True, False, False, True)
+frozenset of numbers: 1180591620717411303424 |  | (True, False, False, True)
+frozenset of numbers: 1.1805916207174113e+21 |  | (True, False, False, True)
+frozenset of numbers: -1 |  | (True, False, False, True)
+frozenset of numbers: -2 |  | (False, True, True, False)
+frozenset of numbers: 3 |  | (False, True, True, False)
+frozenset of numbers: nan |  | (False, True, True, False)
+frozenset of numbers: inf |  | (False, True, True, False)
+frozenset of numbers: (1+0j) |  | (True, False, False, True)
+frozenset of numbers: None |  | (False, True, True, False)
+frozenset of tuples: (1, 2) |  | (True, False, False, True)
+frozenset of tuples: (1.0, 2) |  | (True, False, False, True)
+frozenset of tuples: () |  | (True, False, False, True)
+frozenset of tuples: (2, 1) |  | (False, True, True, False)
+frozenset of tuples: ('a', (b'b', None)) |  | (True, False, False, True)
+frozenset of tuples: ('a', [1]) |  | TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')
+frozenset of tuples: [1, 2] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+frozenset of objects: Ka | ha ha ha ha | (True, False, False, True)
+frozenset of objects: Kb | hb ea:b hb ea:b hb ea:b hb ea:b | (True, False, False, True)
+frozenset of objects: Kc | hc hc hc hc | (False, True, True, False)
+frozenset of objects: Ka | ha ea:a ha ea:a ha ea:a ha ea:a | (True, False, False, True)
+frozenset of objects: Ka | ha ha ha ha | (False, True, True, False)
+frozenset of objects: Kd | hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d | (False, True, True, False)
+frozenset of sets: frozenset({1, 2}) |  | (True, False, False, True)
+frozenset of sets: {1, 2} |  | (True, False, False, True)
+frozenset of sets: set() |  | (True, False, False, True)
+frozenset of sets: {3} |  | (False, True, True, False)
+frozenset of sets: Plain({1, 2}) |  | (True, False, False, True)
+frozenset of sets: PlainFrozen({1, 2}) |  | (True, False, False, True)
+frozenset of sets: {1: 2} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+frozenset of sets: dict_keys([(1,)]) |  | TypeError: cannot use 'dict_keys' as a set element (unhashable type: 'dict_keys')
+frozenset of nothing: 'alpha' |  | (False, True, True, False)
+frozenset of nothing: 1 |  | (False, True, True, False)
+frozenset of nothing: () |  | (False, True, True, False)
+frozenset of nothing: Ka | ha ha ha ha | (False, True, True, False)
+frozenset of nothing: None |  | (False, True, True, False)
+frozenset of nothing: [] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+frozenset of nothing: {} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+frozenset of nothing: set() |  | (False, True, True, False)
+Plain of strs: 'alpha' |  | (True, False, False, True)
+Plain of strs: 'gamma' |  | (False, True, True, False)
+Plain of strs: '' |  | (True, False, False, True)
+Plain of strs: 'alpha' |  | (True, False, False, True)
+Plain of strs: 'beta' |  | (True, False, False, True)
+Plain of strs: 'beta' | hSH eSH hSH eSH hSH eSH hSH eSH | (True, False, False, True)
+Plain of strs: 'delta' | hSH hSH hSH hSH | (False, True, True, False)
+Plain of strs: b'alpha' |  | (False, True, True, False)
+Plain of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' |  | (False, True, True, False)
+Plain of numbers: 1 |  | (True, False, False, True)
+Plain of numbers: 1.0 |  | (True, False, False, True)
+Plain of numbers: True |  | (True, False, False, True)
+Plain of numbers: 2.5 |  | (True, False, False, True)
+Plain of numbers: 0 |  | (True, False, False, True)
+Plain of numbers: 0.0 |  | (True, False, False, True)
+Plain of numbers: -0.0 |  | (True, False, False, True)
+Plain of numbers: False |  | (True, False, False, True)
+Plain of numbers: 1180591620717411303424 |  | (True, False, False, True)
+Plain of numbers: 1.1805916207174113e+21 |  | (True, False, False, True)
+Plain of numbers: -1 |  | (True, False, False, True)
+Plain of numbers: -2 |  | (False, True, True, False)
+Plain of numbers: 3 |  | (False, True, True, False)
+Plain of numbers: nan |  | (False, True, True, False)
+Plain of numbers: inf |  | (False, True, True, False)
+Plain of numbers: (1+0j) |  | (True, False, False, True)
+Plain of numbers: None |  | (False, True, True, False)
+Plain of tuples: (1, 2) |  | (True, False, False, True)
+Plain of tuples: (1.0, 2) |  | (True, False, False, True)
+Plain of tuples: () |  | (True, False, False, True)
+Plain of tuples: (2, 1) |  | (False, True, True, False)
+Plain of tuples: ('a', (b'b', None)) |  | (True, False, False, True)
+Plain of tuples: ('a', [1]) |  | TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')
+Plain of tuples: [1, 2] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+Plain of objects: Ka | ha ha ha ha | (True, False, False, True)
+Plain of objects: Kb | hb ea:b hb ea:b hb ea:b hb ea:b | (True, False, False, True)
+Plain of objects: Kc | hc hc hc hc | (False, True, True, False)
+Plain of objects: Ka | ha ea:a ha ea:a ha ea:a ha ea:a | (True, False, False, True)
+Plain of objects: Ka | ha ha ha ha | (False, True, True, False)
+Plain of objects: Kd | hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d | (False, True, True, False)
+Plain of sets: frozenset({1, 2}) |  | (True, False, False, True)
+Plain of sets: {1, 2} |  | (True, False, False, True)
+Plain of sets: set() |  | (True, False, False, True)
+Plain of sets: {3} |  | (False, True, True, False)
+Plain of sets: Plain({1, 2}) |  | (True, False, False, True)
+Plain of sets: PlainFrozen({1, 2}) |  | (True, False, False, True)
+Plain of sets: {1: 2} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+Plain of sets: dict_keys([(1,)]) |  | TypeError: cannot use 'dict_keys' as a set element (unhashable type: 'dict_keys')
+Plain of nothing: 'alpha' |  | (False, True, True, False)
+Plain of nothing: 1 |  | (False, True, True, False)
+Plain of nothing: () |  | (False, True, True, False)
+Plain of nothing: Ka | ha ha ha ha | (False, True, True, False)
+Plain of nothing: None |  | (False, True, True, False)
+Plain of nothing: [] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+Plain of nothing: {} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+Plain of nothing: set() |  | (False, True, True, False)
+PlainFrozen of strs: 'alpha' |  | (True, False, False, True)
+PlainFrozen of strs: 'gamma' |  | (False, True, True, False)
+PlainFrozen of strs: '' |  | (True, False, False, True)
+PlainFrozen of strs: 'alpha' |  | (True, False, False, True)
+PlainFrozen of strs: 'beta' |  | (True, False, False, True)
+PlainFrozen of strs: 'beta' | hSH eSH hSH eSH hSH eSH hSH eSH | (True, False, False, True)
+PlainFrozen of strs: 'delta' | hSH hSH hSH hSH | (False, True, True, False)
+PlainFrozen of strs: b'alpha' |  | (False, True, True, False)
+PlainFrozen of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' |  | (False, True, True, False)
+PlainFrozen of numbers: 1 |  | (True, False, False, True)
+PlainFrozen of numbers: 1.0 |  | (True, False, False, True)
+PlainFrozen of numbers: True |  | (True, False, False, True)
+PlainFrozen of numbers: 2.5 |  | (True, False, False, True)
+PlainFrozen of numbers: 0 |  | (True, False, False, True)
+PlainFrozen of numbers: 0.0 |  | (True, False, False, True)
+PlainFrozen of numbers: -0.0 |  | (True, False, False, True)
+PlainFrozen of numbers: False |  | (True, False, False, True)
+PlainFrozen of numbers: 1180591620717411303424 |  | (True, False, False, True)
+PlainFrozen of numbers: 1.1805916207174113e+21 |  | (True, False, False, True)
+PlainFrozen of numbers: -1 |  | (True, False, False, True)
+PlainFrozen of numbers: -2 |  | (False, True, True, False)
+PlainFrozen of numbers: 3 |  | (False, True, True, False)
+PlainFrozen of numbers: nan |  | (False, True, True, False)
+PlainFrozen of numbers: inf |  | (False, True, True, False)
+PlainFrozen of numbers: (1+0j) |  | (True, False, False, True)
+PlainFrozen of numbers: None |  | (False, True, True, False)
+PlainFrozen of tuples: (1, 2) |  | (True, False, False, True)
+PlainFrozen of tuples: (1.0, 2) |  | (True, False, False, True)
+PlainFrozen of tuples: () |  | (True, False, False, True)
+PlainFrozen of tuples: (2, 1) |  | (False, True, True, False)
+PlainFrozen of tuples: ('a', (b'b', None)) |  | (True, False, False, True)
+PlainFrozen of tuples: ('a', [1]) |  | TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')
+PlainFrozen of tuples: [1, 2] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+PlainFrozen of objects: Ka | ha ha ha ha | (True, False, False, True)
+PlainFrozen of objects: Kb | hb ea:b hb ea:b hb ea:b hb ea:b | (True, False, False, True)
+PlainFrozen of objects: Kc | hc hc hc hc | (False, True, True, False)
+PlainFrozen of objects: Ka | ha ea:a ha ea:a ha ea:a ha ea:a | (True, False, False, True)
+PlainFrozen of objects: Ka | ha ha ha ha | (False, True, True, False)
+PlainFrozen of objects: Kd | hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d | (False, True, True, False)
+PlainFrozen of sets: frozenset({1, 2}) |  | (True, False, False, True)
+PlainFrozen of sets: {1, 2} |  | (True, False, False, True)
+PlainFrozen of sets: set() |  | (True, False, False, True)
+PlainFrozen of sets: {3} |  | (False, True, True, False)
+PlainFrozen of sets: Plain({1, 2}) |  | (True, False, False, True)
+PlainFrozen of sets: PlainFrozen({1, 2}) |  | (True, False, False, True)
+PlainFrozen of sets: {1: 2} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+PlainFrozen of sets: dict_keys([(1,)]) |  | TypeError: cannot use 'dict_keys' as a set element (unhashable type: 'dict_keys')
+PlainFrozen of nothing: 'alpha' |  | (False, True, True, False)
+PlainFrozen of nothing: 1 |  | (False, True, True, False)
+PlainFrozen of nothing: () |  | (False, True, True, False)
+PlainFrozen of nothing: Ka | ha ha ha ha | (False, True, True, False)
+PlainFrozen of nothing: None |  | (False, True, True, False)
+PlainFrozen of nothing: [] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+PlainFrozen of nothing: {} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+PlainFrozen of nothing: set() |  | (False, True, True, False)
+Own of strs: 'alpha' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of strs: 'gamma' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of strs: '' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of strs: 'alpha' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of strs: 'beta' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of strs: 'beta' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of strs: 'delta' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of strs: b'alpha' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: 1 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: 1.0 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: True | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: 2.5 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: 0 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: 0.0 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: -0.0 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: False | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: 1180591620717411303424 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: 1.1805916207174113e+21 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: -1 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: -2 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: 3 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: nan | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: inf | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: (1+0j) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of numbers: None | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of tuples: (1, 2) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of tuples: (1.0, 2) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of tuples: () | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of tuples: (2, 1) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of tuples: ('a', (b'b', None)) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of tuples: ('a', [1]) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of tuples: [1, 2] | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of objects: Ka | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of objects: Kb | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of objects: Kc | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of objects: Ka | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of objects: Ka | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of objects: Kd | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of sets: frozenset({1, 2}) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of sets: {1, 2} | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of sets: set() | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of sets: {3} | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of sets: Plain({1, 2}) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of sets: PlainFrozen({1, 2}) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of sets: {1: 2} | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of sets: dict_keys([(1,)]) | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of nothing: 'alpha' | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of nothing: 1 | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of nothing: () | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of nothing: Ka | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of nothing: None | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of nothing: [] | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of nothing: {} | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+Own of nothing: set() | Own.__contains__ Own.__contains__ Own.__contains__ Own.__contains__ | (True, False, False, True)
+OwnFrozen of strs: 'alpha' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of strs: 'gamma' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of strs: '' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of strs: 'alpha' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of strs: 'beta' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of strs: 'beta' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of strs: 'delta' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of strs: b'alpha' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: 1 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: 1.0 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: True | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: 2.5 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: 0 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: 0.0 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: -0.0 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: False | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: 1180591620717411303424 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: 1.1805916207174113e+21 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: -1 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: -2 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: 3 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: nan | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: inf | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: (1+0j) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of numbers: None | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of tuples: (1, 2) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of tuples: (1.0, 2) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of tuples: () | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of tuples: (2, 1) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of tuples: ('a', (b'b', None)) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of tuples: ('a', [1]) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of tuples: [1, 2] | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of objects: Ka | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of objects: Kb | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of objects: Kc | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of objects: Ka | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of objects: Ka | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of objects: Kd | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of sets: frozenset({1, 2}) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of sets: {1, 2} | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of sets: set() | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of sets: {3} | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of sets: Plain({1, 2}) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of sets: PlainFrozen({1, 2}) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of sets: {1: 2} | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of sets: dict_keys([(1,)]) | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of nothing: 'alpha' | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of nothing: 1 | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of nothing: () | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of nothing: Ka | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of nothing: None | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of nothing: [] | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of nothing: {} | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+OwnFrozen of nothing: set() | OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ OwnFrozen.__contains__ | (False, True, True, False)
+Calls of strs: 'alpha' | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of strs: 'gamma' | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of strs: '' | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of strs: 'alpha' | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of strs: 'beta' | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of strs: 'beta' | Calls.__contains__ hSH eSH Calls.__contains__ hSH eSH Calls.__contains__ hSH eSH Calls.__contains__ hSH eSH | (True, False, False, True)
+Calls of strs: 'delta' | Calls.__contains__ hSH Calls.__contains__ hSH Calls.__contains__ hSH Calls.__contains__ hSH | (False, True, True, False)
+Calls of strs: b'alpha' | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of numbers: 1 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: 1.0 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: True | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: 2.5 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: 0 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: 0.0 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: -0.0 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: False | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: 1180591620717411303424 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: 1.1805916207174113e+21 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: -1 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: -2 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of numbers: 3 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of numbers: nan | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of numbers: inf | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of numbers: (1+0j) | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of numbers: None | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of tuples: (1, 2) | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of tuples: (1.0, 2) | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of tuples: () | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of tuples: (2, 1) | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of tuples: ('a', (b'b', None)) | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of tuples: ('a', [1]) | Calls.__contains__ | TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')
+Calls of tuples: [1, 2] | Calls.__contains__ | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+Calls of objects: Ka | Calls.__contains__ ha Calls.__contains__ ha Calls.__contains__ ha Calls.__contains__ ha | (True, False, False, True)
+Calls of objects: Kb | Calls.__contains__ hb ea:b Calls.__contains__ hb ea:b Calls.__contains__ hb ea:b Calls.__contains__ hb ea:b | (True, False, False, True)
+Calls of objects: Kc | Calls.__contains__ hc Calls.__contains__ hc Calls.__contains__ hc Calls.__contains__ hc | (False, True, True, False)
+Calls of objects: Ka | Calls.__contains__ ha ea:a Calls.__contains__ ha ea:a Calls.__contains__ ha ea:a Calls.__contains__ ha ea:a | (True, False, False, True)
+Calls of objects: Ka | Calls.__contains__ ha Calls.__contains__ ha Calls.__contains__ ha Calls.__contains__ ha | (False, True, True, False)
+Calls of objects: Kd | Calls.__contains__ hd ea:d eb:d Calls.__contains__ hd ea:d eb:d Calls.__contains__ hd ea:d eb:d Calls.__contains__ hd ea:d eb:d | (False, True, True, False)
+Calls of sets: frozenset({1, 2}) | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of sets: {1, 2} | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of sets: set() | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of sets: {3} | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of sets: Plain({1, 2}) | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of sets: PlainFrozen({1, 2}) | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (True, False, False, True)
+Calls of sets: {1: 2} | Calls.__contains__ | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+Calls of sets: dict_keys([(1,)]) | Calls.__contains__ | TypeError: cannot use 'dict_keys' as a set element (unhashable type: 'dict_keys')
+Calls of nothing: 'alpha' | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of nothing: 1 | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of nothing: () | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of nothing: Ka | Calls.__contains__ ha Calls.__contains__ ha Calls.__contains__ ha Calls.__contains__ ha | (False, True, True, False)
+Calls of nothing: None | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Calls of nothing: [] | Calls.__contains__ | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+Calls of nothing: {} | Calls.__contains__ | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+Calls of nothing: set() | Calls.__contains__ Calls.__contains__ Calls.__contains__ Calls.__contains__ | (False, True, True, False)
+Nothing of strs: 'alpha' |  | TypeError: 'Nothing' object is not a container
+Nothing of strs: 'gamma' |  | TypeError: 'Nothing' object is not a container
+Nothing of strs: '' |  | TypeError: 'Nothing' object is not a container
+Nothing of strs: 'alpha' |  | TypeError: 'Nothing' object is not a container
+Nothing of strs: 'beta' |  | TypeError: 'Nothing' object is not a container
+Nothing of strs: 'beta' |  | TypeError: 'Nothing' object is not a container
+Nothing of strs: 'delta' |  | TypeError: 'Nothing' object is not a container
+Nothing of strs: b'alpha' |  | TypeError: 'Nothing' object is not a container
+Nothing of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: 1 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: 1.0 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: True |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: 2.5 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: 0 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: 0.0 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: -0.0 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: False |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: 1180591620717411303424 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: 1.1805916207174113e+21 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: -1 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: -2 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: 3 |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: nan |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: inf |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: (1+0j) |  | TypeError: 'Nothing' object is not a container
+Nothing of numbers: None |  | TypeError: 'Nothing' object is not a container
+Nothing of tuples: (1, 2) |  | TypeError: 'Nothing' object is not a container
+Nothing of tuples: (1.0, 2) |  | TypeError: 'Nothing' object is not a container
+Nothing of tuples: () |  | TypeError: 'Nothing' object is not a container
+Nothing of tuples: (2, 1) |  | TypeError: 'Nothing' object is not a container
+Nothing of tuples: ('a', (b'b', None)) |  | TypeError: 'Nothing' object is not a container
+Nothing of tuples: ('a', [1]) |  | TypeError: 'Nothing' object is not a container
+Nothing of tuples: [1, 2] |  | TypeError: 'Nothing' object is not a container
+Nothing of objects: Ka |  | TypeError: 'Nothing' object is not a container
+Nothing of objects: Kb |  | TypeError: 'Nothing' object is not a container
+Nothing of objects: Kc |  | TypeError: 'Nothing' object is not a container
+Nothing of objects: Ka |  | TypeError: 'Nothing' object is not a container
+Nothing of objects: Ka |  | TypeError: 'Nothing' object is not a container
+Nothing of objects: Kd |  | TypeError: 'Nothing' object is not a container
+Nothing of sets: frozenset({1, 2}) |  | TypeError: 'Nothing' object is not a container
+Nothing of sets: {1, 2} |  | TypeError: 'Nothing' object is not a container
+Nothing of sets: set() |  | TypeError: 'Nothing' object is not a container
+Nothing of sets: {3} |  | TypeError: 'Nothing' object is not a container
+Nothing of sets: Plain({1, 2}) |  | TypeError: 'Nothing' object is not a container
+Nothing of sets: PlainFrozen({1, 2}) |  | TypeError: 'Nothing' object is not a container
+Nothing of sets: {1: 2} |  | TypeError: 'Nothing' object is not a container
+Nothing of sets: dict_keys([(1,)]) |  | TypeError: 'Nothing' object is not a container
+Nothing of nothing: 'alpha' |  | TypeError: 'Nothing' object is not a container
+Nothing of nothing: 1 |  | TypeError: 'Nothing' object is not a container
+Nothing of nothing: () |  | TypeError: 'Nothing' object is not a container
+Nothing of nothing: Ka |  | TypeError: 'Nothing' object is not a container
+Nothing of nothing: None |  | TypeError: 'Nothing' object is not a container
+Nothing of nothing: [] |  | TypeError: 'Nothing' object is not a container
+Nothing of nothing: {} |  | TypeError: 'Nothing' object is not a container
+Nothing of nothing: set() |  | TypeError: 'Nothing' object is not a container
+Iterates of strs: 'alpha' |  | (True, False, False, True)
+Iterates of strs: 'gamma' |  | (False, True, True, False)
+Iterates of strs: '' |  | (True, False, False, True)
+Iterates of strs: 'alpha' |  | (True, False, False, True)
+Iterates of strs: 'beta' |  | (True, False, False, True)
+Iterates of strs: 'beta' | hSH eSH hSH eSH hSH eSH hSH eSH | (True, False, False, True)
+Iterates of strs: 'delta' | hSH hSH hSH hSH | (False, True, True, False)
+Iterates of strs: b'alpha' |  | (False, True, True, False)
+Iterates of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' |  | (False, True, True, False)
+Iterates of numbers: 1 |  | (True, False, False, True)
+Iterates of numbers: 1.0 |  | (True, False, False, True)
+Iterates of numbers: True |  | (True, False, False, True)
+Iterates of numbers: 2.5 |  | (True, False, False, True)
+Iterates of numbers: 0 |  | (True, False, False, True)
+Iterates of numbers: 0.0 |  | (True, False, False, True)
+Iterates of numbers: -0.0 |  | (True, False, False, True)
+Iterates of numbers: False |  | (True, False, False, True)
+Iterates of numbers: 1180591620717411303424 |  | (True, False, False, True)
+Iterates of numbers: 1.1805916207174113e+21 |  | (True, False, False, True)
+Iterates of numbers: -1 |  | (True, False, False, True)
+Iterates of numbers: -2 |  | (False, True, True, False)
+Iterates of numbers: 3 |  | (False, True, True, False)
+Iterates of numbers: nan |  | (False, True, True, False)
+Iterates of numbers: inf |  | (False, True, True, False)
+Iterates of numbers: (1+0j) |  | (True, False, False, True)
+Iterates of numbers: None |  | (False, True, True, False)
+Iterates of tuples: (1, 2) |  | (True, False, False, True)
+Iterates of tuples: (1.0, 2) |  | (True, False, False, True)
+Iterates of tuples: () |  | (True, False, False, True)
+Iterates of tuples: (2, 1) |  | (False, True, True, False)
+Iterates of tuples: ('a', (b'b', None)) |  | (True, False, False, True)
+Iterates of tuples: ('a', [1]) |  | TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')
+Iterates of tuples: [1, 2] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+Iterates of objects: Ka | ha ha ha ha | (True, False, False, True)
+Iterates of objects: Kb | hb ea:b hb ea:b hb ea:b hb ea:b | (True, False, False, True)
+Iterates of objects: Kc | hc hc hc hc | (False, True, True, False)
+Iterates of objects: Ka | ha ea:a ha ea:a ha ea:a ha ea:a | (True, False, False, True)
+Iterates of objects: Ka | ha ha ha ha | (False, True, True, False)
+Iterates of objects: Kd | hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d | (False, True, True, False)
+Iterates of sets: frozenset({1, 2}) |  | (True, False, False, True)
+Iterates of sets: {1, 2} |  | (True, False, False, True)
+Iterates of sets: set() |  | (True, False, False, True)
+Iterates of sets: {3} |  | (False, True, True, False)
+Iterates of sets: Plain({1, 2}) |  | (True, False, False, True)
+Iterates of sets: PlainFrozen({1, 2}) |  | (True, False, False, True)
+Iterates of sets: {1: 2} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+Iterates of sets: dict_keys([(1,)]) |  | TypeError: cannot use 'dict_keys' as a set element (unhashable type: 'dict_keys')
+Iterates of nothing: 'alpha' |  | (False, True, True, False)
+Iterates of nothing: 1 |  | (False, True, True, False)
+Iterates of nothing: () |  | (False, True, True, False)
+Iterates of nothing: Ka | ha ha ha ha | (False, True, True, False)
+Iterates of nothing: None |  | (False, True, True, False)
+Iterates of nothing: [] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+Iterates of nothing: {} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+Iterates of nothing: set() |  | (False, True, True, False)
+OfMeta of strs: 'alpha' |  | (True, False, False, True)
+OfMeta of strs: 'gamma' |  | (False, True, True, False)
+OfMeta of strs: '' |  | (True, False, False, True)
+OfMeta of strs: 'alpha' |  | (True, False, False, True)
+OfMeta of strs: 'beta' |  | (True, False, False, True)
+OfMeta of strs: 'beta' | hSH eSH hSH eSH hSH eSH hSH eSH | (True, False, False, True)
+OfMeta of strs: 'delta' | hSH hSH hSH hSH | (False, True, True, False)
+OfMeta of strs: b'alpha' |  | (False, True, True, False)
+OfMeta of strs: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' |  | (False, True, True, False)
+OfMeta of numbers: 1 |  | (True, False, False, True)
+OfMeta of numbers: 1.0 |  | (True, False, False, True)
+OfMeta of numbers: True |  | (True, False, False, True)
+OfMeta of numbers: 2.5 |  | (True, False, False, True)
+OfMeta of numbers: 0 |  | (True, False, False, True)
+OfMeta of numbers: 0.0 |  | (True, False, False, True)
+OfMeta of numbers: -0.0 |  | (True, False, False, True)
+OfMeta of numbers: False |  | (True, False, False, True)
+OfMeta of numbers: 1180591620717411303424 |  | (True, False, False, True)
+OfMeta of numbers: 1.1805916207174113e+21 |  | (True, False, False, True)
+OfMeta of numbers: -1 |  | (True, False, False, True)
+OfMeta of numbers: -2 |  | (False, True, True, False)
+OfMeta of numbers: 3 |  | (False, True, True, False)
+OfMeta of numbers: nan |  | (False, True, True, False)
+OfMeta of numbers: inf |  | (False, True, True, False)
+OfMeta of numbers: (1+0j) |  | (True, False, False, True)
+OfMeta of numbers: None |  | (False, True, True, False)
+OfMeta of tuples: (1, 2) |  | (True, False, False, True)
+OfMeta of tuples: (1.0, 2) |  | (True, False, False, True)
+OfMeta of tuples: () |  | (True, False, False, True)
+OfMeta of tuples: (2, 1) |  | (False, True, True, False)
+OfMeta of tuples: ('a', (b'b', None)) |  | (True, False, False, True)
+OfMeta of tuples: ('a', [1]) |  | TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')
+OfMeta of tuples: [1, 2] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+OfMeta of objects: Ka | ha ha ha ha | (True, False, False, True)
+OfMeta of objects: Kb | hb ea:b hb ea:b hb ea:b hb ea:b | (True, False, False, True)
+OfMeta of objects: Kc | hc hc hc hc | (False, True, True, False)
+OfMeta of objects: Ka | ha ea:a ha ea:a ha ea:a ha ea:a | (True, False, False, True)
+OfMeta of objects: Ka | ha ha ha ha | (False, True, True, False)
+OfMeta of objects: Kd | hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d hd ea:d eb:d | (False, True, True, False)
+OfMeta of sets: frozenset({1, 2}) |  | (True, False, False, True)
+OfMeta of sets: {1, 2} |  | (True, False, False, True)
+OfMeta of sets: set() |  | (True, False, False, True)
+OfMeta of sets: {3} |  | (False, True, True, False)
+OfMeta of sets: Plain({1, 2}) |  | (True, False, False, True)
+OfMeta of sets: PlainFrozen({1, 2}) |  | (True, False, False, True)
+OfMeta of sets: {1: 2} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+OfMeta of sets: dict_keys([(1,)]) |  | TypeError: cannot use 'dict_keys' as a set element (unhashable type: 'dict_keys')
+OfMeta of nothing: 'alpha' |  | (False, True, True, False)
+OfMeta of nothing: 1 |  | (False, True, True, False)
+OfMeta of nothing: () |  | (False, True, True, False)
+OfMeta of nothing: Ka | ha ha ha ha | (False, True, True, False)
+OfMeta of nothing: None |  | (False, True, True, False)
+OfMeta of nothing: [] |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+OfMeta of nothing: {} |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+OfMeta of nothing: set() |  | (False, True, True, False)
+set: __hash__ raises |  | ZeroDivisionError: in __hash__
+set: __eq__ raises | ex:Raises | ZeroDivisionError: in __eq__
+set: no __hash__ |  | TypeError: cannot use 'NoHash' as a set element (unhashable type: 'NoHash')
+set: a list |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+set: a dict |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+set: a bytearray |  | TypeError: cannot use 'bytearray' as a set element (unhashable type: 'bytearray')
+set: a set of lists cannot be |  | False
+set: itself |  | False
+frozenset: __hash__ raises |  | ZeroDivisionError: in __hash__
+frozenset: __eq__ raises | ex:Raises | ZeroDivisionError: in __eq__
+frozenset: no __hash__ |  | TypeError: cannot use 'NoHash' as a set element (unhashable type: 'NoHash')
+frozenset: a list |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+frozenset: a dict |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+frozenset: a bytearray |  | TypeError: cannot use 'bytearray' as a set element (unhashable type: 'bytearray')
+frozenset: a set of lists cannot be |  | False
+frozenset: itself |  | False
+Plain: __hash__ raises |  | ZeroDivisionError: in __hash__
+Plain: __eq__ raises | ex:Raises | ZeroDivisionError: in __eq__
+Plain: no __hash__ |  | TypeError: cannot use 'NoHash' as a set element (unhashable type: 'NoHash')
+Plain: a list |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+Plain: a dict |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+Plain: a bytearray |  | TypeError: cannot use 'bytearray' as a set element (unhashable type: 'bytearray')
+Plain: a set of lists cannot be |  | False
+Plain: itself |  | False
+PlainFrozen: __hash__ raises |  | ZeroDivisionError: in __hash__
+PlainFrozen: __eq__ raises | ex:Raises | ZeroDivisionError: in __eq__
+PlainFrozen: no __hash__ |  | TypeError: cannot use 'NoHash' as a set element (unhashable type: 'NoHash')
+PlainFrozen: a list |  | TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+PlainFrozen: a dict |  | TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+PlainFrozen: a bytearray |  | TypeError: cannot use 'bytearray' as a set element (unhashable type: 'bytearray')
+PlainFrozen: a set of lists cannot be |  | False
+PlainFrozen: itself |  | False
+set: the hash has changed | hm hm hm hm | (False, True, True, False)
+set: the hash has changed to that of another | hm en:m hm en:m hm en:m hm en:m | (False, True, True, False)
+frozenset: the hash has changed | hm hm hm hm | (True, False, False, True)
+frozenset: the hash has changed to that of another | hm en:m hm en:m hm en:m hm en:m | (False, True, True, False)
+Plain: the hash has changed | hm hm hm hm | (False, True, True, False)
+Plain: the hash has changed to that of another | hm en:m hm en:m hm en:m hm en:m | (False, True, True, False)
+PlainFrozen: the hash has changed | hm hm hm hm | (True, False, False, True)
+PlainFrozen: the hash has changed to that of another | hm en:m hm en:m hm en:m hm en:m | (False, True, True, False)
+round 0, set |  | True
+round 0, frozenset |  | True
+round 0, Plain |  | True
+round 0, Own | Own.__contains__ | True
+round 0, dict |  | True
+round 0, list |  | True
+round 0, tuple |  | True
+round 0, str |  | True
+round 0, Calls | Calls.__contains__ | True
+round 0, OwnFrozen | OwnFrozen.__contains__ | False
+round 0, range |  | False
+round 0, list_iterator |  | True
+round 0, dict_keys |  | True
+round 0, dict_items |  | False
+round 0, bytes |  | TypeError: a bytes-like object is required, not 'str'
+round 0, Nothing |  | TypeError: 'Nothing' object is not a container
+round 0, int |  | TypeError: argument of type 'int' is not a container or iterable
+round 0, NoneType |  | TypeError: argument of type 'NoneType' is not a container or iterable
+round 0, Meta | Meta.__contains__ | True
+round 0, OfMeta |  | True
+round 1, set |  | True
+round 1, frozenset |  | True
+round 1, Plain |  | True
+round 1, Own | Own.__contains__ | True
+round 1, dict |  | True
+round 1, list |  | True
+round 1, tuple |  | True
+round 1, str |  | True
+round 1, Calls | Calls.__contains__ | True
+round 1, OwnFrozen | OwnFrozen.__contains__ | False
+round 1, range |  | False
+round 1, list_iterator |  | False
+round 1, dict_keys |  | True
+round 1, dict_items |  | False
+round 1, bytes |  | TypeError: a bytes-like object is required, not 'str'
+round 1, Nothing |  | TypeError: 'Nothing' object is not a container
+round 1, int |  | TypeError: argument of type 'int' is not a container or iterable
+round 1, NoneType |  | TypeError: argument of type 'NoneType' is not a container or iterable
+round 1, Meta | Meta.__contains__ | True
+round 1, OfMeta |  | True
+round 2, set |  | True
+round 2, frozenset |  | True
+round 2, Plain |  | True
+round 2, Own | Own.__contains__ | True
+round 2, dict |  | True
+round 2, list |  | True
+round 2, tuple |  | True
+round 2, str |  | True
+round 2, Calls | Calls.__contains__ | True
+round 2, OwnFrozen | OwnFrozen.__contains__ | False
+round 2, range |  | False
+round 2, list_iterator |  | False
+round 2, dict_keys |  | True
+round 2, dict_items |  | False
+round 2, bytes |  | TypeError: a bytes-like object is required, not 'str'
+round 2, Nothing |  | TypeError: 'Nothing' object is not a container
+round 2, int |  | TypeError: argument of type 'int' is not a container or iterable
+round 2, NoneType |  | TypeError: argument of type 'NoneType' is not a container or iterable
+round 2, Meta | Meta.__contains__ | True
+round 2, OfMeta |  | True
+a __contains__ that comes and goes |  | 200
+an __eq__ that clears the set | ex:Clears clears | (False, 0)
+an __eq__ that makes the set grow |  | TypeError: cannot use 'Grows' as a set element (unhashable type: 'Grows')
+comprehension |  | ['alpha', 1, (1, 2)]
+while |  | 0
+chained |  | (False, False, False)
+operator.contains |  | True
+any |  | True
+a display | ha hb ea:b ha | (True, False, True, True)
+a guard |  | ('in', 'out')

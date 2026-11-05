@@ -1,6 +1,6 @@
 # A namespace is a dict, and a dict may have a key that is no str, hashes like the name m and says that it is equal to it. Then reading, storing and deleting m
 # by name all come by that key: what is stored is stored with it, and is what the next read finds.
-import builtins, types, warnings
+import builtins, os, subprocess, sys, types, warnings
 warnings.simplefilter('ignore')
 
 class Key:
@@ -13,6 +13,43 @@ def T(f):
     try: return f()
     except BaseException as e: return '%s: %s' % (type(e).__name__, e)
 def items(d): return [(k, v) for k, v in d.items() if not (type(k) is str and k.startswith('__'))]
+
+# How often a key is asked that has the hash of the name and says no. A name is looked for among the locals, the globals and the builtins, one after the other, also where
+# the locals are the globals: at the top of a module, in exec() and eval() with one dict.
+# (How often also depends on the slots that a search comes by, and so on the hash of the name: in children with a PYTHONHASHSEED.)
+def counts():
+    asked = []
+    class No:
+        def __init__(self, name, label): self.name, self.label = name, label
+        def __hash__(self): return hash(self.name)
+        def __eq__(self, other): asked.append(self.label); return False
+    def count(label, f):
+        del asked[:]
+        r = T(f)
+        print(label, '|', ' '.join(asked), '|', r if isinstance(r, (str, int)) else type(r).__name__)
+    read = compile('m', '<read>', 'eval')
+    statement = compile('r = m', '<statement>', 'exec')
+    function = 'def f(): return m\nr = f()'
+    for where in ('nowhere', 'globals', 'builtins', 'locals'):
+        def spaces():
+            b = {No('m', 'b'): 0}
+            g = {'__builtins__': b, No('m', 'g'): 0}
+            l = {No('m', 'l'): 0}
+            {'nowhere': {}, 'globals': g, 'builtins': b, 'locals': l}[where]['m'] = 'found'
+            del asked[:]
+            return g, l
+        g, l = spaces(); count('m is %s: eval(code, g)' % where, lambda: eval(read, g))
+        g, l = spaces(); count('m is %s: exec(code, g)' % where, lambda: exec(statement, g))
+        g, l = spaces(); count('m is %s: eval(code, g, g)' % where, lambda: eval(read, g, g))
+        g, l = spaces(); count('m is %s: eval(code, g, l)' % where, lambda: eval(read, g, l))
+        g, l = spaces(); count('m is %s: in a function' % where, lambda: exec(function, g))
+        g, l = spaces(); count('m is %s: three times' % where, lambda: [T(lambda: eval(read, g)) for i in range(3)] and None)
+        g, l = spaces(); count('m is %s: the body of a class' % where, lambda: exec('class C:\n    r = m', g))
+        g, l = spaces(); count('m is %s: del m' % where, lambda: exec('del m', g))
+        g, l = spaces(); count('m is %s: m = 1' % where, lambda: exec('m = 1', g))
+if sys.argv[1:] == ['counts']:
+    counts()
+    sys.exit()
 
 # ---- By attribute ----
 def a_class(): C = type('C', (), {Key(): 'old'}); return C, C.__dict__
@@ -68,3 +105,9 @@ print('shadowed builtin', run('r = len("abc")\ndef f(): return [len("abc") for i
 b = dict(vars(builtins)); b[Key('mine')] = 'from the builtins'
 g = {'__builtins__': b}
 print('in the builtins', run('r = mine\ndef f(): return mine\ns = f()', g), g.get('r'), g.get('s'))
+
+# ---- How often ----
+for hashseed in ('0', '1', '12345'):
+    child = subprocess.run([sys.executable, __file__, 'counts'], env=dict(os.environ, PYTHONHASHSEED=hashseed), stdout=subprocess.PIPE, text=True)
+    print('PYTHONHASHSEED', hashseed, 'status', child.returncode)
+    print(child.stdout, end='')

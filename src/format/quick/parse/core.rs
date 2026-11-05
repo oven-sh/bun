@@ -1134,8 +1134,16 @@ impl Quick {
         let column = self.parse.list_depth.wrapping_mul(self.options.tab_width);
         let head = k::Ready | F_STANDS | self.fast.ready_flags | decided | (kind << SUB_SHIFT);
         if last != 0 && self.arena.ls_pos > 0 && self.arena.ls.at(self.arena.ls_pos - 1) == last {
-            let [last_head, last_start, _, parent, text, length, last_column, _] =
-                self.n.several(last);
+            let [
+                last_head,
+                last_start,
+                _,
+                parent,
+                text,
+                length,
+                last_column,
+                _,
+            ] = self.n.several(last);
             // a line break, or two, and the indentation
             let last_end = text + length;
             let between = start - last_end - column;

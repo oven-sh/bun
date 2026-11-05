@@ -2,7 +2,7 @@
 //! The bytes around the source are zeros, so running off either end stops every loop by itself.
 
 use crate::lexer::{C_END, C_START, C_STRIDE};
-use crate::{Bytes, Quick, Words};
+use crate::{Bytes, Quick, Words, bytes_before, where_byte_is};
 
 impl Quick {
     pub(crate) fn skip_spaces(&self, mut p: i32) -> i32 {
@@ -10,14 +10,14 @@ impl Quick {
         if c != 32 && c != 9 {
             return p;
         }
-        // mostly the indentation of a line: four blanks at a time
-        while self.t.i32_at(p) == 0x20202020 {
-            p += 4;
-        }
-        while self.t.at(p) == 32 || self.t.at(p) == 9 {
+        // mostly the indentation of a line
+        loop {
+            p = self.blanks_end(p);
+            if self.t.at(p) != 9 {
+                return p;
+            }
             p += 1;
         }
-        return p;
     }
 
     pub(crate) fn skip_spaces_back(&self, mut p: i32) -> i32 {
@@ -78,10 +78,11 @@ impl Quick {
     pub(crate) fn has_newline_in_range(&self, start: i32, end: i32) -> bool {
         let mut p = start;
         while p < end {
-            if self.t.at(p) == 10 {
-                return true;
+            let found = where_byte_is(self.t.u128_at(p), 10);
+            if found != 0 {
+                return p + bytes_before(found) < end;
             }
-            p += 1;
+            p += 16;
         }
         return false;
     }

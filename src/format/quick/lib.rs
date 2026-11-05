@@ -434,13 +434,15 @@ pub(crate) fn where_not_printable(v: u64) -> u64 {
     (v | v.wrapping_sub(ONES.wrapping_mul(32)) | v.wrapping_add(ONES)) & TOP_BITS
 }
 
-/// The same for the first byte that is no letter of ASCII.
+/// Sixteen bytes at a time: the top bit of the first byte of `v` that is no letter of ASCII is set, none below it.
 /// (x + (0x80 - low)) & !(x + (0x7f - high)) has the top bit set for low <= x <= high, for x below 0x80, without carries.
 #[inline(always)]
-pub(crate) fn where_letters_end(v: u64) -> u64 {
-    let lower = (v & !TOP_BITS) | ONES.wrapping_mul(0x20);
-    !(lower.wrapping_add(ONES.wrapping_mul(0x1f)) & !lower.wrapping_add(ONES.wrapping_mul(0x05)) & !v)
-        & TOP_BITS
+pub(crate) fn where_letters_end(v: u128) -> u128 {
+    const fn all(byte: u8) -> u128 {
+        u128::from_le_bytes([byte; 16])
+    }
+    let lower = (v & all(0x7f)) | all(0x20);
+    !(lower.wrapping_add(all(0x1f)) & !lower.wrapping_add(all(0x05)) & !v) & all(0x80)
 }
 
 /// A digit, `_` or `$`.
@@ -590,16 +592,14 @@ impl Quick {
     #[inline(always)]
     pub(crate) fn name_end(&self, mut p: i32) -> i32 {
         loop {
-            let v = self.t.u64_at(p);
-            let ends = where_letters_end(v);
+            let ends = where_letters_end(self.t.u128_at(p));
             if ends == 0 {
-                p += 8;
+                p += 16;
                 continue;
             }
             // most names are letters and no more
-            let bits = ends.trailing_zeros() & !7;
-            p += (bits >> 3) as i32;
-            if !is_digit_or_sign_of_names((v >> bits) as u8) {
+            p += (ends.trailing_zeros() >> 3) as i32;
+            if !is_digit_or_sign_of_names(self.t.at(p) as u8) {
                 return p;
             }
             p += 1;

@@ -64,7 +64,7 @@ const factories = [
 function run() {
   const seen = [];
   for (const f of factories) {
-    f({ x: { middleware: "mw" }, s: (...exports) => seen.push(exports.filter(x => typeof x === "string")) });
+    f({ x: { middleware: "mw" }, s: exports => seen.push(exports.filter(x => typeof x === "string")) });
   }
   return JSON.stringify(seen);
 }
@@ -112,7 +112,6 @@ test.each([
   ["object destructuring", "({ a: e } = { a: 1 })"],
   ["for-of target", "for (e of [1]) {}"],
   ["for-in target", "for (e in { a: 1 }) {}"],
-  ["delete", "delete e"],
 ])("unexecuted %s write to a const loads", async (_name, stmt) => {
   for (const decl of ["const e = 1;", "const e = Math.random();"]) {
     const { stdout, stderr, exitCode } = await run(

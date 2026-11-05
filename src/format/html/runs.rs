@@ -2918,6 +2918,8 @@ impl<'a> Scanner<'_, 'a> {
         let name = &rest[..len];
         let has_filters = match name {
             _ if seen & NAME_NEVER != 0 || name.ends_with(b":") => return None,
+            // What is behind the second colon is taken for a namespace, so the `fullName` starts with that.
+            [b':', b':', ..] => return None,
             [b':' | b'.', ..] => true,
             [b'@', ..] => false,
             [b'v', b'-', rest @ ..] => match rest {

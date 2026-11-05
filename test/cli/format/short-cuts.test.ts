@@ -2539,6 +2539,8 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
     "$emit('a',  b)",
   ];
   const names = [":a", ".a", "v-bind:a", "v-bind", "v-if", "v-model", "v-html", "@a", "v-on:a", "@a.b", ":[a]", "v-for", "#a", "v-slot:a", "slot-scope", "a", "onclick"];
+  // What is in front of a colon can be a namespace, and then the name that counts is another one than is written.
+  names.push("::a", ":a:b", ":a::b", "@a:b", "@:a", ".a:b", "a:b", "a::b", "v:a", "v-bind::a", "v-on::a", ":::a");
   const scripts = [
     "",
     '\n<script setup lang="ts">\nlet a;\n</script>\n',

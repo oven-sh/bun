@@ -148,7 +148,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                     has_computed_property
                         || is_factory(name)
                         // A name that's shorter than the indentation: the `.` wouldn't even be to the right of it.
-                        || (name.len() <= f.options().indent_width.value() as usize
+                        || (length_of_name(name, f) <= f.options().indent_width.value() as usize
                             && matches!(self.root.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
                             && !is_whole_expression_in_html(f))
                 }
@@ -531,6 +531,14 @@ fn push_ends_of_remaining_groups<'a>(
     }
     if group_start < members.len() {
         group_ends.push(members.len() as u32);
+    }
+}
+
+/// Prettier uses a JavaScript string's `length`, oxfmt a Rust string's.
+fn length_of_name(name: &[u8], f: &Formatter<'_>) -> usize {
+    match f.options().flavor.is_oxfmt() {
+        true => name.len(),
+        false => bun_core::strings::wtf8_len_utf16(name) as usize,
     }
 }
 

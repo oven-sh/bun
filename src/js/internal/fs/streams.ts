@@ -190,12 +190,10 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: ErrorCallback) {
   this.close().then(() => cb(), cb);
 }
 
-// Node keeps the path as given and hands it to open():
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L179-L186
+// As Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L179-L186
 function fileStreamPath(path: string | Uint8Array | URL | null | undefined): string | Uint8Array {
   const given = getValidatedFsPath(path as string | Uint8Array | URL);
-  // On Windows Node's open() resolves every path (ToNamespacedPath). Here only an absolute path gets
-  // the long-path prefix (PathLike::slice_z_with_force_copy), so a string is still made absolute.
+  // Windows: only an absolute path gets the long-path prefix natively, so a string is still made absolute.
   if (isWindows && typeof path === "string") return require("node:path").resolve(path);
   return given;
 }
@@ -536,8 +534,7 @@ function WriteStream(
     if (customFs) {
       validateFunction(customFs.open, "options.fs.open");
     }
-    // Internal $fastPath callers give a placeholder and discard .path: "" from
-    // writableFromFileSink, null from tty.WriteStream.
+    // Internal $fastPath callers pass a placeholder ("" or null) and discard .path.
     this.path = fastPath ? (path as string | null | undefined) : fileStreamPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;

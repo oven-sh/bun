@@ -80,6 +80,13 @@ impl Settings {
     }
 }
 
+/// Who formats the code in a template that is not known to be printed as it is written.
+pub(crate) struct Guests<'g> {
+    /// Those of the text.
+    pub(crate) options: &'g FormatOptions,
+    pub(crate) scripts: &'g mut super::Scripts,
+}
+
 /// What the children of a run are in.
 #[derive(Copy, Clone)]
 pub(crate) struct Parent<'a> {
@@ -267,6 +274,8 @@ struct Attribute {
     end: usize,
     /// The `;` in front of the quote at its end is not printed.
     drops_semicolon: bool,
+    /// What is printed for it, if that is not in the text: a range of `Scanner::formatted`. Else it is empty.
+    formatted: (usize, usize),
 }
 
 /// What has been made of a child.
@@ -690,6 +699,11 @@ pub(crate) struct Runs {
     marks: HtmlMarksBuffer,
     /// A block that has been read is a `<script>` whose `lang` is `ts` or `typescript`.
     pub(crate) has_typescript_script: bool,
+    /// What `isVueSfcWithTypescriptScript` has been taken to be where code has been formatted. Whoever uses what has
+    /// been found makes sure of it.
+    pub(crate) assumes_typescript: Option<bool>,
+    /// See `Scanner::formatted`.
+    formatted: Vec<u8>,
 }
 
 impl Runs {
@@ -705,6 +719,8 @@ impl Runs {
             pieces: Vec::new(),
             marks: HtmlMarksBuffer::default(),
             has_typescript_script: false,
+            assumes_typescript: None,
+            formatted: Vec::new(),
         }
     }
 
@@ -713,7 +729,7 @@ impl Runs {
         self.settings = settings;
         self.found.clear();
         (self.next, self.scanned_to, self.is_new) = (0, 0, true);
-        self.has_typescript_script = false;
+        (self.has_typescript_script, self.assumes_typescript) = (false, None);
     }
 
     /// True if the text has been looked at from `at` on.
@@ -724,7 +740,12 @@ impl Runs {
     /// Reads `text` from behind its front matter on, as the lexer would ask it to. If all of it is one run, returns where
     /// what is printed for it is, without the last line break, and whether that is in `text` rather than in `printed`. If
     /// not, what has been found is kept for the lexer, together with `printed`.
-    pub(crate) fn whole(&mut self, text: &[u8], printed: &mut Vec<u8>) -> Option<(Span, bool)> {
+    pub(crate) fn whole(
+        &mut self,
+        text: &[u8],
+        printed: &mut Vec<u8>,
+        guests: Option<Guests<'_>>,
+    ) -> Option<(Span, bool)> {
         let front_matter_len = self.settings.front_matter_len;
         let rest = text.get(front_matter_len..)?;
         let space = rest.len() - rest.trim_ascii_start().len();
@@ -747,11 +768,13 @@ impl Runs {
             is_in_svg: false,
             has_children: front_matter_len > 0,
         };
-        self.scan(text, front_matter_len + space, root, printed);
+        self.scan(text, front_matter_len + space, root, printed, guests);
         let &[ready] = &self.found[..] else {
             return None;
         };
-        let is_whole = ready.name_end == 0
+        // All blocks have been read.
+        let is_whole = (self.assumes_typescript).is_none_or(|it| it == self.has_typescript_script)
+            && ready.name_end == 0
             && !ready.has_broken_void_tag
             && text.get(ready.span.end as usize..)?.trim_ascii().is_empty();
         is_whole.then_some((ready.printed, ready.is_printed_as_written))
@@ -774,6 +797,7 @@ impl Runs {
         start: usize,
         parent: Parent<'_>,
         printed: &mut Vec<u8>,
+        guests: Option<Guests<'_>>,
     ) {
         self.levels.clear();
         if std::mem::take(&mut self.is_new) {
@@ -798,6 +822,9 @@ impl Runs {
             levels: &mut self.levels,
             attributes: &mut self.attributes,
             pieces: &mut self.pieces,
+            guests,
+            formatted: &mut self.formatted,
+            assumes_typescript: &mut self.assumes_typescript,
             has_odd_pieces: false,
             has_interpolation: false,
             looked_to: 0,
@@ -896,6 +923,11 @@ struct Scanner<'s, 'a> {
     attributes: &'s mut Vec<Attribute>,
     /// What `read_pieces` has read.
     pieces: &'s mut Vec<Piece>,
+    guests: Option<Guests<'s>>,
+    /// What is printed for those of `attributes` whose code has been formatted.
+    formatted: &'s mut Vec<u8>,
+    /// See `Runs::assumes_typescript`.
+    assumes_typescript: &'s mut Option<bool>,
     /// How `pieces` are laid out in several lines is not known.
     has_odd_pieces: bool,
     /// There is a `{{ }}` with code in `pieces`.
@@ -1342,6 +1374,10 @@ impl<'a> Scanner<'_, 'a> {
         };
         let has_attributes = !self.attributes.is_empty();
         self.ends_in_text = false;
+        // What is in a `<pre>` follows its last attribute, so that is on no line of its own.
+        if must_be_empty && !self.formatted.is_empty() {
+            return Item::No;
+        }
 
         if self.at(at) == b'/' || definition.is_void {
             let end = at + if self.at(at) == b'/' { 2 } else { 1 };
@@ -1679,6 +1715,7 @@ impl<'a> Scanner<'_, 'a> {
         can_span_lines: bool,
     ) -> Option<(usize, usize)> {
         self.attributes.clear();
+        self.formatted.clear();
         self.has_single_blanks_in_tag = true;
         loop {
             if self.at(at) == b' '
@@ -1688,6 +1725,7 @@ impl<'a> Scanner<'_, 'a> {
                     start: at + 1,
                     end,
                     drops_semicolon: false,
+                    formatted: (0, 0),
                 });
                 (at, width) = (end, (width + end - at).min(TOO_WIDE));
                 continue;
@@ -1704,20 +1742,34 @@ impl<'a> Scanner<'_, 'a> {
                 _ if attribute == at => return None,
                 _ => {}
             }
+            let formatted_from = self.formatted.len();
             let (end, attribute_width, drops_semicolon) =
                 match self.plain_attribute(name, attribute) {
                     Some(end) => (end, end - attribute, false),
-                    None => self.attribute(name, attribute)?,
+                    None => match self.attribute(name, attribute) {
+                        Some(it) => it,
+                        None => {
+                            let (end, width) = match self.text.get(attribute..attribute + 7) {
+                                Some(b"style=\"") => self.style_attribute(name, attribute)?,
+                                _ => self.attribute_with_code(name, attribute)?,
+                            };
+                            (end, width, false)
+                        }
+                    },
                 };
             if attribute_width == TOO_WIDE && !can_span_lines {
                 return None;
             }
-            self.has_single_blanks_in_tag &=
-                attribute == at + 1 && self.at(at) == b' ' && !drops_semicolon;
+            let formatted = (formatted_from, self.formatted.len());
+            self.has_single_blanks_in_tag &= attribute == at + 1
+                && self.at(at) == b' '
+                && !drops_semicolon
+                && formatted.0 == formatted.1;
             self.attributes.push(Attribute {
                 start: attribute,
                 end,
                 drops_semicolon,
+                formatted,
             });
             (at, width) = (end, (width + 1 + attribute_width).min(TOO_WIDE));
         }
@@ -1740,7 +1792,9 @@ impl<'a> Scanner<'_, 'a> {
                 true => self.put_line(level + 1),
                 false => self.out.push(b' '),
             }
+            let (from, to) = attribute.formatted;
             match attribute.drops_semicolon {
+                _ if from < to => (self.out).put(self.formatted.get(from..to).unwrap_or_default()),
                 true => {
                     self.out.source(attribute.start, attribute.end - 2);
                     self.out.push(b'"');
@@ -2486,8 +2540,11 @@ impl<'a> Scanner<'_, 'a> {
             self.out.put(b" }}");
             return Some(close + 2);
         }
-        let (to, quote) = canonical::expression_end_in_other_quotes(self.text, from, spelling)?;
-        let close = closing_braces_behind(to)?;
+        let in_other_quotes = canonical::expression_end_in_other_quotes(self.text, from, spelling)
+            .and_then(|(to, quote)| Some((to, quote, closing_braces_behind(to)?)));
+        let Some((to, quote, close)) = in_other_quotes else {
+            return self.interpolation_with_code(start);
+        };
         self.out.put(b"{{ ");
         for &byte in self.text.get(from..to)? {
             self.out.push(match byte {
@@ -2700,7 +2757,7 @@ impl<'a> Scanner<'_, 'a> {
         let value_start = at + 2;
         let mut end = value_start;
         let (mut has_braces, mut is_wide, mut has_reference) = (false, false, false);
-        let mut has_line_break = false;
+        let (mut has_line_break, mut has_tab) = (false, false);
         let mut rest = value_and_rest;
         // Most values are plain from one quote to the other. Most are short, and some are long.
         match short_plain_value_len(rest) {
@@ -2723,13 +2780,18 @@ impl<'a> Scanner<'_, 'a> {
                     end = self.odd_in_text(end, &mut has_braces, &mut is_wide)? + 1;
                     rest = self.text.get(end..)?;
                 }
-                b'\n' => {
-                    has_line_break = true;
+                byte @ (b'\n' | b'\t') => {
+                    has_line_break |= byte == b'\n';
+                    has_tab |= byte == b'\t';
                     end += 1;
                     rest = &rest[plain + 1..];
                 }
                 _ => return None,
             }
+        }
+        // How wide a tab is only matters on one line.
+        if has_tab && !has_line_break {
+            return None;
         }
         let value = self.text.get(value_start..end)?;
         // In `{{ }}` the character behind `//` is a part of the value, whatever it is.
@@ -2769,6 +2831,204 @@ impl<'a> Scanner<'_, 'a> {
             }
         }
         Some((end, width, false))
+    }
+
+    /// `isVueSfcWithTypescriptScript`, as far as a look at the start tags of the scripts tells.
+    #[cold]
+    #[inline(never)]
+    fn assumes_typescript(&mut self) -> bool {
+        let text = self.text;
+        *self.assumes_typescript.get_or_insert_with(|| {
+            let mut rest = text;
+            while let Some(at) = bun_core::strings::index_of(rest, b"<script") {
+                rest = &rest[at + 7..];
+                let tag = &rest[..bun_core::strings::index_of_char_usize(rest, b'>').unwrap_or(0)];
+                if bun_core::strings::contains(tag, b"lang=\"ts\"")
+                    || bun_core::strings::contains(tag, b"lang=\"typescript\"")
+                {
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
+    /// The attribute of Vue that starts at `from`, whose value is an expression: appends what is printed for it on a line
+    /// of its own to `formatted`. Returns where it ends and how wide it is. It is `TOO_WIDE` on several lines.
+    #[cold]
+    #[inline(never)]
+    fn attribute_with_code(&mut self, element: &[u8], from: usize) -> Option<(usize, usize)> {
+        if self.guests.is_none() || !self.settings.formats_embedded {
+            return None;
+        }
+        let rest = self.text.get(from..)?;
+        let mut seen = 0;
+        let len = rest.iter().position(|byte| {
+            let bits = NAME_BITS[*byte as usize];
+            seen |= bits;
+            bits >= NAME_END
+        })?;
+        let [b'=', b'"', value_and_rest @ ..] = rest.get(len..)? else {
+            return None;
+        };
+        // `embed/vue-attributes.js`. A value that is more than an expression goes the long way.
+        let name = &rest[..len];
+        let has_filters = match name {
+            _ if seen & NAME_NEVER != 0 || name.ends_with(b":") => return None,
+            [b':' | b'.', ..] => true,
+            [b'@', ..] => false,
+            [b'v', b'-', rest @ ..] => match rest {
+                b"for" | b"slot" | [b's', b'l', b'o', b't', b':', ..] => return None,
+                _ => rest.starts_with(b"bind:"),
+            },
+            _ => return None,
+        };
+        let value =
+            &value_and_rest[..bun_core::strings::index_of_char_usize(value_and_rest, b'"')?];
+        // Behind `{{` the lexer looks for `}}` first.
+        if bun_core::strings::contains(value, b"{{")
+            || (self.siblings.level + 1) * self.settings.indent_width > self.settings.line_width
+        {
+            return None;
+        }
+        let is_typescript = self.assumes_typescript();
+        let Guests { options, scripts } = self.guests.as_mut()?;
+        let expression = crate::js::quick::Expression {
+            text: value,
+            is_typescript,
+            has_filters,
+            attribute: rest.get(..len + 2),
+            indentation: self.siblings.level as u32 + 1,
+        };
+        let printed = &mut scripts.formatted;
+        crate::js::quick::format_expression(expression, options, &mut scripts.quick, printed)
+            .ok()?;
+        let mut kinds = 0;
+        for &byte in printed.iter() {
+            kinds |= match byte {
+                b' '..=b'~' => 0,
+                b'\n' => 1,
+                128.. => 2,
+                _ => 4,
+            };
+        }
+        let width = match kinds {
+            0 => printed.len(),
+            2 => crate::ir::width::string_width(printed) as usize,
+            // What has no room on a line of its own has none behind `<`, the name of the element and a blank either, if
+            // that is at least as wide as a level of indentation. So the start tag is broken.
+            1 | 3 if self.settings.indent_width <= element.len() + 2 => TOO_WIDE,
+            _ => return None,
+        };
+        self.formatted.extend_from_slice(printed);
+        Some((from + len + 2 + value.len() + 1, width))
+    }
+
+    /// The `style` attribute that starts at `from`, whose declarations are printed as they are written, whatever is
+    /// between them: appends what is printed for it on a line of its own to `formatted`. See `attribute_with_code`.
+    #[cold]
+    #[inline(never)]
+    fn style_attribute(&mut self, element: &[u8], from: usize) -> Option<(usize, usize)> {
+        let Settings {
+            line_width,
+            indent_width,
+            uses_tabs,
+            formats_embedded,
+            ..
+        } = self.settings;
+        let rest = self.text.get(from + 7..).filter(|_| formats_embedded)?;
+        let value = &rest[..bun_core::strings::index_of_char_usize(rest, b'"')?];
+        // An empty line between two declarations is kept.
+        let skip_space = |mut at: usize| {
+            let mut line_breaks = 0;
+            while let Some(b' ' | b'\t' | b'\n') = value.get(at) {
+                line_breaks += usize::from(value[at] == b'\n');
+                at += 1;
+            }
+            (line_breaks < 2).then_some(at)
+        };
+        let mut declarations = smallvec::SmallVec::<[&[u8]; 16]>::new();
+        let mut at = skip_space(0)?;
+        while at < value.len() {
+            let end = canonical::declaration_end(value, at)?;
+            declarations.push(value.get(at..end)?);
+            at = skip_space(end + usize::from(value.get(end) == Some(&b';')))?;
+            if value.get(end) != Some(&b';') && at < value.len() {
+                return None;
+            }
+        }
+        let longest = declarations.iter().map(|it| it.len()).max()?;
+        let flat_width = 7 + declarations.iter().map(|it| it.len() + 2).sum::<usize>() - 2 + 1;
+        let level = self.siblings.level + 1;
+        let end = from + 7 + value.len() + 1;
+        if level * indent_width + flat_width <= line_width {
+            self.formatted.extend_from_slice(b"style=\"");
+            for (index, declaration) in declarations.iter().enumerate() {
+                if index > 0 {
+                    self.formatted.extend_from_slice(b"; ");
+                }
+                self.formatted.extend_from_slice(declaration);
+            }
+            self.formatted.push(b'"');
+            return Some((end, flat_width));
+        }
+        // A declaration that has no room on its line may be broken. For the rest, see `attribute_with_code`.
+        if (level + 1) * indent_width + longest + 1 > line_width
+            || indent_width > element.len() + 2
+            || level >= 128
+            || (level + 1) * indent_width > 1024
+        {
+            return None;
+        }
+        let put_line = |formatted: &mut Vec<u8>, level: usize| {
+            formatted.push(b'\n');
+            match uses_tabs {
+                true => formatted.extend(std::iter::repeat_n(b'\t', level)),
+                false => formatted.extend(std::iter::repeat_n(b' ', level * indent_width)),
+            }
+        };
+        self.formatted.extend_from_slice(b"style=\"");
+        for declaration in &declarations {
+            put_line(self.formatted, level + 1);
+            self.formatted.extend_from_slice(declaration);
+            self.formatted.push(b';');
+        }
+        put_line(self.formatted, level);
+        self.formatted.push(b'"');
+        Some((end, TOO_WIDE))
+    }
+
+    /// `interpolation` for an expression that is not known to be printed as it is written.
+    #[cold]
+    #[inline(never)]
+    fn interpolation_with_code(&mut self, start: usize) -> Option<usize> {
+        self.guests.as_ref()?;
+        // Where the lexer ends it, and where `extractInterpolation` does.
+        let end = self.interpolation_end(start)?;
+        let code = self.text.get(start + 2..end.checked_sub(2)?)?;
+        if self.text.get(end - 2..end) != Some(b"}}") || bun_core::strings::contains(code, b"}}") {
+            return None;
+        }
+        let is_typescript = self.assumes_typescript();
+        let Guests { options, scripts } = self.guests.as_mut()?;
+        let expression = crate::js::quick::Expression {
+            text: code,
+            is_typescript,
+            has_filters: true,
+            attribute: None,
+            indentation: self.siblings.level as u32 + 1,
+        };
+        let printed = &mut scripts.formatted;
+        crate::js::quick::format_expression(expression, options, &mut scripts.quick, printed)
+            .ok()?;
+        // It is as wide as it is long.
+        if printed.is_empty() || !printed.iter().all(|byte| matches!(byte, b' '..=b'~')) {
+            return None;
+        }
+        self.out.put(b"{{ ");
+        self.out.put(printed);
+        self.out.put(b" }}");
+        Some(end)
     }
 
     /// What `embed` makes of the value of an attribute.

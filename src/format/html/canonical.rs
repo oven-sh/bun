@@ -666,40 +666,47 @@ fn term(text: &[u8], start: usize, is_in_call: bool) -> Option<usize> {
     is_plain.then_some(end)
 }
 
-/// `width: 100px`, `margin: 0 auto; color: var(--a)`: the value of a `style` attribute that is printed as it is written
-/// on one line. Declarations with `; ` between them, whose values are terms with a blank between them.
-pub(crate) fn is_style(value: &[u8]) -> bool {
+/// `width: 100px`, `margin: 0 auto`: a declaration in the value of a `style` attribute that is printed as it is written
+/// on one line, from `start` on. Its value is terms with a blank between them. Returns where it ends.
+pub(crate) fn declaration_end(value: &[u8], start: usize) -> Option<usize> {
     let at = |index: usize| value.get(index).copied().unwrap_or(0);
+    let mut end = start;
+    // `--a`
+    if at(end) == b'-' && at(end + 1) == b'-' {
+        end += 2;
+    }
+    if !at(end).is_ascii_lowercase() {
+        return None;
+    }
+    while at(end).is_ascii_lowercase() || (at(end) == b'-' && at(end + 1) != b'-') {
+        end += 1;
+    }
+    if at(end) != b':' || at(end - 1) == b'-' || at(end + 1) != b' ' {
+        return None;
+    }
+    end += 2;
+    loop {
+        end = term(value, end, false)?;
+        if at(end) != b' ' {
+            return Some(end);
+        }
+        end += 1;
+    }
+}
+
+/// `margin: 0 auto; color: var(--a)`: the value of a `style` attribute that is printed as it is written on one line.
+/// Declarations with `; ` between them.
+pub(crate) fn is_style(value: &[u8]) -> bool {
     let mut end = 0;
     loop {
-        // `--a`
-        if at(end) == b'-' && at(end + 1) == b'-' {
-            end += 2;
+        match declaration_end(value, end) {
+            Some(it) => end = it,
+            None => return false,
         }
-        if !at(end).is_ascii_lowercase() {
-            return false;
+        if end == value.len() {
+            return true;
         }
-        while at(end).is_ascii_lowercase() || (at(end) == b'-' && at(end + 1) != b'-') {
-            end += 1;
-        }
-        if at(end) != b':' || at(end - 1) == b'-' || at(end + 1) != b' ' {
-            return false;
-        }
-        end += 2;
-        loop {
-            match term(value, end, false) {
-                Some(it) => end = it,
-                None => return false,
-            }
-            if end == value.len() {
-                return true;
-            }
-            if at(end) != b' ' {
-                break;
-            }
-            end += 1;
-        }
-        if at(end) != b';' || at(end + 1) != b' ' {
+        if value.get(end..end + 2) != Some(b"; ") {
             return false;
         }
         end += 2;

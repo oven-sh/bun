@@ -280,6 +280,8 @@ pub(crate) struct Tree<'a> {
     pub(crate) runs: Option<super::runs::Runs>,
     /// See `Runs::has_typescript_script`.
     pub(crate) has_typescript_script_in_run: bool,
+    /// See `Runs::assumes_typescript`.
+    pub(crate) assumes_typescript: Option<bool>,
     pub(crate) root: Id,
 }
 

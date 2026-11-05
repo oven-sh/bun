@@ -570,3 +570,50 @@ test.skipIf(!!aotUnsupported)("compiled timer hooks stage mutations across TickO
     exitCode: 0,
   });
 });
+
+test("faked animation frames retain timer hook lifecycles", async () => {
+  using dir = tempDir("animation-frame-hooks", {
+    "animation.test.ts": `
+      import assert from "node:assert/strict";
+      import { createHook } from "node:async_hooks";
+      import { test, vi } from "bun:test";
+      test("animation frame lifecycle", async () => {
+        globalThis.requestAnimationFrame = () => 0;
+        globalThis.cancelAnimationFrame = () => {};
+        vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance"] });
+        const initialized = [];
+        const destroyed = [];
+        const times = [];
+        const hook = createHook({
+          init(id, type) { if (type === "Timeout") initialized.push(id); },
+          destroy(id) { if (initialized.includes(id)) destroyed.push(id); },
+        }).enable();
+        try {
+          requestAnimationFrame(now => times.push(now));
+          cancelAnimationFrame(requestAnimationFrame(() => times.push(-1)));
+          vi.advanceTimersByTime(16);
+          await new Promise(resolve => queueMicrotask(resolve));
+          assert.deepEqual(times, [16]);
+          assert.equal(initialized.length, 2);
+          assert.notEqual(initialized[0], initialized[1]);
+          assert.deepEqual(destroyed.toSorted(), initialized.toSorted());
+          console.log("ok");
+        } finally {
+          hook.disable();
+          vi.useRealTimers();
+          delete globalThis.requestAnimationFrame;
+          delete globalThis.cancelAnimationFrame;
+        }
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "animation.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: "ok\n", exitCode: 0 });
+});

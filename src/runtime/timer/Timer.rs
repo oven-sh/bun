@@ -626,6 +626,7 @@ pub(crate) fn fake_request_animation_frame_export(
     let vm = global.bun_vm();
     let all = timer_all_mut();
     let id = all.last_id;
+    let async_hooks_id = all.next_async_hooks_id();
     all.last_id = all.last_id.wrapping_add(1);
 
     let clock = if all.fake_timers.is_installed(function) {
@@ -641,6 +642,7 @@ pub(crate) fn fake_request_animation_frame_export(
     let timeout = TimeoutObject::init(
         &global.js_thread(vm.context_of_caller()),
         id,
+        async_hooks_id,
         Kind::SetTimeout,
         to_next_frame as u32,
         callback.with_async_context_if_needed(global),

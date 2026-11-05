@@ -101,6 +101,21 @@ describe.concurrent("workers", () => {
     },
   );
 
+  test.each(["in a finalizer, with more to come", "two threads collect, and finalizers make more to finalize"])(
+    "terminate() of a worker whose Python is %s",
+    async what => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "fixtures", "terminate-at-work-fixture.ts"), what],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.each(["atexit", "threading", "finalizer", "flush"])(
     "terminate() while the interpreter of the worker is shutting down: %s",
     async where => {

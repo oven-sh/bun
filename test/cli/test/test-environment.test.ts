@@ -2128,9 +2128,19 @@ describe.concurrent("Testing Library does not wait 1 ms for a setTimeout() of 0"
     });
     // All the packages of the test suite: React and Testing Library beside the two DOMs.
     symlinkSync(join(import.meta.dir, "../../node_modules"), join(String(dir), "node_modules"), "junction");
-    const { stdout, stderr, exitCode } = await bunTest(String(dir), flag);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", flag],
+      cwd: String(dir),
+      // CI sets BUN_GARBAGE_COLLECTOR_LEVEL=1, with which every expect() asks for a collection. On Windows the next
+      // turn of the event loop runs it, and that turn is the wait.
+      env: { ...bunEnv, NODE_PATH: undefined, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
-    expect(stdout).toEqual(["50 waits, the median under 1 ms"]);
+    // slice(1) drops the "bun test v1.2.3" banner.
+    expect(stdout.split("\n").slice(1).filter(Boolean)).toEqual(["50 waits, the median under 1 ms"]);
     expect(summary(stderr)).toEqual(["1 pass", "0 fail"]);
     expect(exitCode).toBe(0);
   });

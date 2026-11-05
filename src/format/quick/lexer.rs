@@ -1689,7 +1689,7 @@ impl Quick {
                 break;
             }
             if d < 32 || d >= 127 {
-                if d == 0 && q >= self.text.src_end {
+                if d == 0 {
                     return Err(self.fail(p));
                 }
                 if d == 0xe2 && self.is_line_separator(q) {

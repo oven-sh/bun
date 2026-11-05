@@ -2620,7 +2620,8 @@ impl Quick {
             if d == 46 {
                 let mut r = q + 1;
                 if (CC.at(self.t.at(r)) & ID_START) == 0 {
-                    if self.t.at(r) != 35 {
+                    // (TypeScript has no private name in an optional chain)
+                    if self.t.at(r) != 35 || (optional && self.fast.ts) {
                         return Ok(self.no(refusal::Member));
                     }
                     r += 1;
@@ -2843,10 +2844,11 @@ impl Quick {
                     if (CC.at(d) & (ID_START | DIGIT)) == 0 && d != 34 && d != 39 {
                         return Ok(self.no(refusal::Await));
                     }
-                    if !self.fast.ts
+                    if (!self.fast.ts
                         && (!self.fast.await_is_operator
                             || self.fast.in_parameters != 0
-                            || self.parse.place.in_parameters)
+                            || self.parse.place.in_parameters))
+                        || self.dialect.declaration_file
                     {
                         return Ok(self.no(refusal::Await));
                     }

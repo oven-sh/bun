@@ -20,6 +20,8 @@ pub(crate) struct ParseFlow {
     pub(crate) flow_no_conditional_types: i32,
     /// The `%checks` behind the return type that was parsed last.
     pub(crate) flow_predicate: i32,
+    /// The type arguments that are parsed next are those of a type: there may be none between the `<` and the `>`.
+    pub(crate) may_be_empty: bool,
 }
 impl ParseFlow {
     pub(crate) fn new() -> Self {
@@ -27,6 +29,7 @@ impl ParseFlow {
             no_anon_function_type: 0,
             flow_no_conditional_types: 0,
             flow_predicate: 0,
+            may_be_empty: false,
         }
     }
 }
@@ -42,6 +45,7 @@ impl Quick {
         self.parse_flow.flow_predicate = 0;
         self.parse_flow.flow_no_conditional_types = 0;
         self.parse_flow.no_anon_function_type = 0;
+        self.parse_flow.may_be_empty = false;
     }
 
     /// Called where syntax starts that flow-parser knows and Babel does not.
@@ -420,6 +424,7 @@ impl Quick {
         let saved_conditional = self.parse_flow.flow_no_conditional_types;
         self.parse_flow.flow_no_conditional_types = 0;
         self.parse_flow.no_anon_function_type = 0;
+        self.parse_flow.may_be_empty = true;
         let type_arguments = self.ts_parse_type_arguments()?;
         self.parse_flow.no_anon_function_type = saved;
         self.parse_flow.flow_no_conditional_types = saved_conditional;
@@ -959,6 +964,9 @@ impl Quick {
         } else {
             0
         };
+        if type_arguments != 0 && self.n.at(self.n.at(type_arguments + 4)) == 0 {
+            return Err(self.text_refuse());
+        }
         return Ok(self.node2(
             k::TypeQuery,
             start,
@@ -972,6 +980,9 @@ impl Quick {
         let list_mark = self.arena.ls_pos;
         loop {
             let start = self.lexer.tok_start;
+            if self.lexer.tok != tk::Name {
+                return Err(self.unexpected());
+            }
             let id = self.flow_parse_qualified(0)?;
             let type_arguments = if self.lexer.tok == tk::Lt {
                 self.flow_parse_type_arguments_in_type()?
@@ -1347,14 +1358,15 @@ impl Quick {
             let type_ = self.flow_parse_type()?;
             bound = self.node1(k::TypeAnnotation, bound_start, self.lexer.prev_end, type_);
         } else if self.lexer.tok == tk::Extends {
+            // (Babel does not note the difference, and the long way does)
+            if self.mode.is_babel_flow {
+                return Err(self.text_refuse());
+            }
             self.next()?;
             let bound_start = self.lexer.tok_start;
             let type_ = self.flow_parse_type()?;
             bound = self.node1(k::TypeAnnotation, bound_start, self.lexer.prev_end, type_);
-            if !self.mode.is_babel_flow {
-                // Babel does not note the difference
-                flags |= F_EXTENDS_BOUND;
-            }
+            flags |= F_EXTENDS_BOUND;
         }
         if self.eat(tk::Eq)? {
             default_type = self.flow_parse_type()?;

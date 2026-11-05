@@ -29,11 +29,12 @@ const asksCellForItsClass = {
 } satisfies b.FunctionField;
 
 // ErrorCode.cpp: an error with a code is an instance of the kind of error the code stands for, with an object of its own for each code in front of the prototype of that kind.
+// The error has `code` itself. That object has `name` and `toString`, and an error whose name is not the name of its kind has `name` itself too.
 const kindsOfErrorsWithCode = ["Error", "TypeError", "RangeError", "SyntaxError", "URIError"];
 const [firstKind, ...otherKinds] = kindsOfErrorsWithCode.map(kind => b.instance(kind));
 const newErrorWithCode = b.union(firstKind, ...otherKinds).unaliased;
 const printsErrorWithCode = b.builtin("%NativeFunctions%.ErrorCodeCppNodeError_proto_toString");
-const membersInheritedByErrorWithCode = { name: b.string, code: b.string, toString: printsErrorWithCode };
+const membersOfErrorWithCode = { name: b.string, code: b.string, toString: printsErrorWithCode };
 
 // The message reads constructor.name of a value, converts it to a string, or prints it the way console.log does.
 const formattedInMessage = [b.printedByFormatter("constructor")];
@@ -67,7 +68,7 @@ const makesErrorWithCode = [
     args: { code: b.int(first, last), operands: b.any.rest },
     returns: newErrorWithCode,
     // ERR_SSL_NO_CIPHER_MATCH.
-    resultProperties: { ...membersInheritedByErrorWithCode, reason: b.string, library: b.string },
+    resultProperties: { ...membersOfErrorWithCode, reason: b.string, library: b.string },
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,
@@ -82,7 +83,7 @@ const makesAbortError = [
   {
     args: { message: b.string.optional, options: b.undefined.optional },
     returns: b.instance("Error").unaliased,
-    resultProperties: membersInheritedByErrorWithCode,
+    resultProperties: membersOfErrorWithCode,
     capability: "heap",
     implementation: b.hostCall,
   },
@@ -112,7 +113,7 @@ const looksAtPromise = (returns: b.TableType, otherwise: b.TableType, uses: read
 const closedPromise = b.instance("Promise").holding({ value: b.undefined, reason: b.any });
 
 export default b.declarations(
-  // Each of those objects has a function of its own, and one entry stands for them all. It reads the three members of its receiver and converts each to a string.
+  // Each of those objects has a function of its own, and one entry stands for them all. It reads the name and the message of its receiver and converts each to a string. The code it prints is the one its function was made with, and the function of a SystemError code reads the code of its receiver.
   b.hostFunction(printsErrorWithCodeCell, "ErrorCode.cpp", "NodeError_proto_toString", {
     this: b.any,
     returns: b.string,

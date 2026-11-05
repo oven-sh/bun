@@ -1563,7 +1563,8 @@ class ChildProcess extends EventEmitter {
           this.#stdioOptions[2] = "undefined";
         }
       } else {
-        if (exCode !== undefined) {
+        // An ERR_* validation error has an own `code` too, and Node gives it no `syscall`.
+        if (exCode !== undefined && Object.hasOwn(ex as SystemError, "errno")) {
           // Node throws errors that are not in the deferred list above
           // synchronously, with `syscall: "spawn"` (no file appended).
           (ex as SystemError).syscall = "spawn";

@@ -61,7 +61,6 @@ function decorateSystemError(err: SystemError, prefix: string, context: SystemEr
   if (path !== undefined) message += ` ${path}`;
   if (dest !== undefined) message += ` => ${dest}`;
   err.message = message;
-  err.name = "SystemError";
   err.info = context;
   err.errno = errno;
   err.syscall = syscall;

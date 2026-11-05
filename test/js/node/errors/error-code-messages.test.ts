@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import child_process from "node:child_process";
 import { EventEmitter, once } from "node:events";
@@ -7,9 +7,12 @@ import http from "node:http";
 import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
+import { setTimeout as sleep } from "node:timers/promises";
 import tls from "node:tls";
 import url from "node:url";
+import util from "node:util";
+import { Worker } from "node:worker_threads";
 import zlib from "node:zlib";
 
 // Codes whose messages come from the fixed-template table behind $ERR_*.
@@ -308,4 +311,208 @@ test("ERR_IPC_CHANNEL_CLOSED message from process.send() in the child", async ()
   expect(stderr).toBe("");
   expect(stdout).toBe("ERR_IPC_CHANNEL_CLOSED | Error | Channel closed\n");
   expect(exitCode).toBe(0);
+});
+
+// `code` is a class field of Node's errors, and AbortError assigns `this.name` after it:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L441 and #L985-L986.
+// So what copies the own keys of an error keeps them: Object.keys, JSON.stringify, a spread.
+describe("own properties of an error with a code", () => {
+  function thrownBy(fn: () => unknown): any {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    throw new Error("did not throw");
+  }
+
+  async function rejectionOf(promise: Promise<unknown>): Promise<any> {
+    try {
+      await promise;
+    } catch (e) {
+      return e;
+    }
+    throw new Error("did not reject");
+  }
+
+  function ownShape(e: any) {
+    const forIn: string[] = [];
+    for (const key in e) forIn.push(key);
+    return {
+      code: Object.getOwnPropertyDescriptor(e, "code"),
+      keys: Object.keys(e),
+      forIn,
+      json: JSON.stringify(e),
+      spread: { ...e },
+    };
+  }
+
+  const codeAlone = (code: string) => ({
+    code: { value: code, writable: true, enumerable: true, configurable: true },
+    keys: ["code"],
+    forIn: ["code"],
+    json: JSON.stringify({ code }),
+    spread: { code },
+  });
+
+  const codeThenName = (code: string, name: string) => ({
+    code: { value: code, writable: true, enumerable: true, configurable: true },
+    keys: ["code", "name"],
+    forIn: ["code", "name"],
+    json: JSON.stringify({ code, name }),
+    spread: { code, name },
+  });
+
+  const enumerableName = (name: string) => ({ value: name, writable: true, enumerable: true, configurable: true });
+
+  const abortError = () => rejectionOf(sleep(1, undefined, { signal: AbortSignal.abort() }));
+
+  // A client that is not in subscriber mode throws this before it connects.
+  function redisError() {
+    const client = new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false, enableOfflineQueue: false });
+    try {
+      return thrownBy(() => client.unsubscribe("channel"));
+    } finally {
+      client.close();
+    }
+  }
+
+  // One producer for each way into the native table of errors (src/jsc/bindings/ErrorCode.cpp).
+  test.each([
+    ["a C++ validator", () => Buffer.alloc(-1), "ERR_OUT_OF_RANGE"],
+    ["a Rust validator", () => path.join(1 as any), "ERR_INVALID_ARG_TYPE"],
+    ["$ERR_* in a built-in module", () => new Writable({ write() {} }).write(null), "ERR_STREAM_NULL_VALUES"],
+    [
+      "the RangeError of ERR_INVALID_ARG_VALUE",
+      () => process.cpuUsage({ user: -1, system: 0 }),
+      "ERR_INVALID_ARG_VALUE",
+    ],
+  ] as const)("code is the only own enumerable key of an error from %s", (_, fn, code) => {
+    expect(ownShape(thrownBy(fn))).toEqual(codeAlone(code));
+  });
+
+  test("a rejection has the same keys as a thrown error", async () => {
+    expect(ownShape(await rejectionOf(fs.promises.readFile({} as any)))).toEqual(codeAlone("ERR_INVALID_ARG_TYPE"));
+  });
+
+  test("AbortError has code, then name", async () => {
+    const e = await abortError();
+    expect(ownShape(e)).toEqual(codeThenName("ABORT_ERR", "AbortError"));
+    expect(Object.getOwnPropertyDescriptor(e, "name")).toEqual(enumerableName("AbortError"));
+  });
+
+  // Bun's own: Node has no RedisError.
+  test("RedisError has code, then name", () => {
+    const e = redisError();
+    expect(ownShape(e)).toEqual(codeThenName("ERR_REDIS_INVALID_STATE", "RedisError"));
+    expect(Object.getOwnPropertyDescriptor(e, "name")).toEqual(enumerableName("RedisError"));
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/promises.js#L47-L48
+  test("the error of an unhandled rejection has code, then name", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=strict",
+        "-e",
+        `process.on("uncaughtException", e => {
+           console.log(JSON.stringify({ keys: Object.keys(e), name: Object.getOwnPropertyDescriptor(e, "name") }));
+         });
+         Promise.reject(1);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(
+      JSON.stringify({ keys: ["code", "name"], name: enumerableName("UnhandledPromiseRejection") }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // Node's SystemError: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L293-L309
+  test("a SystemError has code first, and a name that is not enumerable", () => {
+    using dir = tempDir("error-code-system-error", {});
+    const e = thrownBy(() => fs.rmSync(String(dir)));
+    expect(Object.keys(e)).toEqual(["code", "info", "errno", "syscall", "path"]);
+    expect(Object.getOwnPropertyDescriptor(e, "name")).toEqual({ ...enumerableName("SystemError"), enumerable: false });
+    expect(e.code).toBe("ERR_FS_EISDIR");
+  });
+
+  test("the printers show an own name in the first line only", async () => {
+    for (const e of [await abortError(), redisError()]) {
+      expect(Bun.inspect(e)).toContain(`${e.name}: ${e.message}\n code: "${e.code}"\n`);
+      expect(Bun.inspect(e)).not.toMatch(/^\s*name: /m);
+      expect(util.inspect(e)).toContain(`code: '${e.code}'`);
+      expect(util.inspect(e)).not.toMatch(/^\s*name: /m);
+    }
+  });
+
+  test("code comes before the properties that the producer adds", () => {
+    const e = thrownBy(() => new EventEmitter().emit("error", 42));
+    expect(Object.keys(e)).toEqual(["code", "context"]);
+    expect(JSON.parse(JSON.stringify(e))).toEqual({ code: "ERR_UNHANDLED_ERROR", context: 42 });
+  });
+
+  test("util.inspect() prints the code", () => {
+    expect(util.inspect(thrownBy(() => Buffer.alloc(-1)))).toContain("code: 'ERR_OUT_OF_RANGE'");
+  });
+
+  test("code is a plain property: it can be assigned, hidden and deleted", () => {
+    const assigned = thrownBy(() => Buffer.alloc(-1));
+    assigned.code = "CUSTOM";
+    expect(assigned.code).toBe("CUSTOM");
+
+    const hidden = thrownBy(() => Buffer.alloc(-1));
+    Object.defineProperty(hidden, "code", { enumerable: false });
+    expect({ code: hidden.code, keys: Object.keys(hidden) }).toEqual({ code: "ERR_OUT_OF_RANGE", keys: [] });
+
+    const deleted = thrownBy(() => Buffer.alloc(-1));
+    delete deleted.code;
+    expect({ has: "code" in deleted, code: deleted.code }).toEqual({ has: false, code: undefined });
+  });
+
+  test("the errors of one code share a prototype that holds no code", () => {
+    const first = thrownBy(() => process.cpuUsage({ user: -1, system: 0 }));
+    const second = thrownBy(() => process.cpuUsage({ user: -1, system: 0 }));
+    expect(first).toBeInstanceOf(RangeError);
+    expect(Object.hasOwn(first, "cause")).toBe(false);
+
+    const prototype = Object.getPrototypeOf(first);
+    expect(Object.getPrototypeOf(second)).toBe(prototype);
+    expect({ code: Object.hasOwn(prototype, "code"), enumerable: Object.keys(prototype) }).toEqual({
+      code: false,
+      enumerable: [],
+    });
+    // The first line of the stack has the name of the kind, which the error itself does not hold.
+    expect(first.stack).toStartWith("RangeError: ");
+
+    // A `code` written to the prototype does not reach the next error.
+    const before = Object.getOwnPropertyDescriptor(prototype, "code");
+    prototype.code = "WRITTEN";
+    try {
+      const third = thrownBy(() => process.cpuUsage({ user: -1, system: 0 }));
+      expect(third.code).toBe("ERR_INVALID_ARG_VALUE");
+      expect(String(third)).toStartWith("RangeError [ERR_INVALID_ARG_VALUE]: ");
+    } finally {
+      if (before) Object.defineProperty(prototype, "code", before);
+      else delete prototype.code;
+    }
+  });
+
+  test("an error made in a Worker has the same keys", async () => {
+    const worker = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       try {
+         Buffer.alloc(-1);
+       } catch (e) {
+         parentPort.postMessage({ keys: Object.keys(e), json: JSON.stringify(e) });
+       }`,
+      { eval: true },
+    );
+    const [message] = await once(worker, "message");
+    await worker.terminate();
+    expect(message).toEqual({ keys: ["code"], json: '{"code":"ERR_OUT_OF_RANGE"}' });
+  });
 });

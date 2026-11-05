@@ -2330,16 +2330,31 @@ impl<'a> Scanner<'_, 'a> {
         while self.at(from) == b' ' {
             from += 1;
         }
-        let to = canonical::expression_end(self.text, from, self.settings.spelling)?;
-        let mut close = to;
-        while self.at(close) == b' ' {
-            close += 1;
+        let closing_braces_behind = |to: usize| {
+            let mut close = to;
+            while self.at(close) == b' ' {
+                close += 1;
+            }
+            (self.text.get(close..close + 2) == Some(b"}}")).then_some(close)
+        };
+        let spelling = self.settings.spelling;
+        let as_written = canonical::expression_end(self.text, from, spelling)
+            .and_then(|to| Some((to, closing_braces_behind(to)?)));
+        if let Some((to, close)) = as_written {
+            self.out.put(b"{{ ");
+            self.out.source(from, to);
+            self.out.put(b" }}");
+            return Some(close + 2);
         }
-        if self.text.get(close..close + 2) != Some(b"}}") {
-            return None;
-        }
+        let (to, quote) = canonical::expression_end_in_other_quotes(self.text, from, spelling)?;
+        let close = closing_braces_behind(to)?;
         self.out.put(b"{{ ");
-        self.out.source(from, to);
+        for &byte in self.text.get(from..to)? {
+            self.out.push(match byte {
+                b'"' | b'\'' => quote,
+                _ => byte,
+            });
+        }
         self.out.put(b" }}");
         Some(close + 2)
     }

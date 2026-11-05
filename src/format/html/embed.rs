@@ -586,6 +586,18 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 self.out.text(value.trim_ascii());
                 true
             }
+            Parser::Vue
+                if !lends_closing_braces
+                    && let Some(quote) = self.quote_printed_between_braces(value) =>
+            {
+                self.out.built_text(|out| {
+                    out.extend(value.trim_ascii().iter().map(|&byte| match byte {
+                        b'"' | b'\'' => quote,
+                        _ => byte,
+                    }));
+                });
+                true
+            }
             _ => {
                 let is_typescript =
                     self.options.parser == Parser::Vue && self.is_vue_sfc_with_typescript_script();
@@ -625,11 +637,24 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// line with its braces, or on a line of its own at the current indentation, given that a `line` follows it.
     fn is_printed_as_written_between_braces(&self, code: &[u8]) -> bool {
         let (format, code) = (self.options.format, code.trim_ascii());
+        self.has_room_between_braces(code)
+            && canonical::expression_end(code, 0, Spelling::new(format)) == Some(code.len())
+    }
+
+    fn has_room_between_braces(&self, code: &[u8]) -> bool {
+        let format = self.options.format;
         !format.no_short_cuts
             && self.out.indentation_width().is_some_and(|indentation| {
                 indentation + code.len() <= format.line_width.value() as usize
             })
-            && canonical::expression_end(code, 0, Spelling::new(format)) == Some(code.len())
+    }
+
+    /// The same for an expression that is printed as it is written but for its quotes: returns the quote that is printed.
+    fn quote_printed_between_braces(&self, code: &[u8]) -> Option<u8> {
+        let code = code.trim_ascii();
+        let spelling = Spelling::new(self.options.format);
+        let (end, quote) = canonical::expression_end_in_other_quotes(code, 0, spelling)?;
+        (end == code.len() && self.has_room_between_braces(code)).then_some(quote)
     }
 
     // ───────────────────────────── `embed/attribute.js` ─────────────────────────────

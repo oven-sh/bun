@@ -491,7 +491,7 @@ pub(crate) fn format_expression(
         return Err(scratch.refuse(Reason::InHtml, text));
     }
     if !strings::is_valid_utf8(text) {
-        return Err(scratch.refuse(Reason::NotUtf8, text));
+        return Err(scratch.refuse(Reason::Rare, text));
     }
     let quick_options = quick::Options {
         end_of_line: quick::EndOfLine::Lf,

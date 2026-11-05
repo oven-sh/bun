@@ -1,7 +1,13 @@
 import { expect } from "bun:test";
-import { tempDir } from "harness";
+import { isLinux, tempDir } from "harness";
 import { test } from "../aot/supported";
-import { compileEachAlone, compileInPlace, oneAfterTheOther, startsAtAnyEntryPoint } from "./aot-builtin-modules";
+import {
+  builtInModulesOfEachAlone,
+  compileEachAlone,
+  compileInPlace,
+  oneAfterTheOther,
+  startsAtAnyEntryPoint,
+} from "./aot-builtin-modules";
 
 // An executable holds the built-in modules that are imported by a constant name. A mention of `module` brings none with it: not where the
 // file asks whether it is the main one or whether hot reloading is on, and not where `module` goes into a variable.
@@ -25,6 +31,8 @@ const inExecutablesOnly: Record<string, string> = {
 };
 
 // How large compiled code is follows from how Bun was built, so the plain program is the measure. A built-in module is larger than all of it.
+// An image grows by whole pages, and how large a page is and how many the plain program takes follows from the platform. The bound leaves room
+// for four pages on Linux, where it was measured, and is asked there. Every platform is asked for the modules by name.
 const grows = (bytes: number, plain: number) => !(bytes - plain <= plain / 8);
 
 // The goal is not met for these yet: what they reach of Bun's library is not cut down to what they use. The number is the size of the image in
@@ -46,6 +54,12 @@ const compiledOnce = () =>
     using dir = tempDir("builtin-modules-of-a-small-program", all);
     return await compileEachAlone(String(dir), Object.keys(all));
   })());
+let modules: ReturnType<typeof builtInModulesOfEachAlone> | undefined;
+const modulesOnce = () =>
+  (modules ??= (async () => {
+    using dir = tempDir("builtin-modules-of-a-small-program", all);
+    return await builtInModulesOfEachAlone(String(dir), Object.keys(all));
+  })());
 
 test.skipIf(!startsAtAnyEntryPoint)(
   "programs that test module.parent and module.hot run as executables",
@@ -61,8 +75,12 @@ for (const entry of Object.keys(all)) {
   (times ? test.failing : test.skipIf(!startsAtAnyEntryPoint))(
     `${entry} brings no built-in module into the executable${times ? measuredAgainstBound(times) : ""}`,
     async () => {
+      const held = await modulesOnce();
+      expect({ entry, builtInModules: held[entry] }).toEqual({ entry, builtInModules: held["plain.cjs"] });
       const ran = await compiledOnce();
-      expect({ entry, grows: grows(ran[entry].bytes, ran["plain.cjs"].bytes) }).toEqual({ entry, grows: false });
+      const sizes = { entry, bytes: ran[entry].bytes, plain: ran["plain.cjs"].bytes };
+      if (isLinux) expect({ ...sizes, grows: grows(sizes.bytes, sizes.plain) }).toEqual({ ...sizes, grows: false });
+      else console.log(JSON.stringify(sizes));
     },
     120_000,
   );

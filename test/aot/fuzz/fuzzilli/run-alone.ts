@@ -32,6 +32,7 @@ import {
 } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { strikeWhatOnlyCounts } from "./write-hands.ts";
 import { writeKin } from "./write-kin.ts";
 import { writeOrdinaryScenes } from "./write-ordinary-scenes.ts";
 
@@ -84,8 +85,9 @@ const flags = options.flags.split(" ").filter(Boolean);
 const folder = join(work, `alone-${process.pid}`);
 mkdirSync(finds, { recursive: true });
 
-type Ended = { stdout: string; stderr: string; end: string };
+type Ended = { stdout: string; stderr: string; end: string; seconds: number };
 async function spawn(cmd: string[], seconds: number): Promise<Ended> {
+  const began = performance.now();
   const child = Bun.spawn({
     cmd,
     cwd: folder,
@@ -105,6 +107,7 @@ async function spawn(cmd: string[], seconds: number): Promise<Ended> {
     stdout: stdout.slice(0, 1 << 20),
     stderr: stderr.slice(-8000),
     end: child.signalCode === "SIGKILL" ? "time" : (child.signalCode ?? String(exitCode)),
+    seconds: (performance.now() - began) / 1000,
   };
 }
 
@@ -117,6 +120,11 @@ const withoutDetails = (output: string) =>
     .map(line => line.replace(/Error: .*/, "Error").replace(/\[(\w*Function): [^\]]*\]/g, "[$1]"))
     .join("\n");
 const agree = (a: Ended, b: Ended) => a.end === b.end && withoutDetails(a.stdout) === withoutDetails(b.stdout);
+/** As `agree()`, where one side runs the library's plain text: how often that text reads a member of what a program hands to it is its own matter (write-hands.ts). */
+function agreesWithPlain(ours: Ended, plain: Ended) {
+  const [expected, found] = strikeWhatOnlyCounts(plain.stdout, ours.stdout);
+  return ours.end === plain.end && withoutDetails(found) === withoutDetails(expected);
+}
 /** The two runs differ in where the lines of a function's text break and in parentheses that change nothing. As in run-batch.ts. */
 const withoutLayout = (output: string) => withoutDetails(output).replace(/\\n|[\s()]/g, "");
 /** What docs/compiler/compatibility.mdx lists, by what the executable says or the program names. */
@@ -137,8 +145,9 @@ const stopAtAFalseProof = /^AOT: .*$/m;
 /** `plain` and `plainAgain` are two runs of the reference, `ours` is the second run of what was compiled. */
 function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: Ended) {
   if (!agree(plain, plainAgain)) return "the reference is unsteady";
-  if (agree(ours, plainAgain)) return "unsteady";
-  if (ours.end === "time") return "limit";
+  if (agreesWithPlain(ours, plainAgain)) return "unsteady";
+  // What `bun <file>` does in a moment and the executable not in forty seconds is no matter of speed.
+  if (ours.end === "time") return plain.seconds < 1 && plainAgain.seconds < 1 ? "never-ends" : "limit";
   if (stopAtAFalseProof.test(ours.stderr)) return "false-proof";
   // No page declares a death.
   if (/^SIG/.test(ours.end) || Number(ours.end) >= 128) return "signal";
@@ -149,7 +158,7 @@ function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: E
   const parting = (right[left.findIndex((each, at) => each !== right[at])] ?? "").trim();
   if (
     (parting.length > 12 && text.includes(parting)) ||
-    /^(?:async )?function\b.*\{$|^class\b.*\{$|=> \{$/.test(parting)
+    /^(?:async )?function\b.*\{$|^class\b.*\{$|=> \{$|\) \{$/.test(parting)
   )
     return "function text";
   // The text of a function of the library is not in the executable.
@@ -158,7 +167,7 @@ function kindOfDifference(text: string, plain: Ended, plainAgain: Ended, ours: E
   if (isDocumented(text, ours)) return "documented difference";
   return ours.end !== plainAgain.end ? "exit-code" : "stdout";
 }
-const kept = ["false-proof", "signal", "exit-code", "stdout", "limit"];
+const kept = ["false-proof", "signal", "exit-code", "stdout", "limit", "never-ends"];
 function firstDifference(ours: Ended, plain: Ended) {
   const [left, right] = [withoutDetails(ours.stdout).split("\n"), withoutDetails(plain.stdout).split("\n")];
   const line = left.findIndex((each, at) => each !== right[at]);
@@ -228,7 +237,8 @@ function drawKin() {
     const name = inFolder[Math.floor(Math.random() * inFolder.length)];
     if (!existsSync(join(stored, name))) continue;
     const text = readFileSync(join(stored, name), "utf8").replace(/^\/\* Output:\n[^]*?\*\/\n?/m, "");
-    if (!standsAlone(text)) continue;
+    // An executable refuses stores on globals and built-ins, and a stored program about them says so in what it prints. Its kin would not.
+    if (!standsAlone(text) || changesTheWorld.test(text)) continue;
     const kin = writeKin(text, Math.random);
     if (kin.changes.length)
       return {
@@ -345,6 +355,9 @@ const asksForDepth = /^function visit_\d+\(depth/m;
 const endsTheProcess = /process\.(?:exit|abort|kill|reallyExit|on|once)\b|uncaughtException|unhandledRejection/;
 // When an `import()` settles against what a module beside it awaits is an order of loads.
 const loadsLate = /\bimport\(/;
+// What one program does to a global or to a built-in, its neighbors would meet (the classes of a drawn scene end in its number): an executable refuses some of it, and then they part for no fault of their own.
+const changesTheWorld =
+  /globalThis(?:\.\w+|\[[^\]]+\]| as any\)(?:\.\w+|\[[^\]]+\]))\s*=[^=]|\bprocess\s*(?:\+\+|--|[-+*]?=[^=])|\b[A-Z]\w*[A-Za-z]\.prototype(?:\.\w+|\[[^\]]+\]| as any\)(?:\.\w+|\[[^\]]+\]))\s*=[^=]|Object\.(?:defineProperty|defineProperties|setPrototypeOf|assign|freeze)\((?:globalThis|process|[A-Z]\w*[A-Za-z](?:\.prototype)?)\b|\bdelete (?:globalThis|process|[A-Z]\w*[A-Za-z])\b/;
 
 /** So many programs that `bun <file>` runs to their end, as one. What cannot stand in company waits to be judged alone. */
 async function drawTogether(size: number): Promise<Drawn | undefined> {
@@ -354,24 +367,31 @@ async function drawTogether(size: number): Promise<Drawn | undefined> {
     if (!program) break;
     lay(program);
     const plain = await spawn([bun, "program" + program.extension], 20);
-    const canStandInCompany = ![endsTheProcess, asksForDepth, loadsLate].some(pattern => pattern.test(program.text));
+    const canStandInCompany = ![endsTheProcess, asksForDepth, loadsLate, changesTheWorld].some(pattern =>
+      pattern.test(program.text),
+    );
     if (plain.end === "0" && canStandInCompany) members.push(program);
-    else if (!program.isKin) waiting.push(program);
+    else if (!program.isKin || plain.end === "0") waiting.push(program);
     else {
       counts.taken++;
-      add(plain.end === "0" ? "a kin that cannot stand in company" : "a kin that bun <file> does not run to its end");
+      add("a kin that bun <file> does not run to its end");
     }
   }
   return members.length > 1 ? together(members) : (members[0] ?? waiting.shift());
 }
 
+/** The compiler's own checks of the code that it makes. They stand beside a word, never in the build as it ships: they change the frame, and a fault has hidden behind that. Under a word that may only change cost a coin decides. */
+const ownChecks = "--aot-check=Validate";
 function drawArms(text: string): Arm[] {
+  // A program may name the flags that it is to be built with in its first line.
+  const named = /^\/\/ Flags: (.+)\n/.exec(text);
+  if (named) return [[`${named[1].replace(/^--aot-testing=|:.*/g, "")}-`, named[1].split(" ")]];
   const arms: Arm[] = [["", []]];
   if (asksForDepth.test(text)) return arms;
   if (Math.random() * 100 < Number(options["checks-proofs"]))
-    arms.push(["proof-checks-", ["--aot-testing=CheckProofsAtRunTime"]]);
+    arms.push(["proof-checks-", ["--aot-testing=CheckProofsAtRunTime", ownChecks]]);
   if (Math.random() * 100 < Number(options["writes-straight"]))
-    arms.push(["straight-", ["--aot-testing=WritesBodiesStraight"]]);
+    arms.push(["straight-", ["--aot-testing=WritesBodiesStraight", ownChecks]]);
   if (Math.random() * 100 < Number(options["shuffles-costs"])) {
     const seed = 1 + Math.floor(Math.random() * 1000);
     const word = [
@@ -386,7 +406,11 @@ function drawArms(text: string): Arm[] {
     ][Math.floor(Math.random() * 8)];
     arms.push([
       `cost-${word.replace(/:.*/, "")}-`,
-      [`--aot-testing=${word}`, ...(word.startsWith("GiveLinkMore") ? ["--aot-check=FlowFindsNoLessFromMore"] : [])],
+      [
+        `--aot-testing=${word}`,
+        ...(word.startsWith("GiveLinkMore") ? ["--aot-check=FlowFindsNoLessFromMore"] : []),
+        ...(Math.random() < 0.5 ? [ownChecks] : []),
+      ],
     ]);
   }
   return arms;
@@ -493,7 +517,7 @@ while (performance.now() < lastStart || waiting.length) {
       }
       let ours = await spawn([join(folder, "executable")], members ? 80 : 40);
       if (arm === "") asBuilt = ours;
-      if (agree(ours, plain)) {
+      if (agreesWithPlain(ours, plain)) {
         add(`${inCompany}${arm}same`);
         rmSync(join(folder, "executable"), { force: true });
         continue;
@@ -523,7 +547,7 @@ while (performance.now() < lastStart || waiting.length) {
           ? await spawn([join(folder, "plain-executable")], 40)
           : undefined;
         rmSync(join(folder, "plain-executable"), { force: true });
-        if (bundled && agree(bundled, ours)) {
+        if (bundled && agreesWithPlain(ours, bundled)) {
           add(inCompany + arm + "as the executable without --aot");
           continue;
         }

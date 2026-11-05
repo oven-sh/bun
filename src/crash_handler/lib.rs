@@ -632,6 +632,42 @@ mod draft {
     /// things that affect crash reporting. See suppressReporting() for intended usage.
     static SUPPRESS_REPORTING: AtomicBool = AtomicBool::new(false);
 
+    /// `si_code` of the signal that is being reported, and who sent it where a process did. `i32::MIN`: no signal.
+    #[cfg(unix)]
+    static CODE_OF_SIGNAL: core::sync::atomic::AtomicI32 =
+        core::sync::atomic::AtomicI32::new(i32::MIN);
+    #[cfg(unix)]
+    static SENDER_OF_SIGNAL: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+
+    /// `si_addr` is an address only for some codes: a signal that a process sent has its sender there, and
+    /// one that the kernel raised for a pointer outside the address space has nothing.
+    #[cfg(unix)]
+    fn write_code_of_signal(writer: &mut impl Write, reason: &CrashReason<'_>) -> bool {
+        let is_segmentation_fault = match reason {
+            CrashReason::SegmentationFault(_) => true,
+            CrashReason::BusError(_) => false,
+            _ => return true,
+        };
+        match (
+            CODE_OF_SIGNAL.load(Ordering::Relaxed),
+            is_segmentation_fault,
+        ) {
+            (i32::MIN, _) => true,
+            (..=0, _) => writeln!(
+                writer,
+                "Signal sent by process {}",
+                SENDER_OF_SIGNAL.load(Ordering::Relaxed)
+            )
+            .is_ok(),
+            (1, true) => writeln!(writer, "Signal code: SEGV_MAPERR").is_ok(),
+            (2, true) => writeln!(writer, "Signal code: SEGV_ACCERR").is_ok(),
+            (0x80, _) if cfg!(any(target_os = "linux", target_os = "android")) => {
+                writeln!(writer, "Signal code: SI_KERNEL").is_ok()
+            }
+            (code, _) => writeln!(writer, "Signal code: {}", code).is_ok(),
+        }
+    }
+
     /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
     #[derive(Clone, Copy)]
     pub enum CrashReason<'a> {
@@ -1057,13 +1093,21 @@ mod draft {
                                     }
                                 }
                             }
-                            #[cfg(any(
-                                target_os = "macos",
-                                target_os = "linux",
-                                target_os = "android",
-                                target_os = "freebsd"
-                            ))]
-                            { /* no-op */ }
+                            #[cfg(any(target_os = "linux", target_os = "android"))]
+                            {
+                                let mut name = [0u8; 16];
+                                // SAFETY: the kernel writes at most sixteen bytes, the last of them 0.
+                                let result =
+                                    unsafe { libc::prctl(libc::PR_GET_NAME, name.as_mut_ptr()) };
+                                let length = strings::index_of_char_usize(&name, 0).unwrap_or(0);
+                                if result == 0
+                                    && length != 0
+                                    && write!(writer, "({})", bstr::BStr::new(&name[..length]))
+                                        .is_err()
+                                {
+                                    abort();
+                                }
+                            }
                         }
 
                         if writer.write_all(b": ").is_err() {
@@ -1086,6 +1130,10 @@ mod draft {
                         if writeln!(writer, "Crashed while {}", action).is_err() {
                             abort();
                         }
+                    }
+                    #[cfg(unix)]
+                    if !write_code_of_signal(writer, &reason) {
+                        abort();
                     }
                     crate::stopped_builds::write_where_this_thread_stopped(writer);
 
@@ -1685,6 +1733,14 @@ mod draft {
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
         let context = fault_context_from_ucontext(ctx);
+        // SAFETY: kernel provides a valid siginfo_t; a signal that a process sent names its sender.
+        unsafe {
+            let code = (*info).si_code;
+            if code <= 0 {
+                SENDER_OF_SIGNAL.store((*info).si_pid(), Ordering::Relaxed);
+            }
+            CODE_OF_SIGNAL.store(code, Ordering::Relaxed);
+        }
 
         // Removed code was filled with traps, or cut out of the file, which leaves its pages unmapped.
         const SEGV_MAPERR: c_int = 1;

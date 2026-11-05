@@ -98,6 +98,8 @@ pub struct CompiledProgram {
     pub names_plugin: bool,
     /// The last folders of the root directory where the program writes a path that goes up out of them and comes back.
     root_folders_spelled: &'static [u8],
+    /// How many folders above the root directory of the build the folder lies that `/$bunfs/_.._` stands for: one more than the highest file of the program. 0: no file lies above the root directory.
+    levels_above_root: usize,
     module_lookup: OnceLock<ModuleLookup>,
     test_of_path_starts: OnceLock<TestOfPathStart>,
     test_of_names_left_outside: OnceLock<TestOfNamesLeftOutside>,
@@ -155,7 +157,7 @@ pub enum PackageLookup {
     Unknown,
 }
 
-/// In a public path, a `..` that leaves the root directory of the build.
+/// The files that lay above the root directory of the build have a mount of their own beside the root, `/$bunfs/_.._`. It stands for a folder above them all, and each folder on the way down from there to the root directory is spelled `_.._` too. So a `..` that a program joins to such a path takes a folder away and leads up, as on disk.
 const PARENT_OF_ROOT: &[u8] = b"_.._";
 
 /// Behind the public path of the folder of a package: the disk of the build held that folder, so `bun run` finds no copy of the package further up.
@@ -190,24 +192,31 @@ fn split_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
     path.split(|&byte| bun_paths::is_sep_any(byte))
 }
 
-/// `..` removes the segment before it. Where there is none it stays, as `PARENT_OF_ROOT`.
+/// `..` removes the segment before it. Where there is none it stays.
 fn push_segments<'p>(kept: &mut Vec<&'p [u8]>, segments: impl Iterator<Item = &'p [u8]>) {
     for segment in segments {
         match segment {
             b"" | b"." => {}
             b".." => match kept.last() {
-                Some(&last) if last != PARENT_OF_ROOT => {
+                Some(&last) if last != b".." => {
                     kept.pop();
                 }
-                Some(_) | None => kept.push(PARENT_OF_ROOT),
+                Some(_) | None => kept.push(b".."),
             },
             _ => kept.push(segment),
         }
     }
 }
 
+fn count_levels_above_root(segments: &[&[u8]]) -> usize {
+    let is_above = |segment: &&&[u8]| **segment == b"..";
+    segments.iter().take_while(is_above).count()
+}
+
+/// The way from the root directory of the build to what a public path names: a `..` for each folder that it lies above the root directory, then names.
 fn segments_below_public_root<'p>(
     root: &[u8],
+    levels_above_root: usize,
     base: &'p [u8],
     written: &'p [u8],
 ) -> Option<Vec<&'p [u8]>> {
@@ -221,28 +230,73 @@ fn segments_below_public_root<'p>(
         }
     }
     let mut kept = Vec::new();
-    // A program that goes up from a path in the root, with `..` in a URL or in `path.join()`, names what lies beside the root.
+
     if segments.next_if_eq(&name_of_root).is_none() {
-        kept.push(PARENT_OF_ROOT);
+        let most = match levels_above_root {
+            0 => 0,
+            levels => levels + 1,
+        };
+        let mut spelled = 0;
+        while spelled < most && segments.next_if_eq(&PARENT_OF_ROOT).is_some() {
+            spelled += 1;
+        }
+        let level = match spelled {
+            // A program that goes up from a path in the root, with `..` in a URL or in `path.join()`, names what lies beside the root.
+            0 => 1,
+            _ => most - spelled,
+        };
+        kept.extend(core::iter::repeat_n(&b".."[..], level));
     }
     push_segments(&mut kept, segments.chain(split_path(written)));
     Some(kept)
 }
 
+/// The public path of what `segments` lead to from the root directory of the build, without a trailing `/`.
+/// No file of the program lies above the mount. What the build wrote down about a `node_modules` up there has a `_.._` behind the root for each folder that it lies above the root directory.
+fn spell_public_path(public_root: &[u8], levels_above_root: usize, segments: &[&[u8]]) -> Vec<u8> {
+    let level = count_levels_above_root(segments);
+    let root = public_root.strip_suffix(b"/").unwrap_or(public_root);
+    let name_of_root = bun_core::strings::last_index_of_char(root, b'/').map_or(0, |at| at + 1);
+    let (start, folders) = match (1..=levels_above_root).contains(&level) {
+        true => (&root[..name_of_root], levels_above_root + 1 - level),
+        false => (public_root, level),
+    };
+    let below = segments[level..].join(&b"/"[..]);
+    let mut path = [start, &b"_.._/".repeat(folders)[..], &below[..]].concat();
+    if path.ends_with(b"/") {
+        path.pop();
+    }
+    path
+}
+
 /// The public path of the folder that `relative` leads to from the root directory of the build, without a trailing `/`.
-pub(crate) fn public_path_from_root(public_root: &[u8], relative: &[u8]) -> Vec<u8> {
+pub(crate) fn public_path_from_root(
+    public_root: &[u8],
+    levels_above_root: usize,
+    relative: &[u8],
+) -> Vec<u8> {
     let mut kept = Vec::new();
     push_segments(&mut kept, split_path(relative));
-    let path = [public_root, &kept.join(&b"/"[..])].concat();
-    path.strip_suffix(b"/").unwrap_or(&path).to_vec()
+    spell_public_path(public_root, levels_above_root, &kept)
 }
 
 /// The public path a file would have, without a trailing `/`.
 pub fn join_public_path(
     public_root: &[u8],
+    levels_above_root: usize,
     source_dir: &[u8],
     specifier: &[u8],
 ) -> Option<Vec<u8>> {
+    let kept = join_below_public_root(public_root, levels_above_root, source_dir, specifier)?;
+    Some(spell_public_path(public_root, levels_above_root, &kept))
+}
+
+fn join_below_public_root<'p>(
+    public_root: &[u8],
+    levels_above_root: usize,
+    source_dir: &'p [u8],
+    specifier: &'p [u8],
+) -> Option<Vec<&'p [u8]>> {
     let (base, written): (&[u8], &[u8]) = if is_relative_specifier(specifier) {
         (source_dir, specifier)
     } else {
@@ -251,21 +305,19 @@ pub fn join_public_path(
     if !is_bun_standalone_file_path(base) {
         return None;
     }
-    let kept = segments_below_public_root(public_root, base, written)?;
-    let path = [public_root, &kept.join(&b"/"[..])].concat();
-    Some(path.strip_suffix(b"/").unwrap_or(&path).to_vec())
+    segments_below_public_root(public_root, levels_above_root, base, written)
 }
 
 /// Where to search from for what a module in `source_dir`, a directory of public paths, names outside the executable, when `base` stands for the root directory of the build: the directory itself, then each of its parents below the root.
-pub fn directories_of_importer(public_root: &[u8], source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
+pub fn directories_of_importer(
+    public_root: &[u8],
+    levels_above_root: usize,
+    source_dir: &[u8],
+    base: &[u8],
+) -> Vec<Vec<u8>> {
     use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-    let mut segments = segments_below_public_root(public_root, source_dir, b"").unwrap_or_default();
-    for segment in segments
-        .iter_mut()
-        .filter(|segment| **segment == PARENT_OF_ROOT)
-    {
-        *segment = b"..";
-    }
+    let segments = segments_below_public_root(public_root, levels_above_root, source_dir, b"");
+    let segments = segments.unwrap_or_default();
     let join = |count: usize| {
         let mut buffer = bun_paths::path_buffer_pool::get();
         let relative = segments[..count].join(&b"/"[..]);
@@ -385,6 +437,7 @@ impl CompiledProgram {
             allows_code_from_disk: false,
             names_plugin: false,
             root_folders_spelled: b"",
+            levels_above_root: 0,
             module_lookup: OnceLock::new(),
             test_of_path_starts: OnceLock::new(),
             test_of_names_left_outside: OnceLock::new(),
@@ -436,6 +489,25 @@ impl CompiledProgram {
         self
     }
 
+    pub fn with_levels_above_root(mut self, levels: usize) -> CompiledProgram {
+        self.levels_above_root = levels;
+        self
+    }
+
+    pub fn levels_above_root(&self) -> usize {
+        self.levels_above_root
+    }
+
+    /// `join_public_path` in this executable.
+    pub fn join_public_path(
+        &self,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+    ) -> Option<Vec<u8>> {
+        join_public_path(public_root, self.levels_above_root, source_dir, specifier)
+    }
+
     pub fn with_further_package_names(
         mut self,
         names: Box<[CompiledFurtherPackageName]>,
@@ -475,7 +547,7 @@ impl CompiledProgram {
             return None;
         }
         // It lists nothing for the root itself.
-        let deepest = directories_of_importer(public_root, path, root)
+        let deepest = directories_of_importer(public_root, self.levels_above_root, path, root)
             .into_iter()
             .next();
         Some(deepest.unwrap_or_else(|| root.to_vec()))
@@ -488,7 +560,7 @@ impl CompiledProgram {
             return None;
         }
         let below_root = [b"./", bun_paths::resolve_path::relative(root, path)].concat();
-        join_public_path(public_root, public_root, &below_root)
+        self.join_public_path(public_root, public_root, &below_root)
     }
 
     /// Where the root directory lies below the folder of this executable, wherever it is installed.
@@ -623,11 +695,6 @@ impl CompiledProgram {
         });
     }
 
-    /// Whether the image may hold a module below `folder`, which ends with a `/`. The build has laid a table of the folders with code into the image: one pass over the text and one look. `None` where nobody has set that test.
-    pub fn may_hold_module_below(&self, folder: &[u8]) -> Option<bool> {
-        Some(self.test_of_path_starts.get()?(folder))
-    }
-
     /// Whether the image may hold a module at `path` or below it. `path` is followed by a `/` that is not part of it. Nothing is listed, and where the folder of `path` holds no code nothing is looked up.
     pub fn may_hold_module_at_or_below(&self, path_and_slash: &[u8]) -> Option<bool> {
         let (lookup, may_hold) = (self.module_lookup.get()?, self.test_of_path_starts.get()?);
@@ -694,7 +761,7 @@ impl CompiledProgram {
         if self.preserves_source_paths {
             return None;
         }
-        let path = join_public_path(public_root, source_dir, specifier)?;
+        let path = self.join_public_path(public_root, source_dir, specifier)?;
         let how = HowNamed {
             names_directory: Resolver::import_path_names_directory(specifier),
             is_require,
@@ -714,12 +781,9 @@ impl CompiledProgram {
         if self.root_folders_spelled.is_empty() {
             return None;
         }
-        let path = join_public_path(public_root, source_dir, specifier)?;
-        let parts: Vec<&[u8]> = split_path(path.strip_prefix(public_root)?).collect();
-        let above = parts
-            .iter()
-            .take_while(|part| **part == PARENT_OF_ROOT)
-            .count();
+        let levels = self.levels_above_root;
+        let parts = join_below_public_root(public_root, levels, source_dir, specifier)?;
+        let above = count_levels_above_root(&parts);
         let folders: Vec<&[u8]> = split_path(self.root_folders_spelled).collect();
         let spelled = &folders[folders.len().checked_sub(above)?..];
         if above == 0 || parts.get(above..above * 2)? != spelled {
@@ -795,7 +859,7 @@ impl CompiledProgram {
         specifier: &[u8],
         is_require: bool,
     ) -> Option<&'static [u8]> {
-        let folder = join_public_path(public_root, source_dir, b".")?;
+        let folder = self.join_public_path(public_root, source_dir, b".")?;
         self.find_package_name(&[&folder[..], b"//", specifier].concat(), is_require)?
     }
 
@@ -880,7 +944,7 @@ impl CompiledProgram {
                 names_directory: Resolver::import_path_names_directory(&target),
                 is_require,
             };
-            let path = join_public_path(public_root, folder, &target)?;
+            let path = self.join_public_path(public_root, folder, &target)?;
             self.find_file_or_directory(&path, how, search, lookup)
         };
         let exact = paths().filter(|alias| alias.key == specifier);
@@ -967,28 +1031,28 @@ impl CompiledProgram {
             is_require,
         };
         let package = find_name_of_package_with_exports(specifier);
-        let Some(mut folders) = segments_below_public_root(public_root, source_dir, b"") else {
+        let levels = self.levels_above_root;
+        let Some(mut folders) = segments_below_public_root(public_root, levels, source_dir, b"")
+        else {
             return Unknown;
         };
         let count_levels = |path: &[u8]| {
-            let segments = segments_below_public_root(public_root, path, b"");
-            let is_above = |segment: &&&[u8]| **segment == PARENT_OF_ROOT;
-            segments.map_or(0, |segments| segments.iter().take_while(is_above).count())
+            let below_root = split_path(path.strip_prefix(public_root).unwrap_or_default());
+            below_root
+                .take_while(|segment| *segment == PARENT_OF_ROOT)
+                .count()
         };
-        let entry_points = self.entry_points.iter().map(|entry| entry.module_path);
+
         let names = self.package_names.iter().map(|name| name.path);
         let further_names = self.further_package_names.iter().map(|name| name.path);
-        let levels_above_root = entry_points
-            .chain(names)
-            .chain(further_names)
-            .map(count_levels)
-            .max()
-            .unwrap_or(0);
+        let highest_name = names.chain(further_names).map(count_levels).max();
+        let highest = highest_name.unwrap_or(0).max(levels);
         loop {
             if folders.last() != Some(&&b"node_modules"[..]) {
                 let mut segments = folders.clone();
                 segments.push(b"node_modules");
-                let node_modules = [public_root, &segments.join(&b"/"[..]), b"/"].concat();
+                let mut node_modules = spell_public_path(public_root, levels, &segments);
+                node_modules.push(b'/');
                 if self.is_hidden_name(&[&node_modules[..], specifier].concat(), is_require) {
                     return Hidden;
                 }
@@ -1011,7 +1075,7 @@ impl CompiledProgram {
                     };
                 }
                 push_segments(&mut segments, split_path(specifier));
-                let path = [public_root, &segments.join(&b"/"[..])].concat();
+                let path = spell_public_path(public_root, levels, &segments);
                 let folder = match how.names_directory {
                     true => self.find_package_name(&[&path[..], b"/"].concat(), is_require),
                     false => None,
@@ -1037,9 +1101,9 @@ impl CompiledProgram {
                     return Unknown;
                 }
             }
-            // Above the root directory of the build there are as many folders as an entry point or a name lies above it: a package there need not hold an entry point.
+            // A package above the root directory of the build need not hold a file of the program.
             push_segments(&mut folders, core::iter::once(&b".."[..]));
-            if folders.len() > levels_above_root && folders.last() == Some(&PARENT_OF_ROOT) {
+            if count_levels_above_root(&folders) > highest {
                 return Unknown;
             }
         }
@@ -1074,7 +1138,7 @@ impl CompiledProgram {
         };
         let find_file = |specifier: &[u8]| {
             let names_directory = Resolver::import_path_names_directory(specifier);
-            let Some(path) = join_public_path(public_root, public_root, specifier) else {
+            let Some(path) = self.join_public_path(public_root, public_root, specifier) else {
                 // `..` has left nothing of the root in a path that began there. The build wrote down what it leads to.
                 let written: Vec<u8> = specifier.iter().copied().map(normalize_separator).collect();
                 return self.find_package_name(&written, false)?;
@@ -1123,8 +1187,9 @@ impl CompiledProgram {
         if !is_relative_specifier(specifier) || Resolver::import_path_names_directory(specifier) {
             return None;
         }
-        let path = join_public_path(public_root, public_root, specifier)?;
-        let name = [b"./", path.strip_prefix(public_root)?].concat();
+        let levels = self.levels_above_root;
+        let segments = join_below_public_root(public_root, levels, public_root, specifier)?;
+        let name = [b"./", &segments.join(&b"/"[..])[..]].concat();
         self.entry_point_by_module_path(self.find_package_name(&name, false)??)
     }
 
@@ -1252,7 +1317,7 @@ mod tests {
             b"/$bunfs/root/index.js",
             b"/$bunfs/root/plugins/index.ts",
             b"/$bunfs/root/plugins/first.js",
-            b"/$bunfs/root/_.._/shared/util.js",
+            b"/$bunfs/_.._/_.._/shared/util.js",
             b"/$bunfs/root/plugins.js",
         ];
 
@@ -1292,7 +1357,7 @@ mod tests {
             );
             program.set_module_lookup(find_module);
             program.set_test_of_path_starts(may_hold);
-            program
+            program.with_levels_above_root(2)
         }
 
         fn may_hold(start: &[u8]) -> bool {
@@ -1367,7 +1432,7 @@ mod tests {
                 (b"/work/app", b"/$bunfs/root"),
                 (b"/work/app/main.js", b"/$bunfs/root/main.js"),
                 (b"/work/app/lib/a.cjs", b"/$bunfs/root/lib/a.cjs"),
-                (b"/work/shared/util.js", b"/$bunfs/root/_.._/shared/util.js"),
+                (b"/work/shared/util.js", b"/$bunfs/_.._/_.._/shared/util.js"),
             ];
             for (on_build_machine, in_executable) in pairs {
                 let found = program.public_path_of_source(ROOT, on_build_machine);
@@ -1430,7 +1495,7 @@ mod tests {
         #[test]
         fn entry_point_is_found_by_module_path() {
             let entry_points: [(u32, &[u8], &[u8]); 2] = [
-                (0, b"/project/lib/a.ts", b"/$bunfs/root/_.._/lib/a.ts"),
+                (0, b"/project/lib/a.ts", b"/$bunfs/_.._/_.._/lib/a.ts"),
                 (1, b"/project/app/x/b.ts", b"/$bunfs/root/x/b.ts"),
             ];
             let entry_points =
@@ -1499,15 +1564,41 @@ mod tests {
                 Some(MODULES[8])
             );
             assert_eq!(
-                resolve(b"/$bunfs/root/_.._/shared/", b"./util.js"),
+                resolve(b"/$bunfs/_.._/_.._/shared/", b"./util.js"),
                 Some(MODULES[8])
             );
             assert_eq!(
-                resolve(b"/$bunfs/root/_.._/other/", b"../shared/util.js"),
+                resolve(b"/$bunfs/_.._/_.._/other/", b"../shared/util.js"),
                 Some(MODULES[8])
             );
             assert_eq!(
-                resolve(b"/$bunfs/root/_.._/shared/", b"../../shared/util.js"),
+                resolve(b"/$bunfs/_.._/_.._/shared/", b"../../shared/util.js"),
+                None
+            );
+        }
+
+        #[test]
+        fn path_that_a_program_has_joined_above_the_root_directory() {
+            // `path.join(import.meta.dir, "../shared/util.js")` in the root, and in a folder beside `shared`.
+            assert_eq!(resolve(ROOT, b"/$bunfs/shared/util.js"), Some(MODULES[8]));
+            let joined = b"/$bunfs/_.._/_.._/shared/util.js";
+            assert_eq!(
+                resolve(b"/$bunfs/_.._/_.._/other/", joined),
+                Some(MODULES[8])
+            );
+            // One folder further up there is nothing, and what lies in the root under the rest of the path does not answer.
+            assert_eq!(resolve(ROOT, b"/$bunfs/_.._/lib.cjs"), None);
+            assert_eq!(resolve(ROOT, b"/$bunfs/_.._/shared/util.js"), None);
+            // All the way down is the root directory.
+            assert_eq!(
+                resolve(ROOT, b"/$bunfs/_.._/_.._/_.._/lib.cjs"),
+                Some(MODULES[0])
+            );
+            // A folder of that name in the root is a folder like any other.
+            assert_eq!(resolve(ROOT, b"/$bunfs/root/_.._/shared/util.js"), None);
+            let nothing_above = program_with_lookup(false).with_levels_above_root(0);
+            assert_eq!(
+                resolve_in(&nothing_above, ROOT, b"/$bunfs/_.._/lib.cjs"),
                 None
             );
         }
@@ -1515,14 +1606,14 @@ mod tests {
         #[test]
         #[cfg(not(windows))]
         fn importer_directories_are_deepest_first() {
-            let directories = |source_dir| directories_of_importer(ROOT, source_dir, b"/work/");
+            let directories = |source_dir| directories_of_importer(ROOT, 2, source_dir, b"/work/");
             assert!(directories(ROOT).is_empty());
             assert!(directories(b"/elsewhere/lib/").is_empty());
             assert_eq!(directories(b"/$bunfs/root/lib/"), [b"/work/lib".to_vec()]);
             let nested = [b"/work/lib/deep".to_vec(), b"/work/lib".to_vec()];
             assert_eq!(directories(b"/$bunfs/root/lib/deep/"), nested);
             let above = [b"/shared".to_vec(), b"/".to_vec()];
-            assert_eq!(directories(b"/$bunfs/root/_.._/shared/"), above);
+            assert_eq!(directories(b"/$bunfs/_.._/_.._/shared/"), above);
         }
 
         #[test]
@@ -1956,7 +2047,7 @@ mod tests {
                 assert_eq!(require(ROOT, b"/$bunfs/root/node_modules/driver"), Unknown);
                 assert_eq!(require(ROOT, b""), Unknown);
                 assert_eq!(require(b"/project/app/", b"driver"), Unknown);
-                assert_eq!(require(b"/$bunfs/root/_.._/shared/", b"driver"), Unknown);
+                assert_eq!(require(b"/$bunfs/shared/", b"driver"), Unknown);
                 assert_eq!(find_in(&program(true), ROOT, b"driver", true), Unknown);
             }
         }

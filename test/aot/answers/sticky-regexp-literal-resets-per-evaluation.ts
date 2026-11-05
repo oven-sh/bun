@@ -7,3 +7,4 @@
 function cut(seed: number): string { const text = "aab" + seed; const pattern = /a+/y; return text.replace(pattern, "-"); }
 report(cut(1)); report(cut(2)); report(cut(3));
 report("end");
+declare function report(value: unknown): void;

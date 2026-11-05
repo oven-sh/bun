@@ -10,6 +10,7 @@
 #     Counter2.scanner = () => scan;
 # })(Counter || (Counter = {}));
 # print(Counter.run(2), Counter.position(), Counter.run(1), Counter.position(), Counter.scanner() === Counter.scanner());
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # The function is called once, from the body of the module. Its scope is never made: token and limit are numbers and lie among the variables of the module.
 # scan and next hold nothing but that scope, and the function asks at its entry whether it has been entered before.

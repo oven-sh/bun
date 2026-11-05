@@ -21,8 +21,8 @@ export interface ProgramOptions {
   posix?: boolean;
   /** It prints what an executable alone has, so it is held against an executable built without --trim. */
   printsAsAnExecutable?: boolean;
-  /** A program that comes near parts: those that stay today. A case for each runs every time and is red the day the part goes. `true`: all stay, and nothing asks. */
-  keptToday?: boolean | string[];
+  /** A program that comes near parts: those that stay today. A case for each runs every time and is red the day the part goes. */
+  keptToday?: string[];
   /** A known bug, in a sentence. The test is red as soon as the program runs. */
   failsToday?: string;
 }
@@ -89,7 +89,7 @@ export function checkNames() {
           wrong.push(
             `${where}: ${spelling} is ${findFeature(spelling) === undefined ? "no feature" : "spelled " + findFeature(spelling)}`,
           );
-      for (const spelling of Array.isArray(options.keptToday) ? options.keptToday : [])
+      for (const spelling of options.keptToday ?? [])
         if (!featuresOf(name, options).includes(spelling))
           wrong.push(`${where}: ${spelling} stays today and is none of its features`);
     };
@@ -136,7 +136,7 @@ export function byUse(part: number, parts: number) {
         readdirSync(join(neighbors, name)).map(file => [file, readFileSync(join(neighbors, name, file), "utf8")]),
       );
       const options: ProgramOptions = files["features.json"] ? JSON.parse(files["features.json"]) : {};
-      const keptToday = Array.isArray(options.keptToday) ? options.keptToday : [];
+      const keptToday = options.keptToday ?? [];
       const features = featuresOf(name, options).filter(feature => !keptToday.includes(feature));
       const isSkipped = features.length + keptToday.length === 0 || (isWindows && options.posix === true);
       let ran: ReturnType<typeof trimmedAndPlain> | undefined;
@@ -155,7 +155,7 @@ export function byUse(part: number, parts: number) {
             stdout: plain.stdout,
             exitCode: 0,
           });
-          if (options.keptToday !== true) expect(features.filter(feature => !removed.includes(feature))).toEqual([]);
+          expect(features.filter(feature => !removed.includes(feature))).toEqual([]);
         },
       );
       for (const feature of isSkipped ? [] : keptToday)

@@ -1297,6 +1297,14 @@ impl<'a, 's> FileScan<'a, 's> {
             if bound.is_in_type_query(reference) {
                 continue;
             }
+            if let Parent::Expr(parent) = bound.parent_of_expr(reference)
+                && let Some(read) = decisions.length_of_named_text(hir, parent)
+                && read.name == reference
+                && !read.name_runs_for_its_check
+                && !self.is_called(parent)
+            {
+                continue;
+            }
             if imports_quiet_file && let Some(interest) = self.find_use_of_import(symbol) {
                 self.add_interest(hir[reference].pos, interest);
             }
@@ -2432,6 +2440,7 @@ impl<'a, 's> Walk<'a, 's> {
             && parsed_source(self.input.files, file).is_none_or(|source| {
                 let names = &source.contents.names;
                 names.loads_by_unknown_name
+                    || source.builtins.loads_unknown_modules()
                     || !names.unknown_names_at.is_empty()
                     || (!self.input.isolates_code_from_disk
                         && !names.files_missing_at_build_at.is_empty())

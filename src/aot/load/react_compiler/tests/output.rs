@@ -1,10 +1,10 @@
 use bun_ast::runtime::ReactCompilerMode;
-use bun_sema::hir::{BinOp, CallId, ExprKind, FnBody, FnKind, StmtId, StmtKind};
+use bun_sema::hir::{BinOp, CallId, ExprKind, Flags, FnBody, FnKind, IdList, StmtId, StmtKind};
 use bun_sema::resolve::{JsxRuntime, JsxSettings, TranspileSettings};
 
 use super::{
     CACHE_FUNCTION, CACHE_IMPORT, COMPILER_RUNTIME, DEVELOPMENT_RUNTIME, HELLO, PRODUCTION_RUNTIME,
-    RULE, production_settings, settings_with_jsx, with_compiled_tree, with_tree,
+    RULE, Tree, production_settings, settings_with_jsx, with_compiled_tree, with_tree,
     with_tree_and_settings,
 };
 
@@ -160,6 +160,83 @@ fn function_with_captures_is_not_outlined() {
             panic!("expected a function declaration");
         };
         assert_eq!(function, tree.function_named("List"));
+    });
+}
+
+fn list_with_outlined_function(tree: &Tree<'_>) -> (&'static str, Vec<&'static str>) {
+    let hir = tree.hir();
+    let outlined = tree.function_named("%react:outlined:0:_temp");
+    let kinds_in = |list: IdList<StmtId>| {
+        let kinds = hir.ids(list).map(|statement| match hir[statement].kind {
+            StmtKind::Fn(function) if function == outlined => "outlined",
+            StmtKind::Return(_) => "return",
+            StmtKind::Expr(_) => "expression",
+            StmtKind::Var(_) => "variable",
+            _ => "other",
+        });
+        let kinds: Vec<&'static str> = kinds.collect();
+        kinds.contains(&"outlined").then_some(kinds)
+    };
+    let blocks = hir
+        .stmts
+        .iter()
+        .filter_map(|statement| match statement.kind {
+            StmtKind::Block(list) => Some(("block", kinds_in(list)?)),
+            _ => None,
+        });
+    let cases = hir.cases.iter();
+    let cases = cases.filter_map(|case| Some(("case", kinds_in(case.body)?)));
+    let functions = hir.fns.iter().filter_map(|function| match function.body {
+        FnBody::Block(list) if function.flags.contains(Flags::REPLACED_BODY) => {
+            Some(("component", kinds_in(list)?))
+        }
+        FnBody::Block(list) => Some(("function", kinds_in(list)?)),
+        FnBody::None | FnBody::Expr(_) => None,
+    });
+    let mut lists = blocks.chain(cases).chain(functions);
+    lists
+        .next()
+        .expect("no list declares the outlined function")
+}
+
+#[test]
+fn function_outlined_from_nested_component_is_declared_in_innermost_scope() {
+    let component = "function (items: number[]) {\n\
+                     \"use memo\";\n\
+                     return items.map(n => n * rate);\n\
+                     }";
+    let in_arrow = format!("export const make = (rate: number) => {component};\n");
+    with_compiled_tree(&in_arrow, |tree| {
+        let expected = ("function", vec!["return", "outlined"]);
+        assert_eq!(list_with_outlined_function(tree), expected);
+    });
+    let in_loop = format!(
+        "export const made: unknown[] = [];\n\
+         for (const rate of [3]) made.push({component});\n"
+    );
+    with_compiled_tree(&in_loop, |tree| {
+        let expected = ("block", vec!["expression", "outlined"]);
+        assert_eq!(list_with_outlined_function(tree), expected);
+    });
+    let in_test_of_case = format!(
+        "export const made: unknown[] = [];\n\
+         switch (1) {{\n\
+         case made.push({component}):\n\
+         let rate = 3;\n\
+         }}\n"
+    );
+    with_compiled_tree(&in_test_of_case, |tree| {
+        let expected = ("case", vec!["outlined", "variable"]);
+        assert_eq!(list_with_outlined_function(tree), expected);
+    });
+    let among_parameters = format!(
+        "export function priced(rate: number, bill = {component}) {{\n\
+         return bill;\n\
+         }}\n"
+    );
+    with_compiled_tree(&among_parameters, |tree| {
+        let (holder, kinds) = list_with_outlined_function(tree);
+        assert_eq!((holder, kinds.last()), ("component", Some(&"outlined")));
     });
 }
 

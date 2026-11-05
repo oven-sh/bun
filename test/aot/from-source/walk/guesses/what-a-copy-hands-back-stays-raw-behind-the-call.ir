@@ -4,9 +4,9 @@
 # -- source: what-a-copy-hands-back-stays-raw-behind-the-call.ts
 # declare function sink(...values: unknown[]): void;
 # const enum Bits { Four = 4, Eight = 8, ThirtyTwo = 32 }
-# class Kind { flags: Bits; objectFlags: Bits; constructor(flags: Bits, objectFlags: Bits) { this.flags = flags; this.objectFlags = objectFlags; } }
+# class Kind { flags: Bits; objectFlags: Bits; constructor(flags: Bits, objectFlags: Bits) { this.flags = flags; this.objectFlags = objectFlags; } } // @ts-expect-error
 # function flagsOf(kind: Kind): Bits { return kind.flags & Bits.Eight ? kind.objectFlags : 0; }
-# function sort(kind: Kind) { const f = flagsOf(kind); if (f & Bits.ThirtyTwo) return 1; return 2; }
+# function sort(kind: Kind) { const f = flagsOf(kind); if (f & Bits.ThirtyTwo) return 1; return 2; } // @ts-expect-error
 # sink(sort, new Kind(1, 2));
 # -- end of source
 # RUN: walk f2 mechanisms=all-ParameterGuards

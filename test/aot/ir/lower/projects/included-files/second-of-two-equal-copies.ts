@@ -1,16 +1,8 @@
 // RUN: lower
-
-// Of two copies of one version of a package the first in the project stands for both, as for tsc. What the second declares globally is not declared: `FromSecondTwin` names nothing, which stops no build, and its position is untyped.
-// CHECK: [[literal]] = Data
-// CHECK-NEXT: Convert [[literal]] declared={type=undefined|null|[[FromFirstTwin]]
-// CHECK: [[second]] = Data
-// CHECK-NOT: Convert [[second]]
-// CHECK: PropGet [[second]] key="a"
+// DIAGNOSTIC: TS2304 src/main.ts:1
 
 // FILE: src/main.ts
-const first: FromFirstTwin = { a: 1 };
-const second: FromSecondTwin = { a: 2 };
-console.log(first.a, second.a);
+console.log(typeof fromSecondTwin);
 
 // FILE: tsconfig.json
 {"compilerOptions":{"strict":true,"module":"esnext","moduleResolution":"bundler","types":[]},"include":["src","tests"]}
@@ -24,9 +16,7 @@ exports.value = 1;
 // FILE: tests/first/node_modules/twin/index.d.ts
 export declare const value: number;
 declare global {
-  interface FromFirstTwin {
-    a: number;
-  }
+  var fromFirstTwin: number | undefined;
 }
 
 // FILE: tests/second/node_modules/twin/package.json
@@ -38,9 +28,7 @@ exports.value = 1;
 // FILE: tests/second/node_modules/twin/index.d.ts
 export declare const value: number;
 declare global {
-  interface FromSecondTwin {
-    a: number;
-  }
+  var fromSecondTwin: number | undefined;
 }
 
 // FILE: tests/first/uses.ts

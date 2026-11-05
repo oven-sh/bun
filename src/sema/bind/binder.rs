@@ -1046,7 +1046,7 @@ impl<'f, 's> Binder<'f, 's> {
         let s = &self.b.scopes[scope.idx()];
         match s.kind {
             ScopeKind::Module(m)
-                if !self.f.has_module_syntax
+                if !self.f.is_module_for(self.f[m].name)
                     && !matches!(self.f[m].name, ModuleName::Ident(_))
                     && matches!(
                         self.b.scopes[self.declaration_scope_at(s.parent).idx()].kind,
@@ -3198,7 +3198,7 @@ impl<'f, 's> Binder<'f, 's> {
         let is_at_top = matches!(self.b.scopes[scope.idx()].kind, ScopeKind::File);
         // `IsModuleAugmentationExternal`: it augments a module that is declared elsewhere.
         let is_augmentation = if is_at_top {
-            self.f.has_module_syntax
+            self.f.is_module_for(decl.name)
         } else {
             self.enclosing_ambient_module(scope).is_some()
         };
@@ -3214,7 +3214,7 @@ impl<'f, 's> Binder<'f, 's> {
         // `b.container`. A declaration in a script, even inside a block, is global.
         let container = self.b.container_scope(self.scope);
         let is_in_file = matches!(self.b.scopes[container.idx()].kind, ScopeKind::File);
-        let is_global = is_in_file && !self.f.has_module_syntax;
+        let is_global = is_in_file && !self.f.is_module_for(decl.name);
         let symbol = match decl.name {
             ModuleName::String(name)
                 if is_in_file || self.enclosing_ambient_module(container).is_some() =>
@@ -3223,7 +3223,7 @@ impl<'f, 's> Binder<'f, 's> {
                 // import. At the top level of a script it declares the module itself.
                 if !is_at_top {
                     self.statement_specifier(name);
-                } else if self.f.has_module_syntax && ambient && name.is_some() {
+                } else if self.f.is_module_for(decl.name) && ambient && name.is_some() {
                     self.b.module_augmentations.push(name);
                 }
                 // `declareSymbol(GetLocals(container), ..)`: one symbol in each container.

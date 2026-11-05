@@ -1,7 +1,10 @@
 use bun_sema::bind::FnOwner;
-use bun_sema::check::aot::{FunctionRef, ShapeKind, TypeShape};
+use bun_sema::check::aot::{
+    ClassDeclaration, ClassMember, ClassParent, ClassRef, FunctionRef, MemberName,
+    ObjectMemberKind, ShapeKind, TypeShape,
+};
 use bun_sema::fold::Constant;
-use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, Flags, FnBody, FnKind};
+use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, Flags, FnBody, FnKind, MemberKey};
 use smallvec::{SmallVec, smallvec};
 
 use crate::ir::generated::IllTypedCause;
@@ -156,13 +159,13 @@ impl FileLowering<'_, '_, '_, '_> {
                     pending.push(right);
                     continue;
                 }
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                    !self.reads_field_that_may_be_absent(flowing)
+                }
                 ExprKind::Ident(_)
-                | ExprKind::Dot { .. }
-                | ExprKind::Index { .. }
                 | ExprKind::Call(_)
                 | ExprKind::TaggedTemplate(_)
-                | ExprKind::Await(_)
-                | ExprKind::Yield { .. } => true,
+                | ExprKind::Await(_) => true,
                 _ => false,
             };
             match self.find_numbers(flowing) {
@@ -174,11 +177,39 @@ impl FileLowering<'_, '_, '_, '_> {
         true
     }
 
+    fn reads_field_that_may_be_absent(&mut self, access: ExprId) -> bool {
+        let Some((object, MemberKey::Name(name))) = self.hir.member_key(access) else {
+            return false;
+        };
+        let receiver = self.queries.expression_type(object);
+        let shape = receiver.and_then(|receiver| self.queries.type_shape(receiver));
+        let Ok(ShapeKind::Class(class)) = shape.map(|shape| shape.kind) else {
+            return false;
+        };
+        let is_read =
+            |member: &&ClassMember| !member.is_static && member.name == MemberName::String(name);
+        let mut row: SmallVec<[ClassRef; 4]> = smallvec![class];
+        loop {
+            let class = row[row.len() - 1];
+            if let Some(member) = self.queries.class_shape(class).members.iter().find(is_read) {
+                return member.kind == ObjectMemberKind::Field && member.is_optional;
+            }
+            match self.queries.class_parent(class) {
+                Some(ClassParent::Declared(ClassDeclaration::Class(above)))
+                    if !row.contains(&above) =>
+                {
+                    row.push(above);
+                }
+                _ => return false,
+            }
+        }
+    }
+
     pub(in crate::lower) fn position_of_int32_read(
         &mut self,
         read: ExprId,
     ) -> Option<DeclaredType> {
-        if self.find_numbers(read) != Numbers::Int32s {
+        if self.find_numbers(read) != Numbers::Int32s || self.reads_field_that_may_be_absent(read) {
             return None;
         }
         let ty = self.queries.expression_type(read).ok()?;

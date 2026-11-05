@@ -34,3 +34,4 @@ for (let a = 0; a < ends.length; a++) { bounds(ends[a]!); rooms(ends[a]!); }
 for (let a = 0; a < strides.length; a++) steps(strides[a]!);
 for (let a = 0; a < entering.length; a++) enters(entering[a]!);
 report("end");
+declare function report(value: unknown): void;

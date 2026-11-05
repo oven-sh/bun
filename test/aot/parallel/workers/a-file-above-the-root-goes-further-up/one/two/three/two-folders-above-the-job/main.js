@@ -1,6 +1,5 @@
 // A Worker's file lies two folders above the entry point and starts a Worker from a file two folders above itself.
-// In an executable the job lies in /$bunfs/root/_.._/_.._/jobs: each `..` that leaves the root is spelled `_.._`. A `..` of the job that should go further up takes one of those back, so the URL says /$bunfs/root/_.._/helper.js,
-// which is not where the helper lies. The build writes down what that leads to.
+// In an executable the files above the folder of the entry point lie in a mount of their own, /$bunfs/_.._, spelled from the top down: a `..` of the run takes a folder away and leads up, as on disk.
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 const report = (how, worker) =>
   new Promise(done => {

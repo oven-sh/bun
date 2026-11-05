@@ -9,3 +9,4 @@
 function total(view: Int32Array, buffer: ArrayBuffer, bytes: number): string { const n = view.length; buffer.resize(bytes); let sum = 0; let absent = 0; for (let at = 0; at < n; at++) { const element = view[at]; if (element === undefined) absent++; else sum += element; } return n + " " + sum + " " + absent + " " + view.length; }
 for (const bytes of [24, 8, 0, 40]) { const buffer = new ArrayBuffer(24, { maxByteLength: 64 }); const view = new Int32Array(buffer); for (let at = 0; at < view.length; at++) view[at] = 3; report(total(view, buffer, bytes)); }
 report("end");
+declare function report(value: unknown): void;

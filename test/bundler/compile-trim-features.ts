@@ -1,5 +1,5 @@
 import { builtinFeatureUses, readTrimTable } from "bun:internal-for-testing";
-import { bunEnv, bunExe, tempDir, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "node:path";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
 import {
@@ -41,6 +41,9 @@ export function getMappedSegments(file: Buffer): Buffer[] {
       ),
     );
 }
+
+/** A floor under the number of features that an executable lacks. What Bun's own modules use hangs on the platform in places, and the counts are those of Linux. */
+export const atLeastOnLinux = (count: number): number => (isLinux ? count : 0);
 
 export const model: FeatureModel = loadFeatures(repositoryRoot);
 export const builtinEntries: BuiltinEntry[] = builtinFeatureUses();

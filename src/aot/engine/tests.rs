@@ -210,26 +210,46 @@ fn features_removed_by_request_fill_bits() {
 }
 
 #[test]
+fn trimming_has_the_words_of_written_texts_looked_for_in_every_feature() {
+    let looked_for =
+        |change: fn(&mut AotOptions)| filled_record(change).target.features_kept_only_when_named;
+    let bits_of = |features: &FeatureSet| {
+        let mut bits = [0; 8];
+        fill_feature_bits(&mut bits, features);
+        bits
+    };
+    assert_eq!(
+        looked_for(|options| options.trim.removes_unused = true),
+        bits_of(&FeatureSet::all())
+    );
+    assert_eq!(
+        looked_for(|_| {}),
+        bits_of(&bun_trim::features_kept_only_when_named())
+    );
+}
+
+#[test]
 fn trimming_says_who_can_make_foreign_calls() {
     let excluded = |change: fn(&mut AotOptions)| filled_record(change).excluded_code;
     let without = |flag| expected_record(|_| {}).excluded_code | flag;
+    let trimming = ExcludedCode::FEATURES_NAMED_AT_RUN_TIME;
     assert_eq!(
         excluded(|options| options.trim.removes_unused = true),
-        without(ExcludedCode::FOREIGN_CALLS_OF_UNSEEN_CODE)
+        without(ExcludedCode::FOREIGN_CALLS_OF_UNSEEN_CODE | trimming)
     );
     assert_eq!(
         excluded(|options| {
             options.trim.removes_unused = true;
             options.trim.allow = vec![TrimFeature::from_name(b"ffi").unwrap()];
         }),
-        without(ExcludedCode::default())
+        without(trimming)
     );
     assert_eq!(
         excluded(|options| {
             options.trim.removes_unused = true;
             options.trim.remove = vec![TrimFeature::from_name(b"native-code").unwrap()];
         }),
-        without(ExcludedCode::FOREIGN_CALLS)
+        without(ExcludedCode::FOREIGN_CALLS | trimming)
     );
     assert_eq!(
         excluded(|options| options.trim.remove_internal = vec![Feature::Ffi]),

@@ -27,3 +27,4 @@ report(written(open)); report(written(straight));
 straight.below[0].below.push(straight);
 report(written(straight)); report(written(open));
 report("end");
+declare function report(value: unknown): void;

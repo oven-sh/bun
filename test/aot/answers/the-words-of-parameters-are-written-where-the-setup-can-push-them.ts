@@ -21,3 +21,4 @@
 function tellAll(first: string, second: string, third: string, fourth: string): void { report("begin"); report(first); report(second); report(third); report(fourth); }
 tellAll("a", "b", "c", "d");
 report("end");
+declare function report(value: unknown): void;

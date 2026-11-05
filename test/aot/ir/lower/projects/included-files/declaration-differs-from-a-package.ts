@@ -1,9 +1,7 @@
 // RUN: lower
+// DIAGNOSTIC: TS2717 src/options.ts:4
 
-// A member that a file of the program declares with another type than a package does stops no build, and the interface stays the type of the position.
-// CHECK: [[literal]] = Data
-// CHECK-NEXT: [[options]] = Convert [[literal]] declared={type=undefined|null|number|string|symbol|bigint|[[Options]] flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK: PropGet [[options]] key="known"
+// The error is at the program's own file.
 
 // FILE: src/main.ts
 import "./options";

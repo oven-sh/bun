@@ -676,8 +676,8 @@ fn list_conversions(merged: &Merged<'_>) -> Vec<Vec<Conversion>> {
                     continue;
                 }
                 let conversion = Conversion {
-                    sources: collect_merged_layouts(merged, unit, &source.layouts),
-                    targets: collect_merged_layouts(merged, unit, &target.layouts),
+                    sources: collect_merged_layouts(merged, unit, source.layouts),
+                    targets: collect_merged_layouts(merged, unit, target.layouts),
                 };
                 if listed.insert(conversion.clone()) {
                     conversions.push(conversion);

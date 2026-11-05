@@ -251,6 +251,31 @@ fn exposed_object_needs_members() {
 }
 
 #[test]
+fn whoever_is_handed_what_stands_below_a_prototype_linked_anew_loads_node_events() {
+    let is_linked_anew = |id: BuiltinId| {
+        let entry = table::entry(table::canonical_id(id));
+        entry.kind == BuiltinKind::Prototype && matches!(entry.prototype, Prototype::Unknown)
+    };
+    let below = BuiltinId::ALL.into_iter().filter(|&id| {
+        matches!(table::entry(id).prototype, Prototype::Builtin(above) if is_linked_anew(above))
+    });
+    let holders: Vec<BuiltinId> = below.collect();
+    assert!(holders.contains(&BuiltinId::Process));
+    for prototype in BuiltinId::ALL.into_iter().filter(|&id| is_linked_anew(id)) {
+        assert_eq!(table::entry(prototype).holder, None, "{prototype:?}");
+    }
+    for holder in holders.into_iter().chain([BuiltinId::GlobalThis]) {
+        let uses = uses_of(&[], &[holder]);
+        assert!(
+            uses.modules.contains(&RuntimeModule::NodeEvents),
+            "{holder:?}"
+        );
+    }
+    let mentioned = uses_of(&[BuiltinId::Process], &[]);
+    assert!(!mentioned.modules.contains(&RuntimeModule::NodeEvents));
+}
+
+#[test]
 fn exposed_member_skips_holder() {
     let constructor = BuiltinId::BunRedisClient;
     assert_eq!(table::entry(constructor).holder, Some(BuiltinId::Bun));

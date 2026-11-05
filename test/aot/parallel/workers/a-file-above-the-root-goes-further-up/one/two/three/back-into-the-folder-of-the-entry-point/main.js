@@ -1,5 +1,5 @@
 // A Worker's file lies two folders above the entry point and starts a Worker from a file beside the entry point, which it names by the folders as they are called on disk.
-// In an executable the job lies in /$bunfs/root/_.._/_.._/jobs, so its URL says /$bunfs/root/_.._/_.._/three/back-into-the-folder-of-the-entry-point/inner.js, and the module is /$bunfs/root/inner.js.
+// In an executable the job lies in /$bunfs/_.._/_.._/jobs, and the folders on the way down from there to the entry point are spelled `_.._`: its URL names them as they are called on disk, and the module is /$bunfs/root/inner.js.
 // The build writes down what that leads to.
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 const report = (how, worker) =>

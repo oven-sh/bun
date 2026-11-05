@@ -28,8 +28,6 @@ const { folder, build, buildWith } = sharedBuilds("compile-trim-runtime-options"
 });
 
 const wasRemoved = "can't be used with this executable because --trim removed the feature it needs";
-const wasNotCompiledIn =
-  "can't be used with this executable: the program never uses Bun.sql, so it wasn't compiled in. Rebuild with --compile-exec-argv=--sql-preconnect";
 const hasNoCommandLine =
   "can't be used with this executable because it doesn't include the Bun command line. Run bun instead";
 const needNothing = [
@@ -151,12 +149,7 @@ function removedFeaturesOf(executable: Build) {
         const hello = await build("hello.ts", ...flags, "--trim");
         for (const program of [hello, await build("names-eval.ts", ...flags, "--trim")]) {
           for (const [option, options] of rejected) {
-            // The text that names-eval.ts evaluates may use anything, so --trim keeps the feature there. The program itself never uses Bun.sql.
-            const reason = needTheCli.some(([, theirs]) => theirs === options)
-              ? hasNoCommandLine
-              : option === "--sql-preconnect" && program !== hello
-                ? wasNotCompiledIn
-                : wasRemoved;
+            const reason = needTheCli.some(([, theirs]) => theirs === options) ? hasNoCommandLine : wasRemoved;
             expect(await startedWith(program, options)).toEqual({
               options,
               stdout: "",

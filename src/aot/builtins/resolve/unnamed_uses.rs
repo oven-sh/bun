@@ -1,5 +1,6 @@
 use super::SourceDialect;
 use super::mention_use::MentionUse;
+use super::module_values::reads_what_wrapper_hands_in;
 use super::resolver::{ExprState, Resolver};
 use crate::builtins::runtime_uses::{
     SyntaxWithHelpers, is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,
@@ -16,7 +17,7 @@ use bun_sema::hir::{
 };
 use core::ops::Range;
 
-const MOST_VARIABLES_FOLLOWED: u32 = 4;
+pub(super) const MOST_VARIABLES_FOLLOWED: u32 = 4;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Head {
@@ -207,6 +208,8 @@ impl Resolver<'_, '_> {
     }
 
     fn note_text_under_which_evaluator_hangs(&mut self, text: Atom) {
+        self.output.reads_name_leading_to_hook_of_instanceof |=
+            self.input.names.leads_to_hook_of_instanceof(text);
         let name = self.input.names.find_name_of_language_member(text);
         if let Some(name) = name.filter(|&name| is_name_under_which_evaluator_hangs(name)) {
             self.output.members_read.push(name);
@@ -256,6 +259,8 @@ impl Resolver<'_, '_> {
     }
 
     fn note_text_read(&mut self, name: Atom) {
+        self.output.reads_name_leading_to_hook_of_instanceof |=
+            self.input.names.leads_to_hook_of_instanceof(name);
         if let Some(name) = self.input.names.find_name_of_language_member(name) {
             self.output.members_read.push(name);
         }
@@ -298,7 +303,9 @@ impl Resolver<'_, '_> {
         let is_plain = is_variable
             && is_stored_under_its_name_alone
             && !bound.is_appended_symbol(variable)
-            && !redeclared.any(|it| it.0 == variable)
+            && !redeclared.any(|it| {
+                it.0 == variable && reads_what_wrapper_hands_in(self.input.hir, bound, variable)
+            })
             && declarations.iter().all(|it| declaration_of(it).is_some());
         is_plain.then(|| declarations.iter().filter_map(declaration_of))
     }
@@ -382,10 +389,20 @@ impl Resolver<'_, '_> {
         }
     }
 
+    fn note_key_read_by_pattern(&mut self, key: ExprId) {
+        let key_without_assertions = self.input.hir.skip_type_assertions(key);
+        let folded = self
+            .input
+            .decisions
+            .constant(self.input.hir, key_without_assertions);
+        let is_name = self.symbol_that_key_is(key).is_some() || folded != FoldedValue::Unknown;
+        self.output.reads_by_unknown_key |= !is_name;
+        self.note_key_read(key, false);
+    }
+
     fn note_key_read(&mut self, key: ExprId, is_only_looked_at: bool) {
         let input = self.input;
-        let symbol = self.value_of(key);
-        if let Some(symbol) = symbol.and_then(|it| table::well_known_symbol(it.path.id)) {
+        if let Some((_, symbol)) = self.symbol_that_key_is(key) {
             return self.note_name_read(table::name_of_symbol(symbol));
         }
         let key = input.hir.skip_type_assertions(key);
@@ -420,7 +437,7 @@ impl Resolver<'_, '_> {
                         let property = &hir[property];
                         match property.key {
                             PropKey::Name(name) => self.note_text_taken_by_pattern(name),
-                            PropKey::Computed(key) => self.note_key_read(key, false),
+                            PropKey::Computed(key) => self.note_key_read_by_pattern(key),
                             PropKey::None | PropKey::Private(_) => {}
                         }
                         waiting.extend(property.value.some());
@@ -457,7 +474,7 @@ impl Resolver<'_, '_> {
             for property in properties.iter() {
                 match hir[property].key {
                     PropKey::Name(name) => self.note_text_taken_by_pattern(name),
-                    PropKey::Computed(key) => self.note_key_read(key, false),
+                    PropKey::Computed(key) => self.note_key_read_by_pattern(key),
                     PropKey::None | PropKey::Private(_) => {}
                 }
             }

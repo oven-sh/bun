@@ -26,6 +26,8 @@ pub(crate) struct ProgramFacts {
     pub can_be_cluster_worker: bool,
     pub can_replace_builtins: bool,
     pub process_reaches_code_on_its_prototypes: bool,
+    pub warnings_load_events: bool,
+    pub takes_first_texts: bool,
 }
 
 fn is_read_left_out_where_unused(path: &[&[u8]]) -> bool {
@@ -132,7 +134,8 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
             b"PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES",
             facts.process_reaches_code_on_its_prototypes,
         ),
-        define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
+        define_fact(b"WARNINGS_LOAD_NODE_EVENTS", facts.warnings_load_events),
+        define_fact(b"IS_COMPILED_AHEAD_OF_TIME", !facts.takes_first_texts),
     ]);
     let held_in_every_run = collect_defines_held_in_every_run(platform, arena, atoms);
     let options = FoldOptions {
@@ -287,6 +290,8 @@ mod tests {
         can_be_cluster_worker: false,
         can_replace_builtins: false,
         process_reaches_code_on_its_prototypes: false,
+        warnings_load_events: false,
+        takes_first_texts: false,
     };
 
     fn fold_inputs_with_facts<'s>(
@@ -457,6 +462,17 @@ mod tests {
     }
 
     #[test]
+    fn testing_word_decides_whether_runtime_sources_take_arms_of_plain_run() {
+        assert_fact_decides_import(
+            "if (!IS_COMPILED_AHEAD_OF_TIME) import('./addon');",
+            |takes_first_texts| ProgramFacts {
+                takes_first_texts,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
     fn build_decides_whether_runtime_sources_load_code() {
         assert_fact_decides_import(
             "if (CAN_LOAD_CODE_AT_RUN_TIME) import('./addon');",
@@ -495,6 +511,17 @@ mod tests {
             "if (PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES) import('./process');",
             |process_reaches_code_on_its_prototypes| ProgramFacts {
                 process_reaches_code_on_its_prototypes,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn build_decides_whether_runtime_sources_load_node_events_where_they_print_a_warning() {
+        assert_fact_decides_import(
+            "if (WARNINGS_LOAD_NODE_EVENTS) import('./events');",
+            |warnings_load_events| ProgramFacts {
+                warnings_load_events,
                 ..NO_FACTS
             },
         );

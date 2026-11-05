@@ -1,7 +1,10 @@
 // SIZE lines in a row. Each takes another object out of a list, returns early by one of its fields and keeps another in a variable of its own, and all of them are read at the end.
 // One object of the list comes out of JSON.parse, so every line guesses anew what it has read, and the way on which a guess fails meets the ways on which earlier guesses failed.
+// What the build holds at its peak grows in line with the program as well, but a line is dear: 105 KB on x64, 120 KB on arm64, most of it the blocks that the back end lays for the one
+// large function. At 500 lines that is 40 to 46 MB more than at 125, where the bound of this driver gives 40: it was met or not by where the driver, which looks every 50 ms, happened
+// to look. So the sizes end at 250, where the build holds 23 MB more than at 60 and may hold 36. What a line costs is what ought to fall.
 // It writes a program: SIZE says how large, PASSES how many copies of its function under names of their own.
-// Sizes: 125 250 500
+// Sizes: 60 125 250
 // Passes: 1
 // Grows: the build, linear
 const size = Number(process.env.SIZE ?? 2),

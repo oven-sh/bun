@@ -1,6 +1,6 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
 import { builtinEntries, textOf } from "../bundler/compile-trim-features";
 import { test } from "./supported";
@@ -59,36 +59,41 @@ test("there are many classes, and the table leaves the prototype objects of some
   }).toEqual({ classes: true, taken: expect.arrayContaining(["WebSocket", "Worker", "URLPattern"]) });
 });
 
-// `gap` says what the report holds today, on Linux x64, where the goal is not met yet. Once it is met that test fails: take the gap away.
-const questions: { title: string; gap?: string; ask(path: string, token: string): string[] }[] = [
+// `gap` says what the report holds today, on Linux, where the goal is not met yet: how many of its lines say what blocks --trim, and how many
+// name a class. Once the goal is met that test fails: take the gap away. A mark does not see a number grow worse: a case beside it holds the
+// report to these numbers.
+type Gap = { block?: number; name: number };
+const inWords = ({ block, name }: Gap) =>
+  `${block ? `${block} lines say what blocks --trim and ${name}` : `${name} lines`} name a class, the goal is none`;
+const questions: { title: string; gap?: Gap; ask(path: string, token: string): string[] }[] = [
   { title: "its type", ask: path => [`typeof ${path}`] },
   { title: "its name", ask: path => [`${path}.name`] },
   { title: "its length", ask: path => [`${path}.length`] },
   {
     title: "whether its prototype object has a name",
-    gap: "94 lines name a class, the goal is none",
+    gap: { name: 94 },
     ask: path => [`"nothing" in ${path}.prototype`],
   },
   {
     title: "how many names its prototype object has",
-    gap: "94 lines name a class, the goal is none",
+    gap: { name: 94 },
     ask: path => [`Object.getOwnPropertyNames(${path}.prototype).length`],
   },
   {
     title: "whether an object is an instance of it",
-    gap: "3 lines say what blocks --trim and 92 name a class, the goal is none",
+    gap: { block: 3, name: 96 },
     ask: path => [`{} instanceof ${path}`],
   },
   {
     title: "whether an object made over its prototype object is an instance of it",
-    gap: "3 lines say what blocks --trim and 92 name a class, the goal is none",
+    gap: { block: 3, name: 96 },
     ask: path => [`Object.create(${path}.prototype) instanceof ${path}`],
   },
   { title: "the numbers on it", ask: (_, token) => constantsOf(token).map(constant => constant.path) },
 ];
 const allQuestions: (typeof questions)[number] = {
   title: "all of that in one program",
-  gap: "3 lines say what blocks --trim and 92 name a class, the goal is none",
+  gap: { block: 3, name: 96 },
   ask: (path, token) => questions.flatMap(each => each.ask(path, token)),
 };
 
@@ -102,20 +107,36 @@ const askedTogether: typeof questions = [
   allQuestions,
 ];
 
+const linesThatNameAClass = (report: string) =>
+  Array.from(report.matchAll(/^aot: trim: kept .+: used \((.+?)\)/gm), ([line, user]) => ({ line, user }))
+    .filter(({ user }) => classes.some(({ path }) => isOf(path, user)))
+    .map(({ line }) => line);
+
 for (const { title, gap, ask } of askedTogether) {
+  const head = `what a program asks about a class without calling anything is no use of the class: ${title}`;
+  let asked: Promise<string> | undefined;
+  const report = () =>
+    (asked ??= reportOf(
+      classes
+        .map(({ path, token }) => ask(path, token))
+        .filter(about => about.length > 0)
+        .map(about => `console.log(${about.join(", ")});\n`)
+        .join(""),
+    ));
   (gap ? test.failing : test)(
-    `what a program asks about a class without calling anything is no use of the class: ${title}${gap ? `: ${gap}` : ""}`,
+    `${head}${gap ? `: ${inWords(gap)}` : ""}`,
     async () => {
-      const asked = classes.map(({ path, token }) => ask(path, token)).filter(about => about.length > 0);
-      const report = await reportOf(asked.map(about => `console.log(${about.join(", ")});\n`).join(""));
-      expect(report).toContain("aot: trim: the compiler can see every API this program uses");
-      const users = Array.from(report.matchAll(/^aot: trim: kept .+: used \((.+?)\)/gm), ([line, user]) => ({
-        line,
-        user,
-      }));
-      expect(users.filter(({ user }) => classes.some(({ path }) => isOf(path, user))).map(({ line }) => line)).toEqual(
-        [],
-      );
+      expect(await report()).toContain("aot: trim: the compiler can see every API this program uses");
+      expect(linesThatNameAClass(await report())).toEqual([]);
+    },
+    600_000,
+  );
+  if (!gap) continue;
+  test.skipIf(!isLinux)(
+    `${head}: ${gap.block ? `no more than ${gap.block} lines say` : "no line says"} what blocks --trim and no more than ${gap.name} name a class`,
+    async () => {
+      expect((await report()).match(/^aot: trim: blocked by /gm)?.length ?? 0).toBeLessThanOrEqual(gap.block ?? 0);
+      expect(linesThatNameAClass(await report()).length).toBeLessThanOrEqual(gap.name);
     },
     600_000,
   );

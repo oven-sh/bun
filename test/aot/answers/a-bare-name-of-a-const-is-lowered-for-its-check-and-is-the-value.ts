@@ -27,3 +27,4 @@ function early(): string { try { return String(six()); } catch (e) { return "dea
 report(early());
 for (let round = 0; round < 2; round++) { report(six()); report(name()); report(open()); }
 report("end");
+declare function report(value: unknown): void;

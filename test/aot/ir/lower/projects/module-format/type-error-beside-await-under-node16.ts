@@ -1,10 +1,5 @@
 // RUN: lower
-
-// A file with a top-level `await` under Node16 counts as checked: the type that is written is sent. That the value does not fit it stops no build.
-// CHECK: function {{*}}kind=Module flags=[IsAsync, IsChecked]
-// CHECK: Await
-// CHECK: [[text]] = String string="text"
-// CHECK-NEXT: Convert [[text]] declared={type=number}
+// DIAGNOSTIC: TS2322 main.ts:4
 
 // FILE: main.ts
 const one = await Promise.resolve(1);

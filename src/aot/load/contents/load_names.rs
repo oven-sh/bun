@@ -225,7 +225,10 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
     for &file in application.compiled_files() {
         let source = parsed_source(application, file);
         loads_by_unknown_name = loads_by_unknown_name
-            || source.is_none_or(|source| source.contents.names.loads_by_unknown_name)
+            || source.is_none_or(|source| {
+                source.contents.names.loads_by_unknown_name
+                    || source.builtins.loads_unknown_modules()
+            })
             || resolve_loads_through_imported_loaders(application, file);
         let Some(source) = source else {
             continue;

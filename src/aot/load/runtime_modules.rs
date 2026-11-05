@@ -45,6 +45,7 @@ type DirectoryEntries = (Vec<Vec<u8>>, Vec<Vec<u8>>);
 pub(crate) struct RuntimeModules {
     archive: &'static Archive,
     omits_builtin_modules: bool,
+    takes_first_texts: bool,
     answers_modules_of_own_tests: bool,
     aliases: Cfg,
     files: FxHashMap<Vec<u8>, RuntimeFile>,
@@ -66,6 +67,7 @@ impl RuntimeModules {
             archive,
             paths,
             omits_builtin_modules,
+            takes_first_texts: false,
             answers_modules_of_own_tests: runs_own_tests(),
             aliases: Cfg::default(),
             directories: collect_directories(&files),
@@ -82,6 +84,11 @@ impl RuntimeModules {
         let aliases = self.aliases;
         self.public_specifiers
             .retain(|&(_, specifier)| !(runs_tests && wraps_entry_point(specifier, aliases)));
+        self
+    }
+
+    pub(crate) fn with_first_texts(mut self, takes_first_texts: bool) -> RuntimeModules {
+        self.takes_first_texts = takes_first_texts;
         self
     }
 
@@ -131,6 +138,17 @@ impl RuntimeModules {
 
     pub(crate) fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         let file = self.files.get(path)?;
+        if self.takes_first_texts && file.contents.is_none() {
+            let first = [b"first-texts/", &*file.archive_name].concat();
+            if let Some(text) = Archive::read(&first) {
+                return Some(Cow::Owned(text));
+            }
+        }
+        self.read_text_for_compiler(path)
+    }
+
+    fn read_text_for_compiler(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        let file = self.files.get(path)?;
         match file.contents {
             Some(contents) => Some(Cow::Borrowed(contents)),
             None => Archive::read(&file.archive_name).map(Cow::Owned),
@@ -149,7 +167,7 @@ impl RuntimeModules {
 
     pub(crate) fn read_part_seen_by_every_file(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         let part = self.part_seen_by_every_file(path)?;
-        let mut text = self.read(path)?.into_owned();
+        let mut text = self.read_text_for_compiler(path)?.into_owned();
         let mut kept: Vec<(u32, u32)> = part.seen.iter().chain(&part.asked).copied().collect();
         kept.push((text.len() as u32, 0));
         kept.sort_unstable();

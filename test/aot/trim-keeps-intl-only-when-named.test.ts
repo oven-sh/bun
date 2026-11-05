@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim, tempDirForAotBuilds } from "../bundler/compile-trim-features";
 import { spawned } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { describe, test } from "./supported";
 
 const collation = "Intl.Collator and localeCompare";
@@ -185,8 +186,10 @@ describe.skipIf(!canTrim)("text from outside the program that uses what was remo
     [`return WebAssembly.validate(new Uint8Array(8))`, "false", "validate", "webassembly"],
   ];
 
-  const asks = (snippets: Snippet[]) => async () => {
-    using dir = tempDirForAotBuilds("aot-trim-named", { "build.mjs": buildScript, "main.mjs": program });
+  let dir: ReturnType<typeof tempDirForAotBuilds> | undefined;
+  afterAll(() => dir?.[Symbol.dispose]());
+  async function buildBoth() {
+    dir = tempDirForAotBuilds("aot-trim-named", { "build.mjs": buildScript, "main.mjs": program });
     const folder = String(dir);
     const build = (outfile: string, trim: unknown) =>
       spawned([bunExe(), "build.mjs", "./main.mjs", join(folder, outfile), JSON.stringify(trim)], folder, bunEnv);
@@ -195,14 +198,19 @@ describe.skipIf(!canTrim)("text from outside the program that uses what was remo
       stdout: "built\n",
       exitCode: 0,
     });
+    return folder;
+  }
+  let bothAreBuilt: ReturnType<typeof buildBoth> | undefined;
 
+  const asks = (snippets: Snippet[], inTrimmed: "throws" | "answers") => async () => {
+    const folder = await (bothAreBuilt ??= buildBoth());
     const found: Record<string, string> = {};
     const expected: Record<string, string> = {};
     for (const [code, whole, api, name] of snippets) {
       for (const executable of ["trimmed", "allowed"]) {
         found[`${executable}: ${code}`] = (await spawned([join(folder, executable), code], folder, bunEnv)).stdout;
         const answer =
-          executable === "trimmed"
+          executable === "trimmed" && inTrimmed === "throws"
             ? `caught: ERR_FEATURE_REMOVED ${api} was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "${name}" to compile.trim.allow in Bun.build().`
             : `answer: ${whole}`;
         expected[`${executable}: ${code}`] = `${typesOfNames}\n${answer}\n${typesOfNames}\n`;
@@ -210,10 +218,15 @@ describe.skipIf(!canTrim)("text from outside the program that uses what was remo
     }
     expect(found).toEqual(expected);
   };
-  test("the names stay, the call throws, and the error says how to keep the API", asks(thrown), 600_000);
+  test("the names stay, the call throws, and the error says how to keep the API", asks(thrown, "throws"), 600_000);
+  test(
+    "what the program only asks the type of is removed too: what is reached",
+    asks(answeredToday, "answers"),
+    600_000,
+  );
   test.failing(
     "what the program only asks the type of is removed too: 4 calls answer for 0: toLocaleString, NumberFormat, localeCompare, validate",
-    asks(answeredToday),
+    asks(answeredToday, "throws"),
     600_000,
   );
 });

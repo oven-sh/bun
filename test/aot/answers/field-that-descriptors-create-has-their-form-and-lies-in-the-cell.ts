@@ -27,3 +27,4 @@ one.y = 9;
 report(one.y);
 report(JSON.stringify(Object.getOwnPropertyDescriptor(one, "z")));
 report("end");
+declare function report(value: unknown): void;

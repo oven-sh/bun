@@ -18,3 +18,4 @@ report(look(early()));
 report(readC(early()));
 report("b" in make(false));
 report("end");
+declare function report(value: unknown): void;

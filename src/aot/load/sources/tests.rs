@@ -402,7 +402,7 @@ fn entry_point_name_cannot_leave_module_prefix() {
                 .sources;
             let main = input.files.entry_points()[0];
             let public_path = sources.module_paths(main).public_path;
-            assert_eq!(public_path, b"/$bunfs/root/_.._/out/app.js");
+            assert_eq!(public_path, b"/$bunfs/_.._/_.._/out/app.js");
         },
     );
 }

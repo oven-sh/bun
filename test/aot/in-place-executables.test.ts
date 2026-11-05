@@ -159,6 +159,15 @@ oneAtATime.failing(
   "the build of the scenes that load by name names dynamic-import alone: 4 causes for 1: eval, native-code and runtime-code beside it, none with a place",
   names("loads by name", ["dynamic-import"]),
 );
+// A mark does not see a number grow worse. On Windows the build names the first two alone.
+oneAtATime(
+  "the build of the scenes that load by name names dynamic-import alone but for eval, native-code and runtime-code",
+  async () => {
+    await buildScenery("loads by name");
+    const namedToday = ["dynamic-import", "eval", "native-code", "runtime-code"];
+    expect(whatBlocks.get("loads by name")!.causes.filter(cause => !namedToday.includes(cause))).toEqual([]);
+  },
+);
 
 test("extra entry points load as compiled code by absolute path", async () => {
   using dir = tempDir("aot-in-place", files);

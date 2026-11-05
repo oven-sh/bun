@@ -1,10 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// CHECK: [[area]] = CheckInitialized {{*}} name="area"
-// CHECK: = Call [[area]], {{*}}calleeName="area"
+// DIAGNOSTIC: TS1484 1
 
 // FILE: main.ts
-// Under verbatimModuleSyntax, which inner/tsconfig.json sets, TypeScript wants `import type` for `Shape`. That is an error of the type checker, and a build reports none.
+// verbatimModuleSyntax in a package's own tsconfig.json applies to that package, even when the program's tsconfig.json does not set it.
 import { area } from "./inner/index.ts";
 console.log(area({ width: 2, height: 3 }));
 

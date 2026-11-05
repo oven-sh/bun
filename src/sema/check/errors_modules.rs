@@ -335,9 +335,11 @@ impl Checker<'_, '_> {
         let is_at_top = container.module.is_none() && container.is_appropriate_context;
         // `IsModuleAugmentationExternal`
         let adds_to_another = if is_at_top {
-            cx.is_module
+            hir.is_module_for(module.name)
         } else {
-            container.is_ambient_module && container.is_top_level && !cx.is_module
+            container.is_ambient_module
+                && container.is_top_level
+                && !hir.is_module_for(hir[container.module].name)
         };
         let is_augmentation = is_ambient_module && adds_to_another;
         let inner = StatementParent {
@@ -444,7 +446,7 @@ impl Checker<'_, '_> {
             }
         } else if is_global {
             self.error_at((cx.file, name_pos, 0), 2669, &[]);
-        } else if !is_at_top || !cx.is_global_source_file {
+        } else if !is_at_top || !cx.is_global_source_file && hir.is_module_for(module.name) {
             self.error_at((cx.file, name_pos, 0), 2435, &[]);
         } else if let ModuleName::String(name) = module.name
             && is_relative(self.atoms().bytes(name))

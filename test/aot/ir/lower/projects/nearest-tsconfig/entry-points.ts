@@ -1,11 +1,10 @@
-// RUN: link
+// RUN: lower
 // ENTRY: top.ts pkg/middle.ts pkg/test/deep.ts
-// STATISTIC: SourceFilesChecked = 3
+// DIAGNOSTIC: TS7030 top.ts:1
+// DIAGNOSTIC: TS6133 pkg/middle.ts:2
+// DIAGNOSTIC: TS7006 pkg/test/deep.ts:1
 
-// Each file breaks the one rule of style that the tsconfig.json nearest to it turns on: noImplicitReturns, noUnusedLocals, noImplicitAny.
-// No build reports that. The three files are compiled alike, each with the types that it writes.
-
-// CHECK-COUNT-3: function {{*}}name="smells" {{*}}flags=[IsChecked, HasExplicitName] {{*}}parameters=[{type=boolean}, {type=anything}] results=[{type=anything}]
+// Each file is checked under the tsconfig.json nearest to it.
 
 // FILE: tsconfig.json
 {"compilerOptions":{"target":"ESNext","module":"Preserve","moduleResolution":"bundler","noEmit":true,"types":[],"strict":true,"noImplicitAny":false,"noImplicitReturns":true,"noUnusedLocals":false}}

@@ -3,8 +3,8 @@ use core::ops::Range;
 use super::entry_parameters::EntryPosition;
 use super::finish::FinishScratch;
 use super::generated::{
-    BlockRole, EntryParameter, Function, Opcode, STANDS_IN_TAIL_POSITION, TerminatorKind,
-    ValueHead, visit_terminator_fields, visit_value_fields,
+    BlockFrequency, BlockRole, EntryParameter, Function, Opcode, STANDS_IN_TAIL_POSITION,
+    TerminatorKind, ValueHead, visit_terminator_fields, visit_value_fields,
 };
 use super::ids::{BlockId, Id, TypeId, ValueId, optional_id_to_word};
 use super::ssa::SsaState;
@@ -232,6 +232,7 @@ pub(super) struct PendingBlock {
     pub(super) handler: Option<PendingTarget>,
     pub(super) covering: Option<Handler>,
     pub(super) role: BlockRole,
+    pub(super) frequency: BlockFrequency,
     pub(super) subject: Option<ValueId>,
     pub(super) visible_variable_count: u32,
 }
@@ -250,6 +251,7 @@ impl Default for PendingBlock {
             handler: None,
             covering: None,
             role: BlockRole::Ordinary,
+            frequency: BlockFrequency::Normal,
             subject: None,
             visible_variable_count: 0,
         }
@@ -353,6 +355,10 @@ impl FunctionBuilder {
             self.ssa.add_predecessor(handler.block, block);
         }
         block
+    }
+
+    pub fn set_frequency(&mut self, block: BlockId, frequency: BlockFrequency) {
+        self.blocks[block.index()].frequency = frequency;
     }
 
     pub fn create_handler(

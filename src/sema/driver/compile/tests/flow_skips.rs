@@ -320,8 +320,9 @@ fn a_call_beside_a_comma_that_is_asked_about_in_the_middle_of_a_far_skip_leaves_
 #[test]
 fn names_behind_many_loops_do_not_each_leave_a_type_at_every_loop() {
     const COUNT: usize = 300;
-    let mut text =
-        String::from("declare const items: number[];\ndeclare function make(): string | number;\n");
+    let mut text = String::from(
+        "// @ts-nocheck\ndeclare const items: number[];\ndeclare function make(): string | number;\n",
+    );
     for index in 0..COUNT {
         writeln!(
             text,

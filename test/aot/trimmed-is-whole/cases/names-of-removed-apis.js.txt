@@ -31,7 +31,7 @@ console.log("WebSocket" in globalThis, Object.hasOwn(globalThis, "WebSocket"));
 //@ kept-today WebSocket a class that is asked a question counts as used
 console.log({} instanceof WebSocket, Object.create(WebSocket.prototype) instanceof WebSocket);
 //// a-property-that-holds-an-instance
-//@ kept-today Bun.redis a question about the name counts as a read of it
+//@ removes Bun.redis
 console.log("redis" in Bun, Object.hasOwn(Bun, "redis"), Object.keys(Bun).includes("redis"));
 //// has-instance
 //@ kept-today WebSocket a class that is asked a question counts as used

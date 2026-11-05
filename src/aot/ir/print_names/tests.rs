@@ -4,7 +4,7 @@ use crate::ir::ids::ModuleId;
 use crate::ir::program::Program;
 use crate::ir::property_keys::PropertyKey;
 use crate::ir::testing::{array_of, layout, print_with};
-use crate::ir::types::OpaqueKind;
+use crate::ir::types::{OpaqueKind, Type};
 
 fn quoted(bytes: &[u8]) -> String {
     let mut out = String::new();

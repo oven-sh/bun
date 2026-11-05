@@ -188,13 +188,21 @@ impl Project {
     }
 
     pub fn roots(&self, host: &dyn Host) -> Roots {
+        self.roots_less(host, &self.exclude)
+    }
+
+    /// `roots`, as if the project wrote no `exclude`.
+    pub fn roots_with_what_is_excluded(&self, host: &dyn Host) -> Roots {
+        self.roots_less(host, &[])
+    }
+
+    fn roots_less(&self, host: &dyn Host, exclude: &[Vec<u8>]) -> Roots {
         let case_sensitive = host.is_case_sensitive();
         let specs = self.options.include_specs.iter();
         let include: Vec<Vec<u8>> = specs.map(|it| it.1.clone()).collect();
         let base = join(b"", &self.base);
         let extra_extensions = extra_supported_extensions(host, &self.options);
-        let patterns =
-            GlobMatcher::new(&include, &self.exclude, &base, case_sensitive, Usage::Files);
+        let patterns = GlobMatcher::new(&include, exclude, &base, case_sensitive, Usage::Files);
         let base: Vec<Vec<u8>> = (PathParts::split_directory(typescript_path(&base)).iter())
             .map(|it| it.to_vec())
             .collect();

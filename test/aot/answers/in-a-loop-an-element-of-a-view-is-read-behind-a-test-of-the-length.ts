@@ -20,3 +20,4 @@ report(typeof report(holder as unknown as string));
 const bounds = [0, 1, 3, 4, 5, 9];
 for (let at = 0; at < bounds.length; at++) { report(wrapped(holder, bounds[at])); report(plain(holder, bounds[at])); }
 report("end");
+declare function report(value: unknown): void;

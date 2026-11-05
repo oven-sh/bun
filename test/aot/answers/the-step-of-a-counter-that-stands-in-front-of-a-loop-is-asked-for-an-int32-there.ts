@@ -54,3 +54,4 @@ report(said(firstDifference(ints, other)));
 report(said(firstDifference(ints, other, 0)));
 report(said(firstDifference(ints, other, undefined, 2)));
 report("end");
+declare function report(value: unknown): void;

@@ -15,7 +15,7 @@ const cases: Record<string, [Function, ...unknown[]]> = {
   behindATypeThatGoes: [function (a: unknown[], g: (x: number) => number) { let b = a
     type Gone = number;
     true && [1].map(g)
-    return b === a; }, [0, [5]], (x: number) => x],
+    return b === a; }, [0, [5]], (x: number) => x], // @ts-expect-error
   aVarWithAType: [function (a: number) { if (false) { var v: number = 1, w: string[] = []; } return [v, w, a]; }, 1],
 };
 const show = (run: () => unknown) => {

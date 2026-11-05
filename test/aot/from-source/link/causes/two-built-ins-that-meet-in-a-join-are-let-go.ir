@@ -1,6 +1,6 @@
 # the control: two objects, not two names of one: the join follows neither
 # -- source: two-built-ins-that-meet-in-a-join-are-let-go.ts
-# declare const input: boolean;
+# declare const input: boolean; // @ts-expect-error
 # console.log(typeof (input ? globalThis : process).argv);
 # -- end of source
 # RUN: causes

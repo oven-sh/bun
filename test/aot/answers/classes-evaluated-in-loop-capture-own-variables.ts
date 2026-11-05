@@ -9,3 +9,4 @@
 function scene() { const made: { read(): number }[] = []; for (let i = 0; i < 3; i++) { const mine = String(i); made.push(new (class { kept = mine.length; read() { return this.kept * 2 + mine.length; } })()); } for (let more = 0; more < 3; more++) made.push(new (class { kept = more * 7; read() { return this.kept * 2 + more * 7; } })()); let said = ""; for (const each of made) said += each.read() + "-"; return said; }
 report(scene()); report(scene());
 report("end");
+declare function report(value: unknown): void;

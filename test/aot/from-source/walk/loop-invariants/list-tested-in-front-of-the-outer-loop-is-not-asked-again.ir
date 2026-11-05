@@ -1,7 +1,7 @@
 # neither loop writes a list, so the row stands in front of the outer loop, the inner loop is built once in the typed copy, and storage and length stand in front of the outer head
 # f1 = sumsAgainAndAgain
 # -- source: list-tested-in-front-of-the-outer-loop-is-not-asked-again.ts
-# declare function sink(...values: unknown[]): void;
+# declare function sink(...values: unknown[]): void; // @ts-expect-error
 # function sumsAgainAndAgain(list: number[] | null | undefined, rounds: number) { let s = 0; for (let k = 0; k < rounds; k++) { for (let i = 0; i < list.length; i++) s += list[i] + list[k & 1]; } return s; }
 # sink(sumsAgainAndAgain, [1, 2, 3]);
 # -- end of source

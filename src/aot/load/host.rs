@@ -53,7 +53,7 @@ use crate::load::loaders::{
 };
 use crate::load::made_own_require;
 use crate::load::manual_mocks::find_manual_mocks;
-use crate::load::module_paths::compute_program_path;
+use crate::load::module_paths::{compute_program_path, compute_relative_path, count_levels_above};
 use crate::load::modules_with_queries::{
     ModulesWithQueries, find_worker_constructor, has_vite_suffix,
 };
@@ -189,7 +189,7 @@ fn collect_entry_points_by_file(options: &Options<'_>) -> Vec<(Vec<u8>, Vec<u8>)
         .zip(&options.entry_points)
         .filter_map(|(name, entry_point)| {
             let in_executable = [&paths.module_prefix[..], &name[..]].concat();
-            let on_disk = find_file_named_as_in_executable(paths, &in_executable)?;
+            let on_disk = find_file_named_as_in_executable(paths, 0, &in_executable)?;
             let entry_point = from_argument(&options.code.working_directory, entry_point);
             Some((from_native(&on_disk), entry_point))
         })
@@ -378,6 +378,9 @@ impl<'a> LoadHost<'a> {
         if path == compiler_declarations::PATH {
             return ServedBy::Declarations(compiler_declarations::TEXT);
         }
+        if path == runtime_types::GLOBALS_THAT_NOTHING_DECLARES_PATH {
+            return ServedBy::Declarations(runtime_types::globals_that_nothing_declares());
+        }
         match runtime_types::is_file(path) {
             true => ServedBy::RuntimeTypes,
             false => ServedBy::Disk,
@@ -416,9 +419,20 @@ impl<'a> LoadHost<'a> {
             true => options.entry_points.iter().position(is_written_as),
             false => None,
         };
+        let paths = &options.paths;
+        let below_root = match index {
+            Some(index) => Some(paths.entry_point_names[index].clone()),
+            None => compute_relative_path(&paths.root_directory, to_native(path)),
+        };
+        let lies_above_root = below_root.is_some_and(|it| count_levels_above(&it) > 0);
+        if lies_above_root && !options.aot.runs_in_place {
+            return None;
+        }
+        let runs_in_place = options.aot.runs_in_place;
         Some(compute_program_path(
-            options.aot.runs_in_place,
-            &options.paths,
+            runs_in_place,
+            paths,
+            0,
             to_native(path),
             index,
         ))
@@ -874,7 +888,8 @@ impl CodeHost for LoadHost<'_> {
         let options = self.input.options;
         if is_import
             && !options.aot.runs_in_place
-            && let Some(path) = find_file_named_as_in_executable(&options.paths, request.specifier)
+            && let written = request.specifier
+            && let Some(path) = find_file_named_as_in_executable(&options.paths, 0, written)
             && let path = from_native(&path)
             && let Some(path) = match self.is_file(&path) {
                 true => Some(path),
@@ -1043,6 +1058,10 @@ impl CodeHost for LoadHost<'_> {
             files.push(runtime_types::GLOBALS_OF_TEST_RUNNER.to_vec());
         }
         files
+    }
+
+    fn declarations_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
+        Some(runtime_types::GLOBALS_THAT_NOTHING_DECLARES_PATH.to_vec())
     }
 
     fn type_root_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
@@ -1445,9 +1464,8 @@ impl CodeHost for LoadHost<'_> {
             platform: self.input.platform,
             replaced: &load.replaced_builtins,
             runs_tests: load.runs_tests,
-            holds_language: load.runs_tests,
-            is_text_asked: !load.runs_tests
-                && !self.has_file_that_asks_for_what_unseen_code_finds(),
+            holds_language: false,
+            is_text_asked: !self.has_file_that_asks_for_what_unseen_code_finds(),
         };
         let mut answers =
             builtin_uses::finish_application_file(&input, needs_declarations, request, source);
@@ -1462,6 +1480,11 @@ impl CodeHost for LoadHost<'_> {
         let is_file = |path: &[u8]| self.is_file(path) || self.is_file(&from_native(path));
         let is_data = |path: &[u8]| parses_text_as_data(self.default_loader(path));
         let find_path_at_run_time = || self.find_path_at_run_time(request.path);
+        let options = self.input.options;
+        let sees_backslashes = match options.aot.runs_in_place {
+            true => cfg!(windows),
+            false => options.paths.module_prefix.starts_with(b"B:/"),
+        };
         let write_url =
             |text: &[u8], base: Option<&[u8]>| self.input.provider.write_url(text, base);
         let scan = ScanInput {
@@ -1471,6 +1494,7 @@ impl CodeHost for LoadHost<'_> {
             is_file: &is_file,
             is_data: &is_data,
             find_path_at_run_time: &find_path_at_run_time,
+            sees_backslashes: (!is_host_path(request.path)).then_some(sees_backslashes),
             write_url: &write_url,
         };
         source.contents = scan_file(request, &source.builtins, &scan);

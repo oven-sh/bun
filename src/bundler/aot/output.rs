@@ -5,29 +5,47 @@ use crate::output_file::{IndexOptional, Options, OptionsData};
 use bun_aot::Compilation;
 use bun_aot::compile::{EntryPointPaths, ProgramSummary};
 use bun_ast::Loader;
+use bun_core::strings;
 use bun_paths::is_sep_any;
 use bun_sema::util::{FxHashMap, FxHashSet};
 
 /// Entry point `i` is shown as `shown[i]`, the path of its source, and is a file of the executable under `embedded[i]`, the name that `bun build --compile` gives it.
 pub(crate) struct EntryPointNames<'a> {
     pub module_prefix: &'a [u8],
+    /// `Compilation::levels_above_root`
+    pub levels_above_root: usize,
     pub shown: &'a [Vec<u8>],
     pub embedded: &'a [Vec<u8>],
 }
 
 impl EntryPointNames<'_> {
-    /// `embedded[i]` by `shown[i]` as a public path spells it: there a `..` that leaves the root directory of the build is `_.._`.
+    /// `embedded[i]` by `shown[i]` as a public path spells it behind `/$bunfs/root/`, or behind `/$bunfs/` for a file above the root directory of the build.
     fn embedded_by_public_name(&self) -> FxHashMap<Vec<u8>, &[u8]> {
         let mut names = FxHashMap::default();
         for (shown, embedded) in self.shown.iter().zip(self.embedded) {
-            let segments = bun_core::strings::split(shown, b"/").map(|segment| match segment {
-                b".." => &b"_.._"[..],
-                _ => segment,
-            });
-            let public_name = segments.collect::<Vec<&[u8]>>().join(&b"/"[..]);
+            let folders = bun_core::strings::split(shown, b"/");
+            let level = folders.take_while(|&folder| folder == b"..").count();
+            let folders = match (1..=self.levels_above_root).contains(&level) {
+                true => self.levels_above_root + 1 - level,
+                false => level,
+            };
+            let below = &shown[shown.len().min(3 * level)..];
+            let public_name = [&b"_.._/".repeat(folders)[..], below].concat();
             names.entry(public_name).or_insert(&embedded[..]);
         }
         names
+    }
+
+    fn source_name<'p>(&self, public_path: &'p [u8]) -> Option<&'p [u8]> {
+        let root = self.module_prefix;
+        let folder = root.strip_suffix(b"/").unwrap_or(root);
+        let mount = &root[..strings::last_index_of_char(folder, b'/').map_or(0, |at| at + 1)];
+        let below_root = public_path.strip_prefix(root);
+        below_root.or_else(|| {
+            public_path
+                .strip_prefix(mount)
+                .filter(|_| !mount.is_empty())
+        })
     }
 
     /// A program that runs in place has the paths of its files on disk, and no other names.
@@ -36,7 +54,7 @@ impl EntryPointNames<'_> {
         embedded_by_public_name: &FxHashMap<Vec<u8>, &'p [u8]>,
         public_path: &'p [u8],
     ) -> &'p [u8] {
-        let Some(shown) = public_path.strip_prefix(self.module_prefix) else {
+        let Some(shown) = self.source_name(public_path) else {
             return public_path;
         };
         embedded_by_public_name.get(shown).copied().unwrap_or(shown)
@@ -44,7 +62,7 @@ impl EntryPointNames<'_> {
 
     /// The name of each entry point's file. Below the root a path names the source there first, so an entry point whose embedded name is the path of another's source is a file under the path of its own.
     fn file_names<'p>(&'p self, public_paths: &'p [Vec<u8>]) -> Vec<&'p [u8]> {
-        let source_name = |path: &'p [u8]| path.strip_prefix(self.module_prefix).unwrap_or(path);
+        let source_name = |path: &'p [u8]| self.source_name(path).unwrap_or(path);
         let source_names = public_paths.iter().map(|path| source_name(path));
         let source_names: FxHashSet<&[u8]> = source_names.collect();
         let embedded = self.embedded_by_public_name();
@@ -83,6 +101,7 @@ pub(crate) fn finish_build(
         names_followed: _,
         names_plugin,
         root_folders_spelled,
+        levels_above_root,
         holds_source_paths,
         program_files: _,
         names_added_to_builtins,
@@ -103,6 +122,7 @@ pub(crate) fn finish_build(
         entry_points,
         root_directory: Vec::new(),
         root_folders_spelled,
+        levels_above_root,
         holds_source_paths,
         names_plugin,
         names_added_to_builtins,
@@ -236,13 +256,18 @@ mod tests {
         );
         let names = EntryPointNames {
             module_prefix: PREFIX,
+            levels_above_root: 2,
             shown: &shown,
             embedded: &embedded,
         };
         let embedded = names.embedded_by_public_name();
         let file_name = |path: &'static [u8]| names.file_name(&embedded, path);
         assert_eq!(file_name(b"/$bunfs/root/a.ts"), b"app");
-        assert_eq!(file_name(b"/$bunfs/root/_.._/lib/b.mjs"), b"_.._/lib/b.js");
+        assert_eq!(file_name(b"/$bunfs/_.._/_.._/lib/b.mjs"), b"_.._/lib/b.js");
+        assert_eq!(
+            file_name(b"/$bunfs/_.._/_.._/lib/c.mjs"),
+            b"_.._/_.._/lib/c.mjs"
+        );
         assert_eq!(file_name(b"/$bunfs/root/a.ts?text"), b"a.ts?text");
         assert_eq!(file_name(b"/project/a.ts"), b"/project/a.ts");
     }
@@ -252,6 +277,7 @@ mod tests {
         let (shown, embedded) = (names(&["a.js", "a.ts"]), names(&["app", "a.js"]));
         let names = EntryPointNames {
             module_prefix: PREFIX,
+            levels_above_root: 0,
             shown: &shown,
             embedded: &embedded,
         };
@@ -282,6 +308,7 @@ mod tests {
             ],
             &EntryPointNames {
                 module_prefix: PREFIX,
+                levels_above_root: 0,
                 shown: &shown,
                 embedded: &embedded_names,
             },
@@ -309,6 +336,7 @@ mod tests {
             vec![entry(b"/$bunfs/root/a.ts", b"/project/a.ts")],
             &EntryPointNames {
                 module_prefix: PREFIX,
+                levels_above_root: 0,
                 shown: &names(&["a.ts"]),
                 embedded: &names(&["a.js"]),
             },
@@ -329,6 +357,7 @@ mod tests {
             ],
             &EntryPointNames {
                 module_prefix: PREFIX,
+                levels_above_root: 0,
                 shown: &names(&["a.ts"]),
                 embedded: &names(&["a.js"]),
             },
@@ -369,6 +398,7 @@ mod tests {
             vec![entry(b"/project/a.ts", b"/project/a.ts")],
             &EntryPointNames {
                 module_prefix: PREFIX,
+                levels_above_root: 0,
                 shown: &names(&["a.ts"]),
                 embedded: &names(&["a.js"]),
             },

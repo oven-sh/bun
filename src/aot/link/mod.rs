@@ -379,7 +379,7 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
         || {
             let ids = &numbering.tables;
             let records = make_type_records(&tables, &merged_types, ids, in_parallel);
-            TypeTable::of_distinct_types(records, in_parallel)
+            TypeTable::of_distinct_types(records)
         },
         || {
             move_records(

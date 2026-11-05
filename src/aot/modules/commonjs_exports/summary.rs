@@ -1,7 +1,9 @@
 use super::{CommonJsInput, find_literal_exported_under_name};
 use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
-use crate::builtins::resolve::{ModuleObjectOwner, ModuleObjectUse};
+use crate::builtins::resolve::{
+    ModuleObjectOwner, ModuleObjectUse, redeclares_what_wrapper_hands_in,
+};
 use crate::known_helpers::Quiet;
 use crate::load::sources::parsed_source;
 use crate::modules::order::FileText;
@@ -568,7 +570,7 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         let (hir, bound, decisions) = (self.hir, self.bound, self.decisions());
         let mut evals = bound.runtime.eval_scopes().iter();
         let mut is_out_of_sight = bound.file_uses_arguments()
-            || !bound.runtime.redeclared_commonjs_variables().is_empty()
+            || redeclares_what_wrapper_hands_in(hir, bound)
             || !hir.with_bodies.is_empty()
             || evals.any(|&(call, _)| !decisions.is_dead_expr(call));
         for &(target, _) in bound.runtime.unbound_name_stores() {

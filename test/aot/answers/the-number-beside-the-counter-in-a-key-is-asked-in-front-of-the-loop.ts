@@ -69,3 +69,4 @@ const starts: any[] = [0, 2, 5, -1, -0, 0.5, NaN, Infinity, 4294967294, 42949672
 for (const start of starts) { const list = [1, 2, 3]; try { report(said(fillFrom(list, start, 2, 9))); } catch (e: any) { report(e.name); } report(Object.keys(list).join(",") + " " + list.length); }
 
 report("end");
+declare function report(value: unknown): void;

@@ -22,6 +22,7 @@ pub(crate) struct RuntimeRoots {
     pub host_loaded_modules: Vec<RuntimeModule>,
     pub modules_named_at_run_time: Vec<RuntimeModule>,
     pub imports_cluster: bool,
+    pub loads_events: bool,
     pub imports_uncompiled_code: bool,
     pub asks: RuntimeUses,
     pub holds_what_unseen_code_finds: bool,
@@ -64,7 +65,6 @@ pub(crate) struct FurtherLibraryCode<'a> {
     pub used_at_start: &'a [BuiltinId],
     pub serves_unseen_code: bool,
     pub loads_code_from_disk: bool,
-    pub runs_tests: bool,
     pub has_file_that_asks_for_it: bool,
 }
 
@@ -98,6 +98,7 @@ pub(crate) fn collect_runtime_roots(
         }
         if let Some(source) = parsed_source(application, file) {
             functions.extend(source.builtins.called_functions());
+            host_loaded.extend(source.builtins.loaded_modules());
             named.extend(source.named_modules().iter().map(|it| it.module));
             lets_in_what_nobody_names |= source.builtins.uses().lets_in_what_nobody_names
                 || source.contents.names.may_go_to_loader_of_host;
@@ -124,7 +125,6 @@ pub(crate) fn collect_runtime_roots(
         || contents.names_worker_constructor
         || contents.loads_by_unknown_name
         || contents.loads_by_unknown_path
-        || further.runs_tests
         || lets_in_what_nobody_names;
     let answered = match is_held_whatever_texts_ask {
         true => RuntimeUses::default(),
@@ -139,8 +139,7 @@ pub(crate) fn collect_runtime_roots(
         || contents.names_worker_constructor
         || contents.loads_by_unknown_name
         || contents.loads_by_unknown_path;
-    let holds_what_unseen_code_finds =
-        keeps_code_without_names || further.runs_tests || lets_in_what_nobody_names;
+    let holds_what_unseen_code_finds = keeps_code_without_names || lets_in_what_nobody_names;
     let without_names = match holds_what_unseen_code_finds {
         true => RuntimeUses::of_unseen_code(platform),
         false => RuntimeUses::default(),
@@ -152,6 +151,16 @@ pub(crate) fn collect_runtime_roots(
         false => collect_asks(application, &named, &host_loaded, &answered),
     };
     functions.retain(|&function| exists_on(function, platform));
+    let handed_out = RuntimeUses::of_native_modules_handed_out(&named, platform);
+    host_loaded.extend(&handed_out.modules);
+    host_loaded.extend(&handed_out.modules_read_whole);
+    host_loaded.extend(handed_out.exports_read.iter().map(|it| it.0));
+    functions.extend(
+        handed_out
+            .functions
+            .iter()
+            .filter(|&&it| exists_on(it, platform)),
+    );
     let mut host_loaded_modules: Vec<RuntimeModule> = host_loaded.into_iter().collect();
     host_loaded_modules.shared_sort_unstable_by_key(|module| module.registry_id());
     let imported = application.host_modules().iter().copied();
@@ -159,12 +168,14 @@ pub(crate) fn collect_runtime_roots(
     modules.extend(&named);
     let imports_cluster = modules.contains(&RuntimeModule::NodeCluster);
     modules.extend(&host_loaded_modules);
+    let loads_events = modules.contains(&RuntimeModule::NodeEvents);
     let functions: Vec<RuntimeFunction> = functions.into_iter().collect();
     RuntimeRoots {
         paths: order_root_paths(runtime_modules, modules, functions),
         host_loaded_modules,
         modules_named_at_run_time: named,
         imports_cluster,
+        loads_events,
         imports_uncompiled_code,
         holds_what_unseen_code_finds,
         asks,
@@ -303,7 +314,6 @@ mod tests {
         used_at_start: &[],
         serves_unseen_code: false,
         loads_code_from_disk: false,
-        runs_tests: false,
         has_file_that_asks_for_it: false,
     };
 
@@ -326,6 +336,34 @@ mod tests {
                 further,
             )
         })
+    }
+
+    fn count_roots_of_files(files: &[(&str, &str)], runtime_modules: &RuntimeModules) -> usize {
+        with_loaded_build(files, &default_settings(), |_, loaded| {
+            let roots = collect_runtime_roots(
+                loaded.project(ProjectId::Application).loaded.files(),
+                loaded.contents,
+                runtime_modules,
+                host_platform(),
+                NOTHING_FURTHER,
+            );
+            roots.paths.len()
+        })
+    }
+
+    #[test]
+    fn left_of_instanceof_is_handed_on_where_any_file_can_come_by_the_hook() {
+        let runtime = runtime_modules();
+        let asks = "import { Kind } from \"./kind.ts\"; console.log(process instanceof Kind);";
+        let plain = "export class Kind {}";
+        let hooked =
+            "export class Kind { static [Symbol.hasInstance](v: any) { return v.title; } }";
+        let without = count_roots_of_files(&[("main.ts", asks), ("kind.ts", plain)], &runtime);
+        let with = count_roots_of_files(&[("main.ts", asks), ("kind.ts", hooked)], &runtime);
+        let handed_on = "import { Kind } from \"./kind.ts\"; console.log(Kind, [process]);";
+        let by_text = count_roots_of_files(&[("main.ts", handed_on), ("kind.ts", plain)], &runtime);
+        assert!(without < with, "{without} {with}");
+        assert!(by_text <= with, "{by_text} {with}");
     }
 
     fn has_module_root(
@@ -401,28 +439,6 @@ mod tests {
     }
 
     #[test]
-    fn test_run_holds_what_unseen_code_finds() {
-        let runtime = runtime_modules();
-        let in_test_run = FurtherLibraryCode {
-            runs_tests: true,
-            ..NOTHING_FURTHER
-        };
-        let roots = collect_roots_beside("export {};", &runtime, in_test_run);
-        assert!(!roots.keeps_code_without_names);
-        let held = RuntimeUses::of_unseen_code(host_platform());
-        assert_eq!(roots.host_loaded_modules.len(), held.modules.len());
-        assert!(!held.functions.is_empty());
-        for &function in &held.functions {
-            let path = runtime.function_file_path(function);
-            assert!(
-                path.is_none_or(|path| roots.paths.contains(&path)),
-                "{function:?}"
-            );
-        }
-        assert_holds_startup_code(&runtime, &roots);
-    }
-
-    #[test]
     fn startup_modules_are_roots_of_a_program_that_names_code_of_the_host() {
         let runtime = runtime_modules();
         let roots = collect_roots_of("process.openStdin();", &runtime);
@@ -475,6 +491,30 @@ mod tests {
         let loads = "export const load = (at: string) => import(at);";
         assert!(!is_loaded(loads, NOTHING_FURTHER));
         assert!(is_loaded(loads, beside_code_from_disk));
+    }
+
+    #[test]
+    fn native_module_behind_a_name_that_no_site_binds_brings_what_lies_below_its_object() {
+        let runtime = runtime_modules();
+        let below = RuntimeUses::of_native_modules_handed_out(
+            &[RuntimeModule::NodeProcess],
+            host_platform(),
+        );
+        let files: Vec<_> = (below.functions.iter())
+            .filter_map(|&function| runtime.function_file_path(function))
+            .collect();
+        assert!(!files.is_empty());
+        let holds_all = |source: &str| {
+            let roots = collect_roots_of(source, &runtime);
+            files.iter().all(|file| roots.paths.contains(file))
+        };
+        assert!(holds_all(
+            "const names = { a: 'process' };\nrequire(names.a);"
+        ));
+        assert!(holds_all(
+            "require(process.argv.length > 5 ? 'node:os' : 'process');"
+        ));
+        assert!(!holds_all("require('process');"));
     }
 
     #[test]

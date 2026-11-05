@@ -2114,7 +2114,540 @@ function instancesThatTheHostLooksAt({ pick, typed, cast, n }: Draw): string[] {
   ];
 }
 
+/** A helper takes one element of a text, a list or a view at a place that its caller counts up, under a bound of which nobody knows that it is a whole number. */
+function elementsTakenInHelpers({ pick, chance, typed, isTypeScript, n }: Draw): string[] {
+  const [type, given, reads] = pick<[string, string, string[]]>([
+    [
+      "string",
+      `JSON.parse('"abcd"')`,
+      [
+        "held[at]",
+        "held[at]",
+        "held.charAt(at)",
+        "held.at(at)",
+        "held.codePointAt(at)",
+        "held.charCodeAt(at)",
+        "held.slice(at, at + 1)",
+        "held.substring(at, at + 1)",
+      ],
+    ],
+    [
+      "string",
+      `JSON.parse('"abcd"')`,
+      [
+        "held[at]",
+        "held[at]",
+        "held.charAt(at)",
+        "held.at(at)",
+        "held.codePointAt(at)",
+        "held.charCodeAt(at)",
+        "held.slice(at, at + 1)",
+        "held.substring(at, at + 1)",
+      ],
+    ],
+    [
+      "number[]",
+      `JSON.parse("[1,2,3,4]")`,
+      ["held[at]", "held[at]", "held.at(at)", "held.slice(at, at + 1)[0]", "held.indexOf(at)"],
+    ],
+    [
+      "Uint8Array",
+      `new Uint8Array([1, 2, 3, 4])`,
+      ["held[at]", "held[at]", "held.at(at)", "held.subarray(at, at + 1)[0]"],
+    ],
+  ]);
+  const guard = pick([
+    "at >= 0 && at < held.length",
+    "at >= 0 && at < held.length",
+    "at < held.length",
+    "at < held.length",
+    "at >= 0",
+    "true",
+    "at + 1 <= held.length",
+  ]);
+  const turn = pick(["i++", "i++", "i++", "i += 1", "i = (i + 1) | 0", "i += step"]);
+  const bound = pick([
+    `Number(JSON.parse("5"))`,
+    `Number(JSON.parse("5"))`,
+    `JSON.parse("5")`,
+    `JSON.parse("4.5")`,
+    `5`,
+    `Number(JSON.parse("5")) | 0`,
+  ]);
+  const from = pick(["0", "0", "0", "-1", "start"]);
+  const born = pick(['""', '""', "0", "0"]);
+  return [
+    `function take(held${typed(type)}, at${typed("number")})${typed("any")} { ${chance(75) ? work : "const work = 0;"} return ${guard} ? ${pick(reads)} : ${pick(["undefined", "undefined", "work", '""'])}; }`,
+    `function run${n}(held${typed(type)}, most${typed("number")}, start${typed("number")}, step${typed("number")})${typed("any")} { let sum${typed("any")} = ${born}; for (let i = ${from}; i < most; ${turn}) sum += take(held, i); return sum; }`,
+    `printValue("taken ${n}", String(run${n}(${given}${isTypeScript && type !== "Uint8Array" ? ` as ${type}` : ""}, ${bound}, ${pick(["0", "1", "-2"])}, 1)));`,
+  ];
+}
+
+/** A function changes its own `arguments` on one of two ways: the length, an element, a name. Behind the join it reads them. */
+function argumentsThatTheirFunctionChanges({ pick, chance, n }: Draw): string[] {
+  const deed = pick([
+    "arguments.length = 0;",
+    "arguments.length = 0;",
+    "arguments.length = 5;",
+    'Array.prototype.push.call(arguments, "more", "still more");',
+    'Array.prototype.push.call(arguments, "more", "still more");',
+    "delete arguments.length;",
+    "delete arguments.length;",
+    "arguments[0] = 7;",
+    "arguments[3] = 7;",
+    "delete arguments[1];",
+    "Array.prototype.shift.call(arguments);",
+    "Array.prototype.pop.call(arguments);",
+    'Object.defineProperty(arguments, "length", { value: 1 });',
+    "first = 9;",
+    "arguments.extra = 1;",
+    "Object.freeze(arguments);",
+    "Array.prototype.reverse.call(arguments);",
+    "Object.setPrototypeOf(arguments, Array.prototype);",
+  ]);
+  const read = pick([
+    "arguments.length",
+    "arguments.length",
+    "arguments.length",
+    "String(arguments.length)",
+    'arguments[0] + "," + arguments[1]',
+    'first + "," + arguments[1]',
+    "[...arguments].join()",
+    "Array.prototype.slice.call(arguments).join()",
+    "Array.from(arguments).length",
+    "other.apply(null, arguments)",
+    "other(...arguments)",
+    "Object.keys(arguments).join()",
+    "typeof arguments.length",
+    "(() => { let sum = 0; for (let i = 0; i < arguments.length; i++) sum += arguments[i]; return sum; })()",
+    "JSON.stringify(arguments)",
+  ]);
+  const reach = pick([
+    [
+      `printValue("arguments ${n}", String(tally(1, 2, 3)), String(tally(0, 2, 3)), String(tally(1)), String(tally(0)));`,
+    ],
+    [
+      `printValue("arguments ${n}", String(tally(1, 2, 3)), String(tally(0, 2, 3)), String(tally(1)), String(tally(0)));`,
+    ],
+    [
+      `const held = [tally][JSON.parse("0")];`,
+      `printValue("arguments ${n}", String(held(1, 2, 3)), String(held(0, 2, 3)), [1, 0].map(held).join("|"), String(Reflect.apply(held, undefined, [1])));`,
+    ],
+    [
+      `printValue("arguments ${n}", String(tally.call(null, 1, 2, 3)), String(tally.apply(null, [0, 2, 3])), String(tally(...[1, 2])));`,
+    ],
+  ]);
+  return [
+    ...(chance(50) ? [`// stays a script`] : []),
+    `function other() { return arguments.length + ":" + Array.prototype.join.call(arguments); }`,
+    `function tally(flag, first) { ${chance(70) ? work : "const work = 0;"} if (flag === 1) { ${deed} } return ${read} + "/" + work; }`,
+    ...reach,
+  ];
+}
+
+/** One function with a test at its head is called with one kind of value where the call stands under a `try`, in a coroutine or in a closed arm, and with another kind at a plain site. */
+function callsOfOneFunctionFromUnlikePlaces({ pick, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const [one, other] = pick<[string, string]>([
+    ["7", '"text"'],
+    ["7", '"text"'],
+    ['"text"', "7"],
+    ["7", "0.5"],
+    ["7", "null"],
+    ["7", "undefined"],
+    ["7", "{ deep: 1 }"],
+    ["true", "7"],
+    ["[1]", '"text"'],
+  ]);
+  const asks = pick([
+    'typeof unit + ":" + sum',
+    'typeof unit + ":" + sum',
+    'String(unit) + ":" + sum',
+    "unit + sum",
+    '(unit === 7 ? "seven" : "other") + sum',
+    "[unit].length + sum + typeof unit",
+  ]);
+  const head = pick([
+    "if (box.cached) return box.cached;",
+    "if (box.cached) return box.cached;",
+    'if (box.cached !== "") return box.cached;',
+    'if (!box) return "none";',
+    'if (box.height > 90) return "tall";',
+    "",
+  ]);
+  const guarded = pick([
+    `function guarded(box${any})${any} { ${work} try { return cachedOf(box, ${one}); } catch (error) { return "caught"; } }`,
+    `function guarded(box${any})${any} { ${work} try { return cachedOf(box, ${one}); } catch (error) { return "caught"; } }`,
+    `function guarded(box${any})${any} { ${work} try { return cachedOf(box, ${one}); } finally { heard += 1; } }`,
+    `function guarded(box${any})${any} { ${work} return [...(function* () { yield cachedOf(box, ${one}); })()][0]; }`,
+    `function guarded(box${any})${any} { ${work} return work > 90 ? "never" : cachedOf(box, ${one}); }`,
+    `function guarded(box${any})${any} { ${work} for (let turn = 0; turn < 1; turn++) { if (turn === 0) return cachedOf(box, ${one}); } return "none"; }`,
+  ]);
+  return [
+    `let heard = 0;`,
+    `class Box${n} { cached${any}; width${any}; height${any}; constructor(width${any}, height${any}) { this.cached = ""; this.width = width; this.height = height; } }`,
+    `function make(width${any}, height${any}) { ${work} return new Box${n}(width, height + work - 1); }`,
+    `function cachedOf(box${any}, unit${any})${any} { ${head} let sum = 0; for (let i = 0; i < box.height; i++) sum = (sum + box.width * box.height + i) | 0; box.cached = ${asks}; return box.cached; }`,
+    guarded,
+    `function plainly(box${any})${any} { ${work} const answer = cachedOf(box, ${other}); return answer + "!"; }`,
+    ...pick([
+      [
+        `printValue("unlike ${n}", guarded(make(1, 2)), plainly(make(3, 4)), plainly(JSON.parse('{"cached":"","width":5,"height":6}')), heard);`,
+      ],
+      [
+        `printValue("unlike ${n}", plainly(make(3, 4)), guarded(make(1, 2)), plainly(JSON.parse('{"cached":"","width":5,"height":6}')), heard);`,
+      ],
+    ]),
+  ];
+}
+
+/** A function that a file exports and nobody calls is read as a value in another file, and then what held it is changed. */
+function functionsOfFilesThatAreKept({ pick, chance, n }: Draw): string[] {
+  const body = chance(70) ? `${work} return work + 1;` : "return 1;";
+  const replaced = pick(["() => 9", "() => 9", "function () { return 9; }", "9", "undefined"]);
+  const inAFunction = (deed: string) =>
+    chance(70) ? [`function change() { ${work} ${deed} return work; }`, `change();`] : [deed];
+  return pick([
+    () => [
+      `// stays a script`,
+      `const part = require("./part${n}.cjs");`,
+      `let kept;`,
+      ...inAFunction(
+        pick([
+          `kept = part.tell; part.tell = ${replaced};`,
+          `kept = part.tell; part.tell = ${replaced};`,
+          `kept = part.tell; delete part.tell;`,
+          `({ tell: kept } = part); part.tell = ${replaced};`,
+        ]),
+      ),
+      `printValue("kept of a file ${n}", typeof kept, typeof part.tell, part.size, typeof require("./part${n}.cjs").tell);`,
+      `// @filename: ./part${n}.cjs`,
+      pick([
+        `function tell() { ${body} }\nexports.tell = tell;\nexports.size = 1;`,
+        `function tell() { ${body} }\nmodule.exports = { tell, size: 1 };`,
+        `exports.tell = function () { ${body} };\nexports.size = 1;`,
+        `module.exports = { tell() { ${body} }, size: 1 };`,
+        `class Part { static tell() { ${body} } }\nPart.size = 1;\nmodule.exports = Part;`,
+      ]),
+    ],
+    () => [
+      pick([
+        `import * as part from "./part${n}.mjs";`,
+        `import * as part from "./part${n}.mjs";`,
+        `import { tell, swap, size } from "./part${n}.mjs";\nconst part = { get tell() { return tell; }, swap, size };`,
+      ]),
+      `let kept;`,
+      ...inAFunction(
+        pick([
+          `kept = part.tell; part.swap();`,
+          `kept = part.tell; part.swap();`,
+          `kept = part.tell;`,
+          `({ tell: kept } = part); part.swap();`,
+          `kept = [part.tell][0]; part.swap();`,
+        ]),
+      ),
+      `printValue("kept of a file ${n}", typeof kept, typeof part.tell, part.size);`,
+      `// @filename: ./part${n}.mjs`,
+      pick([
+        `export let tell = function () { ${body} };\nexport function swap() { tell = ${replaced}; }\nexport const size = 1;`,
+        `export function tell() { ${body} }\nexport function swap() { tell = ${replaced}; }\nexport const size = 1;`,
+        `function told() { ${body} }\nexport { told as tell };\nexport function swap() {}\nexport const size = 1;`,
+      ]),
+    ],
+  ])().flatMap(line => line.split("\n"));
+}
+
+/** A list, or `arguments`, is named once in the text, inside a short counted loop, and handed to code that keeps, compares and changes it: each turn must hand over the same object. */
+function listsHandedOverInShortLoops({ pick, chance, n }: Draw): string[] {
+  const turns = pick(["2", "2", "3", 'JSON.parse("2")']);
+  const target = pick([
+    `const target = [{ apply(self, list) { ${work} return look(list) + work; } }][JSON.parse("0")];`,
+    `const target = [{ apply(self, list) { ${work} return look(list) + work; } }][JSON.parse("0")];`,
+    `const target = { apply(self, list) { return look(list); } };`,
+    `function target() { return look(arguments); }`,
+    `const target = [function () { return look(arguments); }][JSON.parse("0")];`,
+  ]);
+  const handed = pick([
+    "target.apply(this, LIST)",
+    "target.apply(this, LIST)",
+    "target.apply(this, LIST)",
+    "Reflect.apply(look, undefined, [LIST])",
+    "look(LIST)",
+    "[LIST].map(look)[0]",
+  ]);
+  const [front, list] = pick<[string, string]>([
+    ["", "arguments"],
+    ["", "arguments"],
+    ["const all = arguments;", "all"],
+    ["const pair = [a, b];", "pair"],
+    ["", "rest"],
+    ["const pair = { 0: a, 1: b, length: 2 };", "pair"],
+  ]);
+  const parameters = list === "rest" ? "...rest" : "a, b";
+  return [
+    ...(chance(50) ? [`// stays a script`] : []),
+    `let kept = null;`,
+    `function look(list) { const said = (kept === list ? "same" : "other") + ":" + list[0] + ":" + list.length + ":" + (list.extra | 0); kept = list; ${pick(['list[0] = "changed"; list.extra = 1;', 'list[0] = "changed"; list.extra = 1; list.length = 1;', "list.extra = 1;", ""])} return said; }`,
+    target,
+    `function relay(${parameters}) { ${front} let said = ""; for (let i = 0; i < ${turns}; i++) said = said + ${handed.replace("LIST", list)} + "|"; return said; }`,
+    pick([
+      `printValue("handed over ${n}", relay("a", "b"));`,
+      `printValue("handed over ${n}", [relay][JSON.parse("0")]("a", "b"));`,
+      `printValue("handed over ${n}", relay("a", "b"), relay("c"));`,
+    ]),
+  ];
+}
+
+/** An object is made fresh in each turn of an outer loop. An inner loop reads a member of it that is an accessor, and the accessor writes. Behind the inner loop the turn says what was written. */
+function accessorsThatWriteOnWhatAnOuterTurnMakes({ pick, chance, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const name = pick(["length", "length", "length", "length", "size", "count", "byteLength"]);
+  const [declared, make, left] = pick<[string, string, string]>([
+    [
+      `class Counter${n} { n${any}; constructor() { this.n = 0; } get ${name}() { this.n = this.n + 1; return this.n; } }`,
+      `new Counter${n}()`,
+      "c.n",
+    ],
+    [
+      `class Counter${n} { n${any}; constructor() { this.n = 0; } get ${name}() { this.n = this.n + 1; return this.n; } }`,
+      `new Counter${n}()`,
+      "c.n",
+    ],
+    [`class Counter${n} { n = 0; get ${name}() { return ++this.n; } }`, `new Counter${n}()`, "c.n"],
+    [
+      `class Lazy${n} { known = -1; asked = 0; get ${name}()${typed("number")} { this.asked++; if (this.known < 0) this.known = 7; return this.known; } }`,
+      `new Lazy${n}()`,
+      'c.known + "/" + c.asked',
+    ],
+    [
+      `class Lazy${n} { kept${any}; words = 4; get ${name}() { return (this.kept ??= this.words * 2); } }`,
+      `new Lazy${n}()`,
+      "c.kept",
+    ],
+    [
+      `class Base${n} { n${any} = 0; get ${name}() { this.n = this.n + 1; return this.n; } }\nclass Heir${n} extends Base${n} { m = 1; }`,
+      `new Heir${n}()`,
+      "c.n",
+    ],
+    [
+      `class Caller${n} { n${any} = 0; bump() { this.n = this.n + 1; return this.n; } get ${name}() { return this.bump(); } }`,
+      `new Caller${n}()`,
+      "c.n",
+    ],
+    [
+      `class Queue${n} { reads = 0; items${any}; constructor(items${any}) { this.items = items; } get ${name}()${typed("number")} { this.reads = this.reads + 1; return this.items.length; } }`,
+      `new Queue${n}([1, 2, 3])`,
+      "c.reads",
+    ],
+    [
+      `class Hidden${n} { #n = 0; get ${name}() { this.#n = this.#n + 1; return this.#n; } get n() { return this.#n; } }`,
+      `new Hidden${n}()`,
+      "c.n",
+    ],
+    [
+      `class Pusher${n} { seen${typed("number[]")} = []; get ${name}() { this.seen.push(1); return this.seen.length; } }`,
+      `new Pusher${n}()`,
+      "c.seen.length",
+    ],
+    [
+      `class Writer${n} { text = ""; get ${name}() { this.text = this.text + "x"; return this.text.length; } }`,
+      `new Writer${n}()`,
+      "c.text",
+    ],
+    [
+      `function made${n}()${any} { return { n: 0, get ${name}() { this.n = this.n + 1; return this.n; } }; }`,
+      `made${n}()`,
+      "c.n",
+    ],
+    [
+      `class Counter${n} { n${any} = 0; get ${name}() { this.n = this.n + 1; return this.n; } }\nfunction made${n}()${any} { ${work} return new Counter${n}(); }`,
+      `made${n}()`,
+      "c.n",
+    ],
+  ]);
+  const read = pick([
+    `total = total + c.${name};`,
+    `total = total + c.${name};`,
+    `total += c.${name};`,
+    `if (c.${name} > 2) total++;`,
+    `const l = c.${name}; total += l;`,
+    `for (let k = 0; k < c.${name} && k < 5; k++) total += k;`,
+    `total += c[${JSON.stringify(name)}];`,
+    `total += ${JSON.stringify(name)} in c ? c.${name} : 0;`,
+  ]);
+  const inner = pick([
+    `for (let j = 0; j < times; j++) { ${read} }`,
+    `for (let j = 0; j < times; j++) { ${read} }`,
+    `let j = 0; do { ${read} j++; } while (j < times);`,
+    `let j = 0; while (j < times) { ${read} j++; }`,
+    `for (let j = 0; ; j++) { ${read} if (j + 1 >= times) break; }`,
+    `for (const j of [0, 1, 2, 3]) { if (j >= times) break; ${read} }`,
+  ]);
+  return [
+    ...declared.split("\n"),
+    `function run(rows${any}, times${any})${typed("string")} {`,
+    `  const out${typed("string[]")} = [];`,
+    `  for (let i = 0; i < rows; i++) {`,
+    `    const c${chance(70) ? any : ""} = ${make};`,
+    `    let total${any} = 0;`,
+    `    ${inner}`,
+    `    out.push(total + "/" + ${left});`,
+    `  }`,
+    `  return out.join(" ");`,
+    `}`,
+    `const [rows, times] = JSON.parse("[2, ${pick([4, 4, 3, 1])}]");`,
+    `let said = "";`,
+    `for (let turn = 0; turn < ${pick([1, 2, 300])}; turn++) said = run(rows | 0, times | 0);`,
+    `printValue("written by an accessor ${n}", said);`,
+  ];
+}
+
+/** A sum is born anew in each turn of an outer loop and grows in an inner one by a value that the outer loop carries from turn to turn. That value is of one kind in the first turn and of another behind it. */
+function sumsFedByWhatAnOuterLoopCarries({ pick, typed, n }: Draw): string[] {
+  const any = typed("any");
+  const [first, later] = pick<[string, string]>([
+    ['""', "i"],
+    ['""', "i"],
+    ['"a"', "i"],
+    ["0", '"t" + i'],
+    ["null", "i"],
+    ["undefined", "i"],
+    ["0.5", "i"],
+    ["1", "i + 0.5"],
+    ["true", "i"],
+    ['""', "i * 1.5"],
+    ["[]", "i"],
+    ["1n", "BigInt(i)"],
+  ]);
+  const born = first === "1n" ? "0n" : pick(["0", "0", "0", "true", "0.5", "-0", "null", '""', "1"]);
+  const grows = pick([
+    "sum = sum + last;",
+    "sum = sum + last;",
+    "sum += last;",
+    "sum = last + sum;",
+    "sum = sum + last + last;",
+    "sum = `${sum}${last}`.length > 9 ? sum : sum + last;",
+  ]);
+  const inner = pick([
+    `let j = 0; do { ${grows} j++; } while (j < times);`,
+    `let j = 0; do { ${grows} j++; } while (j < times);`,
+    `for (let j = 0; ; j++) { ${grows} if (j + 1 >= times) break; }`,
+    `for (let j = 0; j < times; j++) { ${grows} }`,
+    `let j = 0; while (j < times) { ${grows} j++; }`,
+    `let j = times; do { ${grows} } while (--j > 0);`,
+  ]);
+  const home = pick(["local", "local", "local", "outer"]);
+  return [
+    ...(home === "outer" ? [`let last${any} = ${first};`] : []),
+    `function rows(n${any}, k${any})${typed("string")} {`,
+    `  const count = n | 0, times = k | 0;`,
+    `  const out${typed("string[]")} = [];`,
+    home === "outer" ? `  last = ${first};` : `  let last${any} = ${first};`,
+    `  for (let i = 0; i < count; i++) {`,
+    `    let sum${any} = ${born};`,
+    `    ${inner}`,
+    `    out.push(typeof sum + " " + String(sum));`,
+    `    last = ${later};`,
+    `  }`,
+    `  return out.join(", ");`,
+    `}`,
+    `const [given, times] = JSON.parse("[4, ${pick([3, 3, 1, 2])}]");`,
+    `let said = "";`,
+    `for (let turn = 0; turn < ${pick([1, 2, 300])}; turn++) said = rows(given, times);`,
+    `printValue("a sum fed from outside ${n}", said);`,
+  ];
+}
+
+/** One view of three on one buffer is read or written at the counter plus small numbers. Two of them are written out, one is held: in a variable in front of the loop, out of a helper, in a parameter. The loop enters below zero or runs past the end. */
+function viewsAtTheCounterPlusSmallNumbers({ pick, chance, typed, n }: Draw): string[] {
+  const kind = pick([
+    "Int32Array",
+    "Int32Array",
+    "Int32Array",
+    "Uint8Array",
+    "Float64Array",
+    "Int16Array",
+    "Uint32Array",
+    "Float32Array",
+  ]);
+  const [held, one, other] = pick<[number, number, number]>([
+    [2, 2, 1],
+    [2, 2, 1],
+    [1, 1, -1],
+    [1, 1, -1],
+    [1, 1, 0],
+    [3, 3, 1],
+    [2, 1, -1],
+    [1, 2, -2],
+    [2, 2, -1],
+    [0, 1, -1],
+    [-1, -1, 1],
+    [-1, 1, 2],
+  ]);
+  const [helper, front, extra, given] = pick<[string, string, string, string]>([
+    ["", `let ahead = ${held};`, "", ""],
+    ["", `let ahead = ${held};`, "", ""],
+    ["", `const ahead = ${held};`, "", ""],
+    ["", `var ahead = ${held};`, "", ""],
+    [`function reach${n}()${typed("number")} { return ${held}; }`, `const ahead = reach${n}();`, "", ""],
+    [`function reach${n}()${typed("number")} { return ${held}; }`, `const ahead = reach${n}();`, "", ""],
+    [`const reach${n} = ${held};`, `const ahead = reach${n};`, "", ""],
+    ["", `let ahead = ${held - 1}; ahead++;`, "", ""],
+    ["", `const ahead = more | 0;`, `, more${typed("number")}`, `, ${held}`],
+    ["", `const ahead = [${held}][0];`, "", ""],
+  ]);
+  const written = (add: number) => (add === 0 ? "i" : chance(70) || add > 0 ? `i + ${add}` : `i - ${-add}`);
+  const reads = chance(25);
+  const access = (place: string, value: number) =>
+    reads ? `sum = (sum + (cells[${place}] | 0)) | 0;` : `cells[${place}] = ${value};`;
+  const three = [access("i + ahead", 5), access(written(one), 6), access(written(other), 7)];
+  const order = pick([
+    [0, 1, 2],
+    [0, 1, 2],
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 1, 0],
+  ]);
+  const size = pick([4, 4, 4, 16]);
+  const bytes = `${kind}.BYTES_PER_ELEMENT`;
+  const [a, b, c, d] = pick([
+    [0, 2, -2, 2],
+    [0, 2, -2, 2],
+    [0, 2, -1, 3],
+    [0, size, 2, size + 2],
+    [1, 3, -3, 1],
+    [0, 2, -2, size + 2],
+    [0, 3, 0, 3],
+  ]);
+  return [
+    ...(helper ? [helper] : []),
+    `function lay(cells${typed(kind)}, start${typed("number")}, end${typed("number")}${extra})${typed("number")} {`,
+    `  ${front}`,
+    `  let sum = 0;`,
+    `  const from = start | 0, to = end | 0;`,
+    `  for (let i = from; i < to; ${pick(["i++", "i++", "i += 1", "++i"])}) { ${order.map(at => three[at]).join(" ")} }`,
+    `  return sum + to;`,
+    `}`,
+    `const room = new ArrayBuffer(${3 * size} * ${bytes});`,
+    `const front = new ${kind}(room, 0, ${size}), middle = new ${kind}(room, ${size} * ${bytes}, ${size}), behind = new ${kind}(room, ${2 * size} * ${bytes}, ${size});`,
+    `for (let at = 0; at < ${size}; at++) { front[at] = 100 + at; middle[at] = at + 1; behind[at] = 70 + at; }`,
+    `const given${typed("number[]")} = JSON.parse("[${a}, ${b}, ${c}, ${d}]");`,
+    `printValue("small numbers ${n}", lay(middle, given[0], given[1]${given}), front.join(), middle.join(), behind.join());`,
+    `printValue("small numbers ${n}", lay(middle, given[2], given[3]${given}), front.join(), middle.join(), behind.join());`,
+  ];
+}
+
 const deeds = {
+  accessorsThatWriteOnWhatAnOuterTurnMakes,
+  sumsFedByWhatAnOuterLoopCarries,
+  viewsAtTheCounterPlusSmallNumbers,
+  listsHandedOverInShortLoops,
+  functionsOfFilesThatAreKept,
+  argumentsThatTheirFunctionChanges,
+  callsOfOneFunctionFromUnlikePlaces,
+  elementsTakenInHelpers,
   thingsToDisposeOf,
   membersThatAreMadeWhenRead,
   instancesThatTheHostLooksAt,
@@ -2232,7 +2765,12 @@ export function writeSceneOfASingleDeed(
       name !== "graphsOfModules" &&
       name !== "deepVisitors" &&
       (!isTypeScript ||
-        (name !== "namesThroughWith" && name !== "roadsToTheLoader" && name !== "loadersOfTheProgramItself")),
+        (name !== "namesThroughWith" &&
+          name !== "roadsToTheLoader" &&
+          name !== "loadersOfTheProgramItself" &&
+          name !== "argumentsThatTheirFunctionChanges" &&
+          name !== "functionsOfFilesThatAreKept" &&
+          name !== "listsHandedOverInShortLoops")),
   );
   return withNamesOfItsOwn(deeds[only ?? pick(names)](draw), n);
 }

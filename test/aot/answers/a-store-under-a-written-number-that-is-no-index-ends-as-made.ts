@@ -10,3 +10,4 @@ function beyond(): string { const a: number[] = [1.5, 2.5]; a[4294967295] = 1; l
 function between(): string { const a: string[] = ["a", "b"]; a[1.5] = "c"; return a.join("") + "/" + a.lastIndexOf("c") + "/" + a.length + "/" + Object.keys(a).join(); }
 for (let round = 0; round < 2; round++) { report(below()); report(beyond()); report(between()); }
 report("end");
+declare function report(value: unknown): void;

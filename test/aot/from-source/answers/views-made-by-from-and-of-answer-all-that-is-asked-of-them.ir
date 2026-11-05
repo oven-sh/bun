@@ -21,7 +21,7 @@
 # const above = Object.getPrototypeOf(Uint8Array);
 # print(String(above === Object.getPrototypeOf(Float64Array)) + " " + (Object.getPrototypeOf(Object.getPrototypeOf(bytes)) === above.prototype) + " " + above.name);
 # class Bytes extends Uint8Array { twice() { return this.map((n: number) => n * 2); } }
-# const own = Bytes.from([7, 8]);
+# const own = Bytes.from([7, 8]); // @ts-expect-error
 # print(String(own instanceof Bytes) + " " + own.join() + " " + (own.twice() instanceof Bytes));
 # class Wide extends Uint8Array { static get [Symbol.species]() { return Uint16Array; } }
 # const wide = Wide.of(1, 2).map((n: number) => n);

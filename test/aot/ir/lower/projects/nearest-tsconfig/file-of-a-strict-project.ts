@@ -1,10 +1,5 @@
 // RUN: lower
-// STATISTIC: SourceFilesChecked = 2
-
-// strictPropertyInitialization is a rule of style: a field that nothing initializes stops no build, whatever the project of its class says.
-
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK: = Construct {{*}}calleeName="Box"
+// DIAGNOSTIC: TS2564 lib/box.ts:2
 
 // FILE: lenient/other.ts
 import { Box } from "../lib/box";

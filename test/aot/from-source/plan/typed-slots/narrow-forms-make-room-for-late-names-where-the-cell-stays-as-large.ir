@@ -3,7 +3,7 @@
 # but a layout with a name out of line that could move in gains from them all the same: the three narrow slots end at 36, and the twelve bytes that are left take the other two late names, four bytes each. Nothing lies out of line any more.
 # -- source: narrow-forms-make-room-for-late-names-where-the-cell-stays-as-large.ts
 # declare function sink(...values: unknown[]): void;
-# interface Tied { owner?: Knot | null; partner?: Knot | null; rival?: Knot | null; }
+# interface Tied { owner?: Knot | null; partner?: Knot | null; rival?: Knot | null; } // @ts-expect-error
 # class Knot implements Tied {
 #     a: Knot | null = null;
 #     b: Knot | null = null;
@@ -16,8 +16,8 @@
 # for (let i = 0; i < 4; i++) {
 #     const knot = new Knot();
 #     knot.a = last;
-#     knot.b = i > 1 ? last : null;
-#     tie(knot, last);
+#     knot.b = i > 1 ? last : null; // @ts-expect-error
+#     tie(knot, last); // @ts-expect-error
 #     sum += count(knot) + countTies(knot) + countTies(last);
 #     last = knot;
 # }

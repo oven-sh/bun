@@ -1,12 +1,7 @@
-// RUN: link
+// RUN: lower
 // ENTRY: packages/app/src/wrong.ts
 // LINK: node_modules/@workspace/types -> packages/types
-
-// The annotation names the layout of the interface in the sources of the package, with its number. A text in the place of the number stops no build.
-
-// CHECK: layout [[rule]] {{*}}fields=[{key="level" declared={type=number
-// CHECK: [[literal]] = Data
-// CHECK-NEXT: = Convert [[literal]] declared={type=undefined|null|[[rule]] flags=[OmitsNull, OmitsUndefined]}
+// DIAGNOSTIC: TS2322 packages/app/src/wrong.ts:2
 
 // FILE: package.json
 {"name":"workspace","workspaces":["packages/*"]}

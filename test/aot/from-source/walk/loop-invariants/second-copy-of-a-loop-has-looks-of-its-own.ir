@@ -3,6 +3,7 @@
 # the looks at the closed copy, which assumed less on their way, do not stand around the typed one, and a preview is held to the looks around by what it hands the walk.
 # f1 = digest
 # -- source: second-copy-of-a-loop-has-looks-of-its-own.ts
+# // @ts-expect-error
 # function digest(s: string | null | undefined): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
 # (globalThis as any).kept = digest;
 # console.log(digest("abcdefghij"));

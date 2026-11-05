@@ -331,15 +331,10 @@ impl ContentsScan<'_, '_> {
         Some(self.request.atoms.bytes(export))
     }
 
-    fn sees_backslashes(&self) -> Option<bool> {
-        let path = (self.input.find_path_at_run_time)()?;
-        Some(with_separators_of_program(&path) != path)
-    }
-
     fn find_separator(&self, expression: ExprId) -> Option<Vec<u8>> {
         let export = self.find_export_of(worker_builtins().paths, expression)?;
         match export == b"sep" {
-            true => Some(with_separators_of_host(b"/", self.sees_backslashes()?)),
+            true => Some(with_separators_of_host(b"/", self.input.sees_backslashes?)),
             false => None,
         }
     }
@@ -377,7 +372,7 @@ impl ContentsScan<'_, '_> {
         names: &mut Vec<SymbolId>,
     ) -> Option<Vec<u8>> {
         let hir = self.request.hir;
-        let sees_backslashes = self.sees_backslashes()?;
+        let sees_backslashes = self.input.sees_backslashes?;
         let parts = hir.ids(hir[call].args).map(|part| {
             let part = self.find_text(part, names)?;
             Some(without_separators_of_run(part, sees_backslashes))
@@ -399,7 +394,7 @@ impl ContentsScan<'_, '_> {
         names: &mut Vec<SymbolId>,
     ) -> Option<Vec<u8>> {
         let hir = self.request.hir;
-        let sees_backslashes = self.sees_backslashes()?;
+        let sees_backslashes = self.input.sees_backslashes?;
         let given = self.find_text(hir.ids(hir[call].args).next()?, names)?;
         match function {
             b"fileURLToPath" => {

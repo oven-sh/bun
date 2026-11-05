@@ -49,3 +49,4 @@ report(sums(other, middle, given[0]!, given[1]!, given[2]!) + " " + sums(other, 
 fill(); report(stepAsked(other, middle, 2, 4, 1) + " " + all());
 fill(); report(stepAsked(other, middle, 2, 4, -1) + " " + all());
 report("end");
+declare function report(value: unknown): void;

@@ -327,7 +327,7 @@ impl<'x, 's> Walker<'x, 's> {
         let decisions = &input.compiled.analysis.decisions;
         let is_commonjs = input.modules.kind(input.file) == ModuleKind::CommonJs;
         let keeps_wrapper =
-            is_commonjs && commonjs::keeps_wrapper(bound, decisions, input.builtins);
+            is_commonjs && commonjs::keeps_wrapper(hir, bound, decisions, input.builtins);
         let (jsx_uses, metadata_uses) = collect_implicit_uses(bound);
         let (eval_variable_scopes, parameter_eval_variable_scopes) =
             collect_eval_variable_scopes(hir, bound, decisions);

@@ -1,10 +1,5 @@
 // RUN: lower
-// STATISTIC: SourceFilesChecked = 1
-// STATISTIC: SourceFilesInferred = 1
-// STATISTIC: SourceLinesOfPackages = 0
-// CHECK: = Call {{*}}calleeName="f"
-
-// A name that nothing declares, in a file of the program that is reached through an alias, is not reported and stops no build. The file stays checked.
+// DIAGNOSTIC: TS2304 lib/f.ts:2
 
 // FILE: main.js
 import { f } from "#lib/f.ts";

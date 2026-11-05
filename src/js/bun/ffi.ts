@@ -69,11 +69,7 @@ const ptr = (arg1: ArrayBufferView | ArrayBufferLike, arg2?: number) =>
   typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2);
 const toBuffer = ffi.toBuffer;
 const toArrayBuffer = ffi.toArrayBuffer;
-const nativeDLOpen = ffi.dlopen;
-// These throw the errors that the `Bun.FFI` functions of the same name return.
-const openLibrary: (path: unknown, symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "openLibrary");
-const linkLibrary: (symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "linkLibrary");
-const makeFunction: (options: object, name: string) => $Node.FFIFunction = $bindgen("ffi.bind.ts", "makeFunction");
+// These throw the errors that the `Bun.FFI` functions of the same name return. Those that load machine code are asked for where they are called.
 const makeCallback: (options: object, callback: unknown) => object = $bindgen("ffi.bind.ts", "makeCallback");
 const printSource: (symbols: object, isCallback?: boolean) => string | string[] = $bindgen(
   "ffi.bind.ts",
@@ -174,7 +170,7 @@ function FFIBuilder(params: unknown[], functionToCall: $Node.FFIFunction, name: 
 }
 
 const native = {
-  dlopen: nativeDLOpen,
+  dlopen: (path: string | undefined, symbols: object) => ffi.dlopen(path, symbols),
   callback: () => {
     throw new Error("Deprecated. Use new JSCallback(options, fn) instead");
   },
@@ -203,6 +199,7 @@ function normalizePath(path: string | URL | Bun.BunFile | undefined) {
 function dlopen(path: string | URL | Bun.BunFile | undefined, options: object) {
   path = normalizePath(path);
 
+  const openLibrary: (path: unknown, symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "openLibrary");
   const result = openLibrary(path, options);
 
   // Bind it because it's a breaking change to not do so
@@ -267,6 +264,7 @@ function viewSource(symbols: object, isCallback?: boolean) {
 }
 
 function linkSymbols(options: object) {
+  const linkLibrary: (symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "linkLibrary");
   var result = linkLibrary(options);
   return result;
 }
@@ -276,6 +274,7 @@ function closeJSCFFICFunction() {}
 function CFunction(options: object) {
   const identifier = `CFunction${cFunctionI++}`;
 
+  const makeFunction: (options: object, name: string) => $Node.FFIFunction = $bindgen("ffi.bind.ts", "makeFunction");
   const fn = makeFunction(options, identifier);
   fn.close = closeJSCFFICFunction;
   return fn;

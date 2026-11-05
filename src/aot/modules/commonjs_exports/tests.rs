@@ -1284,11 +1284,19 @@ fn a_file_that_stores_to_a_wrapper_parameter_or_exposes_its_scope_needs_a_wrappe
         "exports.a = 1; exports = {};",
         "exports.a = 1; eval('1');",
         "exports.a = 1; console.log(arguments.length);",
+        "exports.a = typeof module; var module = 1;",
+        "function read() { return module; } exports.a = read(); var module = 1;",
+        "var module = module.exports; module.a = 1;",
+        "if (exports.a) { var module = 1; } exports.b = typeof module;",
+        "var require; exports.a = require;",
     ] {
         assert!(needs_wrapped_body(module), "{module}");
     }
     for module in [
         "exports.a = 1;",
+        "var module = 1; exports.a = function () { return module; };",
+        "for (var i = 0; i < 2; i++) { var module = i; exports.a = module; }",
+        "var require = 1; exports.a = require;",
         "exports.a = 1; console.log(exports);",
         "function f() {} exports = module.exports = f; exports.a = 1;",
     ] {

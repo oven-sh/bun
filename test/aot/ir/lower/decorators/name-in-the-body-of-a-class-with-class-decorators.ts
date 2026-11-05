@@ -19,7 +19,7 @@ declare const d: any;
 declare const note: any;
 
 @d
-class C {
+class C { // @ts-expect-error
   @note(C) field = 1;
   static poke() {
     // @ts-ignore

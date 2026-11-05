@@ -343,6 +343,74 @@ fn an_es_module_that_a_made_name_may_require_during_its_load_is_left_to_the_load
 }
 
 #[test]
+fn a_require_in_the_body_of_a_file_may_find_what_another_file_has_written() {
+    let text = "globalThis.wanted = './asked.mjs';";
+    let no_text = "globalThis.wanted = process.env.NONE;";
+    let in_body = "require(globalThis.wanted);";
+    let under_try = "try { require(globalThis.wanted); } catch {}";
+    let in_function = "exports.load = name => require(name);";
+    let rows = [
+        (text, in_body, true),
+        (text, under_try, true),
+        (text, in_function, false),
+        (no_text, in_body, false),
+    ];
+    for (lays_name, asker, expected) in rows {
+        let main = format!("{lays_name} require('./root.mjs');");
+        let files = [
+            ("main.cjs", main.as_str()),
+            ("root.mjs", "import './asker.cjs'; import './asked.mjs';"),
+            ("asker.cjs", asker),
+            ("asked.mjs", "import asker from './asker.cjs'; asker;"),
+        ];
+        with_order(&files, |input, order, _| {
+            let marks = &order.parts.is_loaded_by_loader;
+            for file in &files {
+                let is_left = marks[file_named(input, file.0).idx()];
+                assert_eq!(is_left, expected, "{}: {main} {asker}", file.0);
+            }
+        });
+    }
+}
+
+#[test]
+fn a_made_name_leaves_the_cycle_to_the_loader_where_every_file_is_found_by_name() {
+    let files = [
+        ("main.cjs", "require('./root.mjs');"),
+        ("root.mjs", "import './asker.cjs'; import './asked.mjs';"),
+        ("asker.cjs", "require(process.env.NONE || './asked.mjs');"),
+        ("asked.mjs", "import asker from './asker.cjs'; asker;"),
+    ];
+    let packages = [b"left-out".to_vec()];
+    let (text, no_text) = (files[2].1, "require(process.env.NONE);");
+    let rows: [(&[Vec<u8>], bool, &str); 4] = [
+        (&[], true, text),
+        (&packages, false, text),
+        (&[], true, no_text),
+        (&packages, false, no_text),
+    ];
+    for (external_packages, runs_tests, asker) in rows {
+        let files = [files[0], files[1], ("asker.cjs", asker), files[3]];
+        with_graph(&files, |_, input| {
+            let input = &BindInput {
+                external_packages,
+                files_are_named_out_of_sight: !runs_tests,
+                runs_tests,
+                helpers_of_tests_name_files: runs_tests,
+                ..*input
+            };
+            let scans = scan_files(input);
+            let modules = collect_modules(input, &scans);
+            let (order, _) = compute_order(input, &scans, &modules);
+            assert!(order.parts.texts_that_spell_files.is_none());
+            let marks = &order.parts.is_loaded_by_loader;
+            let is_left = |file: &(&str, &str)| marks[file_named(input, file.0).idx()];
+            assert!(files.iter().all(is_left), "{asker}, tests: {runs_tests}");
+        });
+    }
+}
+
+#[test]
 fn a_site_in_a_branch_exposes_nothing() {
     let files = [
         ("main.cjs", "if (exports.y) require('./a.cjs');"),

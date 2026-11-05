@@ -24,3 +24,4 @@ let thrown = "nothing";
 try { both("Shape.prototype.around = 5"); } catch (error) { thrown = String(error instanceof TypeError); }
 report(thrown);
 report("end");
+declare function report(value: unknown): void;

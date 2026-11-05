@@ -25,6 +25,7 @@ use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
+use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Files, Sym};
@@ -91,6 +92,9 @@ pub(super) struct StoredSite {
 
 struct LinkedFiles {
     by_importer: Vec<Vec<FileId>>,
+    es_modules_by_importer: Vec<Vec<FileId>>,
+    is_target: Vec<bool>,
+    is_on_ring: Vec<bool>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -100,6 +104,7 @@ enum LoadState {
     Fetched,
     Made,
     Recorded,
+    Quiet,
     Settled,
 }
 
@@ -111,6 +116,47 @@ enum LoadJob {
     LoadRequests,
 }
 
+#[derive(Default)]
+struct LoadSteps {
+    root_number: u32,
+    walk: u32,
+    roots_of_states: Vec<u32>,
+    states: Vec<LoadState>,
+    last_walks: Vec<u32>,
+    jobs: Vec<(LoadJob, FileId)>,
+    to_walk: Vec<FileId>,
+    walked: Vec<FileId>,
+}
+
+impl LoadSteps {
+    fn begin(&mut self, file_count: usize) {
+        self.root_number += 1;
+        self.roots_of_states.resize(file_count, 0);
+        self.states.resize(file_count, LoadState::Unrequested);
+        self.last_walks.resize(file_count, 0);
+        self.jobs.clear();
+    }
+
+    fn state(&self, file: FileId) -> LoadState {
+        if self.roots_of_states[file.idx()] == self.root_number {
+            self.states[file.idx()]
+        } else {
+            LoadState::Unrequested
+        }
+    }
+
+    fn set_state(&mut self, file: FileId, state: LoadState) {
+        self.roots_of_states[file.idx()] = self.root_number;
+        self.states[file.idx()] = state;
+    }
+
+    fn take_if_unseen(&mut self, file: FileId) -> bool {
+        let is_unseen = self.state(file) == LoadState::Unrequested;
+        self.set_state(file, LoadState::Requested);
+        is_unseen
+    }
+}
+
 impl LinkedFiles {
     fn leads_to_target(&self, es_module: FileId) -> bool {
         !self.by_importer[es_module.idx()].is_empty()
@@ -119,83 +165,105 @@ impl LinkedFiles {
     fn list_targets_as_require_makes_them(
         &self,
         root: FileId,
-        is_es_module: impl Fn(FileId) -> bool,
+        target_count: usize,
+        steps: &mut LoadSteps,
     ) -> Vec<FileId> {
-        let mut states = vec![LoadState::Unrequested; self.by_importer.len()];
-        let mut last_walks = vec![0u32; self.by_importer.len()];
+        steps.begin(self.by_importer.len());
         let mut made = Vec::new();
-        let mut jobs = vec![(LoadJob::LoadRequests, root)];
-        let (mut to_walk, mut walked) = (Vec::new(), Vec::new());
-        states[root.idx()] = LoadState::Recorded;
+        steps.jobs.push((LoadJob::LoadRequests, root));
+        steps.set_state(root, LoadState::Recorded);
         let mut next = 0;
-        while let Some(&(job, file)) = jobs.get(next) {
+        while let Some(&(job, file)) = steps.jobs.get(next)
+            && made.len() < target_count
+        {
             next += 1;
-            match (job, states[file.idx()]) {
+            match (job, steps.state(file)) {
                 (LoadJob::SettleFetch, LoadState::Requested) => {
-                    states[file.idx()] = LoadState::Fetched;
-                    jobs.push((LoadJob::MakeRecord, file));
+                    steps.set_state(file, LoadState::Fetched);
+                    steps.jobs.push((LoadJob::MakeRecord, file));
                 }
                 (LoadJob::MakeRecord, LoadState::Fetched) => {
-                    states[file.idx()] = LoadState::Made;
-                    if !is_es_module(file) {
+                    steps.set_state(file, LoadState::Made);
+                    if self.is_target[file.idx()] {
                         made.push(file);
                     }
-                    jobs.push((LoadJob::StoreRecord, file));
+                    steps.jobs.push((LoadJob::StoreRecord, file));
                 }
                 (LoadJob::StoreRecord, LoadState::Made) => {
-                    states[file.idx()] = LoadState::Recorded;
-                    if is_es_module(file) {
-                        jobs.push((LoadJob::LoadRequests, file));
+                    steps.set_state(file, LoadState::Recorded);
+                    if !self.is_target[file.idx()] {
+                        steps.jobs.push((LoadJob::LoadRequests, file));
                     }
                 }
-                (LoadJob::LoadRequests, LoadState::Recorded) => {
-                    let walk = next as u32;
-                    let mut is_all_recorded = true;
-                    to_walk.push(file);
-                    while let Some(importer) = to_walk.pop() {
-                        if states[importer.idx()] == LoadState::Settled
-                            || core::mem::replace(&mut last_walks[importer.idx()], walk) == walk
-                        {
-                            continue;
-                        }
-                        walked.push(importer);
-                        for &target in &self.by_importer[importer.idx()] {
-                            let state = states[target.idx()];
-                            match state {
-                                LoadState::Unrequested => {
-                                    states[target.idx()] = LoadState::Requested;
-                                    jobs.push((LoadJob::SettleFetch, target));
-                                    is_all_recorded = false;
-                                }
-                                LoadState::Requested => {
-                                    states[target.idx()] = LoadState::Fetched;
-                                    jobs.push((LoadJob::MakeRecord, target));
-                                    is_all_recorded = false;
-                                }
-                                LoadState::Fetched | LoadState::Made => {
-                                    states[target.idx()] = LoadState::Recorded;
-                                    if is_es_module(target) {
-                                        jobs.push((LoadJob::LoadRequests, target));
-                                        to_walk.push(target);
-                                    } else if state == LoadState::Fetched {
-                                        made.push(target);
-                                    }
-                                }
-                                LoadState::Recorded if is_es_module(target) => to_walk.push(target),
-                                LoadState::Recorded | LoadState::Settled => {}
-                            }
-                        }
-                    }
-                    for importer in walked.drain(..) {
-                        if is_all_recorded {
-                            states[importer.idx()] = LoadState::Settled;
-                        }
-                    }
+                (LoadJob::LoadRequests, LoadState::Recorded | LoadState::Quiet) => {
+                    self.walk_stored_modules(file, steps, &mut made);
                 }
                 _ => {}
             }
         }
         made
+    }
+
+    fn walk_stored_modules(&self, start: FileId, steps: &mut LoadSteps, made: &mut Vec<FileId>) {
+        steps.walk += 1;
+        let walk = steps.walk;
+        let mut is_all_recorded = true;
+        steps.to_walk.push(start);
+        while let Some(importer) = steps.to_walk.pop() {
+            if core::mem::replace(&mut steps.last_walks[importer.idx()], walk) == walk {
+                continue;
+            }
+            steps.walked.push(importer);
+            if steps.states[importer.idx()] == LoadState::Quiet {
+                for &target in &self.es_modules_by_importer[importer.idx()] {
+                    if steps.last_walks[target.idx()] != walk
+                        && steps.states[target.idx()] != LoadState::Settled
+                    {
+                        steps.to_walk.push(target);
+                    }
+                }
+                continue;
+            }
+            let mut is_quiet = true;
+            for &target in &self.by_importer[importer.idx()] {
+                let state = steps.state(target);
+                match state {
+                    LoadState::Unrequested => {
+                        steps.set_state(target, LoadState::Requested);
+                        steps.jobs.push((LoadJob::SettleFetch, target));
+                        is_quiet = false;
+                    }
+                    LoadState::Requested => {
+                        steps.set_state(target, LoadState::Fetched);
+                        steps.jobs.push((LoadJob::MakeRecord, target));
+                        is_quiet = false;
+                    }
+                    LoadState::Fetched | LoadState::Made => {
+                        steps.set_state(target, LoadState::Recorded);
+                        if !self.is_target[target.idx()] {
+                            steps.jobs.push((LoadJob::LoadRequests, target));
+                            steps.to_walk.push(target);
+                        } else if state == LoadState::Fetched {
+                            made.push(target);
+                        }
+                    }
+                    LoadState::Recorded | LoadState::Quiet if !self.is_target[target.idx()] => {
+                        steps.to_walk.push(target);
+                    }
+                    LoadState::Recorded | LoadState::Quiet | LoadState::Settled => {}
+                }
+            }
+            if is_quiet {
+                steps.set_state(importer, LoadState::Quiet);
+            }
+            is_all_recorded &= is_quiet;
+        }
+        for at in 0..steps.walked.len() {
+            if is_all_recorded {
+                steps.set_state(steps.walked[at], LoadState::Settled);
+            }
+        }
+        steps.walked.clear();
     }
 }
 
@@ -1251,40 +1319,44 @@ impl ModuleGraph {
         })
     }
 
-    fn collect_prefix(&self, root: FileId, linked: &LinkedFiles) -> Vec<ModuleRef> {
-        let mut prefix = Vec::new();
+    fn collect_prefix(
+        &self,
+        root: FileId,
+        linked: &LinkedFiles,
+        steps: &mut LoadSteps,
+    ) -> Vec<ModuleRef> {
         if !linked.leads_to_target(root) {
-            return prefix;
+            return Vec::new();
         }
+        let mut prefix = Vec::new();
         let order = &self.plan.order;
-        let face_of = |file: FileId| {
-            let file = ModuleRef::File(file);
-            self.face(file).unwrap_or(file)
-        };
-        if order.required_prefix_roots.binary_search(&root).is_ok() {
-            let is_es_module = |file: FileId| self.kind(file) == ModuleKind::SourceText;
-            let made = linked.list_targets_as_require_makes_them(root, is_es_module);
-            return made.into_iter().map(face_of).collect();
-        }
-        let runs_in_its_turn = |file: FileId| order.is_es_module_to_imports[file.idx()];
-        let mut is_seen = vec![false; linked.by_importer.len()];
-        is_seen[root.idx()] = true;
+        let is_read_by_require = order.required_prefix_roots.binary_search(&root).is_ok();
+        let runs_in_its_turn =
+            |file: FileId| !is_read_by_require && order.is_es_module_to_imports[file.idx()];
+        steps.begin(linked.by_importer.len());
+        steps.take_if_unseen(root);
+        let mut meets_ring = linked.is_on_ring[root.idx()];
         let mut importers = vec![root];
         let mut next = 0;
         while let Some(&file) = importers.get(next) {
             next += 1;
             for &target in &linked.by_importer[file.idx()] {
-                if core::mem::replace(&mut is_seen[target.idx()], true) {
+                if !steps.take_if_unseen(target) {
                     continue;
                 }
-                if self.kind(target) == ModuleKind::SourceText {
+                if !linked.is_target[target.idx()] {
+                    meets_ring |= linked.is_on_ring[target.idx()];
                     importers.push(target);
                 } else if !runs_in_its_turn(target) {
-                    prefix.push(face_of(target));
+                    prefix.push(target);
                 }
             }
         }
-        prefix
+        if prefix.len() > 1 && is_read_by_require && !meets_ring {
+            prefix = linked.list_targets_as_require_makes_them(root, prefix.len(), steps);
+        }
+        let faces = prefix.into_iter().map(ModuleRef::File);
+        faces.map(|file| self.face(file).unwrap_or(file)).collect()
     }
 
     fn find_linked_file(&self, request: &ModuleRequest) -> Option<FileId> {
@@ -1320,12 +1392,29 @@ impl ModuleGraph {
                 imports.push((target, file));
             }
         }
+        let mut is_target = vec![false; successors.len()];
+        for &target in &targets {
+            is_target[target.idx()] = true;
+        }
         let leads_to_target = find_files_that_lead_to(targets, &imports, successors.len());
         for imported in &mut successors {
             imported.retain(|&file| leads_to_target[file.idx()]);
         }
+        let only_es_modules = |imported: &Vec<FileId>| {
+            let imported = imported.iter().copied();
+            imported.filter(|file| !is_target[file.idx()]).collect()
+        };
+        let es_modules_by_importer: Vec<Vec<FileId>> =
+            successors.iter().map(only_es_modules).collect();
+        let numbers = |imported: &Vec<FileId>| imported.iter().map(|file| file.0).collect();
+        let edges: Vec<Vec<u32>> = es_modules_by_importer.iter().map(numbers).collect();
+        let (ring_of, rings) = strongly_connected_components(&edges);
+        let sizes = ring_of.iter().map(|&ring| rings[ring as usize].len());
         LinkedFiles {
+            is_on_ring: sizes.map(|size| size > 1).collect(),
+            es_modules_by_importer,
             by_importer: successors,
+            is_target,
         }
     }
 
@@ -1391,9 +1480,13 @@ impl ModuleGraph {
             .filter(|&file| self.is_es_module_of_program(file) && self.is_prefix_root(file))
             .map(|root| (root, Vec::new()))
             .collect();
-        for_each_mut(&mut prefixes, in_parallel, &|(root, prefix)| {
-            if !self.is_loaded_by_loader(ModuleRef::File(*root)) {
-                *prefix = self.collect_prefix(*root, linked_files);
+        let mut parts: Vec<&mut [(FileId, Vec<ModuleRef>)]> = prefixes.chunks_mut(16).collect();
+        for_each_mut(&mut parts, in_parallel, &|part| {
+            let mut steps = LoadSteps::default();
+            for (root, prefix) in part.iter_mut() {
+                if !self.is_loaded_by_loader(ModuleRef::File(*root)) {
+                    *prefix = self.collect_prefix(*root, linked_files, &mut steps);
+                }
             }
         });
         prefixes
@@ -1416,7 +1509,7 @@ impl ModuleGraph {
             .map(|entry| (entry, Vec::new()))
             .collect();
         for_each_mut(&mut data_prefixes, in_parallel, &|(entry, prefix)| {
-            *prefix = self.collect_prefix(*entry, data_files);
+            *prefix = self.collect_prefix(*entry, data_files, &mut LoadSteps::default());
         });
         let mut data_prefixes = data_prefixes.into_iter().peekable();
         for &file in self.record_files() {

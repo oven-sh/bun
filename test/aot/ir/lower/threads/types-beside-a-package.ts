@@ -30,8 +30,8 @@ import { near } from "./near";
 import type { Listed } from "listed";
 declare const console: { log(...values: unknown[]): void };
 const listed: Listed = { each: visit => visit(1), last: pick => pick("last") };
-const own = { twice: (change: (value: number) => number) => change(change(1)) };
-console.log(far(listed, own) + near(listed, own), listed.last(text => text + "!"), declaredIn_app, declaredIn_far, declaredIn_near);
+const own = { twice: (change: (value: number) => number) => change(change(1)) }; // @ts-expect-error
+console.log(far(listed, own) + near(listed, own), listed.last(text => text + "!"), declaredIn_app, declaredIn_far, declaredIn_near); // @ts-expect-error
 export function declared(inApp: typeof declaredIn_app, inFar: typeof declaredIn_far, inNear: typeof declaredIn_near) {}
 
 // FILE: app/tsconfig.json

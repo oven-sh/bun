@@ -7,4 +7,5 @@
 // CHECK-NOT: sourcestamp
 
 // FILE: main.ts
+// @ts-expect-error
 import("\0made:up").catch(() => console.log("nothing is there"));

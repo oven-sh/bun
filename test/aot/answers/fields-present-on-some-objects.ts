@@ -14,3 +14,4 @@ function chain(length: number): number { let first: Item | undefined; for (let i
 for (let id = 0; id < 7; id++) { const item = make(id); report(read(item)); report(has(item)); report(fill(item)); report(has(item)); report(empty(item)); }
 report(chain(0)); report(chain(1)); report(chain(9));
 report("end");
+declare function report(value: unknown): void;

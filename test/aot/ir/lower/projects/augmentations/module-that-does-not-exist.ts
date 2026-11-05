@@ -1,9 +1,5 @@
 // RUN: lower
-
-// `declare module` under the name of a file that does not exist stops no build: it is a type error, and nothing of it runs.
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK: [[nothing]] = Undefined
-// CHECK-NEXT: Return [[nothing]]
+// DIAGNOSTIC: TS2664 missing.ts:1
 
 // FILE: missing.ts
 declare module "./nowhere" {

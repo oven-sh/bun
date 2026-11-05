@@ -63,7 +63,7 @@ const notMetYet: Record<string, string> = isWindows
       ]),
     )
   : {
-      "the descriptor of process": "the compiler does not see every API that the program uses",
+      "the descriptor of process": "the compiler does not see every API that the program uses, and 4,643 names escape",
       "Object.defineProperty": "1,025 names escape",
       "Object.assign": "3,684 names escape",
       "a read under a name of the command line": "1,025 names escape",

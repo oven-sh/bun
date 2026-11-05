@@ -1,5 +1,5 @@
 # Object.defineProperty() with a descriptor written in place creates the field in its slot, like a store: `size` lies boxed and is held to a whole number or a text. A raw number that a direct call gives is whole
-# by a claim alone, and its box would be cut by that claim: in front of the definition it is asked as it lies, as in front of a store (a-raw-number-that-a-call-gives-is-asked-for-the-part-that-the-slot-takes.ir).
+# by a claim alone, and on this road nobody asked it: in front of the definition it is asked as it lies, as in front of a store (a-raw-number-that-a-call-gives-is-asked-for-the-part-that-the-slot-takes.ir).
 # f2 = the constructor of Gauge
 # -- source: a-raw-number-laid-by-a-definition-is-asked-for-the-part-that-the-slot-takes.js
 # function unsigned(n) { return n >>> 0; }

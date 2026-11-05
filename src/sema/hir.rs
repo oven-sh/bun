@@ -2914,7 +2914,9 @@ pub struct FileIn<S: Storage> {
     /// A module even without module syntax: by its extension, or because the options force every
     /// file to be a module. Such a file can still be a CommonJS module.
     pub is_forced_module: bool,
-    /// A script for its project that a build runs as a module: what `bun run` drops of it stays global. Set by the loader.
+    /// A script for its project that a build runs as a module. Set by the loader.
+    pub is_script_for_project: bool,
+    /// `is_script_for_project`, and what `bun run` drops of it stays global. Set by the loader.
     pub is_script_with_code: bool,
     pub runs_beside_loader: bool,
     /// The imports that bind the `require` of another file. Set by the loader.
@@ -3640,6 +3642,7 @@ macro_rules! file_in_storage {
             is_flow: $this.is_flow,
             check_directive: $this.check_directive,
             is_forced_module: $this.is_forced_module,
+            is_script_for_project: $this.is_script_for_project,
             is_script_with_code: $this.is_script_with_code,
             runs_beside_loader: $this.runs_beside_loader,
             imported_requires: $few!($this.imported_requires),
@@ -3789,6 +3792,7 @@ impl FileBuilder {
             is_flow,
             check_directive,
             is_forced_module,
+            is_script_for_project,
             is_script_with_code,
             runs_beside_loader,
             imported_requires,
@@ -3894,6 +3898,7 @@ impl FileBuilder {
         *is_flow = Default::default();
         *check_directive = Default::default();
         *is_forced_module = Default::default();
+        *is_script_for_project = Default::default();
         *is_script_with_code = Default::default();
         *runs_beside_loader = Default::default();
         imported_requires.clear();

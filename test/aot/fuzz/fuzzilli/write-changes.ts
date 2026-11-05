@@ -15,7 +15,10 @@ export function writeSceneOfAChange(random: () => number, n: number, isTypeScrip
   const value = () => pick(["1", "2", "7", "0.5", '"text"', "null", "undefined", "true", "[1]", "{ deep: 1 }"]);
 
   // Who is there: a row of two or three makers, each with a member `size`, a method `tell` and perhaps more.
+  // One scene in five keeps a function that nobody calls: it is read as a value, and then whoever held it is changed.
+  const keepsAFunction = chance(20);
   const kind = pick([
+    ...(keepsAFunction ? ["classes", "classes", "classes", "classes", "classes", "classes"] : []),
     "classes",
     "classes",
     "classes",
@@ -33,16 +36,16 @@ export function writeSceneOfAChange(random: () => number, n: number, isTypeScrip
     pick<Member>(["method", "method", "method", "field", "field", "field", "accessor", "none", "none"]);
   const oneKind: Record<string, Member> = {
     size: pick<Member>(["field", "field", "accessor", "method"]),
-    tell: pick<Member>(["method", "method", "field"]),
+    tell: keepsAFunction ? "method" : pick<Member>(["method", "method", "field"]),
   };
   const members = (level: number, mayLack: boolean) =>
     ["size", "tell"]
       .map(name => {
-        const drawn = drawMember();
+        const drawn = keepsAFunction && name === "tell" && level < 3 ? "method" : drawMember();
         const member =
           !mayLack && drawn === "none" ? "method" : isTypeScript && drawn !== "none" ? oneKind[name] : drawn;
         return member === "method"
-          ? `${name}()${any} { ${level === 2 && chance(30) ? work + " return work + " : "return "}${level}; }`
+          ? `${name}()${any} { ${level === 2 && chance(keepsAFunction ? 70 : 30) ? work + " return work + " : "return "}${level}; }`
           : member === "field"
             ? `${name}${any} = ${level};`
             : member === "accessor"
@@ -102,38 +105,50 @@ export function writeSceneOfAChange(random: () => number, n: number, isTypeScrip
 
   // What is asked, of one who is named.
   const hasMakers = kind === "classes" || kind === "functions";
-  const question = pick<(who: string) => string>([
-    who => `typeof ${who}.size === "function" ? ${who}.size() : ${who}.size`,
-    who => `typeof ${who}.size === "function" ? ${who}.size() : ${who}.size`,
-    who => `${who}.size`,
-    who => `typeof ${who}.tell === "function" ? ${who}.tell() : typeof ${who}.tell`,
-    who => `typeof ${who}.tell === "function" ? ${who}.tell() : typeof ${who}.tell`,
-    who => `${who}.late`,
-    who => `${who}.late !== undefined`,
-    who => `"late" in ${who}`,
-    who => `"size" in ${who}`,
-    who => `Object.keys(${who}).join()`,
-    who => `JSON.stringify(${who})`,
-    who => `Object.hasOwn(${who}, "size")`,
-    who => `typeof ${who}.size`,
-    who => `typeof ${who}.size + typeof ${who}.tell`,
-    who => `String(${who}.more)`,
-    who => `(({ size }) => size)(${who})`,
-    who => `Object.getPrototypeOf(${who}) === Object.getPrototypeOf(${mid})`,
-    ...(hasMakers && !isStatic
+  const question = pick<(who: string) => string>(
+    keepsAFunction
       ? [
-          (who: string) => `${who} instanceof ${Mid}`,
-          (who: string) => `${who} instanceof ${Mid}`,
-          (who: string) => `${who} instanceof ${Top}`,
-          (who: string) => `${who} instanceof ${Low}`,
-          (who: string) => `${who} instanceof ${Low}`,
-          (who: string) => `${who} instanceof ${Low} ? ${who}.size : "no"`,
-          (who: string) => `${who}.constructor === ${Low}`,
-          (who: string) => `${Mid}.prototype.isPrototypeOf(${who})`,
+          who => `${who}.late`,
+          who => `Object.keys(${who}).join()`,
+          who => `typeof ${who}.size`,
+          who => `"late" in ${who}`,
+          who => `typeof ${who}.tell`,
         ]
-      : []),
-    ...(kind === "created" ? [(who: string) => `${who}.label`, (who: string) => `${who}._label !== undefined`] : []),
-  ]);
+      : [
+          who => `typeof ${who}.size === "function" ? ${who}.size() : ${who}.size`,
+          who => `typeof ${who}.size === "function" ? ${who}.size() : ${who}.size`,
+          who => `${who}.size`,
+          who => `typeof ${who}.tell === "function" ? ${who}.tell() : typeof ${who}.tell`,
+          who => `typeof ${who}.tell === "function" ? ${who}.tell() : typeof ${who}.tell`,
+          who => `${who}.late`,
+          who => `${who}.late !== undefined`,
+          who => `"late" in ${who}`,
+          who => `"size" in ${who}`,
+          who => `Object.keys(${who}).join()`,
+          who => `JSON.stringify(${who})`,
+          who => `Object.hasOwn(${who}, "size")`,
+          who => `typeof ${who}.size`,
+          who => `typeof ${who}.size + typeof ${who}.tell`,
+          who => `String(${who}.more)`,
+          who => `(({ size }) => size)(${who})`,
+          who => `Object.getPrototypeOf(${who}) === Object.getPrototypeOf(${mid})`,
+          ...(hasMakers && !isStatic
+            ? [
+                (who: string) => `${who} instanceof ${Mid}`,
+                (who: string) => `${who} instanceof ${Mid}`,
+                (who: string) => `${who} instanceof ${Top}`,
+                (who: string) => `${who} instanceof ${Low}`,
+                (who: string) => `${who} instanceof ${Low}`,
+                (who: string) => `${who} instanceof ${Low} ? ${who}.size : "no"`,
+                (who: string) => `${who}.constructor === ${Low}`,
+                (who: string) => `${Mid}.prototype.isPrototypeOf(${who})`,
+              ]
+            : []),
+          ...(kind === "created"
+            ? [(who: string) => `${who}.label`, (who: string) => `${who}._label !== undefined`]
+            : []),
+        ],
+  );
   // Where it is asked: written out for each, in a function that takes one of them, or in a loop.
   const where = pick(["written", "written", "written", "function", "function", "loop", "loop", "method"]);
   const asker =
@@ -198,7 +213,9 @@ export function writeSceneOfAChange(random: () => number, n: number, isTypeScrip
         : []),
     ]);
   };
+  const inAFunction = (deed: string) => [`function change${n}() { ${work} ${deed} return work; }`, `change${n}();`];
   const road = pick<(deed: string) => string[]>([
+    ...(keepsAFunction ? [inAFunction, inAFunction, inAFunction, inAFunction, inAFunction, inAFunction] : []),
     deed => [deed],
     deed => [deed],
     deed => [deed],
@@ -239,7 +256,33 @@ export function writeSceneOfAChange(random: () => number, n: number, isTypeScrip
     [`delete ${one}.size;`, `${one}.size = ${value()};`],
     [`Object.freeze(${one});`, `${one}.size = 9;`],
   ];
-  const [first, second] = chance(35) ? pick(pairs) : [drawChange(), chance(40) ? drawChange() : ""];
+  const replaced = () => pick(["() => 9", "() => 9", "function () { return 9; }", "9", "undefined"]);
+  const kept: [string, string][] = [
+    [`kept${n} = ${one}.tell; ${one}.tell = ${replaced()};`, `${one}.tell = kept${n};`],
+    [`kept${n} = ${one}.tell; ${one}.tell = ${replaced()};`, ""],
+    [`kept${n} = ${low}.tell; ${mid}.tell = ${replaced()};`, `delete ${mid}.tell;`],
+    [`kept${n} = ${low}.tell; delete ${one}.tell;`, ""],
+    [`kept${n} = [${mid}.tell][0]; ${one}.tell = ${replaced()};`, ""],
+    [`({ tell: kept${n} } = ${mid}); ${one}.tell = ${replaced()};`, ""],
+    [`kept${n} = slot${n}.run; slot${n}.run = ${replaced()};`, `slot${n}.run = kept${n};`],
+    [`kept${n} = slot${n}.run; delete slot${n}.run;`, ""],
+    ...(hasMakers && !isStatic
+      ? ([
+          [`kept${n} = ${low}.tell; ${proto(Mid)}.tell = ${replaced()};`, `delete ${proto(Mid)}.tell;`],
+          [`kept${n} = ${proto(Mid)}.tell; ${proto(Mid)}.tell = ${replaced()};`, `${proto(Mid)}.tell = kept${n};`],
+          [`kept${n} = ${proto(Top)}.tell; Object.setPrototypeOf(${proto(Mid)}, {});`, ""],
+          [
+            `kept${n} = Object.getOwnPropertyDescriptor(${proto(Mid)}, "size")?.get; Object.defineProperty(${proto(Mid)}, "size", { value: 9, configurable: true });`,
+            "",
+          ],
+        ] as [string, string][])
+      : []),
+  ];
+  const [first, second] = keepsAFunction
+    ? pick(kept)
+    : chance(35)
+      ? pick(pairs)
+      : [drawChange(), chance(40) ? drawChange() : ""];
   return [
     `let heard${n} = 0;`,
     `function show${n}(answer${any})${typed("string")} { return typeof answer === "function" ? "function" : String(answer); }`,
@@ -253,6 +296,7 @@ export function writeSceneOfAChange(random: () => number, n: number, isTypeScrip
         ]
       : []),
     ...(first.includes(`kept${n}`) ? [`let kept${n}${any};`] : []),
+    ...(first.includes(`slot${n}`) ? [`const slot${n}${any} = { run()${any} { ${work} return work; } };`] : []),
     ...safely(road(first)),
     tells("behind"),
     ...(second

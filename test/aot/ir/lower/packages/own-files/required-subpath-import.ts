@@ -1,12 +1,5 @@
 // RUN: lower
-// STATISTIC: SourceFilesChecked = 2
-// STATISTIC: SourceLinesOfPackages = 0
-// CHECK: EvaluateModule {{*}}isCallOfRequire
-// CHECK: [[f]] = CheckInitialized {{*}}name="f"
-// CHECK: = Call [[f]] calleeName="f"
-
-// A file of the program that require() reaches through an alias is the program's own: it is checked, and it counts with the program, not with the packages.
-// The type error in it is not reported and stops no build.
+// DIAGNOSTIC: TS2322 lib/f.ts:2
 
 // FILE: main.ts
 declare const console: { log(...values: unknown[]): void };

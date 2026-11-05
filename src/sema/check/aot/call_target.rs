@@ -10,7 +10,7 @@ use crate::hir::{
     CallId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, JsDocTypeOwner, TypeNodeId,
 };
 use crate::program::{FileId, Sym};
-use crate::types::{MapperId, SigData, SigId, TypeId};
+use crate::types::{MapperId, SigData, SigId, SynthSig, TypeId};
 use smallvec::SmallVec;
 
 const UNTYPED: PositionTypes = PositionTypes {
@@ -70,7 +70,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     ..self.class_result(class)
                 }
             }
-            SigData::Synth { .. } | SigData::WithReturn { .. } => PositionTypes::unwritten(checked),
+            SigData::Synth(_) | SigData::WithReturn { .. } => PositionTypes::unwritten(checked),
         };
         Ok(Some(CallTarget {
             signature,
@@ -145,12 +145,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             SigData::DefaultConstruct { class, .. } => {
                 self.default_constructor_shape(signature, class)
             }
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ref type_params,
                 ref params,
                 this,
                 ..
-            } => {
+            }) => {
                 let parameters: SmallVec<[SignatureParameter; 8]> = params
                     .iter()
                     .map(|parameter| SignatureParameter {
@@ -198,7 +198,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 None => self.checked_result(file, func, mapper),
             },
             SigData::DefaultConstruct { class, .. } => self.class_instance_type(class),
-            SigData::Synth { .. } => self.ask(|queries| {
+            SigData::Synth(_) => self.ask(|queries| {
                 let ty = queries.c.sig_return(signature);
                 queries.resolved(ty)
             }),
@@ -215,7 +215,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         match *self.c.types().sig(signature) {
             SigData::Decl { file, .. } | SigData::Construct { file, .. } => Some(file),
             SigData::DefaultConstruct { base, .. } => self.find_file_of_signature(base?),
-            SigData::Synth { .. } => None,
+            SigData::Synth(_) => None,
             SigData::WithReturn { sig: inner, .. } => self.find_file_of_signature(inner),
         }
     }

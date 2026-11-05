@@ -14,22 +14,23 @@
 // CHECK: = Call {{*}}calleeKey="push" calleeName="list.push"
 
 // `a["b"]` compiles to what `a.b` compiles to. TypeScript has other type errors for one spelling than for the other, and a build reports none of them.
-const point = { x: 1 };
-console.log(point["y"]);
+const point = { x: 1 }; // @ts-expect-error
+console.log(point["y"]); // @ts-expect-error
 console.log(point.y);
 
-const holder: { inner?: { value: number } } = {};
-console.log(holder["inner"].value);
+const holder: { inner?: { value: number } } = {}; // @ts-expect-error
+console.log(holder["inner"].value); // @ts-expect-error
 console.log(holder.inner.value);
 
+// @ts-expect-error
 function leaves(count: number): number {
   if (count > 0) return 1;
   process["exit"](1);
 }
 
-function collects() {
-  const list = [];
-  list["push"](1);
+function collects() { // @ts-expect-error
+  const list = []; // @ts-expect-error
+  list["push"](1); // @ts-expect-error
   return list;
 }
 
@@ -37,10 +38,10 @@ class Steps {
   *[Symbol["iterator"]]() {
     yield 1;
   }
-}
+} // @ts-expect-error
 for (const step of new Steps()) console.log(step);
 
 class Box {
   private hidden = 3;
-}
+} // @ts-expect-error
 console.log(new Box().hidden, leaves(1), collects());

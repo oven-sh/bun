@@ -17,7 +17,6 @@
 //   //@ kept-today Bun.color <why>   it should be and is not yet: a case of its own runs every time and is red the day the feature goes
 //   //@ trimmed-says <text> the trimmed executable prints it and the whole one does not
 //   //@ build-error <text>  both builds fail with it
-//   //@ todo <why>          it does not pass today
 //   //@ fails-today <why>   it does not pass today, runs every time and is red the day it passes
 //   //@ not-seen            the build does not see that the call reaches an evaluator: both executables end with the same EvalError
 //   //@ evaluated-code-uses-removed-api   where --trim removed the feature, the call in the evaluated code throws
@@ -42,7 +41,6 @@ interface Program {
   buildFlags: string[];
   files: Record<string, string>;
   exitCode: number;
-  todo?: string;
   failsToday?: string;
   buildError?: string;
   evaluatedCodeUsesRemovedApi: boolean;
@@ -88,7 +86,6 @@ function programsOf(file: string): Program[] {
         program.files[value.slice(0, value.indexOf(" "))] = JSON.parse(value.slice(value.indexOf(" ") + 1));
       else if (directive === "ext") program.extension = value;
       else if (directive === "exit") program.exitCode = Number(value);
-      else if (directive === "todo") program.todo = value;
       else if (directive === "fails-today") program.failsToday = value;
       else if (directive === "build-error") program.buildError = value;
       else if (directive === "evaluated-code-uses-removed-api") program.evaluatedCodeUsesRemovedApi = true;
@@ -130,7 +127,6 @@ const sharesNoExecutable = (program: Program) =>
   program.keptToday.length > 0 ||
   program.trimmedSays !== undefined ||
   program.buildError !== undefined ||
-  program.todo !== undefined ||
   program.failsToday !== undefined ||
   program.buildFlags.some(flag => flag.startsWith("./"));
 
@@ -302,9 +298,8 @@ export function testTrimmedMatchesWhole(part: number, parts: number) {
         for (const programs of shared.values()) pairs.push(new Executables(programs));
         for (const executables of pairs)
           for (const program of executables.programs) {
-            const why = program.todo ?? program.failsToday;
-            (program.todo ? test.todo : program.failsToday ? test.failing : test)(
-              `${program.group}: ${program.name}${why ? ` (${why})` : ""}`,
+            (program.failsToday ? test.failing : test)(
+              `${program.group}: ${program.name}${program.failsToday ? ` (${program.failsToday})` : ""}`,
               () => judge(program, executables),
               600_000,
             );

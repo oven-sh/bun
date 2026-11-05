@@ -1,12 +1,5 @@
 // RUN: lower
-
-// What `typeof` gives is no number. That stops no build: the annotation is a Convert, which the engine tests.
-
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK: [[meta]] = ModuleBuiltin builtin=ImportMeta
-// CHECK-NEXT: [[url]] = PropGet [[meta]] key="url"
-// CHECK-NEXT: [[kind]] = TypeOf [[url]]
-// CHECK-NEXT: = Convert [[kind]] declared={type=number}
+// DIAGNOSTIC: TS2322 main.ts:1
 
 // FILE: main.ts
 const kind: number = typeof import.meta.url;

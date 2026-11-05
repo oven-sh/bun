@@ -93,4 +93,17 @@ for (const [title, words] of Object.entries(forms)) {
       await findsAll(`fileURLToPath(new URL("./rows/", import.meta.url))`);
     },
   );
+  test(`until then the spy that a file of such a folder makes is refused with a sentence that names both files: ${title}`, async () => {
+    const files = filesWith(`fileURLToPath(new URL("./rows/", import.meta.url))`);
+    using dir = tempDir("helpers-that-a-test-file-reaches-by-other-ways", files);
+    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), env);
+    expect(stderr).toMatch(
+      /TypeError: Cannot spy on 'half' of "\S+math\.ts" because "\S+one\.rows\.ts", which makes the spy, wasn't compiled with your tests: the build couldn't follow the path that loads it\./,
+    );
+    expect({ seen: stdout.split("\n").filter(line => line.startsWith("SEEN")), exitCode }).toEqual({
+      seen: [],
+      exitCode: 1,
+    });
+  });
 }

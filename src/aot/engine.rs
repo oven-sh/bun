@@ -170,10 +170,17 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     } else if options.trim.removes_unused && !is_allowed(Feature::Ffi) {
         record.excluded_code |= ExcludedCode::FOREIGN_CALLS_OF_UNSEEN_CODE;
     }
+    if options.trim.removes_unused {
+        record.excluded_code |= ExcludedCode::FEATURES_NAMED_AT_RUN_TIME;
+    }
     fill_feature_bits(&mut record.removed_features, &removed);
     fill_feature_bits(
         &mut record.target.features_kept_only_when_named,
-        &bun_trim::features_kept_only_when_named(),
+        &if options.trim.removes_unused {
+            FeatureSet::all()
+        } else {
+            bun_trim::features_kept_only_when_named()
+        },
     );
 }
 

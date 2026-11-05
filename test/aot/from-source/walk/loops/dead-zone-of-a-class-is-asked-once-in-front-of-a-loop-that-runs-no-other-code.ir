@@ -4,6 +4,7 @@
 # print(attempt(0), attempt(3));
 # class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } sum(): number { return this.x + this.y; } }
 # print(attempt(0), attempt(3));
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # All in the loop is proven: the object is never made, the method is copied. What was left in each turn is the check of the dead zone of `Point`, whose value nobody reads.
 # A variable of a body that runs once never goes back into its dead zone: it is asked once, in front of the loop. Where it is empty the other copy runs, which stands first in the text and is built for its size:

@@ -8,7 +8,7 @@
 // Nobody compares the type of the import with the annotation: the program builds, and the text is converted to what is written.
 
 // FILE: main.ts
-import note from "./note.tpl" with { type: "text" };
+import note from "./note.tpl" with { type: "text" }; // @ts-expect-error
 const size: number = note;
 console.log(size);
 

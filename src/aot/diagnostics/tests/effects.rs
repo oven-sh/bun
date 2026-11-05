@@ -258,9 +258,13 @@ fn internal_error_quotes_at_most_eighty_bytes_of_source() {
 }
 
 #[test]
-fn nobody_looks_for_type_errors() {
-    for text in [TYPE_ERROR, MISSING_DECLARATION, IMPLICIT_ANY] {
-        assert_eq!(check(&[("main.ts", text)]), NOTHING, "{text}");
+fn type_errors_are_looked_for_in_the_typescript_of_the_program_alone() {
+    for (text, code) in [
+        (TYPE_ERROR, 2322),
+        (MISSING_DECLARATION, 2304),
+        (IMPLICIT_ANY, 7006),
+    ] {
+        assert_eq!(check(&[("main.ts", text)]), [(Kind::Err, code)], "{text}");
         assert_eq!(check_dependency_source(text), NOTHING, "{text}");
         assert_eq!(check_aot_source(text), NOTHING, "{text}");
     }

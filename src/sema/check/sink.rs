@@ -485,7 +485,9 @@ impl Checker<'_, '_> {
         code: u32,
         args: &[Arg<'_>],
     ) -> Reported {
-        Reported::new(at, code, self.stringify_args(args))
+        let mut diagnostic = Reported::new(at, code, self.stringify_args(args));
+        diagnostic.subject = self.subject_of_arguments(args);
+        diagnostic
     }
 
     /// `NewDiagnosticChainForNode`
@@ -503,6 +505,7 @@ impl Checker<'_, '_> {
         // `NewDiagnosticChain`
         let mut diagnostic = self.new_diagnostic((chain.file, chain.start, chain.end), code, args);
         diagnostic.related_information = std::mem::take(&mut chain.related_information);
+        diagnostic.subject = diagnostic.subject.or(chain.subject);
         diagnostic.message_chain.push(chain);
         diagnostic
     }
@@ -1012,9 +1015,10 @@ impl Checker<'_, '_> {
             if diagnostic.is_placeholder() {
                 continue;
             }
-            let Some(diagnostic) = self.settled(diagnostic, &mut directives) else {
+            let Some(mut diagnostic) = self.settled(diagnostic, &mut directives) else {
                 continue;
             };
+            self.lay_subject_by_what_error_stands_at(&mut diagnostic);
             let owner = owner.filter(|&q| is_same_in_every_task(q));
             match at < while_writing_immediately && owner.is_some_and(|q| !is_task_independent(q)) {
                 true => for_visible_entries.push((owner, diagnostic)),

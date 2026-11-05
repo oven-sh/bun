@@ -4,7 +4,9 @@
 // A scene prints one text at its end, and nothing in it calls the host before that.
 import { combinations, conversions, predicates } from "./hand-over-built-ins.ts";
 import { randomFrom } from "./print-members-of-objects.ts";
+import { writeSceneOfCalls } from "./write-calls.ts";
 import { writeSceneOfAChange } from "./write-changes.ts";
+import { writeSceneOfAHand } from "./write-hands.ts";
 import { writeSceneOfHiddenEffects } from "./write-hidden-effects.ts";
 import { writeSceneOfALoop } from "./write-loops.ts";
 import { writeSceneOfASingleDeed } from "./write-single-deeds.ts";
@@ -3639,6 +3641,18 @@ class Scenes {
   sceneOfHiddenEffects() {
     if (!this.isTypeScript) return this.sceneOfChangesInTheMiddle();
     this.lines.push(...writeSceneOfHiddenEffects(this.random, ++this.count));
+  }
+
+  /** What a program hands to node's library watches what it is asked for and answers back (write-hands.ts). It ends guards of the library's classes for the whole process: one to a program, and by its name alone. */
+  sceneOfAHand() {
+    const { imports, lines } = writeSceneOfAHand(this.random, ++this.count, this.isTypeScript);
+    for (const line of imports) if (!this.imports.includes(line)) this.imports.push(line);
+    this.lines.push(...lines, "process.exit(0);");
+  }
+
+  /** One function, called from places that are unlike each other (write-calls.ts). */
+  sceneOfUnlikeCallSites() {
+    this.lines.push(...writeSceneOfCalls(this.random, ++this.count, this.isTypeScript));
   }
 
   /** Ask, change, ask again (write-changes.ts). */
@@ -8297,6 +8311,18 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
         () => scenes.sceneOfAChange(),
         () => scenes.sceneOfAChange(),
         () => scenes.sceneOfAChange(),

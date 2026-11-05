@@ -110,7 +110,7 @@ export function probe(first: {first}, second: {second}): void {{}}
         let parameters = &probe.expect("the fragment defines the function").parameters;
         let describe = |parameter: &DeclaredType| {
             let is_promise = parameter.flags.contains(PositionFlags::IS_INT32_PROMISE);
-            (tables.types.get(parameter.ty).clone(), is_promise)
+            (tables.types.get(parameter.ty).to_type(), is_promise)
         };
         parameters.iter().map(describe).collect()
     }

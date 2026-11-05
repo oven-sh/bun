@@ -75,6 +75,7 @@ pub(super) fn read_block(
         id,
         first_parameter: ValueId::from_word(first_parameter),
         role: head.role,
+        frequency: head.frequency,
         subject: head.subject,
         parameter_types,
         handler,

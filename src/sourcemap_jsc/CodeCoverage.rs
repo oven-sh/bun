@@ -630,6 +630,8 @@ struct CompiledCounts {
     functions: Vec<CountedRange>,
     /// Every function of the file, by where it starts.
     all_functions: Vec<CompiledFunction>,
+    /// `(start of the value of a constant, start of a read of the constant)`, in that order.
+    reads_of_constants: Vec<(u32, u32)>,
     /// Offset of the first unit of each line.
     line_starts: Vec<u32>,
 }
@@ -645,7 +647,8 @@ struct CompiledFunction {
 impl CompiledCounts {
     /// `ranges` has a line for each counter, in bytes of `text`: `b <start> <end>`; `f <start> <end> <counter of the code that makes the function> <end of head>`;
     /// `s <start> <end> <counter>` for text that another counter counts as well; `e <start> <end> <counter of the code around it> <end of head>` for a function
-    /// that the transpiler makes and calls where it stands; `o <start> <end> <offset>` for text that the transpiler prints a second time where the text at the offset runs: it ran as often as the place that ran most.
+    /// that the transpiler makes and calls where it stands; `o <start> <end> <offset>` for text that the transpiler prints a second time where the text at the offset runs: it ran as often as the place that ran most;
+    /// `r <start> <end> <offset>` for the value of a constant that is read at the offset: see `PlacesOfMappings`.
     fn parse(ranges: &[u8], counts: &[u64], text: &[u8]) -> Option<CompiledCounts> {
         // By byte offset: how many code units are in front of it.
         let units_before: Option<Vec<u32>> = (!text.is_ascii()).then(|| {
@@ -679,6 +682,7 @@ impl CompiledCounts {
         let mut all_functions = Vec::new();
         let mut called_where_they_stand = Vec::new();
         let mut printed_twice = Vec::new();
+        let mut reads_of_constants = Vec::new();
         for (counter, line) in bun_core::strings::split(ranges, b"\n").enumerate() {
             if line.is_empty() {
                 break;
@@ -700,6 +704,7 @@ impl CompiledCounts {
                     blocks.push(range);
                 }
                 b"o" => printed_twice.push((range, in_units(number()?))),
+                b"r" => reads_of_constants.push((range.range.start, in_units(number()?))),
                 b"e" => {
                     let is_known = count_of(number()? as usize) > 0;
                     called_where_they_stand.push((range, in_units(number()?), is_known));
@@ -759,10 +764,12 @@ impl CompiledCounts {
         blocks.sort_unstable_by_key(|block| (block.range, core::cmp::Reverse(block.count)));
         functions.sort_unstable_by_key(|function| function.range);
         all_functions.sort_unstable_by_key(|function| function.range.range);
+        reads_of_constants.sort_unstable();
         Some(CompiledCounts {
             blocks,
             functions,
             all_functions,
+            reads_of_constants,
             line_starts,
         })
     }
@@ -771,6 +778,56 @@ impl CompiledCounts {
         let line = usize::try_from(position.lines.zero_based()).ok()?;
         let column = u32::try_from(position.columns.zero_based()).ok()?;
         self.line_starts.get(line)?.checked_add(column)
+    }
+}
+
+/// Where in the file as written the code runs that each mapping stands for, asked in the order of the mappings.
+///
+/// The transpiler prints the value of a constant in the place of a read, with the position of the value, unless it computes with it.
+/// So a mapping that comes from the value of a constant and goes back in the file stands for a read. What is printed comes in the
+/// order of the file, so the read lies between the places of the mappings around it. It is the last one there: what has been
+/// computed bears a position at or in front of what it was computed from. Where none lies there it is the last one in front:
+/// a constant on the left of `===` is printed on the right, and the value of `{ name }` behind its key.
+struct PlacesOfMappings<'a, T> {
+    reads_of_constants: &'a [(u32, u32)],
+    /// Of the last mapping that stands for the text it comes from.
+    previous: u32,
+    /// `(start of the value of a constant, what was handed in with the mapping)`: the mappings since then.
+    waiting: Vec<(u32, T)>,
+}
+
+impl<'a, T> PlacesOfMappings<'a, T> {
+    fn reads_of(&self, constant: u32) -> &'a [(u32, u32)] {
+        let reads = self.reads_of_constants;
+        let start = reads.partition_point(|read| read.0 < constant);
+        &reads[start..reads.partition_point(|read| read.0 <= constant)]
+    }
+
+    /// `found` gets the place of each mapping once, with what was handed in with it.
+    fn add(&mut self, original: u32, with: T, found: &mut impl FnMut(u32, T)) {
+        if original <= self.previous && !self.reads_of(original).is_empty() {
+            self.waiting.push((original, with));
+            return;
+        }
+        self.place_waiting(original, found);
+        self.previous = original;
+        found(original, with);
+    }
+
+    /// `next`: the place of the mapping behind those that wait.
+    fn place_waiting(&mut self, next: u32, found: &mut impl FnMut(u32, T)) {
+        let previous = self.previous;
+        let mut end = if next > previous { next } else { u32::MAX };
+        while let Some((constant, with)) = self.waiting.pop() {
+            let reads = self.reads_of(constant);
+            let behind = reads.partition_point(|read| read.1 <= previous);
+            let between = reads.partition_point(|read| read.1 < end);
+            let place = reads[between.max(behind).saturating_sub(1)].1;
+            if place > previous {
+                end = place;
+            }
+            found(place, with);
+        }
     }
 }
 
@@ -897,6 +954,19 @@ impl ByteRangeMapping {
             source_map_of_compiled.as_deref(),
         ) {
             let mut previous_original = None;
+            let mut count_line = |place: u32, line: Option<(usize, u32)>| {
+                if let Some((line, from_text)) = line
+                    && let Some(count) = compiled_counts.at(place)
+                {
+                    // The file may have run from its text as well, and loads add up.
+                    lines.add(line, count.saturating_add(from_text));
+                }
+            };
+            let mut places = PlacesOfMappings {
+                reads_of_constants: &compiled.reads_of_constants,
+                previous: 0,
+                waiting: Vec::new(),
+            };
             source_map.for_each_mapping(|mapping| {
                 // As below.
                 let original = (
@@ -906,22 +976,21 @@ impl ByteRangeMapping {
                 if previous_original.replace(original) == Some(original) {
                     return;
                 }
+                let Some(original) = compiled.offset_of(mapping.original) else {
+                    return;
+                };
                 let shown = if ignore_sourcemap {
                     mapping.generated
                 } else {
                     mapping.original
                 };
-                if let Ok(line) = usize::try_from(shown.lines.zero_based())
-                    && let Some(offset) = self.offset_of(mapping.generated)
-                    && self.executable_units.is_set(offset as usize)
-                    && let Some(count) = compiled
-                        .offset_of(mapping.original)
-                        .and_then(|at| compiled_counts.at(at))
-                {
-                    // The file may have run from its text as well, and loads add up.
-                    lines.add(line, count.saturating_add(counts.at(offset).unwrap_or(0)));
-                }
+                let line = (usize::try_from(shown.lines.zero_based()).ok())
+                    .zip(self.offset_of(mapping.generated))
+                    .filter(|&(_, offset)| self.executable_units.is_set(offset as usize))
+                    .map(|(line, offset)| (line, counts.at(offset).unwrap_or(0)));
+                places.add(original, line, &mut count_line);
             });
+            places.place_waiting(0, &mut count_line);
         }
 
         if let Some(source_map) = source_map.as_deref() {

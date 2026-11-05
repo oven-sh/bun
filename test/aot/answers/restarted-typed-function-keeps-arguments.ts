@@ -18,3 +18,4 @@ report(length(new Point(3, 4), 2)); report(named(new Point(1, 2), "p")); report(
 for (const one of odd) { report(length(one, 2)); report(length(new Point(1, 1), one.x)); report(named(one, "q")); report(named(new Point(1, 2), one.y)); report(counted([new Point(1, 2), one], 1)); report(both(new Point(1, 2), one)); report(both(one, one)); }
 report(said);
 report("end");
+declare function report(value: unknown): void;

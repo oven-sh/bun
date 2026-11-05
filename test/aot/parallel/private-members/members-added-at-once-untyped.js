@@ -63,11 +63,9 @@ const before = countsSoFar();
 for (let i = 0; i < 1000; i++) seen.add(describe(make(i)));
 const calls = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log([...seen].sort().join("\n"));
-if (typeof aotRuntimeCounters !== "function") console.log("NOT COUNTED HERE: only the jsc shell counts the calls of the run time; the two bounds are held there alone");
-else {
-  console.log(asksFor600 === asksFor60 ? "the members were learnt with the first 60 objects: 540 more asked the run time for nothing" : "the run time was asked " + asksFor60 + " times for 60 objects and " + asksFor600 + " times for 600");
-  console.log(calls < 100 ? "1,000 objects were made with under 100 calls of the run time" : "1,000 objects were made with " + calls + " calls of the run time");
-}
+// Only what is wrong is said: plain Bun and an executable count nothing, and the shell must print what they print.
+if (asksFor600 !== asksFor60) console.log("the run time was asked " + asksFor60 + " times for 60 objects and " + asksFor600 + " times for 600");
+if (calls >= 100) console.log("1,000 objects were made with " + calls + " calls of the run time");
 collect();
 console.log(describe(make(3)));
 console.log(JSON.stringify(Object.getOwnPropertyDescriptors(make(0)), (key, value) => typeof value === "function" ? "function " + value.name : value));

@@ -4,8 +4,8 @@ use super::{BuiltinPath, SourceDialect};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinName, MemberLookup, Mutability,
 };
-use bun_sema::atom::Atom;
-use bun_sema::hir::{ExprId, MemberKey, NodeData};
+use bun_sema::atom::{Atom, known};
+use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PropKey};
 
 fn is_erased_namespace(object: BuiltinId) -> bool {
     object == BuiltinId::BunBundle
@@ -77,6 +77,56 @@ impl Resolver<'_, '_> {
         self.path_of_member(object, holder.path.mutability, found)
     }
 
+    pub(super) fn find_holder_above_function_written_here(
+        &self,
+        written: ExprId,
+    ) -> Option<ResolvedValue> {
+        if !self.input.runs_tests {
+            return None;
+        }
+        let hir = self.input.hir;
+        let ExprKind::Fn(function) = hir[hir.skip_type_assertions(written)].kind else {
+            return None;
+        };
+        let flags = hir[function].flags;
+        let id = match (
+            flags.contains(Flags::ASYNC),
+            flags.contains(Flags::GENERATOR),
+        ) {
+            (false, false) => BuiltinId::FunctionPrototype,
+            (true, false) => BuiltinId::AsyncFunctionPrototype,
+            (false, true) => BuiltinId::GeneratorFunctionPrototype,
+            (true, true) => BuiltinId::AsyncGeneratorFunctionPrototype,
+        };
+        let holder = ResolvedValue::object(BuiltinPath {
+            id,
+            mutability: Mutability::ConstantUnlessWritten,
+        });
+        Some(holder.with_side_effects())
+    }
+
+    pub(super) fn find_holder_that_proto_of_value_written_here_names(
+        &self,
+        written: ExprId,
+    ) -> Option<ResolvedValue> {
+        if !self.input.runs_tests {
+            return None;
+        }
+        let hir = self.input.hir;
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(written)].kind else {
+            return self.find_holder_above_function_written_here(written);
+        };
+        let mut keys = properties.iter().map(|property| hir[property].key);
+        if keys.any(|key| key == PropKey::Name(known::__proto__)) {
+            return None;
+        }
+        let holder = ResolvedValue::object(BuiltinPath {
+            id: BuiltinId::ObjectPrototype,
+            mutability: Mutability::ConstantUnlessWritten,
+        });
+        Some(holder.with_side_effects())
+    }
+
     pub(super) fn find_named_member(
         &self,
         holder: ResolvedValue,
@@ -133,8 +183,7 @@ impl Resolver<'_, '_> {
                 has_side_effects: false,
             }),
             MemberKey::Computed(computed) => {
-                let key = self.value_of(computed)?;
-                let symbol = table::well_known_symbol(key.path.id)?;
+                let (key, symbol) = self.symbol_that_key_is(computed)?;
                 let key = match self.input.runs_tests {
                     true => key.predicted(),
                     false => key,
@@ -167,7 +216,17 @@ impl Resolver<'_, '_> {
             }
             false => (None, None),
         };
-        let Some(holder) = known.or_else(|| self.find_made_require(object)) else {
+        if known.is_none()
+            && key == MemberKey::Name(known::__proto__)
+            && let Some(above) = self.find_holder_that_proto_of_value_written_here_names(object)
+        {
+            return ExprState::Held(above);
+        }
+        let above = match known {
+            Some(_) => None,
+            None => self.find_holder_above_function_written_here(object),
+        };
+        let Some(holder) = known.or_else(|| self.find_made_require(object)).or(above) else {
             return ExprState::Unresolved;
         };
         if let Some(listed) = find_listed_module(holder, key) {
@@ -190,6 +249,9 @@ impl Resolver<'_, '_> {
         let Some(path) = self.find_member(holder, key.name) else {
             return ExprState::Unresolved;
         };
+        if above.is_some() && table::has_flag(path.id, BuiltinFlags::IS_OWN_PROPERTY_OF_INSTANCES) {
+            return ExprState::Unresolved;
+        }
         let member = ResolvedValue::object(BuiltinPath {
             id: path.id,
             mutability: path.mutability.min(key.mutability),

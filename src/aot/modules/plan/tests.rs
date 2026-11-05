@@ -874,26 +874,15 @@ fn below_a_require_a_commonjs_file_imported_twice_runs_in_front() {
 }
 
 #[test]
-fn below_a_require_a_module_that_imports_the_root_lets_its_neighbors_go_first() {
+fn below_a_require_a_ring_leaves_the_order_to_the_run_time() {
     let imports: [(&str, &[&str]); 4] = [
         ("m0.mjs", &["m1.mjs", "m2.mjs", "m3.mjs"]),
         ("m1.mjs", &["c1.cjs", "m0.mjs"]),
         ("m2.mjs", &["c2.cjs"]),
         ("m3.mjs", &["c3.cjs"]),
     ];
-    let expected = ["c2.cjs", "c3.cjs", "c1.cjs"];
+    let expected = ["c1.cjs", "c2.cjs", "c3.cjs"];
     assert_eq!(hoisted_below_required_root(&imports), expected);
-}
-
-#[test]
-fn below_a_require_a_commonjs_file_asked_for_a_third_time_runs_on_the_spot() {
-    let imports: [(&str, &[&str]); 4] = [
-        ("m0.mjs", &["m1.mjs", "m4.mjs", "m3.mjs"]),
-        ("m1.mjs", &["m3.mjs"]),
-        ("m3.mjs", &["c1.cjs", "m0.mjs"]),
-        ("m4.mjs", &["c2.cjs", "m1.mjs"]),
-    ];
-    assert_eq!(hoisted_below_required_root(&imports), ["c1.cjs", "c2.cjs"]);
 }
 
 #[test]

@@ -23,3 +23,4 @@ map.clear();
 set.clear();
 report(sizes(set, map));
 report("end");
+declare function report(value: unknown): void;

@@ -523,9 +523,18 @@ impl Build<'_> {
 
     fn report_check_diagnostics(
         &mut self,
-        diagnostics: Vec<BuildDiagnostic>,
+        mut diagnostics: Vec<BuildDiagnostic>,
         incomplete: &[Incomplete],
     ) {
+        if self.options.aot.type_errors_warn {
+            for reported in &mut diagnostics {
+                if reported.effect == Effect::StopsBuild
+                    && reported.diagnostic.class != DiagnosticClass::EarlyError
+                {
+                    reported.effect = Effect::Warns;
+                }
+            }
+        }
         self.diagnostics
             .add_build_diagnostics(Stage::Check, diagnostics);
         self.diagnostics.add_incomplete_files(incomplete);

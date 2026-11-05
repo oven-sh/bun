@@ -99,6 +99,5 @@ test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported th
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []
 test/js/bun/test/mock/mock-module.test.ts: vi.doMock() from bun:test leaves a module that is already loaded as it is
 test/js/bun/test/mock/mock-module.test.ts: vi.doMock() from vitest leaves a module that is already loaded as it is
-test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by a preload, as its mock, under --isolate: the imports of the file get the mock
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by a preload, as its mock: the imports of the file get the mock
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by an earlier test file: the imports of the file get the mock

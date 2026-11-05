@@ -1,4 +1,4 @@
 // A file two folders above the entry point is imported under the href of a URL made from import.meta.url.
-// In an executable the URL says file:///job.js: `..` takes a folder away. The path of the module spells it `_.._`, and the text was held against that alone, so the load went to the loader, which refused it.
+// In an executable the URL says file:///job.js: `..` takes a folder away. The module lies in /$bunfs/_.._, and the text was held against its path alone, so the load went to the loader, which refused it.
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 console.log((await import(new URL("../../job.js", import.meta.url).href)).said);

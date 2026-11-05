@@ -2,7 +2,7 @@
 # the length of the test at the head and the pointer of the read stand in front of the head, and behind `i < list.length` the read looks at no length
 # f1 = sum
 # -- source: list-of-numbers-is-added-up-with-storage-and-length-from-in-front-of-the-loop.ts
-# declare function sink(...values: unknown[]): void;
+# declare function sink(...values: unknown[]): void; // @ts-expect-error
 # function sum(list: number[] | null | undefined) { let s = 0; for (let i = 0; i < list.length; i++) s += list[i]; return s; }
 # const list = [1, 2, 3, 4.5];
 # sink(sum, list, sum(list));

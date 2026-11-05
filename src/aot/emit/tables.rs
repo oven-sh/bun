@@ -3,9 +3,9 @@ use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
     AmbiguousExport, BuiltinUsedAtStart, Data, Entry, EvalScope, ExpectedResult, Layout, Module,
     ModuleFailure, OpenedName, ProgramList, PropertyKey, ReplaceableBuiltin, RuntimeFunctionEntry,
-    SourceStamp, Type, TypeSite, Variable, WebAssemblyModule,
+    SourceStamp, TypeSite, Variable, WebAssemblyModule,
 };
-use crate::ir::{Id, ListCounts, Program, SectionWriter, StringId, StringTable};
+use crate::ir::{Id, ListCounts, Program, SectionWriter, StringId, StringTable, Types};
 use core::ops::Range;
 
 const RECORDS_PER_TASK: usize = 4096;
@@ -70,9 +70,26 @@ macro_rules! record_table {
     };
 }
 
+impl RecordTable for Types<'_> {
+    fn measure(&self, counts: &mut ListCounts) {
+        counts[ProgramList::Types as usize] += self.len() as u64;
+        for record in self.iter() {
+            record.count_records(counts);
+        }
+    }
+
+    fn write<'a>(&'a self, sections: &mut SectionWriter<'a>) {
+        let word_count = self.len() * ProgramList::Types.element_size() / 4;
+        let mut words = Vec::with_capacity(word_count);
+        for record in self.iter() {
+            record.write_record(sections, &mut words);
+        }
+        sections.push_records(ProgramList::Types, &words, self.len());
+    }
+}
+
 record_table!(
     PropertyKey,
-    Type,
     TypeSite,
     ExpectedResult,
     Layout,
@@ -99,7 +116,10 @@ pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, '
             ProgramList::PropertyKeys => {
                 add_table(&mut tasks, list, program.property_keys.as_slice());
             }
-            ProgramList::Types => add_table(&mut tasks, list, program.types.types()),
+            ProgramList::Types => {
+                let chunks = program.types.types().chunks(RECORDS_PER_TASK);
+                tasks.extend(chunks.map(|types| create_task(Source::Table(Box::new(types)))));
+            }
             ProgramList::TypeSites => add_table(&mut tasks, list, &program.type_sites),
             ProgramList::ExpectedResults => add_table(&mut tasks, list, &program.expected_results),
             ProgramList::Layouts => add_table(&mut tasks, list, &program.layouts),

@@ -122,6 +122,11 @@ export default b.declarations(
   b.intrinsic("callNoInline", "Call", { intrinsic: "Call", isNeverInlined: true }),
   operation("findsDeclaredMember", "FindsDeclaredMember"),
   operation("isPlainInstanceOf", "IsPlainInstanceOf"),
+  operation("isPlainHeirOf", "IsPlainHeirOf"),
+  b.intrinsic("isObjectPrototypeWithoutAddedNames", "Call", {
+    intrinsic: "IsHolderWithoutAddedNames",
+    path: "Object.prototype",
+  }),
   operation("getContiguousIndex", "GetContiguousIndex"),
   operation("getDoubleIndex", "GetDoubleIndex"),
   operation("getOwnContiguousIndex", "GetOwnContiguousIndex"),

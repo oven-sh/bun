@@ -1,6 +1,6 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// DIAGNOSTIC: UnprovenInt32 41
+// DIAGNOSTIC: UnprovenInt32 40
 
 // A value stored into an `int32` that is not one by proof stops the build, and the message says what was found and what to write. type-rules/int32-checked-at-run-time has the flows that the build does not see.
 import type { int32 } from "bun";

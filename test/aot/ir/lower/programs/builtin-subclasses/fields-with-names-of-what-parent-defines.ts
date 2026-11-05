@@ -1,5 +1,6 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// DIAGNOSTIC: TS2578 3
 
 // Classes below built-in classes declare fields under the names that the parent's constructor, its prototype object or the engine defines on or above an instance.
 const lines: string[] = [];

@@ -91,6 +91,12 @@ export function makers(flag, given = () => {
 const FIRST = 4;
 const SECOND = 5;
 const WORD = "w";
+const THIRD = 6;
+const BESIDE_A_LENGTH = 7;
+const MISSING = undefined;
+const SIZE = 8;
+const LEFT_OF_AN_EQUALITY = 9;
+const SHORT = 10;
 
 export function steps(a, b) {
   return a
@@ -102,6 +108,18 @@ export function steps(a, b) {
 
 export function folded(given) {
   return [FIRST + SECOND, -FIRST, \`\${SECOND}\`, WORD + "x", given + WORD];
+}
+
+export function besideWhatIsFolded() {
+  return [FIRST + SECOND + THIRD, BESIDE_A_LENGTH + "abc".length, MISSING === void 0];
+}
+
+export function foldedInOneBranch(flag) {
+  return flag ? 2 * SIZE : SIZE;
+}
+
+export function printedBehindWhatFollows(given) {
+  return [LEFT_OF_AN_EQUALITY === given, { SHORT }];
 }
 `,
   "throws.js": `function fails() {
@@ -185,7 +203,7 @@ module.exports = { used, unused };
 import { pick, loops, chain, byKind, makers } from "./branches.js";
 import { callsWhatThrows, catches, waits, neverResumed } from "./throws.js";
 import common from "./common.cjs";
-import { folded, steps } from "./constants.js";
+import { besideWhatIsFolded, folded, foldedInOneBranch, printedBehindWhatFollows, steps } from "./constants.js";
 
 test("branches", () => {
   expect(pick(20)).toBe("big");
@@ -200,6 +218,9 @@ test("branches", () => {
   expect(steps(1, 0) + steps(1, 0)).toBe(6);
   expect(steps(0, 1)).toBe("second");
   expect(folded(1).length + folded(2).length).toBe(10);
+  expect(besideWhatIsFolded()).toEqual(besideWhatIsFolded());
+  expect(foldedInOneBranch(true) + foldedInOneBranch(true)).toBe(32);
+  expect(printedBehindWhatFollows(9)).toEqual(printedBehindWhatFollows(9));
 });
 
 test("throws", async () => {

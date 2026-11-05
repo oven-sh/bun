@@ -14,3 +14,4 @@ report(lay([1], 4294967295 + zero));
 report(lay([1], -1 - zero));
 report(lay([1], 1 + zero));
 report("end");
+declare function report(value: unknown): void;

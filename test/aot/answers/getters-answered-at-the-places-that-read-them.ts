@@ -4,7 +4,7 @@
 // # f1 = through, f2 = readClass, f3 = readAbove, f4 = readNear, f5 = readOwnFew, f6 = readOwnMany, f7 = readTwo, f8 = readMixed, f9 = readThrows, f10 = warm, f11 = lay, f12 = layMany, f13 = inTurns, f14 = tell
 // # RUN(FORM): bytes f2:Body mechanisms=all
 // # FORM-LABEL: unit f2:Body
-// # FORM: Call Stub ReadAtSite
+// # FORM: Call Stub ReadSizeOfTableAtSite
 // # RUN(ABOVE): bytes f3:Body mechanisms=all
 // # ABOVE-LABEL: unit f3:Body
 // # ABOVE: Call Stub ReadAtSite

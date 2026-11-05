@@ -145,11 +145,11 @@ describe.concurrent("a class of the host of which the program makes no instance"
     },
   );
 
-  // Text that the build cannot read may import any built-in module by its name. In an executable without --aot `new Function("return import('bun:test')")()` answers with the module, and its expect() works.
-  test("text evaluated at run time keeps bun:test, which it may import by its name, and what bun:test uses", async () => {
+  // Text that the build cannot read may import any built-in module by its name. That is a name known only at run time: for --trim it does not count, and the import is refused by name.
+  test("text evaluated at run time keeps nothing of bun:test, which it may import by its name", async () => {
     const { lines } = await of(`console.log(new Function(process.argv[3])());`);
     const used = ["Test", "RuntimeTranspiler", "DeepEquals", "Events", "AbortSignal"];
-    expect(used.filter(name => retainsFeature(lines, name))).toEqual(used);
+    expect(used.filter(name => retainsFeature(lines, name))).toEqual([]);
   });
 
   test("a program that calls expectTypeOf() keeps bun:test", async () => {

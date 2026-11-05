@@ -71,9 +71,9 @@ const programsWithoutBunTypes: [name: string, source: string, build: Build, stdo
     '"ran"\n',
   ],
   [
-    "a name that Bun does not provide",
-    "console.log(document.title);\n",
-    { errors: ["TS2584"], warnings: [], exitCode: 1 },
+    "a name that nothing provides",
+    "console.log(neverDeclared.title);\n",
+    { errors: ["TS2304"], warnings: [], exitCode: 1 },
     null,
   ],
 ];

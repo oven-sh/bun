@@ -3,7 +3,7 @@ use core::num::NonZeroU32;
 use bstr::BStr;
 use bun_aot::report;
 use bun_core::{Global, Output};
-use bun_options_types::aot_options::AotOptions;
+use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_options_types::context::ContextData;
 use bun_options_types::schema::api;
 use bun_sema::util::SharedSort;
@@ -114,7 +114,7 @@ fn set_compile_context(ctx: &mut ContextData, options: &Options, cwd: &[u8]) {
     };
     aot.code_generation_from_strings =
         compile_options::code_generation_from_strings(exec_argv.as_deref().unwrap_or_default());
-    aot.trim.removes_unused = options.trim;
+    aot.trim.removes_unused = options.trim || explain.contains(ExplainSet::RUNTIME_USE);
     bundler_options.compile_exec_argv = exec_argv;
     bundler_options.aot = Some(Box::new(aot));
 }

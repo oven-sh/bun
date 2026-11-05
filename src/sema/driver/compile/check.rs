@@ -92,7 +92,10 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         true => Requested::Types,
         false => requested_diagnostics(
             loaded.origin(file),
-            request.code.looks_for_type_errors && !files.needs_another_program(file),
+            !files.needs_another_program(file)
+                && !files.module_options(file).keeps_type_errors_to_itself
+                && !loaded.is_excluded_by_project(file)
+                && files.hir(file).syntax_errors().next().is_none(),
         ),
     };
     let slots = slots_by_file(files, roles, files_to_lower);

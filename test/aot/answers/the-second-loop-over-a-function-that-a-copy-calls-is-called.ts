@@ -16,3 +16,4 @@ function each(list: number[], f: (x: number) => void) { let i = 0; for (; i < li
 function user(list: number[], k: number) { let sum = 0; each(list, x => { sum += x * k; }); return sum; }
 for (let round = 0; round < 3; round++) { report(user([1, 2, -3, 4], round)); report(user([], 2)); report(user([-1], 3)); report(user([5, 6], round)); }
 report("end");
+declare function report(value: unknown): void;

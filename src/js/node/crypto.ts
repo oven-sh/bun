@@ -676,6 +676,7 @@ crypto_exports.createECDH = function createECDH(curve: string) {
     this._decoder = null;
   }
   $toClass(Cipheriv, "Cipheriv", LazyTransform);
+  Object.defineProperty(Cipheriv, "name", { value: "Cipheriv" });
 
   Object.assign(Cipheriv.prototype, {
     setAutoPadding: function (this: $Node.Cipher, ap?: boolean) {
@@ -744,6 +745,7 @@ crypto_exports.createECDH = function createECDH(curve: string) {
     this._decoder = null;
   }
   $toClass(Decipheriv, "Decipheriv", LazyTransform);
+  Object.defineProperty(Decipheriv, "name", { value: "Decipheriv" });
 
   Object.assign(Decipheriv.prototype, {
     setAutoPadding: Cipheriv.prototype.setAutoPadding,

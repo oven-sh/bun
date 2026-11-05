@@ -28,6 +28,8 @@ export type Shape = {
    * expected to fail: it runs every time, and fails once the goal is met.
    */
   growsSoFar?: string;
+  /** The same for a growth in instructions: the case is expected to fail where instructions are counted, and is an ordinary case elsewhere. */
+  growsSoFarInInstructions?: string;
   write(size: number): Record<string, string>;
 };
 
@@ -1004,6 +1006,9 @@ export const shapes: Shape[] = [
   ...["", "  note();\n"].map(between => ({
     name: `a union of object types that is told apart by a row of ifs over a tag${between ? ", with a call between them" : ""}`,
     counted: "members",
+    // The look for type errors asks for `value.kind` with a declared type of its own behind each test, and makes the property of the tag, its type and the map from tags to
+    // members anew for what each test leaves of the union.
+    growsSoFarInInstructions: between ? "3.56 times in instructions" : "3.60 times in instructions",
     size: 300,
     entry: "main.ts",
     write: (size: number) => ({
@@ -1043,20 +1048,38 @@ export const shapes: Shape[] = [
         `const all: Part[] = [{ name: "n0", weight: 1 }, { name: "other", weight: 2 }, { name: "n${Math.max(size, 1) - 1}", weight: 3 }];\nlet sum = 0;\nfor (const each of all) sum += mark(each);\nconsole.log(sum);\n`,
     }),
   },
-  // The row was gone through to its end and then refused for the form of what is compared, and the next comparison began the same again.
+  // Each `||` had all that stands to its left tested for what is always true, and each comparison went back through all the comparisons in front of it as deep as tsgo goes.
+  // Past 2,000 comparisons TypeScript gives such a body up.
   {
-    name: "a row of ifs that compare a field that holds fractions with whole numbers",
+    name: "texts that one condition compares a field of an object with, in a build that looks for type errors",
     counted: "comparisons",
-    size: 600,
+    size: 900,
     entry: "main.ts",
+    flags: ["--check"],
     write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `interface Part { name: string; weight: number }\nfunction mark(part: Part): number {\n  let hit = 0;\n  if (${upTo(Math.max(size, 1), index => `part.name === "n${index}"`).join(" || ")}) hit = 1;\n  return hit;\n}\n` +
+        `const all: Part[] = [{ name: "n0", weight: 1 }, { name: "other", weight: 2 }, { name: "n${Math.max(size, 1) - 1}", weight: 3 }];\nlet sum = 0;\nfor (const each of all) sum += mark(each);\nconsole.log(sum);\n`,
+    }),
+  },
+  // The row was gone through to its end and then refused for the form of what is compared, and the next comparison began the same again.
+  // In a build that looks for type errors `reading.weight` went back through every test of `reading.code` in front of it.
+  ...[[], ["--check"]].map(flags => ({
+    name: `a row of ifs that compare a field that holds fractions with whole numbers${flags.length ? ", in a build that looks for type errors" : ""}`,
+    counted: "comparisons",
+    size: flags.length ? 900 : 600,
+    entry: "main.ts",
+    flags,
+    write: (size: number) => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts":
         declaredConsole +
         `interface Reading { code: number; weight: number }\nfunction name(reading: Reading): number {\n${lines(size, index => `  if (reading.code === ${index}) return ${index} + reading.weight;`)}  return -1;\n}\n` +
         `const all: Reading[] = [{ code: 0.5, weight: 1 }, { code: 2, weight: 2 }, { code: ${Math.max(size, 1) - 1}, weight: 3 }];\nlet sum = 0;\nfor (const each of all) sum += name(each);\nconsole.log(sum);\n`,
     }),
-  },
+  })),
   // Every variable that was built twice and lives on rode on every later edge, was asked for at the liveness there, bound at every entry and compared at every join.
   {
     name: "lines that each read one of three objects, one of them a stranger, return early if it says so and leave a variable alive to the end",
@@ -2217,18 +2240,7 @@ export const shapes: Shape[] = [
       };
     },
   },
-  {
-    name: "loops nested in one another",
-    counted: "loops",
-    size: 200,
-    entry: "main.js",
-    write: size => ({
-      "main.js":
-        `function run() {\n  let sum = 0;\n` +
-        lines(size, index => `for (let i${index} = 0; i${index} < 1; i${index}++) {`) +
-        `sum++;\n${"}\n".repeat(size)}  return sum;\n}\nconsole.log(run());\n`,
-    }),
-  },
+  // Loops with their test in front, nested in one another: ../parallel/what-a-build-takes-grows-with-its-program/loops-nested-hundreds-deep.js, which holds them to the square that they are today.
   {
     name: "loops that test at their end, nested in one another",
     counted: "loops",
@@ -2318,6 +2330,8 @@ export const shapes: Shape[] = [
   {
     name: "try statements with a finally block, nested in one another",
     counted: "try statements",
+    // The look for type errors goes down through all the blocks below for each `sum`.
+    growsSoFarInInstructions: "3.77 times in instructions",
     size: 150,
     entry: "main.ts",
     write: size => ({
@@ -3446,12 +3460,12 @@ console.log(typeof outmost.inner);
   {
     name: "lines that each add a text and a number to one text, all of them known, past the longest text that is made",
     counted: "lines",
-    // The text passes that length at some 10,800 lines. A line in front of it is folded away, a line behind it is a join that is emitted, so both sizes lie behind it.
-    size: 20000,
+    // That length is 65,536 characters. A line in front of it is folded away and a line behind it is a join that is emitted, which costs a fifth more: so the text begins behind it, at every size.
+    size: 10000,
     entry: "main.ts",
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
-      "main.ts": `${declaredConsole}let s = "";\nlet k = 1;\n${lines(size, index => `s = s + "p${index}" + k; k = (k * 7 + ${index}) % 11;`)}console.log(s.length);\n`,
+      "main.ts": `${declaredConsole}let s = "${"x".repeat(65536)}";\nlet k = 1;\n${lines(size, index => `s = s + "p${index}" + k; k = (k * 7 + ${index}) % 11;`)}console.log(s.length);\n`,
     }),
   },
   {
@@ -3746,6 +3760,84 @@ console.log(typeof outmost.inner);
         `import { expect, test } from "bun:test";\nconst step: (x: number) => number = (globalThis as any).madeUpStep ?? ((x: number) => x + 0.5);\n` +
         `function chained(turns: number): number {\n  let s = 0;\n  for (let at = 0; at < turns; at++) {\n${lines(size, () => `    s += Math.floor(step(s));`)}  }\n  return s;\n}\n` +
         `test("it adds up", () => {\n  expect(chained(2)).toBe(0);\n});\n`,
+    }),
+  },
+  {
+    // Every class below finds every method of the class above. The plan asked for each (class, method) anew what hangs on the method alone, lowering listed all members of each
+    // class to see that no primitive has them, and whatever named a class handed all members of the class above to the queue of units once more.
+    name: "classes below one class that has as many methods, each handed to a function of its own",
+    counted: "classes",
+    size: 125,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `const replace = (0, eval)('(Base, size) => { for (let k = 0; k < size; k++) Base.prototype["m" + k] = () => 2; }');\nclass Base {\n` +
+        lines(size, index => `  m${index}() { return 1; }`) +
+        `}\n` +
+        lines(
+          size,
+          index =>
+            `class C${index} extends Base {}\nfunction r${index}(o) { let t = 0; for (let i = 0; i < 2; i++) t += o.m${index}(); return t; }\nconst o${index} = new C${index}();`,
+        ) +
+        `function all() {\n  let s = 0;\n` +
+        lines(size, index => `  s += r${index}(o${index});`) +
+        `  return s;\n}\nconsole.log(all());\nreplace(Base, ${size});\nconsole.log(all());\n`,
+    }),
+  },
+  {
+    // Each arrow function gives the promise of another module's namespace. The type of the list is the union of their types, and every member of it was held against every
+    // other through three relations (the functions, the promises, the namespaces) to find that `x: 0` is not `x: 1`.
+    name: "arrow functions in one list that each import a module of their own",
+    counted: "modules",
+    size: 250,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `const calls = [];\nfor (const load of [\n` +
+        lines(size, index => `  () => import("./m${index}.ts"),`) +
+        (size ? "" : "  // @ts-expect-error An element of an empty list is never, and never is not called.\n") +
+        `]) calls.push(load());\nconst all = await Promise.all(calls);\nconsole.log(all.reduce((sum, module) => sum + module.x, 0));\n`,
+      ...Object.fromEntries(upTo(size, index => [`m${index}.ts`, `export const x = ${index};\n`])),
+    }),
+  },
+  // What the React compiler moves out of a component is declared in the innermost scope around the component. That place was looked for anew for each such function, in passes
+  // over all the statements and functions of the file, which grows with each component that is written back: functions x statements.
+  {
+    name: "components at the top of one module, out of each of which the React compiler moves a function",
+    counted: "components",
+    size: 2000,
+    entry: "main.js",
+    flags: ["--react-compiler"],
+    write: size => ({
+      "main.js":
+        lines(size, index => `export function Part${index}(given) { "use memo"; return given.items.map(n => n * 2).join("+"); }`) + `console.log(${size});\n`,
+    }),
+  },
+  // There the declaration goes into the list of the function around, and the whole list was written anew for each: in memory too.
+  {
+    name: "components in one function, out of each of which the React compiler moves a function",
+    counted: "components",
+    size: 2000,
+    entry: "main.js",
+    flags: ["--react-compiler"],
+    write: size => ({
+      "main.js":
+        `function parts(rate) {\n` +
+        lines(size, index => `  function Part${index}(given) { "use memo"; return given.items.map(n => n * rate).join("+"); }`) +
+        `  return [${upTo(size, index => `Part${index}`).join(", ")}];\n}\nconsole.log(parts(3).length);\n`,
+    }),
+  },
+  // Such an arrow is given a list of statements first, and the place where its body begins was laid into a sorted list by moving all that stand behind it.
+  {
+    name: "arrows with an expression body that each hold a component, out of which the React compiler moves a function",
+    counted: "arrows",
+    size: 2000,
+    entry: "main.js",
+    flags: ["--react-compiler"],
+    write: size => ({
+      "main.js":
+        lines(size, index => `export const make${index} = rate => function (given) { "use memo"; return given.items.map(n => n * rate).join("+"); };`) +
+        `console.log(${size});\n`,
     }),
   },
 ];

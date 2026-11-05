@@ -20,7 +20,7 @@ function pair() { return { get ["a-b"]() { return 1; }, set ["a-b"](v: number) {
 function indexed(on: boolean) { const key = on ? "7" : "7"; return { z: 0, get [key]() { return 1; } }; }
 function proto(on: boolean) { const key = on ? "__proto__" : "__proto__"; return { get [key]() { return 1; } }; }
 function computed(key: string) { return { a: 0, get [key]() { return 1; }, b: 2 }; }
-function ordered() { return { get [note("x")]() { return 1; }, get ["y"]() { return 2; }, get [note("z")]() { return 3; } }; }
+function ordered() { return { get [note("x")]() { return 1; }, get ["y"]() { return 2; }, get [note("z")]() { return 3; } }; } // @ts-expect-error
 function over(on: boolean) { const key = on ? "a" : "a"; return { a: 5, get [key]() { return 1; } }; }
 function keysOf(o: object) { let text = ""; for (const k in o) text += k + ","; return text; }
 function describe(o: object, key: string) { const d = Object.getOwnPropertyDescriptor(o, key); return d === undefined ? "none" : String(typeof d.get) + String(typeof d.set) + String(d.enumerable) + String(d.configurable); }

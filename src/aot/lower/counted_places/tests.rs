@@ -206,7 +206,7 @@ fn an_else_branch_that_is_a_conditional_counts() {
 }
 
 #[test]
-fn a_constant_that_is_folded_with_its_neighbor_is_not_printed_where_it_is_read() {
+fn each_read_of_a_constant_is_described_with_the_value_of_the_constant() {
     let places = describe(
         "const FIRST = 4;
 const SECOND = 5;
@@ -215,7 +215,16 @@ export function folded(given: number) {
 }
 ",
     );
-    assert_eq!(places, ["b 0 119", "f 42 118 0 57", "o 14 15 109"]);
+    assert_eq!(
+        places,
+        [
+            "b 0 119",
+            "f 42 118 0 57",
+            "r 14 15 85",
+            "r 32 33 93",
+            "r 14 15 109",
+        ]
+    );
 }
 
 #[test]

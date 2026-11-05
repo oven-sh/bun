@@ -1,16 +1,8 @@
 // RUN: lower
-
-// What a package declares globally is declared where a file of the project imports the package, not where the package is only installed: `FromInstalled` names nothing, which stops no build, and its position is untyped.
-// CHECK: [[literal]] = Data
-// CHECK-NEXT: Convert [[literal]] declared={type=undefined|null|[[FromImported]]
-// CHECK: [[installed]] = Data
-// CHECK-NOT: Convert [[installed]]
-// CHECK: PropGet [[installed]] key="a"
+// DIAGNOSTIC: TS2552 src/main.ts:1
 
 // FILE: src/main.ts
-const imported: FromImported = { a: 1 };
-const installed: FromInstalled = { a: 2 };
-console.log(imported.a, installed.a);
+console.log(typeof fromImported, typeof fromInstalled);
 
 // FILE: tsconfig.json
 {"compilerOptions":{"strict":true,"module":"esnext","moduleResolution":"bundler","types":[]},"include":["src","tests"]}
@@ -24,9 +16,7 @@ exports.value = 1;
 // FILE: node_modules/imported/index.d.ts
 export declare const value: number;
 declare global {
-  interface FromImported {
-    a: number;
-  }
+  var fromImported: number | undefined;
 }
 
 // FILE: node_modules/installed/package.json
@@ -38,9 +28,7 @@ exports.value = 1;
 // FILE: node_modules/installed/index.d.ts
 export declare const value: number;
 declare global {
-  interface FromInstalled {
-    a: number;
-  }
+  var fromInstalled: number | undefined;
 }
 
 // FILE: tests/setup.ts

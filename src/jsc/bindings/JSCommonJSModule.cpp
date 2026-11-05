@@ -425,7 +425,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
 
     JSValue returnValue = jsNull();
     // See requireCompiledModule().
-    if (referrer && moduleObject->compiledModule == JSCommonJSModule::noCompiledModule) [[likely]] {
+    if (referrer && moduleObject->compiledModule == JSCommonJSModule::noCompiledModule && referrer->listsAsChild(moduleObject)) [[likely]] {
         if (referrer->m_childrenValue) [[unlikely]] {
             // It's too hard to append from native code:
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
@@ -751,13 +751,14 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
     if (!thisObject)
         return false;
 #if ENABLE(AOT)
-    if (thisObject->compiledModule != JSCommonJSModule::noCompiledModule) [[unlikely]]
+    if (thisObject->areChildrenListedByEngine()) [[unlikely]]
         Bun::dropNewChildrenOfCompiledModule(thisObject);
 #endif
     {
         WTF::Locker locker { thisObject->cellLock() };
         thisObject->m_children.clear();
     }
+    thisObject->compiledModulesAmongChildren.clear();
     thisObject->m_childrenValue.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
 }
@@ -770,7 +771,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
     }
 
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (mod->compiledModule != JSCommonJSModule::noCompiledModule) [[unlikely]] {
+    if (mod->areChildrenListedByEngine()) [[unlikely]] {
         bool areShown = Bun::appendNewChildrenOfCompiledModule(globalObject, mod);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!areShown)
@@ -827,7 +828,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC:
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsBoolean(thisObject->hasEvaluated && !Bun::hasCompiledModuleYetToBegin(thisObject)));
+    return JSValue::encode(jsBoolean(thisObject->hasEvaluated));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setterPaths,

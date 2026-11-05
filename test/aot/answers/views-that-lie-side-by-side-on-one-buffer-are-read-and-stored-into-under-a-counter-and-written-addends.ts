@@ -64,3 +64,4 @@ report("head " + storesInHead(middle, 6) + " " + all());
 fill();
 report("second " + secondParameter(1, middle, 0, 3) + " " + secondParameter(1, middle, 0, 4) + " " + secondParameter(1, middle, -1, 2));
 report("end");
+declare function report(value: unknown): void;

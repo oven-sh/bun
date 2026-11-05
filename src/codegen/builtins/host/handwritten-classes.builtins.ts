@@ -1,5 +1,6 @@
 import * as b from "bun-builtins-table";
 import { methodsOfSubtleCrypto } from "./methods-of-subtle-crypto.ts";
+import { cookiesOfRequestsCell, parametersOfRequestsCell, parametersOfRoutesWithoutAnyCell } from "./native-cells.ts";
 import { answering, constructing, promiseOf } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
@@ -62,33 +63,59 @@ export default b.declarations(
         returns: b.instance("BunRequest").fresh,
         capability: "js",
         throws: true,
-        uses: { this: [b.readsContents(), b.runsTransitively("OwnKeys", "OwnValues")] },
+        // A map of cookies that the request has made is copied for the clone.
+        uses: {
+          this: [
+            b.readsContents(),
+            b.runsTransitively("OwnKeys", "OwnValues"),
+            b.createdIn(b.instance("Bun.CookieMap").fresh, b.nativeCell(cookiesOfRequestsCell)),
+          ],
+        },
         reads: externalState,
         writes: externalState,
         implementation: b.hostCall,
       },
+      // JSBunRequest.cpp: the map is made of the header at the first read and kept in the request. Another receiver gets undefined.
       cookies: {
         this: b.any,
-        getter: objectOrUndefined,
+        getter: b.union(b.instance("Bun.CookieMap"), b.undefined),
         capability: "js",
         throws: true,
         runsOnlyOperandCode: true,
-        uses: { this: [b.runs(b.named("headers"))] },
+        uses: {
+          this: [
+            b.runs(b.named("headers")),
+            b.createdIn(b.instance("Bun.CookieMap").fresh, b.nativeCell(cookiesOfRequestsCell)),
+            b.returnedFrom(cookiesOfRequestsCell),
+          ],
+        },
         reads: externalState,
         writes: externalState,
         implementation: b.generic,
       },
+      // The host makes the object with the request, or at the first read, and keeps it in the request. Another receiver gets undefined.
       params: {
         this: b.any,
         getter: objectOrUndefined,
         capability: "heap",
-        uses: { this: b.inspected },
+        uses: {
+          this: [b.returnedFrom(parametersOfRequestsCell), b.returnedFrom(parametersOfRoutesWithoutAnyCell)],
+        },
         reads: externalState,
         writes: externalState,
         implementation: b.generic,
       },
     },
   }),
+
+  // ServerRouteList.cpp: a string under each name of the route. Object.prototype is not above it: createJSBunRequestParamsPrototype()
+  // makes an empty object below an object without a prototype that bears the tag, of which the table says nothing. A route without names gets an object without a prototype.
+  b.namespace("%RequestParamsTag%", {}),
+  b.inherits("%RequestParamsTag%", null),
+  b.namespace("%RequestParamsPrototype%", {}),
+  b.inherits("%RequestParamsPrototype%", "%RequestParamsTag%"),
+  b.hostObject(parametersOfRequestsCell, { prototype: "%RequestParamsPrototype%", otherNames: b.string }),
+  b.hostObject(parametersOfRoutesWithoutAnyCell, { prototype: null }),
 
   // JSFFICallback.cpp of JavaScriptCore: what Bun.FFI.callback() makes. bun:ffi lays each below JSCallback.prototype.
   // createPrototype(): an object below Object.prototype with `close` and nothing else. Of the own properties of an instance, `ptr` and `threadsafe`, the table says nothing.
@@ -170,7 +197,10 @@ export default b.declarations(
   constructorOnly("URLPattern", { construct: constructing(b.instance("URLPattern").fresh, b.hostCall) }),
   // JSURLPatternPrototype: an object below Object.prototype that bears the tag of the class. Of its members the table says nothing.
   b.static("URLPattern.prototype", b.property(b.instance("URLPattern"))),
-  ["Bun.Cookie", "Bun.CookieMap"].flatMap(path => [...constructorOnly(path), ...b.inherits(path, "Object.prototype")]),
+  constructorOnly("Bun.Cookie"),
+  b.class("Bun.CookieMap", { instanceCppClass: b.cppClass("JSCookieMap"), ...lockedNativeValue("JSCookieMap") }),
+  // Both constructors stand below Object.prototype.
+  ["Bun.Cookie", "Bun.CookieMap"].flatMap(path => b.inherits(path, "Object.prototype")),
 
   // JSCookie.cpp: they make strings of their operands, and `from` reads the members of its options.
   b.static("Bun.Cookie.parse", {

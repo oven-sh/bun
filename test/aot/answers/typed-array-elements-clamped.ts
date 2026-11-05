@@ -10,3 +10,4 @@ function scaled(length: number): string { const pixels = new Uint8ClampedArray(l
 function limited(length: number): string { const shorts = new Int16Array(length); for (let k = 0; k < length; k++) shorts[k] = k * 2999; for (let k = 0; k < shorts.length; k++) shorts[k] = Math.max(-30000, Math.min(shorts[k]! * 70000, 30000)); return shorts.join(); }
 for (const length of [0, 1, 7, 16, 33]) { report(scaled(length)); report(limited(length)); }
 report("end");
+declare function report(value: unknown): void;

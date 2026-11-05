@@ -7,6 +7,7 @@
 # for (let i = 0; i < 5; i++) push();
 # const odd = Reflect.construct(Plain, [7], Other);
 # print(newest.id, newest instanceof Noted, Object.keys(newest).join(), Object.keys(newest.next!).join(), Object.keys(odd).join(), odd instanceof Other, odd.id);
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # The prototype that new.target gives may select a class below Plain, so the layout of the object that Plain's constructor makes is not proven.
 # Whichever class it is, the object has just been made and bears no key. Behind the test of its shape the definitions know the order word that each of them leaves,

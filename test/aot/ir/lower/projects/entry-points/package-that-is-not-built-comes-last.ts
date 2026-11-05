@@ -1,17 +1,7 @@
-// RUN(RIGHT): lower
-// RUN(WRONG): link
+// RUN: lower
 // ENTRY: packages/right/src/right.ts packages/wrong/src/wrong.ts
 // LINK: node_modules/@workspace/right -> packages/right
-
-// A package that is not built, and that the project of the importing file does not refer to, has no declarations: `Rule` names nothing there, which stops no build, and the position is untyped.
-// That an entry point lies in the package changes nothing, whichever of the two comes first. In the package itself `Rule` is the interface.
-// RIGHT: [[literal]] = Data
-// RIGHT-NEXT: Convert [[literal]] declared={type=undefined|null|[[Rule]] flags=[OmitsNull, OmitsUndefined]}
-// WRONG: module [[wrong]] path="{{*}}/wrong.ts"
-// WRONG: function {{*}}module=[[wrong]] kind=Module
-// WRONG: [[rule]] = Data
-// WRONG-NOT: Convert [[rule]]
-// WRONG: PropGet [[rule]] key="level"
+// DIAGNOSTIC: TS2307 packages/wrong/src/wrong.ts:1
 
 // FILE: package.json
 {"name":"workspace","workspaces":["packages/*"]}

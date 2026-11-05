@@ -136,13 +136,13 @@ export class ConstantOfMember {
   unset?: number;
 }
 
-export class ChosenMember {
+export class ChosenMember { // @ts-expect-error
   [true ? Numbers.one : 0] = 1;
   m = 2;
   unset?: number;
 }
 
-export class MemberBehindOr {
+export class MemberBehindOr { // @ts-expect-error
   [0 || Numbers.one] = 1;
   n = 2;
   unset?: number;

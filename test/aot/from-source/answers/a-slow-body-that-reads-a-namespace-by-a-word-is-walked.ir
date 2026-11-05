@@ -6,6 +6,7 @@
 # function tell(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return count(space) + work; }
 # function plain(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return work; }
 # print(tell(new Tag()), tell(id({ n: 1, m: 2 })), plain(new Tag()), plain(id({ n: 1, m: 2 })));
+# declare function print(...values: unknown[]): void;
 # -- source: other.ts
 # export const a = 1;
 # export const b = 2;

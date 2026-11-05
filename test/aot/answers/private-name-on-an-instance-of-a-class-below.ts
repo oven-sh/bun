@@ -14,3 +14,4 @@ for (let round = 0; round < 4; round++) { for (let i = 0; i < 3; i++) { const o 
 report(total);
 for (let i = 0; i < 3; i++) { const o: any = list[i]; report(Base.has(o)); report(Mid.has(o)); attempt(() => Mid.ownOf(o)); attempt(() => Low.wOf(o)); attempt(() => Base.sumOf(o)); attempt(() => o.sum()); attempt(() => o.own()); attempt(() => o.w()); }
 report("end");
+declare function report(value: unknown): void;

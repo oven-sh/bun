@@ -423,6 +423,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     lowering.lower_by_kind(expression, Evaluation::in_chain(exit, evaluation.tail))
                 })
             }
+            ExprKind::Dot { .. }
+                if let Some(read) =
+                    (self.file.decisions()).length_of_named_text(self.file.hir, expression) =>
+            {
+                if read.name_runs_for_its_check {
+                    self.lower_taken_value_for_effect(read.name);
+                }
+                self.emit_constant(read.length)
+            }
             ExprKind::Dot { chain: link, .. } | ExprKind::Index { chain: link, .. } => {
                 let exit = match link {
                     Chain::No => None,
@@ -446,7 +455,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             },
             ExprKind::Binary { op, .. } => match op {
                 BinOp::And | BinOp::Or | BinOp::Nullish => {
-                    self.lower_logical(expression, ResultUsage::Value, evaluation.tail)
+                    match self.find_operand_named_in_place_of(expression, evaluation) {
+                        Some(operand) => self.lower_expression_in(operand, evaluation),
+                        None => self.lower_logical(expression, ResultUsage::Value, evaluation.tail),
+                    }
                 }
                 BinOp::Comma => {
                     let last = logical::lower_comma_prefix(self, expression, ResultUsage::Value);
@@ -458,7 +470,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 assignment::lower_assignment(self, expression, ResultUsage::Value)
             }
             ExprKind::Cond { .. } => {
-                self.lower_conditional(expression, ResultUsage::Value, evaluation.tail)
+                match self.find_operand_named_in_place_of(expression, evaluation) {
+                    Some(operand) => self.lower_expression_in(operand, evaluation),
+                    None => self.lower_conditional(expression, ResultUsage::Value, evaluation.tail),
+                }
             }
             ExprKind::Spread(operand) => self.lower_expression(operand),
             ExprKind::Await(_) => async_function::lower_await(self, expression),
@@ -480,6 +495,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_expression_in(operand, operand_evaluation)
             }
         }
+    }
+
+    fn find_operand_named_in_place_of(
+        &self,
+        operator: ExprId,
+        evaluation: Evaluation<'_>,
+    ) -> Option<ExprId> {
+        evaluation.name?;
+        if self.file.counts_executions() {
+            return None;
+        }
+        let decisions = self.file.decisions();
+        decisions.find_operand_alone_in_bun_run(self.file.hir, operator)
     }
 
     fn lower_unless_constant(

@@ -73,6 +73,83 @@ console.log((await import("made:up")).default);`,
   });
 });
 
+// A DECLARED LIMIT. docs/compiler/compatibility.mdx: "With `--aot-allow-code-from-disk` it doesn't throw, because a file from disk may register a plugin for what it loads itself.
+// The calls in your compiled files aren't sent to that plugin." `bun main.mjs` and the plain executable send them. The declared answer is written down, so that a change of it is seen.
+// The executable runs away from its sources, beside nothing but what is meant to come from disk: beside its sources a file on disk answers where the executable finds none, and hides a fault.
+describe("an executable where code may come from disk, away from its sources", () => {
+  async function answersAwayFromSources(files: Record<string, string>, fromDisk: string[]) {
+    using sources = tempDir("aot-a-plugin-out-of-sight-sources", files);
+    using elsewhere = tempDir(
+      "aot-a-plugin-out-of-sight-elsewhere",
+      Object.fromEntries(fromDisk.map(name => [name, files[name]])),
+    );
+    const executable = join(String(elsewhere), isWindows ? "program.exe" : "program");
+    const plain = await run([bunExe(), "main.mjs"], String(sources), env);
+    const command = [bunExe(), ...compileCommand, "--aot-allow-code-from-disk", "main.mjs", "--outfile", executable];
+    expect((await run(command, String(sources), env)).exitCode).toBe(0);
+    return { plain, compiled: await run([executable], String(elsewhere), env) };
+  }
+  const late = `await import(process.cwd() + "/" + JSON.parse('"late"') + ".mjs");`;
+  const made = `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);`;
+  const both = {
+    ...modules,
+    "a.cjs": `module.exports = { default: "the real a" };`,
+    "b.cjs": `module.exports = { default: "the real b" };`,
+  };
+  const forBoth = options.replace(String.raw`/a\.mjs$/`, String.raw`/a\.[mc]js$/`);
+
+  test.each([
+    ["Bun is handed to a helper", `import { use } from "./use.mjs";\nuse(Bun, ${options});\n${loads}`, "./a.mjs"],
+    ["by a key that is made", `Bun[["plu", "gin"].join("")](${options});\n${loads}`, "./a.mjs"],
+    [
+      "off the global object by a key that is made",
+      `globalThis[["B", "un"].join("")].plugin(${options});\n${loads}`,
+      "./a.mjs",
+    ],
+    ["by a file from disk", `${late}\n${loads}`, "./a.mjs"],
+    [
+      "by a file from disk, for require()",
+      `${made}\n${late}\nconst pick = process.argv.length > 5 ? "./b.cjs" : "./a.cjs";\nconsole.log(require(pick).default);`,
+      "./a.cjs",
+    ],
+    [
+      "by a file from disk, for a name that is put together",
+      `${late}\nconst letter = process.argv.length > 5 ? "b" : "a";\nconsole.log((await import("./" + letter + ".mjs")).default);`,
+      "./a.mjs",
+    ],
+    [
+      "by a file from disk, for a written name that a made require() is handed",
+      `${made}\n${late}\nconsole.log(require("./a.cjs").default);`,
+      "./a.cjs",
+    ],
+    [
+      "by a file from disk, for a written name that import.meta.require() is handed",
+      `${late}\nconsole.log(import.meta.require("./a.cjs").default);`,
+      "./a.cjs",
+    ],
+  ])("a plugin that is registered %s is not asked by compiled files", async (_, main, name) => {
+    const files = { ...both, "late.mjs": `Bun.plugin(${forBoth});`, "main.mjs": main };
+    const { plain, compiled } = await answersAwayFromSources(files, ["late.mjs"]);
+    expect(plain.stdout).toBe(`the plugin's ${name}\n`);
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: "the real a\n", exitCode: 0 });
+  });
+
+  // No limit: this must stay right. Whoever sends such calls to the loader has to see that it still finds what the executable holds.
+  test("calls that the bundler does not read find the files and the data that the executable holds", async () => {
+    const files = {
+      ...both,
+      "data.json": `{ "name": "made-up", "size": 3, "list": [1, 2] }`,
+      "main.mjs": `${made}
+const data = require("./data.json");
+const pick = process.argv.length > 5 ? "./b.cjs" : "./a.cjs";
+console.log(data.name, Object.keys(data).length, import.meta.require("./data.json").size, require("./a.cjs").default, require(pick).default, (await import(pick)).default.default);`,
+    };
+    const { plain, compiled } = await answersAwayFromSources(files, []);
+    expect(plain.stdout).toBe("made-up 3 3 the real a the real a the real a\n");
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  });
+});
+
 describe("a test run", () => {
   test.each([
     [

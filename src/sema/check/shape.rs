@@ -3839,7 +3839,11 @@ impl<'p, 's> Checker<'p, 's> {
             Some(&sig) => self.sig_return(sig),
             None => {
                 if let Some(at) = self.span_to_report_base_at(file, c) {
-                    self.error_at(at, 2508, &[]);
+                    let is_brought = self.is_expression_brought(file, hir[c].extends);
+                    let diagnostic = self.error_at(at, 2508, &[]);
+                    if is_brought {
+                        diagnostic.subject = super::aot::DiagnosticSubject::BroughtDeclaration;
+                    }
                 }
                 TypeId::ERROR
             }
@@ -3922,7 +3926,7 @@ impl<'p, 's> Checker<'p, 's> {
             rest: true,
             declaration: None,
         }];
-        self.types().intern_sig(SigData::Synth {
+        self.types().intern_synth_sig(SynthSig {
             type_params: ArenaBox::empty(),
             params: self.list(&params),
             ret: TypeId::ANY,
@@ -9061,14 +9065,14 @@ impl<'p, 's> Checker<'p, 's> {
         ) else {
             return None;
         };
-        let SigData::Synth {
+        let SigData::Synth(SynthSig {
             type_params,
             params,
             ret: TypeId::UNRESOLVED,
             this: None,
             of,
             is_union: true,
-        } = self.types().sig(*combined)
+        }) = self.types().sig(*combined)
         else {
             return None;
         };
@@ -9098,7 +9102,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut all = of.to_vec();
         all.insert(growth.at, added);
         let so_far = *combined;
-        let combined = self.types().intern_sig(SigData::Synth {
+        let combined = self.types().intern_synth_sig(SynthSig {
             type_params: ArenaBox::empty(),
             params: self.list(params),
             ret: TypeId::UNRESOLVED,
@@ -9173,7 +9177,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .is_global_ref(part, known::Function, 0)
                     .is_some_and(|args| args.is_empty())
             {
-                vec![self.types().intern_sig(SigData::Synth {
+                vec![self.types().intern_synth_sig(SynthSig {
                     type_params: ArenaBox::empty(),
                     params: ArenaBox::empty(),
                     ret: TypeId::ERROR,
@@ -9308,7 +9312,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `createUnionSignature`: a clone of `sig`, which comes first.
                 let mut of = vec![sig];
                 of.extend(matching.iter().copied().filter(|&m| m != sig));
-                result.push(self.types().intern_sig(SigData::Synth {
+                result.push(self.types().intern_synth_sig(SynthSig {
                     type_params: ArenaBox::empty(),
                     params: self.list(&params),
                     ret: TypeId::UNRESOLVED,
@@ -9581,7 +9585,7 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::WithReturn { sig: inner, .. } => self.outer_mapper_of_sig(inner),
             // The type parameters of a union signature are those of the first constituent signature
             // that has any.
-            SigData::Synth { ref of, .. } => {
+            SigData::Synth(SynthSig { of, .. }) => {
                 for &part in of.iter() {
                     if !self.sig_type_params(part).is_empty() {
                         return self.outer_mapper_of_sig(part);
@@ -9787,15 +9791,15 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // `left.composite != nil && left.composite.isUnion`, regardless of `is_union`.
         let mut of: Vec<SigId> = match self.types().sig(left) {
-            SigData::Synth {
+            SigData::Synth(SynthSig {
                 of: members,
                 is_union: true,
                 ..
-            } if members.len() > 1 => members.to_vec(),
+            }) if members.len() > 1 => members.to_vec(),
             _ => vec![left],
         };
         of.push(composite_member);
-        self.types().intern_sig(SigData::Synth {
+        self.types().intern_synth_sig(SynthSig {
             type_params: self.list(&type_params),
             params: self.list(&params),
             ret: TypeId::UNRESOLVED,

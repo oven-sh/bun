@@ -1,5 +1,5 @@
 use super::answers::{MemberForm, ObjectMemberKind};
-use super::prototype_links::{NamedValue, PrototypeOperation};
+use super::prototype_links::{NamedValue, PrototypeOperation, list_in};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent, SymbolId};
@@ -9,7 +9,6 @@ use crate::hir::{
     PatKind, PropKey, PropKind, StmtId, StmtKind,
 };
 use crate::program::FileId;
-use crate::session::Arena;
 use crate::util::{FxHashMap, SharedSort};
 use std::sync::OnceLock;
 
@@ -17,13 +16,6 @@ use std::sync::OnceLock;
 pub(in crate::check) struct StoreIndex<'s> {
     this_stores: &'s [ThisStore],
     binding_stores: &'s [BindingStore],
-}
-
-fn list_in<'s, T: Copy>(arena: &'s Arena, items: &[T]) -> &'s [T] {
-    match items.is_empty() {
-        true => &[],
-        false => arena.alloc_slice_copy(items),
-    }
 }
 
 impl<'s> Program<'s> {

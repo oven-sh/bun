@@ -1,10 +1,8 @@
-// RUN: link
+// RUN: lower
 // ENTRY: top.ts aaa/middle.ts aaa/aaa/deep.ts
-// STATISTIC: SourceFilesChecked = 3
-
-// No build reports what a tsconfig.json asks of style: see entry-points.ts. The names of the folders have no say.
-
-// CHECK-COUNT-3: function {{*}}name="smells" {{*}}flags=[IsChecked, HasExplicitName] {{*}}parameters=[{type=boolean}, {type=anything}] results=[{type=anything}]
+// DIAGNOSTIC: TS7030 top.ts:1
+// DIAGNOSTIC: TS6133 aaa/middle.ts:2
+// DIAGNOSTIC: TS7006 aaa/aaa/deep.ts:1
 
 // FILE: tsconfig.json
 {"compilerOptions":{"target":"ESNext","module":"Preserve","moduleResolution":"bundler","noEmit":true,"types":[],"strict":true,"noImplicitAny":false,"noImplicitReturns":true,"noUnusedLocals":false}}

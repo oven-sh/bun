@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
 import { withoutDebugInformation } from "../aot/harness/without-debug-information";
-import { canTrim, featureNamed, saysFeatureWasRemoved, textOf, withoutFeatures } from "./compile-trim-features";
+import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
+import {
+  atLeastOnLinux,
+  canTrim,
+  featureNamed,
+  saysFeatureWasRemoved,
+  textOf,
+  withoutFeatures,
+} from "./compile-trim-features";
 
 const files = {
   "no-property.ts": `
@@ -38,14 +46,22 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and Unicode p
     );
     expect(built.stderr).not.toMatch(/^error\b/m);
     expect(built.exitCode).toBe(0);
-    const bytes = readFileSync(join(folder, outfile, "program") + (isWindows ? ".exe" : ""));
-    return { size: bytes.length, contents: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
+    const file = join(folder, outfile, "program") + (isWindows ? ".exe" : "");
+    const bytes = readFileSync(file);
+    return {
+      size: bytes.length,
+      contents: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+      featuresLeftOut: readRemovedFeatures(file)?.length,
+    };
   }
 
-  test("a program whose literals name no property runs with the tables and without them", async () => {
+  // The program runs with the tables and without them.
+  test("literals that name no property leave the tables out: what is reached", async () => {
     using dir = tempDir("compile-trim-regexp-unicode-properties", files);
     const folder = String(dir);
-    await build(folder, "no-property.ts", "by-use");
+    expect((await build(folder, "no-property.ts", "by-use")).featuresLeftOut).toBeGreaterThanOrEqual(
+      atLeastOnLinux(252),
+    );
     await build(folder, "no-property.ts", "by-name", properties);
     for (const outfile of ["by-use", "by-name"]) {
       expect(await run([join(folder, outfile, "program")], folder)).toEqual({
@@ -64,30 +80,39 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and Unicode p
     );
   });
 
+  let explained: ReturnType<typeof run> | undefined;
+  async function explain() {
+    using dir = tempDir("compile-trim-regexp-unicode-properties", files);
+    return await run(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        ...withoutDebugInformation,
+        "--aot",
+        "--trim",
+        "--explain=trim",
+        "--disallow-code-generation-from-strings",
+        "no-property.ts",
+        "--outfile",
+        "program",
+      ],
+      String(dir),
+    );
+  }
+
+  test("a literal doesn't count as a use of the RegExp constructor: what is reached", async () => {
+    const { stderr, exitCode } = await (explained ??= explain());
+    expect(stderr).toContain(`trim: kept ${textOf(featureNamed("RegExp"))}: used`);
+    expect(exitCode).toBe(0);
+  });
+
   test.failing(
     "a literal doesn't count as a use of the RegExp constructor: 2 features are kept, the goal is 0",
     async () => {
-      using dir = tempDir("compile-trim-regexp-unicode-properties", files);
-      const { stderr, exitCode } = await run(
-        [
-          bunExe(),
-          "build",
-          "--compile",
-          ...withoutDebugInformation,
-          "--aot",
-          "--trim",
-          "--explain=trim",
-          "--disallow-code-generation-from-strings",
-          "no-property.ts",
-          "--outfile",
-          "program",
-        ],
-        String(dir),
-      );
-      expect(stderr).toContain(`trim: kept ${textOf(featureNamed("RegExp"))}: used`);
+      const { stderr } = await (explained ??= explain());
       expect(stderr).toContain(`trim: removed ${textOf(featureNamed("RegExpFromString"))}: unused`);
       expect(stderr).toContain(`trim: removed ${textOf(featureNamed("RegExpUnicodeProperties"))}: unused`);
-      expect(exitCode).toBe(0);
     },
   );
 

@@ -1,4 +1,4 @@
-// An accessor of the program under statusMessage, which a response does not hold until it is stored, answers another text than what is stored. writeHead() looks at what reads back, and that goes on the wire, as without compilation.
+// An accessor of the program under statusMessage, which a response does not hold until it is stored, answers another text than what is stored: a text of its own, or what was stored with a tail. writeHead() looks at what reads back, and that goes on the wire, as without compilation.
 import http from "node:http";
 const lines = [];
 let row = [];
@@ -11,12 +11,15 @@ const calls = {
 };
 const server = http.createServer((req, res) => {
   const [call, answer] = row;
+  let stored;
   Object.defineProperty(res, "statusMessage", {
     configurable: true,
     get() {
-      return answer;
+      return typeof answer === "object" ? stored : answer;
     },
-    set(value) {},
+    set(value) {
+      if (typeof answer === "object") stored = value + answer.tail;
+    },
   });
   let line;
   try {
@@ -35,7 +38,7 @@ const server = http.createServer((req, res) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 for (const call of Object.keys(calls)) {
-  for (const answer of ["two\nlines", "Other", "", undefined]) {
+  for (const answer of ["two\nlines", "Other", "", undefined, { tail: "\n" }, { tail: " more" }, { tail: "" }]) {
     row = [call, answer];
     const seen = await new Promise(resolve =>
       http

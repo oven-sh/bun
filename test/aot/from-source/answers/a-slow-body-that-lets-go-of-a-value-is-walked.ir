@@ -6,6 +6,7 @@
 # function letsGo(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; let list: number[] | null = make(); work += use(list); list = null; return work + use(list); }
 # function plain(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return work; }
 # print(letsGo(new Tag()), letsGo(id({ n: 1, m: 2 })), plain(new Tag()), plain(id({ n: 1, m: 2 })));
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # Both functions have a guard, and a slow body for what it turns away; neither slow body holds a Builtin operation. That of plain() is written straight.
 # That of letsGo() holds a ReleaseHint, at `list = null`. Straight code keeps each value in a word of the frame and does not know which read of it is the last, so it has no form for the hint:

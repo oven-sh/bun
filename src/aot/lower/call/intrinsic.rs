@@ -201,6 +201,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let arguments = Arguments::Values(smallvec![argument]);
                 Ok(self.emit_construct(callee, arguments, None))
             }
+            Intrinsic::IsHolderWithoutAddedNames(id) => {
+                let [] = get_named_arguments(self.file, site)?;
+                Ok(self.builder.is_holder_without_added_names(id))
+            }
             Intrinsic::IsNullish => self.lower_type_test(site, TypeTable::NULLISH),
             Intrinsic::IsObject => self.lower_type_test(site, TypeTable::OBJECT),
             Intrinsic::IsCallable => self.lower_type_test(site, TypeTable::FUNCTION),

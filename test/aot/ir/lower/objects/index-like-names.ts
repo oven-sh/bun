@@ -72,7 +72,7 @@ export function key(a: unknown, b: unknown, name: string) {
 }
 export function getter(a: unknown) {
   return {
-    7: a,
+    7: a, // @ts-expect-error
     get 7() {
       return 1;
     },

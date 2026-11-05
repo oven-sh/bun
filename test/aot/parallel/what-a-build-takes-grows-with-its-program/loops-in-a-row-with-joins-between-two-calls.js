@@ -1,6 +1,9 @@
 // SIZE loops in a row. In each, four variables are written on one arm of a condition, between a call ahead of the conditions and a call behind them.
+// What the build holds at its peak grows in line with the program as well, but a loop is dear: 130 KB on x64, 140 KB on arm64, for 443 bytes of source, most of it what the back end lays
+// for the one large function. At 1,000 loops that is 123 and 130 MB more than at 10, where the bound of this driver gives 116: it was seen or not by where the driver, which looks every
+// 50 ms, happened to look. So the sizes end at 250, where the build holds 26 to 30 MB more than at 10 and may hold 52. What a loop costs is what ought to fall.
 // It writes a program: SIZE says how large, PASSES how many copies of its function under names of their own.
-// Sizes: 10 100 1000
+// Sizes: 10 100 250
 // Passes: 1
 // Grows: the build, linear
 const size = Number(process.env.SIZE ?? 2),

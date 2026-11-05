@@ -5,7 +5,7 @@ use crate::ir::generated::{
     TypeFlags,
 };
 use crate::ir::parallel::map_each;
-use crate::ir::{Id, InParallel, LayoutId, TypeTable};
+use crate::ir::{Id, InParallel, LayoutId, TypeRef, TypeTable};
 use crate::load::ProjectId;
 use std::sync::atomic::AtomicBool;
 
@@ -29,7 +29,7 @@ fn find_literal_layouts(input: &UseInput<'_>) -> Vec<AtomicBool> {
     is_literal_layout.map(AtomicBool::new).collect()
 }
 
-fn keeps_typed_slot(ty: &Type) -> bool {
+fn keeps_typed_slot(ty: &TypeRef<'_>) -> bool {
     let unboxed = Primitives::NUMBER | Primitives::BOOLEAN;
     *ty != Type::primitives(ty.primitives & Primitives::NULLISH)
         && ty
@@ -52,7 +52,7 @@ pub(super) fn widen_literal_slots(layouts: &mut [Layout], input: &UseInput<'_>, 
         }
         for field in &mut layout.fields {
             let declared = &mut field.declared;
-            if declared.ty == TypeTable::ANYTHING || keeps_typed_slot(types.get(declared.ty)) {
+            if declared.ty == TypeTable::ANYTHING || keeps_typed_slot(&types.get(declared.ty)) {
                 continue;
             }
             declared.flags = declared.flags.without(PositionFlags::IS_INT32_PROMISE)
@@ -69,7 +69,7 @@ fn is_integer_within((minimum, maximum): (i64, i64), number: f64) -> bool {
     is_integer && !is_negative_zero && (minimum..=maximum).contains(&integer)
 }
 
-fn may_hold(layouts: &[Layout], ty: &Type, value: &DataNode) -> bool {
+fn may_hold(layouts: &[Layout], ty: &TypeRef<'_>, value: &DataNode) -> bool {
     let is_unlisted = |id: &LayoutId| layouts.get(id.index()).is_none();
     if ty.layouts.iter().any(is_unlisted) {
         return true;
@@ -129,7 +129,7 @@ fn find_fields_filled_with_other_data(
                 continue;
             }
             let member = members.iter().find(|member| Some(member.key) == field.key);
-            if member.is_some_and(|it| !may_hold(layouts, types.get(declared.ty), &it.value)) {
+            if member.is_some_and(|it| !may_hold(layouts, &types.get(declared.ty), &it.value)) {
                 filled.push((layout, index));
             }
         }

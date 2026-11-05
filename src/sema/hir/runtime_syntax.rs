@@ -1,8 +1,8 @@
 use super::{
     ClassId, ExprFlags, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList,
-    MemberId, MemberKind, ModifierId, ModifierKind, NameKind, ParamId, PatKind, PatPropId, Prop,
-    PropId, PropKey, PropKind, Span, StmtId, StmtKind, Storage, VarDeclId, has_body,
-    is_nested_namespace,
+    MemberId, MemberKind, ModifierId, ModifierKind, ModuleName, NameKind, ParamId, PatKind,
+    PatPropId, Prop, PropId, PropKey, PropKind, Span, StmtId, StmtKind, Storage, VarDeclId,
+    has_body, is_nested_namespace,
 };
 use crate::atom::{Atom, known};
 use bun_core::strings;
@@ -184,6 +184,11 @@ impl<S: Storage> FileIn<S> {
             && self
                 .ids(self.body)
                 .any(|statement| self.is_erased_statement(statement))
+    }
+
+    pub fn is_module_for(&self, name: ModuleName) -> bool {
+        self.has_module_syntax
+            && !(self.is_script_for_project && matches!(name, ModuleName::String(_)))
     }
 
     pub fn set_strict_by_syntax(&mut self) {

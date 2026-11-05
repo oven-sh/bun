@@ -21,3 +21,4 @@ function lengthOf(view: Uint8Array): number { return view.length; }
 report(twice(new Map([["a", 2]]), "a"));
 report(lengthOf(new Uint8Array(3)));
 report("end");
+declare function report(value: unknown): void;

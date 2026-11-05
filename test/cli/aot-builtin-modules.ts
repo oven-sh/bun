@@ -43,6 +43,30 @@ export async function compileEachAlone(folder: string, entryPoints: string[]) {
   );
 }
 
+/**
+ * The built-in modules of which an executable holds a function, by name. Each entry point in `folder` is compiled alone with --obfuscate,
+ * which writes a map beside the executable. The map lists the source of every function in the image.
+ */
+export async function builtInModulesOfEachAlone(folder: string, entryPoints: string[]) {
+  return Object.fromEntries(
+    await Promise.all(
+      entryPoints.map(async (entry, index) => {
+        const outfile = join(folder, `mapped-${index}${isWindows ? ".exe" : ""}`);
+        const built = await run(
+          [bunExe(), "build", "--compile", "--aot", "--obfuscate", "--root=.", "./" + entry, "--outfile", outfile],
+          folder,
+        );
+        expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+          stderr: expect.not.stringContaining("error"),
+          exitCode: 0,
+        });
+        const { sources }: { sources: string[] } = await Bun.file(outfile + ".map").json();
+        return [entry, sources.filter(source => /^(?:node|bun|internal):/.test(source)).sort()] as const;
+      }),
+    ),
+  );
+}
+
 /** The text of a program that loads `programs` one after the other. */
 export const oneAfterTheOther = (programs: Record<string, string>) =>
   Object.keys(programs)

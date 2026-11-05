@@ -1,17 +1,10 @@
 // RUN: lower
+// DIAGNOSTIC: TS2304 src/main.ts:1
 
-// A project that imports itself by its own name is no installed package: `FromItself` names nothing, which stops no build, and its position is untyped.
-// What a file beside the importing one declares globally is declared.
-// CHECK: [[literal]] = Data
-// CHECK-NEXT: Convert [[literal]] declared={type=undefined|null|[[FromTheTests]]
-// CHECK: [[itself]] = Data
-// CHECK-NOT: Convert [[itself]]
-// CHECK: PropGet [[itself]] key="a"
+// A project that imports itself by its own name is no installed package.
 
 // FILE: src/main.ts
-const declared: FromTheTests = { a: 1 };
-const itself: FromItself = { a: 2 };
-console.log(declared.a, itself.a);
+console.log(typeof fromItself);
 
 // FILE: tsconfig.json
 {"compilerOptions":{"strict":true,"module":"esnext","moduleResolution":"bundler","types":[]},"include":["src","tests"]}
@@ -22,9 +15,7 @@ console.log(declared.a, itself.a);
 // FILE: index.d.ts
 export declare const value: number;
 declare global {
-  interface FromItself {
-    a: number;
-  }
+  var fromItself: number | undefined;
 }
 
 // FILE: src/library.ts
@@ -33,11 +24,3 @@ export const value = 1;
 // FILE: tests/setup.ts
 import { value } from "itself/src/library.ts";
 export const one = value;
-
-// FILE: tests/globals.ts
-declare global {
-  interface FromTheTests {
-    a: number;
-  }
-}
-export {};

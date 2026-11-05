@@ -78,6 +78,7 @@ pub(crate) struct ProgramContents {
     pub mocks_any_module: bool,
     pub stores_loader_functions: bool,
     pub process_reaches_code_on_its_prototypes: bool,
+    pub inspects_prototype_chain_of_process: bool,
     pub any_module_loads_again: bool,
     pub loads_by_unknown_name: bool,
     pub loads_by_unknown_path: bool,
@@ -100,6 +101,7 @@ pub(crate) struct ContentsInput<'a, 's> {
     pub options: &'a Options<'a>,
     pub found_entry_points: Vec<FoundEntryPoint>,
     pub any_file_may_become_main_module: bool,
+    pub is_every_text_asked: bool,
     pub in_parallel: InParallel<'a>,
 }
 
@@ -131,6 +133,9 @@ struct FoundInFiles {
     mocks_any_module: bool,
     stores_loader_functions: bool,
     process_reaches_code_on_its_prototypes: bool,
+    inspects_prototype_chain_of_process: bool,
+    can_come_by_hook_of_instanceof: bool,
+    hand_builtins_to_hooks_of_instanceof: Vec<FileId>,
     any_module_loads_again: bool,
     loads_by_unknown_name: bool,
     loads_by_unknown_path: bool,
@@ -148,6 +153,11 @@ impl FoundInFiles {
             mocks_any_module: true,
             stores_loader_functions: true,
             process_reaches_code_on_its_prototypes: true,
+            inspects_prototype_chain_of_process: true,
+            can_come_by_hook_of_instanceof: true,
+            hand_builtins_to_hooks_of_instanceof: take(
+                &mut self.hand_builtins_to_hooks_of_instanceof,
+            ),
             any_module_loads_again: true,
             loads_by_unknown_name: true,
             loads_by_unknown_path: true,
@@ -195,6 +205,14 @@ impl FoundInFiles {
             stores_loader_functions,
             process_reaches_code_on_its_prototypes: builtins
                 .process_reaches_code_on_its_prototypes(),
+            inspects_prototype_chain_of_process: builtins.inspects_prototype_chain_of_process(),
+            can_come_by_hook_of_instanceof: builtins.can_come_by_hook_of_instanceof(),
+            hand_builtins_to_hooks_of_instanceof: match builtins
+                .hands_builtins_to_hooks_of_instanceof()
+            {
+                true => vec![file],
+                false => Vec::new(),
+            },
             any_module_loads_again,
             loads_by_unknown_name,
             loads_by_unknown_path,
@@ -213,6 +231,10 @@ impl FoundInFiles {
         self.stores_loader_functions |= following.stores_loader_functions;
         self.process_reaches_code_on_its_prototypes |=
             following.process_reaches_code_on_its_prototypes;
+        self.inspects_prototype_chain_of_process |= following.inspects_prototype_chain_of_process;
+        self.can_come_by_hook_of_instanceof |= following.can_come_by_hook_of_instanceof;
+        self.hand_builtins_to_hooks_of_instanceof
+            .append(&mut following.hand_builtins_to_hooks_of_instanceof);
         self.any_module_loads_again |= following.any_module_loads_again;
         self.loads_by_unknown_name |= following.loads_by_unknown_name;
         self.loads_by_unknown_path |= following.loads_by_unknown_path;
@@ -276,8 +298,22 @@ impl ReplacedPlaces {
         }
     }
 
+    fn add_what_looks_up(&mut self, place: BuiltinId) {
+        let holder_of = |id: BuiltinId| table::entry(id).holder.map(table::canonical_id);
+        let class = holder_of(place).and_then(|holder| match table::entry(holder).kind {
+            BuiltinKind::Prototype => holder_of(holder),
+            _ => Some(holder),
+        });
+        for &member in class.map_or(&[][..], table::members) {
+            if table::has_flag(member, BuiltinFlags::REQUIRES_HOLDER_AS_THIS) {
+                self.add(member);
+            }
+        }
+    }
+
     fn add_members_transitively(&mut self) {
         while let Some(place) = self.pending.pop() {
+            self.add_what_looks_up(place);
             let object = object_held_at(place);
             if object != place {
                 self.add(object);
@@ -350,6 +386,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         options,
         found_entry_points,
         any_file_may_become_main_module,
+        is_every_text_asked,
         in_parallel,
     } = input;
     let is_test_run = options.load.runs_tests && !options.aot.checks_only;
@@ -376,6 +413,26 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     let mut all = FoundInFiles::default();
     for (_, found) in runs {
         all.append(found);
+    }
+    let unseen_code_may_run = options.can_load_code_at_run_time()
+        || options.aot.loads_code_from_disk
+        || all.loads_by_unknown_name
+        || all.loads_by_unknown_path
+        || files.compiled_files().iter().any(|&file| {
+            let asked_for = files.compiled(file).map(|compiled| compiled.loader);
+            loader_by_name(files.module(file).file_name()) == Loader::Napi
+                || asked_for.and_then(host_loader_kind)
+                    == Some(HostLoaderKind::Loader(Loader::Napi))
+        });
+    if all.can_come_by_hook_of_instanceof || unseen_code_may_run || !is_every_text_asked {
+        for &file in &all.hand_builtins_to_hooks_of_instanceof {
+            let Some(source) = parsed_source(files, file) else {
+                continue;
+            };
+            source.builtins.note_that_hooks_of_instanceof_may_exist();
+            all.loads_by_unknown_name |= source.builtins.loads_unknown_modules();
+            all.loads_by_unknown_path |= source.builtins.hands_on_loader_of_paths();
+        }
     }
     let replaced_builtins = list_replaced_builtins(
         &options.load.replaced_builtins,
@@ -415,6 +472,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
             || all.stores_loader_functions,
         stores_loader_functions: all.stores_loader_functions,
         process_reaches_code_on_its_prototypes: all.process_reaches_code_on_its_prototypes,
+        inspects_prototype_chain_of_process: all.inspects_prototype_chain_of_process,
         any_module_loads_again: match is_test_run {
             true => run.loads.is_every_file,
             false => all.any_module_loads_again,

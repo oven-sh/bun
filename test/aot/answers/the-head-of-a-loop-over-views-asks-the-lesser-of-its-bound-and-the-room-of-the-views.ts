@@ -202,3 +202,4 @@ report(fillsOther(bytes, new Float64Array(3)));
 report(fillsOther(bytes, new Float64Array(8)));
 report(fillsOther(new Uint8Array(0), new Float64Array(2)));
 report("end");
+declare function report(value: unknown): void;

@@ -1,4 +1,4 @@
-// `new URL("../job.js", import.meta.url)` asks no resolver: it takes a folder away. In an executable the path of a module above the root spells each `..` as `_.._`, so what the URL says is another text
+// `new URL("../job.js", import.meta.url)` asks no resolver: it takes a folder away. In an executable a module above the root lies in a mount of its own, /$bunfs/_.._, so what the URL says is another text
 // than the URL of the module, which ResolveModule answers with. The text is held against both.
 // ENTRY: one/two/app/main.js
 // CWD: one/two/app

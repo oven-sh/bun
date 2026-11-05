@@ -1,10 +1,10 @@
-// RUN: link
+// RUN: lower
 // ENTRY: top.ts zzz/middle.ts zzz/zzz/deep.ts
-// STATISTIC: SourceFilesChecked = 3
+// DIAGNOSTIC: TS7030 top.ts:1
+// DIAGNOSTIC: TS6133 zzz/middle.ts:2
+// DIAGNOSTIC: TS7006 zzz/zzz/deep.ts:1
 
-// No build reports what a tsconfig.json asks of style: see entry-points.ts. The names of the folders have no say.
-
-// CHECK-COUNT-3: function {{*}}name="smells" {{*}}flags=[IsChecked, HasExplicitName] {{*}}parameters=[{type=boolean}, {type=anything}] results=[{type=anything}]
+// The names of the folders have no say.
 
 // FILE: tsconfig.json
 {"compilerOptions":{"target":"ESNext","module":"Preserve","moduleResolution":"bundler","noEmit":true,"types":[],"strict":true,"noImplicitAny":false,"noImplicitReturns":true,"noUnusedLocals":false}}

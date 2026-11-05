@@ -336,8 +336,10 @@ impl<'a, 's> Finder<'a, 's> {
                 self.add_parameter_properties(ClassId(index as u32));
             }
         }
-        for member in file.members.iter() {
-            self.add_member(member);
+        for class in file.classes.iter() {
+            for member in &file.members[class.members.range()] {
+                self.add_member(member);
+            }
         }
         for specifier in file.import_specs.iter().filter(|it| it.type_only) {
             self.add_list_element(specifier.start, specifier.end);

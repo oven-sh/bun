@@ -704,22 +704,16 @@ fn what_is_left_of_a_path_that_goes_up_past_the_root_is_written_down_in_each_for
 }
 
 #[test]
-fn file_above_the_root_that_goes_further_up_is_written_down_as_its_url_says_it() {
+fn url_of_a_file_above_the_root_says_the_path_of_what_lies_further_up() {
     let rows: [(&str, &[(&str, &str)]); 5] = [
         ("./helper.ts", &[]),
         ("../helper.ts", &[]),
-        (
-            "../../helper.ts",
-            &[("/$bunfs/root/helper.ts", "one/helper.ts")],
-        ),
+        ("../../helper.ts", &[]),
         (
             "../app/inner.ts",
-            &[("/$bunfs/root/_.._/app/inner.ts", "one/two/app/inner.ts")],
+            &[("/$bunfs/_.._/_.._/app/inner.ts", "one/two/app/inner.ts")],
         ),
-        (
-            "../../../helper.ts",
-            &[("/$bunfs/root/_.._/helper.ts", "helper.ts")],
-        ),
+        ("../../../helper.ts", &[]),
     ];
     for (joined, written) in rows {
         let job = format!(r#"new Worker(new URL("{joined}", import.meta.url));"#);

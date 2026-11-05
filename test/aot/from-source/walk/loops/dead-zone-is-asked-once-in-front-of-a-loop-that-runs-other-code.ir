@@ -7,6 +7,7 @@
 # const step = id(3) | 0;
 # let steps = id(10) | 0;
 # print(withNoTurn, withTurns, attempt(0), attempt(3), steps);
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # Each turn calls what nobody knows, which may run anything. It cannot put a variable back into its dead zone, so both are asked in front of the loop, and no turn of the typed copy checks.
 # `step` is a constant: what was found in front is what every turn finds, and no turn reads it. `steps` is written by the turns, and by whatever they call for all that the walk knows: it is read in each turn, without a check.

@@ -1,0 +1,11 @@
+# the loader is called with a spread: nobody follows the name, and it stands in the program as a constant
+# -- source: a-specifier-in-a-list-that-is-spread-over-a-loader-counts.ts
+# declare const process: any;
+# const found: any = process.getBuiltinModule(...["bun:sqlite"]);
+# new found.Database(":memory:");
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: CreateJSSQLStatementConstructor named
+# RUN(NEVER): features
+# NEVER-NOT: CreateJSSQLStatementConstructor named-at-run-time

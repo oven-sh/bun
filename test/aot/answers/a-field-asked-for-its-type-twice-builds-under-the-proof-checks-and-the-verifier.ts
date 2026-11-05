@@ -14,3 +14,4 @@ report(outer());
 report(outer({ plain: true }));
 report(outer({ wide: true, plain: false }));
 report("end");
+declare function report(value: unknown): void;

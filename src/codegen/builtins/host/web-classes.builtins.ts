@@ -297,8 +297,8 @@ const readsBlob = (settledValue: b.TableType) =>
 
 const parsedBody = { typedResultForm: { form: "ParsedBody", source: "this" } } as const;
 
-// The bytes of a stream are handed to what `FormData.from` holds, which a program can replace, and a promise that is resolved with a FormData looks for `then` on a prototype that is not locked.
-const readsFormData = readsBody(b.any);
+// The bytes of a stream are handed to `FormData.from`, which no program can replace. A promise that is resolved with a FormData looks for `then` on a prototype that is not locked.
+const readsFormData = readsBody(b.anyMadeOf("FormData"));
 
 const membersOfMessage = (className: string) => ({
   // A stream whose only chunk is a string settles with a Uint8Array.

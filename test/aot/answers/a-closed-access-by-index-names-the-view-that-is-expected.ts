@@ -25,3 +25,4 @@ const strange = [{ words: [1, 2, 3], bytes: "text", wide: { 0: "zero" } }];
 const all = (made as unknown[]).concat(strange) as Holder[];
 for (let round = 0; round < 2; round++) for (let at = 0; at < all.length; at++) { put(all[at], 7 + round); report(get(all[at])); report(byte(all[at])); report(wide(all[at])); }
 report("end");
+declare function report(value: unknown): void;

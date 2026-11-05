@@ -28,7 +28,7 @@ function cases() { return "abc".toUpperCase() + "ABC".toLowerCase() + "abc".toLo
 function refusedRepeat() { return "ab".repeat(-1); }
 function row(a: string) { return a + "x" + 1 + "" + "y"; }
 function rowOfOne(a: string) { return a + ""; }
-function asked(s: string) { if (s.startsWith("--")) return "in:" + s.startsWith("--"); return "out:" + s.startsWith("--"); }
+function asked(s: string) { if (s.startsWith("--")) return "in:" + s.startsWith("--"); return "out:" + s.startsWith("--"); } // @ts-expect-error
 function named(kind: number) { if (kind === 2) { switch (kind) { case 1: return "one"; case 2: return "two"; } } return "other"; }
 function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
 tell(joined);

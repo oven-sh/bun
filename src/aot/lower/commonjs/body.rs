@@ -4,6 +4,7 @@ use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::variables::{BodyForm, WRAPPER_PARAMETERS, emit_entry_value};
+use crate::builtins::resolve::reads_what_wrapper_hands_in;
 use crate::ir::generated::{Function, FunctionFlags, FunctionKind};
 use crate::ir::{DeclaredType, FunctionId, FunctionKey, ValueId};
 use crate::lower::function::{self, EntryArguments};
@@ -195,7 +196,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let bound = self.file.bound;
         for &(symbol, variable) in bound.runtime.redeclared_commonjs_variables() {
             let binding = BindingRef::Symbol(symbol);
-            if self.file.scopes.placement(binding).is_none() {
+            if self.file.scopes.placement(binding).is_none()
+                || !reads_what_wrapper_hands_in(self.file.hir, bound, symbol)
+            {
                 continue;
             }
             let value = emit_entry_value(self, variable);

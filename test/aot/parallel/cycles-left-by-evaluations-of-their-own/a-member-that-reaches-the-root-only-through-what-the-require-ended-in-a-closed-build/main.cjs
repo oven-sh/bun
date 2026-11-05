@@ -1,5 +1,6 @@
 // Flags: --explain=trim
-// Build prints: 1 x aot: trim: the compiler can see every API this program uses
+// Build prints: 1 x aot: trim: the compiler can't tell which API this program uses at helper.mjs:2:24, because the name is only known at run time
+// Build prints: 0 x aot: trim: the compiler can see every API this program uses
 // The closed twin of ../a-member-that-reaches-the-root-only-through-what-the-require-ended. There the function lies on globalThis, and a call of a global that nobody knows opens the build as eval does. Here it lies in a leaf file and is called out of a list: THE BUILD MUST BE CLOSED, which the line above holds.
 const STAGE = require("./stage.cjs");
 STAGE.hook = () => require("./ended.mjs").ok;

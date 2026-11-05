@@ -2,7 +2,7 @@
 # the function and the list are handed to unseen code: nothing is proven of either but what the guard at the entry has tested
 # f1 = count
 # -- source: list-that-no-turn-writes-is-tested-in-front-of-the-loop.ts
-# declare function sink(...values: unknown[]): void;
+# declare function sink(...values: unknown[]): void; // @ts-expect-error
 # function count(names: string[] | null | undefined, turns: number) { let n = 0; for (let i = 0; i < turns; i++) n += names[i & 7] ? 1 : 0; return n; }
 # const names = ["a", "", "c", "d", "", "f", "g", "h"];
 # sink(count, names, count(names, 20));

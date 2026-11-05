@@ -22,6 +22,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !self.type_shape(ty)?.can_accept_primitives() {
             return Ok(accepted);
         }
+        let no_primitive_has_what_is_required = PRIMITIVE_SOURCES.iter().all(|&(_, source)| {
+            self.c.has_required_properties_of_unlisted_class(source, ty) == Some(false)
+        });
+        if no_primitive_has_what_is_required {
+            return Ok(accepted);
+        }
         let members = self.c.members(ty);
         let for_some_arguments = self.c.permissive_instantiation(ty);
         let relation = match self.c.is_weak_type(for_some_arguments) {

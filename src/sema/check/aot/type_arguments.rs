@@ -52,7 +52,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             | SigData::Construct { mapper, .. }
             | SigData::DefaultConstruct { mapper, .. } => mapper,
             SigData::WithReturn { sig: inner, .. } => self.signature_mapper(inner),
-            SigData::Synth { .. } => MapperId::IDENTITY,
+            SigData::Synth(_) => MapperId::IDENTITY,
         }
     }
 

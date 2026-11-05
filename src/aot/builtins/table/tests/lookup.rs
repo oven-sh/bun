@@ -22,6 +22,21 @@ fn name_run(name: BuiltinName) -> NameRun {
 }
 
 #[test]
+fn no_member_with_code_has_a_name_that_a_key_without_a_text_spells() {
+    for id in all_ids() {
+        let entry = entry(id);
+        if is_symbol_name(entry.name) {
+            continue;
+        }
+        let name = core::str::from_utf8(text_of_name(entry.name)).unwrap();
+        let is_spelled =
+            matches!(name, "undefined" | "null" | "true" | "false") || name.parse::<f64>().is_ok();
+        let has_code = is_callable(id) || entry.kind == BuiltinKind::Accessor;
+        assert!(!(is_spelled && has_code), "{}", text_of(id));
+    }
+}
+
+#[test]
 fn member_spans_match_holders() {
     for id in all_ids() {
         let span = members(id);

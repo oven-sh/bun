@@ -6,12 +6,16 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use crate::collections::{IndexMap, IndexSet, sort_slice_by};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::collections::{FxHashMap, FxHashSet, IndexMap, IndexSet, sort_slice_by};
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::{
-    ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
+    ClauseItem, ImportKind, ImportRecord, Loc, LocRef, Ref, S, Scope, Stmt, StoreSlice, StoreStr,
+    Symbol,
 };
 use bun_core::strings::locale_compare;
 
@@ -51,8 +55,48 @@ pub(crate) struct ProgramContext {
     pub(crate) logged: CompilerError,
 
     // Internal state
-    known_referenced_names: IndexSet<String>,
+    known_referenced_names: Rc<RefCell<KnownNames>>,
     imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
+}
+
+/// The names a generated name must not take: every binding in the file and every name generated so far. There is one
+/// set per file. The `Environment` of each function shares it, because copying or searching it per function is
+/// quadratic in a file with many components.
+#[derive(Default)]
+pub(crate) struct KnownNames {
+    names: IndexSet<String>,
+    /// Per base, the number to try next. Names are never removed, so the smaller numbers stay taken.
+    next_numbers: FxHashMap<String, u32>,
+    /// The first `generated_len` symbols of the module scope's `generated`, which only grows.
+    generated: FxHashSet<Ref>,
+    generated_len: usize,
+}
+
+impl KnownNames {
+    pub(crate) fn is_generated_in(&mut self, module_scope: &Scope, symbol: Ref) -> bool {
+        let added = &module_scope.generated[self.generated_len..];
+        self.generated.extend(added.iter().copied());
+        self.generated_len += added.len();
+        self.generated.contains(&symbol)
+    }
+
+    /// The first free name of `_<base>`, `_<base>2`, `_<base>3`, ..., like Babel's `generateUid`.
+    pub(crate) fn generate_uid(&mut self, base: &str) -> String {
+        if !self.next_numbers.contains_key(base) {
+            self.next_numbers.insert(base.to_string(), 1);
+        }
+        let number = self.next_numbers.get_mut(base).unwrap();
+        loop {
+            let uid = match *number {
+                1 => format!("_{base}"),
+                number => format!("_{base}{number}"),
+            };
+            *number += 1;
+            if self.names.insert(uid.clone()) {
+                return uid;
+            }
+        }
+    }
 }
 
 impl ProgramContext {
@@ -75,7 +119,7 @@ impl ProgramContext {
             hook_guard_name: None,
             renames: Vec::new(),
             logged: CompilerError::new(),
-            known_referenced_names: IndexSet::new(),
+            known_referenced_names: Rc::default(),
             imports: IndexMap::new(),
         }
     }
@@ -86,9 +130,10 @@ impl ProgramContext {
         // Register ALL bindings (not just program-scope) so that UID generation
         // avoids name conflicts with any binding in the file. This matches
         // Babel's generateUid() which checks all scopes.
+        let mut known = self.known_referenced_names.borrow_mut();
         for binding in symbols {
             if let Ok(name) = core::str::from_utf8(binding.original_name.slice()) {
-                self.known_referenced_names.insert(name.to_string());
+                known.names.insert(name.to_string());
             }
         }
     }
@@ -99,36 +144,28 @@ impl ProgramContext {
     /// hook-name-based type inference. For other names, prefixes with underscore
     /// similar to Babel's generateUid.
     pub(crate) fn new_uid(&mut self, name: &str) -> String {
+        let mut known = self.known_referenced_names.borrow_mut();
         if is_hook_name(name) {
             // Don't prefix hooks with underscore, since InferTypes might
             // type HookKind based on callee naming convention.
             let mut uid = name.to_string();
             let mut i = 0;
-            while self.known_referenced_names.contains(&uid) {
+            while known.names.contains(&uid) {
                 uid = format!("{}_{}", name, i);
                 i += 1;
             }
-            self.known_referenced_names.insert(uid.clone());
+            known.names.insert(uid.clone());
             return uid;
         }
         let uid = name.to_string();
-        if !self.known_referenced_names.contains(&uid) {
-            self.known_referenced_names.insert(uid.clone());
+        if known.names.insert(uid.clone()) {
             return uid;
         }
         // Generate unique name with underscore prefix (similar to Babel's generateUid).
         // Babel strips leading underscores before prefixing, so:
         //   generateUid("_c") → strips to "c" → generates "_c", "_c2", "_c3", ...
         //   generateUid("foo") → generates "_foo", "_foo2", "_foo3", ...
-        let base = name.trim_start_matches('_');
-        let mut uid = format!("_{}", base);
-        let mut i = 2;
-        while self.known_referenced_names.contains(&uid) {
-            uid = format!("_{}{}", base, i);
-            i += 1;
-        }
-        self.known_referenced_names.insert(uid.clone());
-        uid
+        known.generate_uid(name.trim_start_matches('_'))
     }
 
     /// Add the memo cache import (the `c` function from the compiler runtime).
@@ -171,18 +208,12 @@ impl ProgramContext {
 
     /// Register a name as referenced so future uid generation avoids it.
     pub(crate) fn add_new_reference(&mut self, name: String) {
-        self.known_referenced_names.insert(name);
+        self.known_referenced_names.borrow_mut().names.insert(name);
     }
 
-    /// Get the set of known referenced names for seeding per-function Environment UID generation.
-    pub(crate) fn known_referenced_names(&self) -> &IndexSet<String> {
-        &self.known_referenced_names
-    }
-
-    /// Merge UID names generated during a function compilation back into the program context,
-    /// so subsequent function compilations avoid collisions.
-    pub(crate) fn merge_uid_known_names(&mut self, names: &IndexSet<String>) {
-        self.known_referenced_names.extend(names.iter().cloned());
+    /// The set of known referenced names, for the `Environment` of a function to generate its UIDs from.
+    pub(crate) fn known_referenced_names(&self) -> Rc<RefCell<KnownNames>> {
+        Rc::clone(&self.known_referenced_names)
     }
 }
 

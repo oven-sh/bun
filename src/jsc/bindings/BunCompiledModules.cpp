@@ -653,6 +653,15 @@ static std::optional<AOT::ModuleID> compiledModuleOf(JSCommonJSModule* module)
     return AOT::ModuleID(module->compiledModule);
 }
 
+static std::optional<AOT::ModuleID> compiledModuleThatAsksThrough(JSCommonJSModule* requirer)
+{
+    if (auto own = compiledModuleOf(requirer))
+        return own;
+    if (requirer->compiledModuleThatAsks == JSCommonJSModule::noCompiledModule)
+        return std::nullopt;
+    return AOT::ModuleID(requirer->compiledModuleThatAsks);
+}
+
 static void requireInto(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module, std::optional<AOT::ModuleID> referrer = std::nullopt)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -793,12 +802,14 @@ static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJ
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSCommonJSModule* requirer = target->m_parent.get();
     // `target` is the object that require() under a computed name has made to load the file into.
-    auto referrer = requirer ? compiledModuleOf(requirer) : std::nullopt;
+    auto referrer = requirer ? compiledModuleThatAsksThrough(requirer) : std::nullopt;
     // The engine says whose child the file is.
     if (referrer)
         target->compiledModule = module.index();
-    if (requirer && !referrer)
+    if (requirer && !referrer) {
+        target->compiledModuleLoadedInto = module.index();
         AOT::willRequireModuleFromOutsideImage(globalObject, module, requirer);
+    }
     if (reloadsFilesFromDisk()) {
         if (AOT::isESModule(module))
             AOT::didMakeModuleObjectForRequire(globalObject, module, target);
@@ -1199,7 +1210,15 @@ static void layOnModuleObject(Zig::GlobalObject* globalObject, JSCommonJSModule*
     out.require = attachRequireFunction(vm, globalObject, module, path);
 }
 
-static void createRequirer(JSGlobalObject* realm, JSObject* importMeta, AOT::ModuleObjects& out)
+// The program may have stored the `require` of another file in `import.meta.require`: who asks through that is the other file.
+static void layAskerOnRequirer(JSCommonJSModule* requirer, AOT::ModuleID asker)
+{
+    requirer->isMadeByCodeOfImage = true;
+    if (!requirer->areChildrenListedByEngine())
+        requirer->compiledModuleThatAsks = asker.index();
+}
+
+static void createRequirer(JSGlobalObject* realm, JSObject* importMeta, AOT::ModuleID asker, AOT::ModuleObjects& out)
 {
     auto& vm = getVM(realm);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1208,7 +1227,7 @@ static void createRequirer(JSGlobalObject* realm, JSObject* importMeta, AOT::Mod
     RETURN_IF_EXCEPTION(scope, void());
     // The engine asks for the loader of a module of the image.
     if (JSCommonJSModule* module = boundModuleOf(out.require)) [[likely]] {
-        module->isMadeByCodeOfImage = true;
+        layAskerOnRequirer(module, asker);
         out.module = module;
         return;
     }
@@ -1219,7 +1238,7 @@ static void createRequirer(JSGlobalObject* realm, JSObject* importMeta, AOT::Mod
     JSObject* ownRequire = JSCommonJSModule::createBoundRequireFunction(vm, realm, path, meta->moduleGraph());
     RETURN_IF_EXCEPTION(scope, void());
     JSCommonJSModule* module = boundModuleOf(ownRequire);
-    module->isMadeByCodeOfImage = true;
+    layAskerOnRequirer(module, asker);
     out.module = module;
 }
 
@@ -1235,7 +1254,7 @@ static void pushObservableChild(JSGlobalObject* realm, JSObject* parent, JSObjec
 
 bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* parent)
 {
-    auto compiled = compiledModuleOf(parent);
+    auto compiled = compiledModuleThatAsksThrough(parent);
     if (!compiled)
         return true;
     auto& vm = getVM(realm);
@@ -1252,7 +1271,7 @@ bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* 
 
 void dropNewChildrenOfCompiledModule(JSCommonJSModule* parent)
 {
-    if (auto compiled = compiledModuleOf(parent))
+    if (auto compiled = compiledModuleThatAsksThrough(parent))
         AOT::dropNewChildren(parent->globalObject(), *compiled);
 }
 
@@ -1266,12 +1285,6 @@ static void showChildren(JSGlobalObject* realm, JSObject* module, JSObject* requ
         pushObservableChild(realm, parent, requiredAgain);
     else
         appendNewChildrenOfCompiledModule(realm, parent);
-}
-
-bool hasCompiledModuleYetToBegin(JSCommonJSModule* module)
-{
-    auto compiled = compiledModuleOf(module);
-    return compiled && AOT::hasYetToBegin(module->globalObject(), *compiled);
 }
 
 JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule* module)
@@ -1527,6 +1540,11 @@ static bool keepsTexts(JSGlobalObject* globalObject)
     return Bun::IsolatedModuleCache::canUse(globalObject->vm(), defaultGlobalObject(globalObject)->bunVM());
 }
 
+static void stopWithReport(std::span<const char> reason)
+{
+    Bun__panic(reason.data(), reason.size());
+}
+
 static bool loadsSynchronously(JSGlobalObject* globalObject, AOT::ModuleID module)
 {
     String path = AOT::modulePath(module);
@@ -1620,9 +1638,10 @@ const AOT::ModuleHost compiledModuleHost = {
     &holdsTextsOfProgram,
     &isCalledFromFactoryThatWaits,
     &keepsTexts,
+    &stopWithReport,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 38 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 39 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);
@@ -1973,7 +1992,6 @@ void willStorePathOfMainModule(Zig::GlobalObject*, JSValue) {}
 bool appendNewChildrenOfCompiledModule(JSGlobalObject*, JSCommonJSModule*) { return true; }
 void dropNewChildrenOfCompiledModule(JSCommonJSModule*) {}
 JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule*) { return nullptr; }
-bool hasCompiledModuleYetToBegin(JSCommonJSModule*) { return false; }
 JSValue parentSeenBy(Zig::GlobalObject*, JSString*, JSValue parent) { return parent; }
 JSValue errorIfUnseenCodeIsRefused(JSGlobalObject*, ASCIILiteral) { return {}; }
 bool isAskingWhyFileFailsToLoad() { return false; }

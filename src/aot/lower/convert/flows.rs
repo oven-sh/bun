@@ -8,7 +8,7 @@ use smallvec::{SmallVec, smallvec};
 
 use self::parts::find_value_type;
 use super::edges::find_function_shape;
-use crate::ir::{FunctionId, Type, TypeFlags, TypeId};
+use crate::ir::{FunctionId, TypeFlags, TypeId, TypeRef};
 use crate::lower::{CheckerTypeId, FileLowering};
 
 #[derive(Copy, Clone)]
@@ -38,7 +38,7 @@ impl RecordedFlows {
     }
 }
 
-fn may_name_family(ty: &Type) -> bool {
+fn may_name_family(ty: &TypeRef<'_>) -> bool {
     !(ty.layouts.is_empty() && ty.functions.is_empty() && ty.classes.is_empty())
 }
 
@@ -58,7 +58,7 @@ fn find_flow_target(
     let mut held = named.classes.iter().flat_map(|part| &part.contents);
     let is_target = target.names_layouts
         || target.names_function_types
-        || held.any(|&held| may_name_family(types.get(held)));
+        || held.any(|&held| may_name_family(&types.get(held)));
     is_target.then_some(target)
 }
 
@@ -325,7 +325,7 @@ mod tests {
         };
         let mut pairs = Vec::new();
         for &(source, target) in &fragment.family_facts.conversions {
-            for &from in &tables.types.get(source).layouts {
+            for &from in tables.types.get(source).layouts {
                 let targets = tables.types.get(target).layouts.iter();
                 pairs.extend(targets.map(|&to| (describe(from), describe(to))));
             }

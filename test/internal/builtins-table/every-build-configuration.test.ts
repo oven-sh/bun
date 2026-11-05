@@ -5,7 +5,7 @@ import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 import { run } from "../../aot/harness/run";
-import { engineDirectory, engineFiles as generated } from "./engine-files.ts";
+import { engineDirectory, engineFiles as generated, generatorEnv } from "./engine-files.ts";
 
 const bunRoot = resolve(import.meta.dir, "..", "..", "..");
 const schemas = globAllSources().bindgen;
@@ -25,6 +25,7 @@ async function generate(typesOnly: readonly string[]) {
       `--types-only=${typesOnly.join(",")}`,
     ],
     bunRoot,
+    generatorEnv,
   );
   return {
     errors: stderr.split("\n").filter(line => line !== "" && !line.startsWith("builtins table:")),

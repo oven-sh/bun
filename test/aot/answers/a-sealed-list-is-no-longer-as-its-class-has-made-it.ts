@@ -18,3 +18,4 @@ function place(wanted: number): number { return marks.indexOf(wanted); }
 for (let round = 0; round < 6; round++) { report(holds(round)); report(place(round)); }
 report(marks.length);
 report("end");
+declare function report(value: unknown): void;

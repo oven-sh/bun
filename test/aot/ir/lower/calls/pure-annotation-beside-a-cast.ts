@@ -26,7 +26,7 @@
 export function inFrontOfTheCast(f: any) {
   /* @__PURE__ */ <any>f();
   // @__PURE__
-  <any>f();
+  <any>f(); // @ts-expect-error
   /* @__PURE__ */ <const>f();
   /* @__PURE__ */ <any><unknown>f();
   /* @__PURE__ */ <any>(f());
@@ -57,6 +57,7 @@ export function castBehindTheCall(f: any, g: any) {
 export function castInParentheses(f: any) {
   /* @__PURE__ */ (f() as any);
   /* @__PURE__ */ (f() satisfies any);
+  // @ts-expect-error
   /* @__PURE__ */ (f() as const);
   /* @__PURE__ */ ((f() as any) as unknown);
   /* @__PURE__ */ (<any>f());
@@ -75,6 +76,7 @@ export function startsInParentheses(f: any) {
 
 export function behindTheCast(f: any) {
   <any>/* @__PURE__ */ f();
+  // @ts-expect-error
   <const>/* @__PURE__ */ f();
   <any>/* @__PURE__ */ (f());
   <any>/* @__PURE__ */ <unknown>f();

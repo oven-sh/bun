@@ -19,3 +19,4 @@ function intern(text: string): string { let found = names.get(text); if (found =
 for (let round = 0; round < 3; round++) for (const word of ["alpha", "beta", "alpha", "gamma"]) report(intern(word + round % 2));
 report(names.size);
 report("end");
+declare function report(value: unknown): void;

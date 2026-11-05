@@ -1,6 +1,7 @@
 # the option is an object with a method of its own that the conversion calls: the bag goes to what nobody sees, as it did: nobody knows who writes its fields
 # The locale is the one that is written all the same. Native code that holds the bag finds `constructor` by the protocol and asks what it finds for Symbol.species alone: Intl.NumberFormat has none, so nobody calls it out of sight.
 # -- source: an-option-that-is-an-object-takes-the-bag-along.ts
+# // @ts-expect-error
 # new Intl.NumberFormat("de", { style: { toString() { return "percent"; } } });
 # -- end of source
 # RUN: link fields

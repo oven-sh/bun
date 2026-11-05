@@ -211,6 +211,11 @@ function storeOwnMethod(stream: $Node.Readable, name: string, method: unknown) {
   (stream as any)[name] = method;
 }
 
+// stream._readableState. Behind the yes the compiler knows where the field lies; it is the same read on both sides.
+function stateOf(stream: $Node.Readable) {
+  return $isPlainHeirOf(stream, Readable) ? stream._readableState : stream._readableState;
+}
+
 function Readable(this: $Node.Readable, options?: $Node.ReadableOptions): void {
   if (new.target !== Readable && !(this instanceof Readable)) {
     ("unlikely");
@@ -288,7 +293,7 @@ Readable.prototype[SymbolAsyncDispose] = function (this: $Node.Readable) {
 const pushingMethod = (Readable.prototype.push = function (this: $Node.Readable, chunk: unknown, encoding?: string) {
   $debug("push", chunk);
 
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
   return (state[kState] & Flag.ObjectMode) === 0
     ? readableAddChunkPushByteMode(this, state, chunk, encoding)
     : readableAddChunkPushObjectMode(this, state, chunk, encoding);
@@ -306,7 +311,7 @@ internals.pushingMethod = pushingMethod;
 // Unshift should *always* be something directly out of read().
 Readable.prototype.unshift = function (this: $Node.Readable, chunk: unknown, encoding?: string) {
   $debug("unshift", chunk);
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
   return (state[kState] & Flag.ObjectMode) === 0
     ? readableAddChunkUnshiftByteMode(this, state, chunk, encoding)
     : readableAddChunkUnshiftObjectMode(this, state, chunk);
@@ -556,13 +561,13 @@ function addChunk(stream: $Node.Readable, state: ReadableState, chunk, length: n
 }
 
 Readable.prototype.isPaused = function (this: $Node.Readable) {
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
   return (state[kState] & Flag.Paused) !== 0 || (state[kState] & (Flag.HasFlowing | Flag.Flowing)) === Flag.HasFlowing;
 };
 
 // Backwards compatibility.
 Readable.prototype.setEncoding = function (this: $Node.Readable, enc: string) {
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
 
   const decoder = new StringDecoder(enc);
   state[kDecoderValue] = decoder;
@@ -651,7 +656,7 @@ const readingMethod = (Readable.prototype.read = function (this: $Node.Readable,
   } else if (!NumberIsInteger(n)) {
     n = NumberParseInt(n, 10);
   }
-  return read.$call(this, this._readableState, n);
+  return read.$call(this, IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState, n);
 });
 
 function read(this: $Node.Readable, state: ReadableState, n: number) {
@@ -825,7 +830,7 @@ function onEofChunk(stream: $Node.Readable, state: ReadableState): void {
 // another read() call => stack overflow.  This way, it might trigger
 // a nextTick recursion warning, but that's not so bad.
 function emitReadable(stream: $Node.Readable) {
-  const state: ReadableState = stream._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(stream) : stream._readableState;
   $debug("emitReadable");
   state[kState] &= ~Flag.NeedReadable;
   if ((state[kState] & Flag.EmittedReadable) === 0) {
@@ -836,7 +841,7 @@ function emitReadable(stream: $Node.Readable) {
 }
 
 function emitReadable_(stream: $Node.Readable) {
-  const state: ReadableState = stream._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(stream) : stream._readableState;
   $debug("emitReadable_");
   if ((state[kState] & (Flag.Destroyed | Flag.Errored)) === 0 && (state.length || (state[kState] & Flag.Ended) !== 0)) {
     if (!(IS_COMPILED_AHEAD_OF_TIME && emitsToListeners(stream, "readable"))) stream.emit("readable");
@@ -916,7 +921,7 @@ Readable.prototype._read = function (this: $Node.Readable, _n: number) {
 Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Stream, pipeOpts?: $Node.PipeOptions) {
   const dest: $Node.AnyStream = destination;
   const src = this;
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
 
   if (state.pipes.length === 1) {
     if ((state[kState] & Flag.MultiAwaitDrain) === 0) {
@@ -1120,7 +1125,7 @@ function pipeOnDrain(src: $Node.Readable, dest: $Node.AnyStream) {
 }
 
 Readable.prototype.unpipe = function (this: $Node.Readable, dest?: $Node.AnyStream) {
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
   const unpipeInfo = { hasUnpiped: false };
 
   // If we're not piping anywhere, then do nothing.
@@ -1159,7 +1164,7 @@ Readable.prototype.on = function (this: $Node.Readable, ev: $Node.EventName, fn:
   ) {
     return res;
   }
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
 
   if (ev === "data") {
     state[kState] |= Flag.DataListening;
@@ -1201,7 +1206,7 @@ const removingMethod = (Readable.prototype.removeListener = function (
   ) {
     return Stream.prototype.removeListener.$call(this, ev, fn);
   }
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
 
   const res = Stream.prototype.removeListener.$call(this, ev, fn);
 
@@ -1273,7 +1278,7 @@ function nReadingNextTick(self: $Node.Readable) {
 // pause() and resume() are remnants of the legacy readable stream API
 // If the user uses them, then switch into old mode.
 const resumingMethod = (Readable.prototype.resume = function (this: $Node.Readable) {
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
   // Node 26 (nodejs/node#62557) early-returns on Flag.Destroyed. We narrow it to Flag.Destroyed && Flag.EndEmitted: fd-slicer-style readables set `destroyed` right
   // before push(null), and the full guard strands their buffered tail when a
   // piped dest drains (yauzl/extract-zip). Once 'end' has fired there is
@@ -1346,7 +1351,7 @@ internals.readMoreOnNextTick = maybeReadMore_;
 internals.emitReadableNow = emitReadable_;
 
 Readable.prototype.pause = function (this: $Node.Readable) {
-  const state: ReadableState = this._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState;
   if ((state[kState] & Flag.Destroyed) !== 0) {
     return this;
   }
@@ -1362,7 +1367,7 @@ Readable.prototype.pause = function (this: $Node.Readable) {
 };
 
 function flow(stream: $Node.Readable) {
-  const state: ReadableState = stream._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(stream) : stream._readableState;
   $debug("flow");
   while ((state[kState] & Flag.Flowing) !== 0 && stream.read() !== null);
 }
@@ -1588,7 +1593,8 @@ ObjectDefineProperties(Readable.prototype, {
   readable: {
     __proto__: null,
     get(this: $Node.Readable) {
-      const r = this._readableState as ReadableState | $Node.ForeignState | undefined;
+      const r = (IS_COMPILED_AHEAD_OF_TIME ? stateOf(this) : this._readableState) as
+        ReadableState | $Node.ForeignState | undefined;
       if (isReadableState(r)) {
         return r.readable !== false && (r[kState] & (Flag.Destroyed | Flag.ErrorEmitted | Flag.EndEmitted)) === 0;
       }
@@ -1701,7 +1707,7 @@ ObjectDefineProperties(Readable.prototype, {
     enumerable: false,
     get(this: $Node.Readable) {
       if (IS_COMPILED_AHEAD_OF_TIME && !$isProxyObject(this)) {
-        const state = this._readableState;
+        const state = stateOf(this);
         return state ? errorOfState(state) : null;
       }
       return this._readableState ? errorOfState(this._readableState) : null;
@@ -1712,7 +1718,7 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     get(this: $Node.Readable) {
       if (IS_COMPILED_AHEAD_OF_TIME && !$isProxyObject(this)) {
-        const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
+        const state = stateOf(this) as ReadableState | $Node.ForeignState | undefined;
         if (!state) return false;
         return isReadableState(state) ? (state[kState] & Flag.Closed) !== 0 : state.closed;
       }
@@ -1727,7 +1733,7 @@ ObjectDefineProperties(Readable.prototype, {
     enumerable: false,
     get(this: $Node.Readable) {
       if (IS_COMPILED_AHEAD_OF_TIME && !$isProxyObject(this)) {
-        const state = this._readableState;
+        const state = stateOf(this);
         return state ? isStateDestroyed(state) : false;
       }
       return this._readableState ? isStateDestroyed(this._readableState) : false;
@@ -1752,7 +1758,7 @@ ObjectDefineProperties(Readable.prototype, {
     enumerable: false,
     get(this: $Node.Readable) {
       if (IS_COMPILED_AHEAD_OF_TIME && !$isProxyObject(this)) {
-        const state = this._readableState;
+        const state = stateOf(this);
         return state ? hasStateEmittedEnd(state) : false;
       }
       return this._readableState ? hasStateEmittedEnd(this._readableState) : false;
@@ -1881,7 +1887,7 @@ function bytesFromList(n: number, state: ReadableState, idx: number, buf: any[],
 }
 
 function endReadable(stream: $Node.Readable) {
-  const state: ReadableState = stream._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(stream) : stream._readableState;
 
   $debug("endReadable");
   if ((state[kState] & Flag.EndEmitted) === 0) {
@@ -1941,7 +1947,7 @@ function endWritableNT(stream: $Node.Duplex) {
 // What `new Readable({ objectMode: true, highWaterMark })` makes. Nobody sees which options are asked for in a list that the library has written, unless a name lies on `Object.prototype`: the caller asks `CAN_REPLACE_BUILT_INS`.
 function makeObjectReadable(highWaterMark: number): $Node.Readable {
   const stream = new (Readable as $Node.ReadableConstructor)();
-  const state: ReadableState = stream._readableState;
+  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(stream) : stream._readableState;
   state[kState] |= Flag.ObjectMode;
   state.highWaterMark = highWaterMark;
   return stream;

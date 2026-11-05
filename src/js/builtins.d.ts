@@ -50,6 +50,8 @@ declare const CAN_BE_CLUSTER_WORKER: boolean;
 declare const CAN_REPLACE_BUILT_INS: boolean;
 /** False in what was compiled ahead of time from a program that asks `process` only for what Bun gives it. Another name, or a conversion to a text or a number, is answered by what the program has laid on `EventEmitter.prototype`, with `process` as `this`. */
 declare const PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES: boolean;
+/** False in what was compiled ahead of time from a program that cannot tell whether `node:events` was loaded: nothing in it loads the module or may hand `process` on, and it does not look at the prototype chain of `process`. */
+declare const WARNINGS_LOAD_NODE_EVENTS: boolean;
 /** True in an executable that was compiled ahead of time, false in `bun run`. Only for a choice between two ways that a program cannot tell apart. */
 declare const IS_COMPILED_AHEAD_OF_TIME: boolean;
 /** Calls `callee`. A compiled executable never inlines the call. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`. */
@@ -80,6 +82,24 @@ declare function $findsDeclaredMember(object: object, name: string, Class?: Func
  * `Class` is the binding of a class or constructor function that is evaluated once. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
  */
 declare function $isPlainInstanceOf(object: unknown, Class: Function): boolean;
+
+/**
+ * `$isPlainInstanceOf` for a method that `Class` hands down: true also for an object that a class below `Class` has made, the library's or the program's,
+ * by `extends` or by `$toClass(Below, name, Class)`. All that a yes of `$isPlainInstanceOf` says holds of the fields that the object's own class declares or inherits.
+ * A class below that declares an accessor of the program under the name of such a field gets a no. It says nothing about methods: an heir may declare its own:
+ * ask `$findsDeclaredMember(object, name, Class)` for each one that you count on.
+ * One count answers for all the classes: what ends the yes for the objects of one of them ends it for all.
+ * `Class` is the file's own binding of the class or constructor function: one taken out of `require()` makes the answer false.
+ */
+declare function $isPlainHeirOf(object: unknown, Class: Function): boolean;
+
+/**
+ * True while no name was added to `Object.prototype`: then a name that an object of the library's own making does not hold is found nowhere.
+ * A compiled executable lets nobody add one, so there it is true and costs nothing. A compiled test run lets a test add one: from then on it is false for good.
+ * A member of `Object.prototype` that a test replaces does not make it false.
+ * It holds until code of the program runs again. Only compiled code has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $isObjectPrototypeWithoutAddedNames(): boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;

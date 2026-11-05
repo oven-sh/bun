@@ -53,7 +53,7 @@ export function arrayFromList(list: unknown, mapper: unknown): unknown[] {
   if ($isJSArray(list) && typeof mapper === "function") {
     const source = list as unknown[];
     const count = source.length;
-    const made = $newArrayLike<unknown>(count, source);
+    const made = $newArrayLike<unknown>(count, undefined);
     let index = 0;
     entered: for (;;) {
       for (; index < source.length; index++) {

@@ -1,11 +1,13 @@
 use super::SourceDialect;
 use super::mentions::mentioned_id;
-use super::resolver::{ExprState, HolderKind, ResolvedValue, Resolver, is_of_loader};
+use super::resolver::{
+    ExprState, HolderKind, HooksOfInstanceof, ResolvedValue, Resolver, is_of_loader,
+};
 use super::written_members::{follows_unlisted_names_of, holder_of, writes_on_first_operand};
 use crate::builtins::table::{
-    self, BuiltinId, BuiltinKind, BuiltinName, Intrinsic, Prototype, Scope,
+    self, BuiltinId, BuiltinKind, BuiltinName, Intrinsic, Platforms, Prototype, Scope,
 };
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingStability, Parent, SymbolId};
 use bun_sema::hir::{
     self, BinOp, CallId, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, StmtId, StmtKind,
@@ -23,10 +25,21 @@ pub(super) enum MentionUse {
     Exposed,
 }
 
-fn lookup_passes_holder_linked_anew(holder: BuiltinId, name: Option<BuiltinName>) -> bool {
+fn lookup_passes_holder_linked_anew(
+    holder: BuiltinId,
+    name: Option<BuiltinName>,
+    dialect: SourceDialect,
+    platform: Platforms,
+) -> bool {
     let mut object = table::canonical_id(holder);
     loop {
-        if name.is_some_and(|name| table::own_member(object, name).is_some()) {
+        let own = name
+            .and_then(|name| table::own_member(object, name))
+            .filter(|&member| table::exists_on(member, platform));
+        if own.is_some_and(|member| {
+            dialect != SourceDialect::Program
+                || !table::MEMBERS_CREATED_IN_SOME_RUNS.contains(&table::canonical_id(member))
+        }) {
             return false;
         }
         let entry = table::entry(object);
@@ -61,6 +74,36 @@ fn classify_stmt_parent(hir: &hir::File<'_>, node: ExprId, stmt: StmtId) -> Ment
 
 impl Resolver<'_, '_> {
     #[rustfmt::skip]
+    pub(super) fn is_handed_to_hook_of_instanceof_alone(&self, e: ExprId) -> bool {
+        if self.input.dialect != SourceDialect::Program || self.input.runs_tests {
+            return false;
+        }
+        let classify_where_hooks_are = |supposed: HooksOfInstanceof| {
+            self.hooks_of_instanceof_supposed.set(supposed);
+            let found = self.classify_use(e);
+            self.hooks_of_instanceof_supposed
+                .set(HooksOfInstanceof::OnWhatIsNoBuiltin);
+            found
+        };
+        matches!(
+            classify_where_hooks_are(HooksOfInstanceof::Everywhere),
+            MentionUse::Exposed
+        ) && matches!(
+            classify_where_hooks_are(HooksOfInstanceof::Nowhere),
+            MentionUse::Inspected
+        )
+    }
+
+    fn may_have_hook_of_instanceof(&self, right: ExprId) -> bool {
+        match self.hooks_of_instanceof_supposed.get() {
+            HooksOfInstanceof::OnWhatIsNoBuiltin => {
+                !self.is_resolved(self.input.hir.skip_type_assertions(right))
+            }
+            HooksOfInstanceof::Nowhere => false,
+            HooksOfInstanceof::Everywhere => true,
+        }
+    }
+
     pub(super) fn classify_use(&self, e: ExprId) -> MentionUse {
         let input = self.input;
         let mut node = e;
@@ -74,10 +117,17 @@ impl Resolver<'_, '_> {
                     ControlFlow::Break(self.classify_initializer(e, declarator))
                 }
                 Parent::None
-                | Parent::File | Parent::ParamDefault(_) | Parent::PatPropDefault(_)
-                | Parent::PatElemDefault(_) | Parent::Prop(_) | Parent::MemberInit(_)
-                | Parent::FnBody(_) | Parent::EnumInit(_) | Parent::ClassExtends(_)
-                | Parent::ClassDecorator(_) | Parent::MemberDecorator(_)
+                | Parent::File
+                | Parent::ParamDefault(_)
+                | Parent::PatPropDefault(_)
+                | Parent::PatElemDefault(_)
+                | Parent::Prop(_)
+                | Parent::MemberInit(_)
+                | Parent::FnBody(_)
+                | Parent::EnumInit(_)
+                | Parent::ClassExtends(_)
+                | Parent::ClassDecorator(_)
+                | Parent::MemberDecorator(_)
                 | Parent::ParamDecorator(_)
                 | Parent::Module(_) => ControlFlow::Break(MentionUse::Exposed),
                 _ => ControlFlow::Break(MentionUse::Inspected),
@@ -101,7 +151,7 @@ impl Resolver<'_, '_> {
             ExprKind::Binary { op: BinOp::Comma, right, .. } if node == right => {
                 return ControlFlow::Continue(parent);
             }
-            ExprKind::Binary { op: BinOp::Instanceof, left, right } if node == left && !matches!(hir[e].kind, ExprKind::This) && !self.is_resolved(hir.skip_type_assertions(right)) => MentionUse::Exposed,
+            ExprKind::Binary { op: BinOp::Instanceof, left, right } if node == left && !matches!(hir[e].kind, ExprKind::This) && self.may_have_hook_of_instanceof(right) => MentionUse::Exposed,
             ExprKind::Binary { .. } => MentionUse::Inspected,
             ExprKind::Cond { test, .. } if node != test && self.is_resolved(parent) => MentionUse::Aliased,
             ExprKind::Cond { test, .. } if node != test => return ControlFlow::Continue(parent),
@@ -314,7 +364,8 @@ impl Resolver<'_, '_> {
 
     pub(super) fn is_handed_to_code_laid_above(&self, e: ExprId, object: BuiltinId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
-        if !lookup_passes_holder_linked_anew(holder_of(object), None) {
+        let (input, holder) = (self.input, holder_of(object));
+        if !lookup_passes_holder_linked_anew(holder, None, input.dialect, input.platform) {
             return false;
         }
         let mut node = e;
@@ -389,7 +440,22 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn may_be_answered_by_accessor_above(&self, object: BuiltinId, name: Atom) -> bool {
-        lookup_passes_holder_linked_anew(holder_of(object), self.input.names.get(name))
+        lookup_passes_holder_linked_anew(
+            holder_of(object),
+            self.input.names.get(name),
+            self.input.dialect,
+            self.input.platform,
+        )
+    }
+
+    pub(super) fn is_inherited_from_node_events(&self, object: BuiltinId, name: Atom) -> bool {
+        name == known::events_count && self.may_be_answered_by_accessor_above(object, name)
+    }
+
+    pub(super) fn is_asked_for_member_of_node_events(&self, e: ExprId, object: BuiltinId) -> bool {
+        let member = self.find_member_of(e);
+        let key = member.and_then(|member| self.input.hir.member_key(member));
+        matches!(key, Some((_, MemberKey::Name(name))) if self.is_inherited_from_node_events(object, name))
     }
 
     fn hands_function_on(&self, member: ExprId) -> bool {

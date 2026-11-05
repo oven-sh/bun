@@ -15,3 +15,4 @@ new Stamp(table);
 report(count(table, "a"));
 report(Stamp.isOn(table));
 report("end");
+declare function report(value: unknown): void;

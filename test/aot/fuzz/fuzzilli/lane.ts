@@ -26,6 +26,10 @@ const kinds: Record<string, string> = {
   places: `alone --scene sceneOfTypedPlaces,sceneOfHiddenEffects --checks-proofs 100 --as-a-test 25 --shuffles-costs 50`,
   alone: `alone --families 30 --checks-proofs 25 --writes-straight 25 --as-a-test 25 --shuffles-costs 50`,
   kin: `alone --kin 100 --together 10 --checks-proofs 25 --shuffles-costs 25`,
+  // Kin of programs that lie outside the tree, such as those that a reader of a change wrote to try it. FUZZ_MORE_STORED_PROGRAMS names their folder.
+  "more-kin": `alone --kin 100 --stored ${process.env.FUZZ_MORE_STORED_PROGRAMS ?? join(import.meta.dir, "..", "..", "parallel")} --together 10 --checks-proofs 25 --shuffles-costs 25`,
+  hands: `alone --scene sceneOfAHand --draws js --checks-proofs 25 --shuffles-costs 25`,
+  calls: `alone --scene sceneOfUnlikeCallSites --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   changes: `alone --scene sceneOfAChange --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   loops: `alone --scene sceneOfALoop --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   crowds: `alone --scene sceneOfASingleDeed,sceneOfASingleDeed,sceneOfALoop,sceneOfALoop,sceneOfALoop,sceneOfTypedPlaces,sceneOfHiddenEffects --together 10 --changes-draws 30 --checks-proofs 25 --writes-straight 10 --shuffles-costs 50`,
@@ -55,10 +59,12 @@ if (!out || !(kind in kinds)) {
 }
 
 for (const folder of ["finds", "logs", "work"]) mkdirSync(join(out, folder), { recursive: true });
+// Each driver gets a network of its own, so that no drawn program reaches anything and no two meet on a port. The loopback of a new network is down: a program that serves itself would be refused
+// in both ways of running it, and that is the same answer.
 const alone =
   process.platform === "linux" &&
   Bun.spawnSync({ cmd: ["unshare", "-Urn", "true"], stdio: ["ignore", "ignore", "ignore"] }).exitCode === 0
-    ? ["unshare", "-Urn"]
+    ? ["unshare", "-Urn", "sh", "-c", 'ip link set lo up 2> /dev/null; exec "$@"', "sh"]
     : [];
 const drivers = Array.from({ length: jobs }, (_, index) =>
   Bun.spawn({

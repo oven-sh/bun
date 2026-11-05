@@ -30,7 +30,7 @@ const NOT_EXPOSED: &[(&str, BuiltinId)] = &[
     ("for (; Math; Math) {}", BuiltinId::Math),
     ("Math ? x : y;", BuiltinId::Math),
     ("Math.zzz;", BuiltinId::Math),
-    ("Math.floor = f;", BuiltinId::Math),
+    ("Math.floor = () => {};", BuiltinId::Math),
     ("Math = x;", BuiltinId::Math),
     ("`${Math}`;", BuiltinId::Math),
     ("o[Math];", BuiltinId::Math),
@@ -141,6 +141,33 @@ const EXPOSED: &[(&str, BuiltinId)] = &[
 const FOLLOWED: &[&str] = &[
     "Object.keys(process);",
     "Reflect.ownKeys(process);",
+    "process.on(\"exit\", () => {});",
+    "process.exit = () => {};",
+    "Object.defineProperty(process, \"platform\", { get: () => \"made up\" });",
+    "Object.defineProperty(process, \"cwd\", { get: () => () => f });",
+    "Object.defineProperty(process, \"title\", { value: \"made up\" });",
+    "process.exit = function () { f(); };",
+    "process.exit = {};",
+    "process.exit = new Map();",
+    "process.argv = [];",
+    "process.title = f;",
+    "process.exitCode = f;",
+    "process.madeUp = f;",
+    "process.madeUp = function () { this.title; };",
+    "function left() { f(); } process.exit = left;",
+    "Object.defineProperty(process, \"exit\", { value() { f(); } });",
+    "Object.defineProperty(process, \"exit\", { value: () => {} });",
+    "Object.defineProperty(process, \"madeUp\", { value: f });",
+    "process.on(\"exit\", function () { f(); });",
+    "process.on(\"exit\", function () { function inner() { this.title; } });",
+    "function heard() { f(); } process.once(\"exit\", heard);",
+    "const heard = () => { f(); }; process.on(\"exit\", heard);",
+    "process.on(f, () => {});",
+    "process.on(\"exit\", () => {}, f);",
+    "process.off(\"exit\", f);",
+    "process.off(\"exit\", f) === x;",
+    "if (process.removeAllListeners(\"exit\")) {}",
+    "x = process.listenerCount(\"exit\");",
     "\"own\" in process;",
     "Object.getPrototypeOf(process);",
     "Object.getPrototypeOf(process) !== null;",
@@ -159,6 +186,63 @@ const HANDED_OVER: &[&str] = &[
     "for (const k in process) {}",
     "for (const k in process as any) {}",
     "f(process);",
+    "process.on(\"exit\", function () { this.title; });",
+    "process.exit = function () { this.title; };",
+    "Object.defineProperty(process, \"title\", { value: function () { this.pid; } });",
+    "Object.defineProperties(process, { title: { value() { this.pid; } } });",
+    "Object.defineProperty(process, \"cwd\", { get: () => function () { this.title; } });",
+    "Object.defineProperty(process, \"cwd\", { get: () => f });",
+    "Object.defineProperty(process, \"cwd\", { get: () => { return f; } });",
+    "process.exit = f;",
+    "process.cwd = function () { return () => this; };",
+    "function left() { this.title; } process.exit = left;",
+    "(process as any).exit = function () { this.title; };",
+    "process[\"exit\"] = function () { this.title; };",
+    "process.exit ??= function () { this.title; };",
+    "process.exit = new Proxy(f, g);",
+    "process.exit = f();",
+    "process.exit = f.g;",
+    "process.exit = new f();",
+    "process.argv0 = function () { this.title; };",
+    "process.argv = f;",
+    "process.on(\"exit\", new f());",
+    "const p = process; p.exit = function () { this.title; };",
+    "[process.exit] = f;",
+    "({ a: process.exit } = f);",
+    "for (process.exit of f) {}",
+    "for (process.exit in f) {}",
+    "Object.defineProperty(process, \"exit\", { value() { this.title; } });",
+    "Object.defineProperty(process, \"exit\", { value: function () { this.title; } });",
+    "Object.defineProperty(process, \"exit\", { value: f });",
+    "Object.defineProperty(process, \"exit\", { value });",
+    "Object.defineProperties(process, { exit: { value() { this.title; } } });",
+    "x = Reflect.defineProperty(process, \"exit\", { value() { this.title; } });",
+    "process.once(\"exit\", function () { return () => this; });",
+    "function heard() { this.title; } process.addListener(\"exit\", heard);",
+    "const heard = function () { this.title; }; process.prependListener(\"exit\", heard);",
+    "process.on(\"exit\", f);",
+    "const heard = heard; process.on(\"exit\", heard);",
+    "const a = b, b = a; process.on(\"exit\", a);",
+    "let heard = () => {}; heard = f; process.on(\"exit\", heard);",
+    "const p = process; p.on(\"exit\", function () { this.title; });",
+    "process.on(...f);",
+    "process.on(\"exit\", ...f);",
+    "x = process.off(\"exit\", f);",
+    "const held = process.removeListener(\"exit\", f);",
+    "process.removeAllListeners(\"exit\").title;",
+    "process.on(\"exit\", () => {}).on(\"exit\", () => {});",
+    "f(process.once(\"exit\", () => {}));",
+    "() => process.off(\"exit\", f);",
+    "function f() { return process.off(\"exit\", f); }",
+    "const p = process; x = p.off(\"exit\", f);",
+    "process.off(\"exit\", f) + x;",
+    "process.off(\"exit\", f) == x;",
+    "`${process.off(\"exit\", f)}`;",
+    "o[process.off(\"exit\", f)];",
+    "Object.defineProperty(process, \"toString\", { value() { return this; } });",
+    "Object.defineProperty(process, \"valueOf\", { value: f });",
+    "x = Reflect.defineProperty(process, \"toString\", { value: f });",
+    "Object.defineProperties(process, { own: { value: 1 }, toLocaleString: { value: f } });",
     "delete process.title;",
     "const p = process; delete p.title;",
     "new f(process);",
@@ -253,6 +337,54 @@ fn object_whose_every_use_is_in_sight_is_not_exposed() {
 }
 
 #[test]
+fn look_at_what_process_inherits_from_node_events_is_noted_and_hands_process_to_nobody() {
+    for source in [
+        "process._eventsCount;",
+        "typeof process._eventsCount;",
+        "process?._eventsCount;",
+        "process[\"_eventsCount\"];",
+        "process._eventsCount++;",
+        "process._eventsCount ??= 1;",
+        "(process as any)._eventsCount;",
+        "const p = process; p._eventsCount;",
+        "const { _eventsCount } = process;",
+        "\"_eventsCount\" in process;",
+        "Object.getPrototypeOf(Object.getPrototypeOf(process)) === x;",
+        "Reflect.getPrototypeOf(Object.getPrototypeOf(process)) === x;",
+        "const above = Object.getPrototypeOf(process); Object.getPrototypeOf(above) === null;",
+        "Object.getOwnPropertySymbols(Object.getPrototypeOf(Object.getPrototypeOf(process)));",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(
+                case.resolved.inspects_prototype_chain_of_process(),
+                "{source}"
+            );
+            assert!(case.resolved.exposed().is_empty(), "{source}");
+        });
+    }
+    for source in [
+        "process.madeUp;",
+        "\"madeUp\" in process;",
+        "const { madeUp } = process;",
+        "process.title;",
+        "process.on(x, () => {});",
+        "Object.getPrototypeOf(process) === x;",
+        "const above = Reflect.getPrototypeOf(process); above !== null;",
+        "Math._eventsCount;",
+        "\"_eventsCount\" in Math;",
+        "x._eventsCount;",
+        "Object.getPrototypeOf(Object.getPrototypeOf(Math)) === x;",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(
+                !case.resolved.inspects_prototype_chain_of_process(),
+                "{source}"
+            );
+        });
+    }
+}
+
+#[test]
 fn name_that_is_searched_for_is_a_mention_of_the_member() {
     for source in [
         "\"stdout\" in process;",
@@ -277,6 +409,57 @@ fn code_of_bun_may_link_what_stands_above_an_object_again() {
     let kept = "const above = Object.getPrototypeOf(process); y = Object.setPrototypeOf(above, x);";
     with_case(RUNTIME, kept, |case| {
         assert!(case.exposes(BuiltinId::Process))
+    });
+}
+
+#[test]
+fn what_is_laid_above_process_answers_a_name_that_process_has_only_under_its_flag() {
+    for name in [
+        "noDeprecation",
+        "noProcessWarnings",
+        "pendingDeprecation",
+        "throwDeprecation",
+        "traceDeprecation",
+        "traceProcessWarnings",
+        "_debugEnd",
+        "_debugProcess",
+        "_startProfilerIdleNotifier",
+        "_stopProfilerIdleNotifier",
+    ] {
+        for source in [
+            format!("process.{name};"),
+            format!("process.{name} = true;"),
+            format!("const {{ {name} }} = process;"),
+        ] {
+            with_case(PROGRAM, &source, |case| {
+                assert!(
+                    case.resolved.process_reaches_code_on_its_prototypes(),
+                    "{source}"
+                );
+                assert!(case.resolved.exposed().is_empty(), "{source}");
+            });
+            with_case(RUNTIME, &source, |case| {
+                assert!(
+                    !case.resolved.process_reaches_code_on_its_prototypes(),
+                    "{source}"
+                );
+                assert!(!case.exposes(BuiltinId::Process), "{source}");
+            });
+        }
+    }
+}
+
+#[test]
+fn what_is_laid_above_process_answers_a_name_that_process_lacks_on_the_platform() {
+    let windows = Setup {
+        platform: Platforms::WINDOWS,
+        ..PROGRAM
+    };
+    with_case(windows, "process.getuid;", |case| {
+        assert!(case.resolved.process_reaches_code_on_its_prototypes());
+    });
+    with_case(PROGRAM, "process.getuid;", |case| {
+        assert!(!case.resolved.process_reaches_code_on_its_prototypes());
     });
 }
 
@@ -354,22 +537,91 @@ fn what_is_laid_above_process_answers_what_process_lacks() {
 }
 
 #[test]
-fn left_of_instanceof_is_handed_to_the_method_of_the_right() {
+fn left_of_instanceof_is_handed_to_the_method_of_the_right_where_the_program_can_lay_one() {
+    let handed_on = with_case(PROGRAM, "f(process);", |case| case.resolved.uses().clone());
     for source in [
         "process instanceof x;",
-        "class K { static [Symbol.hasInstance](v) { return v; } } process instanceof K;",
+        "process instanceof Map;",
+        "process instanceof exports;",
+        "class K {} process instanceof K;",
+        "import { EventEmitter } from \"node:events\"; process instanceof EventEmitter;",
         "const p = process; p instanceof x;",
         "(y || process) instanceof x;",
         "switch (true) { case process instanceof x: }",
-        "import { EventEmitter } from \"node:events\"; process instanceof EventEmitter;",
     ] {
         with_case(PROGRAM, source, |case| {
-            assert!(case.exposes(BuiltinId::Process), "{source}")
+            let resolved = &case.resolved;
+            assert!(!case.exposes(BuiltinId::Process), "{source}");
+            assert!(resolved.hands_builtins_to_hooks_of_instanceof(), "{source}");
+            assert!(!resolved.can_come_by_hook_of_instanceof(), "{source}");
+            assert!(!resolved.loads_unknown_modules(), "{source}");
+            let holds_all = |uses: &crate::builtins::RuntimeUses| {
+                let mut functions = handed_on.functions.iter();
+                functions.all(|function| uses.functions.contains(function))
+            };
+            assert!(!holds_all(resolved.uses()), "{source}");
+            resolved.note_that_hooks_of_instanceof_may_exist();
+            assert!(holds_all(resolved.uses()), "{source}");
+            assert!(resolved.loads_unknown_modules(), "{source}");
         });
     }
-    for source in ["process instanceof Map;", "process instanceof Object;"] {
+    for source in ["x instanceof process;", "x instanceof y;", "f(process);"] {
         with_case(PROGRAM, source, |case| {
-            assert!(!case.exposes(BuiltinId::Process), "{source}")
+            assert!(
+                !case.resolved.hands_builtins_to_hooks_of_instanceof(),
+                "{source}"
+            );
+        });
+    }
+    for setup in [RUNTIME, TEST_RUN] {
+        with_case(setup, "process instanceof x;", |case| {
+            assert!(case.exposes(BuiltinId::Process));
+            assert!(!case.resolved.hands_builtins_to_hooks_of_instanceof());
+        });
+    }
+}
+
+#[test]
+fn a_file_says_whether_it_can_come_by_the_hook_of_instanceof() {
+    for source in [
+        "Symbol.hasInstance;",
+        "class K { static [Symbol.hasInstance](v) { return v; } }",
+        "const { hasInstance } = Symbol;",
+        "Symbol[x];",
+        "f(Symbol);",
+        "new Proxy(f, g);",
+        "Proxy.revocable(f, g);",
+        "Object.getOwnPropertySymbols(f);",
+        "Object.getOwnPropertyDescriptors(f);",
+        "Reflect.ownKeys(f);",
+        "f(Reflect);",
+        "f(Object);",
+        "f(globalThis);",
+        "globalThis[x];",
+        "eval(x);",
+        "new Function(x);",
+        "f.constructor(x);",
+        "f[x];",
+        "f.constructor.hasInstance;",
+        "Symbol('a').constructor.hasInstance;",
+        "Symbol.iterator.constructor.hasInstance;",
+        "const list = f.constructor.getOwnPropertySymbols;",
+        "const { ownKeys } = f;",
+        "f['hasInstance'];",
+        "g(f, 'hasInstance');",
+        "f.Proxy;",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.resolved.can_come_by_hook_of_instanceof(), "{source}");
+        });
+    }
+    for source in [
+        "process instanceof x;",
+        "Symbol.iterator;",
+        "class K { static make() {} }",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(!case.resolved.can_come_by_hook_of_instanceof(), "{source}");
         });
     }
 }

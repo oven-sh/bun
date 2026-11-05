@@ -42,13 +42,15 @@
 //   // Exit code: 3                    what both runs end with. Without the line a reference that does not end with 0 fails the program: two runs that
 //                                      stop at the same error agree and show nothing
 //   // Todo: <why>                     it does not pass today. It is run all the same and reported as skipped, and fails once it passes: the line goes out.
-//                                      `// Todo: Not every time: <why>`: it is skipped either way
-//                                      No `Todo` of any kind stands for a death: what a signal ends, what passes a limit of time or memory, a report of a sanitizer,
+//                                      No `Todo` of any kind and no `Skip` stands for a death: what a signal ends, what passes a limit of time or memory, a report of a sanitizer,
 //                                      a failed assertion and an internal compiler error fail the program whatever it is marked with
 //   // Todo on win32 x64: <why>        the same where process.platform and process.arch are those two, and nothing anywhere else. There it goes before a `// Todo:`
+//   // Skip on win32 x64: <why>        where process.platform and process.arch are those two, what it prints is compared with nothing, and it is reported as skipped:
+//                                      for a program whose reference, `bun <file>`, answers now one way, now the other there. It is built and run all the same,
+//                                      and its line says in which lines the two differed in this run
+//                                      Nothing anywhere else. There is no such line for every platform
 //   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
 //   // Todo under --aot-erase-types: <why>   its build with those flags does not pass today. The others are held as ever. It fails once that one passes: the line goes out.
-//                                      `Not every time: <why>`: it is held to nothing
 //   // Todo under a check: <why>       the same for every build with --aot-check= among its flags
 //   // Under: <flags>: <why>           it is built once more with those flags, and held to the same. A line for each such build
 //   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. What it prints is compared in the first build alone, and not under --more-flags.
@@ -60,6 +62,9 @@
 //   // COUNTER: <name> (= | >= | <=) <n>     the same, with the name without its kind (CompiledStructuresMade, operationAOTGetById)
 //                                      Each of the three may end with ` Todo: <why>`: it is not met today. It is asked all the same, and fails once it is met: the words go out.
 //                                      ` Todo on win32: <why>`: the same where process.platform is that, and the bound is held as ever anywhere else.
+//                                      ` Todo on linux x64: <why>`: where process.arch is the second word too: how often the allocator asks for room hangs on it.
+//                                      What was counted for it stands in the line of the file: `goalsNotMet: { "<name> <= <n>": <counted> }`. The bound alone says
+//                                      neither how far off it is nor that it moves further off: tools/goals-that-grew.ts holds two runs against one another.
 //                                      The rest of the program is held as ever. A name that nothing counts fails with or without them.
 //                                      A line that begins like one of the three and is not of that form fails the program: nothing that looks like a bound is passed over.
 //                                      In a folder with a main file they may stand in any file: none of the others is a program
@@ -122,6 +127,7 @@ type Program = {
   namesModules: boolean;
   exitCode: number;
   todo?: string;
+  skip?: string;
   todoOfBuildWith: (flags: readonly string[]) => string | undefined;
   /** The flags of each further build that it asks for. */
   under: string[][];
@@ -198,6 +204,10 @@ const runsAreAsUsersRunThem = !Object.keys(envOfEveryExecutable).length;
 const countsInstructions = process.argv.includes("--instructions");
 const keepsStatistics = process.argv.includes("--keep-statistics");
 const statisticsKept = new Map<string, Record<string, number>>();
+/** Of each bound that says ` Todo:` here and was asked: what was counted. */
+const countedForGoalsNotMet = new Map<string, Record<string, number>>();
+const goalsNotMetOf = (file: string) =>
+  countedForGoalsNotMet.has(file) ? { goalsNotMet: countedForGoalsNotMet.get(file) } : {};
 if (countsInstructions && !Bun.which("perf")) throw new Error("--instructions: there is no `perf` here");
 let opensCounter: boolean | undefined;
 /** Asked by the first program that needs it: where no counter opens, a line on stderr says why. */
@@ -663,7 +673,7 @@ const verdicts = new Map<string, Record<string, unknown>[]>();
 function settle(program: Program, verdict: Record<string, unknown>) {
   if (program.todoOfWay !== undefined && !verdict.died)
     verdict =
-      verdict.state === "fail" || program.todoOfWay.startsWith("Not every time:")
+      verdict.state === "fail"
         ? { state: "todo" }
         : {
             state: "fail",
@@ -675,10 +685,23 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   if (all.length < waysLeft.get(program.file)!) return;
   const sum = (name: string) => all.reduce((total, verdict) => total + Number(verdict[name] ?? 0), 0);
   const failed = all.some(({ state }) => state === "fail");
+  if (program.skip !== undefined && !all.some(({ died }) => died)) {
+    const differs = all.find(({ state }) => state === "fail");
+    const linesOf = (output: unknown) => JSON.stringify((output as Output | undefined)?.stdout ?? "");
+    const printed = differs
+      ? `the reference printed ${linesOf(differs.expected)} and the executable ${linesOf(differs.actual)}`
+      : "the executable printed what the reference printed";
+    return say({
+      file: program.file,
+      state: "skip",
+      message: `skipped on this platform: ${program.skip} | in this run ${printed}`,
+      ...goalsNotMetOf(program.file),
+    });
+  }
   if (program.todo !== undefined && !all.some(({ died }) => died)) {
-    if (failed || moreFlags.length || !runsAreAsUsersRunThem || program.todo.startsWith("Not every time:")) {
+    if (failed || moreFlags.length || !runsAreAsUsersRunThem) {
       if (program.todo.startsWith("only frames")) programsMarkedForFramesAlone++;
-      return say({ file: program.file, state: "skip", message: `todo: ${program.todo}` });
+      return say({ file: program.file, state: "skip", message: `todo: ${program.todo}`, ...goalsNotMetOf(program.file) });
     }
     hasFailed = true;
     return say({
@@ -686,6 +709,7 @@ function settle(program: Program, verdict: Record<string, unknown>) {
       state: "fail",
       stage: "todo",
       message: "it passes: its `// Todo:` line goes out",
+      ...goalsNotMetOf(program.file),
     });
   }
   hasFailed ||= failed;
@@ -702,6 +726,7 @@ function settle(program: Program, verdict: Record<string, unknown>) {
       all.map(({ way, state, isCompared }) => [way, isCompared === false ? "built and run, not compared" : state]),
     ),
     ...(statisticsKept.has(program.file) && { statistics: statisticsKept.get(program.file) }),
+    ...goalsNotMetOf(program.file),
   });
 }
 // A long output is cut where it is shown, and the cut must not hide the difference.
@@ -723,10 +748,11 @@ function fail(program: Program, stage: string, message: string, actual?: Output,
 
 /** Only a COUNT names what is counted with its kind in front. */
 function readBound(line: string): (Bound & { kind: string }) | undefined {
-  const [, kind, name, relation, bound, platform, todo] =
-    /^\/\/ (STATISTIC|COUNT|COUNTER): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+))?: (.+))?$/.exec(line) ?? [];
+  const [, kind, name, relation, bound, platform, arch, todo] =
+    /^\/\/ (STATISTIC|COUNT|COUNTER): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+)(?: (\w+))?)?: (.+))?$/.exec(line) ?? [];
   if (kind === undefined || (kind !== "COUNT" && name.includes(":"))) return undefined;
-  const isTodoHere = platform === undefined || platform === process.platform;
+  const isTodoHere =
+    (platform === undefined || platform === process.platform) && (arch === undefined || arch === process.arch);
   return { kind, name, relation, bound: Number(bound), todo: isTodoHere ? todo : undefined };
 }
 
@@ -802,6 +828,7 @@ function read(file: string): Program {
       (isASAN ? lines("Todo under ASAN")[0] : undefined) ??
       lines(`Todo on ${process.platform} ${process.arch}`)[0] ??
       lines("Todo")[0],
+    skip: lines(`Skip on ${process.platform} ${process.arch}`)[0],
     todoOfBuildWith: flags =>
       lines(`Todo under ${flags.join(" ")}`)[0] ?? (flags.some(isCheck) ? lines("Todo under a check")[0] : undefined),
     under: lines("Under").map(line => line.split(": ", 1)[0].split(/\s+/).filter(Boolean)),
@@ -893,14 +920,17 @@ const withoutCollections = {
   BUN_JSC_largeHeapSize: "2000000000",
 };
 
-function unmetBounds(counted: Map<string, number>, bounds: Bound[], who: "build" | "executable") {
+function unmetBounds(file: string, counted: Map<string, number>, bounds: Bound[], who: "build" | "executable") {
   return bounds.flatMap(({ name, relation, bound, todo }) => {
     // With AddressSanitizer the allocators have shorter free lists, so compiled code calls the run time for a new one more often.
     if (isASAN && name === "operations") return [];
     const value = counted.get(name);
     if (value === undefined) return [`${name} ${relation} ${bound}, but the ${who} counted nothing of that name`];
     const isMet = relation === "=" ? value === bound : relation === ">=" ? value >= bound : value <= bound;
-    if (todo !== undefined) return isMet ? [`${name} ${relation} ${bound} is met: its \`Todo:\` goes out`] : [];
+    if (todo !== undefined) {
+      countedForGoalsNotMet.set(file, { ...countedForGoalsNotMet.get(file), [`${name} ${relation} ${bound}`]: value });
+      return isMet ? [`${name} ${relation} ${bound} is met: its \`Todo:\` goes out`] : [];
+    }
     return isMet ? [] : [`${name} ${relation} ${bound}, but the ${who} counted ${value}`];
   });
 }
@@ -1130,7 +1160,7 @@ async function run(program: Program): Promise<void> {
       );
     const unmet =
       program.way === "compiled" && !moreFlags.length
-        ? unmetBounds(countedByBuild(build.output.stderr), program.statistics, "build")
+        ? unmetBounds(program.file, countedByBuild(build.output.stderr), program.statistics, "build")
         : [];
     const printed = build.output.stderr.split(/\r?\n/).map(asNamedElsewhere);
     for (const { times, line } of moreFlags.length ? [] : program.buildPrints) {
@@ -1204,7 +1234,7 @@ async function run(program: Program): Promise<void> {
     if (!compiled.output.stderr.includes("[aot] module: "))
       return fail(program, "run", "it did not run compiled code", compiled.output, plain?.output);
     compiled.output.stderr = withoutLinesOfImage(compiled.output.stderr);
-    const unmetByRun = counts ? unmetBounds(counted, program.counts, "executable") : [];
+    const unmetByRun = counts ? unmetBounds(program.file, counted, program.counts, "executable") : [];
     if (unmetByRun.length) return fail(program, "count", unmetByRun.join("; "), compiled.output, plain?.output);
     const grown =
       program.way === "compiled" && program.growth && !moreFlags.length && runsAreAsUsersRunThem && !isASAN

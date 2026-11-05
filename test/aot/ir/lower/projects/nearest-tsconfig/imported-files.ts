@@ -1,9 +1,7 @@
-// RUN: link
-// STATISTIC: SourceFilesChecked = 4
-
-// No build reports what a tsconfig.json asks of style: see entry-points.ts. Here the files are imported.
-
-// CHECK-COUNT-3: function {{*}}name="smells" {{*}}flags=[IsChecked, HasExplicitName] {{*}}parameters=[{type=boolean}, {type=anything}] results=[{type=anything}]
+// RUN: lower
+// DIAGNOSTIC: TS7030 top.ts:1
+// DIAGNOSTIC: TS6133 pkg/middle.ts:2
+// DIAGNOSTIC: TS7006 pkg/test/deep.ts:1
 
 // FILE: pkg/test/main.ts
 import "../../top";

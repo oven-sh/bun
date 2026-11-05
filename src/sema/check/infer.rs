@@ -3569,13 +3569,13 @@ impl<'p, 's> Checker<'p, 's> {
                     signatures.extend(*base);
                     left.extend(values(*mapper));
                 }
-                SigData::Synth {
+                SigData::Synth(SynthSig {
                     params,
                     ret,
                     this,
                     of,
                     ..
-                } => {
+                }) => {
                     left.extend(params.iter().map(|p| p.ty).chain([*ret]).chain(*this));
                     signatures.extend_from_slice(of);
                 }

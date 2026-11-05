@@ -41,7 +41,7 @@ try { say(createRequire(import.meta.url)(name)); } catch (error) { refused(error
 };
 // Two of the shapes swallow the error, as such code does: what they print then stands for the refusal.
 const head = (module: string) =>
-  `// Arguments: ${module}\n// Refused: Cannot load '\n// Refused: the import answered null\n// Refused: nothing was loaded\n`;
+  `// Arguments: ${module}\n// Refused where closed: Cannot load '\n// Refused where closed: the import answered null\n// Refused where closed: nothing was loaded\n`;
 
 export default function write(folder: string) {
   for (const [shape, text] of Object.entries(shapes))

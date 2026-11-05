@@ -580,9 +580,11 @@ impl Encoder<'_> {
         let block = &self.blocks[id.index()];
         let first_joined = self.find_joined_block(id);
         let mut value_count = block.value_count;
+        let mut frequency = block.frequency;
         let mut joined = first_joined;
         while let Some(part) = joined {
             value_count += self.blocks[part.index()].value_count;
+            frequency = frequency.max(self.blocks[part.index()].frequency);
             joined = self.find_joined_block(part);
         }
         let subject = block
@@ -594,6 +596,7 @@ impl Encoder<'_> {
             role: block.role,
             subject,
             has_handler: block.handler.is_some(),
+            frequency,
         };
         head.append_to(&mut PushedWords(&mut self.words));
         for list in parameter_lists(block, self.lists.values) {

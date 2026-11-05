@@ -1,6 +1,6 @@
 use super::*;
 use crate::ir::builder::Edge;
-use crate::ir::generated::TerminatorKind;
+use crate::ir::generated::{BlockFrequency, TerminatorKind};
 use crate::ir::ids::{ABSENT_WORD, BlockId, VariableId};
 use crate::ir::program::Program;
 use crate::ir::testing::{build_function, create_blocks, print_with};
@@ -39,6 +39,39 @@ fn value_without_result_takes_an_id() {
         let name = builder.type_of(value);
         builder.put_module_variable(VariableId::new(1), name);
         builder.return_value(Some(name));
+    });
+}
+
+const FREQUENCIES: &str = "\
+function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v1 = TypeOf v0
+    Return v1
+  b2():
+    Return v0
+}
+";
+
+#[test]
+fn a_block_that_goes_on_in_an_unlikely_one_is_unlikely() {
+    assert_graph(&[TypeTable::ANYTHING], FREQUENCIES, |builder| {
+        let value = builder.parameter(0);
+        let [taken, arm, not_taken] = create_blocks(builder);
+        builder.set_frequency(arm, BlockFrequency::Unlikely);
+        builder.branch(value, Edge::to(taken), Edge::to(not_taken));
+        builder.seal(taken);
+        builder.seal(not_taken);
+
+        builder.switch_to(taken);
+        builder.jump(Edge::to(arm));
+        builder.seal(arm);
+        builder.switch_to(arm);
+        let name = builder.type_of(value);
+        builder.return_value(Some(name));
+        builder.switch_to(not_taken);
+        builder.return_value(Some(value));
     });
 }
 

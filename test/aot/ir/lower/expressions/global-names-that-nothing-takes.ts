@@ -19,7 +19,7 @@
 // Neither `bun build` nor `bun run` reads a free name that the parser lists where nothing takes the value. Both read every other name, and every name whose value something takes.
 // Left of a comma whose value is taken `bun build` reads it, unless it minifies. `bun run` minifies.
 export function listed() {
-  Date;
+  Date; // @ts-expect-error
   Date, URL;
   [Promise, { when: Date }];
 }
@@ -33,7 +33,7 @@ export function unlisted() {
   structuredClone;
 }
 
-export function leftOfComma() {
+export function leftOfComma() { // @ts-expect-error
   const last = (Date, 1);
   return last;
 }

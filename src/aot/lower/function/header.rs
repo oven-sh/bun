@@ -9,7 +9,7 @@ use crate::builtins::table::{FramesMark, frames_mark_of};
 use crate::ir::generated::{Function, FunctionFlags, FunctionKind, FunctionSyntax, SourceRange};
 use crate::ir::{
     Body, DeclaredType, FunctionId, FunctionKey, Mapped, PositionFlags, Primitives, StringId, Type,
-    TypeTable,
+    TypeRef, TypeTable,
 };
 use crate::lower::{FileLowering, class, generator};
 
@@ -97,7 +97,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn compute_rest_position(&mut self, position: DeclaredType) -> DeclaredType {
         let types = &mut self.fragment.types;
         let declared = types.without_primitives(position.ty, Primitives::NULLISH);
-        let ty = match is_array_type(types.get(declared)) {
+        let ty = match is_array_type(&types.get(declared)) {
             true => declared,
             false => TypeTable::ARRAY,
         };
@@ -335,8 +335,8 @@ fn compute_source_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFlags {
     flags
 }
 
-fn is_array_type(ty: &Type) -> bool {
-    let [part] = ty.classes.as_slice() else {
+fn is_array_type(ty: &TypeRef<'_>) -> bool {
+    let [part] = ty.classes else {
         return false;
     };
     part.builtin_class == BuiltinClass::Array

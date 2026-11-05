@@ -154,8 +154,8 @@ fn module_that_mocks_alone_make_is_asked_for_at_each_read() {
 
 #[test]
 fn computed_load_may_name_a_declaration_file_beside_a_spy() {
-    let loads = "const folder = new URL('./lib/', import.meta.url);\nconst loaded = await import(new URL(String(globalThis.name), folder).href);\nconsole.log(loaded);\n";
-    let spies = "import { spyOn } from 'bun:test';\nimport type { more } from './lib/more';\nexport type More = typeof more;\nspyOn(globalThis.somebody, 'run');\n";
+    let loads = "const folder = new URL('./lib/', import.meta.url); // @ts-expect-error\nconst loaded = await import(new URL(String(globalThis.name), folder).href);\nconsole.log(loaded);\n";
+    let spies = "import { spyOn } from 'bun:test';\nimport type { more } from './lib/more';\nexport type More = typeof more; // @ts-expect-error\nspyOn(globalThis.somebody, 'run');\n";
     let mocks = "import { mock } from 'bun:test';\nimport type { more } from './lib/more';\nexport type More = typeof more;\nmock.module('./lib/more', () => ({ more: 1 }));\n";
     for head in [spies, mocks] {
         let test_file = format!("{head}{loads}");

@@ -23,3 +23,4 @@ tell(() => sameThroughCallee(0));
 tell(() => sameThroughCallee(5));
 tell(() => readOther() === readOther());
 report("end");
+declare function report(value: unknown): void;

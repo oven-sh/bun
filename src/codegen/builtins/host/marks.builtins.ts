@@ -100,9 +100,45 @@ export default b.declarations(
   // JSEnvironmentVariableMap.cpp puts another object under both when the thread starts a worker with `env: SHARE_ENV`.
   marked("IsReplacedByHostThatSaysSo", ["Bun.env", "process.env"]),
   marked("IsCalledWithoutStartupLoads", ["Buffer.prototype.inspect"]),
+  // What registers a test, a suite or a hook answers undefined, and a modifier answers another function of the kind: ScopeFunctions.bind.ts, BunTest.bind.ts, jest.bind.ts.
+  // expect() answers an Expect. A matcher answers undefined, a promise of it, or an object of one of the runner's classes: expect.bind.ts.
+  // spyOn() and mock() answer a mock function: JSMockFunction in JSMockFunction.cpp. What lies below mock is not marked: mock.module() goes to the loader.
+  // The mark on a class stands for all that lies below it.
+  marked("HandsOutNoOtherHostObject", [
+    "bun:test.test",
+    "bun:test.xtest",
+    "bun:test.describe",
+    "bun:test.xdescribe",
+    "bun:test.beforeAll",
+    "bun:test.beforeEach",
+    "bun:test.afterAll",
+    "bun:test.afterEach",
+    "bun:test.onTestFinished",
+    "bun:test.spyOn",
+    "bun:test.mock",
+    "%ScopeFunctions%",
+    "%DoneCallback%",
+    "%Expect%",
+    "%ExpectAny%",
+    "%ExpectAnything%",
+    "%ExpectArrayContaining%",
+    "%ExpectCloseTo%",
+    "%ExpectCustomAsymmetricMatcher%",
+    "%ExpectMatcherContext%",
+    "%ExpectMatcherUtils%",
+    "%ExpectObjectContaining%",
+    "%ExpectStatic%",
+    "%ExpectStringContaining%",
+    "%ExpectStringMatching%",
+  ]),
   marked("InstancesHaveMethodCalledWithStartupLoads", classesWithInspectMethod),
   // console_print_runtime_object_inner() in src/runtime/jsc_hooks.rs prints them and walks no prototype.
   marked("InstancesArePrintedByCodeOfTheirOwn", ["%Immediate%", "%Timeout%", "Blob", "Request", "Response"]),
+  // RequestContext.rs render_missing_invalid_response(): an answer that is no Response.
+  marked("PrintsWhatHandlersAnswer", [
+    "Bun.serve",
+    ...["HTTPServer", "HTTPSServer", "DebugHTTPServer", "DebugHTTPSServer"].map(name => `%${name}%.prototype.reload`),
+  ]),
   // These reject napi_env and napi_value in a signature (reject_napi_types_error in ffi_body.rs). Only cc() accepts them.
   marked("LoadsCodeWithoutJSAccess", [
     "%NativeFunctions%.FfiBindTsLinkLibrary",
@@ -137,4 +173,9 @@ export default b.declarations(
   b.extend("%NativeFunctions%.FfiBindTsOpenLibrary", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
   b.extend("%NativeFunctions%.FfiBindTsLinkLibrary", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
   b.extend("%NativeFunctions%.FfiBindTsMakeFunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),
+  // A call of what a binding answers is counted on the binding.
+  b.extend("native:Bindgen:ffi.bind.ts:cc", { loadsMachineCodeAs: "bun:ffi.cc" }),
+  b.extend("native:Bindgen:ffi.bind.ts:openLibrary", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
+  b.extend("native:Bindgen:ffi.bind.ts:linkLibrary", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
+  b.extend("native:Bindgen:ffi.bind.ts:makeFunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),
 );

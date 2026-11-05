@@ -1269,6 +1269,7 @@ impl<'a, 's> Walk<'a, 's> {
         self.reach_uses(&used_at_start);
         let files = application.compiled_files().iter();
         let mut asks = used_at_start.asks;
+        let mut bound_by_no_site: Vec<RuntimeModule> = Vec::new();
         for &file in files.filter(|&&file| !asks_nothing_of_library(application, graph, file)) {
             let read_by_name = self.reach_named_imports(application, graph, file);
             let compiled = application.compiled(file);
@@ -1286,6 +1287,7 @@ impl<'a, 's> Walk<'a, 's> {
                 asks.add(&source.builtins.uses().asks);
                 for named in source.named_modules() {
                     self.reach_every_export(ModuleRef::Runtime(named.module));
+                    bound_by_no_site.push(named.module);
                 }
             }
         }
@@ -1294,7 +1296,13 @@ impl<'a, 's> Walk<'a, 's> {
         }
         for module in find_library_modules_that_unknown_names_may_stand_for(application) {
             self.reach_every_export(ModuleRef::Runtime(module));
+            bound_by_no_site.push(module);
         }
+        let platform = self.input.platform;
+        self.reach_uses(&RuntimeUses::of_native_modules_handed_out(
+            &bound_by_no_site,
+            platform,
+        ));
     }
 
     fn find_file(&self, module: ModuleRef) -> Option<FileId> {

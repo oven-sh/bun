@@ -3,9 +3,9 @@
 // ENTRY: one/two/app/main.js
 // CWD: one/two/app
 // RUN(TWO): link
-// TWO: module {{*}} path="/$bunfs/root/_.._/_.._/job.js"
+// TWO: module {{*}} path="/$bunfs/_.._/_.._/_.._/job.js"
 // RUN(THREE): link
-// THREE: module {{*}} path="/$bunfs/root/_.._/_.._/_.._/job.js"
+// THREE: module {{*}} path="/$bunfs/_.._/_.._/job.js"
 
 // FILE: one/two/app/main.js
 new Worker(new URL("../../job.js", import.meta.url).href);

@@ -1,11 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK-NOT: Integer integer=1
-// CHECK-LABEL: function {{*}}name="isAbsolute"
+// DIAGNOSTIC: TS6133 1
 
 // FILE: main.ts
-// A name that nothing reads stops no build, whatever `noUnusedLocals` says, and nothing is built for it.
+// A name that is unused in the source is still reported when the build removes code beside it.
 const WINDOWS_PATH = /^[a-zA-Z]:/;
 const neverRead = 1;
 function isAbsolute(path: string): boolean {

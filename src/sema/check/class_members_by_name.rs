@@ -46,6 +46,64 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.property_in_type(apparent, &Members { resolved, mapper }, name))
     }
 
+    pub(in super::super) fn declared_by_unlisted_class(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<Members<'p>> {
+        let &TypeData::Ref { target, .. } = self.data(ty) else {
+            return None;
+        };
+        if !self.class_members_by_name.is_on
+            || self.resolved_members(ty).is_some()
+            || !self.resolves_no_members()
+            || !self.has_only_this_all_the_way_up(target)
+        {
+            return None;
+        }
+        let resolved = self.plain_class(target)?.declared;
+        let mapper = self.mapper_of_reference(ty, target)?;
+        Some(Members { resolved, mapper })
+    }
+
+    pub(in super::super) fn has_required_properties_of_unlisted_class(
+        &mut self,
+        source: TypeId,
+        ty: TypeId,
+    ) -> Option<bool> {
+        let &TypeData::Ref { target, .. } = self.data(ty) else {
+            return None;
+        };
+        if !self.class_members_by_name.is_on
+            || self.resolved_members(ty).is_some()
+            || !self.resolves_no_members()
+            || !self.has_only_this_all_the_way_up(target)
+        {
+            return None;
+        }
+        let mut at = target;
+        loop {
+            let plain = self.plain_class(at)?;
+            for prop in &plain.declared.shape.props {
+                if prop.flags.contains(PropFlags::OPTIONAL)
+                    || self.get_property_of_type(source, prop.name).is_some()
+                {
+                    continue;
+                }
+                let listed = match at == target {
+                    true => prop,
+                    false => self.member_of_plain_class(target, prop.name)??,
+                };
+                if !listed.flags.contains(PropFlags::OPTIONAL) {
+                    return Some(false);
+                }
+            }
+            match plain.base {
+                Some((base, _)) => at = base,
+                None => return Some(true),
+            }
+        }
+    }
+
     pub(super) fn resolves_no_members(&self) -> bool {
         self.unresolved_members.is_empty()
             && self.inheriting.is_empty()

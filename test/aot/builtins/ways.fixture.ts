@@ -178,12 +178,12 @@ async function makeInstances(): Promise<() => void> {
   by("Buffer", () => Buffer.from("text"));
   by("CryptoHasher", () => new Bun.CryptoHasher("sha256"));
   by("Glob", () => new Bun.Glob("*"));
-  by("Cookie", () => new Bun.Cookie("a", "b"));
+  by("BunCookie", () => new Bun.Cookie("a", "b"));
   by(
-    "Cookie",
+    "BunCookie",
     () => new Bun.Cookie("a", "b", { expires: new Date(5), maxAge: 5, domain: "x.y", path: "/p", sameSite: "strict" }),
   );
-  by("CookieMap", () => new Bun.CookieMap("a=b"));
+  by("BunCookieMap", () => new Bun.CookieMap("a=b"));
   by("RegExp", () => /x/dgimsuy);
   by("RegExp", () => /x/v);
   by("Error", () => new Error("x", { cause: 1 }));

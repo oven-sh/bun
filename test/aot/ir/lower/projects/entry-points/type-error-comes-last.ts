@@ -1,12 +1,7 @@
-// RUN: link
+// RUN: lower
 // ENTRY: packages/right/src/right.ts packages/wrong/src/wrong.ts
 // LINK: node_modules/@workspace/right -> packages/right
-
-// A value that does not fit the type that is written for it stops no build, in the last entry point as in the first: the type is sent, and the engine tests it.
-// CHECK: module [[wrong]] path="{{*}}/wrong.ts"
-// CHECK: function {{*}}module=[[wrong]] kind=Module
-// CHECK: [[one]] = String string="one"
-// CHECK-NEXT: Convert [[one]] declared={type=number}
+// DIAGNOSTIC: TS2322 packages/wrong/src/wrong.ts:1
 
 // FILE: package.json
 {"name":"workspace","workspaces":["packages/*"]}

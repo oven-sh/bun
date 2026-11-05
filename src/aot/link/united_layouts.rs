@@ -2,8 +2,8 @@ use super::grouped::Grouped;
 use crate::ir::generated::{Field, FieldFlags, Layout, LayoutFlags, LayoutKind, PositionFlags};
 use crate::ir::parallel::map_each;
 use crate::ir::{
-    DeclaredType, Id, InParallel, LayoutId, Mapped, Primitives, PropertyKeyId, StringId, Type,
-    TypeFlags, TypeId, TypeTable, drop_each, for_each_mut,
+    DeclaredType, Id, InParallel, LayoutId, Mapped, Primitives, PropertyKeyId, StringId, TypeFlags,
+    TypeId, TypeTable, drop_each, for_each_mut,
 };
 use crate::statistics::{Stage, StepClock};
 use bun_sema::util::SharedSort;
@@ -150,7 +150,8 @@ enum Literal {
     String(StringId),
 }
 
-fn find_only_literal(ty: &Type) -> Option<Literal> {
+fn find_only_literal(types: &TypeTable, ty: TypeId) -> Option<Literal> {
+    let ty = types.get(ty);
     let nullish = Primitives::UNDEFINED | Primitives::NULL;
     let has_objects = !(ty.layouts.is_empty()
         && ty.classes.is_empty()
@@ -159,7 +160,7 @@ fn find_only_literal(ty: &Type) -> Option<Literal> {
     if has_objects || ty.is_internal() || !ty.primitives.without(nullish).is_empty() {
         return None;
     }
-    match (ty.integer_range(), ty.strings.as_slice()) {
+    match (ty.integer_range(), ty.strings) {
         (Some((minimum, maximum)), []) if ty.flags == TypeFlags::HAS_INTEGERS => {
             (minimum == maximum).then_some(Literal::Integer(minimum))
         }
@@ -176,7 +177,7 @@ fn list_literals(definition: &Layout, types: &TypeTable) -> Literals {
         .iter()
         .filter(|field| !field.declared.is_expected());
     let mut literals: Literals = checked
-        .filter_map(|field| Some((field.key?, find_only_literal(types.get(field.declared.ty))?)))
+        .filter_map(|field| Some((field.key?, find_only_literal(types, field.declared.ty)?)))
         .collect();
     literals.shared_sort_unstable();
     literals
@@ -400,7 +401,7 @@ pub(super) fn add_views_of_literals(layouts: &mut Vec<Layout>, views: Vec<Layout
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{FunctionId, PropertyKeyId, StringId};
+    use crate::ir::{FunctionId, PropertyKeyId, StringId, Type};
     use crate::link::testing::{forward, reverse, test_class_key, test_object_type_key};
 
     fn field(key: usize, declared: DeclaredType, flags: FieldFlags) -> Field {
@@ -499,7 +500,7 @@ mod tests {
         let layouts = unite_with_views(tagged(10, one), definitions, &mut types);
         assert_eq!(layouts.len(), 3);
         assert_eq!(
-            *types.get(layouts[0].fields[0].declared.ty),
+            types.get(layouts[0].fields[0].declared.ty),
             Type::integers(1, 5)
         );
         for (view, (name, tag)) in layouts[1..].iter().zip([(10, one), (11, five)]) {
@@ -684,7 +685,7 @@ mod tests {
                 .iter()
                 .map(|layout| layout.fields[0].declared.ty)
                 .collect();
-            (said, types.types()[known..].to_vec())
+            (said, types.types().skip(known).to_records())
         };
         let (said, added) = unite_all(&forward);
         assert_eq!(added.len(), count / 2);

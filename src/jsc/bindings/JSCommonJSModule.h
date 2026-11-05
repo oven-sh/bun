@@ -91,6 +91,14 @@ public:
     uint32_t compiledModule { noCompiledModule };
     // Of the object that createRequire() has made: code of the executable called it. A loader that code from disk makes finds no file of the executable, whatever path it is given.
     bool isMadeByCodeOfImage { false };
+    // Of the object behind `import.meta.require` of an ES module of the executable: the number of that module. It is who asks through the object, and the engine lists what it has required.
+    uint32_t compiledModuleThatAsks { noCompiledModule };
+    bool areChildrenListedByEngine() const { return compiledModule != noCompiledModule || compiledModuleThatAsks != noCompiledModule; }
+    // require() makes an object for a file of the executable at every call: the number of the file that was loaded into this one, where a requirer that is no file of the executable asked.
+    uint32_t compiledModuleLoadedInto { noCompiledModule };
+    // Among the children of such a requirer the first object of a file stays, and no other is listed.
+    WTF::HashSet<uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> compiledModulesAmongChildren;
+    bool listsAsChild(JSCommonJSModule* loaded) { return loaded->compiledModuleLoadedInto == noCompiledModule || compiledModulesAmongChildren.add(loaded->compiledModuleLoadedInto).isNewEntry; }
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);

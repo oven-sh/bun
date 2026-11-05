@@ -12,3 +12,4 @@ const b = new B();
 const values: any[] = [a, b, {}, [], A, A.prototype, Object.create(a), null, undefined, 1, "s", true];
 for (let round = 0; round < 3; round++) { for (let i = 0; i < values.length; i++) { const v = values[i]; attempt(() => A.get(v)); attempt(() => B.get(v)); attempt(() => A.set(v, 5 + round)); attempt(() => A.has(v)); attempt(() => A.get(v)); } }
 report("end");
+declare function report(value: unknown): void;

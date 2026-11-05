@@ -1,6 +1,6 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
 import { builtinEntries } from "../bundler/compile-trim-features";
 import { test } from "./supported";
@@ -118,11 +118,21 @@ test("what a program asks about a function without calling it is no use of anyth
 }, 600_000);
 
 // A goal that is not met yet. Once it is, this test fails: change `test.failing` to `test` and empty the list of what is used once it is named.
+// A mark does not see a number grow worse: the case behind it holds the report to the number of today.
+let usersOfAll: ReturnType<typeof usersIn> | undefined;
+const usersWhereAllAreAsked = () =>
+  (usersOfAll ??= usersIn(questionsAbout(functions.filter(listsAllMembers).map(({ path }) => path))));
 test.failing(
-  "what a program asks about any function that --trim can remove is no use of anything: 158 lines of the report on Linux x64, the goal is none",
+  "what a program asks about any function that --trim can remove is no use of anything: 158 lines of the report on Linux, the goal is none",
   async () => {
-    const asked = functions.filter(listsAllMembers).map(({ path }) => path);
-    expect((await usersIn(questionsAbout(asked))).map(({ line }) => line)).toEqual([]);
+    expect((await usersWhereAllAreAsked()).map(({ line }) => line)).toEqual([]);
+  },
+  600_000,
+);
+test.skipIf(!isLinux)(
+  "what a program asks about any function that --trim can remove is no use of anything: no more than 158 lines of the report",
+  async () => {
+    expect((await usersWhereAllAreAsked()).length).toBeLessThanOrEqual(158);
   },
   600_000,
 );

@@ -1,9 +1,10 @@
 use crate::builtins::id::{BuiltinClass, BuiltinId};
 use crate::ir::generated::MAX_TRACKED_INTEGER;
 use crate::ir::ids::{Id, LayoutId, TypeId};
-use crate::ir::parallel::{InParallel, run_serially};
 use crate::ir::testing::{array_of, layout, string};
-use crate::ir::types::{ClassPart, OpaqueKind, Primitives, Type, TypeFlags, TypeTable};
+use crate::ir::types::{
+    ClassPart, DistinctTypes, OpaqueKind, Primitives, Type, TypeFlags, TypeTable,
+};
 
 fn builtin(word: u32) -> BuiltinId {
     BuiltinId::from_wire(word).expect("the table has the built-in")
@@ -55,7 +56,7 @@ fn well_known_types_have_their_ids() {
     assert_eq!(table.len(), TypeTable::WELL_KNOWN_COUNT);
     for (index, (id, ty)) in well_known_types().into_iter().enumerate() {
         assert_eq!(id.index(), index);
-        assert_eq!(*table.get(id), ty);
+        assert_eq!(table.get(id), ty);
         assert_eq!(table.intern(ty), id);
     }
     assert_eq!(table.len(), TypeTable::WELL_KNOWN_COUNT);
@@ -65,12 +66,18 @@ fn well_known_types_have_their_ids() {
 fn two_tables_agree_on_well_known_ids() {
     let mut first = TypeTable::new();
     let mut second = TypeTable::default();
-    assert_eq!(first.types(), second.types());
+    assert_eq!(first.types().to_records(), second.types().to_records());
     first.intern(Type::layout(layout(1)));
     second.intern(Type::string_literal(string(1)));
     let count = TypeTable::WELL_KNOWN_COUNT;
-    assert_eq!(first.types()[..count], second.types()[..count]);
-    assert_ne!(first.types()[count], second.types()[count]);
+    assert_eq!(
+        first.types().to_records()[..count],
+        second.types().to_records()[..count]
+    );
+    assert_ne!(
+        first.types().to_records()[count],
+        second.types().to_records()[count]
+    );
 }
 
 #[test]
@@ -100,7 +107,7 @@ fn equal_types_have_one_id() {
     };
     let id = table.intern(ascending.clone());
     assert_eq!(table.intern(descending_with_repeats), id);
-    assert_eq!(*table.get(id), ascending);
+    assert_eq!(table.get(id), ascending);
     assert_eq!(table.len(), TypeTable::WELL_KNOWN_COUNT + 1);
 }
 
@@ -373,7 +380,7 @@ fn wider_bit_absorbs_its_part_only() {
         layouts: vec![layout(1)],
         ..Type::default()
     };
-    assert_eq!(*table.get(union), expected);
+    assert_eq!(table.get(union), expected);
 
     let union = table.union_all([range, TypeTable::NUMBER, literal]);
     let expected = Type {
@@ -381,7 +388,7 @@ fn wider_bit_absorbs_its_part_only() {
         strings: vec![string(1)],
         ..Type::default()
     };
-    assert_eq!(*table.get(union), expected);
+    assert_eq!(table.get(union), expected);
 
     let union = table.union_all([object, numbers, TypeTable::OBJECT, literal]);
     let expected = Type {
@@ -389,7 +396,7 @@ fn wider_bit_absorbs_its_part_only() {
         strings: vec![string(1)],
         ..Type::default()
     };
-    assert_eq!(*table.get(union), expected);
+    assert_eq!(table.get(union), expected);
 }
 
 #[test]
@@ -398,7 +405,7 @@ fn union_of_ranges_is_hull() {
     let low = table.intern(Type::integers(0, 1));
     let high = table.intern(Type::integers(5, 6));
     let union = table.union(low, high);
-    assert_eq!(*table.get(union), Type::integers(0, 6));
+    assert_eq!(table.get(union), Type::integers(0, 6));
     let with_string = table.union(low, TypeTable::STRING);
     assert_eq!(table.get(with_string).integer_range(), Some((0, 1)));
 }
@@ -408,7 +415,7 @@ fn range_outside_tracked_integers_becomes_number() {
     let mut table = TypeTable::new();
     let widest = Type::integers(-MAX_TRACKED_INTEGER, MAX_TRACKED_INTEGER);
     let widest_id = table.intern(widest.clone());
-    assert_eq!(*table.get(widest_id), widest);
+    assert_eq!(table.get(widest_id), widest);
 
     for (minimum, maximum) in [(0, MAX_TRACKED_INTEGER + 1), (-MAX_TRACKED_INTEGER - 1, 0)] {
         let untracked = Type {
@@ -421,7 +428,7 @@ fn range_outside_tracked_integers_becomes_number() {
             ..Type::default()
         };
         let id = table.intern(untracked);
-        assert_eq!(*table.get(id), expected);
+        assert_eq!(table.get(id), expected);
     }
 }
 
@@ -456,7 +463,7 @@ fn one_class_merges_contents() {
 
     let arrays = table.union(numbers, strings);
     let number_or_string = table.union(TypeTable::NUMBER, TypeTable::STRING);
-    assert_eq!(*table.get(arrays), array_of(number_or_string));
+    assert_eq!(table.get(arrays), array_of(number_or_string));
 
     let array_or_map = table.union(map, numbers);
     let classes = table.get(array_or_map).classes.iter();
@@ -490,7 +497,7 @@ fn function_beside_other_parts_stays() {
         layouts: vec![layout(1)],
         ..Type::default()
     };
-    assert_eq!(*table.get(union), expected);
+    assert_eq!(table.get(union), expected);
     assert_eq!(table.union(function, TypeTable::OBJECT), TypeTable::OBJECT);
 }
 
@@ -499,7 +506,7 @@ fn with_nullish_is_idempotent() {
     let mut table = TypeTable::new();
     let nullable = table.with_nullish(TypeTable::NUMBER);
     let expected = Primitives::NUMBER | Primitives::NULLISH;
-    assert_eq!(*table.get(nullable), Type::primitives(expected));
+    assert_eq!(table.get(nullable), Type::primitives(expected));
     assert_eq!(table.with_nullish(nullable), nullable);
     assert_eq!(table.with_nullish(TypeTable::NEVER), TypeTable::NULLISH);
     assert_eq!(table.with_nullish(TypeTable::UNDEFINED), TypeTable::NULLISH);
@@ -520,10 +527,7 @@ fn removing_primitives_removes_matching_parts() {
     let without_null = table.without_primitives(TypeTable::NULLISH, Primitives::NULL);
     assert_eq!(without_null, TypeTable::UNDEFINED);
     let without_true = table.without_primitives(TypeTable::BOOLEAN, Primitives::TRUE);
-    assert_eq!(
-        *table.get(without_true),
-        Type::primitives(Primitives::FALSE)
-    );
+    assert_eq!(table.get(without_true), Type::primitives(Primitives::FALSE));
     let without_boolean = table.without_primitives(TypeTable::BOOLEAN, Primitives::BOOLEAN);
     assert_eq!(without_boolean, TypeTable::NEVER);
 }
@@ -557,6 +561,17 @@ fn internal_type_in_union_panics() {
     table.union(environment, TypeTable::NUMBER);
 }
 
+fn in_parts(types: &[Type], size: usize) -> Vec<DistinctTypes> {
+    let parts = types.chunks(size).map(|types| {
+        let mut part = DistinctTypes::with_capacity(types.len());
+        for ty in types {
+            part.push(ty);
+        }
+        part
+    });
+    parts.collect()
+}
+
 #[test]
 fn table_of_distinct_types_finds_each_type() {
     let mut interned = TypeTable::new();
@@ -568,15 +583,15 @@ fn table_of_distinct_types_finds_each_type() {
     for maximum in 1..10_000 {
         interned.intern(Type::integers(0, maximum));
     }
+    let other_object = interned.intern(Type::layout(layout(4)));
+    let either_object = interned.union(object, other_object);
+    interned.intern(array_of(either_object));
 
-    let in_reverse = |count: usize, work: &(dyn Fn(usize) + Sync)| {
-        (0..count).rev().for_each(work);
-    };
-    let ways: [InParallel<'_>; 2] = [&run_serially, &in_reverse];
-    for in_parallel in ways {
-        let mut table = TypeTable::of_distinct_types(interned.types().to_vec(), in_parallel);
-        assert_eq!(table.types(), interned.types());
-        for (index, ty) in interned.types().iter().enumerate() {
+    let records = interned.types().to_records();
+    for size in [records.len(), 1_000, 7] {
+        let mut table = TypeTable::of_distinct_types(in_parts(&records, size));
+        assert_eq!(table.types().to_records(), records);
+        for (index, ty) in records.iter().enumerate() {
             assert_eq!(table.intern(ty.clone()).index(), index);
         }
         assert_eq!(table.len(), interned.len());
@@ -608,7 +623,8 @@ fn union_adds_to_table_of_distinct_types() {
     let [circles, squares] = [circle, square].map(|shape| interned.intern(array_of(shape)));
     let count = interned.len();
 
-    let mut table = TypeTable::of_distinct_types(interned.types().to_vec(), &run_serially);
+    let records = interned.types().to_records();
+    let mut table = TypeTable::of_distinct_types(in_parts(&records, records.len()));
     assert_eq!(table.union(literal, circle), circle_or_literal);
     assert_eq!(table.union(circle, TypeTable::OBJECT), TypeTable::OBJECT);
     assert_eq!(table.with_nullish(TypeTable::NULL), TypeTable::NULLISH);
@@ -621,20 +637,20 @@ fn union_adds_to_table_of_distinct_types() {
         layouts: vec![layout(1), layout(3)],
         ..Type::default()
     };
-    assert_eq!(*table.get(shape), expected);
-    assert_eq!(*table.get(shapes), array_of(shape));
+    assert_eq!(table.get(shape), expected);
+    assert_eq!(table.get(shapes), array_of(shape));
 
     assert_eq!(interned.union(circles, squares), shapes);
-    assert_eq!(table.types(), interned.types());
+    assert_eq!(table.types().to_records(), interned.types().to_records());
 }
 
 #[test]
 #[cfg(debug_assertions)]
 #[should_panic]
 fn table_of_distinct_types_needs_well_known_types_at_their_ids() {
-    let mut types = TypeTable::new().types().to_vec();
+    let mut types = TypeTable::new().types().to_records();
     types.swap(TypeTable::NUMBER.index(), TypeTable::STRING.index());
-    TypeTable::of_distinct_types(types, &run_serially);
+    TypeTable::of_distinct_types(in_parts(&types, types.len()));
 }
 
 #[test]
@@ -658,5 +674,8 @@ fn truncating_keeps_earlier_ids_and_frees_later_ones() {
     };
     assert_eq!(table.intern(both.clone()).index(), length);
     assert_eq!(table.intern(Type::layout(layout(2))).index(), length + 1);
-    assert_eq!(table.types()[length..], [both, Type::layout(layout(2))]);
+    assert_eq!(
+        table.types().to_records()[length..],
+        [both, Type::layout(layout(2))]
+    );
 }

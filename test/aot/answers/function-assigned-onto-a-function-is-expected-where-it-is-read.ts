@@ -15,3 +15,4 @@ report(run(100));
 Object.assign(holder, { Point: function Other(this: any, x: number) { this.x = -x; } });
 report(run(100));
 report("end");
+declare function report(value: unknown): void;

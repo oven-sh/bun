@@ -51,10 +51,10 @@ fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
         (
             DiagnosticClass::Style
             | DiagnosticClass::TypeScriptGrammar
+            | DiagnosticClass::Semantic
             | DiagnosticClass::MissingDeclaration,
             FileOrigin::TestedSource,
         ) => Effect::Warns,
-        (DiagnosticClass::Semantic, FileOrigin::TestedSource) => Effect::WithdrawsTrust,
         (
             DiagnosticClass::Style,
             FileOrigin::ProgramJavaScript
@@ -128,7 +128,7 @@ mod tests {
             DiagnosticClass::TypeScriptGrammar,
             [S, S, W, D, D, D, D, D, D],
         ),
-        (DiagnosticClass::Semantic, [S, S, T, D, T, D, D, T, D]),
+        (DiagnosticClass::Semantic, [S, S, W, D, T, D, D, T, D]),
         (
             DiagnosticClass::MissingDeclaration,
             [S, S, W, D, D, D, D, D, D],

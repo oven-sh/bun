@@ -149,7 +149,7 @@ export function getLightStdioWriteStreams(
     listenForSizeOfTerminal(fd: number) {
       const readSize = readsSizeOfTerminal[fd];
       readSize();
-      $newCppFunction("BunProcess.cpp", "jsFunctionListenForSizeOfTerminal", 1)(readSize);
+      process.on("SIGWINCH", () => readSize());
     },
   };
 }

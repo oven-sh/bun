@@ -1268,6 +1268,21 @@ impl SigParam {
     }
 }
 
+/// Synthesized. `this` is its `this` type. The first entry of `of` is the signature it's a clone
+/// of, whose declaration it shares. With more than one entry, `of` is `Signature.composite`
+/// (`createUnionSignature`, `combineUnionOrIntersectionMemberSignatures`) and `is_union` is
+/// `composite.isUnion`. Then `ret` is `TypeId::UNRESOLVED`, and `sig_return` resolves it from
+/// their return types.
+#[derive(PartialEq, Eq, Hash, Debug)]
+pub struct SynthSig<'s> {
+    pub type_params: List<'s, TypeId>,
+    pub params: List<'s, SigParam>,
+    pub ret: TypeId,
+    pub this: Option<TypeId>,
+    pub of: List<'s, SigId>,
+    pub is_union: bool,
+}
+
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub enum SigData<'s> {
     /// As declared, with `mapper` applied.
@@ -1292,24 +1307,17 @@ pub enum SigData<'s> {
         func: FnId,
         mapper: MapperId,
     },
-    /// Synthesized. `this` is its `this` type. The first entry of `of` is the signature it's a clone
-    /// of, whose declaration it shares. With more than one entry, `of` is `Signature.composite`
-    /// (`createUnionSignature`, `combineUnionOrIntersectionMemberSignatures`) and `is_union` is
-    /// `composite.isUnion`. Then `ret` is `TypeId::UNRESOLVED`, and `sig_return` resolves it from
-    /// their return types.
-    Synth {
-        type_params: List<'s, TypeId>,
-        params: List<'s, SigParam>,
-        ret: TypeId,
-        this: Option<TypeId>,
-        of: List<'s, SigId>,
-        is_union: bool,
-    },
+    Synth(&'s SynthSig<'s>),
     /// `sig` with the return type `ret`: a construct signature of an intersection that contains
     /// mixin constructors (`cloneSignature` with `resolvedReturnType` set). `sig` is never one of
     /// these itself.
-    WithReturn { sig: SigId, ret: TypeId },
+    WithReturn {
+        sig: SigId,
+        ret: TypeId,
+    },
 }
+
+const _: () = assert!(size_of::<SigData<'static>>() == 24);
 
 /// `TypeFlags`, with the same values as in types.go, because `CompareTypes` orders types of different kinds by them.
 pub mod tf {
@@ -2869,7 +2877,7 @@ impl Windowed for SigData<'_> {
                 window_of_mapper(mapper, || window_of_symbol(class))
             }
             SigData::WithReturn { ret, .. } => Window::of_type(ret.0),
-            SigData::Synth { .. } => Window::of_hash(self),
+            SigData::Synth(_) => Window::of_hash(self),
         }
     }
 }
@@ -3890,13 +3898,13 @@ impl<'p, 's> Types<'p, 's> {
             SigData::Decl { mapper, .. }
             | SigData::DefaultConstruct { mapper, .. }
             | SigData::Construct { mapper, .. } => self.mapper_flags(*mapper),
-            SigData::Synth {
+            SigData::Synth(SynthSig {
                 params,
                 ret,
                 this,
                 of,
                 ..
-            } => {
+            }) => {
                 let mut flags = params
                     .iter()
                     .fold(self.object_flags(*ret), |f, p| f | self.object_flags(p.ty));
@@ -4457,10 +4465,14 @@ impl<'p, 's> Types<'p, 's> {
         loop {
             match self.sig(sig) {
                 SigData::WithReturn { sig: inner, .. } => sig = *inner,
-                SigData::Synth { of, .. } if !of.is_empty() => sig = of[0],
+                SigData::Synth(SynthSig { of, .. }) if !of.is_empty() => sig = of[0],
                 _ => return sig,
             }
         }
+    }
+
+    pub fn intern_synth_sig(&self, synth: SynthSig<'s>) -> SigId {
+        self.intern_sig(SigData::Synth(self.own.arena.alloc(synth)))
     }
 
     pub fn intern_sig(&self, mut data: SigData<'s>) -> SigId {
@@ -5037,7 +5049,7 @@ follow_enum!(SigData<'_> {
     SigData::Decl { file, func, mapper } => (file, func, mapper),
     SigData::DefaultConstruct { class, base, mapper } => (class, base, mapper),
     SigData::Construct { class, file, func, mapper } => (class, file, func, mapper),
-    SigData::Synth { type_params, params, ret, this, of, is_union } => (type_params, params, ret, this, of, is_union),
+    SigData::Synth(SynthSig { type_params, params, ret, this, of, is_union }) => (type_params, params, ret, this, of, is_union),
     SigData::WithReturn { sig, ret } => (sig, ret),
 });
 follow_struct!(Provenance<'_> {
@@ -5311,9 +5323,24 @@ clone_in_enum!(SigData {
     Decl { file, func, mapper },
     DefaultConstruct { class, base, mapper },
     Construct { class, file, func, mapper },
-    Synth { type_params, params, ret, this, of, is_union },
+    Synth(synth),
     WithReturn { sig, ret },
 });
+clone_in_struct!(SynthSig {
+    type_params,
+    params,
+    ret,
+    this,
+    of,
+    is_union
+});
+
+impl CloneIn for &SynthSig<'_> {
+    type In<'t> = &'t SynthSig<'t>;
+    fn clone_in<'t>(&self, arena: &'t Arena) -> &'t SynthSig<'t> {
+        arena.alloc((**self).clone_in(arena))
+    }
+}
 clone_in_struct!(Provenance {
     alias,
     origin,

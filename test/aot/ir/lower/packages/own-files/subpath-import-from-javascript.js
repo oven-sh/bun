@@ -1,11 +1,7 @@
 // RUN: lower
-// STATISTIC: SourceFilesChecked = 1
-// STATISTIC: SourceFilesInferred = 1
-// STATISTIC: SourceLinesOfPackages = 0
-// CHECK: = Call {{*}}calleeName="f"
+// DIAGNOSTIC: TS2322 lib/f.ts:2
 
-// A file of the program that is reached through an alias is the program's own: it is checked, and it counts with the program, not with the packages.
-// The type error in it is not reported and stops no build.
+// A file of the program that is reached through an alias is the program's own: a type error in it stops the build.
 
 // FILE: main.js
 import { f } from "#lib/f.ts";

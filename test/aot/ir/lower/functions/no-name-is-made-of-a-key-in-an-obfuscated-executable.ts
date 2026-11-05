@@ -19,7 +19,7 @@ export class Keyed {
   [mark]() {}
   get [text]() {
     return 1;
-  }
+  } // @ts-expect-error
   static accessor [text + "x"] = 2;
 }
 

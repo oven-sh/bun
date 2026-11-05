@@ -91,7 +91,7 @@ describe.skipIf(isWindows)("a test run compiles what the executable compiles", (
   // The start of each file, and the function that makes the call by one byte or one instruction.
   const differsToday = (row: string) => /:0  Body |:37 parse Body /.test(row);
 
-  test(title, async () => {
+  test(`${title} but for the start of each file and the function that makes the call`, async () => {
     const { executable, testRun } = await (both ??= buildBoth());
     expect(executable.filter(row => / (helper|other) Body /.test(row))).toHaveLength(2);
     expect(testRun.filter(row => !differsToday(row))).toEqual(executable.filter(row => !differsToday(row)));

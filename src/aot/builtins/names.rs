@@ -1,4 +1,6 @@
-use super::runtime_uses::is_name_of_language_member_with_code;
+use super::runtime_uses::{
+    ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, is_name_of_language_member_with_code,
+};
 use super::table::{self, BuiltinName, Intrinsic, IntrinsicPosition};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::util::FxHashMap;
@@ -16,6 +18,7 @@ pub struct BuiltinNames {
     by_symbol_key_atom: FxHashMap<Atom, BuiltinName>,
     texts_of_symbols_that_host_looks_for: Box<[Atom]>,
     names_of_language_members: OnceLock<Box<[Option<BuiltinName>]>>,
+    names_leading_to_hook_of_instanceof: Box<[Atom]>,
     atoms: Box<[Option<Atom>]>,
 }
 
@@ -56,6 +59,10 @@ impl BuiltinNames {
             .collect();
         BuiltinNames {
             names_of_language_members: OnceLock::new(),
+            names_leading_to_hook_of_instanceof: ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF
+                .iter()
+                .filter_map(|&id| name_atoms[table::entry(id).name.0 as usize])
+                .collect(),
             by_atom,
             by_private_atom,
             by_symbol_key_atom,
@@ -80,6 +87,11 @@ impl BuiltinNames {
     #[inline]
     pub fn get_symbol_key(&self, atom: Atom) -> Option<BuiltinName> {
         self.by_symbol_key_atom.get(&atom).copied()
+    }
+
+    #[inline]
+    pub fn leads_to_hook_of_instanceof(&self, atom: Atom) -> bool {
+        self.names_leading_to_hook_of_instanceof.contains(&atom)
     }
 
     #[inline]

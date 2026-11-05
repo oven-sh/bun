@@ -3989,12 +3989,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             // `signature.composite != nil`
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ret: TypeId::UNRESOLVED,
                 ref of,
                 ..
-            } if of.len() > 1 => {}
-            SigData::Synth { ret, .. } => {
+            }) if of.len() > 1 => {}
+            SigData::Synth(&SynthSig { ret, .. }) => {
                 return if self.is_resolving_return_type(sig) {
                     self.any_for_return_type_in_resolution()
                 } else {

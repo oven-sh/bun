@@ -123,3 +123,4 @@ report(had(new WeakSet([key]), {}));
 report(put(new WeakMap(), key, 1));
 report(calls);
 report("end");
+declare function report(value: unknown): void;

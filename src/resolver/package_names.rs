@@ -797,6 +797,7 @@ impl Resolver<'_> {
         &mut self,
         refused: &[RefusedName],
         root: BuildPaths<'_>,
+        levels_above_root: usize,
     ) -> Vec<PackageName> {
         let root_directory: Vec<u8> = root
             .source_path
@@ -823,7 +824,7 @@ impl Resolver<'_> {
             else {
                 continue;
             };
-            let place = public_path_from_root(root.public_path, &relative);
+            let place = public_path_from_root(root.public_path, levels_above_root, &relative);
             names.push(PackageName {
                 public_path: [&place[..], b"/node_modules/", &name.specifier]
                     .concat()
@@ -926,12 +927,12 @@ mod tests {
             expected
         );
         let outside: [&[u8]; 3] = [
-            b"/$bunfs/root/_.._/shared/lib",
-            b"/$bunfs/root/_.._/shared",
-            b"/$bunfs/root/_.._",
+            b"/$bunfs/_.._/_.._/shared/lib",
+            b"/$bunfs/_.._/_.._/shared",
+            b"/$bunfs/_.._/_.._",
         ];
         assert_eq!(
-            above(b"/work/shared/lib", b"/$bunfs/root/_.._/shared/lib"),
+            above(b"/work/shared/lib", b"/$bunfs/_.._/_.._/shared/lib"),
             outside
         );
     }

@@ -31,8 +31,12 @@ type Program = {
   opened?: string[];
   /** The row "All of Bun's own JavaScript that such a file could reach is compiled in": `file:position name form` of a function, and the operations that it has more in the test run. Nothing else of it may differ. */
   moreInTestRun?: Record<string, string[]>;
-  /** What differs, with its count: it stands in the name of the case. That both ways are built stays a case of its own. */
+  /**
+   * What differs, with its count: it stands in the name of the case. That both ways are built stays a case of its own, which also holds the count: a mark does not see a number
+   * grow worse.
+   */
   differsToday?: string;
+  unitsThatDifferToday?: number;
 };
 
 const programs: Record<string, Program> = {
@@ -62,6 +66,7 @@ console.log(sum(1000), far(3));
     },
     differsToday:
       "2 units of the executable for 1 of the test run: the test run copies far() into the body of main.ts and keeps no body of it",
+    unitsThatDifferToday: 2,
   },
   "a namespace object that goes somewhere, and no spy that could take it": {
     files: {
@@ -158,7 +163,9 @@ const total = require("./sums.cjs");
 console.log(total([1, 2, 3]), new shapes.Box(2).volume(), (await import("./sums.cjs")).default([4]));
 `,
     },
-    differsToday: "2 units differ: the bodies of shapes.cjs and sums.cjs, 219 and 209 for 197 and 191 in the test run",
+    differsToday:
+      "2 units differ, none may: the bodies of shapes.cjs and sums.cjs, of 219 and 209 bytes on Linux x64 where the test run has 197 and 191",
+    unitsThatDifferToday: 2,
   },
   "a test takes one file out of require.cache, and the others are not touched": {
     files: {
@@ -215,7 +222,8 @@ function ownFunctions(mapPath: string, files: string[], byOperations: string[]):
 
 // The map is written on every platform. The forms are the same there, the bytes are not worth a second look.
 describe.skipIf(isWindows)("compile/aot/a-test-run-compiles-what-an-executable-compiles", () => {
-  for (const [title, { files, testFile, opened = [], moreInTestRun = {}, differsToday }] of Object.entries(programs)) {
+  for (const [title, program] of Object.entries(programs)) {
+    const { files, testFile, opened = [], moreInTestRun = {}, differsToday, unitsThatDifferToday = 0 } = program;
     let built: Promise<{ executable: string[]; testRun: string[] }> | undefined;
     const buildBothWays = async () => {
       const folder = String(
@@ -253,7 +261,12 @@ describe.skipIf(isWindows)("compile/aot/a-test-run-compiles-what-an-executable-c
       expect(executable).not.toBeEmpty();
       return { executable, testRun };
     };
-    if (differsToday) test(`${title}: both ways are built`, async () => void (await (built ??= buildBothWays())));
+    if (differsToday)
+      test(`${title}: both ways are built, and no more than ${unitsThatDifferToday} units differ`, async () => {
+        const { executable, testRun } = await (built ??= buildBothWays());
+        expect(executable.filter(it => !testRun.includes(it)).length).toBeLessThanOrEqual(unitsThatDifferToday);
+        expect(testRun.filter(it => !executable.includes(it)).length).toBeLessThanOrEqual(unitsThatDifferToday);
+      });
     // `failing`: it turns red the day the two agree. Then take the reason out.
     (differsToday ? test.failing : test)(differsToday ? `${title}: ${differsToday}` : title, async () => {
       const { executable, testRun } = await (built ??= buildBothWays());

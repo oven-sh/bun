@@ -1,6 +1,6 @@
 use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolver};
 use super::{BuiltinPath, ResolveInput};
-use crate::builtins::table::{self, BuiltinId};
+use crate::builtins::table::{self, BuiltinId, BuiltinKind};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingInitializer, BindingStability, Decl, InitialState, SymbolId};
 use bun_sema::hir::{
@@ -21,6 +21,10 @@ pub(super) fn declared_names(
         let symbol = input.bound.declared_symbol(Decl::Var(name));
         (!symbol.is_none()).then_some((name, symbol))
     })
+}
+
+fn is_prototype_object(id: BuiltinId) -> bool {
+    table::entry(table::canonical_id(id)).kind == BuiltinKind::Prototype
 }
 
 impl Resolver<'_, '_> {
@@ -181,11 +185,16 @@ impl Resolver<'_, '_> {
         match hir[hir.skip_type_assertions(initializer)].kind {
             ExprKind::Call(_) | ExprKind::Ident(_) => {
                 let held = self.held_value_of(initializer);
-                held.filter(|held| table::is_of_test_runner(held.path.id))
+                held.filter(|held| {
+                    table::is_of_test_runner(held.path.id) || is_prototype_object(held.path.id)
+                })
             }
             ExprKind::Index { .. } | ExprKind::Dot { .. } => {
                 let held = self.held_value_of(initializer);
-                held.filter(|held| table::canonical_id(held.path.id) == BuiltinId::ModuleObject)
+                held.filter(|held| {
+                    table::canonical_id(held.path.id) == BuiltinId::ModuleObject
+                        || is_prototype_object(held.path.id)
+                })
             }
             _ => self.find_module_object_behind_tests(initializer),
         }

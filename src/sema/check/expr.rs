@@ -4024,7 +4024,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !hir.is_js {
+        if !hir.is_js || self.is_made_by_loader(file) {
             return false;
         }
         let symbol = bound.symbol_of_expr(literal);
@@ -4313,7 +4313,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return cached;
                 }
                 let ret = self.return_type_of_fn_uncached(file, func, check_mode);
-                let return_only_signature = self.types().intern_sig(SigData::Synth {
+                let return_only_signature = self.types().intern_synth_sig(SynthSig {
                     type_params: ArenaBox::empty(),
                     params: ArenaBox::empty(),
                     ret,

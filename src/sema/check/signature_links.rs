@@ -147,11 +147,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn return_type_source(&self, sig: SigId) -> ReturnTypeSource {
         match *self.types().sig(sig) {
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ret: TypeId::UNRESOLVED,
                 ref of,
                 ..
-            } if of.len() > 1 => ReturnTypeSource::Signature,
+            }) if of.len() > 1 => ReturnTypeSource::Signature,
             SigData::WithReturn {
                 sig: of,
                 ret: TypeId::UNRESOLVED,

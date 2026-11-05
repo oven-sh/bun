@@ -2,7 +2,7 @@ use bun_sema::check::aot::{GaveUp, ShapeKind};
 use smallvec::{SmallVec, smallvec};
 
 use super::{FlowTarget, is_container};
-use crate::ir::{LayoutId, Type, TypeId};
+use crate::ir::{LayoutId, TypeId};
 use crate::lower::{CheckerTypeId, FileLowering};
 
 #[derive(Copy, Clone)]
@@ -96,7 +96,7 @@ fn union_of_layouts(file: &mut FileLowering<'_, '_, '_, '_>, members: &[Member])
     let types = &mut file.fragment.types;
     let layouts: SmallVec<[TypeId; 4]> = members
         .iter()
-        .map(|member| types.intern(Type::layout(member.layout)))
+        .map(|member| types.intern_layout(member.layout))
         .collect();
     types.union_all(layouts)
 }

@@ -19,8 +19,18 @@ type Walked = {
   /** What can happen to it in one turn of the loop. */
   events: string[];
   show: string;
+  /** What a turn of an outer loop reads off it behind the inner loop, where each outer turn makes a new one. */
+  leaves?: string;
 };
-type Motif = { front?: string[]; body: string[]; behind?: string[] };
+/** `enters` and `ends` stand at the start and at the end of each turn of an outer loop. */
+type Motif = {
+  outside?: string[];
+  front?: string[];
+  enters?: string[];
+  body: string[];
+  ends?: string[];
+  behind?: string[];
+};
 
 export function writeSceneOfALoop(random: () => number, n: number, isTypeScript: boolean): string[] {
   const pick = <T>(from: readonly T[]) => from[Math.floor(random() * from.length)];
@@ -38,6 +48,7 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
   const View = pick(["Int32Array", "Int32Array", "Uint8Array", "Float64Array", "Uint16Array", "Float32Array"]);
   const outside = otherKind();
   const yielded = pick(["i", "i", "i", "i * 0.5", "String(i)", "[i]"]);
+  const overAnother = chance(40);
   const listEvents = [
     "c.push(9);",
     "c.pop();",
@@ -108,6 +119,34 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
     views,
     views,
     () =>
+      list(`new Shelf${n}()`, {
+        setup: [
+          pick([
+            `class Shelf${n} { reads${any} = 0; get length() { this.reads = this.reads + 1; return 4; } }`,
+            `class Shelf${n} { reads${any} = 0; get length() { this.reads = this.reads + 1; return 4; } }`,
+            `class Shelf${n} { reads = 0; known = -1; get length()${number} { this.reads++; if (this.known < 0) this.known = 4; return this.known; } }`,
+            `class Base${n} { reads${any} = 0; get length() { this.reads = this.reads + 1; return 4; } }\nclass Shelf${n} extends Base${n} { more = 1; }`,
+            `class Shelf${n} { reads${any} = 0; bump() { this.reads = this.reads + 1; return 4; } get length() { return this.bump(); } }`,
+          ]),
+        ].flatMap(text => text.split("\n")),
+        type: "any",
+        canStore: false,
+        holds: "anything",
+        events: ["mark = c.length;"],
+        show: "made.reads",
+        leaves: "c.reads",
+      }),
+    () =>
+      list(`new Shelf${n}()`, {
+        setup: [`class Shelf${n} { reads${any} = 0; get length() { this.reads = this.reads + 1; return 4; } }`],
+        type: "any",
+        canStore: false,
+        holds: "anything",
+        events: ["mark = c.length;"],
+        show: "made.reads",
+        leaves: "c.reads",
+      }),
+    () =>
       list(pick(['"abcd"', `JSON.parse('"abcd"')`, '"a\\u{1F600}b"']), {
         type: "string",
         canStore: false,
@@ -129,7 +168,12 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
       () => () =>
         list(`parts${n}(4)`, {
           setup: [
-            `function* parts${n}(count${number})${typed("Generator<any>")} { ${pick([`yield ${outside}; for (let i = 0; i < count; i++) yield ${yielded};`, `yield ${outside}; for (let i = 0; i < count; i++) yield ${yielded};`, `yield ${outside}; for (let i = 0; i < count; i++) yield ${yielded};`, `for (let i = 0; i < count; i++) yield ${yielded};`, `for (let i = 0; i < count; i++) yield ${yielded}; yield ${outside};`, `for (let i = 0; i < count; i++) { if (i === 2) yield ${outside}; yield ${yielded}; }`])} }`,
+            ...(overAnother
+              ? [
+                  `function* parts${n}(count${number})${typed("Generator<any>")} { for (const value of inner${n}(count)) yield ${pick(["value", "value", 'typeof value === "number" ? value * 2 : value'])}; }`,
+                ]
+              : []),
+            `function* ${overAnother ? "inner" : "parts"}${n}(count${number})${typed("Generator<any>")} { ${pick([`yield ${outside}; for (let i = 0; i < count; i++) yield ${yielded};`, `yield ${outside}; for (let i = 0; i < count; i++) yield ${yielded};`, `yield ${outside}; for (let i = 0; i < count; i++) yield ${yielded};`, `for (let i = 0; i < count; i++) yield ${yielded};`, `for (let i = 0; i < count; i++) yield ${yielded}; yield ${outside};`, `for (let i = 0; i < count; i++) { if (i === 2) yield ${outside}; yield ${yielded}; }`])} }`,
           ],
           type: "Generator<any>",
           isIndexed: false,
@@ -202,8 +246,9 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
   const [a, b, t, ticks] = [ref("a"), ref("b"), ref("t"), ref("ticks")];
 
   // How the head counts.
-  const isNested = chance(30);
-  const walksByIndex = walked.isIndexed && chance(65);
+  const isNested = chance(walked.leaves ? 85 : 30);
+  // An object of the program's own has no iterator.
+  const walksByIndex = walked.leaves !== undefined || (walked.isIndexed && chance(65));
   const form = walksByIndex ? pick(["for", "for", "for", "for", "down", "while", "do"]) : "of";
   const turn = pick(["i++", "i++", "i++", "i += step", "i += 1", "++i"]);
   const bound = pick([
@@ -240,6 +285,46 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
         `if (${b} !== mark) same = i;`,
       ]);
       return { body: [test, pick([`${b} = i < 2 ? i : mark;`, `${b} = i < 2 ? i : mark;`, `${b} = i;`])] };
+    },
+    // A renderer: a switch on what the element is, a `try` in one case, a text that grows behind it, and a way out of the whole function.
+    () => {
+      const counts = pick([
+        `${a} += String(x).length;`,
+        `${a} += String(x).length;`,
+        `${a} += x.length;`,
+        `${a} += 1;`,
+        `same += String(x).length;`,
+      ]);
+      const grows = pick([`${t} += x;`, `${t} += x;`, `${t} += String(x);`, `${t} = ${t} + x + ",";`]);
+      const guarded = pick([
+        `try { ${counts} } catch (error) { ${a} += 1; }`,
+        `try { ${counts} } catch (error) { ${a} += 1; }`,
+        `try { ${counts} } finally { same++; }`,
+        counts,
+      ]);
+      const asked = pick(["typeof x", "typeof x", "typeof x", "i & 1", "String(x).length"]);
+      const label = asked === "typeof x" ? pick(['"number"', '"string"', '"object"', '"number"']) : pick(["0", "1"]);
+      return {
+        body: [
+          pick([
+            `switch (${asked}) { case ${label}: ${guarded} ${grows} break; }`,
+            `switch (${asked}) { case ${label}: ${guarded} ${grows} break; }`,
+            `switch (${asked}) { case ${label}: ${guarded} ${grows} break; default: ${grows} }`,
+            `switch (${asked}) { case ${label}: ${grows} ${guarded} break; default: same++; }`,
+            `if (${asked} === ${label}) { ${guarded} ${grows} }`,
+          ]),
+          pick([
+            `if (${a} > 6) return "too wide";`,
+            `if (${a} > 6) return "too wide";`,
+            `if (${a} > 2) return "too wide";`,
+            `if (same > 3) return "too wide";`,
+            `if (${t}.length > 6) return "too wide";`,
+            `if (${a} > 6) break;`,
+            `if (same > 3) return ${t};`,
+            "",
+          ]),
+        ].filter(Boolean),
+      };
     },
     // A closure that one turn makes runs in the next.
     () => {
@@ -285,6 +370,62 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
     () =>
       walked.isIndexed &&
       walked.canStore && { body: [pick([`c[${beside}] = 5; ${a} = (${a} + c[i]) | 0;`, `${a} = (${a} + c[${beside}] + c[i]) | 0;`, `c[${beside}] = c[i]; ${a} += 1;`])] }, // prettier-ignore
+    // Small numbers beside the counter, two written out and one held: in a variable in front of the loop, out of a helper.
+    () => {
+      if (!walked.isIndexed || !walked.canStore) return false;
+      const [held, one, other] = pick([[2, 2, 1], [2, 2, 1], [1, 1, -1], [1, 1, -1], [1, 1, 0], [3, 3, 1], [2, 1, -1], [-1, -1, 1]]); // prettier-ignore
+      const helper = chance(30);
+      const place = (add: number) => (add === 0 ? "i" : `i + ${add}`);
+      const three = chance(75)
+        ? [`c[i + ahead] = 5;`, `c[${place(one)}] = 6;`, `c[${place(other)}] = 7;`]
+        : [
+            `${a} = (${a} + (c[i + ahead] | 0)) | 0;`,
+            `${a} = (${a} + (c[${place(one)}] | 0)) | 0;`,
+            `${a} = (${a} + (c[${place(other)}] | 0)) | 0;`,
+          ];
+      return {
+        outside: helper ? [`function reach${n}()${number} { return ${held}; }`] : [],
+        front: [
+          helper
+            ? `const ahead = reach${n}();`
+            : pick([
+                `let ahead = ${held};`,
+                `let ahead = ${held};`,
+                `const ahead = ${held};`,
+                `var ahead = ${held};`,
+                `let ahead = ${held - 1}; ahead++;`,
+              ]),
+        ],
+        body: [pick([[0, 1, 2], [0, 1, 2], [0, 2, 1], [1, 0, 2], [2, 1, 0]]).map(at => three[at]).join(" ")], // prettier-ignore
+      };
+    },
+    // A sum is born anew in each turn of an outer loop, as a variable of that turn, and grows by what the loop carries from turn to turn: of one kind in the first turn, of another behind it.
+    ...Array.from({ length: 2 }, () => () => {
+      if (!isNested) return false;
+      const [first, later] = pick([['""', "r"], ['""', "r"], ['"a"', "r"], ["0", '"t" + r'], ["null", "r"], ["undefined", "r"], ["0.5", "r"], ["true", "r"]]); // prettier-ignore
+      return {
+        front: [`let carried${any} = ${first};`],
+        enters: [`let sum${any} = ${pick(["0", "0", "0", "true", "0.5", "null", '""'])};`],
+        body: [pick([`sum = sum + carried;`, `sum = sum + carried;`, `sum += carried;`, `sum = carried + sum;`])],
+        ends: [`${t} += typeof sum + " " + String(sum) + ";";`, `carried = ${later};`],
+      };
+    }),
+    // The length of an object of the program's own is an accessor that writes.
+    ...Array.from(
+      { length: 6 },
+      () => () =>
+        walked.leaves !== undefined && {
+          body: [
+            pick([
+              `${a} = ${a} + c.length;`,
+              `${a} = ${a} + c.length;`,
+              `${a} += c.length;`,
+              `if (c.length > 2) same++;`,
+              `const l = c.length; ${a} += l;`,
+            ]),
+          ],
+        },
+    ),
     // The kind of what comes round decides.
     () =>
       walked.holds === "anything" && {
@@ -391,6 +532,23 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
         [`if (${pick([`${x} > 2`, "i > 1", `${a} > 5`])}) break;`, `${a} += ${x};`],
       ]),
     }),
+    // A helper takes the element, behind a test of the place or without one.
+    () =>
+      walked.isIndexed &&
+      walked.holds !== "records" && {
+        outside: [
+          `function take${n}(held${typed(walked.type)}, at${number})${any} { ${chance(70) ? "let work = 0; for (let j = 0; j < 2; j++) work = (work + j) | 0;" : ""} return ${pick(["at >= 0 && at < held.length", "at >= 0 && at < held.length", "at < held.length", "at >= 0", "true"])} ? ${pick(["held[at]", "held[at]", "held[at]", "held.at(at)", ...(walked.type === "string" ? ["held.charAt(at)", "held.codePointAt(at)", "held.slice(at, at + 1)"] : [])])} : undefined; }`,
+        ],
+        body: [
+          pick([
+            `${a} += take${n}(c, i);`,
+            `${a} += take${n}(c, i);`,
+            `${t} += take${n}(c, i);`,
+            `${t} += take${n}(c, ${beside});`,
+            `${b} = take${n}(c, i);`,
+          ]),
+        ],
+      },
     // A name comes to an object, or leaves it, while the loop reads it.
     () => ({
       front: [`const thing${any} = { size: 1 };`],
@@ -403,7 +561,10 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
   const drawn: Motif[] = [];
   while (drawn.length < (chance(25) ? 2 : 1)) {
     const motif = pick(motifs)();
-    if (motif) drawn.push(motif);
+    // Two motifs that declare one name in front of the loop cannot stand together.
+    const declared = (each: Motif) =>
+      (each.front ?? []).flatMap(line => /^(?:let|const|var) (\w+)/.exec(line)?.[1] ?? []);
+    if (motif && !drawn.some(other => declared(other).some(name => declared(motif).includes(name)))) drawn.push(motif);
   }
   const pause =
     shape === "async"
@@ -412,6 +573,12 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
         ? pick(["yield i;", `yield ${a};`])
         : "";
   const body = [...new Set(drawn.flatMap(motif => motif.body))];
+  // One statement gets a small loop of its own inside the turn.
+  if (chance(25)) {
+    const at = Math.floor(random() * body.length);
+    if (!/\b(?:break|continue|return|const|yield|await)\b/.test(body[at]))
+      body[at] = `for (let j = 0; j < ${pick(["2", "3", "to", "to"])}; j++) { ${body[at]} }`;
+  }
   if (pause && chance(35)) body.splice(Math.floor(random() * (body.length + 1)), 0, pause);
   // A list that grows ahead of the loop which walks it to its end would never end.
   if (
@@ -420,13 +587,24 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
   )
     body.push("if (i > 12) break;");
 
+  // Where what is walked comes from: a parameter, a variable of the function, or the head of the loop itself. What is made and walked in one place is known through and through.
+  const inPlace = (walked.again ?? "").replace(/\bround\b/g, "0");
+  const namesIt = body.some(line => /(?<![\w$.])c\b/.test(line));
+  const drawnOrigin = inPlace ? pick(["parameter", "parameter", "parameter", "local", "head", "head"]) : "parameter";
+  const origin = drawnOrigin === "head" && (form !== "of" || namesIt || isNested) ? "local" : drawnOrigin;
   const usesElement = body.some(line => /(?<![\w$.])x\b/.test(line));
   const element = usesElement ? [`  const x${walked.holds === "anything" ? any : ""} = c[i];`] : [];
   const lines = body.map(line => "  " + line);
   const cast = isTypeScript && walked.holds === "anything" ? " as any" : "";
   const inner =
     form === "of"
-      ? [`let i = -1;`, `for (${pick(["const", "const", "let"])} x of c${cast}) {`, `  i++;`, ...lines, `}`]
+      ? [
+          `let i = -1;`,
+          `for (${pick(["const", "const", "let"])} x of ${origin === "head" ? inPlace : "c"}${cast}) {`,
+          `  i++;`,
+          ...lines,
+          `}`,
+        ]
       : form === "for"
         ? [`for (let i = from; ${bound}; ${turn}) {`, ...element, ...lines, `}`]
         : form === "down"
@@ -444,8 +622,15 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
           [`  ${ticks}++;`, `  ${b} = mark;`],
           [`  ${ticks}++;`, `  ${a} += r;`],
         ]),
-        ...(form === "of" && !walked.isIndexed && walked.again ? [`  c = again();`] : []),
+        ...(walked.leaves
+          ? [`  c = ${inPlace};`]
+          : form === "of" && !walked.isIndexed && walked.again
+            ? [`  c = again();`]
+            : []),
+        ...drawn.flatMap(motif => motif.enters ?? []).map(line => "  " + line),
         ...inner.map(line => "  " + line),
+        ...drawn.flatMap(motif => motif.ends ?? []).map(line => "  " + line),
+        ...(walked.leaves ? [`  same += ${walked.leaves};`] : []),
         `}`,
       ]
     : inner;
@@ -472,13 +657,13 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
     ["c", "start", "end", "stride", "mark", "hook"],
     ["start", "c", "end", "stride", "mark", "hook"],
     ["start", "end", "stride", "mark", "hook", "c"],
-  ]).filter(
-    name =>
-      name === "c" ||
-      names(name) ||
-      (name === "start" && names("from")) ||
-      (name === "end" && names("to")) ||
-      (name === "stride" && names("step")),
+  ]).filter(name =>
+    name === "c"
+      ? origin === "parameter"
+      : names(name) ||
+        (name === "start" && names("from")) ||
+        (name === "end" && names("to")) ||
+        (name === "stride" && names("step")),
   );
   const types: Record<string, string> = {
     c: chance(70) ? walked.type : "any",
@@ -494,10 +679,28 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
     ["start | 0", "end | 0", "(stride | 0) || 1"],
     ["start", "end", "stride || 1"],
   ]);
-  const declare = (name: string) => `${pick(["let", "let", "let", "var"])} ${ref(name)}${any} = ${born[name]};`;
+  // The text is a text all its life and the count of turns a number: to call them `any` would hide that from whoever listens to the types.
+  const declare = (name: string) =>
+    `${pick(["let", "let", "let", "var"])} ${ref(name)}${name === "t" || name === "ticks" ? "" : any} = ${born[name]};`;
+  // What stands round the loop and what follows it: nothing, or a `try` whose `finally` or `catch` reads what the loop has left.
+  const leaves = `heard${n} += [${told.join(", ")}].join("|").length;`;
+  const round = pick<[string[], string[]]>([
+    [[], []],
+    [[], []],
+    [[], []],
+    [[], []],
+    [[], []],
+    [[`try {`], [`} finally {`, `  ${leaves}`, `}`]],
+    [[`try {`], [`} finally {`, `  ${leaves}`, `}`]],
+    [[`try {`], [`} catch (error) {`, `  ${leaves}`, `}`]],
+    [[`try {`], [`} catch (error) {`, `  ${leaves}`, `} finally {`, `  heard${n}++;`, `}`]],
+  ]);
   const living = (where: Home) => Object.keys(homes).filter(name => homes[name] === where && names(ref(name)));
   const whole = [
     ...living("local").map(declare),
+    ...(origin === "local"
+      ? [`${isNested ? "let" : "const"} c${walked.holds === "anything" ? any : ""} = ${inPlace};`]
+      : []),
     ...["from", "to", "step"].flatMap((each, at) => (names(each) ? [`const ${each} = ${bounds[at]};`] : [])),
     ...(names("rows") ? [`const rows = 3;`] : []),
     ...(names("pair") ? [`const pair = [1, 2];`] : []),
@@ -507,8 +710,9 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
     ...(names("copy") ? [`let copy = "";`] : []),
     ...(names("last") ? [`let last${any} = null;`] : []),
     ...front,
-    ...loop,
-    ...behind,
+    ...round[0],
+    ...[...loop, ...behind].map(line => (round[0].length ? "  " + line : line)),
+    ...round[1],
     `${shape === "generator" ? "yield" : "return"} [${told.join(", ")}].join("|");`,
   ].map(line => "  " + line);
   const name = `run${n}`;
@@ -561,11 +765,18 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
       : []),
   ]);
   const mark = unseen(otherKind());
+  // Of a written bound the compiler knows that it is a small whole number. Of one out of a parser it knows that it is a number, if that.
+  const bounded = pick<(value: number | string) => string>([
+    String,
+    String,
+    value => `Number(JSON.parse("${value}"))`,
+    value => `JSON.parse("${value}")`,
+  ]);
   const call = ([from, to, step]: (number | string)[]) => {
     const given: Record<string, string> = {
       c: "made",
-      start: String(from),
-      end: String(to),
+      start: bounded(from),
+      end: bounded(to),
       stride: String(step),
       mark,
       hook: `hook${n}`,
@@ -577,6 +788,7 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
     `let heard${n} = 0;`,
     ...(names(`echo${n}`) ? [`function echo${n}(value${typed("string")})${typed("string")} { return value; }`] : []),
     ...(walked.setup ?? []),
+    ...new Set(drawn.flatMap(motif => motif.outside ?? [])),
     ...living("outer").map(declare),
     ...(fields.length
       ? [`const box${n}${any} = { ${fields.map(field => `${field}: ${born[field]}`).join(", ")} };`]
@@ -587,7 +799,7 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
     ...[
       [0, 3, 1],
       [0, 4, 1],
-      [pick([-1, -1, 0, 1]), 2, 1],
+      [pick([-2, -2, -1, -1, 0, 1]), 2, 1],
       pick([
         [0, 9, 2],
         [0, 9, 1],

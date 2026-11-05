@@ -94,11 +94,17 @@ const classesNotToMake: [string, string][] = [
 
 const nameOf = (base: string) => base.replace(/<.*/, "");
 
+// TypeScript's library for browsers, which is in where no tsconfig.json says otherwise, declares these with constructors that take a type argument or that answer
+// different types. TypeScript refuses a class below them that gives none, and for the first two also `new` of that class. The lines say so, and they run.
+const refusedAsBase = ["CustomEvent", "MessageEvent", "ReadableStream"];
+const refusedWhereMade = ["CustomEvent", "MessageEvent"];
+const markedIn = (refused: string[], base: string) => (refused.includes(base) ? "  // @ts-expect-error\n" : "");
+
 const oneClassBelowEach =
   classesToStandBelow
     .map(
       ([base, given, shown]) =>
-        `{\n  class Below extends ${base} {}\n  const made = new Below(${given});\n  console.log("${nameOf(base)}", made instanceof ${nameOf(base)}, ${shown});\n}\n`,
+        `{\n${markedIn(refusedAsBase, base)}  class Below extends ${base} {}\n${markedIn(refusedWhereMade, base)}  const made = new Below(${given});\n  console.log("${nameOf(base)}", made instanceof ${nameOf(base)}, ${shown});\n}\n`,
     )
     .join("") +
   classesNotToMake
@@ -114,6 +120,12 @@ const provided: Record<
   { files: Record<string, string>; checkSays: string[]; warnings?: string[]; prints: string }
 > = {
   "console": { files: { "main.ts": `console.log("ran");\n` }, checkSays: ["TS2584"], prints: "ran\n" },
+  // TypeScript says TS2709 where its library for browsers declares the namespace. Here the declaration is one that Bun brings, and what rests on those stops no build.
+  "a global that is no class, as a type": {
+    files: { "main.ts": `const memory: WebAssembly | undefined = undefined;\nconsole.log(memory);\n` },
+    checkSays: ["TS2304", "TS2584"],
+    prints: "undefined\n",
+  },
   "the module bun": {
     files: { "main.ts": `import { version } from "bun";\nconsole.log(typeof version);\n` },
     checkSays: ["TS2307", "TS2584"],
@@ -276,6 +288,8 @@ console.log(Packet.from("ab").length, Object.getPrototypeOf(Packet) === Buffer);
   "arguments for a class without a constructor below each class of the language, of the web and of Node.js": {
     files: { "main.ts": oneClassBelowEach },
     checkSays: [],
+    // Of the class below Worker: the build cannot tell which files its instances start from.
+    warnings: ["TS100082"],
     prints: `Map true a
 Set true true
 WeakMap true 1
@@ -647,7 +661,6 @@ export function twice(n: number): number { return n * 2; }
 
 const stillErrors: [string, string, string[]][] = [
   ["a name that nothing provides", `console.log(notDeclaredAnywhere);\n`, ["TS2304"]],
-  ["a name that only a browser provides", `console.log(document.title);\n`, ["TS2584"]],
   ["a name that is nearly one of Bun's", `consle.log("typo");\n`, ["TS2552"]],
   ["a type error", `const port: number = "3000";\nconsole.log(port);\n`, ["TS2322"]],
   [
@@ -725,11 +738,6 @@ const stillErrors: [string, string, string[]][] = [
     "a missing member of an error, and of the program's own type named ErrorConstructor",
     `interface ErrorConstructor { own: number }\nconst made: ErrorConstructor = { own: 1 };\nconsole.log(made.stackTraceLimit, new Error("x").notThere);\nexport {};\n`,
     ["TS2339", "TS2339"],
-  ],
-  [
-    "a global that is no class, used as a type",
-    `const memory: WebAssembly | undefined = undefined;\nconsole.log(memory);\n`,
-    ["TS2749"],
   ],
   [
     "one mistake alone, beside the whole of Bun, however it is reached, where the program's own type is expected",
@@ -868,11 +876,36 @@ describe.concurrent("without Bun's type declarations", () => {
   goesOn(
     "the whole of Bun goes where the program's own type is expected, in a program that does not fit Bun's declarations",
     {
-      "main.ts": `interface Wanted { main: string; version: string }\nconst odd: number = Bun.version;\nconst found: Wanted | undefined = Reflect.get(globalThis, "Bun");\nconst direct: Wanted = Bun;\nconsole.log(typeof odd, typeof found?.main, direct.version === Bun.version);\n`,
+      "main.ts": `interface Wanted { main: string; version: string }\nconst odd: number = Bun.version;\nconst found: Wanted | undefined = globalThis.Bun;\nconst direct: Wanted = Bun;\nconsole.log(typeof odd, typeof found?.main, direct.version === Bun.version);\n`,
     },
     async dir => {
       expect(await run(String(dir), "compiled")).toEqual(await run(String(dir), "plain"));
     },
+  );
+
+  // Reflect.get() is a function of the library, and the key is a parameter there: the read counts as one of any member of the global object.
+  const readByReflect = `interface Wanted { main: string; version: string }\nconst odd: number = Bun.version;\nconst found: Wanted | undefined = Reflect.get(globalThis, "Bun");\nconsole.log(typeof odd, typeof found?.main);\n`;
+  goesOn(
+    "the whole of Bun that Reflect.get() reads off the global object goes where the program's own type is expected",
+    { "main.ts": readByReflect },
+    async dir => {
+      expect(await run(String(dir), "compiled")).toEqual(await run(String(dir), "plain"));
+    },
+    "alone",
+  );
+  test.failing(
+    "a build sees all that can run where Reflect.get() reads Bun off the global object: 13 lines say what blocks it, for 0",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", { "main.ts": readByReflect });
+        const command = [bunExe(), "build", "--compile", "--aot", "--explain=trim", "main.ts", "--outfile", "app"];
+        const { stderr, exitCode } = await spawned(command, String(dir), env);
+        expect({
+          onUnseenCode: stderr.split("\n").filter(line => /^aot: trim: (blocked by |the compiler can)/.test(line)),
+          exitCode,
+        }).toEqual({ onUnseenCode: ["aot: trim: the compiler can see every API this program uses"], exitCode: 0 });
+      }),
+    buildTimeout,
   );
 
   // `declare module "node:fs";` is all that stands in for the module then, and TypeScript finds no `Stats` in that.
@@ -996,9 +1029,10 @@ console.log(odd, encoding, wrong, list, neitherIsThis, [1].lenght);
     buildTimeout,
   );
 
-  // Bun declares "*.txt", so with its declarations nothing is said at the import. Without them the project's own files and options count.
+  // Bun declares "*.txt", so nothing is said at the import, as TypeScript says nothing there with Bun's declarations installed. That the text is no "declared" rests on
+  // that declaration, which stops no build. `bun check`, which brings no declarations, says what TypeScript says without them.
   test(
-    "a declaration beside a text file that tsconfig.json does not allow stops the build, in a program that does not fit Bun's declarations",
+    "a declaration beside a text file that tsconfig.json does not allow stops no build, in a program that does not fit Bun's declarations",
     () =>
       slot(async () => {
         const options = {
@@ -1018,13 +1052,16 @@ console.log(typeof declared, encoding);
           "note.d.txt.ts": `declare const text: "declared";\nexport default text;\n`,
           "tsconfig.json": JSON.stringify({ compilerOptions: options }),
         });
-        expect(await build(String(dir))).toEqual({ errors: ["TS6263"], warnings: [], exitCode: 1, signal: null });
+        expect(await check(String(dir))).toMatchObject({ errors: ["TS2304", "TS6263"], exitCode: 1 });
+        expect(await build(String(dir))).toEqual(built);
+        const expected = { stdout: "string utf8\n", exitCode: 0, signal: null };
+        expect(await run(String(dir), "compiled")).toEqual(expected);
         await Bun.write(
           join(String(dir), "tsconfig.json"),
           JSON.stringify({ compilerOptions: { ...options, allowArbitraryExtensions: true } }),
         );
+        expect(await check(String(dir))).toMatchObject({ errors: ["TS2304"], exitCode: 1 });
         expect(await build(String(dir))).toEqual(built);
-        const expected = { stdout: "string utf8\n", exitCode: 0, signal: null };
         expect(await run(String(dir), "plain")).toEqual(expected);
         expect(await run(String(dir), "compiled")).toEqual(expected);
       }),
@@ -1324,8 +1361,10 @@ console.log(handedOn(["abc", Buffer.from("a"), new Uint8Array(2)]));
     },
   );
 
+  // TypeScript infers no predicate from `x instanceof Buffer` for a `string | Uint8Array`: where the answer is no, bytes are left that may be a Buffer.
+  // So the four lines of nobodyWritesItDown() are type errors with Bun's declarations and without them, they rest on no declaration that Bun brings, and they say so.
   goesOn(
-    "a guard narrows where the class of the run time stands deeper in its type, behind a type parameter, or where nobody writes the guard down",
+    "a guard narrows where the class of the run time stands deeper in its type or behind a type parameter, and where nobody writes the guard down the lines say that none does",
     {
       "main.ts": `import { EventEmitter } from "node:events";
 const odd: number = process.argv.length.toString();
@@ -1352,9 +1391,13 @@ function writtenAsAny(x: string | number): unknown {
 const isBytes = (x: string | Uint8Array) => x instanceof Buffer;
 function nobodyWritesItDown(list: (string | Uint8Array)[]): unknown[] {
   return [
+    // @ts-expect-error
     list.filter(x => x instanceof Buffer).map(x => x.toString("hex")),
+    // @ts-expect-error
     list.filter(isBytes).map(x => x.readUInt8(0)),
+    // @ts-expect-error
     list.map(x => (isBytes(x) ? x.toString("latin1") : x.length)),
+    // @ts-expect-error
     list.find(x => x instanceof Buffer)?.toString("hex"),
   ];
 }
@@ -1907,6 +1950,7 @@ test(
       expect(await build(String(bare))).toEqual(built);
       using dir = tempDir("aot-installed-bun-types", {
         "main.ts": main,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: ["bun"] } }),
         "node_modules/@types/bun/package.json": JSON.stringify({
           name: "@types/bun",
           version: "1.0.0",

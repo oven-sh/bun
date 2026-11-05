@@ -16,6 +16,7 @@ use bun_sema::hir::{self, FileBuilder, FnBody, FnId};
 use bun_sema::resolve::{EarlyTransformRequest, JsxSettings, TreeChange};
 use bun_sema::session::Arena;
 use bun_sema_driver::host::to_native;
+use bun_sort_by_number::SortByNumber;
 
 pub(crate) use self::module_items::POSITION;
 use self::writer::{TreeWriter, UnsupportedNode};
@@ -118,6 +119,7 @@ impl<'a> ReactCompiler<'a> {
             jsx: jsx.as_ref().unwrap_or(&request.settings.jsx),
             writer: None,
             failure: None,
+            functions_by_anchor: Vec::new(),
         };
         let file = ComponentFile {
             module,
@@ -168,17 +170,22 @@ struct CompilerOutput<'a, 's> {
     jsx: &'a JsxSettings,
     writer: Option<TreeWriter<'a, 's>>,
     failure: Option<Failure>,
+    functions_by_anchor: Vec<(u32, FnId)>,
 }
 
 impl CompilerOutput<'_, '_> {
-    fn find_function(&self, parameters_loc: Loc) -> Option<FnId> {
+    fn find_function(&mut self, parameters_loc: Loc) -> Option<FnId> {
         let position = u32::try_from(parameters_loc.start).ok()?;
-        let functions = self.tree.fns.iter().enumerate();
-        let before = functions.filter(|(_, function)| {
-            function.anchor <= position && !matches!(function.body, FnBody::None)
-        });
-        let (index, _) = before.max_by_key(|(_, function)| function.anchor)?;
-        Some(FnId(index as u32))
+        if self.functions_by_anchor.is_empty() {
+            let functions = self.tree.fns.iter().enumerate();
+            let written = functions.filter(|(_, function)| !matches!(function.body, FnBody::None));
+            let anchors = written.map(|(index, function)| (function.anchor, FnId(index as u32)));
+            self.functions_by_anchor = anchors.collect();
+            self.functions_by_anchor.sort_by_u32(|entry| entry.0);
+        }
+        let functions = &self.functions_by_anchor;
+        let behind = functions.partition_point(|entry| entry.0 <= position);
+        Some(functions[behind.checked_sub(1)?].1)
     }
 }
 

@@ -40,8 +40,14 @@ const notAllowed = { ...allowed, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: undefine
       ["--compile", []],
       ["--compile --aot", ["--aot"]],
     ] as const) {
-      test.skipIf(flags.length > 0 && !!unsupported).each(["asks.js", "imports.js"])(
-        `${how}: %s: it is not found, whether or not the environment allows it`,
+      const heldToday =
+        flags.length > 0 ? ", and no more than 3 of its 4 roads fail in other words than in plain Bun" : "";
+      const entries = [
+        ["asks.js", heldToday],
+        ["imports.js", ""],
+      ];
+      test.skipIf(flags.length > 0 && !!unsupported).each(entries)(
+        `${how}: %s: it is not found, whether or not the environment allows it%s`,
         async entry => {
           using dir = tempDir("compile-trim-runtime-internal-for-testing", programs);
           const folder = String(dir);

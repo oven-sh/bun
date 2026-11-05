@@ -290,29 +290,6 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
-  // It calls what it finds as process.on, with "SIGWINCH" and the function. The method of native code tells the listeners for "newListener" and keeps the function, which from then on is listed as any listener is and called as any: on the object that a listener was last added through.
-  // The light standard streams alone call it, and they are made only where nobody has laid anything under process.on (runtime-dependencies.builtins.ts): so what it finds there is the method of native code.
-  b.static(cpp("BunProcess.cpp", "jsFunctionListenForSizeOfTerminal"), {
-    args: { listener: b.any },
-    returns: b.undefined,
-    capability: "js",
-    throws: true,
-    usesFeature: ["ProcessListeners"],
-    uses: {
-      listener: [
-        b.retained,
-        b.called({
-          afterwards: "TouchesOnlyWhatRowNames",
-          times: "PerEvent",
-          this: b.nativeMemory,
-          args: [],
-          spreadArgs: b.nativeMemory,
-          result: "Ignored",
-        }),
-      ],
-    },
-    implementation: b.hostCall,
-  }),
   // It keeps the function. The process object calls it when the process or the worker starts to exit: inside process.exit() and process.reallyExit(), and when nothing is left to do.
   b.static(cpp("BunProcess.cpp", "jsFunctionRunWhenProcessExits"), {
     // It refuses nothing: what is no object is as good as nothing.

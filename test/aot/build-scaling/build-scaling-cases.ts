@@ -38,8 +38,8 @@
 //
 // Each shape prints one line that begins with SCALING.
 import { expect } from "bun:test";
-import { rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { readFileSync, rmSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { countsInstructions, measureCommandWithMemory, type Cost } from "../analysis-scaling/measure-check";
 import { countsIn } from "../compiler/measure";
@@ -69,6 +69,13 @@ const skipped =
 if (skipped) console.error(`SKIPPED: test/aot/build-scaling: ${skipped}`);
 
 const envOfShapeBuilds = { ...bunEnv, MIMALLOC_PURGE_DELAY: "0" };
+// `bun test --aot` takes no number of threads: it compiles on as many as there are processors that it may use, and what threads execute while they wait
+// for one another is counted with the rest. One program read 3,930, 4,168 and 4,535 million instructions on one machine, and its growth 1.80 to 2.03, and
+// 3.32 on a busier one. Held to one processor it compiles on one thread, as a build with --aot-threads=1 does: 3,867, 3,870 and 3,872 million.
+const taskset = isLinux ? Bun.which("taskset") : null;
+const onOneProcessor = taskset
+  ? [taskset, "-c", /^Cpus_allowed_list:\s*(\d+)/m.exec(readFileSync("/proc/self/status", "utf8"))![1]]
+  : [];
 const printsCounts = (shape: Shape) => !shape.isTestRun && !shape.isRefused;
 // A later name is longer (e9999, e10000), so twice as many names are more than twice the characters: 2.13 times from 16,000 names to 32,000.
 // A file that is read again shows in SourceLines and its like, and a text that is written again in TableBytesEmitted, which counts the text of the image too.
@@ -105,7 +112,7 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<B
     const cost = await measureCommandWithMemory(
       cwd,
       shape.isTestRun
-        ? [bunExe(), "test", "--aot", ...(shape.flags ?? []), entry]
+        ? [...onOneProcessor, bunExe(), "test", "--aot", ...(shape.flags ?? []), entry]
         : [
             bunExe(),
             "build",
@@ -154,8 +161,9 @@ export const buildScaling = (part: number, parts: number) =>
     const countsInstructionsHere = countsInstructions();
     for (const [index, shape] of shapes.entries()) {
       if (!shape.name.includes(wanted) || index % parts !== part - 1) continue;
-      (shape.growsSoFar ? test.concurrent.failing : test.concurrent)(
-        shape.growsSoFar ? `${shape.name}: ${shape.growsSoFar}; the bound is ${mostGrowth}` : shape.name,
+      const growsSoFar = shape.growsSoFar ?? (countsInstructionsHere ? shape.growsSoFarInInstructions : undefined);
+      (growsSoFar ? test.concurrent.failing : test.concurrent)(
+        growsSoFar ? `${shape.name}: ${growsSoFar}; the bound is ${mostGrowth}` : shape.name,
         async () => {
           const size = shape.size * factor;
           type Costs = [none: Built, once: Built | undefined, twice: Built];

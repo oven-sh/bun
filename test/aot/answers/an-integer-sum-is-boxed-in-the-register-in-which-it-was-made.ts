@@ -24,3 +24,4 @@ function keepDifference(a: number, b: number): void { kept = (a | 0) - (b | 0); 
 const pairs = [1, 2, -1, -2, 2147483647, 1, -2147483648, -1, 2147483647, 2147483647, -2147483648, -2147483648, 0, 0, -1, 1, -2147483648, 1, 2147483647, -1, 2147483647, -2147483648, 5, -7];
 for (let at = 0; at < pairs.length; at += 2) { keepSum(pairs[at], pairs[at + 1]); report(kept as number); keepDifference(pairs[at], pairs[at + 1]); report(kept as number); }
 report("end");
+declare function report(value: unknown): void;

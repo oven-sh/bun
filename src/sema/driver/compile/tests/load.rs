@@ -760,7 +760,7 @@ fn libraries_match_bun_check() {
 
         let configured = with_program(&files, &["./main.ts"], 1, |program| {
             assert!(!program.files().options.config_path.is_empty());
-            let is_installed = matches!(program.loaded.bun_types, BunTypes::Installed);
+            let is_installed = matches!(program.loaded.bun_types, BunTypes::InstalledAndNotNamed);
             assert_eq!(is_installed, has_bun_types);
             libraries_of(program.files().options)
         });
@@ -772,7 +772,7 @@ fn libraries_match_bun_check() {
         let tool = "node_modules/tool/main.ts";
         let unconfigured = with_program(&files, &["./node_modules/tool/main.ts"], 1, |program| {
             assert!(program.files().options.config_path.is_empty());
-            let is_installed = matches!(program.loaded.bun_types, BunTypes::Installed);
+            let is_installed = matches!(program.loaded.bun_types, BunTypes::InstalledAndNotNamed);
             assert_eq!(is_installed, has_bun_types);
             libraries_of(program.files().options)
         });

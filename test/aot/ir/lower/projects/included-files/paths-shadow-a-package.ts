@@ -1,17 +1,10 @@
 // RUN: lower
+// DIAGNOSTIC: TS2304 src/main.ts:1
 
-// A name that `paths` leads elsewhere does not stand for the installed package: `FromShadowed` names nothing, which stops no build, and its position is untyped.
-// What a file beside the importing one declares globally is declared.
-// CHECK: [[literal]] = Data
-// CHECK-NEXT: Convert [[literal]] declared={type=undefined|null|[[FromTheTests]]
-// CHECK: [[shadowed]] = Data
-// CHECK-NOT: Convert [[shadowed]]
-// CHECK: PropGet [[shadowed]] key="a"
+// A name that `paths` leads elsewhere does not stand for the installed package.
 
 // FILE: src/main.ts
-const declared: FromTheTests = { a: 1 };
-const shadowed: FromShadowed = { a: 2 };
-console.log(declared.a, shadowed.a);
+console.log(typeof fromShadowed);
 
 // FILE: tsconfig.json
 {"compilerOptions":{"strict":true,"module":"esnext","moduleResolution":"bundler","types":[],"paths":{"shadowed":["./src/local.ts"],"shadowed/*":["./src/*"]}},"include":["src","tests"]}
@@ -25,9 +18,7 @@ exports.value = 1;
 // FILE: node_modules/shadowed/index.d.ts
 export declare const value: number;
 declare global {
-  interface FromShadowed {
-    a: number;
-  }
+  var fromShadowed: number | undefined;
 }
 
 // FILE: src/local.ts
@@ -37,11 +28,3 @@ export const value = 1;
 import { value } from "shadowed";
 import { value as again } from "shadowed/local.ts";
 export const both = [value, again];
-
-// FILE: tests/globals.ts
-declare global {
-  interface FromTheTests {
-    a: number;
-  }
-}
-export {};

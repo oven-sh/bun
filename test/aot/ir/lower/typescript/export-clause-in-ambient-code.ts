@@ -19,7 +19,7 @@ declare namespace InANamespace {
 }
 export declare namespace InAnExportedNamespace {
   export { C };
-}
+} // @ts-expect-error
 declare module "in-a-module" {
   export { D };
 }

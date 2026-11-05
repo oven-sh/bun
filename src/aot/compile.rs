@@ -114,6 +114,7 @@ pub(crate) enum CodeOfWorkers {
 #[derive(Default)]
 pub(crate) struct StartedWorkers {
     pub root_folders_spelled: Vec<u8>,
+    pub levels_above_root: usize,
     pub program_files: Vec<EntryPointPaths>,
     pub code: CodeOfWorkers,
     pub names: Vec<EntryPointPaths>,
@@ -327,10 +328,11 @@ fn names_one_of<'f>(
     name: &[u8],
     mut files: impl Iterator<Item = &'f EntryPointPaths>,
     paths: &PathOptions,
+    levels_above_root: usize,
 ) -> bool {
     let below_root = [&paths.module_prefix[..], name].concat();
-    let on_disk = find_file_named_as_in_executable(paths, name)
-        .or_else(|| find_file_named_as_in_executable(paths, &below_root))
+    let on_disk = find_file_named_as_in_executable(paths, levels_above_root, name)
+        .or_else(|| find_file_named_as_in_executable(paths, levels_above_root, &below_root))
         .map(|path| source_path_of(&path));
     let looked_under = match is_relative_path(name) {
         true => {
@@ -339,7 +341,7 @@ fn names_one_of<'f>(
                 .map(|&byte| if byte == b'\\' { b'/' } else { byte })
                 .collect();
             vec![
-                join_below_root(&root, name),
+                join_below_root(&root, levels_above_root, name),
                 name_from_working_directory(name),
             ]
         }
@@ -728,7 +730,8 @@ impl<'a> Build<'a> {
                 .entry_points
                 .iter()
                 .chain(&self.started_workers.names);
-            if names_one_of(name, compiled, &options.paths) {
+            let levels = self.started_workers.levels_above_root;
+            if names_one_of(name, compiled, &options.paths, levels) {
                 continue;
             }
             self.started_workers.code = CodeOfWorkers::Unseen;

@@ -167,12 +167,7 @@ pub(crate) fn compile_fn(
     env.instrument_fn_name = borrow(&context.instrument_fn_name);
     env.instrument_gating_name = borrow(&context.instrument_gating_name);
     env.hook_guard_name = borrow(&context.hook_guard_name);
-    let known: HashSet<StoreStr> = context
-        .known_referenced_names()
-        .iter()
-        .map(|s| StoreStr::new(s.as_bytes()))
-        .collect();
-    env.seed_uid_known_names(&known);
+    env.share_uid_known_names(context.known_referenced_names());
 
     ensure_timing_dump_registered();
 
@@ -220,19 +215,9 @@ pub(crate) fn compile_fn(
     // Check for accumulated errors at the end of the pipeline
     // (matches TS Pipeline.ts: env.hasErrors() → Err at the end)
     if env.has_errors() {
-        // Merge UIDs even on error: in TS, Babel's scope.generateUid() permanently
+        // The UIDs stay registered on error: in TS, Babel's scope.generateUid() permanently
         // registers names in the scope's `uids` map regardless of whether the function
-        // compilation succeeds or fails. Without this merge, failed compilations would
-        // "leak" _temp names that subsequent successful compilations wouldn't see,
-        // causing numbering mismatches vs TS.
-        if let Some(uid_names) = env.take_uid_known_names() {
-            context.merge_uid_known_names(
-                &uid_names
-                    .into_iter()
-                    .map(|s| bun_core::BStr::new(s.slice()).to_string())
-                    .collect(),
-            );
-        }
+        // compilation succeeds or fails.
         return Err(env.take_errors());
     }
 
@@ -264,15 +249,6 @@ pub(crate) fn compile_fn(
             continue;
         }
         compiled_outlined.push(o);
-    }
-
-    if let Some(uid_names) = env.take_uid_known_names() {
-        context.merge_uid_known_names(
-            &uid_names
-                .into_iter()
-                .map(|s| bun_core::BStr::new(s.slice()).to_string())
-                .collect(),
-        );
     }
 
     Ok(CodegenFunction {

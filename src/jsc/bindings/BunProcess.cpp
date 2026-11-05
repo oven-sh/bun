@@ -1907,6 +1907,7 @@ JSC_DEFINE_CUSTOM_GETTER(lazyProcessStderr, (JSGlobalObject * globalObject, Enco
 }
 
 // Appends to the file that its second operand names. Where there is none, or that fails, it calls process.stderr.write.
+// It answers true where it has written to the descriptor itself, in the place of the stream that `bun run` makes at this call.
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1940,7 +1941,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * le
         RETURN_IF_EXCEPTION(scope, {});
         auto bytes = text.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
         writeToStandardError(byteCast<char>(bytes.span()));
-        return JSValue::encode(jsUndefined());
+        return JSValue::encode(jsBoolean(true));
     }
     JSValue stream = process->get(globalObject, stderrName);
     RETURN_IF_EXCEPTION(scope, {});
@@ -5529,24 +5530,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
 {
     JSValue arg0 = callFrame->argument(0);
     Bun__reportUnhandledError(globalObject, JSValue::encode(arg0));
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionListenForSizeOfTerminal, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* process = defaultGlobalObject(globalObject)->processObject();
-    JSValue on = process->get(globalObject, Identifier::fromString(vm, "on"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-    JSC::CallData callData = JSC::getCallData(on);
-    if (callData.type == JSC::CallData::Type::None)
-        return throwVMError(globalObject, scope, createNotAFunctionError(globalObject, on));
-    JSC::MarkedArgumentBuffer arguments;
-    arguments.append(jsNontrivialString(vm, "SIGWINCH"_s));
-    arguments.append(callFrame->argument(0));
-    JSC::profiledCall(globalObject, ProfilingReason::API, on, callData, process, arguments);
-    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

@@ -273,7 +273,7 @@ fn project_without_null_checks_has_unverified_types() {
 }
 
 #[test]
-fn type_error_in_file_of_the_program_stops_no_build() {
+fn type_error_in_file_of_the_program_stops_the_build_and_takes_no_types_away() {
     for text in [
         UNDEFINED_FOR_A_NUMBER,
         NARROWER_PARAMETER,
@@ -284,7 +284,17 @@ fn type_error_in_file_of_the_program_stops_no_build() {
             ("lib/index.ts", text),
             EXACT_OPTIONAL_CONFIG,
         ];
-        assert_stays_checked(&files, "lib/index.ts");
+        with_program(&files, &["./main.ts"], 1, |program| {
+            let (build, lib) = (check_only(program), program.file("lib/index.ts"));
+            assert!(build.has_diagnostics(lib), "{text}");
+            assert!(
+                build
+                    .diagnostics()
+                    .all(|it| it.effect == Effect::StopsBuild)
+            );
+            assert!(build.roles.demoted.is_empty());
+            assert_eq!(build.roles.role(lib), FileRole::Checked);
+        });
     }
 }
 
@@ -363,7 +373,8 @@ export const copy = value;
         assert!(build.roles.checked.is_empty());
         assert!(build.roles.rounds.is_empty());
         assert_eq!(build.roles.role(own), FileRole::Checked);
-        assert_eq!(build.codes(), [0; 0]);
+        let stops_build = (DiagnosticClass::Semantic, Effect::StopsBuild);
+        assert_eq!(build.reported(own, 2322), [stops_build]);
         assert_eq!(calls.load(Ordering::Relaxed), 2);
     });
 }

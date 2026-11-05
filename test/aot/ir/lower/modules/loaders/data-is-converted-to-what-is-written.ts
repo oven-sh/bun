@@ -6,7 +6,7 @@
 // The build reads the member out of the file. Nobody compares its type with the annotation: the program builds, and the value is converted to what is written.
 
 // FILE: main.ts
-import settings from "./settings.conf" with { type: "json" };
+import settings from "./settings.conf" with { type: "json" }; // @ts-expect-error
 const port: string = settings.port;
 console.log(port);
 

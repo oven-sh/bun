@@ -70,6 +70,29 @@ pub(super) struct UnrelatedClasses {
     unions: FxHashSet<TypeId>,
 }
 
+/// Not in tsgo. `[() => import("./a"), () => import("./b"), ..]`: what the members of a union give in the end. `ways` are the ways
+/// that lead from a member to an object type, each step the result of the only signature, which takes nothing (`None`; one
+/// such step at most), or the only type argument of a reference to a type that is covariant in it, and the name of the first required property of that
+/// object type with a unit type.
+/// `of_members` has for each member the number of its way and that unit type, a literal or a unique symbol. Two members with
+/// one way and different units are unrelated, as two object types with such a property are for `removeSubtypes`. That costs a thousandth of the
+/// comparison, which goes the same way through a relation for every step.
+struct UnitsBehindResults {
+    ways: Vec<(smallvec::SmallVec<[Option<Sym>; 4]>, Atom)>,
+    of_members: Vec<(u32, TypeId)>,
+}
+
+impl UnitsBehindResults {
+    const NOT_ASKED: u32 = u32::MAX;
+    const NO_WAY: u32 = u32::MAX - 1;
+
+    #[inline(always)]
+    fn are_known_to_differ(&self, source: usize, target: usize) -> bool {
+        let (source, target) = (self.of_members[source], self.of_members[target]);
+        source.0 == target.0 && source.0 < Self::NO_WAY && source.1 != target.1
+    }
+}
+
 /// Not in tsgo. A union that has the members of the union `from`, and `added` at the place `at`. What is made of the members
 /// of a union one by one (a property, its type, the signatures of that type) is made here of what was made for `from`, and
 /// of `added`: n unions that each have one member more than the one before take n steps then, and not n * n.
@@ -1210,6 +1233,10 @@ impl<'p, 's> Checker<'p, 's> {
         let literals = self.literals_of_union(&members);
         // The places of the members that are removed here, descending: the members are gone through from the last.
         let mut removed_places: Vec<usize> = Vec::new();
+        let mut units_behind_results = UnitsBehindResults {
+            ways: Vec::new(),
+            of_members: vec![(UnitsBehindResults::NOT_ASKED, TypeId::NEVER); len],
+        };
         let mut keep = vec![true; len];
         let mut count = 0usize;
         for i in (0..len).rev() {
@@ -1287,6 +1314,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 count += 1;
                 self.union_members_compared += 1;
+                if units_behind_results.are_known_to_differ(i, j) {
+                    continue;
+                }
                 if let Some((name, unit)) = key_property
                     && self.flags(target) & HAS_PROPERTIES != 0
                     && let Some(other) = self.type_of_property(target, name)
@@ -1321,6 +1351,13 @@ impl<'p, 's> Checker<'p, 's> {
                     && !self.is_type_derived_from(source, target)
                 {
                     continue;
+                }
+                if key_property.is_none() {
+                    self.look_for_unit_behind_results(&mut units_behind_results, &members, i);
+                    self.look_for_unit_behind_results(&mut units_behind_results, &members, j);
+                    if units_behind_results.are_known_to_differ(i, j) {
+                        continue;
+                    }
                 }
                 if self.is_strict_subtype(source, target) {
                     keep[i] = false;
@@ -1483,6 +1520,120 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         None
+    }
+
+    /// Reads what is resolved and resolves nothing, so that nothing is resolved earlier than the comparison would, or
+    /// that it never would. A member with something unresolved on its way is looked at again at its next comparison.
+    fn look_for_unit_behind_results(
+        &mut self,
+        units: &mut UnitsBehindResults,
+        members: &[TypeId],
+        place: usize,
+    ) {
+        if units.of_members[place].0 != UnitsBehindResults::NOT_ASKED {
+            return;
+        }
+        let mut steps: smallvec::SmallVec<[Option<Sym>; 4]> = smallvec::SmallVec::new();
+        let mut passed: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
+        let mut at = members[place];
+        let no_way = (UnitsBehindResults::NO_WAY, TypeId::NEVER);
+        let mut has_passed_signature = false;
+        loop {
+            // Two instantiations of one alias are related by the variances of the alias, whatever they hold.
+            let is_made_with_arguments =
+                (self.alias_of_type(at)).is_some_and(|(_, arguments)| !arguments.is_empty());
+            if passed.contains(&at) || !self.is_object_type(at) || is_made_with_arguments {
+                units.of_members[place] = no_way;
+                return;
+            }
+            passed.push(at);
+            if let &TypeData::Ref { target, .. } = self.data(at) {
+                let declared = self.declared_type(target);
+                match self.type_arguments(declared).len() {
+                    0 => break,
+                    1 => {}
+                    // By the variances of them all.
+                    _ => {
+                        units.of_members[place] = no_way;
+                        return;
+                    }
+                }
+                let Some(variances) = self.p.variances.get(&self.task, &target) else {
+                    return;
+                };
+                let (Some(&argument), [super::relate::COVARIANT]) =
+                    (self.type_arguments(at).first(), variances)
+                else {
+                    units.of_members[place] = no_way;
+                    return;
+                };
+                steps.push(Some(target));
+                at = argument;
+                continue;
+            }
+            if self.resolved_members(at).is_none() {
+                return;
+            }
+            let Some(signature) = self.single_call_signature(at) else {
+                break;
+            };
+            // Without parameters the comparison of two such signatures gets as far as their results.
+            let has_only_result = match *self.types().sig(signature) {
+                SigData::Decl { file, func, mapper } => {
+                    let declaration = &self.hir(file)[func];
+                    mapper == MapperId::IDENTITY
+                        && declaration.params.is_empty()
+                        && declaration.type_params.is_empty()
+                        && !std::mem::replace(&mut has_passed_signature, true)
+                }
+                _ => false,
+            };
+            if !has_only_result {
+                units.of_members[place] = no_way;
+                return;
+            }
+            let Some(result) = self.cached_return_type(signature) else {
+                return;
+            };
+            steps.push(None);
+            at = result;
+        }
+        if steps.is_empty() {
+            units.of_members[place] = no_way;
+            return;
+        }
+        let Some(properties) = self.resolved_members(at) else {
+            return;
+        };
+        units.of_members[place] = no_way;
+        if properties.mapper != MapperId::IDENTITY {
+            return;
+        }
+        for prop in &properties.shape().props {
+            let resolved = match prop.source {
+                _ if prop.mapper != MapperId::IDENTITY => return,
+                PropSource::Type(resolved) => Some(resolved),
+                PropSource::Symbol(symbol) => self.p.symbol_types.get(&self.task, &symbol),
+                _ => return,
+            };
+            let Some(resolved) = resolved else {
+                units.of_members[place].0 = UnitsBehindResults::NOT_ASKED;
+                return;
+            };
+            // A member of an enum is a subtype of the literal of its value, and `undefined` of everything without `strictNullChecks`.
+            let is_told_apart = self.is_unit(resolved)
+                && self.flags(resolved) & (tf::ENUM | tf::ENUM_LITERAL | tf::NULLABLE) == 0;
+            if !is_told_apart || prop.flags.contains(PropFlags::OPTIONAL) {
+                continue;
+            }
+            let way = (steps, prop.name);
+            let number = (units.ways.iter().position(|known| *known == way)).unwrap_or_else(|| {
+                units.ways.push(way);
+                units.ways.len() - 1
+            });
+            units.of_members[place] = (number as u32, self.with_freshness(resolved, false));
+            return;
+        }
     }
 
     fn is_class_instance(&self, ty: TypeId) -> bool {

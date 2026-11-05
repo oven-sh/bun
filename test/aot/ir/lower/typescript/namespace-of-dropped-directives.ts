@@ -19,11 +19,11 @@ namespace Several {
   type A = 1;
   <any>"use asm";
 }
-namespace BehindAnAlias {
+namespace BehindAnAlias { // @ts-expect-error
   import type A = Types.A;
   "use strict";
 }
-namespace ExportedAlias {
+namespace ExportedAlias { // @ts-expect-error
   export import type A = Types.A;
 }
 namespace OtherText {

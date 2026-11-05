@@ -202,6 +202,8 @@ export const define: Record<string, string> = {
   "CAN_REPLACE_BUILT_INS": "true",
   // `bun compile` replaces the value: false for a program that asks `process` only for what Bun gives it.
   "PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES": "true",
+  // `bun compile` replaces the value: false for a program that cannot tell whether node:events was loaded.
+  "WARNINGS_LOAD_NODE_EVENTS": "true",
   // `bun compile` replaces the value: true where these files are compiled ahead of time.
   "IS_COMPILED_AHEAD_OF_TIME": "false",
 

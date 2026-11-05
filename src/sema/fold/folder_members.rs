@@ -154,6 +154,12 @@ impl Folder<'_, '_> {
         else {
             return Folded::UNKNOWN;
         };
+        let effects = match effects {
+            Effects::DeadZoneCheck if self.is_constant_read_behind_its_declaration(object) => {
+                Effects::None
+            }
+            effects => effects,
+        };
         let Constant::String(text) = self.evaluator.to_constant(value) else {
             return Folded::UNKNOWN;
         };

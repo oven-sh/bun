@@ -5,8 +5,8 @@ use crate::ir::parallel::{extend_from_each, map_each};
 use crate::ir::references::IdMap;
 use crate::ir::types::ClassPart;
 use crate::ir::{
-    FunctionId, Id, InParallel, LayoutId, StringId, Type, TypeId, TypeTable, drop_each,
-    for_each_mut,
+    DistinctTypes, FunctionId, Id, InParallel, LayoutId, StringId, Type, TypeId, TypeRef,
+    TypeTable, Types, drop_each, for_each_mut,
 };
 use crate::statistics::{Stage, StepClock};
 use bun_sort_by_number::{SortByNumber, number_of_signed};
@@ -23,9 +23,9 @@ pub(super) struct TypesByHeight {
 }
 
 impl TypesByHeight {
-    fn new(types: &[Type]) -> TypesByHeight {
+    fn new(types: Types<'_>) -> TypesByHeight {
         let mut heights: Vec<u32> = Vec::with_capacity(types.len());
-        for ty in types {
+        for ty in types.iter() {
             let named = ty.classes.iter().flat_map(|part| &part.contents);
             let height = named.map(|id| heights[id.index()] + 1).max();
             heights.push(height.unwrap_or(0));
@@ -94,8 +94,8 @@ fn push_sorted_list<I: Id>(
     Some(())
 }
 
-fn push_row(row: &mut Vec<u32>, ty: &Type, map: &IdMap<'_>) -> Option<()> {
-    let Type {
+fn push_row(row: &mut Vec<u32>, ty: &TypeRef<'_>, map: &IdMap<'_>) -> Option<()> {
+    let TypeRef {
         primitives,
         flags,
         opaque,
@@ -107,8 +107,8 @@ fn push_row(row: &mut Vec<u32>, ty: &Type, map: &IdMap<'_>) -> Option<()> {
         classes,
         builtins,
         functions,
-    } = ty;
-    let (minimum, maximum) = (number_of_signed(*minimum), number_of_signed(*maximum));
+    } = *ty;
+    let (minimum, maximum) = (number_of_signed(minimum), number_of_signed(maximum));
     row.push(primitives.to_wire());
     row.push(flags.to_wire());
     row.push(opaque.map_or(0, |kind| kind.to_wire() + 1));
@@ -242,7 +242,7 @@ struct Run {
 }
 
 impl Run {
-    fn new(run: u32, cut: Cut<'_>, types: &[Type], map: &IdMap<'_>, hashing: Hashing) -> Run {
+    fn new(run: u32, cut: Cut<'_>, types: Types<'_>, map: &IdMap<'_>, hashing: Hashing) -> Run {
         let count = cut.numbers.len();
         let mut numbers = Vec::with_capacity(count);
         let mut rows: Vec<u32> = Vec::with_capacity(count * WORDS_IN_MOST_ROWS);
@@ -253,7 +253,7 @@ impl Run {
             #[cfg(test)]
             ROWS.set(ROWS.get() + 1);
             let start = rows.len();
-            if push_row(&mut rows, &types[number as usize], map).is_none() {
+            if push_row(&mut rows, &types.get(number as usize), map).is_none() {
                 rows.truncate(start);
                 continue;
             }
@@ -540,14 +540,14 @@ fn cut_height(by_height: &[TypesByHeight], height: usize) -> Vec<Cut<'_>> {
     cuts
 }
 
-fn list_types_of_tables(tables: &[LinkTables]) -> Vec<&[Type]> {
+fn list_types_of_tables(tables: &[LinkTables]) -> Vec<Types<'_>> {
     tables
         .iter()
-        .map(|tables| &tables.types.types()[..tables.lengths.types as usize])
+        .map(|tables| tables.types.types().first(tables.lengths.types as usize))
         .collect()
 }
 
-fn sort_lists_by_height(lists: &[&[Type]], in_parallel: InParallel<'_>) -> Vec<TypesByHeight> {
+fn sort_lists_by_height(lists: &[Types<'_>], in_parallel: InParallel<'_>) -> Vec<TypesByHeight> {
     map_each(lists.to_vec(), in_parallel, &|types| {
         TypesByHeight::new(types)
     })
@@ -586,7 +586,7 @@ fn write_names_as_ids<I: Id>(names: &[u32]) -> Vec<Option<I>> {
 }
 
 fn find_alike_types_in_lists(
-    lists: &[&[Type]],
+    lists: &[Types<'_>],
     by_height: &[TypesByHeight],
     names: NamesOfRecords<'_>,
     weaken_hash: fn(u64) -> u64,
@@ -688,7 +688,7 @@ pub(super) struct MergedTypes {
 }
 
 fn merge_type_lists(
-    lists: &[&[Type]],
+    lists: &[Types<'_>],
     by_height: &[TypesByHeight],
     alike: AlikeTypes,
     ids: &[TableIds],
@@ -701,11 +701,12 @@ fn merge_type_lists(
     let height_counts = by_height.iter().map(TypesByHeight::height_count);
     let height_count = height_counts.max().unwrap_or(0);
 
-    debug_assert!(
-        lists
+    debug_assert!(lists.iter().all(|types| {
+        TypeTable::new()
+            .types()
             .iter()
-            .all(|types| types.starts_with(TypeTable::new().types()))
-    );
+            .eq(types.first(TypeTable::WELL_KNOWN_COUNT).iter())
+    }));
     let mut type_count = TypeTable::WELL_KNOWN_COUNT;
     let mut places_of_types: Vec<Vec<(u32, u32)>> = Vec::new();
     let AlikeTypes {
@@ -812,45 +813,34 @@ fn merge_type_lists(
     (merged, program_ids)
 }
 
-#[inline]
-fn copy_list<T: Clone>(list: &[T]) -> Vec<T> {
-    match list.is_empty() {
-        true => Vec::new(),
-        false => list.to_vec(),
-    }
-}
-
-fn copy_type(ty: &Type) -> Type {
-    Type {
-        strings: copy_list(&ty.strings),
-        layouts: copy_list(&ty.layouts),
-        classes: copy_list(&ty.classes),
-        builtins: copy_list(&ty.builtins),
-        functions: copy_list(&ty.functions),
-        ..*ty
-    }
-}
-
 fn make_records_of_lists<'a>(
-    lists: &[&[Type]],
+    lists: &[Types<'_>],
     merged: &MergedTypes,
     map_of: &(dyn Fn(u32) -> IdMap<'a> + Sync),
     in_parallel: InParallel<'_>,
-) -> Vec<Type> {
+) -> Vec<DistinctTypes> {
     let mut steps = StepClock::new(Stage::LinkAndEmit);
-    let mut program_types: Vec<Type> = Vec::with_capacity(merged.count + merged.count / 8);
-    program_types.extend_from_slice(TypeTable::new().types());
-    extend_from_each(&mut program_types, &merged.places, in_parallel, &|&(
-        tables,
-        number,
-    )| {
-        let mut ty = copy_type(&lists[tables as usize][number as usize]);
-        ty.remap_ids(&map_of(tables));
-        ty
+    let mut well_known = DistinctTypes::with_capacity(TypeTable::WELL_KNOWN_COUNT);
+    for ty in TypeTable::new().types().iter() {
+        well_known.push(&ty.to_type());
+    }
+    debug_assert_eq!(
+        TypeTable::WELL_KNOWN_COUNT + merged.places.iter().map(Vec::len).sum::<usize>(),
+        merged.count
+    );
+    let tasks: Vec<&[(u32, u32)]> = merged.places.iter().map(Vec::as_slice).collect();
+    let parts = map_each(tasks, in_parallel, &|places: &[(u32, u32)]| {
+        let mut part = DistinctTypes::with_capacity(places.len());
+        let mut ty = Type::never();
+        for &(tables, number) in places {
+            lists[tables as usize].get(number as usize).copy_to(&mut ty);
+            ty.remap_ids(&map_of(tables));
+            part.push(&ty);
+        }
+        part
     });
-    debug_assert_eq!(program_types.len(), merged.count);
     steps.end("merge types: records");
-    program_types
+    core::iter::once(well_known).chain(parts).collect()
 }
 
 pub(super) fn find_alike_types(
@@ -879,7 +869,7 @@ pub(super) fn make_type_records(
     merged: &MergedTypes,
     ids: &[TableIds],
     in_parallel: InParallel<'_>,
-) -> Vec<Type> {
+) -> Vec<DistinctTypes> {
     let lists = list_types_of_tables(tables);
     let map_of = |tables: u32| ids[tables as usize].as_map();
     make_records_of_lists(&lists, merged, &map_of, in_parallel)
@@ -950,7 +940,7 @@ mod tests {
     }
 
     fn merge_lists(
-        lists: &[&[Type]],
+        lists: &[Types<'_>],
         names: &Names,
         ids: &[TableIds],
         weaken_hash: fn(u64) -> u64,
@@ -966,11 +956,9 @@ mod tests {
             ..ids[tables as usize].as_map()
         };
         let records = make_records_of_lists(lists, &merged, &map_of, in_parallel);
-        assert_eq!(records.len(), merged.count);
-        (
-            TypeTable::of_distinct_types(records, in_parallel),
-            program_ids,
-        )
+        let program = TypeTable::of_distinct_types(records);
+        assert_eq!(program.len(), merged.count);
+        (program, program_ids)
     }
 
     fn merge(
@@ -978,7 +966,7 @@ mod tests {
         ids: &[TableIds],
         in_parallel: InParallel<'_>,
     ) -> (TypeTable, Vec<Vec<Option<TypeId>>>) {
-        let lists: Vec<&[Type]> = types.iter().map(TypeTable::types).collect();
+        let lists: Vec<Types<'_>> = types.iter().map(TypeTable::types).collect();
         merge_lists(&lists, &Names::of_ids(ids), ids, keep_hash, in_parallel)
     }
 
@@ -1030,7 +1018,8 @@ mod tests {
         };
         let rows = ascending.each_ref().map(|ty| {
             let mut row = Vec::new();
-            push_row(&mut row, ty, &ids.as_map()).expect("the program has every record");
+            push_row(&mut row, &TypeRef::of(ty), &ids.as_map())
+                .expect("the program has every record");
             row
         });
         for (place, a) in rows.iter().enumerate() {
@@ -1059,7 +1048,10 @@ mod tests {
     #[test]
     fn well_known_types_keep_their_ids() {
         let (program, ids) = merge(&[], &[], &run_serially);
-        assert_eq!(program.types(), TypeTable::new().types());
+        assert_eq!(
+            program.types().to_records(),
+            TypeTable::new().types().to_records()
+        );
         assert!(ids.is_empty());
 
         let mut types = TypeTable::new();
@@ -1070,11 +1062,11 @@ mod tests {
             .collect();
         assert_eq!(ids, [same_ids]);
         assert_eq!(
-            program.types()[..WELL_KNOWN_COUNT],
-            *TypeTable::new().types()
+            program.types().to_records()[..WELL_KNOWN_COUNT],
+            TypeTable::new().types().to_records()
         );
         assert_eq!(
-            program.types()[WELL_KNOWN_COUNT..],
+            program.types().to_records()[WELL_KNOWN_COUNT..],
             [array_of(TypeTable::ARRAY)]
         );
     }
@@ -1106,7 +1098,7 @@ mod tests {
             Type::layout(layout(7)),
             array_of(TypeId::new(WELL_KNOWN_COUNT + 2)),
         ];
-        assert_eq!(program.types()[WELL_KNOWN_COUNT..], expected);
+        assert_eq!(program.types().to_records()[WELL_KNOWN_COUNT..], expected);
         let id = id_behind_well_known_types;
         assert_eq!(ids[0][WELL_KNOWN_COUNT..], [id(2), id(0), id(1), id(3)]);
         assert_eq!(ids[1][WELL_KNOWN_COUNT..], [id(2), id(3), id(1)]);
@@ -1152,7 +1144,7 @@ mod tests {
         let id = id_behind_well_known_types;
         for names in [by_key, Names::of_ids(&ids)] {
             let (program, ids) = merge_lists(&lists, &names, &ids, keep_hash, &run_serially);
-            assert_eq!(program.types()[WELL_KNOWN_COUNT..], expected);
+            assert_eq!(program.types().to_records()[WELL_KNOWN_COUNT..], expected);
             assert_eq!(
                 ids[0][WELL_KNOWN_COUNT..],
                 [id(2), id(0), id(1), None, id(3)]
@@ -1191,7 +1183,7 @@ mod tests {
         }
         assert_eq!(ids[0][whole.index()], id_behind_well_known_types(0));
         assert_eq!(
-            program.types()[WELL_KNOWN_COUNT..],
+            program.types().to_records()[WELL_KNOWN_COUNT..],
             [Type::function(function(0))]
         );
     }
@@ -1214,7 +1206,7 @@ mod tests {
 
         let whole = [table_of_ranges_and_their_lists(1..20_000)];
         let (program, _) = merge(&whole, &ids[..1], &run_serially);
-        assert_eq!(program.types()[WELL_KNOWN_COUNT..], expected);
+        assert_eq!(program.types().to_records()[WELL_KNOWN_COUNT..], expected);
 
         let mut parts = [
             table_of_ranges_and_their_lists((1..12_000).rev()),
@@ -1222,17 +1214,17 @@ mod tests {
             table_of_ranges_and_their_lists((1..20_000).step_by(7)),
         ];
         let (program, program_ids) = merge(&parts, &ids, &run_serially);
-        assert_eq!(program.types()[WELL_KNOWN_COUNT..], expected);
+        assert_eq!(program.types().to_records()[WELL_KNOWN_COUNT..], expected);
         for (types, program_ids) in parts.iter().zip(&program_ids) {
             let map = IdMap {
                 types: program_ids,
                 ..ids[0].as_map()
             };
             for (ty, id) in types.types().iter().zip(program_ids) {
-                let mut remapped = ty.clone();
+                let mut remapped = ty.to_type();
                 remapped.remap_ids(&map);
                 let id = id.expect("the type names nothing that the program lacks");
-                assert_eq!(remapped, *program.get(id));
+                assert_eq!(program.get(id), remapped);
             }
         }
 
@@ -1241,7 +1233,7 @@ mod tests {
         };
         parts.reverse();
         let (program, _) = merge(&parts, &ids, &in_reverse);
-        assert_eq!(program.types()[WELL_KNOWN_COUNT..], expected);
+        assert_eq!(program.types().to_records()[WELL_KNOWN_COUNT..], expected);
     }
 
     #[test]
@@ -1262,7 +1254,7 @@ mod tests {
         let tables: Vec<TypeTable> = (0..64)
             .map(|_| table_of_ranges_and_their_lists(1..1_000))
             .collect();
-        let lists: Vec<&[Type]> = tables.iter().map(TypeTable::types).collect();
+        let lists: Vec<Types<'_>> = tables.iter().map(TypeTable::types).collect();
         let ids: Vec<TableIds> = tables.iter().map(|_| TableIds::default()).collect();
         let by_height = sort_lists_by_height(&lists, &run_serially);
         let names = Names::of_ids(&ids);
@@ -1280,7 +1272,7 @@ mod tests {
             table_of_ranges_and_their_lists((1..count * 2 / 3).rev()),
             table_of_ranges_and_their_lists(count / 3..count),
         ];
-        let lists: Vec<&[Type]> = parts.iter().map(TypeTable::types).collect();
+        let lists: Vec<Types<'_>> = parts.iter().map(TypeTable::types).collect();
         let ids = [(); 2].map(|()| TableIds::default());
         let names = Names::of_ids(&ids);
         let (program, program_ids) = merge_lists(&lists, &names, &ids, weaken_hash, &run_serially);
@@ -1289,17 +1281,17 @@ mod tests {
         let lists_of_ranges =
             (0..count as usize - 1).map(|place| array_of(TypeId::new(WELL_KNOWN_COUNT + place)));
         let expected: Vec<Type> = ranges.chain(lists_of_ranges).collect();
-        assert_eq!(program.types()[WELL_KNOWN_COUNT..], expected);
+        assert_eq!(program.types().to_records()[WELL_KNOWN_COUNT..], expected);
         for (types, program_ids) in parts.iter().zip(&program_ids) {
             let map = IdMap {
                 types: program_ids,
                 ..ids[0].as_map()
             };
             for (ty, id) in types.types().iter().zip(program_ids) {
-                let mut remapped = ty.clone();
+                let mut remapped = ty.to_type();
                 remapped.remap_ids(&map);
                 let id = id.expect("the type names nothing that the program lacks");
-                assert_eq!(remapped, *program.get(id));
+                assert_eq!(program.get(id), remapped);
             }
         }
     }

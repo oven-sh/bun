@@ -141,7 +141,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn note_layouts_of_objects(&mut self, ty: TypeId) {
-        let named = &self.fragment.types.get(ty).layouts;
+        let named = self.fragment.types.get(ty).layouts;
         self.layouts.layouts_seen_as_objects.extend(named);
     }
 
@@ -227,7 +227,7 @@ impl FileLowering<'_, '_, '_, '_> {
         found.extend(self.fragment.allocated_layouts());
         let types = &self.fragment.types;
         for &(_, target) in &self.fragment.family_facts.conversions {
-            found.extend(&types.get(target).layouts);
+            found.extend(types.get(target).layouts);
         }
         if self.fragment.supertype_edges().is_empty() {
             return found;

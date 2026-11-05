@@ -25,3 +25,4 @@ report(stored({ x: 1, y: 2 }, 5)); report(stored(moved(3, 4), 5));
 function inLoop(points: Point[]): number { let total = 0; for (let i = 0; i < points.length; i++) { calls++; total += points[i].x + points[i].y; } return total; }
 report(inLoop([{ x: 1, y: 2 }, moved(3, 4), { x: 5, y: 6 }])); report(calls);
 report("end");
+declare function report(value: unknown): void;

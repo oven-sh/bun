@@ -12,6 +12,7 @@ use bun_sema::program::Sym;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
+use crate::builtins::resolve::reads_what_wrapper_hands_in;
 use crate::ir::ValueId;
 use crate::lower::{FileLowering, FunctionLowering};
 use crate::modules::ExportBinding;
@@ -174,7 +175,7 @@ impl FileLowering<'_, '_, '_, '_> {
         });
         let runtime = &bound.runtime;
         let is_filled_at_entry = (runtime.redeclared_commonjs_variables().iter())
-            .any(|redeclared| redeclared.0 == variable)
+            .any(|it| it.0 == variable && reads_what_wrapper_hands_in(hir, bound, variable))
             || (runtime.annex_b_functions().iter()).any(|function| function.var_symbol == variable)
             || (runtime.parameter_var_copies().iter()).any(|copy| copy.variable == variable);
         let stores = bound.stores_to(variable);

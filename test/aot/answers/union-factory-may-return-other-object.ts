@@ -15,3 +15,4 @@ function str(text: string): Str { const made = new Node(2) as Str; made.text = t
 function read(one: Num | Str): string { return one.kind === 1 ? "num " + one.value : "str " + one.text; }
 report(read(num(1))); report(read(str("s"))); report(new Node(1, true) === spare); report(new Node(2, true) === spare);
 report("end");
+declare function report(value: unknown): void;

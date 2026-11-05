@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunExe, isASAN, tempDir } from "harness";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
@@ -15,7 +15,7 @@ import {
 } from "../../../src/codegen/builtins/declarations.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
 import type { ModelBuiltin, ModelModule } from "../../../src/codegen/builtins/model.ts";
-import { engineDirectory, engineFiles as generated } from "./engine-files.ts";
+import { engineDirectory, engineFiles as generated, generatorEnv } from "./engine-files.ts";
 
 const bunRoot = resolve(import.meta.dir, "..", "..", "..");
 const path = "process.member";
@@ -141,7 +141,7 @@ test.skipIf(generated === undefined)(
         `--types-only=${testSchemas.join(",")}`,
       ],
       cwd: bunRoot,
-      env: bunEnv,
+      env: generatorEnv,
       stdout: "pipe",
       stderr: "pipe",
     });

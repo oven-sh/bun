@@ -21,11 +21,11 @@ function makes(a: any, b: any) { const o = { a, b, [a + "k"]: b, get sum() { ret
 function lists(a: any, b: any) { const l = [a, , b, ...[a, b]]; const [x, , y = 9, ...rest] = l; return l.length + ":" + x + ":" + y + ":" + rest.length + ":" + (1 in l); }
 function takes({ p, q = 3, ...others }: any, ...more: any[]) { return p + ":" + q + ":" + Object.keys(others).length + ":" + more.length; }
 function counts(n: any) { let s = 0; for (let i = 0; i < n; i++) { if (i === 2) continue; if (i === 6) break; s += i; } let j = 0; while (j < n) j += 2; do { j--; } while (j > n); return s + ":" + j; }
-function names(o: any) { let s = ""; for (const k in o) s += k + "=" + o[k] + ";"; return s; }
+function names(o: any) { let s = ""; for (const k in o) s += k + "=" + o[k] + ";"; return s; } // @ts-expect-error
 function picks(v: any) { switch (v) { case 1: return "one"; case "two": return "two"; case 3: case 4: v += 10; default: return "other " + v; } }
 function words(v: any) { switch (v) { case "alpha": return 1; case "beta": return 2; case "gamma": return 3; case "delta": return 4; case "epsilon": return 5; default: return 0; } }
 function closes(n: any) { let held = n; const up = () => ++held; const both = () => [up(), up(), held].join(","); return both; }
-function tries(v: any) { let trail = ""; try { trail += "a"; if (v === 1) throw new TypeError("one"); if (v === 2) return trail + "r"; trail += "b"; } catch (e) { trail += "c" + (e as Error).message; } finally { trail += "f"; report(trail); } return trail; }
+function tries(v: any) { let trail = ""; try { trail += "a"; if (v === 1) throw new TypeError("one"); if (v === 2) return trail + "r"; trail += "b"; } catch (e) { trail += "c" + (e as Error).message; } finally { trail += "f"; report(trail); } return trail; } // @ts-expect-error
 function nests(v: any) { let kept = "k" + v; try { try { kept += "1"; if (v) null[v]; kept += "2"; } finally { kept += "3"; } } catch (e) { return kept + (e as Error).name; } return kept; }
 function tails(n: any, sum: any): any { "use strict"; return n === 0 ? sum : tails(n - 1, sum + n); }
 class Base { x: any; static made = 0; constructor(x: any) { this.x = x; Base.made++; } get twice() { return this.x * 2; } say() { return "base " + this.x; } static of(x: any) { return new this(x); } }

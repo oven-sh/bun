@@ -13,6 +13,18 @@ const graphs: Record<string, Record<string, string[]>> = {
   "each file is asked for once: level by level": { m0: ["m1", "m2"], m1: ["m3"], m2: ["c2"], m3: ["c1"] },
   "what a module that is imported twice imports runs in front": { m0: ["m1", "m2"], m1: ["m2", "c1"], m2: ["c2"] },
   "a CommonJS file that is imported twice runs in front": { m0: ["m1", "m2"], m1: ["c1", "c3"], m2: ["c2", "c3"] },
+  "a module that imports the root lets its neighbors go first": {
+    m0: ["m1", "m2", "m3"],
+    m1: ["c1", "m0"],
+    m2: ["c2"],
+    m3: ["c3"],
+  },
+  "a file that is asked for a third time runs on the spot": {
+    m0: ["m1", "m4", "m3"],
+    m1: ["m3"],
+    m3: ["c1", "m0"],
+    m4: ["c2", "m1"],
+  },
 };
 
 function filesOf(imports: Record<string, string[]>) {
@@ -20,7 +32,7 @@ function filesOf(imports: Record<string, string[]>) {
   const files: Record<string, string> = { "main.cjs": `require("./m0.mjs");\nconsole.log("main ends");\n` };
   for (const [name, imported] of Object.entries(imports)) {
     files[pathOf(name)] = imported.map(to => `import "${pathOf(to)}";\n`).join("") + `console.log("${name}");\n`;
-    for (const to of imported) if (to[0] === "c") files[pathOf(to)] = `console.log("${to}");\n`;
+    for (const to of imported) if (to[0] === "c") files[pathOf(to)] = `console.log("${to}");\nmodule.exports = 1;\n`;
   }
   return files;
 }
@@ -41,6 +53,19 @@ async function answersOf(files: Record<string, string>) {
 test.each(Object.keys(graphs))("%s", async name => {
   const { plain, compiled } = await answersOf(filesOf(graphs[name]));
   expect(plain.stdout).toEndWith("m0\nmain ends\n");
+  expect(compiled).toEqual(plain);
+});
+
+test("a require() that leads back up closes no ring of imports", async () => {
+  const { plain, compiled } = await answersOf({
+    "main.cjs": `require("./root.mjs");\nconsole.log("main ends");\n`,
+    "root.mjs": `import "./a.mjs";\nimport "./b.mjs";\nconsole.log("root");\n`,
+    "a.mjs": `import "./b.mjs";\nimport "./ca.cjs";\nconsole.log("a");\n`,
+    "b.mjs": `import "./cb.cjs";\nconsole.log("b");\nglobalThis.later = () => import.meta.require("./a.mjs");\n`,
+    "ca.cjs": `console.log("ca");\n`,
+    "cb.cjs": `console.log("cb");\n`,
+  });
+  expect(plain).toEqual({ stdout: "cb\nca\nb\na\nroot\nmain ends\n", exitCode: 0 });
   expect(compiled).toEqual(plain);
 });
 

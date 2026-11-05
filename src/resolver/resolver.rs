@@ -1576,6 +1576,7 @@ impl<'a> Resolver<'a> {
         // ...unless you pass a relative path that exists in the standalone module graph executable.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let importer_directory: Vec<u8>;
+        let mut looks_beside_source = false;
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
@@ -1618,6 +1619,7 @@ impl<'a> Resolver<'a> {
                         .find(|directory| self.read_dir_info_ignore_error(directory).is_some())
                     {
                         importer_directory = directory;
+                        looks_beside_source = true;
                         break 'brk &importer_directory[..];
                     }
                     break 'brk top_level_dir;
@@ -1674,6 +1676,15 @@ impl<'a> Resolver<'a> {
 
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        // `bun build --compile` looks from the working directory. A package name has been walked up for, and what ended that walk stands.
+        if looks_beside_source
+            && matches!(tmp, ResultUnion::NotFound)
+            && crate::compiled_program::is_relative_specifier(import_path)
+            && self.custom_dir_paths.is_none()
+        {
+            let top_level_dir = Fs::FileSystem::get().top_level_dir();
+            tmp = self.resolve_without_symlinks(top_level_dir, import_path, kind, global_cache);
+        }
         if matches!(tmp, ResultUnion::NotFound)
             && let Some(path) =
                 self.resolve_at_source_path(source_dir_normalized, import_path, kind)

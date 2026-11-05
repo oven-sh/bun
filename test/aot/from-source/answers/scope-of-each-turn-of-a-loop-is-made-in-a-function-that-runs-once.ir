@@ -11,6 +11,7 @@
 # }
 # const list = make(10);
 # print(list[0](), list[1](), list[2](), list[0](), list[3](), new Set(list).size);
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # total lies among the variables of the module. own belongs to one turn of the loop: its scope is made in each turn, and the closure holds that one word and no other. What was caught is a list: it stays a capture.
 # RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all

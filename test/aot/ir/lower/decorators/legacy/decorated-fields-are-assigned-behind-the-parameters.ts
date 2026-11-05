@@ -17,7 +17,7 @@ declare const d: any;
 declare function f(): number;
 
 export class C {
-  a = 1;
+  a = 1; // @ts-expect-error
   @d b = new.target;
   c = 3;
   constructor(p = f()) {}

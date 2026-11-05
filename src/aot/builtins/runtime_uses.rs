@@ -686,6 +686,19 @@ impl Collector {
     }
 }
 
+pub const ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF: [BuiltinId; 6] = [
+    BuiltinId::SymbolHasInstance,
+    BuiltinId::Proxy,
+    BuiltinId::ProxyRevocable,
+    BuiltinId::ObjectGetOwnPropertySymbols,
+    BuiltinId::ObjectGetOwnPropertyDescriptors,
+    BuiltinId::ReflectOwnKeys,
+];
+
+pub fn is_evaluator(id: BuiltinId) -> bool {
+    table::entry(id).flags.intersects(EVALUATORS)
+}
+
 pub fn is_unknown_module_loader(id: BuiltinId) -> bool {
     table::entry(id).flags.intersects(UNKNOWN_MODULE_LOADERS)
 }
@@ -755,6 +768,28 @@ impl RuntimeUses {
             collector.add_functions(table::FUNCTIONS_FOUND_ON_ANY_OPERAND);
         }
         collector.finish()
+    }
+}
+
+impl RuntimeUses {
+    pub fn of_native_modules_handed_out(
+        modules: &[RuntimeModule],
+        platform: Platforms,
+    ) -> RuntimeUses {
+        let data = modules.iter().map(|&module| table::module_data(module));
+        let native = data.filter(|data| !data.flags.contains(table::ModuleFlags::HAS_SOURCE));
+        let mut exposed: Vec<BuiltinId> = native.map(|data| data.namespace).collect();
+        if exposed.is_empty() {
+            return RuntimeUses::default();
+        }
+        exposed.sort_unstable();
+        exposed.dedup();
+        let mentions = Mentions {
+            mentioned: &exposed,
+            exposed: &exposed,
+            ..Mentions::default()
+        };
+        RuntimeUses::of_mentions(&mentions, platform)
     }
 }
 

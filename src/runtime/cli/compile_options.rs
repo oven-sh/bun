@@ -642,7 +642,9 @@ pub(crate) fn apply_developer_word<'a>(
         "out" => options.ir_output_path = Some(Box::from(text)),
         // The other words of --aot-testing are the engine's.
         "testing" if text == b"NoExecutable" => options.writes_no_executable = true,
+        "testing" if text == b"FirstTexts" => options.takes_first_texts = true,
         "testing" if text == b"DiscardsFirstVisits" => options.discards_first_visits = true,
+        "testing" if text == b"TypeErrorsWarn" => options.type_errors_warn = true,
         "testing" if text == b"IsolatedCodeFromDisk" => {
             if !options.loads_code_from_disk || options.runs_in_place {
                 return Err(OptionError::DeveloperWord {
@@ -995,7 +997,10 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         .flat_map(|words| strings::split(words, b","));
     // A word that begins with `TestRun` is the test runner's, and `erase-types` and `out=<file>` are the front end's. The others go to the engine, which refuses every word that is not its own.
     let (words_read_here, engine_words): (Vec<&[u8]>, Vec<&[u8]>) = words.partition(|word| {
-        word.starts_with(b"TestRun") || *word == b"erase-types" || word.starts_with(b"out=")
+        word.starts_with(b"TestRun")
+            || *word == b"erase-types"
+            || *word == b"FirstTexts"
+            || word.starts_with(b"out=")
     });
     if let Some(word) = find_unknown_test_run_word(&words_read_here) {
         exit_with_unknown_test_run_word(word);
@@ -1004,6 +1009,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         // For a test of what the runner says then. No flag of `bun test` builds a run without the text of its functions.
         embeds_function_source: !words_read_here.contains(&&b"TestRunWithoutFunctionSource"[..]),
         erases_types: words_read_here.contains(&&b"erase-types"[..]),
+        takes_first_texts: words_read_here.contains(&&b"FirstTexts"[..]),
         ir_output_path: (words_read_here.iter())
             .find_map(|word| word.strip_prefix(b"out="))
             .map(Box::from),

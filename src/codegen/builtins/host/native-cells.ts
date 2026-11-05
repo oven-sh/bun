@@ -5,6 +5,10 @@ export const functionOfTimersPromisesCell = (timer: string) => `TimersPromises.$
 export const serverOptionsCell = "Server.options";
 export const requestHandlerCell = "Server.fetch";
 export const socketOptionsCell = "Socket.options";
+export const filesOfFormsCell = "FormData.files";
+export const cookiesOfRequestsCell = "BunRequest.cookies";
+export const parametersOfRequestsCell = "BunRequest.params";
+export const parametersOfRoutesWithoutAnyCell = "BunRequest.paramsOfRouteWithoutAny";
 export const socketsCell = "Socket.instances";
 export const socketDataCell = "Socket.data";
 export const webSocketsCell = "ServerWebSocket.instances";

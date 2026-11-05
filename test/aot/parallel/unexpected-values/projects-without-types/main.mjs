@@ -1,5 +1,6 @@
 // JavaScript projects as people have them, with no types at all: a value is made in one module and used in another, which has seen other values there.
 // Some projects start work that nothing awaits. Each gets time to end before the next begins: else `bun <file>` prints the lines of two projects in an order that the threads of its transpiler decide.
+// One of them imports nineteen names by calls, one behind the other, which takes longer than that on a busy machine: it exports its promise, and this file awaits it.
 const settled = () => new Promise(resolve => setTimeout(resolve, 60));
 console.log("# chain-of-calls-ends-another-kind-began");
 await import("./chain-of-calls-ends-another-kind-began/main.js");
@@ -125,8 +126,7 @@ console.log("# objects-frozen-in-module-stored-others");
 await import("./objects-frozen-in-module-stored-others/main.mjs");
 await settled();
 console.log("# one-name-could-be-file-json-or-folder");
-await import("./one-name-could-be-file-json-or-folder/main.js");
-await settled();
+await import("./one-name-could-be-file-json-or-folder/main.js").then(file => file.default);
 console.log("# packages-wrapped-for-every-loader");
 await import("./packages-wrapped-for-every-loader/main.js");
 await settled();

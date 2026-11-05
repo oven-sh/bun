@@ -22,6 +22,8 @@ export const promiseOf = (value: b.TableType) => b.instance("Promise").holding({
 const protocolsOfDeepComparison = ["OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named()] as const;
 // A key of one operand is read from the other under that name, through its prototypes, so any member may be read.
 export const comparedDeeply = [b.readsContents(), b.runsTransitively(...protocolsOfDeepComparison)];
+// Bun__deepMatch() in bindings.cpp lists private names too, at every object that it comes to.
+export const matchedDeeply = [...comparedDeeply, b.privateFieldsCompared];
 export const comparedDeeplyCalling = (...members: readonly string[]) => [
   b.readsContents(),
   b.runsTransitively(...protocolsOfDeepComparison, b.calls(...members)),

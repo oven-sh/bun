@@ -1,11 +1,6 @@
 // RUN: lower
-
-// What verbatimModuleSyntax forbids in a CommonJS file (TS1287) keeps no program from running, so it stops no build: a .cts file exports in the ordinary way.
-// CHECK: [[A]] = CheckInitialized {{*}}name="A"
-// CHECK-NEXT: Construct [[A]] calleeName="A"
-// CHECK: CheckInitialized {{*}}name="n"
-// CHECK-NEXT: [[n]] = Integer integer=2
-// CHECK-NEXT: Call {{*}}, [[n]] calleeKey="log"
+// DIAGNOSTIC: TS1287 lib.cts:1
+// DIAGNOSTIC: TS1287 lib.cts:2
 
 // FILE: main.ts
 import { A, n } from "./lib.cts";

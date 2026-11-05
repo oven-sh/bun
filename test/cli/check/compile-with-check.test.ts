@@ -8,7 +8,7 @@ import { endChildren, longLimit, spawn } from "../children";
 afterAll(endChildren);
 
 const files = {
-  "wrong.ts": `export const port: number = "3000";\n`,
+  "wrong.ts": `function never(): number {\n  return "3000";\n}\nexport const port: number = 3000;\n`,
   "build.ts": `const result = await Bun.build({
   entrypoints: ["./wrong.ts"],
   target: "bun",
@@ -45,18 +45,22 @@ const stopped = {
   hasExecutable: false,
 };
 
+// A compile looks for type errors in what it compiles. Nothing calls never(), so it is left out of the program, and only `--check` looks at it.
 // A compile never hands its files to the bundler, where `--check` is otherwise looked at.
-describe.skipIf(!!unsupported)("a compile that is asked to check the types stops at a type error", () => {
-  test.concurrent.each([
-    ["bun compile", ["compile", "./wrong.ts", "--outfile", "wrong"], "--check"],
-    ["bun build --compile --aot", ["build", "--compile", "--aot", "./wrong.ts", "--outfile", "wrong"], "--check"],
-    ["Bun.build", ["run", "./build.ts"], "check"],
-  ])(
-    "%s",
-    async (_, command, flag) => {
-      expect(await built(...command, flag)).toEqual(stopped);
-      expect(await built(...command)).toEqual({ errors: null, exitCode: 0, hasExecutable: true });
-    },
-    2 * longLimit,
-  );
-});
+describe.skipIf(!!unsupported)(
+  "a compile that is asked to check the types stops at a type error in what it leaves out",
+  () => {
+    test.concurrent.each([
+      ["bun compile", ["compile", "./wrong.ts", "--outfile", "wrong"], "--check"],
+      ["bun build --compile --aot", ["build", "--compile", "--aot", "./wrong.ts", "--outfile", "wrong"], "--check"],
+      ["Bun.build", ["run", "./build.ts"], "check"],
+    ])(
+      "%s",
+      async (_, command, flag) => {
+        expect(await built(...command, flag)).toEqual(stopped);
+        expect(await built(...command)).toEqual({ errors: null, exitCode: 0, hasExecutable: true });
+      },
+      2 * longLimit,
+    );
+  },
+);

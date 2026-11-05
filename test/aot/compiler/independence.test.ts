@@ -7,21 +7,27 @@
 //   inside                    testaot same-bytes-alone: each of them among all the others, and again on a thread that has seen nothing else
 //   alone | another caller    somebody else calls the shared helpers too, and no function of the features that call them changes
 //   alone | padded            the main file holds ten thousand more functions, and no function of another file changes a byte
+//   inside | padded           the same in the large program, where the sets of layouts are long
+//   inside | other layouts    its main file makes a thousand records under names of their own, and no function of the feature changes an operation
 //   alone | another limit     the control: one constant of the feature is changed, and the comparison must report it
 //   alone | another type      the control: somebody hands a shared helper what the features never do, and the comparison must report it
+//   alone | another helper    the control: a shared helper is no longer copied in line, and the comparison must report the call
 //
 // A build writes its program with --aot-out, and `testaot bytes` prints what each unit of it compiles to: a hash of the code with the fields of its
 // relocations cleared, and each relocation by the name of its symbol. The numbers behind the names are the image's, and differ by right.
 // The numbers of shapes and orders are the plan's. They follow the whole program and lie in the code as immediates and as sets of bits,
 // so two programs, each with a plan of its own, differ in them by right. Bytes alone judge where those numbers are the same: under one plan
 // (same-bytes-alone), and beside padding that gives the plan nothing to number. Between any other two programs a unit with other bytes is held to its
-// operations, which name layouts and not shapes. One with the same operations passes, and is counted.
+// operations, which name layouts and not shapes, and to what its code calls: each call of a stub or of a function by its name, in their order, and how
+// many returns, thunks, inline frames and handlers it has. In line or by a stub shows there, a number of a shape does not. One that agrees in both
+// passes, and is counted.
 // A record is one layout for each set of names, for the whole program, and a read off a value that nobody has typed goes by the name. So what other files
 // store under a name that the unit reads is a fact about what the unit mentions, and differs by right: the part of a type that is marked
 // ?ContentsOfEscapedObject, and which field of which record a fact about such a read names.
 // A written type stands for every layout of the program that fits it, and the plan holds a slot to what the whole program stores there. Both are facts
-// about what the unit mentions, and both grow with the program, by right: a set of layouts is read as its first member, which the small program has too.
-// The type of a value is what the walk knows of it and not what it builds. The operation, its operands, the form of its result and its fields are compared.
+// about what the unit mentions, and both grow with the features, by right. So between the small program and the large one, and there alone, a set of
+// layouts is read as its first member and the type of a value is left out; the operation, its operands, the form of its result and its fields are compared.
+// Every other pair mentions the same layouts, and is compared whole. What is rationed inside a long set shows beside the padding and the other layouts.
 // The padding is there for what comes behind the walk: an emitter that reads a total of the program reads the same one in both halves of same-bytes-alone.
 // A unit is known by its role and by the file, the position and the name of its function. What every caller has inlined is never compiled, so a
 // unit that only one of two programs has is counted and not held against them.
@@ -52,10 +58,12 @@ interface Program {
   units: Map<string, Unit>;
 }
 type Pair = [Program, Program];
-type Judge = "operations" | "bytes";
+type Judge = "operations" | "operations of a larger program" | "bytes";
 
 const featuresAlone = 3;
+const featuresInside = 100 * featuresAlone;
 const paddingFunctions = 10_000;
+const otherLayouts = 1_000;
 const timeLimit = 900_000;
 
 // The same types as the features hand over, so the facts about what they mention stay as they are. A template is a text whatever stands in it.
@@ -72,7 +80,10 @@ const anotherCaller = callerThatHandsOver("`${request.parameters.place}${request
 // whoever stores into it asks for all three.
 const callerWithAnotherType = callerThatHandsOver("request.parameters.place + request.path");
 
-// Each stands at the top of the module, captures nothing and deals in numbers alone: no layout, no environment, no mention of a layout, no string in a type.
+// Each stands at the top of the module and captures nothing: no new layout, no environment. Each has the router make its record, with what the router
+// puts there itself, stores into it, keeps it in a list that stays and reads it. So the plan numbers nothing new and holds the slots to what it held them
+// to, and the program has ten thousand more callers of a shared helper, allocations, stores with a barrier, reads and tests. A literal of its own would
+// give the record another home, and a variable that is written or a parameter that is read by name would have the layouts numbered in another order.
 // Each calls itself, so no caller inlines it and it is compiled.
 // Not `padded += ..`: the type in front of a compound assignment is asked of the assignment in front of it, and TypeScript gives up 2,000 of those deep (TS2563).
 function padding(dress: Dress) {
@@ -80,16 +91,34 @@ function padding(dress: Dress) {
   const functions = Array.from(
     { length: paddingFunctions },
     (_, index) => `function pad${index}(depth${number})${number} {
-  return depth < 1 ? ${index} : pad${index}(depth - 1) + 1;
+  const made = text(404, "not found");
+  made.status = 404;
+  kept[0] = made;
+  return depth < 1 ? ${index} + made.body.length : pad${index}(depth - 1) + 1;
 }
 padded = padded + pad${index}(2);
 `,
   );
-  return `\nlet padded = 0;\n${functions.join("")}console.log(padded);\n`;
+  return `\nimport { text } from "./router";\nlet padded = 0;\nconst kept = [text(404, "not found")];\n${functions.join("")}console.log(padded + kept[0].status);\n`;
 }
 
-function withChange(dress: Dress, name: string, change: (text: string) => string) {
-  const files = generate(featuresAlone, dress);
+// Each record has a name that nothing else has, so no set of layouts that another file mentions gains a member, and the plan has a thousand more to number.
+function recordsOfTheirOwn(dress: Dress) {
+  const number = dress === "typed" ? ": number" : "";
+  const functions = Array.from(
+    { length: otherLayouts },
+    (_, index) => `function own${index}(depth${number})${number} {
+  const made = { own${index}: depth };
+  return depth < 1 ? made.own${index} : own${index}(depth - 1) + 1;
+}
+owned = owned + own${index}(2);
+`,
+  );
+  return `\nlet owned = 0;\n${functions.join("")}console.log(owned);\n`;
+}
+
+function withChange(dress: Dress, name: string, change: (text: string) => string, features = featuresAlone) {
+  const files = generate(features, dress);
   const path = `${name}.${extensions[dress]}`;
   files[path] = change(files[path]);
   return files;
@@ -97,10 +126,18 @@ function withChange(dress: Dress, name: string, change: (text: string) => string
 
 const sources = {
   alone: (dress: Dress) => generate(featuresAlone, dress),
-  inside: (dress: Dress) => generate(100 * featuresAlone, dress),
+  inside: (dress: Dress) => generate(featuresInside, dress),
   "another caller": (dress: Dress) => withChange(dress, "main", text => text + anotherCaller),
   "another type": (dress: Dress) => withChange(dress, "main", text => text + callerWithAnotherType),
+  // A loop keeps a function from being copied. The files of the features keep every position.
+  "another helper": (dress: Dress) =>
+    withChange(dress, "text", text =>
+      text.replace("  return /^-?", "  for (let turn = 0; turn < 1; turn++);\n  return /^-?"),
+    ),
   padded: (dress: Dress) => withChange(dress, "main", text => text + padding(dress)),
+  "inside, padded": (dress: Dress) => withChange(dress, "main", text => text + padding(dress), featuresInside),
+  "inside, other layouts": (dress: Dress) =>
+    withChange(dress, "main", text => text + recordsOfTheirOwn(dress), featuresInside),
   // The number keeps its two digits, so every function keeps its position.
   "another limit": (dress: Dress) =>
     withChange(dress, "feature2", text => text.replace(/area < (\d+)/, (_, limit) => `area < ${Number(limit) + 1}`)),
@@ -174,23 +211,31 @@ const contentsOfEscapedObjects = /(?:\w+\|)*\w+\?(?:\w+\+)*ContentsOfEscapedObje
 const typesOfValues = /\b(v\d+): (?:(?! @[A-Z]).)* (@[A-Z]\w*)/g;
 // L8|L29|L72 in a type, [L8, L29, L72] in a field.
 const setsOfLayouts = /\b(L\d+)(?:\|L\d+)+|\[(L\d+)(?:, L\d+)+\]/g;
-function withoutWhatDiffersByRight(line: string) {
-  const rest = line
-    .replace(typesOfValues, "$1 $2")
-    .replace(contentsOfEscapedObjects, "?ContentsOfEscapedObject")
-    .replace(setsOfLayouts, (_, inType, inField) => inType ?? `[${inField}]`);
+function withoutWhatDiffersByRight(line: string, judge: Judge) {
+  const grown =
+    judge === "operations of a larger program"
+      ? line.replace(typesOfValues, "$1 $2").replace(setsOfLayouts, (_, inType, inField) => inType ?? `[${inField}]`)
+      : line;
+  const rest = grown.replace(contentsOfEscapedObjects, "?ContentsOfEscapedObject");
   return /^\s*fact \S+ kind=NarrowedTypes\b.*\bsubjectKind=Field\b/.test(rest) ? rest.replace(/ index=\d+/, "") : rest;
 }
 // What is left out is left out first: a layout that only one of two texts mentions there takes no place.
-function byFirstMention(lines: string[]) {
+const byFirstMention = (judge: Judge) => (lines: string[]) => {
   const places = new Map<string, string>();
   return lines.map(line =>
-    withoutWhatDiffersByRight(line).replace(numbersOfTheProgram, token => {
+    withoutWhatDiffersByRight(line, judge).replace(numbersOfTheProgram, token => {
       if (/^["bv]/.test(token)) return token;
       if (!places.has(token)) places.set(token, token.replace(/\d+$/, `#${places.size}`));
       return places.get(token)!;
     }),
   );
+};
+
+// relocation 497 Call Stub BinaryOperation.Add: without the place in the code, which follows the widths of the numbers in front of it.
+function callsOf(lines: string[]) {
+  const calls = lines.flatMap(line => /^\s*relocation \d+ (\S+ (?:Stub|Function) .*)$/.exec(line)?.[1] ?? []);
+  const counts = lines.find(line => /^\s*size=/.test(line))?.match(/\b(?:returns|thunks|inlineFrames|handlers)=\d+/g);
+  return [...calls, ...(counts ?? [])];
 }
 
 // Inline frames and constants stand in front of the first block. Most of what differs there follows from an operation further down, so the blocks are read first.
@@ -225,12 +270,13 @@ async function explained(programs: Pair, withOtherBytes: string[], judge: Judge)
   return withOtherBytes.flatMap(key => {
     const walk = firstLinesThatDiffer(
       operations.map(textOf => blocksFirst(textOf(key))),
-      byFirstMention,
+      byFirstMention(judge),
     );
-    if (!walk && judge === "operations") return [];
+    const calls = firstLinesThatDiffer(programs.map(program => callsOf(linesOf(program, key))));
+    if (!walk && !calls && judge !== "bytes") return [];
     const bytes = firstLinesThatDiffer(programs.map(program => linesOf(program, key))) ?? [];
     const operationsThatDiffer = walk ? labeled("walk", walk) : ["  walk: the same operations in both"];
-    return [[key, ...labeled("bytes", bytes), ...operationsThatDiffer].join("\n")];
+    return [[key, ...labeled("bytes", bytes), ...labeled("calls", calls ?? []), ...operationsThatDiffer].join("\n")];
   });
 }
 
@@ -264,7 +310,7 @@ for (const dress of Object.keys(extensions) as Dress[]) {
   describe.concurrent(`a function compiles to the same code whatever else the program holds: ${dress}`, () => {
     declared(
       "alone and inside a program a hundred times as large",
-      async () => expectSameCode(await both(dress, "alone", "inside"), [feature]),
+      async () => expectSameCode(await both(dress, "alone", "inside"), [feature], "operations of a larger program"),
       timeLimit,
     );
 
@@ -303,6 +349,18 @@ for (const dress of Object.keys(extensions) as Dress[]) {
     );
 
     declared(
+      "the same padding changes no byte where the sets of layouts are long",
+      async () => expectSameCode(await both(dress, "inside", "inside, padded"), [feature], "bytes"),
+      timeLimit,
+    );
+
+    declared(
+      "a thousand layouts that fit nothing change no operation",
+      async () => expectSameCode(await both(dress, "inside", "inside, other layouts"), [feature]),
+      timeLimit,
+    );
+
+    declared(
       "the comparison reports a changed constant",
       async () =>
         expect((await compare(await both(dress, "alone", "another limit"), [feature])).differences).not.toEqual([]),
@@ -313,6 +371,15 @@ for (const dress of Object.keys(extensions) as Dress[]) {
       "the comparison reports another type that a shared helper is handed",
       async () =>
         expect((await compare(await both(dress, "alone", "another type"), features)).differences).not.toEqual([]),
+      timeLimit,
+    );
+
+    declared(
+      "the comparison reports a helper that is no longer copied in line",
+      async () =>
+        expect((await compare(await both(dress, "alone", "another helper"), features)).differences.join("\n")).toMatch(
+          /calls, another helper, \w+: Call Function Body .* "isInteger" /,
+        ),
       timeLimit,
     );
   });

@@ -13,7 +13,7 @@
 
 declare function use(...values: unknown[]): void;
 
-enum Level {
+enum Level { // @ts-expect-error
   Low = 1,
   High = 2,
 }
@@ -25,6 +25,7 @@ enum Level {
   Low = 5,
 }
 
+// @ts-expect-error
 if (Level.Low === 5) use("last");
 else use("first");
 use(Level.High);

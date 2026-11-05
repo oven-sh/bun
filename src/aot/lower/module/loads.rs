@@ -59,14 +59,12 @@ enum ComputedLoad {
 
 #[derive(Copy, Clone)]
 struct KnownOfName {
-    written: ImportSpecifier,
     all_names_are_known: bool,
     names_no_library_module: bool,
 }
 
 #[derive(Copy, Clone)]
 struct AnswersOfResolver<'a> {
-    node: ExprId,
     form: ResolvedForm,
     spelled_modules: &'a [SpelledModule],
     known_of_name: KnownOfName,
@@ -349,7 +347,6 @@ pub(crate) fn lower_import_call(
                 return lowering.emit_computed_load(load, referrer, name, specifier, candidates);
             }
             lowering.emit_behind_test_of_name(load, name, specifier, &mut |this, is_path_alone| {
-                let specifier = this.emit_name_as_executable_spells_it(node, written, specifier);
                 (this.builder).import_dynamic(specifier, options, referrer, false, is_path_alone)
             })
         }
@@ -1308,10 +1305,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .iter()
             .filter(is_answered_by_program)
             .collect();
-        let (node, written) = (site.specifier_node, site.specifier);
+
         if answered.is_empty() {
-            let name = self.emit_name_as_executable_spells_it(node, written, specifier);
-            return self.builder.resolve_dynamic(name, referrer, true, false);
+            return self
+                .builder
+                .resolve_dynamic(specifier, referrer, true, false);
         }
         let result = self.builder.create_variable(None);
         let strings: Vec<StringId> = answered
@@ -1330,8 +1328,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.jump(done);
         }
         self.continue_in(otherwise);
-        let name = self.emit_name_as_executable_spells_it(node, written, specifier);
-        let found = self.builder.resolve_dynamic(name, referrer, true, false);
+        let found = self
+            .builder
+            .resolve_dynamic(specifier, referrer, true, false);
         self.builder.write_variable(result, found);
         self.jump(done);
 
@@ -1797,79 +1796,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.read_variable(spelled)
     }
 
-    fn emit_name_as_executable_spells_it(
-        &mut self,
-        node: ExprId,
-        written: ImportSpecifier,
-        name: ValueId,
-    ) -> ValueId {
-        let form = self.file.find_resolved_form(node);
-        if form.is_none() && !self.file.is_path_from_own_directory(node) {
-            return name;
-        }
-        let is_url = matches!(form, Some(ResolvedForm::Url | ResolvedForm::UrlObject));
-        let moved = self.file.find_folders_moved_by_joining(&written, is_url);
-        if moved.is_empty() {
-            return name;
-        }
-        let text = match form {
-            Some(ResolvedForm::UrlObject) => {
-                let href = self.file.intern_bytes(b"href");
-                let href = PropertyName::Constant(self.file.text_key(href));
-                self.emit_get(name, href)
-            }
-            Some(ResolvedForm::Path | ResolvedForm::Url) | None => name,
-        };
-        let platform = self.file.inputs.options.platform;
-        let separator: &[u8] = match !is_url && platform.contains(Platforms::WINDOWS) {
-            true => b"\\",
-            false => b"/",
-        };
-        let spelled = self.builder.create_variable(None);
-        self.builder.write_variable(spelled, text);
-        let (is_text_block, done) = (self.create_block(), self.create_block());
-        let is_text = self.builder.type_test(text, TypeTable::STRING);
-        self.builder
-            .branch(is_text, Edge::to(is_text_block), Edge::to(done));
-
-        self.continue_in(is_text_block);
-        let end = self.emit_text(separator);
-        let with_end = self.builder.strcat(&[text, end]);
-        let in_place = moved.iter().map(|folder| (folder, false));
-        for (folder, is_moved) in in_place.chain(moved.iter().map(|folder| (folder, true))) {
-            let start = match is_moved {
-                true => &folder.as_joined,
-                false => &folder.in_executable,
-            };
-            let starts_with = self.emit_builtin_itself(BuiltinId::StringPrototypeStartsWith);
-            let with_end_too = self.emit_text(&[&start[..], separator].concat());
-            let is_below = call::emit_call(self, starts_with, Some(with_end), &[with_end_too]);
-            let is_below = self.builder.to_boolean(is_below);
-            let (below, otherwise) = (self.create_block(), self.create_block());
-            self.builder
-                .branch(is_below, Edge::to(below), Edge::to(otherwise));
-
-            self.continue_in(below);
-            if is_moved {
-                let as_joined = self.emit_text(start);
-                let length = PropertyName::Constant(self.file.atom_key(known::length));
-                let length = self.emit_get(as_joined, length);
-                let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
-                let rest = call::emit_call(self, slice, Some(text), &[length]);
-                let in_executable = self.emit_text(&folder.in_executable);
-                let put_back = self.builder.strcat(&[in_executable, rest]);
-                self.builder.write_variable(spelled, put_back);
-            }
-            self.jump(done);
-
-            self.continue_in(otherwise);
-        }
-        self.jump(done);
-
-        self.continue_in(done);
-        self.builder.read_variable(spelled)
-    }
-
     fn branch_on_path_made_by_call(
         &mut self,
         specifier: ImportSpecifier,
@@ -2021,7 +1947,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_behind_test_of_name(load, name, specifier, &mut |this, is_path_alone| {
             let analysis = &this.file.compiled.analysis;
             let known_of_name = KnownOfName {
-                written,
                 all_names_are_known: candidates.hold_every_name(analysis, &written),
                 names_no_library_module: is_path_alone,
             };
@@ -2130,13 +2055,41 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     ..
                 }
         );
+        let is_written_out =
+            name.0.is_some() && bun_sema::import_sites::is_name_written_out(self.file.hir, name.0);
+        let files_ask = self.asks_loader_functions();
+        let is_asked_by_name = |it: &&SpelledModule| match it.module {
+            ModuleRef::Runtime(RuntimeModule::Bun | RuntimeModule::BunTest) => {
+                !matches!(load, ComputedLoad::Require { .. })
+            }
+            ModuleRef::Runtime(_) => true,
+            _ => files_ask,
+        };
+        let spelled = candidates.spelled_modules().iter();
+        let asked_by_name: Vec<SpelledModule> = spelled
+            .filter(|it| is_written_out && is_asked_by_name(it))
+            .copied()
+            .collect();
         if asks_nobody
+            || (is_written_out && asked_by_name.is_empty())
             || !modules.computed_names_ask_loader_functions()
             || !modules.is_code_of_program(self.current_module())
         {
             return self.emit_load_of_what_build_found(load, referrer, name, specifier, candidates);
         }
         let are_stored = self.builder.are_loader_functions_stored();
+        if is_written_out {
+            return self.emit_one_of(
+                are_stored,
+                &mut |this| {
+                    let choice = (load, referrer, name, specifier, candidates);
+                    this.emit_choice_of_written_names_for_loader_functions(choice, &asked_by_name)
+                },
+                &mut |this| {
+                    this.emit_load_of_what_build_found(load, referrer, name, specifier, candidates)
+                },
+            );
+        }
         self.emit_one_of(
             are_stored,
             &mut |this| this.emit_load_by_name(load, referrer, specifier, name.1),
@@ -2144,6 +2097,44 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 this.emit_load_of_what_build_found(load, referrer, name, specifier, candidates)
             },
         )
+    }
+
+    fn emit_choice_of_written_names_for_loader_functions(
+        &mut self,
+        (load, referrer, name, specifier, candidates): (
+            ComputedLoad,
+            ModuleId,
+            (ExprId, KnownOfName),
+            ValueId,
+            Candidates<'_>,
+        ),
+        asked_by_name: &[SpelledModule],
+    ) -> ValueId {
+        let result = self.builder.create_variable(None);
+        let mut strings: Vec<StringId> = Vec::with_capacity(asked_by_name.len());
+        let mut arms: Vec<BlockId> = Vec::with_capacity(asked_by_name.len());
+        for spelled in asked_by_name {
+            strings.push(self.file.intern_atom(spelled.spelling));
+            arms.push(self.create_block());
+        }
+        let otherwise = self.create_block();
+        let done = self.create_block();
+        let edges: Vec<Edge<'static>> = arms.iter().map(|&arm| Edge::to(arm)).collect();
+        self.builder
+            .switch_string(specifier, &strings, &edges, Edge::to(otherwise));
+        for (spelled, &arm) in asked_by_name.iter().zip(&arms) {
+            self.continue_in(arm);
+            let asked = self.emit_name_for_loader_functions(spelled.module, spelled.spelling, None);
+            let loaded = self.emit_load_by_name(load, referrer, asked, name.1);
+            self.builder.write_variable(result, loaded);
+            self.jump(done);
+        }
+        self.continue_in(otherwise);
+        let found = self.emit_load_of_what_build_found(load, referrer, name, specifier, candidates);
+        self.builder.write_variable(result, found);
+        self.jump(done);
+        self.continue_in(done);
+        self.builder.read_variable(result)
     }
 
     fn emit_load_of_what_build_found(
@@ -2166,7 +2157,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         if let Some(form) = self.file.find_resolved_form(node) {
             let candidates = AnswersOfResolver {
-                node,
                 form,
                 spelled_modules,
                 known_of_name,
@@ -2176,9 +2166,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let modules_of_every_value = self.file.find_modules_of_every_value(node, spelled_modules);
         let spelled_modules = modules_of_every_value.as_deref().unwrap_or(spelled_modules);
         if spelled_modules.is_empty() {
-            let name =
-                self.emit_name_as_executable_spells_it(node, known_of_name.written, specifier);
-            return self.emit_load_by_name(load, referrer, name, known_of_name);
+            return self.emit_load_by_name(load, referrer, specifier, known_of_name);
         }
         let result = self.builder.create_variable(None);
         let mut strings: Vec<StringId> = Vec::with_capacity(spelled_modules.len());
@@ -2215,9 +2203,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if modules_of_every_value.is_some() {
             self.builder.unreachable();
         } else {
-            let name =
-                self.emit_name_as_executable_spells_it(node, known_of_name.written, specifier);
-            let loaded = self.emit_load_by_name(load, referrer, name, known_of_name);
+            let loaded = self.emit_load_by_name(load, referrer, specifier, known_of_name);
             self.builder.write_variable(result, loaded);
             self.jump(done);
         }
@@ -2334,9 +2320,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
             self.continue_in(other);
         }
-        let written = candidates.known_of_name.written;
-        let name = self.emit_name_as_executable_spells_it(candidates.node, written, answer);
-        let loaded = self.emit_load_by_name(load, referrer, name, candidates.known_of_name);
+        let loaded = self.emit_load_by_name(load, referrer, answer, candidates.known_of_name);
         self.builder.write_variable(result, loaded);
         self.jump(done);
 

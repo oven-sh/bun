@@ -34,7 +34,10 @@ pub(super) struct TreeWriter<'a, 's> {
     written_type_arguments: FxHashMap<(u32, u32), ListAt<TypeNodeId>>,
     source_ranges: SourceRanges,
     item_names: FxHashMap<u32, Atom>,
-    outlined_into_lists: FxHashSet<StmtId>,
+    top_level_statements: Vec<TextRange>,
+    places: Option<Places>,
+    outlined_into_lists: Vec<(ListHolder, StmtId, StmtId)>,
+    new_body_starts: Vec<(FnId, u32)>,
 }
 
 #[derive(Default)]
@@ -49,9 +52,8 @@ pub(super) struct FunctionContext {
     pub is_strict_by_syntax: bool,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum ListHolder {
-    File,
     Block(StmtId),
     Case(CaseId),
     Function(FnId),
@@ -59,17 +61,160 @@ enum ListHolder {
 }
 
 #[derive(Copy, Clone)]
-enum BodyWithoutList {
-    Expression(FnId, ExprId),
-    Statement(StmtId, StmtId),
+enum Place {
+    BehindStatement(ListHolder, StmtId),
+    TestOfCase(CaseId),
+    ExpressionOfFunction(FnId, ExprId),
+    OnlyStatementOfLoop(StmtId, StmtId),
+    Head(FnId),
 }
 
-fn body_in_scope_of_head(kind: StmtKind) -> Option<StmtId> {
-    match kind {
-        StmtKind::For { body, .. }
-        | StmtKind::ForIn { body, .. }
-        | StmtKind::ForOf { body, .. } => Some(body),
-        _ => None,
+struct PlaceInFile {
+    start: u32,
+    end: u32,
+    place: Place,
+    around: u32,
+}
+
+struct Places(Vec<PlaceInFile>);
+
+impl Places {
+    const NOTHING_AROUND: u32 = u32::MAX;
+
+    fn new(file: &FileBuilder) -> Places {
+        let mut places = Vec::new();
+        let around = Places::NOTHING_AROUND;
+        let mut add = |start: u32, end: u32, place: Place| {
+            if start < end {
+                places.push(PlaceInFile {
+                    start,
+                    end,
+                    place,
+                    around,
+                });
+            }
+        };
+        let blocks = (0..file.stmts.len() as u32).map(|id| ListHolder::Block(StmtId(id)));
+        let cases = (0..file.cases.len() as u32).map(|id| ListHolder::Case(CaseId(id)));
+        let functions = (0..file.fns.len() as u32).map(|id| ListHolder::Function(FnId(id)));
+        let namespaces =
+            (0..file.modules.len() as u32).map(|id| ListHolder::Namespace(ModuleId(id)));
+        for holder in blocks.chain(cases).chain(functions).chain(namespaces) {
+            if let ListHolder::Case(case) = holder
+                && file[case].test.is_some()
+            {
+                let test = file[file[case].test];
+                add(test.pos, test.end, Place::TestOfCase(case));
+            }
+            for statement in file.ids(list_of(file, holder)) {
+                let range = file[statement].loc;
+                add(
+                    range.pos,
+                    range.end,
+                    Place::BehindStatement(holder, statement),
+                );
+            }
+        }
+        for (index, function) in file.fns.iter().enumerate() {
+            if let FnBody::Expr(body) = function.body {
+                let place = Place::ExpressionOfFunction(FnId(index as u32), body);
+                add(file[body].pos, file[body].end, place);
+            }
+        }
+        for (index, statement) in file.stmts.iter().enumerate() {
+            if let StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. } = statement.kind
+                && !matches!(file[body].kind, StmtKind::Block(_))
+            {
+                let place = Place::OnlyStatementOfLoop(StmtId(index as u32), body);
+                add(file[body].loc.pos, file[body].loc.end, place);
+            }
+        }
+        for (index, function) in file.fns.iter().enumerate() {
+            let end = match function.body {
+                FnBody::Expr(body) => file[body].pos,
+                FnBody::Block(_) => {
+                    let starts = &file.body_starts;
+                    let at = starts.binary_search_by_key(&(index as u32), |entry| entry.0.0);
+                    at.map_or(function.start, |at| starts[at].1)
+                }
+                FnBody::None => function.start,
+            };
+            add(function.start, end, Place::Head(FnId(index as u32)));
+        }
+        for statement in &file.stmts {
+            match statement.kind {
+                StmtKind::For {
+                    init: head, body, ..
+                }
+                | StmtKind::ForIn {
+                    left: head, body, ..
+                }
+                | StmtKind::ForOf {
+                    left: head, body, ..
+                } if head.is_some() && matches!(file[head].kind, StmtKind::Var(_)) => {
+                    add(
+                        statement.loc.pos,
+                        file[body].loc.pos,
+                        Place::Head(FnId::NONE),
+                    );
+                }
+                StmtKind::Try { param, .. } if param.is_some() => {
+                    add(
+                        file[param].loc.pos,
+                        file[param].loc.end,
+                        Place::Head(FnId::NONE),
+                    );
+                }
+                _ => {}
+            }
+        }
+        places.sort_by_u32(|place| place.start);
+        let mut open: Vec<u32> = Vec::new();
+        for index in 0..places.len() {
+            let start = places[index].start;
+            while open
+                .last()
+                .is_some_and(|&last| places[last as usize].end <= start)
+            {
+                open.pop();
+            }
+            places[index].around = open.last().copied().unwrap_or(Places::NOTHING_AROUND);
+            open.push(index as u32);
+        }
+        Places(places)
+    }
+
+    fn find_innermost_around(&self, function: FnId, position: u32) -> Option<usize> {
+        let behind = self.0.partition_point(|place| place.start <= position);
+        let mut at = behind.checked_sub(1)?;
+        loop {
+            let found = &self.0[at];
+            let is_own_head = matches!(found.place, Place::Head(of) if of == function);
+            if position < found.end && !is_own_head {
+                return Some(at);
+            }
+            if found.around == Places::NOTHING_AROUND {
+                return None;
+            }
+            at = found.around as usize;
+        }
+    }
+}
+
+fn list_of(file: &FileBuilder, holder: ListHolder) -> IdList<StmtId> {
+    match holder {
+        ListHolder::Block(block) => match file[block].kind {
+            StmtKind::Block(list) => list,
+            _ => IdList::EMPTY,
+        },
+        ListHolder::Case(case) => file[case].body,
+        ListHolder::Function(function) => match file[function].body {
+            FnBody::Block(list) => list,
+            FnBody::None | FnBody::Expr(_) => IdList::EMPTY,
+        },
+        ListHolder::Namespace(namespace) => file[namespace].body,
     }
 }
 
@@ -122,6 +267,12 @@ impl SourceRanges {
     }
 }
 
+fn top_level_statements_by_position(file: &FileBuilder) -> Vec<TextRange> {
+    let mut ranges: Vec<TextRange> = file.ids(file.body).map(|id| file[id].loc).collect();
+    ranges.sort_by_u32(|range| range.pos);
+    ranges
+}
+
 fn find_written_type_arguments(file: &FileBuilder) -> FxHashMap<(u32, u32), ListAt<TypeNodeId>> {
     let mut found = FxHashMap::default();
     for expression in &file.exprs {
@@ -145,7 +296,10 @@ impl<'a, 's> TreeWriter<'a, 's> {
             written_type_arguments: find_written_type_arguments(&file),
             source_ranges: SourceRanges::new(&file),
             item_names: FxHashMap::default(),
-            outlined_into_lists: FxHashSet::default(),
+            top_level_statements: top_level_statements_by_position(&file),
+            places: None,
+            outlined_into_lists: Vec::new(),
+            new_body_starts: Vec::new(),
             file,
             atoms,
             jsx,
@@ -166,11 +320,12 @@ impl<'a, 's> TreeWriter<'a, 's> {
         let params = self.write_parameters(compiled.parameters, compiled.flags, original.params)?;
         let mut body = self.write_statement_list(compiled.body)?;
         let this_param = self.write_this_parameter(original.kind, first_expression, original.start);
+        let mut statements: Vec<StmtId> = self.file.ids(body).collect();
         for statement in compiled.outlined {
-            if let Some(declaration) = self.write_outlined_function(statement, function)? {
-                let statements: Vec<StmtId> = self.file.ids(body).chain([declaration]).collect();
-                body = self.file.list(&statements);
-            }
+            statements.extend(self.write_outlined_function(statement, function)?);
+        }
+        if statements.len() > body.len() {
+            body = self.file.list(&statements);
         }
         if self.function.has_unknown_symbol {
             return Err(UnsupportedNode("symbol without a name"));
@@ -201,6 +356,9 @@ impl<'a, 's> TreeWriter<'a, 's> {
     }
 
     pub(super) fn into_file(mut self, arena: &'s Arena, format: ModuleFormat) -> File<'s> {
+        self.lay_outlined_functions_into_lists();
+        self.file.body_starts.append(&mut self.new_body_starts);
+        self.file.body_starts.sort_by_u32(|entry| entry.0.0);
         self.items.write(&mut self.file, self.atoms, format);
         finish_file(self.file, arena, self.atoms)
     }
@@ -292,8 +450,9 @@ impl<'a, 's> TreeWriter<'a, 's> {
     }
 
     fn last_position_of_top_level_statement_at(&self, position: u32) -> u32 {
-        let mut statements = self.file.ids(self.file.body).map(|id| self.file[id].loc);
-        let around = statements.find(|range| range.pos <= position && position < range.end);
+        let statements = &self.top_level_statements;
+        let around = statements.get(statements.partition_point(|range| range.end <= position));
+        let around = around.filter(|range| range.pos <= position);
         around.map_or(position, |range| range.end - 1)
     }
 
@@ -330,170 +489,87 @@ impl<'a, 's> TreeWriter<'a, 's> {
             return Err(UnsupportedNode::statement(statement.data.tag()));
         };
         let declaration = self.write_function_declaration(&outlined.func, statement.loc)?;
-        let position = self.file[outlined_from].start;
-        self.give_list_to_innermost_body_around(position);
-        let (holder, index, start) = self.find_statement_around(position);
-        if self.stands_in_head_behind(start, outlined_from) {
-            return Ok(Some(declaration));
-        }
-        match holder {
-            ListHolder::File => self.items.outlined.push(declaration),
-            holder => {
-                let mut statements: Vec<StmtId> = self.file.ids(self.list_of(holder)).collect();
-                let earlier = statements[index..].iter();
-                let earlier = earlier.take_while(|it| self.outlined_into_lists.contains(it));
-                statements.insert(index + earlier.count(), declaration);
-                self.outlined_into_lists.insert(declaration);
-                let list = self.file.list(&statements);
-                match holder {
-                    ListHolder::File => unreachable!(),
-                    ListHolder::Block(block) => self.file[block].kind = StmtKind::Block(list),
-                    ListHolder::Case(case) => self.file[case].body = list,
-                    ListHolder::Function(function) => {
-                        self.file[function].body = FnBody::Block(list);
-                    }
-                    ListHolder::Namespace(namespace) => self.file[namespace].body = list,
-                }
+        match self.find_place_around(outlined_from) {
+            None => self.items.outlined.push(declaration),
+            Some(Place::Head(_)) => return Ok(Some(declaration)),
+            Some(Place::TestOfCase(case)) => {
+                let in_front = (ListHolder::Case(case), StmtId::NONE, declaration);
+                self.outlined_into_lists.push(in_front);
+            }
+            Some(Place::BehindStatement(holder, statement)) => {
+                self.outlined_into_lists
+                    .push((holder, statement, declaration));
+            }
+            Some(Place::ExpressionOfFunction(..) | Place::OnlyStatementOfLoop(..)) => {
+                unreachable!()
             }
         }
         Ok(None)
     }
 
-    fn give_list_to_innermost_body_around(&mut self, position: u32) {
-        let file = &self.file;
-        let mut innermost = (self.find_statement_around(position).2, None);
-        let mut look_at = |pos: u32, end: u32, body: BodyWithoutList| {
-            if pos <= position && position < end && pos >= innermost.0 {
-                innermost = (pos, Some(body));
-            }
-        };
-        for (index, function) in file.fns.iter().enumerate() {
-            if let FnBody::Expr(body) = function.body {
-                let function = FnId(index as u32);
-                look_at(
-                    file[body].pos,
-                    file[body].end,
-                    BodyWithoutList::Expression(function, body),
-                );
-            }
-        }
-        for (index, statement) in file.stmts.iter().enumerate() {
-            if let Some(body) = body_in_scope_of_head(statement.kind)
-                && !matches!(file[body].kind, StmtKind::Block(_))
-            {
-                let range = file[body].loc;
-                look_at(
-                    range.pos,
-                    range.end,
-                    BodyWithoutList::Statement(StmtId(index as u32), body),
-                );
-            }
-        }
-        match innermost.1 {
-            None => {}
-            Some(BodyWithoutList::Expression(function, body)) => {
-                self.add_body_start(function);
-                let (pos, end) = (self.file[body].pos, self.file[body].end);
-                let returned = self.file.add_stmt_node(hir::Stmt {
-                    kind: StmtKind::Return(body),
-                    start: pos,
-                    loc: TextRange { pos, end },
-                });
-                self.file[function].body = FnBody::Block(self.file.list(&[returned]));
-            }
-            Some(BodyWithoutList::Statement(holder, body)) => {
-                let kind = StmtKind::Block(self.file.list(&[body]));
-                let written = self.file[body];
-                let block = self.file.add_stmt_node(hir::Stmt { kind, ..written });
-                match &mut self.file[holder].kind {
-                    StmtKind::For { body, .. }
-                    | StmtKind::ForIn { body, .. }
-                    | StmtKind::ForOf { body, .. } => *body = block,
-                    _ => unreachable!(),
+    fn find_place_around(&mut self, function: FnId) -> Option<Place> {
+        let mut places = (self.places.take()).unwrap_or_else(|| Places::new(&self.file));
+        let at = places.find_innermost_around(function, self.file[function].start);
+        if let Some(at) = at {
+            places.0[at].place = match places.0[at].place {
+                Place::ExpressionOfFunction(arrow, body) => {
+                    self.add_body_start(arrow);
+                    let (pos, end) = (self.file[body].pos, self.file[body].end);
+                    let returned = self.file.add_stmt_node(hir::Stmt {
+                        kind: StmtKind::Return(body),
+                        start: pos,
+                        loc: TextRange { pos, end },
+                    });
+                    self.file[arrow].body = FnBody::Block(self.file.list(&[returned]));
+                    Place::BehindStatement(ListHolder::Function(arrow), returned)
                 }
-            }
+                Place::OnlyStatementOfLoop(holder, body) => {
+                    let kind = StmtKind::Block(self.file.list(&[body]));
+                    let written = self.file[body];
+                    let block = self.file.add_stmt_node(hir::Stmt { kind, ..written });
+                    match &mut self.file[holder].kind {
+                        StmtKind::For { body, .. }
+                        | StmtKind::ForIn { body, .. }
+                        | StmtKind::ForOf { body, .. } => *body = block,
+                        _ => unreachable!(),
+                    }
+                    Place::BehindStatement(ListHolder::Block(block), body)
+                }
+                place => place,
+            };
         }
+        let place = at.map(|at| places.0[at].place);
+        self.places = Some(places);
+        place
     }
 
-    fn stands_in_head_behind(&self, start: u32, function: FnId) -> bool {
-        let file = &self.file;
-        let position = file[function].start;
-        let is_around = |pos: u32, end: u32| start <= pos && pos <= position && position < end;
-        let end_of_head = |index: usize, other: &hir::Func| match other.body {
-            FnBody::Expr(body) => file[body].pos,
-            FnBody::Block(_) => {
-                let starts = &file.body_starts;
-                let at = starts.binary_search_by_key(&(index as u32), |entry| entry.0.0);
-                at.map_or(other.start, |at| starts[at].1)
+    fn lay_outlined_functions_into_lists(&mut self) {
+        let mut holders = Vec::new();
+        let mut outlined: FxHashMap<(ListHolder, StmtId), Vec<StmtId>> = FxHashMap::default();
+        let mut seen = FxHashSet::default();
+        for (holder, statement, declaration) in std::mem::take(&mut self.outlined_into_lists) {
+            if seen.insert(holder) {
+                holders.push(holder);
             }
-            FnBody::None => other.start,
-        };
-        let mut functions = file.fns.iter().enumerate();
-        let mut statements = file.stmts.iter();
-        functions.any(|(index, other)| {
-            index != function.idx() && is_around(other.start, end_of_head(index, other))
-        }) || statements.any(|statement| match statement.kind {
-            StmtKind::For {
-                init: head, body, ..
-            }
-            | StmtKind::ForIn {
-                left: head, body, ..
-            }
-            | StmtKind::ForOf {
-                left: head, body, ..
-            } => {
-                head.is_some()
-                    && matches!(file[head].kind, StmtKind::Var(_))
-                    && is_around(statement.loc.pos, file[body].loc.pos)
-            }
-            StmtKind::Try { param, .. } => {
-                param.is_some() && is_around(file[param].loc.pos, file[param].loc.end)
-            }
-            _ => false,
-        })
-    }
-
-    fn list_of(&self, holder: ListHolder) -> IdList<StmtId> {
-        match holder {
-            ListHolder::File => self.file.body,
-            ListHolder::Block(block) => match self.file[block].kind {
-                StmtKind::Block(list) => list,
-                _ => IdList::EMPTY,
-            },
-            ListHolder::Case(case) => self.file[case].body,
-            ListHolder::Function(function) => match self.file[function].body {
-                FnBody::Block(list) => list,
-                FnBody::None | FnBody::Expr(_) => IdList::EMPTY,
-            },
-            ListHolder::Namespace(namespace) => self.file[namespace].body,
+            let behind = outlined.entry((holder, statement)).or_default();
+            behind.push(declaration);
         }
-    }
-
-    fn find_statement_around(&self, position: u32) -> (ListHolder, usize, u32) {
-        let file = &self.file;
-        let blocks = (0..file.stmts.len() as u32).map(|id| ListHolder::Block(StmtId(id)));
-        let cases = (0..file.cases.len() as u32).map(|id| ListHolder::Case(CaseId(id)));
-        let functions = (0..file.fns.len() as u32).map(|id| ListHolder::Function(FnId(id)));
-        let namespaces =
-            (0..file.modules.len() as u32).map(|id| ListHolder::Namespace(ModuleId(id)));
-        let mut innermost = (ListHolder::File, 0, 0);
-        for holder in blocks.chain(cases).chain(functions).chain(namespaces) {
-            if let ListHolder::Case(case) = holder
-                && file[case].test.is_some()
-            {
-                let test = file[file[case].test];
-                if test.pos <= position && position < test.end && test.pos >= innermost.2 {
-                    innermost = (holder, 0, test.pos);
-                }
+        for holder in holders {
+            let in_front = outlined.remove(&(holder, StmtId::NONE));
+            let mut statements = in_front.unwrap_or_default();
+            for statement in self.file.ids(list_of(&self.file, holder)) {
+                statements.push(statement);
+                let behind = outlined.get(&(holder, statement));
+                statements.extend(behind.into_iter().flatten());
             }
-            for (index, statement) in file.ids(self.list_of(holder)).enumerate() {
-                let range = file[statement].loc;
-                if range.pos <= position && position < range.end && range.pos >= innermost.2 {
-                    innermost = (holder, index + 1, range.pos);
-                }
+            let list = self.file.list(&statements);
+            match holder {
+                ListHolder::Block(block) => self.file[block].kind = StmtKind::Block(list),
+                ListHolder::Case(case) => self.file[case].body = list,
+                ListHolder::Function(function) => self.file[function].body = FnBody::Block(list),
+                ListHolder::Namespace(namespace) => self.file[namespace].body = list,
             }
         }
-        innermost
     }
 
     fn add_body_start(&mut self, function: FnId) {
@@ -502,9 +578,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
             FnBody::None | FnBody::Block(_) => {}
             FnBody::Expr(expression) => {
                 let start = self.file[expression].pos;
-                let starts = &mut self.file.body_starts;
-                let at = starts.partition_point(|entry| entry.0 < function);
-                starts.insert(at, (function, start));
+                self.new_body_starts.push((function, start));
             }
         }
     }

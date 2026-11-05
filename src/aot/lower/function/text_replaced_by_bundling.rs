@@ -3,9 +3,8 @@ use bun_sema::bind::{Binding, Bound, FnOwner, Parent};
 use bun_sema::erasure::ReplacedText;
 use bun_sema::fold::{Constant, Decision, Decisions};
 use bun_sema::hir::{
-    BinOp, Branches, ExprId, ExprKind, File, FnBody, FnKind, IdList, PatId, PatKind, PropKind,
-    StmtId, StmtKind, UnOp, VarKind, end_of_expr, is_parenthesized, start_inside_parentheses,
-    start_of,
+    BinOp, ExprId, ExprKind, File, FnBody, FnKind, IdList, PatId, PatKind, PropKind, StmtId,
+    StmtKind, UnOp, VarKind, end_of_expr, is_parenthesized, start_inside_parentheses, start_of,
 };
 use bun_sema::hir_from_data::DataValue;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -16,6 +15,7 @@ pub(super) fn find_text_replaced_by_bundling<'s>(
     decisions: &Decisions<'s>,
     atoms: &Interner<'s>,
     values_first_in_text: Vec<(ExprId, u8)>,
+    counts_executions: bool,
 ) -> Vec<ReplacedText> {
     let mut finder = Finder {
         hir,
@@ -24,18 +24,21 @@ pub(super) fn find_text_replaced_by_bundling<'s>(
         atoms,
         replaced: Vec::new(),
         kept_alone: FxHashMap::default(),
-        printed_as_constants: FxHashMap::default(),
         opened: FxHashSet::default(),
         defined_at_heads: FxHashSet::default(),
         values_first_in_text,
     };
     finder.add_branches_of_statements();
-    let folded = finder.find_operators_printed_as_one_operand();
+    let folded = match counts_executions {
+        true => Vec::new(),
+        false => finder.find_operators_printed_as_one_operand(),
+    };
     finder.add_parentheses_at_heads(&folded);
     for &expression in &folded {
         finder.add_operator_printed_as_one_operand(expression);
     }
     finder.add_defined_names();
+    finder.end_prologues();
     finder.replaced
 }
 
@@ -46,7 +49,6 @@ struct Finder<'a, 's> {
     atoms: &'a Interner<'s>,
     replaced: Vec<ReplacedText>,
     kept_alone: FxHashMap<ExprId, ExprId>,
-    printed_as_constants: FxHashMap<ExprId, Constant>,
     opened: FxHashSet<ExprId>,
     defined_at_heads: FxHashSet<ExprId>,
     values_first_in_text: Vec<(ExprId, u8)>,
@@ -151,6 +153,7 @@ impl Finder<'_, '_> {
                 }
             }
         }
+        declared.retain(|_, names| !names.is_empty());
         declared
     }
 
@@ -228,33 +231,11 @@ impl Finder<'_, '_> {
         folded.sort_unstable();
         folded.dedup();
         folded.retain(|&expression| {
-            let printed = match hir[expression].kind {
-                ExprKind::Binary {
-                    op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
-                    left,
-                    right,
-                } => match decisions.is_dead_expr(right) {
-                    true => Some(left),
-                    false => self.is_always_right_operand(op, left).then_some(right),
-                },
-                ExprKind::Cond { branches, .. } => {
-                    let Branches { yes, no } = hir.branches(branches);
-                    match (decisions.is_dead_expr(yes), decisions.is_dead_expr(no)) {
-                        (true, false) => Some(no),
-                        (false, true) => Some(yes),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            let Some(printed) = printed else {
+            let Some(printed) = decisions.find_operand_alone_in_bun_run(hir, expression) else {
                 return false;
             };
             if !matches!(hir[expression].kind, ExprKind::Binary { left, .. } if left == printed) {
                 self.kept_alone.insert(expression, printed);
-            }
-            if let Some(constant) = self.find_written_or_defined(printed) {
-                self.printed_as_constants.insert(expression, constant);
             }
             true
         });
@@ -323,7 +304,6 @@ impl Finder<'_, '_> {
             return;
         };
         let is_joined = match self.find_first_byte(head) {
-            Some(b'"' | b'\'') => true,
             Some(b'(' | b'[' | b'`' | b'+' | b'-' | b'/') => {
                 let in_front = hir.ids(statements).take_while(|&it| it != statement);
                 let in_front = in_front.filter(|&it| !hir.is_erased_statement(it)).last();
@@ -334,6 +314,25 @@ impl Finder<'_, '_> {
         if is_joined {
             let start = start_of(hir, head);
             self.replace(start, start, Box::new(*b";"));
+        }
+    }
+
+    fn end_prologues(&mut self) {
+        let hir = self.hir;
+        for function in hir.fns.iter() {
+            let FnBody::Block(statements) = function.body else {
+                continue;
+            };
+            let first = hir.ids(statements).find(|&it| !hir.is_erased_statement(it));
+            let (Some(StmtKind::Expr(head)) | Some(StmtKind::Directive { expr: head, .. })) =
+                first.map(|first| hir[first].kind)
+            else {
+                continue;
+            };
+            if let Some(b'"' | b'\'') = self.find_first_byte(head) {
+                let start = start_of(hir, head);
+                self.replace(start, start, Box::new(*b";"));
+            }
         }
     }
 
@@ -535,42 +534,6 @@ impl Finder<'_, '_> {
             expression = parent;
         }
         false
-    }
-
-    fn is_always_right_operand(&self, op: BinOp, left: ExprId) -> bool {
-        let Some(left) = self.find_written_or_defined(left) else {
-            return false;
-        };
-        match op {
-            BinOp::And => self.is_truthy(left) == Some(true),
-            BinOp::Or => self.is_truthy(left) == Some(false),
-            _ => matches!(left, Constant::Undefined | Constant::Null),
-        }
-    }
-
-    fn find_written_or_defined(&self, expression: ExprId) -> Option<Constant> {
-        match self.hir[expression].kind {
-            ExprKind::Null => Some(Constant::Null),
-            ExprKind::True => Some(Constant::Boolean(true)),
-            ExprKind::False => Some(Constant::Boolean(false)),
-            ExprKind::Unary {
-                op: UnOp::Not,
-                operand,
-            } => {
-                let operand = self.find_written_or_defined(operand)?;
-                Some(Constant::Boolean(!self.is_truthy(operand)?))
-            }
-            ExprKind::Ident(_) | ExprKind::Dot { .. } => {
-                match self.decisions.decision(expression) {
-                    Decision::Constant(constant) => Some(constant),
-                    _ => None,
-                }
-            }
-            ExprKind::Binary { .. } | ExprKind::Cond { .. } => {
-                self.printed_as_constants.get(&expression).copied()
-            }
-            _ => None,
-        }
     }
 
     fn add_defined_names(&mut self) {

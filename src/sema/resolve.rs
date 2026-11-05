@@ -666,6 +666,8 @@ pub struct Options {
     pub skip_default_lib_check: bool,
     /// `noCheck`: only syntax errors are reported.
     pub no_check: bool,
+    /// The project writes `noCheck`. A build reads types, so `no_check` stays off for it, and it looks for no type errors.
+    pub keeps_type_errors_to_itself: bool,
     /// Keeps `hir::FileIn::comments`, which the checker doesn't read. Not a TypeScript option. For
     /// a caller that reads the program's files afterwards.
     pub keeps_comments: bool,
@@ -795,6 +797,8 @@ pub struct Options {
     pub declarations_of_last_resort: Vec<u8>,
     /// Where `/// <reference types>` and an entry of `types` are looked up that are found nowhere else. It is none of `typeRoots`.
     pub type_root_of_last_resort: Option<Vec<u8>>,
+    /// The project has Bun's types installed and its `types` don't name them, so `tsc` doesn't read them. A build does.
+    pub names_bun_types_by_itself: bool,
     /// The declarations of one symbol in several files are considered in the order in which the directories list the files, whichever file refers to which.
     pub orders_files_as_listed: bool,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
@@ -853,6 +857,9 @@ pub struct Options {
     /// Class fields are emitted as in the source: the target supports them and no option overrides
     /// that.
     pub emit_standard_class_fields: bool,
+    /// A build leaves class fields where they are written whatever the target, so the two options above are on for it.
+    /// True where `tsc` would have them off: what it only reports of a field that is defined is not reported.
+    pub defines_class_fields_for_build_alone: bool,
     /// `GetIsolatedModules`: `isolatedModules`, or `verbatimModuleSyntax`.
     pub isolated_modules: bool,
     /// `isolatedModules` itself.

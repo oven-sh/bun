@@ -21,7 +21,9 @@ use crate::compile::EntryPointPaths;
 use crate::load::externals::contains;
 use crate::load::host::LoadHost;
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
-use crate::load::module_paths::compute_relative_path;
+use crate::load::module_paths::{
+    FOLDER_ABOVE_ROOT, compute_relative_path, count_folders, spell_folder_above_root,
+};
 use crate::load::sources::{SourceKind, parsed_source_in};
 use crate::load::{is_host_path, is_in_node_modules};
 use crate::module_keys::is_name_of_text;
@@ -117,7 +119,6 @@ struct FoundSoFar {
     urls_read: FxHashSet<Vec<u8>>,
     entry_points: Vec<(Vec<u8>, FoundEntryPoint)>,
     names_written: Vec<EntryPointPaths>,
-    names_joined: Vec<Vec<u8>>,
 }
 
 struct FileFinders<'f> {
@@ -157,23 +158,30 @@ fn names_directory(text: &[u8]) -> bool {
     matches!(text, [.., b'/'] | [.., b'/', b'.'] | [.., b'/', b'.', b'.'])
 }
 
-pub(crate) fn join_below_root(root: &[u8], relative: &[u8]) -> Vec<u8> {
+fn normalize(relative: &[u8]) -> Vec<&[u8]> {
     let mut kept: Vec<&[u8]> = Vec::new();
     for segment in strings::split(relative, b"/") {
         match (segment, kept.last()) {
             (b"" | b".", _) => {}
-            (b"..", Some(&last)) if last != b"_.._" => {
+            (b"..", Some(&last)) if last != b".." => {
                 kept.pop();
             }
-            (b"..", _) => kept.push(b"_.._"),
+
             _ => kept.push(segment),
         }
     }
-    [root, &kept.join(&b"/"[..])].concat()
+    kept
+}
+
+pub(crate) fn join_below_root(root: &[u8], levels_above_root: usize, relative: &[u8]) -> Vec<u8> {
+    let kept = normalize(relative);
+    let level = kept.iter().take_while(|&&segment| segment == b"..").count();
+    let folder = spell_folder_above_root(root, levels_above_root, level);
+    [&folder[..], &kept[level..].join(&b"/"[..])].concat()
 }
 
 pub(crate) fn name_from_working_directory(relative: &[u8]) -> Vec<u8> {
-    join_below_root(b"./", relative)
+    [b"./", &normalize(relative).join(&b"/"[..])[..]].concat()
 }
 
 pub(crate) fn spell_root_of_executable(paths: &PathOptions) -> Vec<u8> {
@@ -520,13 +528,14 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             };
         }
         let root = spell_root_of_executable(paths);
+        let levels = count_folders(&paths.root_directory);
         let is_written_down = !names_directory(text);
-        if let Some(on_disk) = find_file_named_as_in_executable(paths, text) {
+        if let Some(on_disk) = find_file_named_as_in_executable(paths, 0, text) {
             let below_root = compute_relative_path(&paths.root_directory, &on_disk);
             let below_root = below_root.filter(|_| is_written_down);
             return Some(NamedFile {
                 path: from_here(&on_disk)?,
-                written_down_as: below_root.map(|it| join_below_root(&root, &it)),
+                written_down_as: below_root.map(|it| join_below_root(&root, levels, &it)),
             });
         }
         if !is_bare && !is_relative_path(text) {
@@ -553,7 +562,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         };
         let written_down_as = match is_from_here {
             true => name_from_working_directory(&looked_for),
-            false => join_below_root(&root, &looked_for),
+            false => join_below_root(&root, levels, &looked_for),
         };
         Some(NamedFile {
             path,
@@ -614,7 +623,8 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         }
         let below_root = compute_relative_path(&paths.root_directory, to_native(directory))?;
         let root = spell_root_of_executable(paths);
-        let folder = join_below_root(&root, &below_root);
+        let levels = count_folders(&paths.root_directory);
+        let folder = join_below_root(&root, levels, &below_root);
         let floor = usize::from(!root.starts_with(b"/"));
         let is_named = |folder: &&[u8]| !folder.is_empty();
         let mut kept: Vec<&[u8]> = strings::split(&folder, b"/").filter(is_named).collect();
@@ -630,9 +640,15 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         }
         let of_root: Vec<&[u8]> = strings::split(&root, b"/").filter(is_named).collect();
         let (&name_of_root, above_root) = of_root.split_last()?;
-        if kept.starts_with(above_root) && kept.get(above_root.len()) != Some(&name_of_root) {
+        let mount = kept.get(above_root.len()).copied();
+        if kept.starts_with(above_root)
+            && ![name_of_root, FOLDER_ABOVE_ROOT].map(Some).contains(&mount)
+        {
             let place = above_root.len();
-            kept.splice(place..place, [name_of_root, b"_.._"]);
+            kept.splice(
+                place..place,
+                core::iter::repeat_n(FOLDER_ABOVE_ROOT, levels),
+            );
         }
         let start: &[u8] = if floor == 0 { b"/" } else { b"" };
         Some([start, &kept.join(&b"/"[..])].concat())
@@ -770,13 +786,9 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 Named::ByName(question) if found.asked.contains_key(&question) => continue,
                 Named::ByName(question) => {
                     let files = self.answer(&finders, &question);
-                    let written_before = found.names_written.len();
+
                     let paths = self.write_down_names(files, &mut found.names_written);
-                    if matches!(question.read_as, ReadAs::PathFromOwnFolder | ReadAs::Url) {
-                        let joined = found.names_written[written_before..].iter();
-                        let joined = joined.map(|it| it.public_path.clone());
-                        found.names_joined.extend(joined);
-                    }
+
                     (paths, None, Some(question))
                 }
                 Named::File {
@@ -883,10 +895,6 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         take(&mut self.found.lock().names_written)
     }
 
-    pub(crate) fn take_names_joined(&self) -> Vec<Vec<u8>> {
-        take(&mut self.found.lock().names_joined)
-    }
-
     pub(crate) fn finish(
         mut self,
         files: &Files<'_>,
@@ -981,21 +989,25 @@ mod tests {
         let rows: [(&[u8], &[u8]); 5] = [
             (b"./w.ts", b"/$bunfs/root/w.ts"),
             (b"./a/../lib//w", b"/$bunfs/root/lib/w"),
-            (b"../lib/w.ts", b"/$bunfs/root/_.._/lib/w.ts"),
-            (b"./a/../../../w.ts", b"/$bunfs/root/_.._/_.._/w.ts"),
+            (b"../lib/w.ts", b"/$bunfs/_.._/_.._/_.._/lib/w.ts"),
+            (b"./a/../../../w.ts", b"/$bunfs/_.._/_.._/w.ts"),
             (
                 b"node_modules/a-package",
                 b"/$bunfs/root/node_modules/a-package",
             ),
         ];
         for (relative, expected) in rows {
-            assert_eq!(join_below_root(b"/$bunfs/root/", relative), expected);
+            assert_eq!(join_below_root(b"/$bunfs/root/", 3, relative), expected);
         }
+        assert_eq!(
+            join_below_root(b"/$bunfs/root/", 1, b"../../w.ts"),
+            b"/$bunfs/root/_.._/_.._/w.ts"
+        );
         assert_eq!(
             name_from_working_directory(b"./src/../src/w.ts"),
             b"./src/w.ts"
         );
-        assert_eq!(name_from_working_directory(b"../w.ts"), b"./_.._/w.ts");
+        assert_eq!(name_from_working_directory(b"../w.ts"), b"./../w.ts");
     }
 
     #[test]

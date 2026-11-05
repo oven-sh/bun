@@ -13,20 +13,24 @@ import "./one-of-module";
 
 // FILE: none-of-function.tsx
 /** @jsxImportSource ./as-function */
+// @ts-expect-error
 const unused = <a />;
 console.log("none");
 
 // FILE: none-of-module.tsx
 /** @jsxImportSource ./as-module */
+// @ts-expect-error
 const unused = <a />;
 console.log("none");
 
 // FILE: one-of-function.tsx
 /** @jsxImportSource ./as-function */
+// @ts-expect-error
 console.log(<a />);
 
 // FILE: one-of-module.tsx
 /** @jsxImportSource ./as-module */
+// @ts-expect-error
 console.log(<a />);
 
 // FILE: as-function/jsx-dev-runtime.js

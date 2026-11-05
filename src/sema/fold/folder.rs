@@ -125,6 +125,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) conditions: Conditions,
     pub(super) short_circuited_links: PositionSet,
     pub(super) goes_on_to_the_right: Vec<ExprId>,
+    pub(super) stands_alone_in_bun_run: PositionSet,
     pub(super) is_main_of_import_meta_written: OnceCell<bool>,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
     pub(super) strings_over_limit: Vec<ExprId>,
@@ -185,6 +186,7 @@ pub(super) fn run<'s>(
         conditions: Conditions::new(hir.exprs.len()),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
         goes_on_to_the_right: Vec::new(),
+        stands_alone_in_bun_run: PositionSet::new(hir.exprs.len()),
         is_main_of_import_meta_written: OnceCell::new(),
         call_errors: Vec::new(),
         strings_over_limit: Vec::new(),
@@ -461,6 +463,7 @@ impl<'s> Folder<'_, 's> {
                 arena,
             ),
             goes_on_to_the_right: slice_in(&self.goes_on_to_the_right, arena),
+            stands_alone_in_bun_run: NodeBits::freeze(&self.stands_alone_in_bun_run, arena),
             folded_with: *self.inputs,
         };
         let call_errors = self.call_errors.iter();

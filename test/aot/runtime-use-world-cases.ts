@@ -131,7 +131,13 @@ group("an object of the program's own, read by a computed key", () => {
   const key = `const key: string = process.argv[2];\n`;
   const table = `const table = { home: () => "home", about: () => "about" };\n`;
   const called = `const found = (table as any)[key];\nconsole.log(found ? found() : "none");`;
-  const judged = async (text: string, entryPoint = "main.ts") => {
+  const judgedOnce = new Map<string, ReturnType<typeof judgedAnew>>();
+  const judged = (text: string, entryPoint = "main.ts") => {
+    let once = judgedOnce.get(entryPoint + text);
+    if (!once) judgedOnce.set(entryPoint + text, (once = judgedAnew(text, entryPoint)));
+    return once;
+  };
+  const judgedAnew = async (text: string, entryPoint: string) => {
     const use = await runtimeUse(
       { [entryPoint]: (entryPoint.endsWith(".ts") ? declared + key : `const key = process.argv[2];\n`) + text },
       undefined,
@@ -162,18 +168,23 @@ group("an object of the program's own, read by a computed key", () => {
     expect(await judged(text)).toEqual({ usesEveryMember: false, exitCode: 0 });
   });
 
-  test.failing.each([
+  const countAsUsingEveryMemberToday = [
     ["the result is called in place and awaited", `${table}console.log(await (table as any)[key]());\nexport {};`],
     [
       "a member says this, and the result is called in place",
       `const table = { home() { return this; } };\n(table as any)[key]();`,
     ],
-  ])(
+  ];
+  test.failing.each(countAsUsingEveryMemberToday)(
     "only the members of Object.prototype may be used where %s (not yet: every member of the built-in objects counts as used)",
     async (_, text) => {
       expect(await judged(text)).toEqual({ usesEveryMember: false, exitCode: 0 });
     },
   );
+  // A case that is marked fails for whatever reason. That the build ends well is asked here, of the same build.
+  test.each(countAsUsingEveryMemberToday)("the build ends well where %s", async (_, text) => {
+    expect((await judged(text)).exitCode).toBe(0);
+  });
 
   const inherited = ["__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"].map(
     name => "property " + name,
@@ -285,6 +296,14 @@ group("Bun.serve for the exports of the entry point", () => {
         "main.cjs": `Object.defineProperty(exports, "__esModule", { value: true });\nexports.default = { then(settle) { settle({ port: 0, fetch() { return new Response("pong"); } }); } };`,
       },
     ],
+    [
+      "export * from a CommonJS module that exports a server's configuration and no then",
+      {
+        "main.ts": `export * from "./service.cjs";`,
+        "service.cjs": `exports.default = { port: 0, fetch() { return new Response("pong"); } };\nexports.fetch = exports.default.fetch;`,
+      },
+    ],
+    ["a default export that has none of the names that are looked for", { "main.ts": `export default { port: 0, routes: {} };` }],
   ])("is not used with %s", async (_, files) => {
     expect(await judged(files)).toEqual({ serves: false, mayServe: false, first: closed.first, exitCode: 0 });
   });
@@ -590,8 +609,14 @@ group("what --trim removes", () => {
     ).toEqual({ stdout: "hello\n", exitCode: 0, removesUnusedFeatures: false });
   });
 
+  const builtOnceWith = new Map<string, ReturnType<typeof built>>();
+  const builtWith = (option: string) => {
+    let once = builtOnceWith.get(option);
+    if (!once) builtOnceWith.set(option, (once = built({ "main.ts": main }, ["main.ts", "--compile-exec-argv=" + option])));
+    return once;
+  };
   const removesWhatIsUnusedWith = async (option: string) => {
-    expect(await built({ "main.ts": main }, ["main.ts", "--compile-exec-argv=" + option])).toEqual({
+    expect(await builtWith(option)).toEqual({
       stdout: "hello\n",
       exitCode: 0,
       removesUnusedFeatures: true,
@@ -605,6 +630,11 @@ group("what --trim removes", () => {
     "--compile-exec-argv=--sql-preconnect: the features the program does not use: HTMLRewriter stays, 1 feature for 0",
     () => removesWhatIsUnusedWith("--sql-preconnect"),
   );
+  // A case that is marked fails for whatever reason. That the program is built and answers is asked here, of the same build.
+  test("--compile-exec-argv=--sql-preconnect: the program is built and answers all the same", async () => {
+    const { stdout, exitCode } = await builtWith("--sql-preconnect");
+    expect({ stdout, exitCode }).toEqual({ stdout: "hello\n", exitCode: 0 });
+  });
 
   test("--compile-exec-argv=--trace-exitx takes a module of the library that the image does not have: no build", async () => {
     expect(built({ "main.ts": main }, ["main.ts", "--compile-exec-argv=--trace-exitx"])).rejects.toThrow(

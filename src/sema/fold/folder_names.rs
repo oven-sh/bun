@@ -315,6 +315,17 @@ impl<'s> Folder<'_, 's> {
         order.is_read_behind(self.hir, ident, init)
     }
 
+    pub(super) fn is_constant_read_behind_its_declaration(&self, read: ExprId) -> bool {
+        let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+            (self.hir[read].kind, self.bound.binding(read))
+        else {
+            return false;
+        };
+        let kind = self.bound.binding_kind(symbol);
+        let initializer = self.find_only_initializer(read, symbol, kind);
+        kind == BindingKind::Const && initializer.is_some_and(|it| self.is_read_behind(read, it))
+    }
+
     fn fold_const_read(&mut self, ident: ExprId, symbol: SymbolId, kind: BindingKind) -> Folded {
         let init = match kind {
             BindingKind::Const | BindingKind::Let | BindingKind::Var => {

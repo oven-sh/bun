@@ -98,8 +98,9 @@ pub(super) fn load_code_file<'s, 'r>(
         let was_script =
             is_script_for_project && !tree.hir.has_module_syntax && !imports_jsx_factory;
         mark_as_module(&mut tree.hir);
+        tree.hir.is_script_for_project = was_script && tree.hir.is_forced_module;
         tree.hir.is_script_with_code =
-            was_script && tree.hir.is_forced_module && tree.hir.declares_beside_code();
+            tree.hir.is_script_for_project && tree.hir.declares_beside_code();
     }
     if tree.hir.text.is_empty() && tree.hir.source_len as usize == tree.text.len() {
         tree.hir.text = std::mem::take(&mut tree.text);

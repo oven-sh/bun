@@ -1,18 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK: [[first]] = PropGet {{*}}key="first"
-// CHECK-NEXT: Call {{*}}, [[first]] calleeName="made"
-// CHECK: PropGet {{*}}key="second"
-// CHECK: [[third]] = PropGet {{*}}key="third"
-// CHECK-NEXT: Call {{*}}, [[third]] calleeName="made"
-// CHECK: [[fourth]] = PropGet {{*}}key="fourth"
-// CHECK-NEXT: Call {{*}}, [[fourth]] calleeName="made"
-// CHECK: [[fifth]] = PropGet {{*}}key="fifth"
-// CHECK-NEXT: Call {{*}}, [[fifth]] calleeName="made"
-// CHECK-LABEL: function {{*}}name="plain"
+// DIAGNOSTIC: TS2339 5
 
-// A type error stops no build. The decorators of a method are evaluated with the class, also where nobody calls the method: each read of a member that `number` lacks stands in the body of the module.
+// A type error stops the build wherever it stands in code that runs. The decorators of a method are evaluated with the class, also where nobody calls the method.
 const plain = (value: unknown, context: unknown) => {};
 const made = (option: unknown) => (value: unknown, context: unknown) => {};
 class Decorated {

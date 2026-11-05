@@ -1,12 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// CHECK: [[color]] = CheckInitialized {{*}} name="Color"
-// CHECK-NEXT: = PropGet [[color]] key="Red"
-// CHECK: [[shade]] = CheckInitialized {{*}} name="Shade"
-// CHECK-NEXT: = PropGet [[shade]] key="Dark"
+// DIAGNOSTIC: TS18055 1
+// DIAGNOSTIC: TS2686 1
+// DIAGNOSTIC: TS2748 1
 
 // FILE: main.ts
-// isolatedModules and allowUmdGlobalAccess apply only to the package whose tsconfig.json sets them: for TypeScript the same code has three errors in strict/ and none in loose/. They are errors of the type checker, and a build reports none.
+// isolatedModules and allowUmdGlobalAccess apply only to the package whose tsconfig.json sets them: the same code has three errors in strict/ and none in loose/.
 import { Color } from "./strict/colors.ts";
 import { Shade } from "./loose/shades.ts";
 console.log(Color.Red, Shade.Dark);

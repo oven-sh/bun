@@ -22,7 +22,7 @@ function quiet(o: any) { if (o.flag) { } return reads; }
 function same(o: any, v: unknown) { const x = o.flag ? v : v; return x; }
 function differs(o: any, v: unknown) { const x = o.flag ? v : "other"; return x; }
 function some(o: any) { let seen = "none"; switch (o.kind) { case 1: break; case 2: seen = "two"; break; case 3: break; } return seen; }
-function none(o: any) { switch (o.kind) { case "a": break; case "b": break; } return reads; }
+function none(o: any) { switch (o.kind) { case "a": break; case "b": break; } return reads; } // @ts-expect-error
 function falls(o: any) { let seen = ""; switch (o.kind) { case 1: case 2: seen += "low"; case 3: break; default: seen += "rest"; } return seen; }
 function oneSide(o: any) { let seen = "none"; if (o.flag) { reads += 1000; } return seen + reads; }
 function readsOnOneSide(o: any, other: any) { if (o.flag) { other.flag; } return reads; }

@@ -529,6 +529,8 @@ public:
     std::optional<unsigned> compiledModuleThatNeverRan;
     // The test file that made that load, or that laid the mock over a compiled module that had run: what testFileOfModule says of a module that the loader fetched. 0 for a preload.
     unsigned testFileOfFirstLoad { 0 };
+    // It was laid over a mock that stood on a compiled module while an importer of the module was linked and had yet to run: everybody gets this mock.
+    bool patchesStandingMock { false };
     // The factory failed behind an await. Whoever waited for it asks again and is handed this, once: runCompiledMock().
     WriteBarrier<Unknown> errorOfLateFailure;
     // Calls of import() for the module itself that wait for the run of the factory that is under way: in `bun test` they share one fetch, and so its failure.
@@ -1409,8 +1411,10 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         String path = specifier->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto compiled = isBuiltinModuleKey(path) ? std::nullopt : JSC::AOT::formThatMockFinds(globalObject, path, Bun::moduleThatMockReplaces(path));
-        if (compiled && JSC::AOT::hasBegunToLoad(globalObject, *compiled) && !JSC::AOT::hasMockInPlace(globalObject, *compiled)) {
-            if (JSC::AOT::isESModule(*compiled) || JSC::AOT::isDataFile(*compiled)) {
+        // This test file loaded the module under the mock of a preload, which still stands: that is what is loaded, so that is the original.
+        bool takesWhatStands = compiled && isOfVitest() && JSC::AOT::wasLoadedUnderMockOfPreloadInThisTestFile(globalObject, *compiled);
+        if (compiled && JSC::AOT::hasBegunToLoad(globalObject, *compiled) && (takesWhatStands || !JSC::AOT::hasMockInPlace(globalObject, *compiled))) {
+            if (takesWhatStands || JSC::AOT::isESModule(*compiled) || JSC::AOT::isDataFile(*compiled)) {
                 JSC::AOT::willRunCopyFromDisk(globalObject);
                 JSObject* exports = JSC::AOT::moduleNamespace(globalObject, *compiled);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -2274,7 +2278,7 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                     answer = defaultValue;
             }
         }
-        bool isInPlace = JSC::AOT::setMock(globalObject, *loaded.compiledModule, mock, answer, mock->isOfVitest());
+        bool isInPlace = JSC::AOT::setMock(globalObject, *loaded.compiledModule, mock, answer, mock->isOfVitest() && !mock->patchesStandingMock);
         RETURN_IF_EXCEPTION(scope, );
         if (isInPlace) {
             if (loaderHoldsMock)
@@ -2325,8 +2329,8 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
         if (!isStillRegisteredModuleMock(globalObject, specifier, registered))
             return;
 
+        static std::atomic<unsigned> patches { 0 };
         if (JSObject* overwritten = moduleNamespaceObject ? mock->originalExports.get() : nullptr) {
-            static std::atomic<unsigned> patches { 0 };
             if (!mock->patchOrder)
                 mock->patchOrder = ++patches;
             for (auto& name : names) {
@@ -2352,9 +2356,8 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
         bool laysOverCompiledModule = loaded.compiledModule && !JSC::AOT::isEvictedFile(globalObject, *loaded.compiledModule);
         if (laysOverCompiledModule) {
             // Two mocks may patch one variable, which two modules export. The last patch is undone first, as above.
-            static std::atomic<unsigned> patchesOfCompiledModules { 0 };
             if (!mock->patchOrder)
-                mock->patchOrder = ++patchesOfCompiledModules;
+                mock->patchOrder = ++patches;
             JSObject* whatRequireAnswers = exports;
             if (commonJSExports) {
                 JSValue moduleExports = commonJSExports->exportsObject();
@@ -3641,6 +3644,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     if (leavesLoadedModuleAlone && loaded.esmNamespace && isImportedByModuleYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
         leavesLoadedModuleAlone = false;
 #if ENABLE(AOT)
+    // The same of a compiled module on which a mock stands: the loader holds nothing of it.
+    mock->patchesStandingMock = leavesLoadedModuleAlone && loaded.compiledModule && JSC::AOT::isStandingMockImportedByModuleYetToRun(globalObject, *loaded.compiledModule, Bun::compiledModuleForPath(callerPath(vm, callframe)));
+    if (mock->patchesStandingMock)
+        leavesLoadedModuleAlone = false;
     // The importers of the module that it stands in place of have run, and nothing loads the module again for them.
     std::optional<unsigned> placeOfMockThatEnds;
     unsigned testFileOfMockThatEnds = 0;
@@ -3778,7 +3785,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         JSC::AOT::deferMock(globalObject, form, mock->importsOriginal ? JSC::AOT::AfterFailure::AsksAgain : JSC::AOT::AfterFailure::KeepsError);
     };
     bool formsWait = false;
-    if (loaded.compiledModule && !placeOfMockThatEnds && !loaded.esmNamespace && !loaded.commonJSModule && (leavesCompiledModuleAlone || !hasLoaded(*loaded.compiledModule))) {
+    // A mock stands on the module, a preload's for one: what was loaded under it keeps it, and the factory waits for the next load, as over a module that has run.
+    bool waitsOverStandingMock = leavesLoadedModuleAlone && mock->factory.get() && loaded.compiledModule && !placeOfMockThatEnds && !loaded.esmNamespace && !loaded.commonJSModule && hasLoaded(*loaded.compiledModule)
+        && JSC::AOT::willLeaveStandingMockAlone(globalObject, *loaded.compiledModule);
+    if (loaded.compiledModule && !placeOfMockThatEnds && !loaded.esmNamespace && !loaded.commonJSModule && (leavesCompiledModuleAlone || waitsOverStandingMock || !hasLoaded(*loaded.compiledModule))) {
         wait(*loaded.compiledModule);
         for (JSC::AOT::ModuleID form : JSC::AOT::formsThatAttributesAskFor(globalObject, specifier))
             wait(form);

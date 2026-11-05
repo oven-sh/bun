@@ -59,7 +59,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
     files: {
       "main.ts":
-        'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst name = Buffer.from("bm9kZTpvcw==", "base64").toString();\nconsole.log(quiet(1), value, typeof process.getBuiltinModule(name).EOL);\n',
+        'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst name = Buffer.from("bm9kZTpvcw==", "base64").toString(); // @ts-expect-error\nconsole.log(quiet(1), value, typeof process.getBuiltinModule(name).EOL);\n',
       "quietFolder/quietBystander.ts": "export const quiet = (n: number) => n + 1;\n",
       "seenFolder/seenSubject.ts": 'export const value = "subject";\n',
     },

@@ -26,3 +26,4 @@ report(await awaitOnOneWay(other as any, 2, 4));
 report(await viewOverAwait(new Float64Array(3), 1.5, 3));
 report(await viewOverAwait([1, 2, 3] as any, 2, 2));
 report("end");
+declare function report(value: unknown): void;

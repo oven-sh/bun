@@ -5,7 +5,7 @@ use super::body_decode::{read_block, read_target, read_terminator, read_value};
 use super::body_walk::walk_body;
 pub use super::generated::Body;
 #[cfg(any(test, feature = "ir_text"))]
-use super::generated::{BlockRole, InternalErrorKind, Opcode, TerminatorKind};
+use super::generated::{BlockFrequency, BlockRole, InternalErrorKind, Opcode, TerminatorKind};
 #[cfg(any(test, feature = "ir_text"))]
 use super::ids::{BlockId, TypeId, ValueId, optional_id_from_word};
 use super::references::{IdMap, Reference, ReferenceKind};
@@ -103,6 +103,7 @@ pub struct BlockView<'a> {
     pub id: BlockId,
     pub first_parameter: ValueId,
     pub role: BlockRole,
+    pub frequency: BlockFrequency,
     pub subject: Option<ValueId>,
     pub(super) parameter_types: &'a [u32],
     pub(super) handler: &'a [u32],

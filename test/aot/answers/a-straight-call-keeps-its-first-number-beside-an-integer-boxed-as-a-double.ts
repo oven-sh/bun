@@ -23,3 +23,4 @@ report(sizeOf(unit));
 report(sizeOf(half));
 main();
 report("end");
+declare function report(value: unknown): void;

@@ -19,3 +19,4 @@ report(b.overflow());
 report(b.swap(new Box().set(3)));
 report(b.get());
 report("end");
+declare function report(value: unknown): void;

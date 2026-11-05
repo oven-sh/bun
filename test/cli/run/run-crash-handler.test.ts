@@ -135,6 +135,7 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
 
     if (approach === "segfault") {
       expect(stderr).toContain("Segmentation fault at address");
+      expect(stderr).toMatch(/^Signal code: SEGV_(MAPERR|ACCERR)$/m);
     } else if (approach === "panic") {
       expect(stderr).toContain("invoked crashByPanic() handler");
     } else if (approach === "abort") {

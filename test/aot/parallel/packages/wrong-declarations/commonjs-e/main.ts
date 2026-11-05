@@ -15,3 +15,6 @@ case V.B: return "B";
 } return "fell out";
 });
 t("keys", () => Object.keys(V));
+/* Build errors:
+error: TS2678: Type 'E.B' is not comparable to type 'E.A'.
+*/

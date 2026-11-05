@@ -9,3 +9,4 @@
 function total(length: number, start: number): number { const view = new Uint8Array(length); for (let k = 0; k < length; k++) view[k] = k * 7; let sum = start; for (let k = 0; k < view.length; k++) sum += view[k]!; return sum; }
 for (const length of [0, 1, 7, 16, 33, 70]) { report(total(length, 0)); report(total(length, 0.5)); report(total(length, 2 ** 53)); report(total(length, -0)); report(total(length, 2147483000)); }
 report("end");
+declare function report(value: unknown): void;

@@ -14,3 +14,4 @@ const a = objects[0];
 for (let i = 0; i < 300; i++) t += a.both() + a.ok() + a.taken();
 report(t);
 report("end");
+declare function report(value: unknown): void;

@@ -25,6 +25,7 @@ async function hasSymbol(path: string, name: string) {
 const accepted = [
   "check=Validate,verify-each-stage",
   "testing=NoExecutable",
+  "testing=TypeErrorsWarn",
   "references=wide",
   "references=narrow",
   // The engine has names for ARM64 CPUs alone.

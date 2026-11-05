@@ -22,3 +22,4 @@ report(make(1000));
 report(kept[3] instanceof Given);
 report(Object.keys(kept[3]).join());
 report("end");
+declare function report(value: unknown): void;

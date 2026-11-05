@@ -414,6 +414,18 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason:
       "`F.arguments`, `F.caller`: the one constructor function of the program that the type of the object names stands in front of the name. The engine answers these two for every function itself, so no member of the class is read there",
   },
+  {
+    paths: /^aot\/codegen\/AOTAccessEmitter\.cpp$/,
+    lines: /key != program\.keyOf\(BuiltinNames::size\)|table\.at\(member\)\.name != BuiltinNames::size/,
+    reason:
+      "`size` of a Map or a Set: the table of built-ins stands in front of the name: the members that hold the two getters are asked whether they go by it and whether a program can replace them. All that follows is which stub a read takes, and that stub asks the object first whether it is a Map or a Set",
+  },
+  {
+    paths: /^aot\/facts\/AOTFactsOfProgram\.cpp$/,
+    lines: /\bprefixOfNode\b/,
+    reason:
+      "the scheme in the path of a module of the library, which is listed with it and without it: what a specifier stands for is a question about a path",
+  },
 ];
 
 /** Why the whole file is allowed, or, given a line of it, why that line is. */

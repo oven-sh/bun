@@ -52,9 +52,10 @@ test("whoever leaves the extension out gets the mock", async () => {
   expect(compiled.exitCode).toBe(0);
 });
 
+// This is a wrong answer and no goal: whoever writes "../dep.ts" gets the mock in a compiled run, and nothing says so. The names say it, so that it is listed as one.
 // TODO(bun): when one of these passes, its `failing` goes.
 test.failing.each(["two-importers", "one-importer"])(
-  "the other spelling of the file is left alone: %s",
+  "the other spelling of the file is left alone: %s: a wrong answer today: under `bun test --aot` it gets the mock too, where `bun test` leaves it alone",
   async folder => {
     const [plain, compiled] = await both();
     expect(of(folder, compiled)).toEqual(of(folder, plain));

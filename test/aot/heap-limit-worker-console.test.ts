@@ -36,7 +36,7 @@ for (const error of thrown) console.${method}("thrown:", error instanceof Error 
 describe("in a Worker whose heap is full", () => {
   const folder = tempDir("aot-heap-limit-worker-console", {
     "program.ts": `import { Worker } from "node:worker_threads";
-const worker = new Worker(process.argv[2] === "log" ? new URL("./log.ts", import.meta.url) : new URL("./error.ts", import.meta.url));
+const worker = new Worker(process.argv[2] === "log" ? new URL("./log.ts", import.meta.url) : new URL("./error.ts", import.meta.url)); // @ts-expect-error
 worker.on("error", error => console.log("the worker ended:", error.constructor.name));
 worker.on("exit", code => console.log("exit", code));
 `,

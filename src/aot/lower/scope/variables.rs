@@ -19,7 +19,10 @@ impl FileLowering<'_, '_, '_, '_> {
             VariableKey::Symbol(symbol)
                 if self.bound.binding_kind(symbol.id) == BindingKind::Import =>
             {
-                self.create_untyped_variable(self.bound.symbol(symbol.id).name)
+                Variable {
+                    flags: VariableFlags::IS_IMMUTABLE,
+                    ..self.create_untyped_variable(self.bound.symbol(symbol.id).name)
+                }
             }
             VariableKey::Symbol(symbol) => self.create_symbol_variable(symbol.id),
             VariableKey::ClassSlot { class, slot } => self.create_class_slot_variable(class, slot),

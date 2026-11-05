@@ -138,6 +138,7 @@ const followed = [
   "named on Bun",
   "taken out of Bun by a pattern",
   "named on a constant",
+  "named on a constant of the module",
   "named on globalThis.Bun",
   "named by a string in brackets",
   "named on require()",

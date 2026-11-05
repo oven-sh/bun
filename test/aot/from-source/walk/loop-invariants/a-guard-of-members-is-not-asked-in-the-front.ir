@@ -3,15 +3,18 @@
 # -- source: main.js
 # const { inherits } = require("node:util");
 # function Shape(a) { this.a = a; }
-# Shape.prototype.first = function () { return this.a; };
+# function Plain() { }
+# Plain.prototype.first = function () { return this.a; };
 # function Round(a, b) { Shape.call(this, a); this.b = b; }
-# inherits(Round, Shape);
+# inherits(Round, Plain);
+# inherits(Shape, Plain);
 # Round.prototype.second = function () { return this.b + this.first(); };
 # function run(count) { let total = 0; for (let i = 0; i < count; i++) { const item = new Round(i & 1023, 2); total += item.second() + item.a; } return total; }
 # console.log(run(1000));
 # -- end of source
-# RUN: walk f3 mechanisms=all
-# CHECK-LABEL: code f3:Body
+# Shape is called by Round and does not stand above it, so what begins the guards of Round in front of the loop does not begin those of Shape.
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
 # CHECK: = BeginMemberGuards
 # CHECK: = BeginMemberGuards
 # CHECK-NEXT: = AreMembersUnchanged {{*}}key="call"

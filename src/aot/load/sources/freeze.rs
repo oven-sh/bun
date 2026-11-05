@@ -18,8 +18,8 @@ use crate::load::loaders::{BY_NAME, loader_by_name};
 use crate::load::module_paths::{
     FileMaps, PathContext, PathInput, are_all_different, check_unique_public_paths,
     collect_entry_point_paths, compute_name_of_module_held_in_part,
-    compute_name_of_third_party_file, compute_public_path, file_ids,
-    find_folder_named_as_parent_is_spelled, is_linkable,
+    compute_name_of_third_party_file, compute_public_path, compute_relative_path,
+    count_levels_above, file_ids, find_folder_named_as_parent_is_spelled, is_linkable,
 };
 use crate::load::project::{PerProject, ProjectId};
 use crate::options::{Options, PathOptions};
@@ -55,6 +55,36 @@ fn with_names_of_found_entry_points<'a>(
     Cow::Owned(paths)
 }
 
+fn count_levels_above_root(input: &FreezeInput<'_, '_>, paths: &PathOptions) -> usize {
+    if input.project != ProjectId::Application || input.options.aot.runs_in_place {
+        return 0;
+    }
+    let files = input.files;
+    let root_directory = &paths.root_directory[..];
+    let level_of = |&file: &FileId| {
+        let source = parsed_source(files, file)?;
+        let is_of_program = matches!(source.kind, SourceKind::Program | SourceKind::Data)
+            && source.plugin_module.is_none()
+            && !files.module(file).is_lib;
+        let with_query = source.file_with_query.as_ref();
+        let file_name = with_query.map_or_else(|| files.module(file).file_name(), |it| &it.file);
+        let native_path = to_native(file_name);
+        let below_root = native_path.strip_prefix(root_directory);
+        if !is_of_program || below_root.is_some_and(|rest| rest.starts_with(b"/")) {
+            return None;
+        }
+        let relative_path = compute_relative_path(root_directory, native_path)?;
+        Some(count_levels_above(&relative_path))
+    };
+    let of_files = files.compiled_files().iter().filter_map(level_of);
+    let of_names = paths.entry_point_names.iter();
+    let of_names = of_names.map(|name| count_levels_above(name));
+    match of_files.chain(of_names).max() {
+        None | Some(0) => 0,
+        Some(highest) => highest + 1,
+    }
+}
+
 pub(crate) fn freeze_sources(
     input: &FreezeInput<'_, '_>,
     in_parallel: InParallel<'_>,
@@ -64,10 +94,13 @@ pub(crate) fn freeze_sources(
     let runs_in_place = input.options.aot.runs_in_place;
     let paths = with_names_of_found_entry_points(&input.options.paths, input.found_entry_points);
     let paths: &PathOptions = &paths;
-    let maps = FileMaps::collect(files, collect_entry_point_paths(runs_in_place, paths));
+    let levels_above_root = count_levels_above_root(input, paths);
+    let entry_point_paths = collect_entry_point_paths(runs_in_place, paths, levels_above_root);
+    let maps = FileMaps::collect(files, entry_point_paths);
     let context = PathContext {
         runs_in_place,
         paths,
+        levels_above_root,
         loaders: &input.options.load.loaders,
         manifest: input.manifest,
         maps: &maps,
@@ -96,6 +129,7 @@ pub(crate) fn freeze_sources(
         entries: all.entries,
         project_root: input.options.load.project_root[..].into(),
         root_of_executable: (!runs_in_place).then(|| paths.module_prefix[..].into()),
+        levels_above_root,
         runtime_module_files: all.runtime_module_files,
         modules_named_at_run_time: input.modules_named_at_run_time.to_vec(),
         web_assembly_files: all.web_assembly_files,

@@ -16,6 +16,13 @@ use bun_sema::program::{FileId, FileRole};
 use bun_sema::util::SharedSort;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+const STOPS_BUILD: (DiagnosticClass, Effect) = (DiagnosticClass::Semantic, Effect::StopsBuild);
+
+const NAMES_BUN_TYPES: (&str, &str) = (
+    "tsconfig.json",
+    r#"{ "compilerOptions": { "strict": true, "noLib": true, "types": ["bun"], "module": "preserve", "moduleResolution": "bundler" } }"#,
+);
+
 struct NoNamedValues;
 
 impl NamedValues for NoNamedValues {
@@ -73,7 +80,7 @@ fn type_errors_are_looked_for_where_the_program_says_what_the_project_says() {
 }
 
 #[test]
-fn early_errors_alone_are_looked_for() {
+fn requested_by_origin() {
     let main_text = r#"import "./a.js";
 import "./b.js";
 const wrong: string = 1;
@@ -85,7 +92,7 @@ const wrong: string = 1;
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let build = check_only(program);
-        assert!(!build.has_diagnostics(program.file("main.ts")));
+        assert_eq!(build.reported(program.file("main.ts"), 2322), [STOPS_BUILD]);
         assert!(!build.has_diagnostics(program.file("a.js")));
         let redeclarations = build.reported(program.file("b.js"), 2451);
         let early_error = (DiagnosticClass::EarlyError, Effect::StopsBuild);
@@ -514,7 +521,8 @@ fn check_generated_program(threads: usize) -> BuildSummary<usize> {
     with_program(&files, &[&entry_point[..]], threads, |program| {
         let build = check(program, &|_, file| file.idx());
         assert_eq!(build.program.lowered.len(), GENERATED_FILE_COUNT);
-        assert!(!build.has_diagnostics(program.file(&generated_name(2))));
+        let second = program.file(&generated_name(2));
+        assert_eq!(build.reported(second, 2322), [STOPS_BUILD]);
         assert!(
             !build
                 .reported(program.file(&generated_name(4)), 2451)
@@ -570,7 +578,7 @@ fn ask_for_member_accesses(files: &[(&str, &str)], threads: usize) -> Vec<Option
                 texts
             })
         });
-        assert_eq!(build.codes(), [0; 0]);
+        assert_eq!(build.codes(), [2339]);
         let lowered = build.program.lowered.into_iter();
         lowered.flat_map(|(_, texts)| texts).collect()
     })
@@ -652,7 +660,7 @@ fn parameters_without_types_in_a_list_of_functions_close_no_cycle() {
 }
 
 #[test]
-fn untyped_package_stops_no_build() {
+fn untyped_package_stops_only_a_project_with_bun_types_installed() {
     for is_installed in [false, true] {
         let folder = match is_installed {
             true => "node_modules/@types/bun".to_owned(),
@@ -676,12 +684,235 @@ fn untyped_package_stops_no_build() {
                 "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
             ),
             (&declarations[..], "declare const Bun: number;\n"),
+            NAMES_BUN_TYPES,
         ];
         let disk = project_disk(&files, 1);
         with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
             let is_brought = matches!(program.loaded.bun_types, BunTypes::Brought);
             assert_eq!(is_brought, !is_installed);
-            assert_eq!(check_only(program).codes(), [0; 0]);
+            let build = check_only(program);
+            let codes: &[u32] = match is_installed {
+                true => &[7016, 7006, 7006, 7006],
+                false => &[],
+            };
+            assert_eq!(build.codes(), codes);
+            assert!(
+                build
+                    .diagnostics()
+                    .all(|it| it.effect == Effect::StopsBuild)
+            );
+        });
+    }
+}
+
+#[test]
+fn brought_declarations_hold_no_program_to_what_is_not_installed() {
+    for is_installed in [false, true] {
+        let folder = match is_installed {
+            true => "node_modules/@types/bun".to_owned(),
+            false => format!("{}/bun", BringsBunTypes::TYPE_ROOT),
+        };
+        let manifest = format!("{folder}/package.json");
+        let declarations = format!("{folder}/index.d.ts");
+        let files = [
+            (
+                "main.ts",
+                "const odd: number = Bun.version;\n\
+                 const kept = Bun.version;\nconst far: number = kept;\n\
+                 Bun.take(1);\nconst take = Bun.take;\ntake(2);\n\
+                 declare const held: Held;\nheld.b;\n\
+                 export const made: Made = Bun.make();\ninterface Made { own: number }\n\
+                 export const wrong: number = \"text\";\nBun.take(missing);\n",
+            ),
+            (
+                &manifest[..],
+                "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
+            ),
+            (
+                &declarations[..],
+                "declare const Bun: { version: string; take(text: string): void; make(): Held };\n\
+                 interface Held { a: number }\n",
+            ),
+        ];
+        for names_them in [false, true] {
+            let with_names = [&files[..], &[NAMES_BUN_TYPES]].concat();
+            let disk = project_disk(if names_them { &with_names } else { &files }, 1);
+            with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
+                let is_held = matches!(program.loaded.bun_types, BunTypes::Installed);
+                assert_eq!(is_held, is_installed && names_them);
+                let codes: &[u32] = match is_held {
+                    true => &[2322, 2322, 2345, 2345, 2339, 2741, 2322, 2304],
+                    false => &[2322, 2304],
+                };
+                assert_eq!(check_only(program).codes(), codes);
+            });
+        }
+    }
+}
+
+#[test]
+fn a_name_of_the_brought_declarations_is_free_for_a_script_of_the_program() {
+    let folder = format!("{}/bun", BringsBunTypes::TYPE_ROOT);
+    let (manifest, declarations) = (
+        format!("{folder}/package.json"),
+        format!("{folder}/index.d.ts"),
+    );
+    let files = [
+        (
+            "main.ts",
+            "type Listeners = { two: number };\ntype Twice = 1;\ntype Twice = 2;\n",
+        ),
+        (
+            &manifest[..],
+            "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
+        ),
+        (&declarations[..], "interface Listeners { one: number }\n"),
+    ];
+    let disk = project_disk(&files, 1);
+    with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
+        assert_eq!(check_only(program).codes(), [2300, 2300]);
+    });
+}
+
+#[test]
+fn what_the_types_of_bun_refer_to_is_brought_with_them() {
+    let manifest = |name: &str| {
+        format!(r#"{{ "name": "{name}", "version": "1.0.0", "types": "index.d.ts" }}"#)
+    };
+    let (of_bun, of_node) = (manifest("@types/bun"), manifest("@types/node"));
+    let files = [
+        ("main.ts", "export const id: number = later();\n"),
+        ("node_modules/@types/bun/package.json", &of_bun[..]),
+        (
+            "node_modules/@types/bun/index.d.ts",
+            "/// <reference types=\"node\" />\n",
+        ),
+        ("node_modules/@types/node/package.json", &of_node[..]),
+        (
+            "node_modules/@types/node/index.d.ts",
+            "declare function later(): { ref(): void };\n",
+        ),
+    ];
+    let names_node = (
+        "tsconfig.json",
+        r#"{ "compilerOptions": { "strict": true, "noLib": true, "types": ["node"] } }"#,
+    );
+    for (names_them, codes) in [(false, &[][..]), (true, &[2322][..])] {
+        let with_names = [&files[..], &[names_node]].concat();
+        let disk = project_disk(if names_them { &with_names } else { &files }, 1);
+        with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
+            assert_eq!(check_only(program).codes(), codes, "{names_them}");
+        });
+    }
+}
+
+#[test]
+fn a_project_that_writes_no_check_is_told_of_early_errors_alone() {
+    let no_check = (
+        "tsconfig.json",
+        r#"{ "compilerOptions": { "strict": true, "noLib": true, "types": [], "noCheck": true } }"#,
+    );
+    let wrong = ("main.ts", "export const weight: number = \"three\";\n");
+    with_look_for_type_errors(&[wrong], &["./main.ts"], |program| {
+        assert_eq!(check_only(program).codes(), [2322]);
+    });
+    with_look_for_type_errors(&[wrong, no_check], &["./main.ts"], |program| {
+        assert_eq!(check_only(program).codes(), [0; 0]);
+    });
+    let declared_twice = ("main.ts", "let x;\nlet x;\nexport {};\n");
+    with_look_for_type_errors(&[declared_twice, no_check], &["./main.ts"], |program| {
+        assert!(check_only(program).codes().contains(&2451));
+    });
+}
+
+#[test]
+fn what_is_an_error_only_in_a_module_stops_nothing_in_a_script_of_the_project() {
+    let reports_unused = (
+        "tsconfig.json",
+        r#"{ "compilerOptions": { "strict": true, "noLib": true, "types": [], "noUnusedLocals": true } }"#,
+    );
+    let umd = (
+        "shapes.d.ts",
+        "export declare function area(): number;\nexport as namespace Shapes;\n",
+    );
+    let global = (
+        "kept.d.ts",
+        "interface KeptConstructor { one: number }\ndeclare var Kept: KeptConstructor;\n",
+    );
+    let cases: [(&str, &[(&str, &str)], u32); 5] = [
+        ("const kept = this.kept;\nkept;\n", &[], 2532),
+        ("class Unused {}\n", &[reports_unused], 6196),
+        (
+            "declare module \"made-up\" {\n  const one: number;\n}\n",
+            &[],
+            2664,
+        ),
+        ("Shapes.area();\n", &[umd], 2686),
+        ("var Kept: KeptConstructor;\nKept.one;\n", &[global], 2454),
+    ];
+    for (script, beside, code) in cases {
+        let module = format!("{script}export {{}};\n");
+        for (text, codes) in [(script, &[][..]), (&module[..], &[code][..])] {
+            let files = [&[("main.ts", text)], beside].concat();
+            with_look_for_type_errors(&files, &["./main.ts"], |program| {
+                assert_eq!(check_only(program).codes(), codes, "{text}");
+            });
+        }
+    }
+    let inside = "function outer() {\n  const inner = 1;\n}\nouter();\n";
+    with_look_for_type_errors(
+        &[("main.ts", inside), reports_unused],
+        &["./main.ts"],
+        |program| {
+            assert_eq!(check_only(program).codes(), [6133]);
+        },
+    );
+}
+
+#[test]
+fn an_entry_point_that_the_project_excludes_is_told_of_early_errors_alone() {
+    let options = r#""compilerOptions": { "strict": true, "noLib": true, "types": [] }"#;
+    let excludes = format!(r#"{{ {options}, "exclude": ["job.worker.ts"] }}"#);
+    let main = ("main.ts", "export const one: number = 1;\n");
+    let worker = (
+        "job.worker.ts",
+        "import { part } from \"./part\";\nexport const wrong: number = part;\n",
+    );
+    let part = ("part.ts", "export const part: string = 1;\n");
+    let entry_points = ["./main.ts", "./job.worker.ts"];
+    with_look_for_type_errors(&[main, worker, part], &entry_points, |program| {
+        assert_eq!(check_only(program).codes(), [2322, 2322]);
+    });
+    let excluded = [main, worker, part, ("tsconfig.json", &excludes[..])];
+    with_look_for_type_errors(&excluded, &entry_points, |program| {
+        assert_eq!(check_only(program).codes(), [0; 0]);
+    });
+    let imports_part = ("main.ts", "export { part } from \"./part\";\n");
+    let shared = [imports_part, worker, part, ("tsconfig.json", &excludes[..])];
+    with_look_for_type_errors(&shared, &entry_points, |program| {
+        assert_eq!(check_only(program).codes(), [2322]);
+    });
+    let declared_twice = ("job.worker.ts", "let x;\nlet x;\nexport {};\n");
+    let early = [main, declared_twice, ("tsconfig.json", &excludes[..])];
+    with_look_for_type_errors(&early, &entry_points, |program| {
+        assert!(check_only(program).codes().contains(&2451));
+    });
+}
+
+#[test]
+fn a_field_declared_again_below_a_class_is_reported_from_the_target_on_that_defines_fields() {
+    let main = (
+        "main.ts",
+        "class Parcel { label: string | number = \"plain\"; }\n\
+         export class Numbered extends Parcel { label!: number; }\n",
+    );
+    for (target, codes) in [("es2020", &[][..]), ("es2022", &[2612][..])] {
+        let written = format!(
+            r#"{{ "compilerOptions": {{ "strict": true, "noLib": true, "types": [], "target": "{target}" }} }}"#
+        );
+        let files = [main, ("tsconfig.json", &written[..])];
+        with_look_for_type_errors(&files, &["./main.ts"], |program| {
+            assert_eq!(check_only(program).codes(), codes, "{target}");
         });
     }
 }
@@ -701,4 +932,132 @@ fn a_thread_gives_memory_back_under_a_hundred_times_in_a_long_check() {
     assert_eq!(due[..4], [26_250, 22_969, 20_098, 17_586]);
     assert_eq!(due[due.len() - 4..], [3, 2, 1, 0]);
     assert!(!crate::has_fallen_by_an_eighth(0, 0));
+}
+
+fn codes_beside_declarations(
+    is_installed: bool,
+    declared: &str,
+    main: &str,
+    other: &str,
+) -> Vec<u32> {
+    let folder = match is_installed {
+        true => "node_modules/@types/bun".to_owned(),
+        false => format!("{}/bun", BringsBunTypes::TYPE_ROOT),
+    };
+    let manifest = format!("{folder}/package.json");
+    let declarations = format!("{folder}/index.d.ts");
+    let files = [
+        ("main.ts", main),
+        ("other.ts", other),
+        (
+            &manifest[..],
+            "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
+        ),
+        (&declarations[..], declared),
+        NAMES_BUN_TYPES,
+    ];
+    let disk = project_disk(&files[..files.len() - usize::from(!is_installed)], 1);
+    let mut codes = Vec::new();
+    with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
+        codes = check_only(program).codes();
+    });
+    codes
+}
+
+#[test]
+fn a_failed_comparison_that_names_a_brought_type_stops_nothing() {
+    let declared = "interface Held { a: number }\ndeclare const kept: Held;\n";
+    let main = "function later(): Held { return kept; }\n\
+                const id: number = later();\n\
+                function stop(id: number) {}\nstop(later());\n\
+                export const pair: { inner: number } = { inner: later() };\n\
+                export const lacks: { a: number; b: number } = later();\n\
+                export const list: number[] = [later()];\n\
+                export const wrong: number = \"text\";\nexport { id };\n";
+    let installed = codes_beside_declarations(true, declared, main, "");
+    assert_eq!(installed, [2322, 2345, 2322, 2741, 2322, 2322]);
+    assert_eq!(codes_beside_declarations(false, declared, main, ""), [2322]);
+}
+
+#[test]
+fn what_has_no_written_type_is_followed_to_the_brought_name_it_is_made_of() {
+    let declared = "declare const Bun: { size(): number; parse(): unknown };\n";
+    let other =
+        "export const far = Bun.size();\nexport function farther() { return Bun.size(); }\n";
+    let main = "import { far, farther } from \"./other\";\n\
+                function open() { return Bun.size(); }\n\
+                function twice() { return open(); }\n\
+                class Crate {\n  weight = Bun.size();\n  heavier() { return Bun.size(); }\n  get most() { return Bun.size(); }\n}\n\
+                export const a: string = open();\n\
+                export const b: string = twice();\n\
+                export const c: string = new Crate().weight;\n\
+                export const d: string = new Crate().heavier();\n\
+                export const e: string = new Crate().most;\n\
+                export const f: string = far;\n\
+                export const g: string = farther();\n\
+                function parse() { return Bun.parse(); }\n\
+                parse().weight;\n\
+                const parcel = parse();\nparcel.weight;\n\
+                function written(): number { return Bun.size(); }\n\
+                export const h: string = written();\n\
+                function calls(list: string[]) { Bun.size(); return list.length; }\n\
+                export const i: string = calls([]);\n";
+    let installed = codes_beside_declarations(true, declared, main, other);
+    assert_eq!(
+        installed,
+        [
+            2322, 2322, 2322, 2322, 2322, 2322, 2322, 2571, 18046, 2322, 2322
+        ]
+    );
+    assert_eq!(
+        codes_beside_declarations(false, declared, main, other),
+        [2322, 2322]
+    );
+}
+
+#[test]
+fn how_a_class_below_a_brought_class_is_made_stops_nothing() {
+    let declared = "interface Signal<T = unknown> { detail: T }\n\
+                    declare var Signal: { prototype: Signal; new <T>(name: string, detail: T): Signal<T> };\n";
+    let other = "export class Far extends Signal {}\n";
+    let main = "import { Far } from \"./other\";\n\
+                class Below extends Signal {}\n\
+                export const made = [new Below(\"a\", 1), new Far(\"a\", 1)];\n\
+                class Own extends Signal<number> { weight = 1; }\n\
+                export const wrong: string = new Own(\"a\", 1).weight;\n\
+                const crate = { weight: 3 };\nnew crate();\n";
+    let installed = codes_beside_declarations(true, declared, main, other);
+    assert_eq!(installed, [2508, 2351, 2351, 2322, 2351, 2508]);
+    assert_eq!(
+        codes_beside_declarations(false, declared, main, other),
+        [2322, 2351]
+    );
+}
+
+#[test]
+fn a_name_without_a_written_type_that_nobody_follows_to_its_maker_stops_nothing() {
+    let declared = "declare const Bun: { size(): number };\n";
+    let main = "function show(text: string) {}\n\
+                declare function each<T>(list: T[], run: (one: T) => void): void;\n\
+                for (const size of [Bun.size()]) show(size);\n\
+                each([Bun.size()], size => show(size));\n\
+                let late;\nlate = Bun.size();\nshow(late);\n\
+                function own(size: number) { show(size); }\nown(1);\n";
+    let installed = codes_beside_declarations(true, declared, main, "");
+    assert_eq!(installed, [2345, 2345, 2345, 2345]);
+    assert_eq!(codes_beside_declarations(false, declared, main, ""), [2345]);
+}
+
+#[test]
+fn an_error_that_names_nothing_is_asked_by_what_it_stands_at() {
+    let declared = "interface Held { a: number }\ndeclare const Bun: { start(): Held };\n";
+    let main = "let id = Bun.start();\n\
+                declare function order<T>(list: T[], by: (a: T, b: T) => number): T[];\n\
+                export const all = [id * 1, 2 % id, order([id, id], (a, b) => a - b)];\n\
+                id++;\n\
+                function typed(held: Held) { return held * 2; }\ntyped(id);\n\
+                const label: string = \"ab\";\nexport const wrong = label * 2;\n";
+    let installed = codes_beside_declarations(true, declared, main, "");
+    assert_eq!(installed, [2362, 2363, 2362, 2363, 2356, 2362, 2362]);
+    assert_eq!(codes_beside_declarations(false, declared, main, ""), [2362]);
 }

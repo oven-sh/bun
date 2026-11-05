@@ -35,11 +35,18 @@ const notReachedAndStillDear: Record<string, string> = {
   "a-function-that-only-such-a-function-calls": `${double}function load(name) { return require(name); }\nexport function loadTwice(name) { return [load(name), load(name)]; }\n`,
 };
 
+const builtWith = new Map<string, ReturnType<typeof built>>();
+function builtOnceWith(lib: string) {
+  let once = builtWith.get(lib);
+  if (!once) builtWith.set(lib, (once = built("main.mjs", { "main.mjs": main, "lib.mjs": lib })));
+  return once;
+}
+
 async function expectNoGrowth(forms: Record<string, string>) {
-  const plain = await built("main.mjs", { "main.mjs": main, "lib.mjs": double });
+  const plain = await builtOnceWith(double);
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
   for (const [name, lib] of Object.entries(forms)) {
-    const found = await built("main.mjs", { "main.mjs": main, "lib.mjs": lib });
+    const found = await builtOnceWith(lib);
     expect({
       name,
       stdout: found.stdout,
@@ -62,6 +69,13 @@ test.failing(
   () => expectNoGrowth(notReachedAndStillDear),
   240_000,
 );
+// A case that is marked fails for whatever reason. That the program is built and answers is asked here, of the same build.
+test("a load by name in a function that only a function nobody calls calls: the program is built and answers all the same", async () => {
+  for (const [name, lib] of Object.entries(notReachedAndStillDear)) {
+    const { stdout, exitCode } = await builtOnceWith(lib);
+    expect({ name, stdout, exitCode }).toEqual({ name, stdout: "42\n", exitCode: 0 });
+  }
+}, 240_000);
 
 // A load under a computed name brings nothing along: it finds a built-in module that a constant name keeps in the executable.
 const name = `const name = ["node:", "querystring"].join("");\nif (process.argv.length > 99) require("node:querystring");\n`;

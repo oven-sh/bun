@@ -5586,6 +5586,7 @@ impl VirtualMachine {
                     // thread for the duration of the bust below.
                     let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
                     let mut busted_as_spelled = false;
+                    let mut busted_working_directory = false;
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
@@ -5631,6 +5632,21 @@ impl VirtualMachine {
                                 let resolver = &mut self.transpiler.resolver;
                                 let found = folders
                                     .find(|it| resolver.read_dir_info_ignore_error(it).is_some());
+                                // From there the resolver has gone on to the working directory.
+                                if found.is_some() {
+                                    use bun_paths::resolve_path::{
+                                        join_abs_string_buf_checked, platform,
+                                    };
+                                    let mut buffer = bun_paths::path_buffer_pool::get();
+                                    let parts = [normalized_specifier, &b".."[..]];
+                                    let folder = join_abs_string_buf_checked::<platform::Auto>(
+                                        top_level_dir,
+                                        &mut buffer[..],
+                                        &parts,
+                                    );
+                                    busted_working_directory =
+                                        folder.is_some_and(|it| resolver.bust_dir_cache(it));
+                                }
                                 Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
                             }
                             _ => None,
@@ -5650,6 +5666,7 @@ impl VirtualMachine {
                     if self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     ) || busted_as_spelled
+                        || busted_working_directory
                     {
                         continue;
                     }

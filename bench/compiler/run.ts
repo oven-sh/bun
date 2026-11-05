@@ -4,7 +4,7 @@
 //   bun bench/compiler/run.ts --sizes=10000 --runs=1           smaller
 //   bun bench/compiler/run.ts --scenarios=typed,go-cold        some of them
 //   bun bench/compiler/run.ts --bun=<path>                     another Bun than the one that runs this script
-//   bun bench/compiler/run.ts --check                          builds every program at the smallest size, runs it, and fails unless all print the same number
+//   bun bench/compiler/run.ts --check                          builds every program at the smallest size, runs it, and fails unless every one was built, ended with 0 and printed the same number
 //   bun bench/compiler/run.ts --json=<file>                    every number of every run, too
 //   bun bench/compiler/run.ts --cores=0-15                     under taskset (Linux)
 //
@@ -304,7 +304,11 @@ try {
       );
       if (has("check")) {
         const ran = spawnSync({ cmd: [join(folder, scenario.executable)], stdout: "pipe", stderr: "pipe" });
-        answers.set(scenario.name, `${ran.stdout.toString().trim()} (exit ${ran.exitCode})`);
+        if (ran.exitCode === 0) answers.set(scenario.name, ran.stdout.toString().trim());
+        else {
+          const failure = `its executable ended with ${ran.signalCode ?? ran.exitCode}: ${ran.stderr.toString().trim().slice(0, 300)}`;
+          results.push({ scenario: scenario.name, size, features, failure });
+        }
       }
       rmSync(folder, { recursive: true, force: true });
     }
@@ -329,11 +333,14 @@ function linesOfGoStandardLibrary(folder: string, env: Record<string, string>) {
 
 if (has("check")) {
   for (const [name, answer] of answers) console.log(`${answer}  ${name}`);
-  if (new Set(answers.values()).size !== 1) {
-    console.error("THE PROGRAMS DO NOT AGREE");
-    process.exit(1);
-  }
-  process.exit(0);
+  // What was not built or did not run to its end has printed no number, so it agrees with nobody.
+  const failed = results.filter(row => row.failure);
+  for (const row of failed) console.log(`FAILED  ${row.scenario}: ${row.failure}`);
+  if (failed.length) console.error("NOT EVERY PROGRAM WAS BUILT AND RUN");
+  else if (!answers.size) console.error("NO PROGRAM WAS BUILT AND RUN");
+  else if (new Set(answers.values()).size !== 1) console.error("THE PROGRAMS DO NOT AGREE");
+  else process.exit(0);
+  process.exit(1);
 }
 
 const version = (command: string[]) =>

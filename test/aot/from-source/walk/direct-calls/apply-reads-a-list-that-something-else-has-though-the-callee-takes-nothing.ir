@@ -9,7 +9,7 @@
 # function ofListThatCame(list: number[]): void { tick.apply(null, list as []); }
 # function ofListThatWasHandedOut(n: number): void { const list = [n, 2]; sink(list); tick.apply(null, list as []); }
 # function byReflect(list: number[]): void { Reflect.apply(tick, null, list); }
-# function ofRestParameter(...rest: number[]): void { tick.apply(null, rest as []); }
+# function ofRestParameter(...rest: number[]): void { tick.apply(null, rest as []); } // @ts-expect-error
 # function ofLiteral(n: number): void { tick.apply(null, [n, 2] as []); }
 # const kept: number[] = [1, 2, 3];
 # sink(kept);

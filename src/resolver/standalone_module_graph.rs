@@ -132,11 +132,9 @@ pub trait StandaloneModuleGraph: Send + Sync {
             self.compiled_program().is_some() && Resolver::import_path_names_directory(specifier);
         let file = match is_embedded && !is_left_to_program {
             true => self.resolve(source_dir, specifier).or_else(|| {
-                // An entry point above the root directory of the build is a file of the graph under `_.._`.
-                self.compiled_program()?;
+                let program = self.compiled_program()?;
                 let public_root = self.base_public_path_with_default_suffix();
-                let path =
-                    crate::compiled_program::join_public_path(public_root, source_dir, specifier)?;
+                let path = program.join_public_path(public_root, source_dir, specifier)?;
                 self.resolve(source_dir, &path)
             }),
             false => None,
@@ -236,11 +234,12 @@ pub trait StandaloneModuleGraph: Send + Sync {
     }
     /// `compiled_program::directories_of_importer`.
     fn directories_of_importer(&self, source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
-        if self.compiled_program().is_none() {
+        let Some(program) = self.compiled_program() else {
             return Vec::new();
-        }
+        };
         let public_root = self.base_public_path_with_default_suffix();
-        crate::compiled_program::directories_of_importer(public_root, source_dir, base)
+        let levels = program.levels_above_root();
+        crate::compiled_program::directories_of_importer(public_root, levels, source_dir, base)
     }
     /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — the
     /// virtual-root prefix used for embedded modules (e.g. `/$bunfs/root/`).

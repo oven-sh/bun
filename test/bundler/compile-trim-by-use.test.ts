@@ -7,6 +7,7 @@ import { run } from "../aot/harness/run";
 import { sharedBuilds, sizeOf, type Build } from "../aot/harness/shared-builds";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import {
+  atLeastOnLinux,
   canTrim,
   featureNamed,
   featureOf,
@@ -359,8 +360,12 @@ const files = {
       expect((await started(await trimmed("styled-route.ts"))).exitCode).toBe(0);
     });
 
+    test("a Bun.serve route with the style option doesn't count as a use of the bundler, and throws a catchable error: what is reached", async () => {
+      expect(removedFrom(await trimmed("styled-route.ts")).length).toBeGreaterThanOrEqual(atLeastOnLinux(110));
+    });
+
     test.failing(
-      "known bug: a Bun.serve route with the style option doesn't count as a use of the bundler, and throws a catchable error: the bundler is kept by 1 call of Bun.serve, the goal is 0",
+      "a Bun.serve route with the style option doesn't count as a use of the bundler, and throws a catchable error: the bundler is kept by 1 call of Bun.serve, the goal is 0",
       async () => {
         const ran = await started(await trimmed("styled-route.ts"));
         expect(ran.stdout).toContain("style: the bundler and the dev server were removed by --trim");
@@ -373,6 +378,10 @@ const files = {
         stderr: "",
         exitCode: 0,
       });
+    });
+
+    test("a server whose options ask for neither has no bundler and no transpiler: what is reached", async () => {
+      expect(removedFrom(await trimmed("serves.ts")).length).toBeGreaterThanOrEqual(atLeastOnLinux(110));
     });
 
     test.failing(
@@ -389,6 +398,10 @@ const files = {
       const whole = await started(await build("reloads.ts", "--aot"));
       expect(whole.stdout).toStartWith("reloaded\n");
       expect(await started(await trimmed("reloads.ts"))).toEqual(whole);
+    });
+
+    test("reload() never needs the development server, whatever its routes ask for: what is reached", async () => {
+      expect(removedFrom(await trimmed("reloads.ts")).length).toBeGreaterThanOrEqual(atLeastOnLinux(110));
     });
 
     test.failing(
@@ -425,6 +438,12 @@ const files = {
         stderr: "",
         exitCode: 0,
       });
+    });
+
+    test("a server that never names bun:test has none of it, whatever names it reads off values nobody knows: what is reached", async () => {
+      expect(removedFrom(await trimmed("serves-values-nobody-knows.ts")).length).toBeGreaterThanOrEqual(
+        atLeastOnLinux(98),
+      );
     });
 
     test.failing(

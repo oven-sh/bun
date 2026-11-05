@@ -112,6 +112,16 @@ const whole: Record<string, [number, (n: number) => string]> = {
     n =>
       `function run(x: number): number {\n${upTo(n, at => `  const v${at} = x + ${at};`)}\n  return ${upTo(Math.min(n, 50), at => `v${at}`, " + ")};\n}\nconst sum = run(JSON.parse("7"));`,
   ],
+  loopsOverGeneratorsInARow: [
+    1 / 8,
+    n =>
+      `function* feed(k: number) { yield k; yield k + 1; }\nfunction run(k: number): number {\n  let sum = 0;\n${upTo(n, at => `  { for (const v of feed(k + ${at})) sum = (sum + v) | 0; }`)}\n  return sum;\n}\nconst sum = run(JSON.parse("1"));`,
+  ],
+  readsOfARestListInARow: [
+    3,
+    n =>
+      `function run(k: number, ...rest: number[]): number {\n  let total = 0;\n${upTo(n, at => `  if (k === ${at}) total += rest.length;`)}\n  return total;\n}\nconst sum = run(JSON.parse("3"), 1, 2);`,
+  ],
   callsInARow: [
     1,
     n =>

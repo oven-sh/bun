@@ -5,7 +5,7 @@ use bun_sema::check::aot::{
 use bun_sema::hir::{ClassId, Flags, FnId, Member, MemberId, MemberKind};
 
 use super::FunctionPositions;
-use crate::ir::{ContentsSlot, DeclaredType, Mapped, PositionFlags, Type, TypeId, TypeTable};
+use crate::ir::{ContentsSlot, DeclaredType, Mapped, PositionFlags, TypeId, TypeTable};
 use crate::lower::FileLowering;
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::types::find_contents_type;
@@ -72,7 +72,7 @@ impl FileLowering<'_, '_, '_, '_> {
             };
         }
         let layout = self.class_layout(class);
-        let instance = self.fragment.types.intern(Type::layout(layout));
+        let instance = self.fragment.types.intern_layout(layout);
         match member {
             Some(member) if !is_receiver_known => {
                 let is_written_here = class.file == self.file && member.func.is_some();
@@ -167,7 +167,7 @@ fn compute_this_position(
         if file.queries.is_prototype_object_used(source)
             && let Some(layout) = file.constructor_function_layout(source)
         {
-            let instance = file.fragment.types.intern(Type::layout(layout));
+            let instance = file.fragment.types.intern_layout(layout);
             let is_tested = file.is_receiver_tested(source.function);
             return file.create_receiver_position(instance, is_tested);
         }
@@ -185,7 +185,7 @@ fn compute_this_position(
             .queries
             .stores_into_instances_or_prototype_object(source)
     {
-        let instance = file.fragment.types.intern(Type::layout(layout));
+        let instance = file.fragment.types.intern_layout(layout);
         let is_tested = file.is_receiver_tested(source.function);
         return file.create_receiver_position(instance, is_tested);
     }

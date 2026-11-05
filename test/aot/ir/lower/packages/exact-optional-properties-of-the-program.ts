@@ -1,15 +1,7 @@
 // RUN: lower
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK: [[literal]] = Data
-// CHECK-NEXT: [[settings]] = Convert [[literal]] declared={type=
-// CHECK-NEXT: PutModuleVariable [[settings]]
-// CHECK: [[argument]] = Data
-// CHECK-NEXT: = Call {{*}}, -, [[argument]] calleeName="describe"
-// CHECK-LABEL: function {{*}}name="reset"
-// CHECK: [[nothing]] = Undefined
-// CHECK-NEXT: PropSet {{*}}, [[nothing]] key="retries"
-
-// What exactOptionalPropertyTypes forbids is a type error: it is not reported and stops no build. Each `undefined` is stored as it is written.
+// DIAGNOSTIC: TS2375 main.ts:2
+// DIAGNOSTIC: TS2412 main.ts:3
+// DIAGNOSTIC: TS2379 main.ts:5
 
 // FILE: main.ts
 export interface Settings { retries?: number }

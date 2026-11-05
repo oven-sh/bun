@@ -58,6 +58,8 @@ function createHiddenRoots(): Map<string, () => unknown> {
     ["%IntlSegments%.prototype", () => prototypeOf(new Intl.Segmenter().segment(""))],
     ["%IntlSegmentIterator%.prototype", () => prototypeOf(new Intl.Segmenter().segment("")[Symbol.iterator]())],
     ["%HeadersIterator%.prototype", () => prototypeOf(new Headers().entries())],
+    ["%FormDataIterator%.prototype", () => prototypeOf(new FormData().entries())],
+    ["%CookieMapIterator%.prototype", () => prototypeOf(new Bun.CookieMap().entries())],
     ["%URLSearchParamsIterator%.prototype", () => prototypeOf(new URLSearchParams().entries())],
     // `test`, `describe` and what their modifiers answer are bound functions below it.
     ["%ScopeFunctions%.prototype", () => prototypeOf(require("bun:test").test)],

@@ -17,3 +17,4 @@ function gather(count: number, change: (k: number) => number): number[] { const 
 const changes = [(k: number) => k * 2, (k: number) => k + 1];
 for (let round = 0; round < 4; round++) report(gather(round + 1, changes[round % 2]));
 report("end");
+declare function report(value: unknown): void;

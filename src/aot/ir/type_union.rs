@@ -5,7 +5,9 @@ use bun_sema::util::SharedSort;
 
 use super::generated::MAX_TRACKED_INTEGER;
 use super::ids::{Id, TypeId};
-use super::types::{ClassPart, Primitives, Type, TypeFlags, TypeTable, hash_of_type};
+use super::types::{
+    ClassPart, Primitives, Type, TypeFlags, TypeRef, TypeTable, Types, hash_of_type,
+};
 
 #[inline]
 pub(super) fn normalize_type(table: &mut TypeTable, ty: &mut Type) {
@@ -79,7 +81,7 @@ impl TypeTable {
         if current.is_internal() {
             return ty;
         }
-        let mut remaining = current.clone();
+        let mut remaining = current.to_type();
         remaining.primitives = remaining.primitives.without(removed);
         if removed.contains(Primitives::NUMBER) {
             remaining.flags = remaining.flags.without(TypeFlags::HAS_INTEGERS);
@@ -92,7 +94,7 @@ impl TypeTable {
 }
 
 fn add_up(
-    types: &[Type],
+    types: Types<'_>,
     members: impl IntoIterator<Item = TypeId>,
     union: &mut Type,
 ) -> Option<TypeId> {
@@ -106,8 +108,8 @@ fn add_up(
         return Some(first);
     };
     let mut add_member = |member: TypeId| {
-        let member = &types[member.index()];
-        add_parts(union, member);
+        let member = types.get(member.index());
+        add_parts(union, &member);
         member.is_internal()
     };
     let mut has_internal_member = add_member(first);
@@ -190,7 +192,7 @@ fn add_list<T: Clone>(union: &mut Vec<T>, member: &[T]) {
 }
 
 #[inline]
-fn add_parts(union: &mut Type, member: &Type) {
+fn add_parts(union: &mut Type, member: &TypeRef<'_>) {
     union.primitives.0 |= member.primitives.0;
     if let Some((minimum, maximum)) = member.integer_range() {
         let (union_minimum, union_maximum) = union.integer_range().unwrap_or((minimum, maximum));
@@ -198,9 +200,9 @@ fn add_parts(union: &mut Type, member: &Type) {
         union.maximum = union_maximum.max(maximum);
     }
     union.flags.0 |= member.flags.0;
-    add_list(&mut union.strings, &member.strings);
-    add_list(&mut union.layouts, &member.layouts);
-    add_list(&mut union.classes, &member.classes);
-    add_list(&mut union.builtins, &member.builtins);
-    add_list(&mut union.functions, &member.functions);
+    add_list(&mut union.strings, member.strings);
+    add_list(&mut union.layouts, member.layouts);
+    add_list(&mut union.classes, member.classes);
+    add_list(&mut union.builtins, member.builtins);
+    add_list(&mut union.functions, member.functions);
 }

@@ -4,7 +4,7 @@
 # with typed slots withheld the five boxed slots fill a cell of 64 and the late name lies out of line.
 # -- source: first-late-name-takes-what-a-cell-has-left-by-the-width-of-its-own-form.ts
 # declare function sink(...values: unknown[]): void;
-# interface Tied { owner?: Knot | null; }
+# interface Tied { owner?: Knot | null; } // @ts-expect-error
 # class Knot implements Tied {
 #     a: Knot | null = null;
 #     b: Knot | null = null;
@@ -23,8 +23,8 @@
 #     knot.b = i > 0 ? last : null;
 #     knot.c = i > 1 ? last : null;
 #     knot.d = i > 2 ? last : null;
-#     knot.e = last.a;
-#     tie(knot, last);
+#     knot.e = last.a; // @ts-expect-error
+#     tie(knot, last); // @ts-expect-error
 #     sum += count(knot) + hasOwner(knot) + hasOwner(last);
 #     last = knot;
 # }

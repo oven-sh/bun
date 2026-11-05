@@ -1,9 +1,60 @@
-// RUN: link
-// STATISTIC: SourceFilesChecked = 51
+// RUN: lower
+// DIAGNOSTIC: TS2339 row000.ts:2
+// DIAGNOSTIC: TS2339 row001.ts:2
+// DIAGNOSTIC: TS2339 row002.ts:2
+// DIAGNOSTIC: TS2339 row003.ts:2
+// DIAGNOSTIC: TS2339 row004.ts:2
+// DIAGNOSTIC: TS2339 row005.ts:2
+// DIAGNOSTIC: TS2339 row006.ts:2
+// DIAGNOSTIC: TS2339 row007.ts:2
+// DIAGNOSTIC: TS2339 row008.ts:2
+// DIAGNOSTIC: TS2339 row009.ts:2
+// DIAGNOSTIC: TS2339 row010.ts:2
+// DIAGNOSTIC: TS2339 row011.ts:2
+// DIAGNOSTIC: TS2339 row012.ts:2
+// DIAGNOSTIC: TS2339 row013.ts:2
+// DIAGNOSTIC: TS2339 row014.ts:2
+// DIAGNOSTIC: TS2339 row015.ts:2
+// DIAGNOSTIC: TS2339 row016.ts:2
+// DIAGNOSTIC: TS2339 row017.ts:2
+// DIAGNOSTIC: TS2339 row018.ts:2
+// DIAGNOSTIC: TS2339 row019.ts:2
+// DIAGNOSTIC: TS2339 row020.ts:2
+// DIAGNOSTIC: TS2339 row021.ts:2
+// DIAGNOSTIC: TS2339 row022.ts:2
+// DIAGNOSTIC: TS2339 row023.ts:2
+// DIAGNOSTIC: TS2339 row024.ts:2
+// DIAGNOSTIC: TS2339 row025.ts:2
+// DIAGNOSTIC: TS2339 row026.ts:2
+// DIAGNOSTIC: TS2339 row027.ts:2
+// DIAGNOSTIC: TS2339 row028.ts:2
+// DIAGNOSTIC: TS2339 row029.ts:2
+// DIAGNOSTIC: TS2339 row030.ts:2
+// DIAGNOSTIC: TS2339 row031.ts:2
+// DIAGNOSTIC: TS2339 row032.ts:2
+// DIAGNOSTIC: TS2339 row033.ts:2
+// DIAGNOSTIC: TS2339 row034.ts:2
+// DIAGNOSTIC: TS2339 row035.ts:2
+// DIAGNOSTIC: TS2339 row036.ts:2
+// DIAGNOSTIC: TS2339 row037.ts:2
+// DIAGNOSTIC: TS2339 row038.ts:2
+// DIAGNOSTIC: TS2339 row039.ts:2
+// DIAGNOSTIC: TS2339 row040.ts:2
+// DIAGNOSTIC: TS2339 row040.ts:3
+// DIAGNOSTIC: TS2339 row040.ts:4
+// DIAGNOSTIC: TS2339 row041.ts:2
+// DIAGNOSTIC: TS2339 row042.ts:2
+// DIAGNOSTIC: TS2339 row043.ts:2
+// DIAGNOSTIC: TS2339 row044.ts:2
+// DIAGNOSTIC: TS2339 row045.ts:2
+// DIAGNOSTIC: TS2339 row046.ts:2
+// DIAGNOSTIC: TS2339 row047.ts:2
+// DIAGNOSTIC: TS2339 row048.ts:2
+// DIAGNOSTIC: TS2339 row049.ts:2
+// DIAGNOSTIC: TS2871 row005.ts:1
+// DIAGNOSTIC: TS2871 row006.ts:1
 
-// The place runs, and right beside it is what a constant cuts out of the program. The type error at the place stops no build, and each of the 52 reads is in the program.
-
-// CHECK-COUNT-52: = PropGet {{*}}key="nope"
+// The place runs, and right beside it is what a constant cuts out of the program.
 
 // FILE: main.ts
 import "./row000.ts";

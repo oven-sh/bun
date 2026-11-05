@@ -61,7 +61,7 @@ console.log(inferred, either(n), maybe(n), mapped, likeTheModel, taking().next()
 // CHECK-NEXT: b2():
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v8 = Convert v6 declared={type=i32}
+// CHECK-NEXT: v8 = Convert v6 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: v9 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v10 = PropGet v9 key="console" [isFreeName]
 // CHECK-NEXT: v11 = Convert v10 declared={type=builtin(Console) flags=[IsExpected]}

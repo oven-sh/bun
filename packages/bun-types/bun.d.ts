@@ -4071,10 +4071,12 @@ declare module "bun" {
      *   where the value arrives: at parameters, results of calls, fields, variables, captured
      *   variables and elements. A test that fails stops the process. Objects and closures that the
      *   compiler would have kept on the stack, or reused once it found them dead, stay on the heap.
-     * - `"ignore-told-ranges"`: test every index where it is used, against the length that the
-     *   array, typed array or string has at that moment, whatever an earlier test or the head of a
-     *   loop has shown. An index that the compiler took to be in range and that is not stops the
-     *   process.
+     *   Every read or write of an element looks up, at that moment, where the array or typed array
+     *   keeps its elements, how many there are and how they are stored. An index that the compiler
+     *   took to be in range and that is not stops the process.
+     * - `"ignore-told-ranges"`: tell no read or write that its index is in range. Each one tests
+     *   its index where it is used, against the length that the array, typed array or string has at
+     *   that moment, whatever an earlier test or the head of a loop has shown.
      *
      * Takes a list of names, or one string with commas between the names. `Bun.build` throws on a
      * name that it doesn't know.

@@ -22,3 +22,4 @@ const all = (made as unknown[]).concat(strange) as Holder[];
 const pairs = [[1, 2], [0.5, 2], [0.5, 3], [3, 0], [-1, 1], [65536, 65536]];
 for (let at = 0; at < all.length; at++) for (let p = 0; p < pairs.length; p++) { put(all[at], pairs[p][0], pairs[p][1], 7 + p); report(get(all[at], pairs[p][0], pairs[p][1])); report(byte(all[at], pairs[p][0], pairs[p][1])); }
 report("end");
+declare function report(value: unknown): void;

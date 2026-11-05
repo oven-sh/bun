@@ -21,3 +21,4 @@ const mixed: any[] = [own, foreign[0], point, new Stamp(undefined)];
 for (let i = 0; i < 400; i++) { const o = mixed[i & 3]; Stamp.set(o, Stamp.get(o) + 1); sum += Stamp.get(o); }
 report(sum);
 report("end");
+declare function report(value: unknown): void;

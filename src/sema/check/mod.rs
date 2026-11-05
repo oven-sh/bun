@@ -2240,7 +2240,8 @@ pub struct Checker<'p, 's> {
     leaves_depth_limit_unreported: bool,
     /// `with_queries` is in progress.
     answers_lowering: bool,
-    /// Nobody reads the mistakes that are found, TS2563 among them: a walk of the flow need not go as deep as tsgo's.
+    /// Nobody holds what is found against tsgo's list, TS2563 least of all: a walk of the flow need not go as deep as tsgo's. So while `with_queries` is in
+    /// progress, and where a build checks a file whole.
     reads_types_alone: bool,
     /// `is_recursive_conditional`
     recursive_conditionals: crate::util::FxHashMap<(FileId, TypeNodeId), bool>,

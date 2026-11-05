@@ -18,6 +18,7 @@ const BIND_AN_OVERLOAD_THAT_RUNS_NO_OTHER_CODE: &[&str] = &[
     "setTimeout(async () => {}, 1);",
     "globalThis.setTimeout(() => {}, 1);",
     "if (setTimeout(() => {}, 1)) f();",
+    "while (setTimeout(() => {}, 1)) break;",
     "function h(setTimeout) { setTimeout(f, g); }",
 ];
 
@@ -44,6 +45,11 @@ const MAY_RUN_OTHER_CODE_OR_HAND_THE_TIMER_ON: &[&str] = &[
     "setTimeout(() => {}, 1); setTimeout(f, 1);",
     "const held = setTimeout(() => {}, 1);",
     "f(setTimeout(() => {}, 1));",
+    "+setTimeout(() => {}, 1);",
+    "`${setTimeout(() => {}, 1)}`;",
+    "setTimeout(() => {}, 1) == 1;",
+    "f[setTimeout(() => {}, 1)];",
+    "!setTimeout(() => {}, 1);",
     "export default setTimeout(() => {}, 1);",
     "new setTimeout(() => {}, 1);",
 ];

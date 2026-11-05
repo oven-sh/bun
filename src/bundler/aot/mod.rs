@@ -69,6 +69,8 @@ pub struct AotEntryPoint {
 pub struct AotBuild {
     /// `Compilation::root_folders_spelled`
     pub root_folders_spelled: Vec<u8>,
+    /// `Compilation::levels_above_root`
+    pub levels_above_root: usize,
     /// `Compilation::holds_source_paths`
     pub holds_source_paths: bool,
     pub names_plugin: bool,
@@ -178,6 +180,10 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     // SAFETY: the log outlives the build, and the reference ends with the statement.
     said_by_compiler.append_to(unsafe { &mut *log });
 
+    let levels_above_root = match &result {
+        Ok(compilation) => compilation.levels_above_root,
+        Err(_) => 0,
+    };
     let refused_names = services.take_refused_names();
     let embedded = services.shut_down();
     let (package_names, path_aliases) = match &result {
@@ -239,7 +245,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             let resolver = &mut bundle.transpiler.resolver;
             add_hidden_names(
                 package_names,
-                resolver.find_hidden_names(&refused_names, root),
+                resolver.find_hidden_names(&refused_names, root, levels_above_root),
             )
         }
         false => package_names,
@@ -281,6 +287,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         Ok(compilation) => {
             let names = output::EntryPointNames {
                 module_prefix,
+                levels_above_root,
                 shown: &options.paths.entry_point_names,
                 embedded: &options.paths.entry_point_file_names,
             };

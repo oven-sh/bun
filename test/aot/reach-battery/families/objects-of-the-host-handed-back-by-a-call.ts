@@ -58,9 +58,9 @@ const others: Record<string, string> = {
   "main-module-constructor": `const Made = process.mainModule.constructor;\nconsole.log(typeof Made._cache, typeof Made.createRequire, Made === require("node:module"));\n`,
   "global-of-global": `const held = globalThis.globalThis.global;\nconsole.log(typeof held.Bun.sql, typeof held.process.finalization);\n`,
   "function-this": `const held = (function () { return this; })();\nconsole.log(typeof held.Bun.sql);\n`,
-  "reflect-apply-get-builtin-module": `const held = Reflect.apply(process.getBuiltinModule, process, ["bun"]);\nconsole.log(typeof held.sql);\n`,
+  "reflect-apply-get-builtin-module": `// Refused where closed: Cannot load '\nconst held = Reflect.apply(process.getBuiltinModule, process, ["bun"]);\nconsole.log(typeof held.sql);\n`,
   "get-builtin-module-by-value": `const give = process.getBuiltinModule;\nconsole.log(typeof give("bun").sql, typeof give("process").finalization);\n`,
-  "get-builtin-module-through-map": `console.log(["bun", "process"].map(process.getBuiltinModule).map(held => typeof (held.sql ?? held.finalization)).join());\n`,
+  "get-builtin-module-through-map": `// Refused where closed: Cannot load '\nconsole.log(["bun", "process"].map(process.getBuiltinModule).map(held => typeof (held.sql ?? held.finalization)).join());\n`,
   "structured-pair": `const [held] = [process.getBuiltinModule("bun")];\nconsole.log(typeof held.sql);\n`,
 };
 

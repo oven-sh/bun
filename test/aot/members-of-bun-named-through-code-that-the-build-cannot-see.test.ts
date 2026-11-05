@@ -1,5 +1,5 @@
-// A read of Bun under a key that nobody knows may be a read under any name: every member may be used, however the read is written. So it is where code that the build cannot see
-// can run: a written text is unseen code, and it may name any member itself.
+// A read of Bun under a key that nobody knows may be a read under any name: every member may be used, however the read is written. So it is where the program hands Bun to code
+// that the build cannot see. A text that is handed nothing may name any member itself: that is a name known only at run time, and for --trim it does not count.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
@@ -71,8 +71,9 @@ test.concurrent.each([
   expect(used).not.toContain("deepEquals");
 });
 
-test.concurrent("a written text may name any member itself, whatever it is handed", async () => {
+test.concurrent("a text from run time may name any member itself, and no such name counts as a use", async () => {
   const used = await membersUsed(`${launder}console.log(launder(1), typeof Bun.version);\n`);
-  expect(used).toContain(everyMember);
-  expect(used).toEqual(expect.arrayContaining(["deepMatch", "$", "sql"]));
+  expect(used).toContain("version");
+  expect(used).not.toContain("deepMatch");
+  expect(used).not.toContain("sql");
 });

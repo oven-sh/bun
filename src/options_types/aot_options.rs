@@ -64,6 +64,8 @@ pub struct AotOptions {
     pub explain: ExplainSet,
     pub trim: TrimRequest,
     pub erases_types: bool,
+    /// For a test: the library is compiled from the texts that `bun run` evaluates.
+    pub takes_first_texts: bool,
     pub emits_symbols: bool,
     pub omits_builtin_modules: bool,
     pub obfuscates: bool,
@@ -87,6 +89,8 @@ pub struct AotOptions {
     pub writes_no_executable: bool,
     /// `--aot-testing=DiscardsFirstVisits`: the first visit of every file is thrown away, as one is that ends with an invalid commit, and the file is visited again. The program is the same.
     pub discards_first_visits: bool,
+    /// `--aot-testing=TypeErrorsWarn`: a type error is printed as `bun test --aot` prints it, and the executable is built. What is compiled is the same.
+    pub type_errors_warn: bool,
     pub runs_in_place: bool,
     pub missing_tsconfig_override: Option<Box<[u8]>>,
     pub checks_only: bool,
@@ -150,6 +154,7 @@ impl Default for AotOptions {
             explain: ExplainSet::empty(),
             trim: TrimRequest::default(),
             erases_types: false,
+            takes_first_texts: false,
             emits_symbols: false,
             omits_builtin_modules: false,
             obfuscates: false,
@@ -165,6 +170,7 @@ impl Default for AotOptions {
             ir_output_path: None,
             writes_no_executable: false,
             discards_first_visits: false,
+            type_errors_warn: false,
             runs_in_place: false,
             missing_tsconfig_override: None,
             checks_only: false,
@@ -211,6 +217,7 @@ mod tests {
             explain,
             trim,
             erases_types,
+            takes_first_texts,
             emits_symbols,
             omits_builtin_modules,
             obfuscates,
@@ -226,6 +233,7 @@ mod tests {
             ir_output_path,
             writes_no_executable,
             discards_first_visits,
+            type_errors_warn,
             runs_in_place,
             missing_tsconfig_override,
             checks_only,
@@ -258,6 +266,7 @@ mod tests {
         assert!(trim.allow.is_empty());
         assert!(!trim.logs);
         assert!(!erases_types);
+        assert!(!takes_first_texts);
         assert!(!emits_symbols);
         assert!(!omits_builtin_modules);
         assert!(!obfuscates);
@@ -276,6 +285,7 @@ mod tests {
         assert!(ir_output_path.is_none());
         assert!(!writes_no_executable);
         assert!(!discards_first_visits);
+        assert!(!type_errors_warn);
         assert!(!runs_in_place);
         assert!(missing_tsconfig_override.is_none());
         assert!(!checks_only);

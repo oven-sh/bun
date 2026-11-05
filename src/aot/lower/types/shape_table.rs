@@ -9,7 +9,9 @@ use crate::builtins::id::BuiltinClass;
 use crate::builtins::table::{class_data, contents_index};
 use crate::builtins::{builtin_class_of, type_name_of};
 use crate::ir::generated::{MAX_TRACKED_INTEGER, NameClass};
-use crate::ir::{LayoutId, Mapped, Primitives, Type, TypeFlags, TypeId, TypeTable, classify_name};
+use crate::ir::{
+    LayoutId, Mapped, Primitives, Type, TypeFlags, TypeId, TypeRef, TypeTable, classify_name,
+};
 use crate::lower::{CheckerTypeId, FileLowering};
 
 const ACCEPTED_PRIMITIVE_TYPES: [(PrimitiveKinds, TypeId); 5] = [
@@ -104,7 +106,7 @@ impl FileLowering<'_, '_, '_, '_> {
             mapped = Mapped::expected(mapped.ty);
         }
         let types = &mut self.fragment.types;
-        if holds_reference(types.get(mapped.ty)) {
+        if holds_reference(&types.get(mapped.ty)) {
             mapped.ty = types.with_nullish(mapped.ty);
         }
         mapped
@@ -221,7 +223,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn map_object(&mut self, ty: CheckerTypeId, layout: Option<LayoutId>) -> Mapped {
         let layout_type = match layout {
-            Some(layout) => self.fragment.types.intern(Type::layout(layout)),
+            Some(layout) => self.fragment.types.intern_layout(layout),
             None => TypeTable::OBJECT,
         };
         self.add_accepted_primitives(ty, Mapped::checked(layout_type))
@@ -289,7 +291,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut widened = mapped;
         for &class in classes {
             let function_type = self.find_class_function_type(class);
-            let constructor = self.fragment.types.intern(Type::function(function_type));
+            let constructor = self.fragment.types.intern_function(function_type);
             widened.ty = self.fragment.types.union(widened.ty, constructor);
         }
         widened
@@ -306,8 +308,8 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-fn holds_reference(ty: &Type) -> bool {
-    let Type {
+fn holds_reference(ty: &TypeRef<'_>) -> bool {
+    let TypeRef {
         primitives,
         flags,
         opaque,
@@ -319,7 +321,7 @@ fn holds_reference(ty: &Type) -> bool {
         classes,
         builtins,
         functions,
-    } = ty;
+    } = *ty;
     if !functions.is_empty()
         || !layouts.is_empty()
         || !classes.is_empty()
@@ -331,7 +333,7 @@ fn holds_reference(ty: &Type) -> bool {
         return true;
     }
     let raw_primitives = Primitives::NUMBER | Primitives::BOOLEAN | Primitives::NULLISH;
-    *primitives != *primitives & raw_primitives || *flags != *flags & TypeFlags::HAS_INTEGERS
+    primitives != primitives & raw_primitives || flags != flags & TypeFlags::HAS_INTEGERS
 }
 
 fn is_function_class(class: BuiltinClass) -> bool {
@@ -393,7 +395,7 @@ mod tests {
             Type::primitives(optional_number),
         ];
         for ty in raw_types {
-            assert!(!holds_reference(&ty), "{ty:?}");
+            assert!(!holds_reference(&TypeRef::of(&ty)), "{ty:?}");
         }
     }
 
@@ -410,7 +412,7 @@ mod tests {
             Type::class(BuiltinClass::Array, &[TypeTable::NUMBER]),
         ];
         for ty in reference_types {
-            assert!(holds_reference(&ty), "{ty:?}");
+            assert!(holds_reference(&TypeRef::of(&ty)), "{ty:?}");
         }
     }
 }

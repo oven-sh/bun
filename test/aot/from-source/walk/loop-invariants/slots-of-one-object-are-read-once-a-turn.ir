@@ -4,6 +4,7 @@
 # function drift(cursor: Cursor, by: number): number { let turns = 0; for (cursor.position = 0; cursor.position < cursor.text.length; cursor.position += by) turns++; return turns; }
 # const cursor: Cursor = { text: "a b c", position: 0 };
 # sink(count, drift, cursor);
+# declare function sink(...values: unknown[]): void;
 # -- end of source
 # The object gets out, so nothing is proven of what its slots hold. Each mention of `cursor.position` and of `cursor.text` is a read of its own. While a turn has written nothing each finds what the first has found:
 # what the test behind the first read shows holds of all, so the looks come through the turn without other code, and the loop is built twice. The turns write `position` alone: the text is read, tested and made flat in front of the loop.

@@ -35,6 +35,9 @@ fn from_records(
         let Some(feature) = feature_of(record.feature) else {
             return UsedFeatures::default();
         };
+        if record.kind == FeatureUseKind::NamedAtRunTime {
+            continue;
+        }
         let is_named = record.kind == FeatureUseKind::Named;
         if is_named {
             named.insert(feature);

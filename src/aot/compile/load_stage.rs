@@ -14,6 +14,7 @@ use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
+use crate::load::module_paths::{count_folders, spell_with_other_levels};
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::runtime_roots::{
@@ -125,34 +126,40 @@ fn is_path_of_module(module_path: &[u8], alias: &[u8]) -> bool {
 fn collect_entry_point_aliases(
     files: &Files<'_>,
     sources: &Sources,
-    mut names_written: Vec<EntryPointPaths>,
-    names_joined: &[Vec<u8>],
+    levels_during_load: usize,
+    names_written: Vec<EntryPointPaths>,
 ) -> (Vec<EntryPointPaths>, Vec<Diagnostic>) {
+    let root = sources.root_of_executable().unwrap_or_default().iter();
+    let root: Vec<u8> = root
+        .map(|&byte| if byte == b'\\' { b'/' } else { byte })
+        .collect();
+    let spell = |name: &[u8]| {
+        spell_with_other_levels(&root, name, levels_during_load, sources.levels_above_root())
+    };
+    let names_written = names_written.into_iter().filter_map(|alias| {
+        let public_path = spell(&alias.public_path)?;
+        Some(EntryPointPaths {
+            public_path,
+            ..alias
+        })
+    });
+    let mut names_written: Vec<EntryPointPaths> = names_written.collect();
     names_written.shared_sort_unstable();
     names_written.dedup();
     let begun_at = files.entry_points().iter();
     let begun_at: FxHashMap<Vec<u8>, FileId> = begun_at
         .map(|&file| (source_path_of(files.module(file).file_name()), file))
         .collect();
-    let mut said = Vec::new();
+
     names_written.retain(|alias| {
         let name = &alias.public_path[..];
-        let is_named = |file: &&FileId| is_path_of_module(sources.public_path(**file), name);
-        let module = files.compiled_files().iter().find(is_named).copied();
-        if let (Some(module), Some(&meant)) = (module, begun_at.get(&alias.source_path))
-            && module != meant
-            && names_joined.contains(&alias.public_path)
-        {
-            let [module, meant] = [module, meant].map(|it| sources.module_paths(it).display_path);
-            let code = Code::WorkerFileGoesByPathOfAnotherFile;
-            said.push(Diagnostic::new(code, None, &[name, module, meant]));
-        }
-        module.is_none()
+        let is_named = |file: &FileId| is_path_of_module(sources.public_path(*file), name);
+        !files.compiled_files().iter().any(is_named)
     });
     let same_name = |a: &EntryPointPaths, b: &EntryPointPaths| a.public_path == b.public_path;
     let (unambiguous, shared): (Vec<_>, Vec<_>) = (names_written.chunk_by(same_name))
         .partition(|files_of_name: &&[EntryPointPaths]| files_of_name.len() == 1);
-    said.extend(shared.iter().map(|files_of_name| {
+    let said = shared.iter().map(|files_of_name| {
         let [first, second] = [0, 1].map(|index| {
             let path = &files_of_name[index].source_path;
             let file = begun_at.get(path);
@@ -160,7 +167,8 @@ fn collect_entry_point_aliases(
         });
         let arguments = [&files_of_name[0].public_path[..], first, second];
         Diagnostic::new(Code::WorkerFilesGoByOnePath, None, &arguments)
-    }));
+    });
+    let said = said.collect();
     let mut aliases: Vec<EntryPointPaths> = unambiguous.into_iter().flatten().cloned().collect();
     aliases.retain(|alias| begun_at.contains_key(&alias.source_path));
     (aliases, said)
@@ -218,7 +226,6 @@ fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
 struct FoundByLoad {
     entry_points: Vec<FoundEntryPoint>,
     names_written: Vec<EntryPointPaths>,
-    names_joined: Vec<Vec<u8>>,
 }
 
 struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
@@ -250,7 +257,8 @@ struct RuntimeLoadInputs<'c, 's> {
 
 fn create_runtime_modules(archive: &'static Archive, options: &Options<'_>) -> RuntimeModules {
     let runtime_modules = RuntimeModules::new(archive, options.load.omits_builtin_modules)
-        .with_test_aliases(options.load.runs_tests);
+        .with_test_aliases(options.load.runs_tests)
+        .with_first_texts(options.aot.takes_first_texts);
     #[cfg(test)]
     let runtime_modules = runtime_modules.with_replaced_sources(&options.load.in_memory_files);
     runtime_modules
@@ -430,11 +438,10 @@ impl<'a> Build<'a> {
                 };
                 let application = self.load_application(shared, project, &request_that_finds)?;
                 let names_written = finder.take_names_written();
-                let names_joined = finder.take_names_joined();
+
                 let found = FoundByLoad {
                     entry_points: finder.finish(application.files(), options.entry_points.len()),
                     names_written,
-                    names_joined,
                 };
                 (application, found)
             }
@@ -464,6 +471,7 @@ impl<'a> Build<'a> {
             options,
             found_entry_points: found.entry_points,
             any_file_may_become_main_module: host.may_any_file_become_main_module(),
+            is_every_text_asked: !host.has_file_that_asks_for_what_unseen_code_finds(),
             in_parallel: &in_parallel,
         });
         steps.end("contents of the program");
@@ -475,7 +483,6 @@ impl<'a> Build<'a> {
             used_at_start: &used_at_start,
             serves_unseen_code,
             loads_code_from_disk: options.aot.loads_code_from_disk,
-            runs_tests: options.load.runs_tests,
             has_file_that_asks_for_it: host.has_file_that_asks_for_what_unseen_code_finds(),
         };
         let roots = collect_runtime_roots(
@@ -524,11 +531,12 @@ impl<'a> Build<'a> {
             self.started_workers.code = code_of_workers(&contents);
             self.started_workers.named_at =
                 find_starts_that_led_to_files(files, &sources.application, &contents);
+            self.started_workers.levels_above_root = sources.application.levels_above_root();
             let (names, said) = collect_entry_point_aliases(
                 files,
                 &sources.application,
+                count_folders(&options.paths.root_directory),
                 found.names_written,
-                &found.names_joined,
             );
             self.started_workers.names = names;
             for diagnostic in said {
@@ -581,8 +589,10 @@ impl<'a> Build<'a> {
     ) -> RuntimeLoadInputs<'c, 's> {
         let options = self.options;
         let is_told_of_code = options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
+        let makes_names = contents.loads_by_unknown_path
+            || (contents.loads_by_unknown_name && !options.load.runs_tests);
         let loads_code_by_unknown_names_alone =
-            !is_told_of_code && contents.loads_by_unknown_path && options.aot.loads_code_from_disk;
+            !is_told_of_code && makes_names && options.aot.loads_code_from_disk;
         let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
         let reads_all_that_files_ask_for =
             can_load_code_at_run_time || roots.holds_what_unseen_code_finds;
@@ -603,6 +613,11 @@ impl<'a> Build<'a> {
                     can_replace_builtins: contents.can_replace_builtins(),
                     process_reaches_code_on_its_prototypes: can_load_code_at_run_time
                         || contents.process_reaches_code_on_its_prototypes,
+                    warnings_load_events: can_load_code_at_run_time
+                        || contents.loads_by_unknown_name
+                        || contents.inspects_prototype_chain_of_process
+                        || roots.loads_events,
+                    takes_first_texts: options.aot.takes_first_texts,
                 },
             ),
             code: CodeOptions {
@@ -1019,12 +1034,9 @@ mod tests {
         let build = with_loaded_build(&files, &default_settings(), |_, loaded| {
             let application = loaded.project(ProjectId::Application);
             let (files, sources) = (application.loaded.files(), &application.sources);
-            let (_, said) = collect_entry_point_aliases(files, sources, names_written.clone(), &[]);
-            let joined = [b"/$bunfs/root/other.ts".to_vec()];
-            let found = collect_entry_point_aliases(files, sources, names_written, &joined);
-            (found, said.len())
+            collect_entry_point_aliases(files, sources, 1, names_written)
         });
-        let ((aliases, warnings), said_of_other_names) = build;
+        let (aliases, warnings) = build;
         assert_eq!(aliases, [paths("/$bunfs/root/worker", "/project/main.ts")]);
         let said: Vec<&[Vec<u8>]> = warnings.iter().map(|it| &it.arguments[..]).collect();
         let shared = [
@@ -1032,10 +1044,7 @@ mod tests {
             b"main.ts",
             b"/project/other.ts",
         ];
-        let of_other = [&b"/$bunfs/root/other.ts"[..], b"other.ts", b"main.ts"];
-        let expected = [of_other, shared].map(|it| it.map(<[u8]>::to_vec));
-        assert_eq!(said, [&expected[0][..], &expected[1][..]]);
-        assert_eq!(said_of_other_names, 1);
+        assert_eq!(said, [&shared.map(<[u8]>::to_vec)[..]]);
         assert!(is_path_of_module(
             b"B:\\~BUN\\root\\a.js",
             b"B:/~BUN/root/a.js"

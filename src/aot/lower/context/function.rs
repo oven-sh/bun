@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 use super::FileLowering;
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::ir::generated::{BlockRole, ECMAMode, FunctionFlags};
+use crate::ir::generated::{BlockFrequency, BlockRole, ECMAMode, FunctionFlags};
 use crate::ir::{
     BlockId, DeclaredType, Edge, FunctionBuilder, FunctionId, FunctionKey, Handler, Type, TypeId,
     ValueId,
@@ -138,6 +138,12 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
 
     pub(crate) fn create_block_under(&mut self, handler: Option<Handler>) -> BlockId {
         self.builder.create_block(handler)
+    }
+
+    pub(crate) fn create_unlikely_block(&mut self) -> BlockId {
+        let block = self.create_block();
+        self.builder.set_frequency(block, BlockFrequency::Unlikely);
+        block
     }
 
     pub(crate) fn jump(&mut self, block: BlockId) {

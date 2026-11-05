@@ -1,7 +1,6 @@
 // RUN(ONE): link
+// DIAGNOSTIC: TS2312 first.ts:6
 // OPTIONS(ONE): threads=1
-// ONE: function [[one]] name="one" {{*}}parameters=[{type=undefined|null|[[merged]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}]
-// ONE: function [[two]] name="two" {{*}}parameters=[{type=undefined|null|[[merged]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}]
 // RUN(T2A): link
 // OPTIONS(T2A): threads=2
 // SAME: ONE T2A
@@ -9,7 +8,7 @@
 // OPTIONS(T8A): threads=8
 // SAME: ONE T8A
 
-// An interface that extends a union is a type error, here in first.ts and in last.d.ts. A type error stops no build and nobody reports it: the program is built, `Merged` is one layout for both files, and the output is the same whatever the number of threads.
+// The other error lies in a declaration file that `skipLibCheck` leaves out, so the one in first.ts alone can stop the build.
 
 // FILE: main.ts
 import { one } from "./first";

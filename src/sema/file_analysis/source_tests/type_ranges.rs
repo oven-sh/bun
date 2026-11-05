@@ -37,6 +37,10 @@ const EXACT_PAIRS: &[Row] = &[
         r#"function t(a) {}"#,
     ),
     (
+        r#"function s(a: { new (b: number): object; (b: string): string }): { (b: number): number; [key: string]: number; (b: string): string } { return a; }"#,
+        r#"function s(a) { return a; }"#,
+    ),
+    (
         r#"abstract class C<T> extends B<T> implements I { declare x: number; abstract y: number; abstract n(): void; private p = 1; readonly z: string = "a"; protected static w?: number; v!: number; public override m(): void {} m2(a: number): void; m2(a: any) {} [k: string]: any; }"#,
         r#"class C extends B { p = 1; z = "a"; static w; v; m() {} m2(a) {} }"#,
     ),

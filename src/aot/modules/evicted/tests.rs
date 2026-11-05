@@ -22,6 +22,27 @@ fn a_function_that_a_file_hands_out_may_ask_for_the_file_behind_its_throw() {
 }
 
 #[test]
+fn a_load_out_of_sight_may_ask_for_the_file_that_a_text_spells_behind_its_throw() {
+    let lib = ("lib.cjs", "if (globalThis.first) throw 0;");
+    let asks_first = "const handed = [require][0];\ntry { handed('./lib.cjs'); } catch {}\nrequire('./lib.cjs');";
+    assert_eq!(
+        files_that_run_again(&[("main.cjs", asks_first), lib]),
+        ["lib.cjs"]
+    );
+    let nobody_loads_out_of_sight = "const text = './lib.cjs';\nrequire('./lib.cjs');";
+    assert!(files_that_run_again(&[("main.cjs", nobody_loads_out_of_sight), lib]).is_empty());
+}
+
+#[test]
+fn a_file_that_has_ended_where_the_text_stands_that_spells_it_runs_once() {
+    let lib = ("lib.cjs", "if (globalThis.first) throw 0;");
+    let in_the_body = "const handed = [require][0];\nrequire('./lib.cjs');\nhanded('./lib.cjs');";
+    assert!(files_that_run_again(&[("main.cjs", in_the_body), lib]).is_empty());
+    let in_a_function = "require('./lib.cjs');\nconst handed = [require][0];\nexports.again = () => handed('./lib.cjs');";
+    assert!(files_that_run_again(&[("main.cjs", in_a_function), lib]).is_empty());
+}
+
+#[test]
 fn a_function_of_a_file_below_may_ask_for_the_file_that_is_still_running() {
     let files = [
         ("main.cjs", "require('./store.cjs');"),

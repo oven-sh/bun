@@ -14,7 +14,7 @@ namespace Shape.Tools {
   export function first() {
     return 1;
   }
-}
+} // @ts-expect-error
 class Path extends Shape {}
 namespace Path.Tools {
   export function second() {

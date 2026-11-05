@@ -13,8 +13,8 @@ const [how, hole] = process.argv.slice(2);
 const libc = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
   mmap: { args: ["ptr", "usize", "i32", "i32", "i32", "i64"], returns: "ptr" },
   ...(process.platform === "darwin" && { _dyld_get_image_vmaddr_slide: { args: ["u32"], returns: "i64" } }),
-});
-const address = Number(hole) + Number(libc.symbols._dyld_get_image_vmaddr_slide?.(0) ?? 0);
+}); // @ts-expect-error
+const address = Number(hole) + Number(libc.symbols._dyld_get_image_vmaddr_slide?.(0) ?? 0); // @ts-expect-error
 const call = () => new CFunction({ ptr: address, args: [], returns: "void" })();
 const [read_write, fixed_private_anonymous] = [3, process.platform === "darwin" ? 0x1012 : 0x32];
 const map = () => console.log("mapped", libc.symbols.mmap(address, 16384, read_write, fixed_private_anonymous, -1, 0) === address);
@@ -106,9 +106,18 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     "call filled, listening": { stdout: "started\n", saysRemoved: true, exits70: true },
   };
   const found: Record<string, unknown> = {};
-  // Today: on macOS a call into a mapped page that cannot be run is reported as a removed feature.
-  // And on x64 there removed code is still filled with breakpoints.
-  const failsToday = isMacOS ? ["call mapped data", ...(process.arch === "x64" ? ["call filled, listening"] : [])] : [];
+  // What fails today fails on macOS alone. It is declared on every platform, so that a list of what is declared `todo` has it wherever the list is written.
+  const knownFailures: Record<string, { here: boolean; today: string }> = {
+    "call mapped data": {
+      here: isMacOS,
+      today: `on macOS a crash is called "a removed feature" where none was called: a call into a mapped page that cannot be run`,
+    },
+    "call filled, listening": {
+      here: isMacOS && process.arch === "x64",
+      today: "on macOS x64 removed code is still filled with breakpoints",
+    },
+  };
+  const failsToday = Object.keys(knownFailures).filter(how => knownFailures[how].here);
   const withoutKnownFailures = (cases: Record<string, unknown>) =>
     Object.fromEntries(Object.entries(cases).filter(([how]) => !failsToday.includes(how)));
 
@@ -167,9 +176,9 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     expect(seen).toEqual(expected);
   }, 240_000);
 
-  for (const how of failsToday) {
-    test.todo(`is called a removed feature only where removed code was called: ${how}`, () => {
-      expect(found[how]).toEqual(wanted[how]);
-    });
+  for (const [how, { here, today }] of Object.entries(knownFailures)) {
+    const name = `is called a removed feature only where removed code was called: ${how}: ${today}`;
+    if (here) test.todo(name, () => expect(found[how]).toEqual(wanted[how]));
+    else test.todo(name);
   }
 });

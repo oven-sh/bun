@@ -6,6 +6,10 @@ const served = 'const server = Bun.serve({ port: 0, fetch: () => new Response("[
 
 const internals = 'import { privateGlobalFunctions } from "bun:internal-for-testing";';
 
+// The form makes a File of the Blob at the first read.
+const form = 'const form = new FormData();\nform.append("text", "a");\nform.append("file", new Blob(["bytes"]));';
+const cookies = 'const cookies = new Bun.CookieMap("first=1");\ncookies.set("second", "2");\ncookies.delete("first");';
+
 /** What a handler of a server is handed. `more` are options of the server, `asked` is what the client does with `server`. */
 const handedToServer = (more: string, asked: string, start = "Bun.serve") => [
   "const { promise, resolve } = Promise.withResolvers();",
@@ -176,6 +180,33 @@ export const calls: Record<string, string[]> = {
   "TransformStream.prototype.readable > ReadableStream": ["new TransformStream().readable"],
   "TransformStream.prototype.writable > WritableStream": ["new TransformStream().writable"],
   "URL.prototype.searchParams > URLSearchParams": ['new URL("https://example.com/a?first=1").searchParams'],
+  "FormData.prototype.entries": [`${form}\nform.entries()`],
+  "FormData.prototype.keys": [`${form}\nform.keys()`],
+  "FormData.prototype.values": [`${form}\nform.values()`],
+  "FormData.prototype.getAll": [`${form}\nform.getAll("text")`, `${form}\nform.getAll("file")`, `${form}\nform.getAll("none")`],
+  "FormData.prototype.toJSON": [`${form}\nform.toJSON()`, "new FormData().toJSON()"],
+  "FormData.prototype.get > Blob": [`${form}\nform.get("file")`],
+  "FormData.prototype.getAll > Blob": [`${form}\nform.getAll("file")[0]`],
+  "FormData.prototype.toJSON > Blob": [`${form}\nform.toJSON().file`],
+  "FormData.prototype.forEach > Blob": [`${form}\nlet handed;\nform.forEach(value => void (handed = value));\nhanded`],
+  "%FormDataIterator%.prototype.next > Blob": [`${form}\nArray.from(form.values())[1]`],
+  "Bun.CookieMap": [
+    "new Bun.CookieMap()",
+    'new Bun.CookieMap("first=1; second=2")',
+    'new Bun.CookieMap([["first", "1"]])',
+    'new Bun.CookieMap({ first: "1" })',
+  ],
+  "Bun.CookieMap.prototype.entries": [`${cookies}\ncookies.entries()`],
+  "Bun.CookieMap.prototype.keys": [`${cookies}\ncookies.keys()`],
+  "Bun.CookieMap.prototype.values": [`${cookies}\ncookies.values()`],
+  "Bun.CookieMap.prototype.toJSON": [`${cookies}\ncookies.toJSON()`, "new Bun.CookieMap().toJSON()"],
+  "Bun.CookieMap.prototype.toSetCookieHeaders": [
+    `${cookies}\ncookies.toSetCookieHeaders()`,
+    "new Bun.CookieMap().toSetCookieHeaders()",
+  ],
+  "%BunRequest%.prototype.cookies > BunCookieMap": [
+    [...handedToServer(routeHandler, get).slice(0, -1), "handed.cookies"].join("\n"),
+  ],
   "WebAssembly.instantiate": [
     "WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))",
     "WebAssembly.instantiate(new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])))",
@@ -314,6 +345,9 @@ export const calls: Record<string, string[]> = {
   ],
   "%BunRequest%.prototype.clone": [
     'let asked;\nconst server = Bun.serve({\n  port: 0,\n  routes: {\n    "/:name": request => {\n      asked = request.clone();\n      return new Response("x");\n    },\n  },\n});\nawait fetch(new URL("/a", server.url));\nawait server.stop(true);\nasked',
+  ],
+  "%BunRequest%.prototype.clone > BunCookieMap": [
+    'let asked;\nconst server = Bun.serve({\n  port: 0,\n  routes: {\n    "/:name": request => {\n      request.cookies.set("first", "1");\n      asked = request.clone().cookies;\n      return new Response("x");\n    },\n  },\n});\nawait fetch(new URL("/a", server.url));\nawait server.stop(true);\nasked',
   ],
   "%BlockList%": ['import { BlockList } from "node:net";\nnew BlockList()'],
   "%SocketAddress%": [

@@ -34,7 +34,7 @@ function readInAClosure(n: number): number { const local = { x: n / 3, y: 2 }; c
 function stored(n: number): number { const local = { x: n / 4, y: 2 }; local.x = n / 8; local.y += 0.5; return local.x + local.y; }
 function asked(n: number): boolean { const local = { x: n / 5, y: 2 }; return "x" in local; }
 function underAKey(n: number, key: "x" | "y"): number { const local = { x: n / 6, y: 2 }; return local[key]; }
-function takenApart(n: number): number { const local = { x: n / 7, y: 2 }; const { x, y } = local; return x + y; }
+function takenApart(n: number): number { const local = { x: n / 7, y: 2 }; const { x, y } = local; return x + y; } // @ts-expect-error
 function deleted(n: number): boolean { const local = { x: n / 9, y: 2 }; delete local.x; return "x" in local; }
 console.log(read(given[1]!), readInAClosure(given[1]!), stored(given[1]!), asked(given[1]!), underAKey(given[1]!, "x"), takenApart(given[1]!), deleted(given[1]!), first({ x: 1, y: 2 }));
 `,

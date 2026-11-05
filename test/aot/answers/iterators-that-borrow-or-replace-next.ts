@@ -65,8 +65,9 @@ report(collect(withListPrototype()));
 report(collect({ [Symbol.iterator]() { return this; }, next() { return 1; } }));
 report(collect({ [Symbol.iterator]() { return this; }, turns: 0, next() { return { get done() { return false; }, get value() { throw new EvalError("value"); } }; } }));
 let turns = 0;
-report(collect({ [Symbol.iterator]() { return this; }, next() { return { done: ++turns > 2 ? "yes" : 0, value: turns }; } }));
+report(collect({ [Symbol.iterator]() { return this; }, next() { return { done: ++turns > 2 ? "yes" : 0, value: turns }; } })); // @ts-expect-error
 const foreign = loadString("(function* () { yield 'from'; yield 'elsewhere'; })");
 report(collect(foreign()));
 report(collect({ [Symbol.iterator]() { return this; }, next: foreign().next }));
 report("end");
+declare function report(value: unknown): void;

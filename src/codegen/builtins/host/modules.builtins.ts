@@ -205,13 +205,25 @@ const functionsOfRunner = (module: b.BuiltinPath, kept: readonly b.UseSpec[]) =>
   ...aroundHooksOfRunner.flatMap(name => b.fn(`${module}.${name}`, registersWithRunner(passedByVitest))),
 ];
 
+// toMatchObject() and expect.objectContaining(), wherever a matcher meets one, are Bun__deepMatch() in bindings.cpp.
+const keptForMatchers = [b.retained, b.privateFieldsCompared];
 // The object keeps the value for its matchers, which call it where it is a function.
 const expects = {
   args: { value: b.any.optional, message: b.any.optional },
   returns: b.instance("Expect").fresh,
   capability: "js",
   throws: true,
-  uses: { value: [b.retained], message: [b.retained] },
+  uses: { value: keptForMatchers, message: [b.retained] },
+  implementation: b.generic,
+} satisfies b.FunctionField;
+
+// The matcher that it answers keeps the pattern, and wherever a comparison meets the matcher the pattern goes to Bun__deepMatch().
+const answersMatcherOfPattern = {
+  args: { pattern: b.any.optional, others: b.any.rest },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  uses: { this: [b.everything], pattern: [b.everything, b.privateFieldsCompared], others: b.inspected },
   implementation: b.generic,
 } satisfies b.FunctionField;
 
@@ -223,7 +235,7 @@ const matches = (returns: b.TableType, receiver: readonly b.UseSpec[]) =>
     returns,
     capability: "js",
     throws: true,
-    uses: { this: receiver, expected: [b.retained] },
+    uses: { this: receiver, expected: keptForMatchers },
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
@@ -517,6 +529,8 @@ export default b.declarations(
   b.same("bun:test/vitest.vitest", "bun:test/vitest.vi"),
   // The export is the constructor of the class: create_test_module() and create_mock_objects() in src/runtime/test_runner/jest.rs.
   b.callOfConstructor("%Expect%", expects),
+  b.fn("%Expect%.objectContaining", answersMatcherOfPattern),
+  b.method("%ExpectStatic%.prototype.objectContaining", answersMatcherOfPattern),
   matchers.flatMap(name =>
     b.method(`%Expect%.prototype.${name}`, matches(b.union(b.undefined, b.instance("Promise").fresh), b.inspected)),
   ),

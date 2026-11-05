@@ -1,20 +1,20 @@
 use super::*;
 
 const OTHER_TEXTS: &[&str] = &[
-    "process.on('exit', f);",
-    "process.once(\"SIGINT\", f);",
-    "process.addListener('exit', f); process.prependListener('beforeExit', f);",
-    "process.prependOnceListener('uncaughtException', f);",
-    "process.on('exit' as string, f);",
-    "process.on(`exit`, f);",
-    "process.on('a text that is in no table', f);",
-    "void process.on('exit', f);",
-    "if (x) process.on('exit', f);",
-    "process.on(x ? 'exit' : 'SIGINT', f);",
-    "for (const name of ['SIGINT', 'SIGTERM']) process.on(name, f);",
+    "process.on('exit', () => {});",
+    "process.once(\"SIGINT\", () => {});",
+    "process.addListener('exit', () => {}); process.prependListener('beforeExit', () => {});",
+    "process.prependOnceListener('uncaughtException', () => {});",
+    "process.on('exit' as string, () => {});",
+    "process.on(`exit`, () => {});",
+    "process.on('a text that is in no table', () => {});",
+    "void process.on('exit', () => {});",
+    "if (x) process.on('exit', () => {});",
+    "process.on(x ? 'exit' : 'SIGINT', () => {});",
+    "for (const name of ['SIGINT', 'SIGTERM']) process.on(name, () => {});",
     "for (const name of ['SIGINT', 'SIGTERM'] as const) process.on(name, () => f(name));",
-    "for (let name of ['SIGINT']) { process.once(name, f); }",
-    "const names = ['SIGINT', 'SIGTERM']; for (const name of names) process.on(name, f);",
+    "for (let name of ['SIGINT']) { process.once(name, () => {}); }",
+    "const names = ['SIGINT', 'SIGTERM']; for (const name of names) process.on(name, () => {});",
 ];
 
 const LISTED_OR_UNKNOWN_TEXTS: &[&str] = &[
@@ -86,7 +86,7 @@ fn a_call_that_writes_another_text_does_without() {
             });
         }
     }
-    with_case(PROGRAM, "process.on('exit', f);", |case| {
+    with_case(PROGRAM, "process.on('exit', () => {});", |case| {
         assert!(case.mentions(BuiltinId::EventEmitterPrototypeOn));
     });
 }
@@ -117,7 +117,7 @@ fn a_test_run_may_replace_how_lists_are_walked() {
         with_case(setup, source, |case| {
             assert!(needs_what_some_texts_need(case), "{source}")
         });
-        let source = "process.on('SIGINT', f);";
+        let source = "process.on('SIGINT', () => {});";
         with_case(setup, source, |case| {
             assert!(!needs_what_some_texts_need(case), "{source}")
         });

@@ -1,8 +1,8 @@
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
 use bun_trim::{
-    Decision, Feature, FeatureSet, RetainReason, Retained, UsedFeature, UsedLocales, WitnessIndex,
-    can_run_unseen_code,
+    Decision, Feature, FeatureSet, RetainReason, Retained, UnseenCodeCause, UsedFeature,
+    UsedLocales, WitnessIndex, can_run_unseen_code,
 };
 
 use super::format::write_parts;
@@ -25,6 +25,21 @@ pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
     let mut positions = Positions::new(input, PathStyle::Posix);
     let reachable = find_removed_but_reachable(input, &mut positions);
     cause_lines(input, &reachable, &mut positions, out);
+    let brings_names = |cause| {
+        matches!(
+            cause,
+            UnseenCodeCause::EvaluatesText
+                | UnseenCodeCause::LoadsModuleByName
+                | UnseenCodeCause::LoadsCodeByName
+        )
+    };
+    let causes = &input.used_features.causes;
+    if !input.options.trim.removes_unused && causes.iter().any(|it| brings_names(it.cause)) {
+        let line = line_from(&[
+            b"without --trim this report keeps what only a name from run time could reach; --trim removes it",
+        ]);
+        out.push(entry_at(line, None));
+    }
     let items = item_lines(input.engine.builtins_used());
     out.extend(items.into_iter().map(|line| entry_at(line, None)));
     out.push(locale_line(input, &mut positions));
@@ -182,7 +197,8 @@ fn item_lines(records: &[BuiltinUseRecord]) -> Vec<Vec<u8>> {
         let Some(id) = builtin_of(record.builtin) else {
             continue;
         };
-        if record.uses.without(BuiltinUse::TESTED).is_empty() {
+        let counts = !record.uses.contains(BuiltinUse::NAMED_AT_RUN_TIME);
+        if !counts || record.uses.without(BuiltinUse::TESTED).is_empty() {
             continue;
         }
         push_item(&mut items, id);

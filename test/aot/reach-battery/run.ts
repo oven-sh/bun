@@ -3,13 +3,14 @@
 // A build with --aot leaves out what the program does not reach: members of `Bun` and `process`, functions of Bun's own JavaScript, whole modules. Every rule that cuts more is a proof about programs, and a
 // false proof shows in one shape of program and in no other. Each family here is one such shape, told over many names; most were written on the night when their fault was found.
 //
-//   bun run.ts [--jobs=32] [--kinds=closed,made-name] [--limit=400] [--part=1/6] [--whole-executables] [family ..]      the Bun that runs this file is the Bun that is asked
+//   bun run.ts [--jobs=32] [--kinds=closed,made-name] [--limit=400] [--part=1/6] [--whole-executables] [--on-a-terminal] [family ..]      the Bun that runs this file is the Bun that is asked
 //
 // Each program is built alone, as anybody builds it (`bun build --compile --aot <file> --outfile x`), three times:
 //   closed      with nothing more
 //   made-name   a load whose name the build cannot know stands in front of the text, and loads nothing. What a build holds of Bun's library goes by other rules there
 //   open        with --aot-allow-code-from-disk
-// and the executable is held against `bun <file> <arguments>`: the same arguments, environment and folder, both into a pipe.
+// and the executable is held against `bun <file> <arguments>`: the same arguments, environment and folder, both into a pipe. With --on-a-terminal each of the two has a terminal of its own for its
+// three standard streams, as under anybody's shell: Bun makes other streams there, listens for the size of the window, and native code calls what it finds on `process`. No test of CI has a terminal.
 //
 // What is said of a program and a build:
 //   as plain    the same standard output and exit code
@@ -33,6 +34,7 @@
 //   // Arguments by: names.js          a file beside it: each line that plain Bun prints for it is one more argument
 //   // Mask: [0-9]+                    what matches is taken out of both outputs: a port, a process id, the frames below an error
 //   // Refused: Cannot load '          see above
+//   // Refused where closed: Cannot load '   the same for the closed build and the one beside a made name. The open build has to answer
 //   // Build stops: TS100080           see above
 //   // Closed alone | // Open alone    the other builds are not made
 // and end with the comment of run-parallel.ts that says what the executable prints where that is not what plain Bun prints: /* Output: .. */. It counts as a refusal that the head allows.
@@ -132,6 +134,7 @@ type Head = {
   argumentsBy?: string;
   masks: RegExp[];
   refused: string[];
+  refusedWhereClosed: string[];
   output?: string;
   stops: string[];
   kinds: Kind[];
@@ -144,6 +147,7 @@ function headOf(text: string): Head {
     arguments: [],
     masks: [],
     refused: [],
+    refusedWhereClosed: [],
     stops: [],
     kinds: kindsInOrder,
   };
@@ -160,6 +164,7 @@ function headOf(text: string): Head {
     else if (word === "Arguments by") head.argumentsBy = rest;
     else if (word === "Mask") head.masks.push(new RegExp(rest, "gm"));
     else if (word === "Refused") head.refused.push(rest);
+    else if (word === "Refused where closed") head.refusedWhereClosed.push(rest);
     else if (word === "Build stops") head.stops.push(rest);
     else if (word === "Closed alone") head.kinds = ["closed"];
     else if (word === "Open alone") head.kinds = ["open"];
@@ -197,8 +202,27 @@ const short = (text: string, length = 200) =>
     .filter(line => line.trim())
     .join(" ~ ")
     .slice(0, length);
-const died = (ended: Ended) => ended.exitCode === null || ended.exitCode === 134 || !!ended.signalCode;
+const died = (ended: Ended) =>
+  ended.exitCode === null || [132, 133, 134, 135, 136, 137, 139].includes(ended.exitCode) || !!ended.signalCode;
+/** `script` of util-linux gives the command a terminal, hands on what is written there, and ends as the command does: with 128 and the number of a signal. */
+const onATerminal = (cmd: string[]) => [
+  "script",
+  "-qec",
+  cmd.map(word => `'${word.replaceAll("'", `'\\''`)}'`).join(" "),
+  "/dev/null",
+];
 const endOf = (ended: Ended) => ended.signalCode ?? ended.exitCode;
+
+/** On a terminal the standard error is read along with the output. How an error that nobody caught is shown (lines of the source, frames) and who warns (the process, the name of its file) differ by design. */
+const whatTheStandardErrorSaysOtherwise = [
+  /^ *\d+ \| .*\r?\n/gm,
+  /^ *\^+ *\r?\n/gm,
+  /^ +at .*\r?\n/gm,
+  /^\(Use `.*\r?\n/gm,
+  /(?<=\(node:)\d+/g,
+  /^Bun v.*\r?\n/gm,
+  /^\s*\r?\n/gm,
+];
 
 export const isBad = (verdict: Verdict) => verdict.word !== "as plain" && verdict.word !== "refused";
 export const lineOf = ({ family, program, kind, word, said }: Verdict) =>
@@ -217,6 +241,8 @@ export type Options = {
   moreFlags?: string[];
   /** Every build writes a whole executable, as anybody's build does. */
   wholeExecutables?: boolean;
+  /** Plain Bun and the executable each run on a terminal of their own. Linux. */
+  onATerminal?: boolean;
   start?: Start;
   /** Called with each verdict as it falls. */
   heard?: (verdict: Verdict) => void;
@@ -349,7 +375,10 @@ export async function battery(options: Options = {}): Promise<Verdict[]> {
           return { ...all, fault: `plain Bun cannot say the arguments: ${short(listed.stdout + listed.stderr)}` };
         all.arguments.push(...listed.stdout.split(/\s+/).filter(Boolean));
       }
-      const plain = await start([bun, program.entry, ...all.arguments], program.folder, env, 60_000);
+      const asPlain = [bun, program.entry, ...all.arguments];
+      const plain = await start(options.onATerminal ? onATerminal(asPlain) : asPlain, program.folder, env, 60_000);
+      // A head says how the program ends into a pipe. On a terminal some end otherwise in plain Bun too: whoever replaces process.on and writes in it is called while the output stream is made.
+      if (options.onATerminal && !died(plain)) return { ...all, plain };
       if (plain.exitCode !== head.exitCode)
         return { ...all, fault: `plain Bun ends with ${endOf(plain)}: ${short(plain.stdout + plain.stderr)}` };
       return { ...all, plain };
@@ -422,19 +451,31 @@ export async function battery(options: Options = {}): Promise<Verdict[]> {
               `the build ends with ${endOf(build)}: ${short(errorsFirst.join("\n"))}`,
             );
           }
-          const ran = await start([made, ...given], folder, env, 60_000);
+          const ran = await start(
+            options.onATerminal ? onATerminal([made, ...given]) : [made, ...given],
+            folder,
+            env,
+            60_000,
+          );
           const both = ran.stdout + ran.stderr;
           const masked = (output: string) =>
-            [...head.masks, /(?<=localhost|127\.0\.0\.1|\[::1\]):\d+/g].reduce(
-              (left, mask) => left.replace(mask, ""),
-              output,
-            );
+            [
+              ...(options.onATerminal ? whatTheStandardErrorSaysOtherwise : []),
+              ...head.masks,
+              /(?<=localhost|127\.0\.0\.1|\[::1\]):\d+/g,
+            ].reduce((left, mask) => left.replace(mask, ""), output);
           if (died(ran) || diesWhateverTheHeadSays.some(sentence => both.includes(sentence)))
             return say("dies", `ends with ${endOf(ran)}: ${short(ran.stderr + ran.stdout)}`);
           if (ran.exitCode === plain.exitCode && masked(ran.stdout) === masked(plain.stdout)) return say("as plain");
-          if (head.refused.some(sentence => both.includes(sentence))) return say("refused");
+          // Where a stack is full, and what is reported on the way out of it, goes by the size of the frames. Into a pipe a program that fills it says so in its head; on a terminal more of them do.
+          const fillsTheStack = (ended: Ended) => ended.stdout.includes("Maximum call stack size exceeded");
+          if (options.onATerminal && ran.exitCode === plain.exitCode && fillsTheStack(ran) && fillsTheStack(plain))
+            return say("as plain");
+          const mayRefuseBy = kind === "open" ? head.refused : [...head.refused, ...head.refusedWhereClosed];
+          if (mayRefuseBy.some(sentence => both.includes(sentence))) return say("refused");
           const named = ran.stderr.split("\n").find(line => /^(error|[A-Za-z]*Error)\b/.test(line)) ?? "";
-          if (head.output === ran.stdout + (ran.exitCode ? `exit code ${ran.exitCode}\n${named}\n` : ran.stderr)) return say("refused");
+          if (head.output === ran.stdout + (ran.exitCode ? `exit code ${ran.exitCode}\n${named}\n` : ran.stderr))
+            return say("refused");
           const inPlain = plain.stdout + plain.stderr;
           const heard = refusals.filter(sentence => both.includes(sentence) && !inPlain.includes(sentence));
           if (heard.length)
@@ -474,6 +515,7 @@ if (import.meta.main) {
     part: flag("part")?.split("/").map(Number) as [number, number] | undefined,
     moreFlags: flag("threads") ? [`--aot-threads=${flag("threads")}`] : [],
     wholeExecutables: process.argv.includes("--whole-executables"),
+    onATerminal: process.argv.includes("--on-a-terminal"),
     // What is bad is said at once on the standard error, for whoever watches a long run; the lines that count come at the end.
     heard: verdict => isBad(verdict) && verdict.word !== "not run" && console.error(`now: ${lineOf(verdict)}`),
     families: process.argv.slice(2).filter(word => !word.startsWith("--")),

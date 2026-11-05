@@ -72,6 +72,39 @@ describe("which code runs", () => {
   });
 });
 
+// A run under --aot generates no code, so the limits on generated code are the build's to find: docs/compiler/debugging.mdx says so.
+test("a function whose stack frame is too large stops the build, and --aot runs the program", async () => {
+  const held = 132_000;
+  const names = Array.from({ length: held }, (_, index) => `v${index}`);
+  using dir = tempDir("aot-flag-runs-from-source", {
+    "main.js": `let calls = 0;
+      function one() { return ++calls; }
+      function take(value) { calls += value; }
+      function wide() {
+        ${names.map(name => `const ${name} = one();`).join("\n")}
+        ${names.map(name => `take(${name});`).join("\n")}
+        return calls;
+      }
+      console.log(wide());`,
+  });
+  const built = await bun(
+    String(dir),
+    "build",
+    "--compile",
+    "--aot",
+    "main.js",
+    "--outfile",
+    join(String(dir), "program"),
+  );
+  expect(built.stderr).toMatch(/error: TS100057: 'wide' .*needs a stack frame of \d+ bytes, over the limit/);
+  expect(built.exitCode).toBe(1);
+  const ran = await bun(String(dir), "run", "--aot", "main.js");
+  expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+    stdout: `${held + (held * (held + 1)) / 2}\n`,
+    exitCode: 0,
+  });
+});
+
 describe("what stops a build stops the run, and is printed as the build prints it", () => {
   const stopped: Record<string, { text: string; code: string }> = {
     "a type error": { text: `console.log("ran"); const port: number = "8080"; console.log(port);`, code: "TS2322" },
@@ -81,10 +114,16 @@ describe("what stops a build stops the run, and is printed as the build prints i
       code: "TS100014",
     },
     "an invalid regular expression": { text: `console.log("ran"); console.log(/(/.source);`, code: "TS1005" },
+    // This one is found where the code of the program is made, so a run that has such a promise anywhere goes that far.
+    "an int32 that the compiler cannot prove": {
+      text: `import type { int32 } from "bun"; console.log("ran"); function half(n: int32): number { return n / 2; } const given: number[] = JSON.parse("[3]"); console.log(half(given[0]!));`,
+      code: "TS100031",
+    },
   };
   test.concurrent.each(Object.keys(stopped))("%s", async name => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
+      "bun.d.ts": `declare module "bun" { type int32 = number & { readonly "bun.int32"?: true }; }`,
       "main.ts": declarations + stopped[name].text,
     });
     const errors = (said: string) => said.split("\n").filter(line => line.startsWith("error: "));

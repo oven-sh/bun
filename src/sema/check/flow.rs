@@ -4137,6 +4137,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if self.is_unit(value_ty) {
             let is_plain = Self::is_literal_outside_enum(self.flags(value_ty));
+            // FOR SPEED: a union of such literals alone, none of them fresh, holds the value itself or nothing that is equal to it. The type of `x.kind`
+            // behind n tests of it no longer holds what they compared it with, and every reference passes all of them.
+            let literals = tf::STRING_LITERAL | tf::NUMBER_LITERAL | tf::BIGINT_LITERAL;
+            if is_plain
+                && let TypeData::Union(members) = self.data(ty)
+                && self.types().member_flags(ty) & !literals == 0
+                && !self.types().has_fresh_literal(ty)
+                && !self.contains_type(members, value_ty)
+            {
+                return ty;
+            }
             return self.filter(ty, |c, m| {
                 if is_plain && Self::is_literal_outside_enum(c.flags(m)) {
                     return c.with_freshness(m, false) != value_ty;

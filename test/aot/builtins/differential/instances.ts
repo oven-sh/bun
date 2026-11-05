@@ -751,8 +751,12 @@ const otherInstances: Candidate[] = [
   pristine("filled:FormData", available(() => {
     const form = new FormData();
     form.append("a", "1");
+    form.append("b", new Blob(["text"]));
     return form;
   })),
+  pristine("filled:CookieMap", available(() => new Bun.CookieMap("a=1; b=2"))),
+  pristine("filled:Cookie", available(() => new Bun.Cookie("a", "1"))),
+  pristine("cookieMapIterator", available(() => new Bun.CookieMap("a=1").entries())),
   pristine("filled:AbortSignal", available(() => new AbortController().signal)),
   pristine("aborted:AbortSignal", available(() => AbortSignal.abort())),
   pristine("filled:ReadableStream", available(() => new Blob(["text"]).stream())),

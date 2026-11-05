@@ -38,3 +38,4 @@ report(wrapped([0, 0, 0, 0, 0, 0, 0, 0], 20));
 report(written([0, 0, 0, 0, 0, 0, 0, 0], 20));
 report(counted([0, 0, 0, 0, 0, 0, 0, 0], 20));
 report("end");
+declare function report(value: unknown): void;

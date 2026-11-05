@@ -7,6 +7,9 @@ function next(i: number): number { if (i === 3) throw new RangeError("at " + i);
 function fillByCalls(list: number[], most: number): string { try { for (let i = 0; i < most; i++) list[i] = next(i); } catch (error) { return (error as Error).message; } return "filled"; }
 function fillOffAnObject(list: unknown[], most: number, holders: ({ word: string } | undefined)[]): string { try { for (let i = 0; i < most; i++) list[i] = holders[i & 3]!.word; } catch (error) { return (error as Error).name; } return "filled"; }
 function fillAndCut(list: number[], most: number): number { for (let i = 0; i < most; i++) { list[list.length] = i; if (list.length > 2) list.length = 0; } return list.length; }
+function keepLast(list: number[], most: number): number { const at = list.length; for (let i = 0; i < most; i++) list[at] = i; return list.length; }
+function fillWithTheName(list: string[], most: number): string { for (let i = 0; i < most; i++) list[i] = later + i; return "filled"; }
+function fillWithALaterName(list: string[], most: number): string { try { return fillWithTheName(list, most); } catch (error) { return (error as Error).name; } }
 const kept: unknown[][] = [];
 const before = held();
 for (const most of [20000000, 250000000]) {
@@ -15,4 +18,8 @@ for (const most of [20000000, 250000000]) {
     console.log(fillByCalls(second, most), second.length, fillOffAnObject(third, most, [{ word: "a" }, { word: "b" }, undefined, { word: "d" }]), third.length);
     if (most < 100000000) { const fourth: number[] = []; kept.push(fourth); console.log(putAndTake(first, most), first.length, fillAndCut(fourth, most), fourth.length); }
 }
+const late: string[] = [];
+{ const last: number[] = [], early: string[] = []; kept.push(last, early, late); console.log(keepLast(last, 250000000), last[0], fillWithALaterName(early, 250000000), early.length); }
 console.log(kept.length, held() - before < 100);
+const later = "l" + kept.length;
+console.log(fillWithALaterName([], 70).length, fillWithALaterName(late, 3), late);

@@ -15,3 +15,4 @@ let text = "";
 for (let i = 0; i < 40; i++) { try { text += both[i & 1].get(); } catch { text += "x"; } }
 report(text);
 report("end");
+declare function report(value: unknown): void;

@@ -19,3 +19,4 @@ function run(turns: number): number { let sum = 0; for (let i = 0; i < turns; i+
 report(run(1000));
 report(outer(2, 3));
 report("end");
+declare function report(value: unknown): void;

@@ -138,6 +138,10 @@ impl FileLowering<'_, '_, '_, '_> {
             let Some((key, mut flags)) = self.find_field_key(layout, entry.name) else {
                 continue;
             };
+            let is_decorated = matches!(entry.source, ClassMemberSource::Member(node) if class::has_decorators(hir, hir[node].modifiers));
+            if is_decorated && flags.contains(FieldFlags::IS_PRIVATE) {
+                flags |= FieldFlags::IS_HIDDEN;
+            }
             if !is_declared
                 && (accessor_keys.binary_search(&key).is_ok()
                     || self.queries.inherits_accessor(shape, entry.name))
@@ -426,7 +430,7 @@ impl FileLowering<'_, '_, '_, '_> {
             let token = Type::opaque(OpaqueKind::ClassToken);
             let token = self.fragment.types.intern(token);
             fields.add(Field {
-                key: Some(self.hidden_key(layout, b"#")),
+                key: Some(self.hidden_key(layout, b"class brand")),
                 declared: DeclaredType::from_compiler(token),
                 flags: FieldFlags::IS_REQUIRED
                     | FieldFlags::IS_PRIVATE

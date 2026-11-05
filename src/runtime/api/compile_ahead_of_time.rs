@@ -99,15 +99,13 @@ impl JSBundleCompletionTask {
         let full_path = executable_path(&self.config, compile_options);
 
         let dirname: &[u8] = paths::dirname(&full_path).unwrap_or(b".");
-        let basename: &[u8] = paths::basename(&full_path);
 
         #[cfg(not(windows))]
         let mut root_dir = Dir::cwd();
         #[cfg(windows)]
         let root_dir = Dir::cwd();
 
-        // Windows keeps the working directory and takes the full path.
-        let outfile: Box<[u8]> = Box::from(if cfg!(windows) { &*full_path } else { basename });
+        let outfile: Box<[u8]> = Box::from(&*full_path);
 
         if !(dirname.is_empty() || dirname == b".") {
             #[cfg(not(windows))]

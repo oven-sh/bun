@@ -35,6 +35,7 @@ fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
         names_followed: compilation.started_workers.names_followed,
         names_plugin: compilation.started_workers.names_plugin,
         root_folders_spelled: compilation.started_workers.root_folders_spelled,
+        levels_above_root: compilation.started_workers.levels_above_root,
         holds_source_paths: compilation.holds_source_paths,
         program_files: compilation.started_workers.program_files,
         names_added_to_builtins: compilation.names_added_to_builtins,

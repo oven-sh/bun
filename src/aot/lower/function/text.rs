@@ -50,6 +50,7 @@ impl FileLowering<'_, '_, '_, '_> {
             decisions,
             atoms,
             values_first_in_text,
+            self.counts_executions(),
         ));
         let ranges = find_type_ranges_beside(hir, replaced);
         if !ranges.is_empty() {

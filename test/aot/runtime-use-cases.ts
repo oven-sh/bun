@@ -232,8 +232,28 @@ group("parts of Bun that run code the compiler does not see", () => {
       `import { CFunction } from "bun:ffi";\nconsole.log(CFunction({ ptr: 0 as any }));`,
       "bun:ffi.CFunction",
     ],
-  ])("the report is open with %s", async (_, text, builtin) => {
-    expect(completeness(await of(text))).toEqual(open(machineCode(builtin)));
+    ["dlopen of bun:ffi", `import { dlopen } from "bun:ffi";\nconsole.log(dlopen("made-up", {}));`, "bun:ffi.dlopen"],
+    [
+      "linkSymbols of bun:ffi",
+      `import { linkSymbols } from "bun:ffi";\nconsole.log(linkSymbols({}));`,
+      "bun:ffi.linkSymbols",
+    ],
+    [
+      "cc of bun:ffi",
+      `import { cc } from "bun:ffi";\nconsole.log(cc({ source: "made-up.c", symbols: {} }));`,
+      "bun:ffi.cc",
+    ],
+  ])("the report is open with %s, and names that alone", async (_, text, builtin) => {
+    const { whyOpen, ...rest } = completeness(await of(text));
+    expect({ whyOpen, ...rest }).toEqual(open(machineCode(builtin)));
+    expect(whyOpen.filter(why => why.endsWith(")"))).toEqual([machineCode(builtin)]);
+  });
+
+  test.each([
+    ["ptr", `import { ptr } from "bun:ffi";\nconsole.log(ptr(new Uint8Array(1)));`],
+    ["JSCallback", `import { JSCallback } from "bun:ffi";\nnew JSCallback(() => 1, { returns: "i32" }).close();`],
+  ])("what loads no machine code leaves the report closed: %s of bun:ffi", async (_, text) => {
+    expect(completeness(await of(text))).toEqual(closed);
   });
 
   test.failing.each([

@@ -11,3 +11,4 @@ function formatted(with_: Intl.NumberFormat, value: number) { let text = ""; for
 report(formatted(formatter, 7));
 report(formatted(new Intl.NumberFormat("en"), 1234));
 report("end");
+declare function report(value: unknown): void;

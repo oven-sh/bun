@@ -24,6 +24,7 @@ pub struct Compilation {
     pub names_followed: Vec<FollowedName>,
     pub names_plugin: bool,
     pub root_folders_spelled: Vec<u8>,
+    pub levels_above_root: usize,
     pub holds_source_paths: bool,
     pub program_files: Vec<EntryPointPaths>,
     pub names_added_to_builtins: Vec<(u32, Vec<u8>)>,

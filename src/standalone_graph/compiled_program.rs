@@ -9,7 +9,7 @@ use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
-    CompiledProgram, ImageFile, compare_source_paths, join_public_path,
+    CompiledProgram, ImageFile, compare_source_paths,
 };
 use bun_resolver::package_names::FurtherPackageName;
 use bun_sys::{Fd, Stat};
@@ -18,7 +18,7 @@ use crate::Error;
 #[cfg(windows)]
 use crate::StandaloneModuleGraph::normalize_file_key;
 use crate::StandaloneModuleGraph::{
-    BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, File, StandaloneModuleGraph, dir_stat,
+    BASE_PUBLIC_PATH, BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, File, StandaloneModuleGraph, dir_stat,
     is_bun_standalone_file_path,
 };
 
@@ -36,6 +36,7 @@ const HAS_FURTHER_PACKAGE_NAMES: u32 = 64;
 const HAS_ROOT_ON_BUILD_MACHINE: u32 = 128;
 const HAS_ASSETS_NAMED_AT_ROOT: u32 = 256;
 const NAMES_PLUGIN: u32 = 512;
+const HAS_LEVELS_ABOVE_ROOT: u32 = 1024;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
 const HIDES_OTHER_PATHS: u32 = 1;
@@ -127,6 +128,8 @@ pub struct CompiledProgramInput<'a> {
     pub root_on_build_machine: Option<&'a [u8]>,
     /// `CompiledProgram::assets_named_at_root`. Empty where there are none.
     pub assets_named_at_root: &'a [u8],
+    /// `CompiledProgram::levels_above_root`
+    pub levels_above_root: u32,
     /// Ascending by path.
     pub further_package_names: &'a [FurtherPackageName],
     pub preserves_source_paths: bool,
@@ -170,6 +173,7 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + input.root_on_build_machine.map_or(0, <[u8]>::len)
         + size_of::<u32>()
         + input.assets_named_at_root.len()
+        + size_of::<u32>()
         + encode_further_package_names(input.further_package_names).len()
 }
 
@@ -276,6 +280,7 @@ pub(crate) fn append_record(
             | (u32::from(input.root_from_executable.is_some()) * HAS_ROOT_FROM_EXECUTABLE)
             | (u32::from(input.root_on_build_machine.is_some()) * HAS_ROOT_ON_BUILD_MACHINE)
             | (u32::from(!input.assets_named_at_root.is_empty()) * HAS_ASSETS_NAMED_AT_ROOT)
+            | (u32::from(input.levels_above_root != 0) * HAS_LEVELS_ABOVE_ROOT)
             | (u32::from(!input.further_package_names.is_empty()) * HAS_FURTHER_PACKAGE_NAMES),
     };
     let root = match input.root_below_working_directory {
@@ -328,6 +333,10 @@ pub(crate) fn append_record(
         ]
         .concat(),
     };
+    let levels_above_root = match input.levels_above_root {
+        0 => Vec::new(),
+        levels => levels.to_le_bytes().to_vec(),
+    };
     let _ = builder.add_concat(&[
         bytes_of(&header),
         slice_as_bytes(&records),
@@ -340,6 +349,7 @@ pub(crate) fn append_record(
         &root_from_executable,
         &root_on_build_machine,
         &assets_named_at_root,
+        &levels_above_root,
         &encode_further_package_names(input.further_package_names),
     ]);
     Ok(())
@@ -642,6 +652,12 @@ fn try_read(
         assets_named_at_root = payload.bytes(end, length)?;
         end += length;
     }
+    let mut levels_above_root = 0;
+    if header.flags & HAS_LEVELS_ABOVE_ROOT != 0 {
+        let levels = payload.bytes(end, size_of::<u32>())?;
+        levels_above_root = u32::from_le_bytes(levels.try_into().ok()?) as usize;
+        end += size_of::<u32>();
+    }
     let mut further_package_names = Vec::new();
     if header.flags & HAS_FURTHER_PACKAGE_NAMES != 0 {
         further_package_names = read_further_package_names(payload, &mut end)?;
@@ -666,6 +682,7 @@ fn try_read(
     let program = program.with_root_from_executable(root_from_executable);
     let program = program.with_root_on_build_machine(root_on_build_machine);
     let program = program.with_assets_named_at_root(assets_named_at_root);
+    let program = program.with_levels_above_root(levels_above_root);
     let program = program.with_further_package_names(further_package_names.into_boxed_slice());
     Some(program.with_path_aliases(path_aliases))
 }
@@ -898,22 +915,18 @@ impl StandaloneModuleGraph {
             .map(Box::from)
     }
 
-    /// How long the folders above the folder in which the program was built are, the nearest first, as far up as code lay. A file that lay higher than that folder has a `_.._` in its path for each folder that it lay higher.
+    /// How long the folders above the folder in which the program was built are, the nearest first, as far up as code lay.
     fn find_folders_above_root_with_code(program: &CompiledProgram) -> Box<[usize]> {
         let Some(root) = program.root_on_build_machine() else {
             return Box::default();
         };
         let mut folder = root.strip_suffix(b"/").unwrap_or(root);
-        let mut spelled = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes().to_vec();
+
         let mut lengths = Vec::new();
-        while let Some(end) = strings::last_index_of_char(folder, b'/') {
-            spelled.extend_from_slice(b"_.._/");
-            let holds_code = program
-                .may_hold_module_below(&spelled)
-                .unwrap_or_else(|| program.holds_module_below(&spelled[..spelled.len() - 1]));
-            if !holds_code {
+        for _ in 1..program.levels_above_root() {
+            let Some(end) = strings::last_index_of_char(folder, b'/') else {
                 break;
-            }
+            };
             folder = &folder[..end];
             lengths.push(end);
         }
@@ -937,17 +950,24 @@ impl StandaloneModuleGraph {
         })
     }
 
-    /// The path under the root of the executable of what lay at `below`, that many folders above the folder of the build, and a `/` behind it. `None` where it does not fit.
+    /// The path in the executable of what lay at `below`, `level` folders above the folder of the build, and a `/` behind it. `None` where it does not fit.
     fn spell_under_own_root<'b>(
+        program: &CompiledProgram,
         level: usize,
         below: &[u8],
         buffer: &'b mut [u8],
     ) -> Option<&'b [u8]> {
-        let own_root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
-        let up = own_root.len() + 5 * level;
+        let (start, folders) = match level {
+            0 => (BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), 0),
+            _ => (
+                BASE_PUBLIC_PATH.as_bytes(),
+                (program.levels_above_root() + 1).checked_sub(level)?,
+            ),
+        };
+        let up = start.len() + 5 * folders;
         let end = up + below.len();
-        buffer.get_mut(..own_root.len())?.copy_from_slice(own_root);
-        for step in buffer.get_mut(own_root.len()..up)?.as_chunks_mut::<5>().0 {
+        buffer.get_mut(..start.len())?.copy_from_slice(start);
+        for step in buffer.get_mut(start.len()..up)?.as_chunks_mut::<5>().0 {
             *step = *b"_.._/";
         }
         buffer.get_mut(up..end)?.copy_from_slice(below);
@@ -964,7 +984,7 @@ impl StandaloneModuleGraph {
         }
         let own_root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
         if is_bun_standalone_file_path(key) {
-            return join_public_path(own_root, own_root, key);
+            return program.join_public_path(own_root, own_root, key);
         }
         if cfg!(windows) {
             return program.public_path_of_source(own_root, key);
@@ -975,10 +995,11 @@ impl StandaloneModuleGraph {
             .get_or_init(|| Self::find_folders_above_root_with_code(program));
         let root = program.root_on_build_machine()?;
         let (level, below) = Self::split_at_known_folder(root, lengths, key)?;
-        let mut spelled = vec![0; own_root.len() + 5 * level + below.len() + 1];
-        Self::spell_under_own_root(level, below, &mut spelled)?;
-        spelled.truncate(spelled.len() - 1 - usize::from(below.is_empty()));
-        Some(spelled)
+        let most = own_root.len() + 5 * program.levels_above_root() + below.len() + 1;
+        let mut buffer = vec![0; most];
+        let length = Self::spell_under_own_root(program, level, below, &mut buffer)?.len();
+        buffer.truncate(length - 1 - usize::from(below.is_empty()));
+        Some(buffer)
     }
 
     /// Whether `key`, as `absolute_key` makes it, can be a file or a directory that the graph answers for outside of its own root: each of those begins as all of them do, or is a directory above them all.
@@ -1002,7 +1023,7 @@ impl StandaloneModuleGraph {
                 return false;
             };
             let mut buffer = [0; 512];
-            let spelled = Self::spell_under_own_root(level, below, &mut buffer);
+            let spelled = Self::spell_under_own_root(program, level, below, &mut buffer);
             let Some(spelled) = spelled.filter(|_| !below.is_empty()) else {
                 return true;
             };
@@ -1264,6 +1285,7 @@ pub(crate) mod tests {
             root_from_executable: None,
             root_on_build_machine: None,
             assets_named_at_root: b"",
+            levels_above_root: 0,
             further_package_names: &[],
             preserves_source_paths,
             symbols: b"",
@@ -1951,14 +1973,14 @@ pub(crate) mod tests {
     #[cfg(not(windows))]
     fn files_above_the_folder_of_the_build_are_found_as_the_loader_reads_their_paths() {
         fn list_modules(start: &[u8], each: &mut dyn FnMut(&[u8]) -> bool) {
-            for relative in [
-                "_.._/_.._/top.js",
-                "_.._/_.._/two-more/x.js",
-                "_.._/commands/build.js",
-                "main.js",
+            for path in [
+                "/$bunfs/_.._/_.._/_.._/commands/build.js",
+                "/$bunfs/_.._/_.._/top.js",
+                "/$bunfs/_.._/_.._/two-more/x.js",
+                "/$bunfs/root/main.js",
             ] {
-                let path = in_virtual_root(relative);
-                if path.starts_with(start) && !each(&path) {
+                let path = path.as_bytes();
+                if path.starts_with(start) && !each(path) {
                     return;
                 }
             }
@@ -1989,7 +2011,8 @@ pub(crate) mod tests {
             is_held.then_some(&b"held"[..])
         });
         let root: &'static [u8] = app.0.clone().leak();
-        graph.compiled_program = Some(program.with_root_on_build_machine(Some(root)));
+        let program = program.with_root_on_build_machine(Some(root));
+        graph.compiled_program = Some(program.with_levels_above_root(3));
         let rows = [
             (folder.join("one/two/commands"), Some(Directory)),
             (folder.join("one/two/commands/build.js"), Some(File)),
@@ -2006,7 +2029,8 @@ pub(crate) mod tests {
             let shown = String::from_utf8_lossy(&path);
             assert!(graph.may_answer_for(&path), "{shown}");
             assert_eq!(graph.source_path_kind(&path), kind, "{shown}");
-            let key = (kind == Some(Directory)).then(|| in_virtual_root("_.._/commands"));
+            let key = b"/$bunfs/_.._/_.._/_.._/commands".to_vec();
+            let key = (kind == Some(Directory)).then_some(key);
             assert_eq!(directory_key(&graph, &path), key, "{shown}");
         }
         let listed = graph.readdir(b"/$bunfs/commands", false).unwrap();

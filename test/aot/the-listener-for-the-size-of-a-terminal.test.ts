@@ -1,6 +1,6 @@
-// process.stdout and process.stderr over a terminal lay a listener for "SIGWINCH" on `process`, as node's do. In a compiled program
-// that asks little of a stream native code lays it. A program can list the listener, remove it, be told of it and put a function
-// of its own in the place of process.on, which gets `process` as `this`: each of these answers as `bun run` does.
+// process.stdout and process.stderr over a terminal lay a listener for "SIGWINCH" on `process`, as node's do. A program can list the
+// listener, remove it, be told of it and put a function of its own in the place of process.on, which gets `process` as `this`: in a
+// compiled program each of these answers as `bun run` does, whether it has the stream with all its members or the light one.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";

@@ -1,11 +1,15 @@
 use super::{BuildDiagnostic, BunTypes, WithoutBunTypes};
+use crate::host::UncachedDisk;
 use crate::{Category, Diagnostic, MessageChain};
+use bun_core::strings;
 use bun_sema::atom::{Atom, known};
+use bun_sema::bind::SymFlags;
 use bun_sema::check::Requested;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, Effect, FileOrigin, effect_of};
+use bun_sema::hir::FileKind;
 use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::{CodeAnswer, FileId, FileRole, Files, ReadingNoTrees, Sym};
-use bun_sema::resolve::CodeHost;
+use bun_sema::resolve::{CodeHost, Host, is_relative, join};
 
 pub(super) fn compute_origins(
     files: &Files<'_>,
@@ -58,7 +62,10 @@ pub(super) fn can_lose_trust(origin: FileOrigin) -> bool {
 
 pub(super) fn requested_diagnostics(origin: FileOrigin, looks_for_type_errors: bool) -> Requested {
     if looks_for_type_errors
-        && effect_of(origin, DiagnosticClass::Semantic, Category::Error) == Effect::StopsBuild
+        && matches!(
+            effect_of(origin, DiagnosticClass::Semantic, Category::Error),
+            Effect::StopsBuild | Effect::Warns
+        )
     {
         return Requested::All;
     }
@@ -78,12 +85,33 @@ pub(super) struct ProgramOrigins<'a, 's> {
 
 const UNKNOWN_MODULE_CODES: [u32; 4] = [2307, 2792, 2882, 7016];
 
+const ENDINGS_OF_A_RELATIVE_IMPORT: [&[u8]; 10] = [
+    b"",
+    b".ts",
+    b".tsx",
+    b".d.ts",
+    b".mts",
+    b".cts",
+    b"/index.ts",
+    b"/index.tsx",
+    b"/index.d.ts",
+    b".json",
+];
+
+const DUPLICATE_IDENTIFIER_CODE: u32 = 2300;
+const AUGMENTATION_OF_UNKNOWN_MODULE_CODE: u32 = 2664;
+const UMD_GLOBAL_IN_MODULE_CODE: u32 = 2686;
+const THIS_IS_UNDEFINED_CODES: [u32; 2] = [2407, 2532];
+const USED_BEFORE_ASSIGNED_CODE: u32 = 2454;
+
 const USES_OF_WHAT_HAS_NO_DECLARATION_CODES: [u32; 2] = [2347, 2709];
 
 const UNKNOWN_TYPE_LIBRARY_CODE: u32 = 2688;
 const UNUSED_EXPECT_ERROR_CODE: u32 = 2578;
+const BODY_TOO_LARGE_FOR_FLOW_ANALYSIS_CODE: u32 = 2563;
 
 const EXACT_OPTIONAL_PROPERTY_CODES: [u32; 3] = [2375, 2379, 2412];
+const DEFINED_CLASS_FIELD_CODES: [u32; 2] = [2612, 2729];
 
 const UNKNOWN_MEMBER_CODES: [u32; 6] = [2305, 2339, 2551, 2614, 2694, 2724];
 
@@ -128,7 +156,7 @@ impl ProgramOrigins<'_, '_> {
     fn is_for_lack_of_bun_types(&self, origin: FileOrigin, diagnostic: &Diagnostic) -> bool {
         let missing = match self.bun_types {
             BunTypes::Installed => return false,
-            BunTypes::Brought => None,
+            BunTypes::InstalledAndNotNamed | BunTypes::Brought => None,
             BunTypes::Missing(missing) => Some(missing),
         };
         let code = diagnostic.code;
@@ -138,12 +166,21 @@ impl ProgramOrigins<'_, '_> {
         if missing.is_some_and(|missing| had_declaration_with_bun_types(missing, diagnostic)) {
             return true;
         }
+        if missing.is_none()
+            && !UNKNOWN_NAME_CODES.contains(&code)
+            && !DECLARATION_OF_ANOTHER_KIND_CODES.contains(&code)
+            && self.rests_on_brought_declaration(diagnostic)
+        {
+            return true;
+        }
         if UNKNOWN_MODULE_CODES.contains(&code) {
             match diagnostic.subject {
                 DiagnosticSubject::ModuleSpecifier(specifier) => {
                     self.is_import_that_the_build_loads(diagnostic.file, specifier)
                 }
-                DiagnosticSubject::None | DiagnosticSubject::MemberContainer(_) => false,
+                DiagnosticSubject::None
+                | DiagnosticSubject::MemberContainer(_)
+                | DiagnosticSubject::BroughtDeclaration => false,
             }
         } else if UNKNOWN_MEMBER_CODES.contains(&code) {
             match (missing, diagnostic.subject) {
@@ -153,12 +190,37 @@ impl ProgramOrigins<'_, '_> {
                         || self.is_declared_for_browsers(container)
                 }
                 (None, DiagnosticSubject::MemberContainer(_))
-                | (_, DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_)) => false,
+                | (
+                    _,
+                    DiagnosticSubject::None
+                    | DiagnosticSubject::ModuleSpecifier(_)
+                    | DiagnosticSubject::BroughtDeclaration,
+                ) => false,
             }
         } else if diagnostic.class == DiagnosticClass::Style {
             !self.has_configuration_file
         } else {
             USES_OF_WHAT_HAS_NO_DECLARATION_CODES.contains(&code)
+        }
+    }
+
+    fn rests_on_brought_declaration(&self, diagnostic: &Diagnostic) -> bool {
+        let is_brought = |other: &Diagnostic| {
+            let file = self.files.zip(other.file);
+            file.is_some_and(|(files, file)| files.is_brought(file))
+        };
+        if diagnostic.code == DUPLICATE_IDENTIFIER_CODE
+            && !diagnostic.related.is_empty()
+            && diagnostic.related.iter().all(is_brought)
+        {
+            return true;
+        }
+        match diagnostic.subject {
+            DiagnosticSubject::BroughtDeclaration => true,
+            DiagnosticSubject::MemberContainer(container) => {
+                (self.files).is_some_and(|files| files.is_brought(container.file))
+            }
+            DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_) => false,
         }
     }
 
@@ -211,8 +273,50 @@ impl ProgramOrigins<'_, '_> {
         let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
             return false;
         };
-        !files.module_options(file).exact_optional_property_types
+        let options = files.module_options(file);
+        !options.exact_optional_property_types
             && is_about_exact_optional_property(diagnostic.code, &diagnostic.message_chain)
+            || options.defines_class_fields_for_build_alone
+                && DEFINED_CLASS_FIELD_CODES.contains(&diagnostic.code)
+    }
+
+    fn comes_of_running_a_script_as_a_module(&self, diagnostic: &Diagnostic) -> bool {
+        let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
+            return false;
+        };
+        let hir = files.hir(file);
+        if !hir.is_script_for_project || diagnostic.has_undefined_range {
+            return false;
+        }
+        let name = || files.atoms.lookup(diagnostic.args.first()?);
+        match diagnostic.code {
+            AUGMENTATION_OF_UNKNOWN_MODULE_CODE | UMD_GLOBAL_IN_MODULE_CODE => true,
+            code if THIS_IS_UNDEFINED_CODES.contains(&code) => {
+                let range = diagnostic.start as usize..diagnostic.end as usize;
+                hir.text.get(range) == Some(&b"this"[..])
+            }
+            USED_BEFORE_ASSIGNED_CODE => name()
+                .and_then(|name| files.global(name, SymFlags::VALUE))
+                .is_some_and(|global| files.hir(global.file).kind == FileKind::Declaration),
+            _ => false,
+        }
+    }
+
+    fn is_import_of_file_written_since_the_load(&self, diagnostic: &Diagnostic) -> bool {
+        let (Some(files), Some(file), DiagnosticSubject::ModuleSpecifier(specifier)) =
+            (self.files, diagnostic.file, diagnostic.subject)
+        else {
+            return false;
+        };
+        let specifier = files.atoms.bytes(specifier);
+        if !UNKNOWN_MODULE_CODES.contains(&diagnostic.code) || !is_relative(specifier) {
+            return false;
+        }
+        let importer = files.module(file).file_name();
+        let folder = &importer[..strings::last_index_of_char(importer, b'/').unwrap_or(0)];
+        let (path, disk) = (join(folder, specifier), UncachedDisk::new(importer));
+        let mut endings = ENDINGS_OF_A_RELATIVE_IMPORT.iter();
+        endings.any(|ending| disk.is_file(&[&path[..], ending].concat()))
     }
 
     fn is_import_that_the_build_loads(&self, file: Option<FileId>, specifier: Atom) -> bool {
@@ -249,8 +353,10 @@ impl ProgramOrigins<'_, '_> {
                 && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
             let effect = match effect_of(origin, diagnostic.class, diagnostic.category) {
                 Effect::Dropped => return None,
-                Effect::StopsBuild if self.is_in_jsdoc_comment(&diagnostic) => return None,
-                Effect::StopsBuild | Effect::WithdrawsTrust
+                Effect::StopsBuild | Effect::Warns if self.is_in_jsdoc_comment(&diagnostic) => {
+                    return None;
+                }
+                Effect::StopsBuild | Effect::WithdrawsTrust | Effect::Warns
                     if self.is_from_option_the_file_does_not_have(&diagnostic) =>
                 {
                     return None;
@@ -260,20 +366,32 @@ impl ProgramOrigins<'_, '_> {
                 {
                     return None;
                 }
-                Effect::StopsBuild if diagnostic.code == UNUSED_EXPECT_ERROR_CODE => Effect::Warns,
-                Effect::StopsBuild if is_for_lack_of_bun_types => return None,
-                Effect::WithdrawsTrust | Effect::Warns
-                    if origin == FileOrigin::TestedSource && is_for_lack_of_bun_types =>
+                Effect::StopsBuild | Effect::Warns
+                    if diagnostic.code == BODY_TOO_LARGE_FOR_FLOW_ANALYSIS_CODE =>
                 {
                     return None;
                 }
-                Effect::WithdrawsTrust
-                    if origin == FileOrigin::TestedSource
-                        && diagnostic.code == UNUSED_EXPECT_ERROR_CODE =>
+                Effect::StopsBuild | Effect::Warns
+                    if self.comes_of_running_a_script_as_a_module(&diagnostic) =>
+                {
+                    return None;
+                }
+                Effect::StopsBuild | Effect::Warns
+                    if self.is_import_of_file_written_since_the_load(&diagnostic) =>
+                {
+                    return None;
+                }
+                Effect::StopsBuild if diagnostic.code == UNUSED_EXPECT_ERROR_CODE => Effect::Warns,
+                Effect::StopsBuild if is_for_lack_of_bun_types => return None,
+                Effect::Warns if origin == FileOrigin::TestedSource && is_for_lack_of_bun_types => {
+                    return None;
+                }
+                Effect::StopsBuild
+                    if names_missing_type_library
+                        && !matches!(self.bun_types, BunTypes::InstalledAndNotNamed) =>
                 {
                     Effect::Warns
                 }
-                Effect::StopsBuild if names_missing_type_library => Effect::Warns,
                 Effect::StopsBuild
                     if diagnostic.file.is_none()
                         && self.project_origin == FileOrigin::TestedSource
@@ -322,7 +440,7 @@ mod tests {
                 "{origin:?}"
             );
             let checked = match origin {
-                NoFile | ProgramSource => Requested::All,
+                NoFile | ProgramSource | TestedSource => Requested::All,
                 _ => requested,
             };
             assert!(requested_diagnostics(origin, true) == checked, "{origin:?}");
@@ -350,11 +468,7 @@ mod tests {
 
     #[test]
     fn type_error_that_came_to_light_takes_no_types_away() {
-        for origin in [
-            FileOrigin::DependencySource,
-            FileOrigin::TestedSource,
-            FileOrigin::Runtime,
-        ] {
+        for origin in [FileOrigin::DependencySource, FileOrigin::Runtime] {
             let origins = ProgramOrigins {
                 files: None,
                 origins: &[origin],
@@ -368,6 +482,27 @@ mod tests {
                 ..crate::global(2322, &["string", "number"])
             };
             assert!(origins.apply_effects(vec![diagnostic]).is_empty());
+        }
+    }
+
+    #[test]
+    fn body_too_large_for_flow_analysis_stops_no_build() {
+        for origin in [FileOrigin::ProgramSource, FileOrigin::TestedSource] {
+            let origins = ProgramOrigins {
+                files: None,
+                origins: &[origin],
+                project_origin: FileOrigin::NoFile,
+                bun_types: &BunTypes::Installed,
+                has_configuration_file: true,
+            };
+            let at_file = |code: u32| Diagnostic {
+                file: Some(FileId(0)),
+                class: DiagnosticClass::Semantic,
+                ..crate::global(code, &[""; 0])
+            };
+            let reported = origins.apply_effects(vec![at_file(2563), at_file(2532)]);
+            assert_eq!(reported.len(), 1, "{origin:?}");
+            assert_eq!(reported[0].diagnostic.code, 2532);
         }
     }
 

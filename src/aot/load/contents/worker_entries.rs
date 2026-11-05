@@ -30,7 +30,7 @@ use super::scan::ContentsScan;
 use crate::builtins::table::{self, BuiltinFlags, Origin};
 use crate::builtins::{BuiltinId, BuiltinName, Intrinsic, Resolved, RuntimeModule};
 use crate::load::is_in_node_modules;
-use crate::load::module_paths::with_separators_of_host;
+use crate::load::module_paths::{read_path_above_root, with_separators_of_host};
 use crate::module_keys::is_name_of_text;
 use crate::options::PathOptions;
 
@@ -1341,21 +1341,37 @@ fn with_separators_of_program(directory: &[u8]) -> Vec<u8> {
     }
 }
 
-fn find_path_on_disk(root_directory: &[u8], root: &[u8], named: &[u8]) -> Option<Vec<u8>> {
-    let segments = strings::split(named.strip_prefix(root)?, b"/");
-    let segments = segments.map(|it| if it == b"_.._" { &b".."[..] } else { it });
-    let name = segments.collect::<Vec<_>>().join(&b"/"[..]);
+fn find_path_on_disk(
+    root_directory: &[u8],
+    root: &[u8],
+    levels_above_root: usize,
+    named: &[u8],
+) -> Option<Vec<u8>> {
+    let name = match named.strip_prefix(root) {
+        Some(below_root) => {
+            let segments = strings::split(below_root, b"/");
+            let segments = segments.map(|it| if it == b"_.._" { &b".."[..] } else { it });
+            segments.collect::<Vec<_>>().join(&b"/"[..])
+        }
+        None => {
+            let (level, below) = read_path_above_root(root, levels_above_root, named)?;
+            [&b"../".repeat(level)[..], below].concat()
+        }
+    };
     resolve_paths(&[with_separators_of_program(root_directory), name])
 }
 
 pub(crate) fn find_file_named_as_in_executable(
     paths: &PathOptions,
+    levels_above_root: usize,
     name: &[u8],
 ) -> Option<Vec<u8>> {
     let root = with_forward_slashes(paths.module_prefix.clone());
+    let find =
+        |name: &[u8]| find_path_on_disk(&paths.root_directory, &root, levels_above_root, name);
     match name.starts_with(b"file:") {
-        true => find_path_on_disk(&paths.root_directory, &root, &read_file_url(name)?),
-        false => find_path_on_disk(&paths.root_directory, &root, name),
+        true => find(&read_file_url(name)?),
+        false => find(name),
     }
 }
 
@@ -1377,7 +1393,7 @@ mod tests {
     }
 
     fn find(name: &[u8]) -> Option<Vec<u8>> {
-        find_file_named_as_in_executable(&paths_of_executable(), name)
+        find_file_named_as_in_executable(&paths_of_executable(), 2, name)
     }
 
     #[test]
@@ -1407,8 +1423,8 @@ mod tests {
         assert_eq!(says(main, b"../../../job.js"), b"file:///job.js");
         let below = b"/$bunfs/root/lib/a.js";
         assert_eq!(says(below, b"../../job"), b"file:///$bunfs/job");
-        let above = b"/$bunfs/root/_.._/jobs/a.js";
-        assert_eq!(says(above, b"../../x.js"), b"file:///$bunfs/root/x.js");
+        let above = b"/$bunfs/_.._/_.._/jobs/a.js";
+        assert_eq!(says(above, b"../../x.js"), b"file:///$bunfs/_.._/x.js");
         let on_windows = b"B:\\~BUN\\root\\main.js";
         assert_eq!(says(on_windows, b"../../../job.js"), b"file:///B:/job.js");
     }
@@ -1431,6 +1447,14 @@ mod tests {
         assert_eq!(found.as_deref(), Some(&b"/project/lib/w.js"[..]));
         let found = find(b"/$bunfs/root/_.._/other/w.js");
         assert_eq!(found.as_deref(), Some(&b"/other/w.js"[..]));
+        let found = find(b"/$bunfs/_.._/_.._/other/w.js");
+        assert_eq!(found.as_deref(), Some(&b"/other/w.js"[..]));
+        let found = find(b"file:///$bunfs/_.._/_.._/_.._/lib/w.js");
+        assert_eq!(found.as_deref(), Some(&b"/project/lib/w.js"[..]));
+        assert_eq!(find(b"/$bunfs/other/w.js"), None);
+        let paths = paths_of_executable();
+        let written = b"/$bunfs/_.._/_.._/other/w.js";
+        assert_eq!(find_file_named_as_in_executable(&paths, 0, written), None);
         assert_eq!(find(b"/project/lib/w.js"), None);
         assert_eq!(find(b"./lib/w.js"), None);
     }

@@ -1,5 +1,7 @@
 // Logs what node:stream and node:events answer and what they store, define and delete on a stream that is not itself a Proxy: an object below a Proxy of a stream,
 // a stream whose own properties are accessors, and a stream with accessors on a prototype object of its own.
+// With STREAM_READS=all it logs what they read too: test/js/node/stream/node-stream-reads-and-messages.test.ts holds that for `bun <file>` against
+// stream-reads-seen-without-proxy-receiver.expected.txt beside it. Whoever changes what this program prints changes that file with it.
 const stream = require("node:stream");
 const EventEmitter = require("node:events");
 
@@ -63,8 +65,9 @@ let late = [];
 process.on("uncaughtException", error => late.push(describeError(error)));
 process.on("unhandledRejection", error => late.push("rejected: " + describeError(error)));
 
-// How often and in which order the library reads a member is its own matter, and differs between versions of node.
+// How often and in which order the library reads a member is its own matter, and differs between versions of node and between `bun <file>` and a compiled executable.
 const changes = /(^|:)((set|defineProperty|deleteProperty) |(setPrototypeOf|preventExtensions)$)/;
+const isHeld = process.env.STREAM_READS === "all" ? () => true : entry => changes.test(entry);
 function formatTraps(list) {
   if (list.length <= 16) return list.join(", ");
   let sum = 0x811c9dc5;
@@ -93,10 +96,10 @@ async function attempt(subject, which, body) {
   } catch (error) {
     text = describeError(error);
   }
-  const now = traps.filter(entry => changes.test(entry));
+  const now = traps.filter(isHeld);
   traps = [];
   for (let index = 0; index < 5; index++) await turn();
-  const later = traps.filter(entry => changes.test(entry));
+  const later = traps.filter(isHeld);
   traps = [];
   print(
     subject,

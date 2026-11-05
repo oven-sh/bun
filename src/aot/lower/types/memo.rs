@@ -102,8 +102,8 @@ impl TypeMemo {
         if let Some(&is_plain) = self.is_plain.get(ty.index()) {
             return is_plain;
         }
-        let described_types = types.types().iter().take(ty.index() + 1);
-        for described in described_types.skip(self.is_plain.len()) {
+        let described_types = types.types().first(ty.index() + 1);
+        for described in described_types.skip(self.is_plain.len()).iter() {
             let known = &self.is_plain;
             let mut contents = described.classes.iter().flat_map(|part| &part.contents);
             let is_plain = described.layouts.is_empty()

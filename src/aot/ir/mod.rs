@@ -64,5 +64,7 @@ pub use property_keys::{PropertyKey, PropertyKeyKind, PropertyKeyTable, WellKnow
 pub use references::{IdMap, Reference, ReferenceKind};
 pub use sections::{ListCounts, SectionWriter, WireSpan};
 pub use strings::StringTable;
-pub use types::{OpaqueKind, Primitives, Type, TypeFlags, TypeTable};
+pub use types::{
+    DistinctTypes, OpaqueKind, Primitives, Type, TypeFlags, TypeRef, TypeTable, Types,
+};
 pub use wtf8::is_canonical_wtf8;

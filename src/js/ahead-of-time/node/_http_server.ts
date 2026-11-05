@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
+// Written against that file with the SHA-256 e1c581ed5a367a01593d170660aa05096742b0983b7a0a420206704b8d020592.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -218,7 +218,6 @@ const pushRenderedHeader = http.responseRoad.pushRenderedHeader!;
 const outgoingSetHeader = http.responseRoad.outgoingSetHeader!;
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const outgoingGetHeader = OutgoingMessagePrototype.getHeader;
-const outgoingHasHeader = OutgoingMessagePrototype.hasHeader;
 function PlainOutgoingMessage() {}
 $toClass(PlainOutgoingMessage, "PlainOutgoingMessage", OutgoingMessage);
 const plainOutgoingMessage: any = new PlainOutgoingMessage();
@@ -1309,7 +1308,12 @@ Server.prototype[kRealListen] = function (
       if (socket[kStreamingEnabled] !== false) socket[kEnableStreaming](false);
 
       let http_res: $Node.ServerResponse;
-      if (ResponseClass === ServerResponse && RequestClass === IncomingMessage) {
+      const makesResponseWithoutOptions =
+        ResponseClass === ServerResponse &&
+        RequestClass === IncomingMessage &&
+        IS_COMPILED_AHEAD_OF_TIME &&
+        $isObjectPrototypeWithoutAddedNames();
+      if (makesResponseWithoutOptions) {
         http_res = new ResponseClass(
           http_req,
           kHandle,
@@ -1359,8 +1363,7 @@ Server.prototype[kRealListen] = function (
       // One plain on() listener (once() allocates a wrapper, a second listener
       // deoptimizes every 'finish' emit), registered before the 'request' event
       // like Node's resOnFinish so res.on-replacing middleware cannot swallow it.
-      if (ResponseClass !== ServerResponse || RequestClass !== IncomingMessage)
-        http_res.on("finish", emitResponseFinish);
+      if (!makesResponseWithoutOptions) http_res.on("finish", emitResponseFinish);
 
       if (hasObserver("http")) {
         startPerf(http_res, kServerResponseStatistics, {
@@ -1640,6 +1643,9 @@ Server.prototype[kRealListen] = function (
         if (
           socket != null &&
           usesOwnClasses === true &&
+          // The full road makes a request and a response of small objects of options, and looks on them for names that they do not hold.
+          IS_COMPILED_AHEAD_OF_TIME &&
+          $isObjectPrototypeWithoutAddedNames() &&
           isAncientHTTP === false &&
           isSocketNew === false &&
           !socket._httpMessage &&
@@ -1789,8 +1795,11 @@ function onNodeHTTPRequest(
 
   if (!hasBody) req.complete = true;
 
+  // What is caught below is the refusal of an object that takes no stores, which refuses again on the full road. A setter of the program's may throw once.
   if (
     (exchange.flags & ExchangeFlags.ended_clean) !== 0 &&
+    IS_COMPILED_AHEAD_OF_TIME &&
+    $isPlainInstanceOf(res, ServerResponse) &&
     detachesItself(res) &&
     connectionRemovesListenersUnseen(socket)
   ) {
@@ -1812,7 +1821,11 @@ function onNodeHTTPRequest(
   } else if (
     exchange.awaitsClose === true &&
     !(
-      (res.finished || res.destroyed || !socket.$isOpen || (exchange.flags & ExchangeFlags.has_stand_in) !== 0) &&
+      (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(res, ServerResponse)) ||
+        res.finished ||
+        res.destroyed ||
+        !socket.$isOpen ||
+        (exchange.flags & ExchangeFlags.has_stand_in) !== 0) &&
       handle.finished
     )
   ) {
@@ -3108,15 +3121,15 @@ function _writeHead(
     if (checkInvalidHeaderChar(statusMessage)) throw $ERR_INVALID_CHAR("statusMessage");
   } else {
     // writeHead(statusCode[, headers])
-    if (response.statusMessage === undefined || !response.statusMessage) {
-      // The program may have written the table.
-      const ofTable: string = (response.statusMessage = STATUS_CODES[statusCode] || "unknown");
-      if (ofTable !== statusMessageLastChecked) {
-        ("unlikely");
-        if (checkInvalidHeaderChar(ofTable)) throw $ERR_INVALID_CHAR("statusMessage");
-        statusMessageLastChecked = ofTable;
-      }
-    } else if (checkInvalidHeaderChar(response.statusMessage)) throw $ERR_INVALID_CHAR("statusMessage");
+    const current = response.statusMessage;
+    if (current === undefined || !current) response.statusMessage = STATUS_CODES[statusCode] || "unknown";
+    // As above: what reads back. The program may also have written the table.
+    const readBack = response.statusMessage!;
+    if (readBack !== statusMessageLastChecked) {
+      ("unlikely");
+      if (checkInvalidHeaderChar(readBack)) throw $ERR_INVALID_CHAR("statusMessage");
+      statusMessageLastChecked = readBack;
+    }
     obj ??= reason;
   }
 
@@ -3385,8 +3398,8 @@ function ServerResponse(
   this._onPendingData = nop;
   this[kErrored] = null;
   this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
-  this[kRejectNonStandardBodyWrites] =
-    options?.[kRejectNonStandardBodyWrites] ?? options?.rejectNonStandardBodyWrites ?? false;
+  const rejectsByName = options?.rejectNonStandardBodyWrites;
+  this[kRejectNonStandardBodyWrites] = options?.[kRejectNonStandardBodyWrites] ?? rejectsByName ?? false;
   this[kLenientValidation] = undefined;
   this.$exchange = exchange;
   this.useChunkedEncodingByDefault = true;
@@ -3735,7 +3748,7 @@ const emitResponseFinish = function emitResponseFinish(this: $Node.ServerRespons
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  const detachedFrom = isItself ? exchange.detachedFrom : (this[kDetachedFrom] ?? null);
+  const detachedFrom = this[kDetachedFrom] ?? null;
   const socket: $Node.HttpServerSocket | null | undefined = (detachedFrom ?? this.req?.socket ?? this.socket) as any;
   // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
   const parser = socket?.parser;
@@ -4844,6 +4857,10 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
   }
   exchange.flags = flags & ~ExchangeFlags.tick_queued;
   const res = exchange.response;
+  if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(res, ServerResponse))) {
+    ("unlikely");
+    return finishExchangeTickByTick(exchange, flags);
+  }
   let takesStores = true;
   try {
     forgetBytesBuffered(exchange);
@@ -4865,7 +4882,6 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     requestState == null ||
     req._readableState !== requestState ||
     req._events == null ||
-    !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(res, ServerResponse)) ||
     res._closed ||
     !ticksAreUnseen() ||
     !emitsUnseen(res) ||
@@ -6223,7 +6239,6 @@ const OriginalWriteHeadFn = (ServerResponse.prototype.writeHead = function (
     exchange === undefined ||
     exchange.response !== this ||
     !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(this, ServerResponse)) ||
-    !((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(this, "hasHeader")) || this.hasHeader === outgoingHasHeader) ||
     !reachesHeadersSent(this)
   ) {
     ("unlikely");
@@ -6244,8 +6259,8 @@ const OriginalWriteHeadFn = (ServerResponse.prototype.writeHead = function (
   // here, so record the frozen choice for renderNativeHeaders.
   if (
     exchange.isImplicitFromEnd !== true &&
-    // A getter of the head's object may have replaced hasHeader() since it was asked for.
-    (this.hasHeader === outgoingHasHeader
+    // The guards are asked and the name is not read: each call reads it.
+    (IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(this, "hasHeader")
       ? !hasHeaderUnderKey(exchange, this, "content-length", HeaderBits.content_length) &&
         !hasHeaderUnderKey(exchange, this, "transfer-encoding", HeaderBits.transfer_encoding)
       : !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding"))
@@ -6461,7 +6476,7 @@ function storeHTTPOptions(this: $Node.HttpServer, options: $Node.HttpServerOptio
 
   const insecureHTTPParser = options.insecureHTTPParser;
   if (insecureHTTPParser !== undefined) validateBoolean(insecureHTTPParser, "options.insecureHTTPParser");
-  this.insecureHTTPParser = insecureHTTPParser;
+  storeRarely(this, "insecureHTTPParser", insecureHTTPParser);
 
   const httpValidation = options.httpValidation;
   if (httpValidation !== undefined) {
@@ -6473,7 +6488,7 @@ function storeHTTPOptions(this: $Node.HttpServer, options: $Node.HttpServerOptio
         "cannot be used with options.insecureHTTPParser",
       );
     }
-    this.httpValidation = httpValidation;
+    storeRarely(this, "httpValidation", httpValidation);
   }
 
   // Node passes options.highWaterMark through to net.Server, which applies it
@@ -6586,7 +6601,7 @@ function spillStateReachedThrough(receiver: $Node.ServerResponse): void {
 }
 
 // What few responses ever have takes no room in all of them.
-function storeRarely(receiver: object, key: symbol, value: unknown): void {
+function storeRarely(receiver: object, key: symbol | string, value: unknown): void {
   (receiver as any)[key] = value;
 }
 

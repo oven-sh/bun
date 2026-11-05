@@ -420,6 +420,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Annotation::Signature => is_every_node = false,
                 Annotation::Missing => {
                     (is_inferred, is_every_signature, is_every_node) = (true, false, false);
+                    break;
                 }
             }
         }

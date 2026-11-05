@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isWindows } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/harness/commands";
@@ -43,14 +43,15 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
       ),
     );
   const larger: Record<string, number> = {};
+  const refusals: Record<string, string | undefined> = {};
   const template = join(folder, isWindows ? "template.exe" : "template");
   let templateIsBuilt: ReturnType<typeof build> | undefined;
   const buildTemplate = () => (templateIsBuilt ??= build("empty.ts", "template", "--trim-template"));
 
-  async function buildOnBothAndRun(programs: string[][], prefix: string) {
+  async function buildOnBothAndRun(programs: string[][], prefix: string, ways: string[][] = [[], ["--trim"]]) {
     const found: Record<string, unknown> = {};
     const expected: Record<string, unknown> = {};
-    const rows = programs.flatMap(([entry, stdout]) => [[], ["--trim"]].map(flags => ({ entry, stdout, flags })));
+    const rows = programs.flatMap(([entry, stdout]) => ways.map(flags => ({ entry, stdout, flags })));
     await Promise.all(
       rows.map(async ({ entry, stdout, flags }, number) => {
         const index = `${prefix}-${number}`;
@@ -59,13 +60,18 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
           build(entry, `on-bun-${index}`, ...flags),
           build(entry, `on-template-${index}`, ...flags, "--compile-executable-path", template),
         ]);
+        expected[title] = { builds: [0, 0], stdout, exitCode: 0 };
+        if (onBun.exitCode !== 0 || onTemplate.exitCode !== 0) {
+          refusals[title] = /^error: .*$/m.exec(onTemplate.stderr)?.[0];
+          found[title] = { builds: [onBun.exitCode, onTemplate.exitCode], stderr: [onBun.stderr, onTemplate.stderr] };
+          return;
+        }
         const ran = await spawned([join(folder, `on-template-${index}`), "1 + 2"], folder, bunEnv);
         found[title] = {
           builds: [onBun.exitCode, onTemplate.exitCode],
           stdout: ran.stdout,
           exitCode: ran.exitCode,
         };
-        expected[title] = { builds: [0, 0], stdout, exitCode: 0 };
         larger[title] = sizeOf(join(folder, `on-template-${index}`)) - sizeOf(join(folder, `on-bun-${index}`));
       }),
     );
@@ -86,23 +92,40 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
     expect(Object.entries(larger).filter(([, bytes]) => bytes >= 256 * 1024)).toEqual([]);
   });
 
+  const more = [
+    ["text.ts", "3 true 1,2,3\n"],
+    ["server.ts", "/path\n"],
+  ];
+
+  test("a program that evaluates text and a server built on it with --trim are what the same builds on Bun give", async () => {
+    expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
+    await buildOnBothAndRun(more, "trimmed", [["--trim"]]);
+  }, 900_000);
+
+  // Evaluated text and Bun.serve count as uses of Bun.build today. A build that is not asked to trim then keeps what Bun.build enters, which is what a template leaves out.
   test.failing(
-    "a program that evaluates text and a server built on it are what the same builds on Bun give: 0 of 4 build, the goal is 4",
+    "a program that evaluates text and a server built on it without --trim are what the same builds on Bun give: 0 of 2 build, the goal is 2",
     async () => {
       expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
-      await buildOnBothAndRun(
-        [
-          ["text.ts", "3 true 1,2,3\n"],
-          ["server.ts", "/path\n"],
-        ],
-        "more",
-      );
+      await buildOnBothAndRun(more, "whole", [[]]);
     },
     900_000,
   );
 
+  test("a build without --trim that stops says what the template doesn't have", () => {
+    const refusal =
+      "error: the Bun executable that this build starts from doesn't have the JIT compilers, which this executable needs";
+    expect(refusals).toEqual({ "text.ts ": refusal, "server.ts ": refusal });
+  });
+
+  test("what is built on it is as small as what the same build on Bun gives: at least 4 of the 6 are built", () => {
+    expect(Object.keys(larger)).toHaveLength(4);
+    // Where the two cuts meet inside a block of the cut's alignment, the block stays. A block is 4 KB here, and 16 KB or 64 KB elsewhere.
+    if (isLinux && !isArm64) expect(Object.entries(larger).filter(([, bytes]) => bytes >= 256 * 1024)).toEqual([]);
+  });
+
   test.failing(
-    "what is built on it is as small as what the same build on Bun gives: 2 of 6 are built, the goal is 6",
+    "what is built on it is as small as what the same build on Bun gives: 4 of 6 are built, the goal is 6",
     () => {
       expect(Object.keys(larger)).toHaveLength(6);
       expect(Object.entries(larger).filter(([, bytes]) => bytes >= 256 * 1024)).toEqual([]);

@@ -74,11 +74,13 @@ pub struct LoadedProgram<'s> {
     pub diagnostics: Vec<BuildDiagnostic>,
     bun_types: BunTypes,
     has_configuration_file: bool,
+    files_that_project_excludes: Vec<FileId>,
     files_left_to_loader: OnceLock<Box<[FileId]>>,
 }
 
 pub(crate) enum BunTypes {
     Installed,
+    InstalledAndNotNamed,
     Brought,
     Missing(WithoutBunTypes),
 }
@@ -179,6 +181,12 @@ impl<'s> LoadedProgram<'s> {
             all.append(cycles.clone());
         }
         all
+    }
+
+    fn is_excluded_by_project(&self, file: FileId) -> bool {
+        self.files_that_project_excludes
+            .binary_search(&file)
+            .is_ok()
     }
 
     fn program_origins(&self) -> ProgramOrigins<'_, 's> {

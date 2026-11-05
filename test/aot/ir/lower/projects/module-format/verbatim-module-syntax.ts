@@ -1,11 +1,9 @@
 // RUN: lower
+// DIAGNOSTIC: TS1287 main.ts:2
+// DIAGNOSTIC: TS1287 other.ts:1
+// DIAGNOSTIC: TS1295 main.ts:1
 
-// What verbatimModuleSyntax forbids in a CommonJS file (TS1287, TS1295) keeps no program from running, so no build reports it. The import and the export are lowered as they are written.
-
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK: [[read]] = GetModuleVariable variable=[[one]]
-// CHECK-NEXT: = CheckInitialized [[read]] name="one"
-// CHECK: PutModuleVariable {{*}}variable=[[two]]
+// verbatimModuleSyntax is asked for by name: what it forbids in a CommonJS file is reported.
 
 // FILE: main.ts
 import { one } from "./other.js";

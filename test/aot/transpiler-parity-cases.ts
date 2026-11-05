@@ -39,9 +39,8 @@ const skipped: Record<string, string> = {
     "its runner imports each case by a computed specifier (:190), so the cases would be interpreted, and its boilerplate adds a property to Function.prototype (:19-20), which is read-only in a compiled program",
 };
 
-const untypedPackages = "TS7016: the packages it imports have no type declarations";
+const untypedJsxRuntime = "TS7016: react/jsx-runtime, which an element stands for, has no type declarations";
 const undeclaredIntrinsicElements = "TS7026: nothing declares JSX.IntrinsicElements";
-const undeclaredGlobalProperty = "TS7017: nothing declares globalThis.$RefreshSig$";
 const fastRefresh = "bundler > a hook call in a method, with React Fast Refresh";
 const classFields = "tsconfig compilerOptions.useDefineForClassFields";
 const fieldOverridesAccessor = "TS2610: a field overrides an accessor of the base class";
@@ -79,16 +78,11 @@ const expectedFailures: Record<string, Record<string, string>> = {
       "TS1477: a property access follows an instantiation expression",
   },
   "test/bundler/bundler_jsx.test.ts": {
-    "bundler > jsx/AutomaticFragmentNamedImportDev": untypedPackages,
-    "bundler > jsx/AutomaticFragmentNamedImportProd": untypedPackages,
-    "bundler > jsx/AutomaticLocalShadowDev": untypedPackages,
-    "bundler > jsx/AutomaticLocalShadowProd": untypedPackages,
+    "bundler > jsx/AutomaticFragmentNamedImportDev": untypedJsxRuntime,
+    "bundler > jsx/AutomaticLocalShadowDev": untypedJsxRuntime,
     "bundler > autoImportTreeShaking > jsx/AutoImportDroppedWhenJsxUnusedBundledCjs": undeclaredIntrinsicElements,
     "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedBundledCjs": undeclaredIntrinsicElements,
-    [`${fastRefresh} > jsx/FastRefreshClassStatementMethods.tsx`]: undeclaredGlobalProperty,
-    [`${fastRefresh} > jsx/FastRefreshClassExpressionMethod.tsx`]: undeclaredGlobalProperty,
-    [`${fastRefresh} > jsx/FastRefreshObjectMethodKeepsSuper.tsx`]: undeclaredGlobalProperty,
-    [`${fastRefresh} > jsx/FastRefreshFunctionsAroundAndInsideAMethod`]: undeclaredGlobalProperty,
+    [`${fastRefresh} > jsx/FastRefreshClassStatementMethods.tsx`]: "TS2339: the class C declares neither c nor v",
   },
   "test/bundler/esbuild/ts.test.ts": {
     "bundler > ts/DeclareClassFields": "TS2304: nothing declares c, d, C and D",
@@ -98,7 +92,6 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "bundler > ts/ImportVsLocalCollisionMixed": "TS2305: other.ts exports only `real`",
     "bundler > ts/TypeScriptDecoratorsSimpleCase": "TS7019: the rest parameter `args` has no type",
     "bundler > ts/ExportTypeSTAR": 'TS2307: there is no module "foo"',
-    "bundler > ts/ImportRewrittenExtensions": "TS2307: TypeScript does not resolve ./g.js to g.mts",
     "bundler > ts/EnumTreeShaking/sibling-enum-before.ts": "TS2450: the enum x is used before its declaration",
     "bundler > ts/EnumTreeShaking/namespace-before.ts": "TS2304: nothing declares y",
     "bundler > ts/EnumTreeShaking/namespace-after.ts": "TS2304: nothing declares y",

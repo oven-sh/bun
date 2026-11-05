@@ -1,24 +1,28 @@
 use super::aliases::declared_names;
+use super::mentions::expose_in;
 use super::unnamed_uses::SyntaxOutsideExpressions;
 use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, GLOBALS_LEFT_ALONE, KeyOfModuleCache,
     LOADED_BELOW_VITEST, LOADED_BY_WORKER, ModuleObjectMention, ResolveInput, Resolved,
-    ResolvedBuiltins, SourceDialect, SpyCall,
+    ResolvedBuiltins, SourceDialect, SpyCall, WhereHooksOfInstanceofExist,
 };
 use crate::builtins::runtime_uses::{
-    Mentions, RuntimeUses, SyntaxWithHelpers, is_unknown_module_loader,
-    reaches_unknown_module_loader,
+    ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RuntimeUses, SyntaxWithHelpers, is_evaluator,
+    is_unknown_module_loader, reaches_unknown_module_loader,
 };
 use crate::builtins::table::{
     self, BuiltinId, BuiltinName, Intrinsic, Mutability, Platforms, RuntimeFunction, RuntimeModule,
 };
+use crate::ir::WellKnownSymbol;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, CommonJsVariable, Decl, Parent, SymbolId};
+use bun_sema::bind::{
+    Binding, BindingInitializer, CommonJsVariable, Decl, InitialState, Parent, SymbolId,
+};
 use bun_sema::fold::{Constant, Decision, KnownSets};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, MemberKey, UnOp};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, FnId, MemberKey, UnOp};
 use bun_sema::import_sites::find_module_printed_as_require;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
-use core::cell::{OnceCell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::ops::Range;
 use smallvec::SmallVec;
 use std::sync::OnceLock;
@@ -199,6 +203,8 @@ pub(super) struct ResolverOutput {
     pub(super) called: Vec<BuiltinId>,
     pub(super) loaded: Vec<BuiltinId>,
     pub(super) exposed: Vec<BuiltinId>,
+    pub(super) handed_to_hooks_of_instanceof: Vec<BuiltinId>,
+    pub(super) reads_name_leading_to_hook_of_instanceof: bool,
     pub(super) linked_functions: Vec<RuntimeFunction>,
     pub(super) evaluated_texts: Vec<EvaluatedText>,
     pub(super) module_object_mentions: Vec<ModuleObjectMention>,
@@ -213,6 +219,7 @@ pub(super) struct ResolverOutput {
     pub(super) resets_modules: bool,
     pub(super) stores_loader_functions: bool,
     pub(super) process_reaches_code_on_its_prototypes: bool,
+    pub(super) inspects_prototype_chain_of_process: bool,
     pub(super) tables_of_loaders_written: Vec<ExprId>,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
@@ -224,6 +231,19 @@ pub(super) struct ResolverOutput {
     pub(super) global_object_may_be_looked_through: bool,
     pub(super) syntax: SyntaxWithHelpers,
     pub(super) may_hand_values_to_natives: bool,
+}
+
+#[derive(Copy, Clone)]
+pub(super) enum HooksOfInstanceof {
+    OnWhatIsNoBuiltin,
+    Nowhere,
+    Everywhere,
+}
+
+#[derive(Default)]
+pub(super) struct FunctionsReadingThis {
+    pub(super) found: FxHashSet<FnId>,
+    pub(super) is_any_this_of_nobody_known: bool,
 }
 
 pub(super) struct Resolver<'a, 's> {
@@ -239,6 +259,8 @@ pub(super) struct Resolver<'a, 's> {
     pub(super) exposes_own_require: bool,
     pub(super) stores_to_exports: Vec<ExprId>,
     pub(super) may_hold_made_require: bool,
+    pub(super) hooks_of_instanceof_supposed: Cell<HooksOfInstanceof>,
+    pub(super) functions_reading_this: OnceCell<FunctionsReadingThis>,
     pub(super) output: ResolverOutput,
     within: Option<&'a [Range<u32>]>,
     named_outside: OnceCell<FxHashSet<SymbolId>>,
@@ -265,6 +287,18 @@ fn can_stand_for_builtin(kind: ExprKind) -> bool {
                 op: BinOp::Comma | BinOp::And,
                 ..
             }
+    )
+}
+
+fn leads_to_hook_of_instanceof(id: BuiltinId) -> bool {
+    let id = table::canonical_id(id);
+    is_evaluator(id) || ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF.contains(&id)
+}
+
+fn holds_what_leads_to_hook_of_instanceof(id: BuiltinId) -> bool {
+    matches!(
+        table::canonical_id(id),
+        BuiltinId::GlobalThis | BuiltinId::Symbol | BuiltinId::Object | BuiltinId::Reflect
     )
 }
 
@@ -382,6 +416,8 @@ impl<'a, 's> Resolver<'a, 's> {
                     .targets
                     .iter()
                     .any(|it| it.1 == RuntimeModule::NodeModule),
+            hooks_of_instanceof_supposed: Cell::new(HooksOfInstanceof::OnWhatIsNoBuiltin),
+            functions_reading_this: OnceCell::new(),
             output: ResolverOutput::default(),
             computed: Vec::new(),
             calls: Vec::new(),
@@ -441,6 +477,46 @@ impl<'a, 's> Resolver<'a, 's> {
                 }))
             }
             _ => None,
+        }
+    }
+
+    pub(super) fn symbol_that_key_is(
+        &self,
+        key: ExprId,
+    ) -> Option<(ResolvedValue, WellKnownSymbol)> {
+        let value = self.value_of(key)?;
+        let symbol = table::well_known_symbol(value.path.id)?;
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::new();
+        let mut current = key;
+        loop {
+            current = hir.skip_type_assertions(current);
+            current = match hir[current].kind {
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => hir.member_key(current)?.0,
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => right,
+                ExprKind::Ident(_) => match bound.binding(current) {
+                    Binding::Symbol(variable) => {
+                        let is_filled_once =
+                            bound.initial_state(variable) == InitialState::Uninitialized;
+                        let may_be_replaced = self.input.runs_tests && self.is_exported(variable);
+                        if !is_filled_once || may_be_replaced || followed.contains(&variable) {
+                            return None;
+                        }
+                        followed.push(variable);
+                        match bound.binding_initializer(hir, variable) {
+                            BindingInitializer::Expression(initializer) => initializer,
+                            BindingInitializer::PatternProperty { source, .. } => source,
+                            _ => return None,
+                        }
+                    }
+                    _ => return Some((value, symbol)),
+                },
+                _ => return Some((value, symbol)),
+            };
         }
     }
 
@@ -779,6 +855,35 @@ impl<'a, 's> Resolver<'a, 's> {
         };
         let hands_on_loader_of_paths = loads_unknown_modules
             && reaches_loader_of_paths(&output.loaded, &called, &handed_on, input.platform);
+        let handed_to_hooks = &output.handed_to_hooks_of_instanceof;
+        let where_hooks_of_instanceof_exist = (!handed_to_hooks.is_empty()).then(|| {
+            let (mut called, mut exposed) = (output.called.clone(), exposed.to_vec());
+            for &id in handed_to_hooks {
+                expose_in(&mut called, &mut exposed, id);
+            }
+            let exposed = sorted_unique(exposed);
+            let mentions = Mentions {
+                exposed: &exposed,
+                called: &called,
+                ..mentions
+            };
+            let uses = RuntimeUses::of_mentions(&mentions, input.platform);
+            let (called, handed_on) = (without_what_leads(&called), without_what_leads(&exposed));
+            let loads_unknown_modules =
+                reaches_unknown_module_loader(&output.loaded, &called, &handed_on, input.platform);
+            Box::new(WhereHooksOfInstanceofExist {
+                uses,
+                loads_unknown_modules,
+                hands_on_loader_of_paths: loads_unknown_modules
+                    && reaches_loader_of_paths(&output.loaded, &called, &handed_on, input.platform),
+            })
+        });
+        let can_come_by_hook_of_instanceof = input.dialect == SourceDialect::Program
+            && (input.runs_tests
+                || uses.lets_in_what_nobody_names
+                || output.reads_name_leading_to_hook_of_instanceof
+                || mentioned.iter().any(|&id| leads_to_hook_of_instanceof(id))
+                || (exposed.iter()).any(|&id| holds_what_leads_to_hook_of_instanceof(id)));
         let reaches_module_cache =
             input.dialect == SourceDialect::Program && output.gets_at_entries_of_module_cache;
         let mut ids = mentioned.iter();
@@ -835,6 +940,7 @@ impl<'a, 's> Resolver<'a, 's> {
             resets_modules: output.resets_modules,
             stores_loader_functions: output.stores_loader_functions,
             process_reaches_code_on_its_prototypes: output.process_reaches_code_on_its_prototypes,
+            inspects_prototype_chain_of_process: output.inspects_prototype_chain_of_process,
             tables_of_loaders_written: output.tables_of_loaders_written.into_boxed_slice(),
             unlocked: OnceLock::new(),
             mentioned,
@@ -843,6 +949,9 @@ impl<'a, 's> Resolver<'a, 's> {
             uses,
             loads_unknown_modules,
             hands_on_loader_of_paths,
+            where_hooks_of_instanceof_exist,
+            hooks_of_instanceof_may_exist: OnceLock::new(),
+            can_come_by_hook_of_instanceof,
             keys_taken_out_of_module_cache: output
                 .keys_taken_out_of_module_cache
                 .into_boxed_slice(),

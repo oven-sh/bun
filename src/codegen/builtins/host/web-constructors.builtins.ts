@@ -367,7 +367,9 @@ export default b.declarations(
     paths.flatMap(path => b.class(path, { extends: parent, ...rowsOfConstructor(path) })),
   ),
   // Its prototype object is that of Blob: b.same() below.
-  b.class("File", { hasPrototype: false }),
+  b.class("File", { extends: "Blob", hasPrototype: false }),
+  // A File is a Blob, and the constructor stands below Function.prototype all the same.
+  b.inherits("File", "Function.prototype"),
   // JSDOMException.cpp: the constructor stands below Function.prototype, the prototype object below that of Error.
   b.inherits("DOMException.prototype", "Error.prototype"),
   constantsOf("DOMException", codesOfDOMException),

@@ -1,14 +1,6 @@
-// RUN: link
+// RUN: lower
 // ENTRY: inner/wrong.tsx
-
-// An element is a call of the `jsx` of the package that the nearest tsconfig.json names. That one gives a number, and the annotation says string: it stops no build, and the engine tests the Convert.
-
-// CHECK: variable [[jsx]] name="jsx" module=[[runtime]]
-// CHECK: module [[runtime]] path="{{*}}/node_modules/length-jsx/jsx-runtime.ts"
-// CHECK: [[read]] = GetModuleVariable variable=[[jsx]]
-// CHECK-NEXT: [[callee]] = CheckInitialized [[read]] name="jsx"
-// CHECK: [[element]] = Call [[callee]], -, {{*}}calleeName="jsx"
-// CHECK-NEXT: = Convert [[element]] declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+// DIAGNOSTIC: TS2322 inner/wrong.tsx:1
 
 // FILE: main.tsx
 import { length } from "./inner/length";

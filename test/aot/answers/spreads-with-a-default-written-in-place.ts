@@ -29,3 +29,4 @@ all(new Proxy({ b: 3 }, {}));
 all({ get b() { return "got"; } });
 tell(() => { let s = 0; for (let i = 0; i < 300; i++) s += nullish(i, i % 2 ? undefined : { b: i }).b; return s; });
 report("end");
+declare function report(value: unknown): void;

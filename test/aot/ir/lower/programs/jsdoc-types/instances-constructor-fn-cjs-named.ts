@@ -1,9 +1,6 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// `InstanceType` takes no plain function, so what is written of `thing` says nothing of it.
-// CHECK-LABEL: function {{*}}name="show"
-// CHECK: b0([[size]]: number, [[thing]]: anything):
-// CHECK: = PropGet [[thing]] key="a"
+// DIAGNOSTIC: TS2344 1
 
 // FILE: main.ts
 // The instances of a constructor function of a commonjs module are named in typescript.

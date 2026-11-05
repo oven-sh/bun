@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-build-without-a-tsconfig-checks-under-the-defaults-of-tsc.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-built-in-kept-under-another-name-is-not-the-spy-on-it.test.ts": {
     "default": 24000,
     "asan": 96000
@@ -60,6 +64,10 @@
     "default": 57400,
     "asan": 229600
   },
+  "aot/a-comparison-that-the-build-did-not-follow-hands-out-no-object-of-a-private-field.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -79,6 +87,10 @@
   "aot/a-data-file-required-before-the-loader-comes-to-its-import-in-a-test-run.test.ts": {
     "default": 33900,
     "asan": 135600
+  },
+  "aot/a-file-beside-the-test-file-requires-it-inside-a-require-of-their-importer.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-file-of-the-product-finds-no-spy-that-the-build-has-not-seen.test.ts": {
     "default": 28900,
@@ -188,6 +200,10 @@
     "default": 12100,
     "asan": 48400
   },
+  "aot/a-made-name-requires-an-es-module-of-the-graph-that-is-being-loaded-where-every-file-is-found-by-name.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-message-quotes-the-global-jest-as-the-test-file-writes-it.test.ts": {
     "default": 7500,
     "asan": 30000
@@ -233,6 +249,10 @@
     "asan": 31600
   },
   "aot/a-name-that-a-test-lays-on-object-prototype-is-read-by-the-library-as-in-bun-test.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-name-that-an-executable-lacks-is-looked-for-from-the-working-directory-too.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -308,6 +328,10 @@
     "default": 9900,
     "asan": 39600
   },
+  "aot/a-require-in-a-file-that-runs-during-a-load-finds-the-load-as-the-loader-left-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-require-made-for-a-folder-above-the-entry-point.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -320,9 +344,25 @@
     "default": 19400,
     "asan": 77600
   },
+  "aot/a-require-that-goes-through-the-host-keeps-no-module-object.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-requirer-that-is-no-file-of-the-executable-keeps-one-object-for-a-file.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-run-goes-on-without-the-tsconfig-that-the-override-names.test.ts": {
     "default": 5000,
     "asan": 20000
+  },
+  "aot/a-safe-collection-wraps-what-each-key-holds.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-server-honors-an-option-laid-on-object-prototype.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-spy-follows-a-name-that-is-left-to-the-loader.test.ts": {
     "default": 19600,
@@ -376,6 +416,10 @@
     "default": 13900,
     "asan": 55600
   },
+  "aot/a-test-run-holds-of-the-library-what-its-files-mention.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-test-stores-an-entry-in-require-cache-under-a-key-that-it-puts-together.test.ts": {
     "default": 23500,
     "asan": 94000
@@ -387,6 +431,10 @@
   "aot/a-test-worker-that-waits-for-its-next-file-sleeps.test.ts": {
     "default": 7200,
     "asan": 28800
+  },
+  "aot/a-testing-word-lets-a-net-build-a-program-with-type-errors.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-text-that-nobody-has-read-comes-in-and-nothing-is-taken-out.test.ts": {
     "default": 14300,
@@ -431,6 +479,10 @@
   "aot/accessors-above-objects-in-test-runs.test.ts": {
     "default": 9300,
     "asan": 37200
+  },
+  "aot/an-accessor-on-a-request-itself-is-asked-as-often-as-plain-bun-asks-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/an-addon-in-the-executable-is-loaded-under-any-name.test.ts": {
     "default": 35500,
@@ -545,6 +597,10 @@
     "asan": 240000
   },
   "aot/builtins/rows-of-the-host-are-held-by-calls-written-by-hand.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/builtins/the-host-hands-on-every-word-of-the-engine.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -713,6 +769,22 @@
     "asan": 240000
   },
   "aot/engine/from-source-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-5.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-6.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-7.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-8.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -1628,6 +1700,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-library-compiled-from-the-texts-that-bun-run-evaluates.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-library-is-written-in-forms-that-the-schema-names.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1647,6 +1723,10 @@
   "aot/the-setter-of-self-says-so-where-it-is-refused.test.ts": {
     "default": 2200,
     "asan": 8800
+  },
+  "aot/the-size-of-a-map-or-a-set-read-closed.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/the-stage-log-says-what-each-step-of-binding-took.test.ts": {
     "default": 800,
@@ -1668,9 +1748,17 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-word-unlikely-is-read-in-the-modules-of-bun-alone.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/tool-loads-a-plugin.test.ts": {
     "default": 1200,
     "asan": 4800
+  },
+  "aot/trim-report-features-by-operand.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/type-errors-under-a-tsconfig-that-needs-another-program.test.ts": {
     "default": 60000,
@@ -1752,11 +1840,19 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/what-node-events-lays-above-process.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/what-require-answered-behind-a-mock-of-a-built-in-module-stays-behind-an-import.test.ts": {
     "default": 2900,
     "asan": 11600
   },
   "aot/what-require-made-of-a-data-file-stays-with-require-in-a-test-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/what-rests-on-a-brought-declaration-stops-no-build.test.ts": {
     "default": 60000,
     "asan": 240000
   },

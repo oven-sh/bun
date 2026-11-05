@@ -37,3 +37,4 @@ report(call("press", new Stranger(), 12));
 report(guarded(other, 13));
 report(calls);
 report("end");
+declare function report(value: unknown): void;

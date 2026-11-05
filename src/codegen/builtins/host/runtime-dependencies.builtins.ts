@@ -65,13 +65,6 @@ const standardStreamModulesThatTestsCanWatch = standardStreamModules.map(load =>
   ...load,
   when: b.whenTestsReplaceBuiltins,
 }));
-// Over a terminal a standard output lays a listener for "SIGWINCH" by process.on(). The whole stream has the call in its text. The light streams leave it to native code, which nobody follows:
-// so they are made only where what native code finds under the name is the method of native code.
-const whenProgramLaysItsOwnOn = b.whenProgramStores("%EventEmitter%.prototype.on");
-const modulesOfWholeOutputStream = [
-  ...standardStreamModulesThatTestsCanWatch,
-  ...standardStreamModules.map(load => ({ ...load, when: whenProgramLaysItsOwnOn })),
-];
 
 const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadSpec[]>> = {
   "node:fs/promises": evaluates("internal/fifo"),
@@ -88,14 +81,14 @@ const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadS
     },
   ],
   "process.openStdin": standardStreamModules,
-  "console._stderr": modulesOfWholeOutputStream,
-  "console._stdout": modulesOfWholeOutputStream,
-  "process.stderr": modulesOfWholeOutputStream,
+  "console._stderr": standardStreamModulesThatTestsCanWatch,
+  "console._stdout": standardStreamModulesThatTestsCanWatch,
+  "process.stderr": standardStreamModulesThatTestsCanWatch,
   "process.stdin": [
     ...standardStreamModulesThatTestsCanWatch,
     ...standardStreamModules.map(load => ({ ...load, when: b.whenProgramStores("process.nextTick") })),
   ],
-  "process.stdout": modulesOfWholeOutputStream,
+  "process.stdout": standardStreamModulesThatTestsCanWatch,
 };
 
 const pluginFunctionsOfBuild = functionsIn(
@@ -261,8 +254,6 @@ const outputStreams = [
   lightOutputStreams,
   { ...wholeOutputStream(1), when: b.whenTestsReplaceBuiltins },
   { ...wholeOutputStream(2), when: b.whenTestsReplaceBuiltins },
-  { ...wholeOutputStream(1), when: whenProgramLaysItsOwnOn },
-  { ...wholeOutputStream(2), when: whenProgramLaysItsOwnOn },
 ];
 
 const needsWholeInputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeInputStream");
@@ -1012,7 +1003,7 @@ export default b.declarations(
   // Where it is handed the name of a file it appends to that. Else, until the program has read or replaced process.stderr, it writes to the descriptor itself.
   b.hostFunction(writeWarningCell, "BunProcess.cpp", "Process_functionWriteWarning", {
     args: { text: b.any.optional, file: b.any.optional },
-    returns: b.undefined,
+    returns: b.union(b.bool, b.undefined),
     capability: "js",
     throws: true,
     uses: { text: [b.retained, b.runs("ToPrimitive")], file: b.inspected },

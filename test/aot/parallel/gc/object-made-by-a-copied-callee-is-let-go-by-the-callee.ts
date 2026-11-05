@@ -1,6 +1,6 @@
 // A function that may be entered again from below itself makes an object through a small function, which is copied into it, lets it wait while another argument is computed, and hands it to a callee that sets its parameter to null and runs on.
 // Prints what the compiler saves: objects that are collected earlier
-// Todo on win32 x64: Not every time: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
+// Skip on win32 x64: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {

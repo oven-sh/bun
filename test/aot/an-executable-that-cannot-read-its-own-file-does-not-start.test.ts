@@ -22,7 +22,7 @@ const worker = `postMessage([3, 4].map(side => side * side).join());
 const callbacks = `import { CFunction, JSCallback } from "bun:ffi";
 import { writeFileSync } from "node:fs";
 writeFileSync(process.argv[2], "");
-let sum = 0;
+let sum = 0; // @ts-expect-error
 for (let n = 0; n < 600; n++) sum += CFunction({ ptr: new JSCallback(() => n, { returns: "int32_t", args: [] }).ptr, returns: "int32_t", args: [] })();
 console.log("called", sum);
 `;

@@ -1,5 +1,11 @@
 import * as b from "bun-builtins-table";
-import { socketDataCell, webSocketDataCell, webSocketHandlerCell, webSocketsCell } from "./native-cells.ts";
+import {
+  filesOfFormsCell,
+  socketDataCell,
+  webSocketDataCell,
+  webSocketHandlerCell,
+  webSocketsCell,
+} from "./native-cells.ts";
 
 type Fields = Readonly<Record<string, b.Field>>;
 type StringOperation = Omit<b.SignatureOptions, "args" | "capability" | "runsOnlyOperandCode" | "implementation">;
@@ -72,33 +78,34 @@ const newIterator = (iteratorClass: b.ClassName) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-const forEachPair = {
-  ...operandCodeOnly,
-  args: { callback: b.callable, thisArg: b.any.optional },
-  throws: true,
-  uses: {
-    this: readsState,
-    callback: [
-      b.called({
-        afterwards: "TouchesOnlyWhatRowNames",
-        times: "PerElement",
-        this: b.operand("thisArg"),
-        args: [b.string, b.string, b.operand("this")],
-        result: "Ignored",
-      }),
-    ],
-    thisArg: b.inspected,
-  },
-  reads: externalState,
-  implementation: b.hostCall,
-} satisfies b.FunctionField;
+const forEachPairOf = (value: b.TableType, receiver: readonly b.UseSpec[]) =>
+  ({
+    ...operandCodeOnly,
+    args: { callback: b.callable, thisArg: b.any.optional },
+    throws: true,
+    uses: {
+      this: receiver,
+      callback: [
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "PerElement",
+          this: b.operand("thisArg"),
+          args: [value, b.string, b.operand("this")],
+          result: "Ignored",
+        }),
+      ],
+      thisArg: b.inspected,
+    },
+    reads: externalState,
+    implementation: b.hostCall,
+  }) satisfies b.FunctionField;
 
-const pairIteration = (iteratorClass: b.ClassName) =>
+const pairIteration = (iteratorClass: b.ClassName, forEach: b.FunctionField = forEachPairOf(b.string, readsState)) =>
   ({
     entries: newIterator(iteratorClass),
     keys: newIterator(iteratorClass),
     values: newIterator(iteratorClass),
-    forEach: forEachPair,
+    forEach,
   }) satisfies Fields;
 
 // next() tests its receiver against the base class.
@@ -108,6 +115,7 @@ const pairIteratorClass = (
   prototypeCppExpression: string,
   structureSlot: string,
   usesFeature: b.FeatureName,
+  next: Partial<b.FunctionField> = { ...stateChanged, returns: b.ordinaryObjectOf("StringPairIteratorResult").fresh },
 ) =>
   b.class(`%${iterated}Iterator%`, {
     extends: "Iterator",
@@ -120,8 +128,7 @@ const pairIteratorClass = (
     usesFeature,
     proto: {
       next: {
-        ...stateChanged,
-        returns: b.ordinaryObjectOf("StringPairIteratorResult").fresh,
+        ...next,
         capability: "heap",
         throws: true,
         implementation: b.hostCall,
@@ -138,6 +145,32 @@ const serialized = {
 } satisfies b.FunctionField;
 
 const newHeaders = b.instance("Headers").fresh;
+
+// blob.cpp toJS(): a Blob of a form is handed out as a File: the very object that was appended, while that object lives, or one that
+// native code makes at the first read and hands out again at the later ones.
+const makesFiles = [...readsState, b.createdIn(b.instance("Blob").fresh, b.nativeCell(filesOfFormsCell))];
+const handsOutFiles = [...makesFiles, b.returnedFrom(filesOfFormsCell)];
+const formRead = { uses: { this: handsOutFiles }, reads: externalState } satisfies Partial<b.SignatureOptions>;
+const valueOfForm = b.union(b.string, b.instance("Blob"));
+
+// JSDOMFormData.cpp: with two arguments a Blob is told from all else, which is converted to a string; with three the second must be a Blob, or it throws.
+// Its native part is shared with the form. A File that gets no other name is remembered as the object that it is.
+const storesInForm = [
+  {
+    ...stateChanged,
+    ...operandCodeOnly,
+    args: { name: b.any, value: b.instance("Blob"), filename: b.any.optional },
+    throws: true,
+    uses: {
+      this: changesState,
+      name: convertedToCharacters,
+      value: [b.readsContents(), b.storedIn(b.nativeCell(filesOfFormsCell))],
+      filename: convertedToCharacters,
+    },
+    implementation: b.hostCall,
+  },
+  ...takingStrings(["name", "value"], [], { ...stateChanged, throws: true }),
+] satisfies b.FunctionField[];
 
 const otherReceiverIgnored = {
   this: b.any,
@@ -247,7 +280,7 @@ const mayClose = (socket: b.PlaceLike) => [
   b.keptCalled(webSocketHandlerCell("error"), {
     times: "Once",
     this: b.undefined,
-    args: [b.any, socket],
+    args: [b.thrown, socket],
     result: "Ignored",
   }),
 ];
@@ -422,6 +455,125 @@ export default b.declarations(
     "urlSearchParamsIteratorPrototype(*globalObject)",
     "URLSearchParamsIterator",
     "Url",
+  ),
+
+  b.tuple("PairOfForm", [b.string, valueOfForm]),
+  b.layout("FormDataIteratorResult", {
+    value: b.union(valueOfForm, b.layoutOf("PairOfForm"), b.undefined),
+    done: b.bool,
+  }),
+  membersOf("FormData.prototype", {
+    ...pairIteration(
+      "FormDataIterator",
+      forEachPairOf(valueOfForm, [...makesFiles, b.handedOutFrom(filesOfFormsCell)]),
+    ),
+    get: takingStrings(["name"], [], { ...formRead, returns: b.union(valueOfForm, b.strictNull) }),
+    getAll: takingStrings(["name"], [], {
+      ...formRead,
+      returns: b.instance("Array").holding({ element: valueOfForm }).fresh,
+    }),
+    has: takingStrings(["name"], [], { ...stateRead, returns: b.bool }),
+    delete: takingStrings(["name"], [], stateChanged),
+    set: storesInForm,
+    append: storesInForm,
+    // The object has an own @@toStringTag, which plain data has not, and holds the files of the form.
+    toJSON: { ...formRead, returns: b.instance("Object").unaliased, capability: "heap", implementation: b.hostCall },
+    length: { ...pairCount, throws: true },
+  }),
+  b.same("FormData.prototype.@@iterator", "FormData.prototype.entries"),
+  pairIteratorClass(
+    "FormData",
+    b.cppClass("DOMFormDataIteratorBase", "JSDOMFormData.h"),
+    "domFormDataIteratorPrototype(*globalObject)",
+    "DOMFormDataIterator",
+    "FormData",
+    {
+      uses: { this: [...changesState, ...handsOutFiles.slice(readsState.length)] },
+      reads: externalState,
+      writes: externalState,
+      returns: b.ordinaryObjectOf("FormDataIteratorResult").fresh,
+    },
+  ),
+
+  // JSCookieMap.cpp. The map holds strings and hands out strings: no Cookie comes out of it.
+  b.construction("Bun.CookieMap", [
+    {
+      args: { init: b.union(b.string, b.null).optional },
+      returns: b.instance("Bun.CookieMap").fresh,
+      capability: "heap",
+      throws: true,
+      uses: { init: characters },
+      implementation: b.hostCall,
+    },
+    {
+      ...operandCodeOnly,
+      args: { init: b.any },
+      returns: b.instance("Bun.CookieMap").fresh,
+      throws: true,
+      uses: { init: pairsOfStrings },
+      implementation: b.hostCall,
+    },
+  ]),
+  membersOf("Bun.CookieMap.prototype", {
+    ...pairIteration("CookieMapIterator"),
+    get: takingStrings(["name"], [], { ...stateRead, returns: stringOrNull }),
+    has: takingStrings(["name"], [], { ...stateRead, returns: b.bool, throws: true }),
+    // A cookie whose text passes the greatest length of a string throws an error that can be caught: the call does not go where nobody reads its result.
+    toSetCookieHeaders: {
+      ...stateRead,
+      returns: newArrayOfStrings,
+      capability: "heap",
+      throws: true,
+      implementation: b.hostCall,
+    },
+    // A name and a value, with options or without; a Cookie, whose native part the map shares from then on; or an object with the members of one.
+    set: [
+      {
+        ...stateChanged,
+        args: { name: b.string, value: b.string, options: b.null.optional },
+        capability: "heap",
+        throws: true,
+        uses: { this: changesState, name: characters, value: characters, options: b.inspected },
+        implementation: b.hostCall,
+      },
+      {
+        ...stateChanged,
+        ...operandCodeOnly,
+        args: { name: b.any.optional, value: b.any.optional, options: b.any.optional },
+        throws: true,
+        uses: { this: changesState, name: [b.everything], value: convertedToCharacters, options: [b.everything] },
+        implementation: b.hostCall,
+      },
+    ],
+    // A name, with options or without, or the options alone. An overload that left the options out would take the calls that have them and say that nobody reads them.
+    delete: [
+      {
+        ...stateChanged,
+        args: { name: b.string, options: b.null.optional },
+        capability: "heap",
+        throws: true,
+        uses: { this: changesState, name: characters, options: b.inspected },
+        implementation: b.hostCall,
+      },
+      {
+        ...stateChanged,
+        ...operandCodeOnly,
+        args: { name: b.any.optional, options: b.any.optional },
+        throws: true,
+        uses: { this: changesState, name: [b.everything], options: [b.everything] },
+        implementation: b.hostCall,
+      },
+    ],
+    toJSON: { ...stateRead, returns: b.plainData, capability: "heap", implementation: b.hostCall },
+    size: pairCount,
+  }),
+  b.same("Bun.CookieMap.prototype.@@iterator", "Bun.CookieMap.prototype.entries"),
+  pairIteratorClass(
+    "CookieMap",
+    b.cppClass("CookieMapIteratorBase", "JSCookieMap.h"),
+    "cookieMapIteratorPrototype(*globalObject)",
+    "CookieMapIterator",
+    "Cookie",
   ),
 
   b.construction("%TextDecoder%", [

@@ -116,6 +116,17 @@ const reasonOf = (promise: Promise<unknown>) =>
 const later = <Handed extends unknown[]>(start: (callback: (...handed: Handed) => void) => unknown) =>
   new Promise<Handed>(resolve => void start((...handed) => resolve(handed)));
 
+async function certificateHandedOver(): Promise<unknown> {
+  using server = Bun.serve({ port: 0, tls, fetch: () => new Response("served") });
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const response = await fetch(`https://localhost:${server.port}/`, {
+    keepalive: false,
+    tls: { ca: tls.cert, checkServerIdentity: (_host: string, certificate: unknown) => void resolve(certificate) },
+  });
+  await response.text();
+  return promise;
+}
+
 type Exit = { receiver: unknown; handed: unknown[] };
 async function exitOf(command: string[], behind?: (child: Bun.Subprocess) => void): Promise<Exit> {
   const { promise, resolve } = Promise.withResolvers<Exit>();
@@ -340,6 +351,135 @@ const casesOfGlob = scansOfGlob.map(([row, scan]): Case => ({
   see: () => [scan(), scan("."), scan(new String(".")), scan({ cwd: ".", dot: true })].map(value => ({ value })),
 }));
 
+// JSDOMFormData.cpp, blob.cpp toJS(). A File that was appended under no other name comes back as the object that it is, a Blob as a File that the form makes.
+const valuesOfForm = () => ["text", new Blob(["bytes"]), new File(["bytes"], "file.txt")];
+const formOf = (...values: (string | Blob)[]) => {
+  const form = new FormData();
+  for (const value of values) form.append("name", value);
+  return form;
+};
+const iterationsOfForm = ["entries", "keys", "values"] as const;
+const handedByForEachOfForm = (position: number) => () => {
+  const seen: Seen[] = [];
+  formOf(...valuesOfForm()).forEach((...operands: unknown[]) => void seen.push({ value: operands[position] }));
+  return seen;
+};
+const casesOfFormData: Case[] = [
+  {
+    row: "FormData.prototype.get",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => [formOf(), ...valuesOfForm().map(value => formOf(value))].map(form => ({ value: form.get("name") })),
+  },
+  {
+    row: "FormData.prototype.getAll",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => [formOf(), formOf(...valuesOfForm())].map(form => ({ value: form.getAll("name") })),
+  },
+  {
+    row: "FormData.prototype.toJSON",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () =>
+      [formOf(), formOf("text"), formOf(...valuesOfForm())].map(form => ({
+        value: Reflect.get(form, "toJSON").call(form),
+      })),
+  },
+  ...iterationsOfForm.map((name): Case => ({
+    row: `FormData.prototype.${name}`,
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => [{ value: formOf("text")[name]() }],
+  })),
+  {
+    row: "%FormDataIterator%.prototype.next",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () =>
+      iterationsOfForm.flatMap(name => {
+        const iterator = formOf(...valuesOfForm())[name]();
+        return Array.from({ length: 4 }, () => ({ value: iterator.next() }));
+      }),
+  },
+  ...[0, 1].map((position): Case => ({
+    row: "FormData.prototype.forEach",
+    mode: "Call",
+    place: `operand ${position} of the callback`,
+    typesIn: handedToCallback(position),
+    see: handedByForEachOfForm(position),
+  })),
+];
+
+// JSCookieMap.cpp, JSBunRequest.cpp. The map hands out strings alone.
+const cookies = () => new Bun.CookieMap("first=1; second=two");
+const resultOfCookies = (name: string, see: Case["see"]): Case => ({
+  row: `Bun.CookieMap.prototype.${name}`,
+  mode: "Call",
+  place: "the result",
+  typesIn: result,
+  see,
+});
+const routedRequest = async (route = "/:name", asked = "/a") => {
+  const { promise, resolve } = Promise.withResolvers<Request>();
+  const server = Bun.serve({ port: 0, routes: { [route]: request => (resolve(request), new Response("x")) } });
+  await fetch(new URL(asked, server.url), { headers: { cookie: "first=1" } });
+  const request = await promise;
+  await server.stop(true);
+  return request;
+};
+const casesOfCookies: Case[] = [
+  resultOfCookies("get", () => [{ value: cookies().get("first") }, { value: cookies().get("none") }]),
+  resultOfCookies("toJSON", () => [{ value: cookies().toJSON() }, { value: new Bun.CookieMap().toJSON() }]),
+  resultOfCookies("toSetCookieHeaders", () => {
+    const changed = cookies();
+    changed.set("third", "3");
+    changed.delete("first");
+    return [{ value: changed.toSetCookieHeaders() }, { value: cookies().toSetCookieHeaders() }];
+  }),
+  ...iterationsOfForm.map(name => resultOfCookies(name, () => [{ value: cookies()[name]() }])),
+  {
+    row: "%CookieMapIterator%.prototype.next",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () =>
+      iterationsOfForm.flatMap(name => {
+        const iterator = cookies()[name]();
+        return Array.from({ length: 3 }, () => ({ value: iterator.next() }));
+      }),
+  },
+  ...[0, 1].map((position): Case => ({
+    row: "Bun.CookieMap.prototype.forEach",
+    mode: "Call",
+    place: `operand ${position} of the callback`,
+    typesIn: handedToCallback(position),
+    see: () => {
+      const seen: Seen[] = [];
+      cookies().forEach((...operands: unknown[]) => void seen.push({ value: operands[position] }));
+      return seen;
+    },
+  })),
+  {
+    row: "%BunRequest%.prototype.cookies",
+    mode: "Get",
+    place: "the result",
+    typesIn: result,
+    see: async () => {
+      const request = await routedRequest();
+      return [
+        { value: Reflect.get(request, "cookies") },
+        { value: Reflect.get(Reflect.getPrototypeOf(request)!, "cookies", {}) },
+      ];
+    },
+  },
+];
+
 const casesOfFFI: Case[] = [
   ...(
     [
@@ -493,7 +633,9 @@ const casesOfFFI: Case[] = [
 ];
 
 const cases: Case[] = [
+  ...casesOfCookies,
   ...casesOfFFI,
+  ...casesOfFormData,
   ...casesOfGlob,
   {
     row: "native:Bindgen:node_util_binding.bind.ts:parseEnv",
@@ -655,6 +797,17 @@ const cases: Case[] = [
     place: "operand 0 of onDisconnect",
     typesIn: handedToHandler("onDisconnect", 0),
     see: async () => [{ value: (await seeChannel()).end.handed[0] }],
+  },
+  {
+    row: "fetch",
+    mode: "Call",
+    place: "operand 1 of tls.checkServerIdentity",
+    typesIn: handedToHandler("tls.checkServerIdentity", 1),
+    see: async () => [{ value: await certificateHandedOver() }],
+    notBroughtOut: {
+      Array:
+        "the certificate of the harness has no uses of its key, no access to information and no part of a name twice, and only those are lists",
+    },
   },
   {
     row: "Error.prepareStackTrace",
@@ -902,7 +1055,7 @@ function defineTests() {
               problems.push(`native code hands out what the row does not say: ${mismatches[0]}`);
           }
           for (const type of types) {
-            expect(type.isAnything || type.hasAnyObject).toBeFalse();
+            expect((type.isAnything && !type.isMadeOfListedClasses) || type.hasAnyObject).toBeFalse();
             for (const { name, rest } of partsOf(type)) {
               const isNeeded = seen.some(
                 one => mismatchOf(type, one) === undefined && mismatchOf(rest, one) !== undefined,
@@ -1238,6 +1391,59 @@ function defineTests() {
       expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
   });
 
+  test("Bun.serve: `error` and the `error` of its websockets are handed what another handler threw, the reason of its promise, or an error that native code made", async () => {
+    const rows = overloadsOf({ row: "Bun.serve", mode: "Call" } as Case);
+    expect(rows).not.toBeEmpty();
+    for (const handler of ["error", "websocket.error", "webSocket.error"]) {
+      const first = rows.flatMap(overload => callsOfHandler(overload, handler)).map(call => call.arguments[0]);
+      expect(first).not.toBeEmpty();
+      expect(first).toEqual(first.map(() => expect.objectContaining({ place: "NewValue", holdsWhatIsThrown: true })));
+    }
+    const thrownByHandler = { tag: "thrown by fetch" };
+    const reasonOfPromise = { tag: "the reason of the promise that fetch answered" };
+    const thrownInSocket = { tag: "thrown by open" };
+    const handed: unknown[] = [];
+    const receivers: unknown[] = [];
+    const toldOfSocket = Promise.withResolvers<unknown[]>();
+    using server = Bun.serve({
+      port: 0,
+      fetch(request, self) {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/throws") throw thrownByHandler;
+        if (pathname === "/rejects") return Promise.reject(reasonOfPromise);
+        if (pathname === "/socket") return self.upgrade(request) ? undefined : new Response("no");
+        return Response.error();
+      },
+      error(this: unknown, error: unknown) {
+        receivers.push(this);
+        handed.push(error);
+        return new Response("told");
+      },
+      websocket: {
+        open() {
+          throw thrownInSocket;
+        },
+        message() {},
+        error: (...operands: unknown[]) => toldOfSocket.resolve(operands),
+      },
+    } as any);
+    for (const path of ["throws", "rejects", "cannot-be-sent"])
+      expect(await (await fetch(`http://127.0.0.1:${server.port}/${path}`)).text()).toBe("told");
+    new WebSocket(`ws://127.0.0.1:${server.port}/socket`);
+    expect((await toldOfSocket.promise)[0]).toBe(thrownInSocket);
+    expect(handed).toEqual([thrownByHandler, reasonOfPromise, expect.any(Error)]);
+    expect(handed[0]).toBe(thrownByHandler);
+    expect(handed[1]).toBe(reasonOfPromise);
+    expect(Object.getPrototypeOf(handed[2])).toBe(Error.prototype);
+    const typesOfReceiver = distinct(rows.flatMap(handedToHandler("error", "this")));
+    expect(typesOfReceiver).not.toBeEmpty();
+    for (const type of typesOfReceiver) expect(type.isAnything || type.hasAnyObject).toBeFalse();
+    for (const receiver of receivers) {
+      expect(receiver).toBe(server);
+      expect(typesOfReceiver.map(type => mismatchOf(type, { value: receiver }))).toContain(undefined);
+    }
+  });
+
   // The compiler takes a program that loads bun:ffi to make no object of a class that nobody names, and native code behind it to call nothing of the library.
   test.skipIf(isWindows)(
     "Bun.FFI: every row says what native code makes, and the judge tells it from anything else",
@@ -1304,6 +1510,34 @@ function defineTests() {
       expect(wrapped.ptr).toBeNull();
     },
   );
+
+  test("the parameters of a routed request are the objects that the table says the host makes", async () => {
+    const aboveObjectOf = (cell: string) => dump.hostObjects.find(object => object.cell === cell)!.prototype;
+    const aboveEntry = (path: string) => dump.entries.find(entry => entry.path === path)!.inheritsFrom;
+    const request = await routedRequest("/:name/:other", "/a/b");
+    const named = Reflect.get(request, "params");
+    const above = Reflect.getPrototypeOf(named)!;
+    const tag = Reflect.getPrototypeOf(above)!;
+    expect(Reflect.get(request, "params")).toBe(named);
+    expect(Reflect.ownKeys(named).map(name => [name, Reflect.get(named, name)])).toEqual([
+      ["name", "a"],
+      ["other", "b"],
+    ]);
+    expect([Reflect.ownKeys(above), Reflect.ownKeys(tag), Reflect.get(tag, Symbol.toStringTag)]).toEqual([
+      [],
+      [Symbol.toStringTag],
+      "RequestParams",
+    ]);
+    expect(Reflect.getPrototypeOf(tag)).toBeNull();
+    expect([
+      aboveObjectOf("BunRequest.params"),
+      aboveEntry("%RequestParamsPrototype%"),
+      aboveEntry("%RequestParamsTag%"),
+    ]).toEqual(["RequestParamsPrototype", "RequestParamsTag", null]);
+    const unnamed = Reflect.get(await routedRequest("/a"), "params");
+    expect([Reflect.ownKeys(unnamed), Reflect.getPrototypeOf(unnamed)]).toEqual([[], null]);
+    expect(aboveObjectOf("BunRequest.paramsOfRouteWithoutAny")).toBeNull();
+  });
 
   test.skipIf(isWindows)("Bun.FFI.CString: called or constructed it answers a text, and no object", () => {
     const text = Buffer.from("text\0");

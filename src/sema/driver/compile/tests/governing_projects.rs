@@ -1,3 +1,4 @@
+use super::super::load::default_project;
 use super::support::{TestProgram, check_whole_files, disk, with_program};
 use crate::{Diagnostic, host};
 use bstr::ByteSlice;
@@ -6,7 +7,9 @@ use bun_sema::atom::Interner;
 use bun_sema::config::{self, ConfigError, Project};
 use bun_sema::hir;
 use bun_sema::json::Json;
-use bun_sema::resolve::{Host, JsxEmit, ModuleKind, Options, ParseOptions, ScriptKind};
+use bun_sema::resolve::{
+    CodeOptions, Host, JsxEmit, ModuleKind, Options, ParseOptions, ScriptKind,
+};
 use bun_sema::session::{Arena, Session};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -688,11 +691,43 @@ fn class_fields_stay_where_they_are_written_whatever_the_target() {
     let old_target = options_of(r#"{ "compilerOptions": { "target": "es2017" } }"#);
     assert!(old_target.use_define_for_class_fields);
     assert!(old_target.emit_standard_class_fields);
+    assert!(old_target.defines_class_fields_for_build_alone);
     let assigned =
         r#"{ "compilerOptions": { "target": "esnext", "useDefineForClassFields": false } }"#;
     let assigned = options_of(assigned);
     assert!(!assigned.use_define_for_class_fields);
     assert!(!assigned.emit_standard_class_fields);
+    assert!(!assigned.defines_class_fields_for_build_alone);
+    for as_in_tsc in [
+        r#"{ "compilerOptions": { "target": "es2022" } }"#,
+        r#"{ "compilerOptions": { "target": "es2017", "useDefineForClassFields": true } }"#,
+        "{}",
+    ] {
+        let options = options_of(as_in_tsc);
+        assert!(options.use_define_for_class_fields, "{as_in_tsc}");
+        assert!(!options.defines_class_fields_for_build_alone, "{as_in_tsc}");
+    }
+}
+
+#[test]
+fn a_folder_without_a_configuration_file_takes_the_default_library_of_tsc() {
+    let code = CodeOptions::bun_run(b"/project");
+    let entry_points = [project_path(A.0)];
+    let project = default_project(&disk_of(&[A]), &code, &entry_points);
+    assert!(!project.options.specifies_lib);
+    assert_eq!(project.options.libs, [b"esnext.full".to_vec()]);
+}
+
+#[test]
+fn a_project_that_writes_no_check_is_checked_and_keeps_what_is_found() {
+    let options_of =
+        |written: &'static str| load_project(&disk_of(&[(CONFIG, written), A])).options;
+    let written = options_of(r#"{ "compilerOptions": { "noCheck": true } }"#);
+    assert!(!written.no_check);
+    assert!(written.keeps_type_errors_to_itself);
+    for other in [r#"{ "compilerOptions": { "noCheck": false } }"#, "{}"] {
+        assert!(!options_of(other).keeps_type_errors_to_itself, "{other}");
+    }
 }
 
 #[test]

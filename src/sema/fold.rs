@@ -38,10 +38,13 @@ pub(crate) use string_affixes::{
 };
 pub use string_affixes::{ends_in_name_with_extension, find_export_of_path_module};
 
-use crate::atom::{Atom, Interner};
+use crate::atom::{Atom, Interner, known};
 use crate::bind::Bound;
 use crate::file_analysis::FileInputs;
-use crate::hir::{BinOp, ExprId, ExprKind, File, FnId, ImportedName, NodeData, StmtId, UnOp};
+use crate::hir::{
+    BinOp, Branches, Chain, ExprId, ExprKind, File, FnId, ImportedName, MemberKey, NodeData,
+    StmtId, UnOp,
+};
 use crate::hir_from_data::DataValue;
 use crate::import_sites::ImportSpecifier;
 use crate::module_format::CommonJsEvidence;
@@ -83,6 +86,13 @@ pub enum FoldedValue {
 pub enum FoldedData<'s> {
     Unknown,
     Known(DataValue<'s>),
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct LengthOfNamedText {
+    pub name: ExprId,
+    pub length: Constant,
+    pub name_runs_for_its_check: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -197,6 +207,7 @@ pub struct Decisions<'s> {
     member_reads: NodeBits<'s>,
     folded_under_minify_syntax: NodeBits<'s>,
     goes_on_to_the_right: &'s [ExprId],
+    stands_alone_in_bun_run: NodeBits<'s>,
 }
 
 impl<'s> Decisions<'s> {
@@ -245,6 +256,36 @@ impl<'s> Decisions<'s> {
             Some(entry) => FoldedValue::Constant(entry.constant),
             None => FoldedValue::Unknown,
         }
+    }
+
+    pub fn length_of_named_text(&self, hir: &File<'_>, read: ExprId) -> Option<LengthOfNamedText> {
+        let ExprKind::Dot {
+            chain: Chain::No, ..
+        } = hir.exprs.get(read.idx())?.kind
+        else {
+            return None;
+        };
+        let (name, MemberKey::Name(known::length)) = hir.member_key(read)? else {
+            return None;
+        };
+        if !matches!(hir[name].kind, ExprKind::Ident(_)) {
+            return None;
+        }
+        let (FoldedValue::Constant(Constant::String(_))
+        | FoldedValue::ConstantOutsideDeadZone(Constant::String(_))) = self.constant(hir, name)
+        else {
+            return None;
+        };
+        let (length, name_runs_for_its_check) = match self.constant(hir, read) {
+            FoldedValue::Constant(length @ Constant::Number(_)) => (length, false),
+            FoldedValue::ConstantOutsideDeadZone(length @ Constant::Number(_)) => (length, true),
+            _ => return None,
+        };
+        Some(LengthOfNamedText {
+            name,
+            length,
+            name_runs_for_its_check,
+        })
     }
 
     #[inline]
@@ -330,6 +371,23 @@ impl<'s> Decisions<'s> {
         self.goes_on_to_the_right
     }
 
+    pub fn find_operand_alone_in_bun_run(
+        &self,
+        hir: &File<'_>,
+        operator: ExprId,
+    ) -> Option<ExprId> {
+        let operands = match hir[operator].kind {
+            ExprKind::Binary { left, right, .. } => [left, right],
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
+                [yes, no]
+            }
+            _ => return None,
+        };
+        let mut operands = operands.into_iter();
+        operands.find(|operand| self.stands_alone_in_bun_run.has(operand.idx()))
+    }
+
     pub(crate) fn has_same_code_and_specifiers(&self, other: &Decisions<'_>) -> bool {
         self.dead_exprs.0 == other.dead_exprs.0
             && self.dead_stmts.0 == other.dead_stmts.0
@@ -337,6 +395,7 @@ impl<'s> Decisions<'s> {
             && self.dead_stmts_in_bun_run.0 == other.dead_stmts_in_bun_run.0
             && self.dead_exprs_under_minify_syntax.0 == other.dead_exprs_under_minify_syntax.0
             && self.dead_stmts_under_minify_syntax.0 == other.dead_stmts_under_minify_syntax.0
+            && self.stands_alone_in_bun_run.0 == other.stands_alone_in_bun_run.0
             && self.specifiers == other.specifiers
     }
 

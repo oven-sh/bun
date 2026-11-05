@@ -1,8 +1,8 @@
 # -- source: main.ts
 # declare function sink(...values: unknown[]): void;
 # class Own { [Symbol.iterator]() { let i = 0; return { next: () => (i < 9 ? { done: false, value: i++ } : { done: true, value: undefined }) }; } }
-# const own = new Own();
-# function inLoop(): number { let sum = 0; for (let i = 0; i < 8; i++) { const [a, b] = own; sum += a + b; } return sum; }
+# const own = new Own(); // @ts-expect-error
+# function inLoop(): number { let sum = 0; for (let i = 0; i < 8; i++) { const [a, b] = own; sum += a + b; } return sum; } // @ts-expect-error
 # function once(): number { const [a, b] = own; return a + b; }
 # sink(new Own(), inLoop, once);
 # -- end of source

@@ -21,3 +21,4 @@ const zero = [0][0];
 const values: unknown[] = [0, -0, 1, -2147483648, 0.5, Infinity, NaN, zero / zero, Infinity - Infinity, "", "text", true, null, undefined, 10n, Symbol.iterator, {}, [NaN]];
 for (let round = 0; round < 2; round++) for (let at = 0; at < values.length; at++) { report(same(values[at])); report(pick(values[at])); }
 report("end");
+declare function report(value: unknown): void;

@@ -2555,21 +2555,22 @@ bool Bun__deepMatch(
         PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
-        if (objProps.size() != subsetProps.size()) {
+        size_t objCount = objProps.size();
+        size_t subsetCount = subsetProps.size();
+#if ENABLE(AOT)
+        if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
+            objCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, obj);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            subsetCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, subsetObj);
+            RETURN_IF_EXCEPTION(throwScope, false);
+        }
+#endif
+        if (objCount != subsetCount) {
             return false;
         }
     }
 
-    for (const auto& property : subsetProps) {
-        JSValue prop = obj->getIfPropertyExists(globalObject, property);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (prop.isEmpty()) {
-            return false;
-        }
-
-        JSValue subsetProp = subsetObj->get(globalObject, property);
-        RETURN_IF_EXCEPTION(throwScope, false);
-
+    auto matchesProperty = [&](const Identifier* property, JSValue prop, JSValue subsetProp) ALWAYS_INLINE_LAMBDA -> bool {
         JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
         JSCell* propCell = prop.isCell() ? prop.asCell() : nullptr;
 
@@ -2579,9 +2580,9 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
+                    if (property) state.recordIfAsked(obj, subsetObj, *property, subsetProp, jsUndefined());
                     // continue to next subset prop
-                    continue;
+                    return true;
                 case AsymmetricMatcherResult::NOT_MATCHER:
                     break;
                 }
@@ -2591,7 +2592,7 @@ bool Bun__deepMatch(
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     // continue to next subset prop
-                    continue;
+                    return true;
                 case AsymmetricMatcherResult::NOT_MATCHER:
                     break;
                 }
@@ -2599,7 +2600,7 @@ bool Bun__deepMatch(
                 if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
                     if (!*matched)
                         return false;
-                    continue;
+                    return true;
                 }
             }
         }
@@ -2617,9 +2618,9 @@ bool Bun__deepMatch(
             } else {
                 state.gcBuffer.append(prop);
                 state.gcBuffer.append(subsetProp);
-                state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
+                if (property) state.recordIfAsked(obj, subsetObj, *property, prop, subsetProp);
                 // This (value, pattern) pair already matched, or is still being compared (a cycle).
-                if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
+                if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) return true;
                 bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!matched) return false;
@@ -2629,7 +2630,7 @@ bool Bun__deepMatch(
                 if (hasEqualityTesters(globalObject)) [[unlikely]] {
                     if (auto verdict = runEqualityTesters(globalObject, throwScope, prop, subsetProp)) {
                         if (!*verdict) return false;
-                        continue;
+                        return true;
                     }
                 }
             }
@@ -2637,7 +2638,34 @@ bool Bun__deepMatch(
             RETURN_IF_EXCEPTION(throwScope, false);
             if (!same) return false;
         }
+        return true;
+    };
+
+    for (const auto& property : subsetProps) {
+        JSValue prop = obj->getIfPropertyExists(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (prop.isEmpty()) {
+            return false;
+        }
+
+        JSValue subsetProp = subsetObj->get(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, false);
+
+        bool matched = matchesProperty(&property, prop, subsetProp);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (!matched) return false;
     }
+
+#if ENABLE(AOT)
+    // No list shows the private fields that compiled classes laid. The engine hands over what each holds, beside what the same field of the other object holds.
+    if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
+        bool matched = JSC::AOT::PropertyWalk::matchPrivateFieldsOfCompiledClasses(globalObject, obj, subsetObj, [&](JSValue prop, JSValue subsetProp) -> bool {
+            return matchesProperty(nullptr, prop, subsetProp);
+        });
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (!matched) return false;
+    }
+#endif
 
     return true;
 }
@@ -6115,7 +6143,7 @@ restart:
 
             bool isPrivate = prop->isSymbol() && snapshotted.key.isPrivateName();
 
-            if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
+            if (isPrivate && (!JSC::Options::showPrivateScriptsInStackTraces() || vm.hasCompiledCode()))
                 continue;
 
             iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
@@ -6240,7 +6268,7 @@ restart:
 
                 bool isPrivate = property.isPrivateName();
 
-                if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
+                if (isPrivate && (!JSC::Options::showPrivateScriptsInStackTraces() || vm.hasCompiledCode()))
                     continue;
 
                 iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);

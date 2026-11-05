@@ -10,7 +10,7 @@ const kinds = {
   "a-class": `class Shelf { constructor(n) { this.n = n; } }\nclass Crate { constructor(n) { this.n = n; } }`,
   "a-class-below-a-class": `class Rack { constructor(n) { this.n = n; } }\nclass Shelf extends Rack { constructor(n) { super(n); this.m = n; } }\nclass Crate extends Rack { constructor(n) { super(n); this.k = n; } }`,
   "a-constructor-function": `function Shelf(n) { this.n = n; }\nfunction Crate(n) { this.n = n; }`,
-  "a-constructor-function-with-a-prototype-object-of-its-own": `function Shelf(n) { this.n = n; }\nShelf.prototype = { kind() { return "shelf"; } };\nfunction Crate(n) { this.n = n; }\nCrate.prototype = {};`,
+  "a-constructor-function-with-its-own-prototype": `function Shelf(n) { this.n = n; }\nShelf.prototype = { kind() { return "shelf"; } };\nfunction Crate(n) { this.n = n; }\nCrate.prototype = {};`,
   "a-constructor-function-below-another": `function Rack(n) { this.n = n; }\nfunction Shelf(n) { Rack.call(this, n); this.m = n; }\nObject.setPrototypeOf(Shelf, Rack);\nShelf.prototype = Object.create(Rack.prototype);\nfunction Crate(n) { Rack.call(this, n); }\nObject.setPrototypeOf(Crate, Rack);\nCrate.prototype = Object.create(Rack.prototype);`,
 };
 const hasRack = kind => kind.includes("below");
@@ -21,7 +21,7 @@ const sights = {
 const deeds = {
   "nothing": ``,
   "has-instance-is-laid-on-it": `Object.defineProperty(pick(Shelf), Symbol.hasInstance, { value(value) { mark("asked"); return value === 7; }, configurable: true });`,
-  "has-instance-is-laid-on-it-and-taken-off": `Object.defineProperty(pick(Shelf), Symbol.hasInstance, { value() { return true; }, configurable: true }); tell("between"); delete pick(Shelf)[Symbol.hasInstance];`,
+  "has-instance-is-laid-and-taken-off": `Object.defineProperty(pick(Shelf), Symbol.hasInstance, { value() { return true; }, configurable: true }); tell("between"); delete pick(Shelf)[Symbol.hasInstance];`,
   "has-instance-is-laid-on-what-stands-above": `Object.defineProperty(Object.getPrototypeOf(pick(Shelf)) === Function.prototype ? pick(Shelf) : Object.getPrototypeOf(pick(Shelf)), Symbol.hasInstance, { value() { mark("asked above"); return false; }, configurable: true });`,
   "a-getter-has-instance": `Object.defineProperty(pick(Shelf), Symbol.hasInstance, { get() { mark("read"); return undefined; }, configurable: true });`,
   "another-parent-with-has-instance": `const parent = function () {}; Object.defineProperty(parent, Symbol.hasInstance, { value() { mark("asked the parent"); return true; } }); Object.setPrototypeOf(pick(Shelf), parent);`,

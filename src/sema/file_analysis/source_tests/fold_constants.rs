@@ -1161,6 +1161,51 @@ fn type_test_keeps_value_for_branches() {
 }
 
 #[test]
+fn operand_that_bun_run_prints_in_place_of_an_operator_is_found() {
+    for text in [
+        "v(true && kept());",
+        "v(1 && kept());",
+        "v(\"\" || kept());",
+        "v(!0 && kept());",
+        "v(/x/ && kept());",
+        "v((function () {}) && kept());",
+        "v(null ?? kept());",
+        "v(void 0 ?? kept());",
+        "v(1 ? kept() : other());",
+        "v(0 ? other() : kept());",
+        "v(true && (false || kept()));",
+    ] {
+        analyzed("a.js", text, |s| {
+            let [kept] = calls_of(s, "kept")[..] else {
+                panic!("calls of kept");
+            };
+            let decisions = &s.analysis.decisions;
+            let mut found = decisions.find_operand_alone_in_bun_run(&s.hir, probe(s));
+            while let Some(inner) =
+                found.and_then(|it| decisions.find_operand_alone_in_bun_run(&s.hir, it))
+            {
+                found = Some(inner);
+            }
+            assert_eq!(found, Some(kept), "{text}");
+        });
+    }
+    for text in [
+        "v(other() && kept());",
+        "v((other(), true) && kept());",
+        "v((other(), null) ?? kept());",
+        "v((other(), true) ? kept() : 0);",
+        "v(other() ? kept() : 0);",
+        "v([] && kept());",
+        "v(1 + kept());",
+    ] {
+        analyzed("a.js", text, |s| {
+            let found = (s.analysis.decisions).find_operand_alone_in_bun_run(&s.hir, probe(s));
+            assert_eq!(found, None, "{text}");
+        });
+    }
+}
+
+#[test]
 fn const_reads_check_the_dead_zone() {
     for &(path, text, expected) in CONST_READS {
         analyzed(path, text, |s| {

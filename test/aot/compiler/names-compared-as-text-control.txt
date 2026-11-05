@@ -438,5 +438,19 @@ allows aot/walk/AOTWalkArguments.cpp the callee of an arguments object
     return object->allocation == Opcode::CreateMappedArguments && read.key() == program.keyOf(BuiltinNames::callee);
 allows aot/walk/AOTWalkTypedAccesses.cpp two names that every function answers for itself
     return !classOfConstructorFunction(program, function) || key == program.keyOf(BuiltinNames::arguments) || key == program.keyOf(BuiltinNames::caller);
+allows aot/codegen/AOTAccessEmitter.cpp the name by which the table lists the getters of a Map and a Set
+    if (key != program.keyOf(BuiltinNames::size)) [[likely]]
+        return false;
+    if (table.at(member).name != BuiltinNames::size)
+        return false;
+allows aot/facts/AOTFactsOfProgram.cpp the scheme in the path of a module of the library
+    static constexpr auto prefixOfNode = "node:"_s;
+    std::span<const uint8_t> path = program.string(module.path);
+    if (path.size() > prefixOfNode.length() && std::ranges::equal(path.first(prefixOfNode.length()), byteCast<uint8_t>(prefixOfNode.span())))
+        list(path.subspan(prefixOfNode.length()), ModuleID(index));
 finds aot/walk/AOTWalkArguments.cpp ==
     return read.key() == program.keyOf(BuiltinNames::eval);
+finds aot/codegen/AOTAccessEmitter.cpp ==
+    return key == program.keyOf(BuiltinNames::eval);
+finds aot/walk/AOTWalk.cpp !=
+    if (key != program.keyOf(BuiltinNames::size)) [[likely]]

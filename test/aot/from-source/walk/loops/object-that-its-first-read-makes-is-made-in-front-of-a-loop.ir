@@ -5,6 +5,7 @@
 # const withTurns = attempt(3);
 # const steps: number[] = [1, 2];
 # print(withNoTurn, withTurns, attempt(0), attempt(3));
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # The list is made by whoever reads `steps` first: the word is empty in the dead zone, holds a mark from the declaration on, and then the list. Each turn read the word, tested for the mark, and checked the dead zone.
 # In front of the loop the word is read once: empty: the other copy . the mark: the list is made here, which nobody sees . and from there on the variable holds it: no turn of the typed copy reads the word.

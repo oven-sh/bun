@@ -6,7 +6,7 @@
 // `bun run` writes 4 in place of `Level.High` and removes the branch, so nothing in the file names `module`: it is an ES module.
 enum Level {
   High = 4,
-}
+} // @ts-expect-error
 if (Level.High) {
 } else {
   module.exports = 1;

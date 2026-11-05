@@ -47,6 +47,12 @@ const calls: Record<string, string> = {
   "bun-file": `Bun.file(OPERAND)`,
   "bun-spawn-sync": `Bun.spawnSync(OPERAND)`,
   "bun-which": `Bun.which(OPERAND)`,
+  "bun-file-url-to-path": `Bun.fileURLToPath(OPERAND)`,
+  "bun-readable-stream-to-array-buffer": `Bun.readableStreamToArrayBuffer(OPERAND)`,
+  "bun-readable-stream-to-blob": `Bun.readableStreamToBlob(OPERAND)`,
+  "bun-readable-stream-to-bytes": `Bun.readableStreamToBytes(OPERAND)`,
+  "bun-readable-stream-to-json": `Bun.readableStreamToJSON(OPERAND)`,
+  "bun-readable-stream-to-text": `Bun.readableStreamToText(OPERAND)`,
 };
 
 /** How the program answers for the name. Each says "asked" when it is asked. */

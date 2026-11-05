@@ -6893,7 +6893,18 @@ impl<'p, 's> Checker<'p, 's> {
             Some(_) => self.synth(Shape::new_in(self.arena)),
             None => properties.unwrap_or(source),
         };
-        let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
+        let unlisted = match properties {
+            None if !is_object_literal_kind(td) => self.declared_by_unlisted_class(source),
+            _ => None,
+        };
+        let (by_name, sm, tm) = match (unlisted, unlisted.and_then(|_| self.members(target))) {
+            (Some(_), Some(tm)) if tm.index_infos().is_empty() => {
+                (Some(source), unlisted, Some(tm))
+            }
+            (Some(_), tm) => (by_name, self.members(has_properties), tm),
+            (None, _) => (by_name, self.members(has_properties), self.members(target)),
+        };
+        let (Some(sm), Some(tm)) = (sm, tm) else {
             return Ternary::FALSE;
         };
         // A cached shape doesn't change. An intersection has its signatures elsewhere.
@@ -7264,7 +7275,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.hir(file)[func].flags.contains(Flags::ABSTRACT)
             }
             // `someSignature`: a union signature is abstract if the signature of some member is.
-            SigData::Synth { ref of, .. } => {
+            SigData::Synth(SynthSig { of, .. }) => {
                 of.iter().any(|&part| self.is_abstract_signature(part))
             }
             // `cloneSignature` preserves the flags.
@@ -7673,7 +7684,7 @@ impl<'p, 's> Checker<'p, 's> {
         match *self.types().sig(sig) {
             // `cloneSignature` preserves the target.
             SigData::WithReturn { sig: inner, .. } => self.sig_target(inner),
-            SigData::Synth { ref of, .. } => match of[..] {
+            SigData::Synth(SynthSig { of, .. }) => match of[..] {
                 [only] => self.sig_target(only),
                 // `createUnionSignature`, `combineUnionOrIntersectionMemberSignatures`
                 _ => None,

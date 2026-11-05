@@ -6,6 +6,9 @@
 # let sum = 0;
 # for (let i = 0; i < 200; i++) { const made: any = step(i); sum += made.id + (made.mark ?? 0); }
 # print(sum);
+# declare function step(...values: any[]): any;
+# declare function publish(...values: any[]): any;
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # f3 = Noted. The base constructor is called, not copied, for two classes: what it gives back is no longer fresh where the class below defines its own field.
 # A definition in the initializer of a class is expected to create its field all the same: the step of the key order is tested in line and no stub lists the field.

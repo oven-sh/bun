@@ -79,11 +79,13 @@ const hiddenObjects = new Map([
   ["%AsyncGeneratorFunction%.prototype", getPrototypeOf(async function* () {})],
   ["%AsyncIterator%.prototype", getPrototypeOf(asyncGeneratorPrototype)],
   ["%BunRequest%.prototype", await findPrototypeOfRoutedRequests()],
+  ["%CookieMapIterator%.prototype", getPrototypeOf(new Bun.CookieMap()[Symbol.iterator]())],
   ["%EventEmitter%.prototype", getPrototypeOf(process)],
   // In front of bun:ffi, which takes `callback` away when it is loaded.
   ["%FFICallback%.prototype", prototypeOfCallbacksOfFFI()],
   // The function pointer is never called.
   ["%FFI%.prototype", getPrototypeOf(require("bun:ffi").linkSymbols({ never: { ptr: 8, args: [], returns: "void" } }))],
+  ["%FormDataIterator%.prototype", getPrototypeOf(new FormData()[Symbol.iterator]())],
   ["%Generator%.prototype", getPrototypeOf(function* () {}).prototype],
   ["%GeneratorFunction%.prototype", getPrototypeOf(function* () {})],
   ["%HeadersIterator%.prototype", getPrototypeOf(new Headers()[Symbol.iterator]())],

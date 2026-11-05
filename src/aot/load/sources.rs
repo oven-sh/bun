@@ -178,6 +178,7 @@ pub struct Sources {
     entries: Vec<SourceEntry>,
     project_root: Box<[u8]>,
     root_of_executable: Option<Box<[u8]>>,
+    levels_above_root: usize,
     entry_points: Vec<EntryPoint>,
     runtime_module_files: Vec<(RuntimeModule, FileId)>,
     modules_named_at_run_time: Vec<RuntimeModule>,
@@ -224,6 +225,10 @@ impl Sources {
 
     pub fn root_of_executable(&self) -> Option<&[u8]> {
         self.root_of_executable.as_deref()
+    }
+
+    pub fn levels_above_root(&self) -> usize {
+        self.levels_above_root
     }
 
     pub fn diagnostic_path(&self, file: FileId) -> &[u8] {

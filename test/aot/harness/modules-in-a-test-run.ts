@@ -842,10 +842,13 @@ const ways = {
   "in parallel": { flags: ["--isolate", "--parallel=2"] },
 } satisfies Record<string, { flags: string[] }>;
 
-// TODO: what happens today, by project and way.
-const differs: Record<string, string[]> = {
-  // The file is read from disk, and its import of a compiled file is refused ("can't load a module from a dynamic path"): an Error. Plain: a SyntaxError, a BuildMessage.
-  "a file that fails when it is linked to a compiled file": ["each file in its own realm"],
+// TODO: what happens today, by project and way. It goes into the name of the case, in the words by which a wrong answer is listed as one.
+const differs: Record<string, Partial<Record<keyof typeof ways, string>>> = {
+  // All else that the project prints is as in plain Bun.
+  "a file that fails when it is linked to a compiled file": {
+    "each file in its own realm":
+      "a wrong answer today: under `bun test --aot --isolate` the error of a file whose import does not parse is a SyntaxError, where `bun test --isolate` makes it a BuildMessage",
+  },
 };
 
 // The runs of a way are dealt over its test files, <name>.test.ts, <name>-2.test.ts and so on, which all read alike. CI's runner gives a file three minutes
@@ -904,8 +907,9 @@ export function declareEveryProject(way: keyof typeof ways, testFile: string) {
   const nextRunIsHere = dealsRunsTo(testFile);
   for (const [name, files] of Object.entries(projects)) {
     if (!runs(name) || !nextRunIsHere()) continue;
-    const declare = differs[name]?.includes(way) ? test.todo : test.concurrent;
-    declare(`${name}: ${way}`, async () => {
+    const today = differs[name]?.[way];
+    const declare = today ? test.todo : test.concurrent;
+    declare(today ? `${name}: ${way}: ${today}` : `${name}: ${way}`, async () => {
       using dir = tempDir("modules-in-a-test-run", {
         "package.json": `{ "type": "module" }`,
         "tsconfig.json": `{ "compilerOptions": { "allowJs": true } }`,

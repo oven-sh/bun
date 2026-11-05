@@ -9,3 +9,4 @@ class Late { z = 1; #p = 2; a = 3; constructor(more: boolean) { if (more) (this 
 function keysOf(o: object) { let text = ""; for (const key in o) text += key + ","; return text + JSON.stringify(o) + Object.keys(o).length; }
 for (let round = 0; round < 3; round++) { const p = new P(); report(p.sum()); report(keysOf(p)); const late: any = new Late(round === 1); late.y = round; report(keysOf(late)); report(late.p()); delete late.z; late.z = 9; report(keysOf(late)); report(late.p()); report(keysOf({ ...late })); }
 report("end");
+declare function report(value: unknown): void;

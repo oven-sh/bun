@@ -1,7 +1,6 @@
-// JSON.parse takes no type argument. The one that is written stops no build and says nothing about the result.
+// JSON.parse takes no type argument
 // RUN: link
+// DIAGNOSTIC: TS2558 1
 // STATISTIC: SourceFilesDemoted = 0
-// CHECK: [[parsed]] = Call {{*}}calleeName="JSON.parse"
-// CHECK-NEXT: = Call {{*}}, [[parsed]] calleeKey="log"
 
 console.log(JSON.parse<number>("1"));

@@ -1,13 +1,5 @@
 // RUN: lower
-
-// A text for a number stops no build: the annotation is a Convert, which the engine tests. TS1343 beside it is a rule about the module format that tsc emits.
-
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK: = ModuleBuiltin builtin=ImportMeta
-// CHECK: [[text]] = String string="text"
-// CHECK-NEXT: = Convert [[text]] declared={type=number}
-// CHECK: [[wrong]] = String string="text"
-// CHECK-NEXT: = Call {{*}}, [[wrong]] calleeKey="log"
+// DIAGNOSTIC: TS2322 main.ts:2
 
 // FILE: main.ts
 console.log(typeof import.meta.url);

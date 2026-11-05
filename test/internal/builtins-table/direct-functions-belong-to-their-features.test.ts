@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunExe, isASAN, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
-import { engineDirectory, engineFiles as generated } from "./engine-files.ts";
+import { engineDirectory, engineFiles as generated, generatorEnv } from "./engine-files.ts";
 
 const bunRoot = resolve(import.meta.dir, "..", "..", "..");
 const schemas = globAllSources().bindgen;
@@ -33,7 +33,7 @@ async function generate(): Promise<{ entries: Entry[]; bindings: string }> {
       `--types-only=${testSchemas.join(",")}`,
     ],
     cwd: bunRoot,
-    env: bunEnv,
+    env: generatorEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

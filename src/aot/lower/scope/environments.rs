@@ -183,7 +183,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn own_exports_position(&mut self) -> Option<DeclaredType> {
         let layout = self.module_exports_layout(self.file)?;
-        let exports = Mapped::expected(self.fragment.types.intern(Type::layout(layout)));
+        let exports = Mapped::expected(self.fragment.types.intern_layout(layout));
         Some(DeclaredType::new(exports, None, PositionFlags::default()))
     }
 

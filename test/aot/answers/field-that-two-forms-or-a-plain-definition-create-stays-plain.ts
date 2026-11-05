@@ -13,3 +13,4 @@ let text = "";
 for (let i = 0; i < 40; i++) { const two = new (Two as any)(i, (i & 1) === 1); const unknown = new (Unknown as any)(i, (i & 1) === 1); text = Object.keys(two).join() + Object.keys(unknown).join() + two.x + unknown.u; }
 report(text);
 report("end");
+declare function report(value: unknown): void;

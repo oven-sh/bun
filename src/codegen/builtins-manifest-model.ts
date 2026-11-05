@@ -53,6 +53,11 @@ export function locate(file: string): string {
   return fs.existsSync(forCompiler) ? forCompiler : path.join(BASE, file);
 }
 
+/** Where the text that `bun run` evaluates under the name `file` is, if the compiler reads another. */
+export function locateFirstText(file: string): string | undefined {
+  return fs.existsSync(path.join(BASE, "ahead-of-time", file)) ? path.join(BASE, file) : undefined;
+}
+
 /** The module that `text` holds a part of, if `text` has a line that says so. */
 export function findModuleHeldInPart(text: string): string | undefined {
   return /^\/\* part of: (\S+) \*\/$/m.exec(text)?.[1];

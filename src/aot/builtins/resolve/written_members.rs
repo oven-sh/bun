@@ -8,7 +8,7 @@ use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, MemberLookup, Mutability, Platforms,
     RuntimeModule, Scope,
 };
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     AssignmentTarget, Binding, BindingInitializer, Decl, Parent, PatParent, StoreKind,
 };
@@ -468,6 +468,13 @@ impl Resolver<'_, '_> {
             .flatten()
     }
 
+    pub(super) fn is_key_of_what_stands_above(&self, key: ExprId) -> bool {
+        self.find_written_keys(key).is_some_and(|keys| {
+            let is_that_name = |key: &WrittenKey| matches!(key, WrittenKey::Text(known::__proto__));
+            !keys.is_empty() && keys.iter().all(is_that_name)
+        })
+    }
+
     fn find_written_keys(&self, key: ExprId) -> Option<WrittenKeys> {
         self.find_written_keys_once(key, &mut SmallVec::new())
     }
@@ -478,8 +485,7 @@ impl Resolver<'_, '_> {
         asked: &mut SmallVec<[ExprId; 4]>,
     ) -> Option<WrittenKeys> {
         let input = self.input;
-        let symbol = self.value_of(key);
-        if let Some(symbol) = symbol.and_then(|it| table::well_known_symbol(it.path.id)) {
+        if let Some((_, symbol)) = self.symbol_that_key_is(key) {
             return Some(smallvec![WrittenKey::Symbol(table::name_of_symbol(symbol))]);
         }
         let key = input.hir.skip_type_assertions(key);

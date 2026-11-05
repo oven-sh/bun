@@ -1,11 +1,7 @@
-// RUN: link
-// STATISTIC: SourceFilesChecked = 2
+// RUN: lower
+// DIAGNOSTIC: TS2322 src/wrong.ts:1
 
-// A file of the project outside rootDir is no error, and the rest counts as checked beside it: the type that is written in an imported file is sent. That the value does not fit it stops no build.
-// CHECK: module [[wrong]] path="{{*}}/wrong.ts"
-// CHECK: function {{*}}module=[[wrong]] kind=Module flags=[IsChecked]
-// CHECK: [[text]] = String string="text"
-// CHECK-NEXT: Convert [[text]] declared={type=number}
+// A file of the project outside rootDir does not keep the rest from being type checked.
 
 // FILE: src/main.ts
 import { wrong } from "./wrong";

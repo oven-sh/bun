@@ -10,6 +10,6 @@ function h(tag: unknown) {
   return tag;
 }
 
-export function element() {
+export function element() { // @ts-expect-error
   return <a b={/* @jsxRuntime classic @jsx h */ 1} />;
 }

@@ -33,3 +33,4 @@ report(countDown(3));
 report(countDown(0));
 report(tellNine("1", "2", "3", "4", "5", "6", "7", "8", "9"));
 report("end");
+declare function report(value: unknown): void;

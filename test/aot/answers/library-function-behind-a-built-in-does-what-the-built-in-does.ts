@@ -10,7 +10,7 @@
 declare function report(value: unknown): void;
 let log = "";
 function list(from: any) { return Array.from(from).join(); }
-function mapped(from: any, f: (v: any) => unknown) { const before = log; const made = Array.from(from, f); return before + "|" + log + "|" + made.join(); }
+function mapped(from: any, f: (v: any) => unknown) { const before = log; const made = Array.from(from, f); return before + "|" + log + "|" + made.join(); } // @ts-expect-error
 function under(self: any, from: any) { const made = Array.from.call(self, from); return String(Array.isArray(made)) + String(made.length); }
 function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
 tell(() => list([1, 2, 3]));

@@ -3,7 +3,7 @@ use bun_sema::check::aot::{ClassRef, FunctionRef, GaveUp, PositionTypes, declare
 use bun_sema::hir::{ExprKind, File, Flags, FnBody, PatId, StmtKind, VarDeclId, VarKind};
 use bun_sema::program::{FileId, Sym};
 
-use crate::ir::{DeclaredType, FunctionKey, Type, TypeTable};
+use crate::ir::{DeclaredType, FunctionKey, TypeTable};
 use crate::lower::FileLowering;
 use crate::lower::function_types::find_explicit_constructor;
 
@@ -64,7 +64,7 @@ impl FileLowering<'_, '_, '_, '_> {
             let ty = match self.find_bound_function(symbol, class) {
                 Some(key) => {
                     let function = self.reference_function(key);
-                    self.fragment.types.intern(Type::function(function))
+                    self.fragment.types.intern_function(function)
                 }
                 None => TypeTable::FUNCTION,
             };

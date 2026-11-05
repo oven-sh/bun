@@ -208,6 +208,49 @@ const NAMES_ADDED: &[(&str, BuiltinId, &str)] = &[
     ),
 ];
 
+const NAMES_ADDED_ABOVE_VALUES_WRITTEN_THERE: &[(&str, BuiltinId, &str)] = &[
+    (
+        "const holder = Object.getPrototypeOf(function* () {}); holder.planted = 1;",
+        BuiltinId::GeneratorFunctionPrototype,
+        "planted",
+    ),
+    (
+        "Reflect.getPrototypeOf(async function () {}).planted = 1;",
+        BuiltinId::AsyncFunctionPrototype,
+        "planted",
+    ),
+    (
+        "Object.defineProperty(Object.getPrototypeOf(async function* () {}), 'planted', { value: 1 });",
+        BuiltinId::AsyncGeneratorFunctionPrototype,
+        "planted",
+    ),
+    (
+        "const holder = (async () => {}).constructor.prototype; holder.planted = 1;",
+        BuiltinId::AsyncFunctionPrototype,
+        "planted",
+    ),
+    (
+        "Object.getPrototypeOf(() => {}).planted = 1;",
+        BuiltinId::FunctionPrototype,
+        "planted",
+    ),
+    (
+        "({}).__proto__.planted = 1;",
+        BuiltinId::ObjectPrototype,
+        "planted",
+    ),
+    (
+        "const above = Reflect.get({}, '__proto__'); Reflect.defineProperty(above, 'planted', { value: 1 });",
+        BuiltinId::ObjectPrototype,
+        "planted",
+    ),
+    (
+        "function plant(way, name) { const above = Reflect.get({ own: 1 }, way); Reflect.defineProperty(above, name, { value: 1 }); } plant('__proto__', 'planted');",
+        BuiltinId::ObjectPrototype,
+        "planted",
+    ),
+];
+
 const SPY_ON_INHERITED_MEMBER: &str = with_runner!("spyOn(Uint8Array.prototype, 'set');");
 
 const SPIES_ON_OTHER_OBJECTS: &str = with_runner!(
@@ -458,6 +501,44 @@ fn new_name_on_an_object_closed_to_new_names_is_listed() {
         with_case(TEST_RUN, source, |case| {
             let name = case.atoms.intern(name.as_bytes());
             assert_eq!(case.resolved.names_added(), [(holder, name)], "{source}");
+            assert!(replaces_and_opens_nothing(case.resolved), "{source}");
+        });
+    }
+}
+
+#[test]
+fn new_name_on_what_stands_above_a_value_written_there_is_listed() {
+    for &(source, holder, name) in NAMES_ADDED_ABOVE_VALUES_WRITTEN_THERE {
+        with_case(TEST_RUN, source, |case| {
+            let name = case.atoms.intern(name.as_bytes());
+            assert_eq!(case.resolved.names_added(), [(holder, name)], "{source}");
+            assert!(replaces_and_opens_nothing(case.resolved), "{source}");
+        });
+    }
+}
+
+#[test]
+fn what_stands_above_a_value_written_there_is_followed_in_test_runs_alone() {
+    for &(source, _, _) in NAMES_ADDED_ABOVE_VALUES_WRITTEN_THERE {
+        with_case(PROGRAM, source, |case| {
+            assert_no_writes_are_found(case.resolved, source);
+            assert!(case.resolved.names_added().is_empty(), "{source}");
+        });
+    }
+}
+
+#[test]
+fn what_does_not_lead_above_a_value_written_there_lists_nothing() {
+    for source in [
+        "(function () {}).prototype.planted = 1;",
+        "(function () {}).name.planted = 1;",
+        "const made = function* () {}; made.planted = 1;",
+        "({ __proto__: other }).__proto__.planted = 1;",
+        "Reflect.get({}, 'own').planted = 1;",
+        "function plant(way) { Reflect.get({}, way).planted = 1; } plant('__proto__'); plant('own');",
+    ] {
+        with_case(TEST_RUN, source, |case| {
+            assert!(case.resolved.names_added().is_empty(), "{source}");
             assert!(replaces_and_opens_nothing(case.resolved), "{source}");
         });
     }

@@ -372,6 +372,7 @@ fn stub_of<'s>(hir: &mut hir::File<'s>) -> hir::File<'s> {
         source_len: hir.source_len,
         has_module_syntax: hir.has_module_syntax,
         is_forced_module: hir.is_forced_module,
+        is_script_for_project: hir.is_script_for_project,
         has_errors: hir.has_errors,
         ran_out_of_stack: hir.ran_out_of_stack,
         has_parse_diagnostics: hir.has_parse_diagnostics || hir.has_parse_or_grammar_diagnostics(),
@@ -3124,6 +3125,11 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     /// = require(..)` of `module`.
     fn required_module_symbol(&self, module: Sym) -> Sym {
         let resolved = self.external_module_symbol(module);
+        let is_made_by_loader =
+            self.is_compiled(resolved.file) && self.hir(resolved.file).source_len == 0;
+        if is_made_by_loader && let Some(value) = self.export(resolved, known::default) {
+            return value;
+        }
         self.module_exports_export(resolved).unwrap_or(resolved)
     }
 
@@ -3633,8 +3639,8 @@ fn module_references(hir: &hir::File) -> Vec<(u32, u32, bool)> {
     };
     for s in hir.ids(hir.body) {
         if !visit(s, false)
-            && !hir.has_module_syntax
             && let Some(m) = ambient_module(hir, s, false)
+            && !hir.is_module_for(hir[m].name)
         {
             for s in hir.ids(hir[m].body) {
                 visit(s, true);
@@ -3669,7 +3675,7 @@ fn module_augmentations(hir: &hir::File, atoms: &Interner) -> Vec<ModuleId> {
         let Some(m) = ambient_module(hir, s, false) else {
             continue;
         };
-        if hir.has_module_syntax {
+        if hir.is_module_for(hir[m].name) {
             augmentations.push(m);
             continue;
         }
@@ -7314,10 +7320,9 @@ impl<'s> Files<'s> {
             let written = options.written_module_detection;
             let imports_jsx_factory =
                 written == ModuleDetection::Auto && has_jsx && options.jsx_imports_its_factory;
-            hir.is_script_with_code = hir.is_forced_module
-                && !imports_jsx_factory
-                && !is_decreed_by(written)
-                && hir.declares_beside_code();
+            hir.is_script_for_project =
+                hir.is_forced_module && !imports_jsx_factory && !is_decreed_by(written);
+            hir.is_script_with_code = hir.is_script_for_project && hir.declares_beside_code();
         }
         if bind_time == BindTime::WhenReached
             && let Some(specifiers) = bind::specifiers_of_closed_module(&hir)
@@ -7830,7 +7835,7 @@ impl<'s> Files<'s> {
             // A module augmentation resolves the module the way the file itself would, regardless
             // of other uses of the specifier. It doesn't add the file to the program.
             let is_module_name = bound.ambient_modules.iter().any(|m| m.0 == spec);
-            if (count == 0 || is_module_name && hir.has_module_syntax)
+            if (count == 0 || is_module_name && hir.is_module_for(ModuleName::String(spec)))
                 && !modes[..count].iter().any(|known| known.0 == default_mode)
             {
                 modes[count] = (default_mode, AFTER_IMPORTS);
@@ -8392,7 +8397,7 @@ impl<'s> Files<'s> {
                     continue;
                 }
                 // `!IsExternalOrCommonJSModule(file)`: it is a local of a CommonJS module.
-                if self.modules[file].is_module() {
+                if self.modules[file].is_commonjs() {
                     continue;
                 }
                 let merged = match self.ambient_modules.get(&name).copied() {
@@ -10041,6 +10046,34 @@ impl<'s> Files<'s> {
         (!is_relative(self.atoms.bytes(spec))).then(|| self.canonical(ambient))
     }
 
+    /// True if some file may be `is_brought`.
+    pub fn brings_declarations(&self) -> bool {
+        self.options.type_root_of_last_resort.is_some() || self.options.names_bun_types_by_itself
+    }
+
+    /// A file of the declarations that a build brings along where the project has not installed them
+    /// (`Options::type_root_of_last_resort`), or has not named them (`Options::names_bun_types_by_itself`).
+    pub fn is_brought(&self, file: FileId) -> bool {
+        let package = self.module(file).package_json_directory;
+        if self.options.names_bun_types_by_itself && package.is_some() {
+            let is_named = |name: &[u8]| self.atoms.bytes(package).ends_with(name);
+            let types = self.options.types.as_deref().unwrap_or_default();
+            let names_node = types.iter().any(|name| name == b"node");
+            // Bun's types refer to Node's, which refer to undici's.
+            if is_named(b"/@types/bun")
+                || is_named(b"/bun-types")
+                || !names_node && (is_named(b"/@types/node") || is_named(b"/undici-types"))
+            {
+                return true;
+            }
+        }
+        let Some(root) = &self.options.type_root_of_last_resort else {
+            return false;
+        };
+        let packages = root.strip_suffix(b"@types").unwrap_or(root);
+        self.module(file).file_name().starts_with(packages)
+    }
+
     /// `Options::declarations_of_last_resort`
     pub fn is_of_last_resort(&self, file: FileId) -> bool {
         let path = &self.options.declarations_of_last_resort;
@@ -10246,11 +10279,11 @@ impl<'s> Files<'s> {
         let parent = |it: ModuleId| bound.parent_of_stmt(hir[it].stmt);
         is_ambient_module(m)
             && match parent(m) {
-                bind::Parent::File => hir.has_module_syntax,
+                bind::Parent::File => hir.is_module_for(hir[m].name),
                 bind::Parent::Module(enclosing_module) => {
                     is_ambient_module(enclosing_module)
                         && matches!(parent(enclosing_module), bind::Parent::File)
-                        && !hir.has_module_syntax
+                        && !hir.is_module_for(hir[enclosing_module].name)
                 }
                 _ => false,
             }

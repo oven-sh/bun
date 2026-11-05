@@ -7,6 +7,7 @@ use super::module_set::ModuleSet;
 use super::requests::{FileScan, ScannedSite, Scans};
 use super::spelled_files::{
     TextThatSpellsFile, find_texts_that_spell_files, is_every_file_found_by_name,
+    list_texts_that_spell_files, list_what_made_names_may_find,
     program_loads_by_name_that_no_pattern_holds,
 };
 use super::wrapped::{InnerModule, InnerModuleKind, WrappedModules};
@@ -60,6 +61,7 @@ struct FileSites {
     sites: Vec<PlannedSite>,
     other_loads: Vec<(ModuleRef, ModuleRef)>,
     required_candidates: Vec<(ModuleRef, ModuleRef)>,
+    requires_by_unknown_name_in_body: bool,
 }
 
 pub(super) struct ModuleNumbers {
@@ -390,7 +392,7 @@ impl<'a, 's> FileText<'a, 's> {
                 .or_insert_with(|| self.bound.is_called_only_where_written(hir, function))
     }
 
-    fn find_body(&self, start: Node) -> Option<(CodeUnit, SitePosition)> {
+    fn find_body(&self, start: Node, goes_past_try: bool) -> Option<(CodeUnit, SitePosition)> {
         let (hir, bound) = (self.hir, self.bound);
         let mut position = SitePosition::InOrder;
         let mut node = start;
@@ -431,7 +433,7 @@ impl<'a, 's> FileText<'a, 's> {
                     Parent::Stmt(parent) => {
                         match hir[parent].kind {
                             StmtKind::Block(_) => {}
-                            StmtKind::Try { .. } => return None,
+                            StmtKind::Try { .. } if !goes_past_try => return None,
                             _ => position = SitePosition::Sometimes,
                         }
                         Node::Statement(parent)
@@ -456,7 +458,7 @@ impl<'a, 's> FileText<'a, 's> {
     }
 
     fn locate(&self, node: Node, start: u32) -> (ModuleRef, SitePosition) {
-        let Some((unit, position)) = self.find_body(node) else {
+        let Some((unit, position)) = self.find_body(node, false) else {
             let fallback = match node {
                 Node::Expression(expression) => self.enclosing_module(expression),
                 Node::Statement(_) | Node::Function(_) => ModuleRef::File(self.file),
@@ -587,7 +589,16 @@ fn plan_file_sites(
                 }
                 continue;
             }
-            ScannedSite::Unresolved | ScannedSite::AllModules | ScannedSite::Erased => continue,
+            ScannedSite::AllModules => {
+                if let ImportSiteKind::Require(call) | ImportSiteKind::ImportMetaRequire(call) =
+                    site.kind
+                {
+                    planned.requires_by_unknown_name_in_body |=
+                        text.find_body(Node::Expression(call), true).is_some();
+                }
+                continue;
+            }
+            ScannedSite::Unresolved | ScannedSite::Erased => continue,
         };
         let (key, node, start, is_proven) = match site.kind {
             ImportSiteKind::Require(call) | ImportSiteKind::ImportMetaRequire(call) => (
@@ -747,17 +758,17 @@ struct LoadsSeenByProgram {
 fn list_what_file_may_require<'a>(
     file: FileId,
     file_sites: &'a FileSites,
-    texts_that_spell_files: &'a [TextThatSpellsFile],
+    found_by_made_names: &'a [(FileId, FileId)],
 ) -> impl Iterator<Item = (ModuleRef, ModuleRef)> + 'a {
-    let first = texts_that_spell_files.partition_point(|text| text.written_in < file);
-    let texts = texts_that_spell_files[first..].iter();
-    let texts = texts.take_while(move |text| text.written_in == file);
-    let spelled = texts.map(move |text| (ModuleRef::File(file), ModuleRef::File(text.spelled)));
+    let first = found_by_made_names.partition_point(|found| found.0 < file);
+    let found = found_by_made_names[first..].iter();
+    let found = found.take_while(move |found| found.0 == file);
+    let found = found.map(|found| (ModuleRef::File(found.0), ModuleRef::File(found.1)));
     let sites = file_sites.sites.iter();
     let sites = sites.map(|site| (site.referrer, site.target));
     sites
         .chain(file_sites.required_candidates.iter().copied())
-        .chain(spelled)
+        .chain(found)
 }
 
 fn find_loads_seen_by_program(
@@ -767,7 +778,7 @@ fn find_loads_seen_by_program(
     edges: &[Vec<u32>],
     is_code_of_program: &[bool],
     planned: &[(FileId, FileSites)],
-    texts_that_spell_files: &[TextThatSpellsFile],
+    found_by_made_names: &[(FileId, FileId)],
 ) -> LoadsSeenByProgram {
     let count = is_code_of_program.len();
     let mut seen = LoadsSeenByProgram {
@@ -807,8 +818,8 @@ fn find_loads_seen_by_program(
     }
 
     let mut edges = Cow::Borrowed(edges);
-    for text in texts_that_spell_files {
-        edges.to_mut()[text.written_in.idx()].push(text.spelled.0);
+    for &(asker, found) in found_by_made_names {
+        edges.to_mut()[asker.idx()].push(found.0);
     }
     let edges = &edges[..];
     let imported = imports.iter().map(|(_, file)| file.0).collect();
@@ -850,7 +861,7 @@ fn find_loads_seen_by_program(
                 }
             }
         }
-        let required = list_what_file_may_require(*file, file_sites, texts_that_spell_files);
+        let required = list_what_file_may_require(*file, file_sites, found_by_made_names);
         for (referrer, target) in required {
             let Some((target, ModuleKind::SourceText)) = kind_of(target) else {
                 continue;
@@ -901,7 +912,7 @@ fn find_loads_seen_by_program(
         }
     }
     for (file, file_sites) in planned {
-        let required = list_what_file_may_require(*file, file_sites, texts_that_spell_files);
+        let required = list_what_file_may_require(*file, file_sites, found_by_made_names);
         for (referrer, target) in required {
             asks(referrer, target);
         }
@@ -1014,6 +1025,11 @@ pub(super) fn compute_order(
         .filter(|_| is_every_file_found);
     let found = found.filter(|file| is_code_of_program[file.idx()]);
     let loaded_by_name = loaded_by_name.chain(found.copied());
+    let is_es_module = |&file: &FileId| {
+        is_code_of_program[file.idx()] && scans.of(file).interop.kind == ModuleKind::SourceText
+    };
+    let es_modules_found_by_name: Vec<FileId> =
+        loaded_by_name.clone().filter(is_es_module).collect();
     let loaded_by_name = loaded_by_name.map(ModuleRef::File);
     let late_targets = other_loads.chain(loaded_by_name.clone());
     let number_of = |target: ModuleRef| Some(numbers.number_of(target)? as u32);
@@ -1049,6 +1065,21 @@ pub(super) fn compute_order(
         is_half[entry.file.idx()] = true;
     }
     let prefix_roots = find_prefix_roots(input, scans, modules, &is_code_of_program, &planned);
+    let texts_beside_every_file = match is_every_file_found {
+        true => list_texts_that_spell_files(input),
+        false => None,
+    };
+    let texts = texts_that_spell_files.as_deref();
+    let texts = texts.or(texts_beside_every_file.as_deref());
+    let require_in_their_bodies = planned.iter();
+    let require_in_their_bodies = require_in_their_bodies
+        .filter(|of_file| of_file.1.requires_by_unknown_name_in_body)
+        .map(|of_file| of_file.0);
+    let found_by_made_names = list_what_made_names_may_find(
+        texts.unwrap_or_default(),
+        require_in_their_bodies,
+        &es_modules_found_by_name,
+    );
     let mut loads = find_loads_seen_by_program(
         scans,
         modules,
@@ -1056,7 +1087,7 @@ pub(super) fn compute_order(
         &edges,
         &is_code_of_program,
         &planned,
-        texts_that_spell_files.as_deref().unwrap_or_default(),
+        &found_by_made_names,
     );
     let ask_for_several_types = find_importers_that_ask_for_several_types(modules);
     if !ask_for_several_types.is_empty() {
@@ -1088,9 +1119,8 @@ pub(super) fn compute_order(
         .filter(|entry| !matches!(entry.kind, EntryPointKind::Main | EntryPointKind::Library))
         .filter(|entry| !input.runner_starts_entry_points || is_found_by_load[entry.file.idx()])
         .map(|entry| ModuleRef::File(entry.file));
-    let required = required.chain(found_by_name);
     let mut is_required = vec![false; file_count];
-    for target in required {
+    for target in required.chain(found_by_name) {
         if let ModuleRef::File(target) = target {
             is_required[target.idx()] = true;
         }

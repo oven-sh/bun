@@ -1031,7 +1031,7 @@ impl<'h> HirBuilder<'h> {
         // and `import_bindings`. They are module-level imports, not locals —
         // classify them as Global so inference initializes them as Frozen instead
         // of tripping the "Expected value kind to be initialized" invariant.
-        if self.host.module_scope().generated.contains(&ref_) {
+        if self.env.is_generated_in(self.host.module_scope(), ref_) {
             return Ok(VariableBinding::Global { name });
         }
 

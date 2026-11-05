@@ -1,4 +1,4 @@
-// The loader lies in /$bunfs/root/_.._/_.._ and goes one up: /$bunfs/root/_.._/texts is left, which is one/app/texts. texts/ has no fr.json.
+// The loader lies two folders above the entry point and goes one up. texts/ has no fr.json; one/app/texts, one folder above the entry point, has one.
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import "../texts/en.json";
 import "../texts/fr.json";

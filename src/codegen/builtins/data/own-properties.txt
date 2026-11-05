@@ -5,9 +5,11 @@
 %AsyncGeneratorFunction%.prototype : @@toStringTag/c constructor/c prototype/c
 %AsyncIterator%.prototype : @@asyncDispose/wc @@asyncIterator/wc
 %BunRequest%.prototype : @@toStringTag/c clone/wc cookies/a params/a
+%CookieMapIterator%.prototype : @@toStringTag/c next/wc
 %EventEmitter%.prototype : @@toStringTag/c addListener/wc constructor/wc emit/wc eventNames/wc getMaxListeners/wc listenerCount/wc listeners/wc off/wc on/wc once/wc prependListener/wc prependOnceListener/wc rawListeners/wc removeAllListeners/wc removeListener/wc setMaxListeners/wc
 %FFI%.prototype : @@toStringTag/c close/w symbols/a
 %FFICallback%.prototype : close/wc
+%FormDataIterator%.prototype : @@toStringTag/c next/wc
 %Generator%.prototype : @@toStringTag/c constructor/c next/wc return/wc throw/wc
 %GeneratorFunction%.prototype : @@toStringTag/c constructor/c prototype/c
 %HeadersIterator%.prototype : @@toStringTag/c next/wc
@@ -53,6 +55,7 @@ Buffer : alloc/wc allocUnsafe/wc allocUnsafeSlow/wc byteLength/wc compare/wc con
 Buffer.prototype : @@@nodejs.util.inspect.custom/wc @@species/- @@toStringTag/c asciiSlice/wc asciiWrite/wc base64Slice/wc base64Write/wc base64urlSlice/wc base64urlWrite/wc compare/wc constructor/wc copy/wc equals/wc fill/wc hexSlice/wc hexWrite/wc includes/wc indexOf/wc inspect/wc lastIndexOf/wc latin1Slice/wc latin1Write/wc offset/ac parent/ac readBigInt64/wc readBigInt64BE/wc readBigInt64LE/wc readBigUInt64/wc readBigUInt64BE/wc readBigUInt64LE/wc readBigUint64BE/wc readBigUint64LE/wc readDouble/wc readDoubleBE/wc readDoubleLE/wc readFloat/wc readFloatBE/wc readFloatLE/wc readInt16/wc readInt16BE/wc readInt16LE/wc readInt32/wc readInt32BE/wc readInt32LE/wc readInt8/wc readIntBE/wc readIntLE/wc readUInt16BE/wc readUInt16LE/wc readUInt32BE/wc readUInt32LE/wc readUInt8/wc readUIntBE/wc readUIntLE/wc readUint16BE/wc readUint16LE/wc readUint32BE/wc readUint32LE/wc readUint8/wc readUintBE/wc readUintLE/wc slice/wc subarray/wc swap16/wc swap32/wc swap64/wc toJSON/wc toLocaleString/wc toString/wc ucs2Slice/wc ucs2Write/wc utf16leSlice/wc utf16leWrite/wc utf8Slice/wc utf8Write/wc write/wc writeBigInt64BE/wc writeBigInt64LE/wc writeBigUInt64BE/wc writeBigUInt64LE/wc writeBigUint64BE/wc writeBigUint64LE/wc writeDouble/wc writeDoubleBE/wc writeDoubleLE/wc writeFloat/wc writeFloatBE/wc writeFloatLE/wc writeInt16BE/wc writeInt16LE/wc writeInt32BE/wc writeInt32LE/wc writeInt8/wc writeIntBE/wc writeIntLE/wc writeUInt16/wc writeUInt16BE/wc writeUInt16LE/wc writeUInt32/wc writeUInt32BE/wc writeUInt32LE/wc writeUInt8/wc writeUIntBE/wc writeUIntLE/wc writeUint16/wc writeUint16BE/wc writeUint16LE/wc writeUint32/wc writeUint32BE/wc writeUint32LE/wc writeUint8/wc writeUintBE/wc writeUintLE/wc
 Bun.Cookie : from/w length/c name/c parse/w prototype/-
 Bun.CookieMap : length/c name/c prototype/-
+Bun.CookieMap.prototype : @@iterator/wc @@toStringTag/c constructor/wc delete/wc entries/wc forEach/wc get/wc has/wc keys/wc set/wc size/a toJSON/wc toSetCookieHeaders/wc values/wc
 Bun.FFI :
 Bun.FFI.read :
 Bun.WebView : closeAll/wc length/c name/c prototype/-
@@ -85,6 +88,7 @@ Float32Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 Float64Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
 Float64Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 FormData : from/- length/c name/c prototype/-
+FormData.prototype : @@iterator/wc @@toStringTag/c append/wc constructor/wc delete/wc entries/wc forEach/wc get/wc getAll/wc has/wc keys/wc length/a set/wc toJSON/- values/wc
 Function : length/? name/? prototype/-
 Function.prototype : @@hasInstance/- apply/wc arguments/ac bind/wc call/wc caller/ac constructor/wc length/c name/c toString/wc
 Headers : length/c name/c prototype/-

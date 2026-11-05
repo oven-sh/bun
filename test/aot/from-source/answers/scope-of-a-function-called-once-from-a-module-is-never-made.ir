@@ -5,8 +5,9 @@
 #     function isDone() { return count >= limit; }
 #     return { next, isDone };
 # }
-# const counter = createCounter(2);
+# const counter = createCounter(2); // @ts-expect-error
 # print(counter.next(), counter.isDone(), counter.next(), counter.isDone(), counter.next === counter.next, counter.next === counter.isDone);
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # count and limit are fields of one scope, and both lie among the variables of the module: numbers, which nobody could have let go.
 # The literal holds two closures that are made where they are written: a closure that is left unmade in a literal is made over a scope, and there is none.

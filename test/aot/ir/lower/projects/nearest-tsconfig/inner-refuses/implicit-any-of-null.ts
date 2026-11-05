@@ -1,9 +1,5 @@
-// RUN: link
-// STATISTIC: SourceFilesChecked = 2
-
-// noImplicitAny is a rule of style: no build reports what it forbids in the inner project, and the file keeps its types.
-
-// CHECK: function {{*}}name="f" {{*}}flags=[IsChecked, HasExplicitName] {{*}}results=[{type=anything}]
+// RUN: lower
+// DIAGNOSTIC: TS7010 inner/lib.ts:1
 
 // FILE: main.ts
 import "./inner/lib.ts";

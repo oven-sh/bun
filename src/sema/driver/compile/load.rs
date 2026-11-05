@@ -61,6 +61,12 @@ pub fn load_program<'s>(
     project
         .errors
         .retain(|error| error.code != 18003 && error.code != 18002);
+    let roots_with_and_without_what_is_excluded = (!project.config_path.is_empty()).then(|| {
+        (
+            project.roots_with_what_is_excluded(host),
+            project.roots(host),
+        )
+    });
     let unlisted_files = project.unlisted_files.take();
     let first_files = host.compiler_declarations();
     let mut last_files = Vec::new();
@@ -74,6 +80,7 @@ pub fn load_program<'s>(
         .custom_conditions
         .extend_from_slice(&request.code.custom_conditions);
     let has_bun_types_installed = choose_libraries(host, options, request.libs);
+    let names_bun_types_by_itself = options.names_bun_types_by_itself;
     let is_application = request.project_origin != FileOrigin::Runtime;
     let brings_bun_types =
         is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
@@ -82,7 +89,7 @@ pub fn load_program<'s>(
     if is_application && has_bun_types {
         last_files.append(&mut host.declarations_beside_bun_types(has_bun_types_installed));
     }
-    if is_application && !has_bun_types {
+    if is_application && !has_bun_types_installed {
         if let Some(path) = host.declarations_in_place_of_bun_types() {
             options.declarations_of_last_resort.clone_from(&path);
             last_files.push(path);
@@ -165,7 +172,9 @@ pub fn load_program<'s>(
     let errors = project.errors.iter().chain(&problems);
     let origins = compute_origins(files, host, request.project_origin);
     steps.end("origins of the files");
-    let bun_types = if !is_application || has_bun_types_installed {
+    let bun_types = if has_bun_types_installed && names_bun_types_by_itself && is_application {
+        BunTypes::InstalledAndNotNamed
+    } else if !is_application || has_bun_types_installed {
         BunTypes::Installed
     } else if brings_bun_types {
         BunTypes::Brought
@@ -176,6 +185,19 @@ pub fn load_program<'s>(
         })
     };
     let has_configuration_file = !config_path.is_empty();
+    let files_that_project_excludes = match &roots_with_and_without_what_is_excluded {
+        Some((all, kept)) => {
+            let is_file = |path: &[u8]| host.is_file(path);
+            let is_excluded = |path: &Vec<u8>| {
+                let path = config::SplitFilePath::new(path);
+                !kept.has(&path, &is_file) && all.has(&path, &is_file)
+            };
+            let mut excluded = [&entry_paths[..], &found_entry_paths.lock()[..]].concat();
+            excluded.retain(is_excluded);
+            find_files_that_only_lead_from(files, &excluded)
+        }
+        None => Vec::new(),
+    };
     let diagnostics = ProgramOrigins {
         files: Some(files),
         origins: &origins,
@@ -196,8 +218,34 @@ pub fn load_program<'s>(
         diagnostics,
         bun_types,
         has_configuration_file,
+        files_that_project_excludes,
         files_left_to_loader: Default::default(),
     })
+}
+
+fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Vec<FileId> {
+    if excluded.is_empty() {
+        return Vec::new();
+    }
+    let file_ids = || (0..files.modules.len()).map(|index| FileId(index as u32));
+    let reach = |mut pending: Vec<FileId>| {
+        let mut is_reached = vec![false; files.modules.len()];
+        while let Some(file) = pending.pop() {
+            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                pending.extend(files.module(file).imports.values().copied());
+            }
+        }
+        is_reached
+    };
+    let is_excluded = |file: &FileId| {
+        let name = files.module(*file).file_name();
+        excluded.iter().any(|path| path == name)
+    };
+    let from_excluded = reach(file_ids().filter(is_excluded).collect());
+    let from_the_rest = reach(file_ids().filter(|it| !from_excluded[it.idx()]).collect());
+    file_ids()
+        .filter(|it| from_excluded[it.idx()] && !from_the_rest[it.idx()])
+        .collect()
 }
 
 fn free_unread_leaves(files: &Files<'_>, host: &dyn CodeHost) {
@@ -597,7 +645,7 @@ fn without_files(project_origin: FileOrigin) -> ProgramOrigins<'static, 'static>
     }
 }
 
-fn default_project(
+pub(super) fn default_project(
     host: &dyn Host,
     code: &CodeOptions,
     entry_paths: &[Vec<u8>],
@@ -605,7 +653,7 @@ fn default_project(
     let mut options = default_compiler_options();
     if let Json::Object(options) = &mut options {
         config::merge_compiler_options(options, config::compile_build_overrides(), &[]);
-        options.retain(|option| option.0 != b"verbatimModuleSyntax");
+        options.retain(|option| option.0 != b"verbatimModuleSyntax" && option.0 != b"lib");
     }
     let directory = &code.working_directory;
     let mut project = config::without_config(host, directory, options, entry_paths.to_vec());
@@ -633,6 +681,7 @@ fn name_bun_types(options: &mut Options) {
     let is_named = (types.iter()).any(|name| matches!(&name[..], b"bun" | b"bun-types" | b"*"));
     if !is_named {
         types.push(b"bun".to_vec());
+        options.names_bun_types_by_itself = true;
     }
 }
 

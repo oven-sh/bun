@@ -179,7 +179,7 @@ fn constructor_that_is_left_out_takes_the_class_token_as_a_class_token() {
     assert!(text.contains("LeftOutOfExecutable"), "{text}");
     let captures = constructor.captures.iter();
     let types = captures.map(|capture| program.types.get(capture.ty));
-    assert!(types.eq([&Type::opaque(OpaqueKind::ClassToken)]), "{text}");
+    assert!(types.eq([Type::opaque(OpaqueKind::ClassToken)]), "{text}");
 }
 
 #[test]
@@ -385,14 +385,15 @@ fn a_store_to_a_name_of_the_runner_costs_no_test_file() {
 }
 
 #[test]
-fn type_error_builds() {
+fn type_error_stops_the_build_of_typescript_alone() {
     let typed = "const x: number = \"a\";\nconsole.log(x);";
+    let (result, log) = link_files(&[("a.ts", typed)]);
+    assert_eq!(expect_failure(result).stage, Stage::Lower);
+    assert_eq!(log.errors, 1);
     let annotated = "/** @type {number} */\nconst x = \"a\";\nconsole.log(x);";
-    for (name, text) in [("a.ts", typed), ("a.js", annotated)] {
-        let (result, log) = link_files(&[(name, text)]);
-        expect_success(result, &log);
-        assert_eq!(log.errors, 0);
-    }
+    let (result, log) = link_files(&[("a.js", annotated)]);
+    expect_success(result, &log);
+    assert_eq!(log.errors, 0);
 }
 
 #[test]
@@ -1466,7 +1467,7 @@ fn function_text_lacks_what_a_bundle_lacks() {
         export function shown(o: any): unknown {\n  \
         if (false) o.dead();\n  \
         if (false) { o.dead(); } else o.a;\n  \
-        if (true) o.b; else o.dead();\n  \
+        if (true) o.b; else o.dead(); // @ts-expect-error\n  \
         const kept = [true ? o.c : o.dead(), false && o.dead(), true && o.d, null ?? o.e, !true || o.f];\n  \
         (true ? o.m : 0)();\n  \
         (true ? o : 0)();\n  \
@@ -1487,12 +1488,114 @@ fn function_text_lacks_what_a_bundle_lacks() {
         .map(|(start, end)| BStr::new(&function_text[start..end]))
         .collect();
     let expected = BStr::new(
-        "function shown(o) {\n  if (false) ;\n  if (false) {} else o.a;\n  if (true) o.b;\n  \
+        "function shown(o) {\n  if (false) ;\n  if (false) {} else o.a;\n  if (true) o.b; // @ts-expect-error\n  \
         const kept = [o.c, false, o.d, o.e, o.f];\n  (0, o.m)();\n  (o)();\n  typeof (0, unbound);\n  \
         ({ g: 1 }).g;\n  for (let i = (\"h\" in o); i; i = false) o.i;\n  \
         for (let i = [\"h\" in o]; i.pop(); ) o.i;\n  return () => ({ kept });\n}",
     );
     assert!(shown.contains(&expected), "{shown:?}");
+}
+
+#[test]
+fn function_text_runs_as_the_function_does() {
+    let texts_of = |path: &str, text: &str| -> Vec<String> {
+        let linked = link_successfully(&[(path, text), GLOBALS]);
+        let (program, texts) = (&linked.program, &linked.summary.texts);
+        let module = program.entries[0].module;
+        let source = texts.get(module).expect("a compiled file has its text");
+        let function_text = source.function_text();
+        let of_module = (program.functions.iter()).filter(|function| function.module == module);
+        of_module
+            .map(|function| (function.text.start as usize, function.text.end as usize))
+            .map(|(start, end)| String::from_utf8_lossy(&function_text[start..end]).into_owned())
+            .collect()
+    };
+    let text = "enum Level { Below = -1, Strict = \"use strict\" }\n\
+        export function shown(o: any): unknown {\n  \
+        if (false) { var a: number = 1, { b, c: [d] } = o; for (var e in o) ; }\n  \
+        if (false) var f = 1;\n  \
+        if (false) var [] = o, {} = o;\n  \
+        if (true) o.a; else { var g = 1; }\n  \
+        if (o.b) if (true) o.c; else o.dead(); else o.d;\n  \
+        if (true) o.e()\n  \
+        else { o.dead() }\n  \
+        (o.f)\n  \
+        let h = o\n  \
+        true && [1].map(o.g)\n  \
+        let i = o\n  \
+        type Gone = number;\n  \
+        true ? (o.h, o.i) : 0\n  \
+        if (o.j) { o.k; }\n  \
+        false || `t`.length\n  \
+        switch (o) { case 1: h = o\n  \
+        true && -o.l }\n  \
+        if (o.m) true && [o.n];\n  \
+        let j = o\n  \
+        Level.Below.toFixed()\n  \
+        return [a!, b, d, e!, f!, g!, h, i, j];\n}\n\
+        export function sloppy(this: unknown): unknown {\n  \
+        true && \"use strict\";\n  \
+        Level.Strict;\n  \
+        return this;\n}\n\
+        console.log(shown, sloppy);";
+    let shown = texts_of("a.ts", text);
+    for expected in [
+        "function shown(o) {\n  if (false) { var a, b, d, e; }\n  if (false) var f;\n  if (false) ;\n  \
+        if (true) o.a; else { var g; }\n  if (o.b) if (true) o.c; else ; else o.d;\n  \
+        if (true) o.e()\n  else {}\n  (o.f)\n  let h = o\n  ;[1].map(o.g)\n  let i = o\n  \n  \
+        ;(o.h, o.i)\n  if (o.j) { o.k; }\n  `t`.length\n  switch (o) { case 1: h = o\n  ;-o.l }\n  \
+        if (o.m) [o.n];\n  let j = o\n  ;(-1).toFixed()\n  return [a, b, d, e, f, g, h, i, j];\n}",
+        "function sloppy() {\n  ;\"use strict\";\n  \"use strict\";\n  return this;\n}",
+    ] {
+        assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
+    }
+    let text = "exports.shown = function () {\n  if (false) { function g() {} }\n  return g;\n};";
+    let expected = "function () {\n  if (false) { var g; }\n  return g;\n}";
+    let shown = texts_of("a.cjs", text);
+    assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
+}
+
+#[test]
+fn function_text_shows_one_operand_where_bun_run_prints_one() {
+    let operators = "export function shown(o) {\n  \
+        return [1 && o.a, \"\" || o.b, void 0 ?? o.c, 0n || o.d, !0 && o.e, -1 && o.f, /x/ && o.g,\n  \
+        typeof 1 === \"number\" && o.h, (o.i++, true) ? o.j : o.k, (o.i++, 1) && o.l, [] && o.m];\n}\n\
+        console.log(shown);";
+    let text = "export function sloppy(this: unknown): unknown {\n  \
+        type Gone = number;\n  \
+        \"use strict\";\n  \
+        return this;\n}\n\
+        export function strict(this: unknown): unknown {\n  \"use strict\";\n  return this;\n}\n\
+        export function made(this: unknown): unknown {\n  \"use strict\" as string;\n  return this;\n}\n\
+        export function read(this: unknown): unknown {\n  \"text\".length;\n  return this;\n}\n\
+        export function later(this: unknown): unknown {\n  let kept = 1;\n  \"use strict\";\n  return this;\n}\n\
+        console.log(sloppy, strict, made, read, later);";
+    let texts_of = |path: &str, text: &str| -> Vec<String> {
+        let linked = link_successfully(&[(path, text), GLOBALS]);
+        let (program, texts) = (&linked.program, &linked.summary.texts);
+        let module = program.entries[0].module;
+        let source = texts.get(module).expect("a compiled file has its text");
+        let function_text = source.function_text();
+        let of_module = (program.functions.iter()).filter(|function| function.module == module);
+        of_module
+            .map(|function| (function.text.start as usize, function.text.end as usize))
+            .map(|(start, end)| String::from_utf8_lossy(&function_text[start..end]).into_owned())
+            .collect()
+    };
+    let expected = "function shown(o) {\n  return [o.a, o.b, o.c, o.d, o.e, o.f, o.g,\n  \
+        o.h, (o.i++, true) ? o.j : o.k, (o.i++, 1) && o.l, [] && o.m];\n}";
+    let shown = texts_of("a.js", operators);
+    assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
+    let shown = texts_of("a.ts", text);
+    for expected in [
+        "function sloppy() {\n  \n  ;\"use strict\";\n  return this;\n}",
+        "function strict() {\n  ;\"use strict\";\n  return this;\n}",
+        "function made() {\n  ;\"use strict\";\n  return this;\n}",
+        "function read() {\n  ;\"text\".length;\n  return this;\n}",
+        "function later() {\n  let kept = 1;\n  \"use strict\";\n  return this;\n}",
+    ] {
+        assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
+    }
 }
 
 #[test]

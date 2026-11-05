@@ -204,9 +204,10 @@ The engine's tests have the same check lines and patterns. `aot/tests/README.md`
 - **`link` prints the source of each module** in `functionText`, with the directives in it. The check lines do not see that text: it
   is hidden before they are matched. `textOfQuotes="..."` of a `module` line is not: it holds the texts of calls. `path=".../link-imported-function"` still contains the word `function`. Begin the pattern with
   the record's keyword and id: `module [[m]] path=`, `variable [[g]] name="x"`.
-- **A type error is not reported and stops no build**: the checker goes through no file as a whole, it answers what lowering asks. Errors of
-  grammar and the front end's own codes are reported. The written types of a `.ts` file are tested at run time. In a `.js` file nothing
-  written is tested.
+- **A type error in a `.ts` file stops the build**, as errors of grammar and the front end's own codes do: the checker goes through each
+  file of the program before it is lowered. A test that needs one says `// @ts-expect-error` in front of the line, or lists it:
+  `// DIAGNOSTIC: TS2322`. The written types of a `.ts` file are tested at run time all the same. In a `.js` file nothing written is
+  tested, and no type error is reported.
 - **A rule gets a positive and a negative case**, in one file or in neighbors.
 
 | What it tests | Where |

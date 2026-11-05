@@ -783,7 +783,7 @@ impl<'p, 's> Checker<'p, 's> {
             under.mentioned.push(ty);
         } else if let TypeData::Synth(shape) = self.data(ty) {
             for &sig in shape.call.iter().chain(&shape.construct) {
-                if let SigData::Synth { type_params, .. } = self.types().sig(sig) {
+                if let SigData::Synth(SynthSig { type_params, .. }) = self.types().sig(sig) {
                     type_params.iter().for_each(|&it| under.note_own(it));
                 }
             }
@@ -804,7 +804,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             } else if let TypeData::Synth(shape) = self.data(part) {
                 for &sig in shape.call.iter().chain(&shape.construct) {
-                    if let SigData::Synth { type_params, .. } = self.types().sig(sig) {
+                    if let SigData::Synth(SynthSig { type_params, .. }) = self.types().sig(sig) {
                         for &it in type_params.iter() {
                             if !own.contains(&it) {
                                 own.push(it);
@@ -1781,14 +1781,14 @@ impl<'p, 's> Checker<'p, 's> {
                 base: *base,
                 mapper: self.class_sig_mapper(*class, *own, mapper),
             },
-            SigData::Synth {
+            SigData::Synth(SynthSig {
                 type_params,
                 params,
                 this,
                 of,
                 is_union,
                 ..
-            } => {
+            }) => {
                 // `instantiateSignatureEx`: the type parameters that have no type arguments yet are
                 // cloned where their outer mapping changes, and everything in the signature refers
                 // to the clones.
@@ -1824,7 +1824,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let params = ArenaBox::from_iter_in(params, arena);
                 // `getReturnTypeOfSignature`, `case sig.target != nil`
                 let ret = self.sig_return(sig);
-                SigData::Synth {
+                SigData::Synth(arena.alloc(SynthSig {
                     type_params: remaining.into(),
                     params,
                     ret: self.instantiate(ret, mapper),
@@ -1834,7 +1834,7 @@ impl<'p, 's> Checker<'p, 's> {
                         arena,
                     ),
                     is_union: *is_union,
-                }
+                }))
             }
             // `cloneSignature` with its own return type, which is instantiated with the same mapper
             // as the rest.

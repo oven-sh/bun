@@ -7,6 +7,7 @@ use super::interop::ModuleKind;
 use super::module_set::ModuleSet;
 use super::order::FileText;
 use super::requests::{ScannedSite, Scans};
+use super::spelled_files::list_texts_that_spell_files;
 use super::test_run_evictions::{find_files_that_leave, is_among};
 use super::{BindInput, ModuleRef};
 use crate::builtins::RuntimeModule;
@@ -227,10 +228,15 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
         some_body_awaits: false,
     };
     let mut calls: Vec<ExprId> = Vec::new();
+    let texts_that_spell_files = list_texts_that_spell_files(input).unwrap_or_default();
     for &file in &modules.compiled_files {
         let (analysis, scan) = (files.analysis(file), scans.of(file));
         loads.some_body_awaits |= analysis.has_live_top_level_await;
-        if analysis.import_sites.is_empty() {
+        let first_text = texts_that_spell_files.partition_point(|text| text.written_in < file);
+        let texts_of_file = &texts_that_spell_files[first_text..];
+        let text_count = texts_of_file.partition_point(|text| text.written_in == file);
+        let texts_of_file = &texts_of_file[..text_count];
+        if analysis.import_sites.is_empty() && texts_of_file.is_empty() {
             continue;
         }
         let text = BodyText {
@@ -326,6 +332,13 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
                 ScannedSite::Module(_) | ScannedSite::Unresolved | ScannedSite::Erased => {}
             }
         }
+        loads.all.extend(texts_of_file.iter().map(|spelling| Load {
+            target: Some(spelling.spelled),
+            timing: (text.find_timing_of_call(spelling.text)).max(LoadTiming::Guarded),
+            is_hoisted: false,
+            is_asked_by_job: true,
+            position: text.place_of(hir[spelling.text].pos),
+        }));
         let of_file = &mut loads.all[first..];
         of_file.sort_by_key(|load| (!load.is_hoisted, load.position));
         let has_deferred_load = (of_file.iter()).any(|load| load.timing == LoadTiming::Deferred);

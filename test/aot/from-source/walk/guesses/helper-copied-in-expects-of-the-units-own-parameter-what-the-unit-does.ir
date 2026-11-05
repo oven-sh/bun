@@ -10,6 +10,7 @@
 # function finish(leaf: Leaf, pos: number): Leaf { setPos(leaf, pos); return leaf; }
 # function finishAll(leaves: Leaves, pos: number): Leaves { return setPos(leaves, pos); }
 # sink(finish, finishAll, setPos, new Leaf());
+# declare function sink(...values: unknown[]): void;
 # -- end of source
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body

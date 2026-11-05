@@ -1,10 +1,6 @@
-// RUN: link
+// RUN: lower
 // ENTRY: src/with-tools.ts
-// STATISTIC: SourceFilesChecked = 2
-
-// noUnusedLocals is a rule of style: no build reports what the project that includes the imported file forbids, and the file keeps its types.
-
-// CHECK: function {{*}}name="smells" {{*}}flags=[IsChecked, HasExplicitName] {{*}}parameters=[{type=boolean}, {type=anything}] results=[{type=anything}]
+// DIAGNOSTIC: TS6133 tools/tool.ts:2
 
 // FILE: tsconfig.json
 {"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.tools.json"}]}

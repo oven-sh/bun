@@ -17,7 +17,9 @@ mod written_members;
 
 pub use self::imports::find_module_export;
 pub use self::module_cache::{KeyOfModuleCache, is_module_cache, is_table_of_loaders};
-pub use self::module_values::commonjs_variable_builtin;
+pub use self::module_values::{
+    commonjs_variable_builtin, reads_what_wrapper_hands_in, redeclares_what_wrapper_hands_in,
+};
 pub use self::resolver::FileFacts;
 pub use self::runtime_dialect::set_natives;
 use super::names::BuiltinNames;
@@ -208,6 +210,12 @@ impl CommonJsBuiltins {
     }
 }
 
+struct WhereHooksOfInstanceofExist {
+    uses: RuntimeUses,
+    loads_unknown_modules: bool,
+    hands_on_loader_of_paths: bool,
+}
+
 #[derive(Default)]
 pub struct ResolvedBuiltins {
     exprs: Box<[(ExprId, Resolved)]>,
@@ -228,6 +236,7 @@ pub struct ResolvedBuiltins {
     resets_modules: bool,
     stores_loader_functions: bool,
     process_reaches_code_on_its_prototypes: bool,
+    inspects_prototype_chain_of_process: bool,
     tables_of_loaders_written: Box<[ExprId]>,
     unlocked: OnceLock<Arc<[u32]>>,
     mentioned: Box<[BuiltinId]>,
@@ -236,6 +245,9 @@ pub struct ResolvedBuiltins {
     uses: RuntimeUses,
     loads_unknown_modules: bool,
     hands_on_loader_of_paths: bool,
+    where_hooks_of_instanceof_exist: Option<Box<WhereHooksOfInstanceofExist>>,
+    hooks_of_instanceof_may_exist: OnceLock<()>,
+    can_come_by_hook_of_instanceof: bool,
     keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
     loses_sight_of_module_cache: bool,
     hands_module_cache_on: bool,
@@ -419,6 +431,10 @@ impl ResolvedBuiltins {
         self.process_reaches_code_on_its_prototypes
     }
 
+    pub fn inspects_prototype_chain_of_process(&self) -> bool {
+        self.inspects_prototype_chain_of_process
+    }
+
     pub fn stores_loader_functions(&self) -> bool {
         self.stores_loader_functions
     }
@@ -460,8 +476,28 @@ impl ResolvedBuiltins {
         &self.exposed
     }
 
+    fn find_what_holds_where_hooks_exist(&self) -> Option<&WhereHooksOfInstanceofExist> {
+        self.hooks_of_instanceof_may_exist.get()?;
+        self.where_hooks_of_instanceof_exist.as_deref()
+    }
+
+    pub fn can_come_by_hook_of_instanceof(&self) -> bool {
+        self.can_come_by_hook_of_instanceof
+    }
+
+    pub fn hands_builtins_to_hooks_of_instanceof(&self) -> bool {
+        self.where_hooks_of_instanceof_exist.is_some()
+    }
+
+    pub fn note_that_hooks_of_instanceof_may_exist(&self) {
+        self.hooks_of_instanceof_may_exist.get_or_init(|| ());
+    }
+
     pub fn uses(&self) -> &RuntimeUses {
-        &self.uses
+        match self.find_what_holds_where_hooks_exist() {
+            Some(held) => &held.uses,
+            None => &self.uses,
+        }
     }
 
     pub fn into_uses(self) -> RuntimeUses {
@@ -469,11 +505,17 @@ impl ResolvedBuiltins {
     }
 
     pub fn loads_unknown_modules(&self) -> bool {
-        self.loads_unknown_modules
+        match self.find_what_holds_where_hooks_exist() {
+            Some(held) => held.loads_unknown_modules,
+            None => self.loads_unknown_modules,
+        }
     }
 
     pub fn hands_on_loader_of_paths(&self) -> bool {
-        self.hands_on_loader_of_paths
+        match self.find_what_holds_where_hooks_exist() {
+            Some(held) => held.hands_on_loader_of_paths,
+            None => self.hands_on_loader_of_paths,
+        }
     }
 
     pub fn keys_taken_out_of_module_cache(&self) -> &[KeyOfModuleCache] {
@@ -497,11 +539,11 @@ impl ResolvedBuiltins {
     }
 
     pub fn loaded_modules(&self) -> impl Iterator<Item = RuntimeModule> + '_ {
-        self.uses.modules.iter().copied()
+        self.uses().modules.iter().copied()
     }
 
     pub fn called_functions(&self) -> impl Iterator<Item = RuntimeFunction> + '_ {
-        self.uses.functions.iter().copied()
+        self.uses().functions.iter().copied()
     }
 }
 

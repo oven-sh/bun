@@ -14,3 +14,4 @@ let n = 0;
 for (let i = 0; i < 300; i++) { if (a.isA(i & 1 ? a : { q: 1 })) n++; }
 report(n);
 report("end");
+declare function report(value: unknown): void;

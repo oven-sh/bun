@@ -171,7 +171,8 @@ impl Checker<'_, '_> {
             (None, &[(bare, display_type)]) => (bare, display_type, Some(2417), 0),
             (None, _) => (self.type_of_properties(static_base), printed, Some(2417), 0),
         };
-        let (lines, related) = self.relation_lines_with_related(static_type, target, head, level);
+        let (lines, related, subject) =
+            self.relation_lines_with_related(static_type, target, head, level);
         // `r.overflow`: that's the whole diagnostic, and it's about the two types passed in.
         if lines.first().is_some_and(|line| line.code == 2859) {
             let types = [Arg::Type(static_type), Arg::Type(printed)];
@@ -207,6 +208,7 @@ impl Checker<'_, '_> {
         let mut diagnostic = Reported::new(at, 2417, held(vec![heir, base]));
         super::explain::add_lines(&mut diagnostic.message_chain, reasons);
         diagnostic.related_information = related;
+        diagnostic.subject = subject;
         self.add_diagnostic(diagnostic);
     }
 

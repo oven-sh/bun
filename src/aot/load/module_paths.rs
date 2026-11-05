@@ -90,17 +90,21 @@ impl<'s> FileMaps<'s> {
 pub(super) fn collect_entry_point_paths(
     runs_in_place: bool,
     paths: &PathOptions,
+    levels_above_root: usize,
 ) -> FxHashSet<Vec<u8>> {
     if runs_in_place {
         return FxHashSet::default();
     }
     let names = paths.entry_point_names.iter();
-    names.map(|name| compute_module_path(paths, name)).collect()
+    names
+        .map(|name| compute_module_path(paths, levels_above_root, name))
+        .collect()
 }
 
 pub(super) struct PathContext<'a> {
     pub runs_in_place: bool,
     pub paths: &'a PathOptions,
+    pub levels_above_root: usize,
     pub loaders: &'a [(Vec<u8>, Loader)],
     pub manifest: &'a Manifest,
     pub maps: &'a FileMaps<'a>,
@@ -140,6 +144,7 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
                 let mut path = compute_program_path(
                     context.runs_in_place,
                     context.paths,
+                    context.levels_above_root,
                     to_native(input.file_name),
                     maps.entry_point_indexes.get(&input.file).copied(),
                 );
@@ -149,6 +154,7 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
             SourceKind::TypesOnly => compute_program_path(
                 context.runs_in_place,
                 context.paths,
+                0,
                 to_native(input.file_name),
                 None,
             ),
@@ -247,6 +253,7 @@ fn plugin_public_path(namespace: &[u8], path: &[u8]) -> Vec<u8> {
 pub(super) fn compute_program_path(
     runs_in_place: bool,
     paths: &PathOptions,
+    levels_above_root: usize,
     native_path: &[u8],
     entry_point_index: Option<usize>,
 ) -> Vec<u8> {
@@ -254,12 +261,43 @@ pub(super) fn compute_program_path(
         return with_separators_of_host(native_path, cfg!(windows));
     }
     if let Some(index) = entry_point_index {
-        return compute_module_path(paths, &paths.entry_point_names[index]);
+        let name = &paths.entry_point_names[index];
+        return compute_module_path(paths, levels_above_root, name);
     }
     match compute_relative_path(&paths.root_directory, native_path) {
-        Some(relative_path) => compute_module_path(paths, &relative_path),
-        None => compute_module_path(paths, native_path),
+        Some(relative_path) => compute_module_path(paths, levels_above_root, &relative_path),
+        None => compute_module_path(paths, levels_above_root, native_path),
     }
+}
+
+pub(crate) const FOLDER_ABOVE_ROOT: &[u8] = b"_.._";
+
+pub(crate) fn count_folders(directory: &[u8]) -> usize {
+    let is_separator = |byte: &u8| *byte == b'/' || (cfg!(windows) && *byte == b'\\');
+    let folders = directory.split(is_separator);
+    folders.filter(|folder| !folder.is_empty()).count()
+}
+
+pub(crate) fn count_levels_above(relative_path: &[u8]) -> usize {
+    let folders = strings::split(relative_path, b"/");
+    folders.take_while(|&folder| folder == b"..").count()
+}
+
+pub(crate) fn spell_mount_above_root(root: &[u8]) -> &[u8] {
+    let folder = root.strip_suffix(b"/").unwrap_or(root);
+    &root[..strings::last_index_of_char(folder, b'/').map_or(0, |at| at + 1)]
+}
+
+pub(crate) fn spell_folder_above_root(
+    root: &[u8],
+    levels_above_root: usize,
+    level: usize,
+) -> Vec<u8> {
+    let (start, folders) = match (1..=levels_above_root).contains(&level) {
+        true => (spell_mount_above_root(root), levels_above_root + 1 - level),
+        false => (root, level),
+    };
+    [start, &b"_.._/".repeat(folders)[..]].concat()
 }
 
 pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> Vec<u8> {
@@ -295,9 +333,45 @@ fn fits_path_buffer(path: &[u8]) -> bool {
     path.len() + MAX_NORMALIZATION_GROWTH <= MAX_PATH_BYTES
 }
 
-pub(super) fn compute_module_path(paths: &PathOptions, relative_path: &[u8]) -> Vec<u8> {
-    let mut path = paths.module_prefix.clone();
-    append_sanitized_path(&mut path, relative_path);
+pub(crate) fn read_path_above_root<'p>(
+    root: &[u8],
+    levels_above_root: usize,
+    path: &'p [u8],
+) -> Option<(usize, &'p [u8])> {
+    let above = path.strip_prefix(spell_mount_above_root(root))?;
+    let folders = strings::split(above, b"/");
+    let spelled = folders.take_while(|&folder| folder == FOLDER_ABOVE_ROOT);
+    let spelled = spelled.count().min(levels_above_root + 1);
+    let below = &above[above.len().min(5 * spelled)..];
+    (spelled > 0 && levels_above_root > 0).then_some((levels_above_root + 1 - spelled, below))
+}
+
+pub(crate) fn spell_with_other_levels(
+    root: &[u8],
+    path: &[u8],
+    levels: usize,
+    other_levels: usize,
+) -> Option<Vec<u8>> {
+    let folder = match read_path_above_root(root, levels, path) {
+        None => return Some(path.to_vec()),
+        Some((0, below)) => return Some([root, below].concat()),
+        Some((level, _)) if level > other_levels => return None,
+        Some((level, below)) => (spell_folder_above_root(root, other_levels, level), below),
+    };
+    Some([&folder.0[..], folder.1].concat())
+}
+
+pub(super) fn compute_module_path(
+    paths: &PathOptions,
+    levels_above_root: usize,
+    relative_path: &[u8],
+) -> Vec<u8> {
+    let level = count_levels_above(relative_path);
+    let mut path = spell_folder_above_root(&paths.module_prefix, levels_above_root, level);
+    append_sanitized_path(
+        &mut path,
+        &relative_path[relative_path.len().min(3 * level)..],
+    );
     with_separators_of_host(&path, paths.module_prefix.starts_with(b"B:/"))
 }
 
@@ -431,6 +505,7 @@ mod tests {
         let context = PathContext {
             runs_in_place: false,
             paths: &path_options(),
+            levels_above_root: 0,
             loaders: &default_loaders(),
             manifest,
             maps,
@@ -445,12 +520,12 @@ mod tests {
             ..path_options()
         };
         assert_eq!(
-            compute_module_path(&paths, b"../lib/a.ts"),
-            b"B:\\~BUN\\root\\_.._\\lib\\a.ts"
+            compute_module_path(&paths, 2, b"../lib/a.ts"),
+            b"B:\\~BUN\\_.._\\_.._\\lib\\a.ts"
         );
         assert_eq!(
-            compute_module_path(&path_options(), b"../lib/a.ts"),
-            b"/$bunfs/root/_.._/lib/a.ts"
+            compute_module_path(&path_options(), 2, b"../lib/a.ts"),
+            b"/$bunfs/_.._/_.._/lib/a.ts"
         );
     }
 
@@ -470,14 +545,14 @@ mod tests {
     #[test]
     fn program_paths_follow_options() {
         let paths = path_options();
-        let path = |native, index| compute_program_path(false, &paths, native, index);
+        let path = |native, index| compute_program_path(false, &paths, 2, native, index);
         assert_eq!(
             path(b"/project/src/main.ts", Some(1)),
             b"/$bunfs/root/worker.js"
         );
         assert_eq!(path(b"/project/src/a.ts", None), b"/$bunfs/root/src/a.ts");
-        assert_eq!(path(b"/other/a.ts", None), b"/$bunfs/root/_.._/other/a.ts");
-        assert_eq!(path(b"/a.ts", None), b"/$bunfs/root/_.._/a.ts");
+        assert_eq!(path(b"/other/a.ts", None), b"/$bunfs/_.._/_.._/other/a.ts");
+        assert_eq!(path(b"/a.ts", None), b"/$bunfs/_.._/_.._/a.ts");
     }
 
     #[test]
@@ -498,7 +573,7 @@ mod tests {
             root_directory: b"/d".repeat(depth),
             ..path_options()
         };
-        let outside = compute_program_path(false, &deep_root, b"/other/a.ts", None);
+        let outside = compute_program_path(false, &deep_root, 0, b"/other/a.ts", None);
         let parents = b"_.._/".repeat(depth);
         assert_eq!(
             outside,
@@ -510,24 +585,24 @@ mod tests {
     fn path_beyond_path_buffer_stays_absolute() {
         let name = b"n".repeat(MAX_PATH_BYTES);
         let native_path = [&b"/project/"[..], &name, b".ts"].concat();
-        let inside = compute_program_path(false, &path_options(), &native_path, None);
+        let inside = compute_program_path(false, &path_options(), 0, &native_path, None);
         assert_eq!(inside, [&b"/$bunfs/root/"[..], &native_path].concat());
 
         let long_root = PathOptions {
             root_directory: b"/d".repeat(MAX_PATH_BYTES / 2),
             ..path_options()
         };
-        let outside = compute_program_path(false, &long_root, b"/other/a.ts", None);
+        let outside = compute_program_path(false, &long_root, 0, b"/other/a.ts", None);
         assert_eq!(outside, b"/$bunfs/root//other/a.ts");
     }
 
     #[test]
     fn program_paths_run_in_place() {
         let paths = path_options();
-        let path = |index| compute_program_path(true, &paths, b"/project/a.ts", index);
+        let path = |index| compute_program_path(true, &paths, 0, b"/project/a.ts", index);
         assert_eq!(path(None), b"/project/a.ts");
         assert_eq!(path(Some(0)), b"/project/a.ts");
-        assert!(collect_entry_point_paths(true, &paths).is_empty());
+        assert!(collect_entry_point_paths(true, &paths, 0).is_empty());
     }
 
     #[test]
@@ -537,12 +612,13 @@ mod tests {
             entry_point_names: names.map(<[u8]>::to_vec).to_vec(),
             ..path_options()
         };
-        let path = |index| compute_program_path(false, &paths, b"/project/src/a.ts", Some(index));
+        let path =
+            |index| compute_program_path(false, &paths, 3, b"/project/src/a.ts", Some(index));
         assert_eq!(path(0), b"/$bunfs/root/a");
-        assert_eq!(path(1), b"/$bunfs/root/_.._/lib/b.js");
-        assert_eq!(path(2), b"/$bunfs/root/_.._/_.._/other/c.js");
+        assert_eq!(path(1), b"/$bunfs/_.._/_.._/_.._/lib/b.js");
+        assert_eq!(path(2), b"/$bunfs/_.._/_.._/other/c.js");
         for index in 0..names.len() {
-            assert!(collect_entry_point_paths(false, &paths).contains(&path(index)));
+            assert!(collect_entry_point_paths(false, &paths, 3).contains(&path(index)));
         }
     }
 
@@ -604,7 +680,7 @@ mod tests {
     fn import_at_entry_point_name_has_suffix() {
         let (main_ts, main_js) = (b"/project/main.ts", b"/project/main.js");
         let mut maps = FileMaps {
-            entry_point_paths: collect_entry_point_paths(false, &path_options()),
+            entry_point_paths: collect_entry_point_paths(false, &path_options(), 0),
             ..FileMaps::default()
         };
         maps.entry_point_indexes.insert(FileId(0), 0);
@@ -627,7 +703,7 @@ mod tests {
             ..path_options()
         };
         let mut maps = FileMaps {
-            entry_point_paths: collect_entry_point_paths(false, &paths),
+            entry_point_paths: collect_entry_point_paths(false, &paths, 2),
             ..FileMaps::default()
         };
         maps.entry_point_indexes.insert(FileId(0), 0);
@@ -636,6 +712,7 @@ mod tests {
         let context = PathContext {
             runs_in_place: false,
             paths: &paths,
+            levels_above_root: 2,
             loaders: &default_loaders(),
             manifest: &Manifest::default(),
             maps: &maps,
@@ -643,8 +720,8 @@ mod tests {
         let path = |file, path: &[u8]| {
             compute_public_path(&context, &program_file(file, path, BY_NAME)).into_vec()
         };
-        assert_eq!(path(0, entry_point), b"/$bunfs/root/_.._/lib/b.js");
-        assert_eq!(path(1, imported), b"/$bunfs/root/_.._/lib/b.js?jsx");
+        assert_eq!(path(0, entry_point), b"/$bunfs/_.._/_.._/lib/b.js");
+        assert_eq!(path(1, imported), b"/$bunfs/_.._/_.._/lib/b.js?jsx");
     }
 
     #[test]
@@ -822,7 +899,7 @@ mod tests {
     #[test]
     fn only_other_files_shadow_entry_point() {
         let mut maps = FileMaps {
-            entry_point_paths: collect_entry_point_paths(false, &path_options()),
+            entry_point_paths: collect_entry_point_paths(false, &path_options(), 0),
             ..FileMaps::default()
         };
         maps.entry_point_indexes.insert(FileId(1), 0);

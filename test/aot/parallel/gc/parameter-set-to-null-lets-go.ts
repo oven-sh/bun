@@ -1,6 +1,6 @@
 // A parameter is a variable like any other: once the function has set it to null, what the caller passed is collected while the function still runs.
 // Prints what the compiler saves: objects that are collected earlier
-// Todo on win32 x64: Not every time: the line prints that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
+// Todo on win32 x64: in each of four runs of CI plain Bun printed "a parameter: collected" and the executable "a parameter: KEPT": native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {

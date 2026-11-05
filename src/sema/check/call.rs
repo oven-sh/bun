@@ -1899,7 +1899,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.sig_return(generic),
             self.sig_this_type(generic),
         );
-        self.types().intern_sig(SigData::Synth {
+        self.types().intern_synth_sig(SynthSig {
             type_params: ArenaBox::empty(),
             params: self.list(&params),
             ret,
@@ -1986,7 +1986,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.sig_this_type(returned),
         );
         // `cloneSignature`: it has the same declaration as `returned`.
-        let generalized = self.types().intern_sig(SigData::Synth {
+        let generalized = self.types().intern_synth_sig(SynthSig {
             type_params: self.list(inferred_type_params),
             params: self.list(&params),
             ret,
@@ -2223,7 +2223,7 @@ impl<'p, 's> Checker<'p, 's> {
         let returns: Vec<TypeId> = sigs.iter().map(|&sig| self.sig_return(sig)).collect();
         let ret = self.intersection(&returns);
         // It has the first signature's declaration.
-        self.types().intern_sig(SigData::Synth {
+        self.types().intern_synth_sig(SynthSig {
             type_params: ArenaBox::empty(),
             params: self.list(&params),
             ret,

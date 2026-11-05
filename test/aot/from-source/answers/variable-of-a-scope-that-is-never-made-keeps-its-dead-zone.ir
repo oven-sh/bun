@@ -11,6 +11,7 @@
 #     return answers + "," + read();
 # }
 # print(make());
+# declare function print(...values: unknown[]): void;
 # -- end of source
 # late is not listed where the scope would have been made. Its word among the variables begins as absent, and both closures go on asking.
 # RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all

@@ -79,6 +79,7 @@ pub enum Intrinsic {
     },
     Builtin(BuiltinId),
     Construct(BuiltinId),
+    IsHolderWithoutAddedNames(BuiltinId),
     NativeBinding(BuiltinId),
     LinkTimeConstant(LinkTimeConstant),
     NativeCall(NativeCallKind),

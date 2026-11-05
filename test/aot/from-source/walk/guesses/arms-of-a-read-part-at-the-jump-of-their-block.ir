@@ -5,7 +5,7 @@
 # declare function sink(...values: unknown[]): void;
 # const enum Bits { Four = 4, Eight = 8, ThirtyTwo = 32 }
 # class Kind { flags: Bits; objectFlags: Bits; constructor(flags: Bits, objectFlags: Bits) { this.flags = flags; this.objectFlags = objectFlags; } }
-# function sort(kind: Kind, c: boolean) { const f = c ? kind.objectFlags : 0; if (f & Bits.ThirtyTwo) return 1; return 2; }
+# function sort(kind: Kind, c: boolean) { const f = c ? kind.objectFlags : 0; if (f & Bits.ThirtyTwo) return 1; return 2; } // @ts-expect-error
 # sink(sort, new Kind(1, 2));
 # -- end of source
 # RUN: walk f1 mechanisms=all-ParameterGuards

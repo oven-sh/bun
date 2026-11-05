@@ -25,6 +25,7 @@ import {
   comparedDeeply,
   deepComparison,
   handedOver,
+  matchedDeeply,
   mayAnswerWrapperKeptIn,
   promiseOf,
 } from "./native-code.ts";
@@ -686,7 +687,8 @@ const webSocketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>
   ping: [webSocket, binaryFrame],
   pong: [webSocket, binaryFrame],
   close: [webSocket, b.f64, b.string],
-  error: [b.any, webSocket],
+  // WebSocketServerContext.rs run_error_callback(): what another of these handlers threw.
+  error: [b.thrown, webSocket],
 };
 
 // upgrade, close and terminate call these before they return.
@@ -738,8 +740,13 @@ const serverOptions = (server: b.PlaceLike) => {
       args: nodeRequestHandlerArguments,
       result: "Escapes",
     }),
-    // `this` is undefined once the server object has been collected.
-    b.memberCalled(["error"], { times: "PerEvent", this: b.any, args: [b.any], result: "Escapes" }),
+    // RequestContext.rs: what a handler threw, the reason of the promise that it answered, or an error that native code made. `this` is undefined once the server object has been collected.
+    b.memberCalled(["error"], {
+      times: "PerEvent",
+      this: b.union(servers, b.undefined),
+      args: [b.thrown],
+      result: "Escapes",
+    }),
     ...routeHandlersUnder("routes", routed),
     ...routeHandlersUnder("static", routed),
     ...webSocketHandlersUnder("websocket"),
@@ -945,7 +952,7 @@ const serverMembers = {
         b.keptCalled(webSocketHandlerCell("error"), {
           times: "Once",
           this: b.undefined,
-          args: [b.any, webSocket],
+          args: webSocketHandlerArguments.error,
           result: "Ignored",
         }),
       ],
@@ -1227,13 +1234,16 @@ const mainModulePath = {
   },
 } satisfies b.GetterField;
 
+// JSX509Certificate::toLegacyObject()
+const legacyCertificate = b.anyMadeOf("Object", "Array", "Buffer", "ArrayBuffer");
+
 const sentWithRequest = [
   ...keptByNativeCode([...requestOptionNames, ...requestCallbackNames], []),
   // fetch.rs looks for it on `tls` of the options and nowhere else. FetchTasklet.rs calls it with the name of the host and the certificate, and an object that it answers rejects the promise.
   b.memberCalled(["tls", "checkServerIdentity"], {
     times: "PerEvent",
     this: b.undefined,
-    args: [b.string, b.any],
+    args: [b.string, legacyCertificate],
     result: "Escapes",
   }),
   b.reachableValuesStoredIn(b.resultSlot("reason")),
@@ -1546,10 +1556,7 @@ export default b.declarations(
         { left: b.any.optional, right: b.any.optional, strict: b.any.optional, skipsPrototypes: b.any.optional },
         { left: comparedDeeply, right: comparedDeeply, strict: b.inspected, skipsPrototypes: b.inspected },
       ),
-      deepMatch: deepComparison(
-        { subset: b.object, value: b.object },
-        { subset: comparedDeeply, value: comparedDeeply },
-      ),
+      deepMatch: deepComparison({ subset: b.object, value: b.object }, { subset: matchedDeeply, value: matchedDeeply }),
       concatArrayBuffers,
       readableStreamToArray: streamConsumer(newArrayOf(b.any)),
       // A stream whose only chunk is a string settles with a Uint8Array.
@@ -1558,10 +1565,10 @@ export default b.declarations(
       ),
       readableStreamToBlob: streamConsumer(b.instance("Blob").fresh),
       readableStreamToBytes: streamConsumer(b.instance("Uint8Array").exactly.fresh),
-      // The bytes are handed to what `FormData.from` holds when they have arrived, which a program can replace.
+      // The bytes are handed to `FormData.from` when they have arrived, which no program can replace. What the promise finds under `then` above the form may be anything.
       readableStreamToFormData: [
         {
-          ...consumedStream(b.any),
+          ...consumedStream(b.anyMadeOf("FormData")),
           args: { stream: b.instance("ReadableStream"), contentType: b.any.optional },
           uses: { stream: [b.retained], contentType: [b.retained] },
         },

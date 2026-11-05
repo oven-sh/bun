@@ -9,6 +9,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Decl, Parent};
 use bun_sema::hir::{ExprId, ExprKind, Flags, ImportId};
 use bun_sema::import_sites::ImportSiteKind;
+use smallvec::SmallVec;
 
 pub(super) fn has_source(module: RuntimeModule) -> bool {
     table::module_data(module)
@@ -194,6 +195,26 @@ impl Resolver<'_, '_> {
                     mutability: Mutability::ConstantUnlessWritten,
                 });
                 return ExprState::Builtin(runner.with_side_effects());
+            }
+            if let BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf =
+                table::canonical_id(function)
+                && let ExprKind::Call(call) = input.hir[expr].kind
+                && let Some(operand) = input.hir.ids(input.hir[call].args).next()
+                && let Some(holder) = self.find_holder_above_function_written_here(operand)
+            {
+                return ExprState::Held(holder);
+            }
+            if table::canonical_id(function) == BuiltinId::ReflectGet
+                && let ExprKind::Call(call) = input.hir[expr].kind
+                && let [object, key] = input
+                    .hir
+                    .ids(input.hir[call].args)
+                    .collect::<SmallVec<[ExprId; 4]>>()[..]
+                && self.is_key_of_what_stands_above(key)
+                && let Some(holder) =
+                    self.find_holder_that_proto_of_value_written_here_names(object)
+            {
+                return ExprState::Held(holder);
             }
             if table::canonical_id(function) == table::canonical_id(BuiltinId::BunJest) {
                 let runner = imported_namespace_value(RuntimeModule::BunTest);

@@ -147,7 +147,7 @@ fn outcome_of(linked: Result<Linked, Vec<LinkError>>) -> Outcome {
         functions: keys.functions,
         strings: strings.ids().map(|id| strings.get(id).to_vec()).collect(),
         property_keys: program.property_keys.as_slice().to_vec(),
-        types: program.types.types().to_vec(),
+        types: program.types.types().to_records(),
     }
 }
 

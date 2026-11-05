@@ -18,21 +18,22 @@ function attempt() { try { return three(); } catch (e) { return e instanceof Ran
 function warm(of: any) { current = of; let last = ""; for (let i = 0; i < 300; i++) last = attempt(); return last; }
 report(warm(flags));
 report(warm(others));
-report(missing());
+report(missing()); // @ts-expect-error
 Object.defineProperty(flags, "n17", descriptorOf(function () { return "another function"; }, undefined));
 report(warm(flags));
 report(warm(others));
 Object.defineProperty(flags, "n3", { value: "a value", writable: true, configurable: true });
 report(warm(flags));
 delete flags.n39;
-report(warm(flags));
+report(warm(flags)); // @ts-expect-error
 Object.defineProperty(flags, "n39", descriptorOf(undefined, function (v: unknown) {}));
-report(warm(flags));
+report(warm(flags)); // @ts-expect-error
 Object.defineProperty(others, "n3", descriptorOf(getterOf("moved", 3, flags), undefined));
-report(warm(others));
+report(warm(others)); // @ts-expect-error
 Object.defineProperty(others, "n39", descriptorOf(function () { throw new RangeError("thrown"); }, undefined));
 report(warm(others));
 report(warm(Object.create(build(4))));
 report(warm(plain()));
 report(warm(build(5)));
 report("end");
+declare function report(value: unknown): void;

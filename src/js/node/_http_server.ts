@@ -1616,7 +1616,7 @@ function onSocketTimeoutTimerExpired(socket) {
     if (remaining > 0) {
       const existingTimer = socket[kSocketTimeoutTimer];
       if (existingTimer !== undefined) clearTimeout(existingTimer);
-      const timer = setTimeout(onSocketTimeoutTimerExpired, remaining, socket);
+      const timer = globalThis.setTimeout(onSocketTimeoutTimerExpired, remaining, socket);
       timer.unref();
       socket[kSocketTimeoutTimer] = timer;
       return;
@@ -2199,7 +2199,7 @@ function getNodeHTTPServerSocket() {
           existingTimer.refresh();
         } else {
           if (existingTimer) clearTimeout(existingTimer);
-          const timer = setTimeout(onSocketTimeoutTimerExpired, msecs, this);
+          const timer = globalThis.setTimeout(onSocketTimeoutTimerExpired, msecs, this);
           timer.unref();
           this[kSocketTimeoutTimer] = timer;
         }

@@ -17,6 +17,7 @@ pub(crate) struct ScanInput<'a> {
     pub is_file: &'a dyn Fn(&[u8]) -> bool,
     pub is_data: &'a dyn Fn(&[u8]) -> bool,
     pub find_path_at_run_time: &'a dyn Fn() -> Option<Vec<u8>>,
+    pub sees_backslashes: Option<bool>,
     pub write_url: &'a dyn Fn(&[u8], Option<&[u8]>) -> Option<Vec<u8>>,
 }
 

@@ -219,6 +219,8 @@ fn project_for_build(
     root_files: RootFiles,
 ) -> Project {
     let base = dirname::<Posix>(path);
+    let keeps_type_errors_to_itself = (raw.compiler.iter())
+        .any(|option| option.0 == b"noCheck" && matches!(option.1, Json::Bool(true)));
     merge_compiler_options(&mut raw.compiler, compile_build_overrides(), &[]);
     exclude_output_directories(&mut raw, base);
     raw.compiler
@@ -243,8 +245,11 @@ fn project_for_build(
     }
     let mut project = project_from_raw(host, session, path, base, raw, errors);
     project.options.imports_need_no_extension = true;
+    project.options.defines_class_fields_for_build_alone =
+        !assigns_class_fields && !project.options.use_define_for_class_fields;
     project.options.use_define_for_class_fields = !assigns_class_fields;
     project.options.emit_standard_class_fields = !assigns_class_fields;
+    project.options.keeps_type_errors_to_itself = keeps_type_errors_to_itself;
     project.options.referenced_outputs = find_outputs_of_referenced_projects(host, &project);
     if let Some(base_url) = base_url {
         project.options.paths_base_dir.clone_from(&base_url);

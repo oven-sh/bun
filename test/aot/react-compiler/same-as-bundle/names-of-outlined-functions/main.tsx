@@ -8,6 +8,7 @@ console.log(render(useLabels, names));
 // The message quotes the call, and so the name.
 for (const hook of [useLabel, useLabels]) {
   try {
+    // @ts-expect-error
     render(hook, undefined);
   } catch (error) {
     console.log((error as Error).message);

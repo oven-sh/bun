@@ -1,13 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// `Level` is the one member that this file lists, and its object is read from the variable of the file.
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK: [[made]] = FinishObject
-// CHECK-NEXT: PutModuleVariable [[made]] variable=[[level]]
-// CHECK-LABEL: function {{*}}name="show"
-// CHECK: parameters=[{type=4}]
-// CHECK: [[read]] = GetModuleVariable variable=[[level]]
-// CHECK-NEXT: = ElemGet [[read]],
+// DIAGNOSTIC: TS2339 1
+// DIAGNOSTIC: TS2345 1
 
 // FILE: main.ts
 /// <reference path="./globals.d.ts" />

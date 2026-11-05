@@ -9,7 +9,7 @@ use super::generated::MAX_TRACKED_INTEGER;
 use super::ids::{Id, PropertyKeyId, StringId, TypeId};
 use super::print::{Printer, REWRITTEN_TYPE};
 use super::property_keys::{PropertyKeyKind, WellKnownSymbol};
-use super::types::{ClassPart, Primitives, Type, TypeFlags, TypeTable};
+use super::types::{ClassPart, Primitives, TypeFlags, TypeRef, TypeTable};
 use super::wtf8::decode_wtf8_code_point;
 
 pub(super) fn print_quoted(out: &mut String, bytes: &[u8]) {
@@ -48,7 +48,7 @@ fn print_optional(out: &mut String, value: Option<impl Display>) {
     }
 }
 
-fn names_layout_or_function(types: &TypeTable, ty: &Type) -> bool {
+fn names_layout_or_function(types: &TypeTable, ty: TypeRef<'_>) -> bool {
     let mut contents = ty.classes.iter().flat_map(|part| &part.contents);
     !ty.layouts.is_empty()
         || !ty.functions.is_empty()
@@ -182,7 +182,7 @@ impl Printer<'_> {
         }
         self.print_string_literals(ty, &mut separator);
         self.print_object_parts(ty, &mut separator);
-        for part in &ty.classes {
+        for part in ty.classes {
             self.begin_type_part(&mut separator);
             self.print_class_part(id, part);
         }
@@ -204,7 +204,7 @@ impl Printer<'_> {
         let _ = write!(self.out, "{word}");
     }
 
-    fn print_primitive_parts(&mut self, ty: &Type, separator: &mut &'static str) {
+    fn print_primitive_parts(&mut self, ty: TypeRef<'_>, separator: &mut &'static str) {
         let primitives = ty.primitives;
         if primitives.contains(Primitives::UNDEFINED) {
             self.print_type_word_part("undefined", separator);
@@ -248,9 +248,9 @@ impl Printer<'_> {
         }
     }
 
-    fn print_string_literals(&mut self, ty: &Type, separator: &mut &'static str) {
+    fn print_string_literals(&mut self, ty: TypeRef<'_>, separator: &mut &'static str) {
         let strings = self.names.strings;
-        let mut literals = ty.strings.clone();
+        let mut literals = ty.strings.to_vec();
         if literals
             .iter()
             .all(|literal| literal.index() < strings.len())
@@ -263,17 +263,17 @@ impl Printer<'_> {
         }
     }
 
-    fn print_object_parts(&mut self, ty: &Type, separator: &mut &'static str) {
-        for &layout in &ty.layouts {
+    fn print_object_parts(&mut self, ty: TypeRef<'_>, separator: &mut &'static str) {
+        for &layout in ty.layouts {
             self.print_type_word_part(layout, separator);
         }
         if let Some(layout) = ty.environment {
             self.print_type_word_part(format_args!("env {layout}"), separator);
         }
-        for &function in &ty.functions {
+        for &function in ty.functions {
             self.print_type_word_part(function, separator);
         }
-        for &builtin in &ty.builtins {
+        for &builtin in ty.builtins {
             self.print_type_word_part(format_args!("builtin({})", builtin.name()), separator);
         }
     }

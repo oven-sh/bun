@@ -1,11 +1,5 @@
 // RUN: lower
-// STATISTIC: SourceFilesChecked = 1
-// STATISTIC: SourceFilesInferred = 1
-// STATISTIC: SourceLinesOfPackages = 0
-// CHECK: = Call {{*}}calleeName="f"
-
-// A file of the program that is reached through the paths of the tsconfig.json is the program's own: it is checked, and it counts with the program, not with the packages.
-// The type error in it is not reported and stops no build.
+// DIAGNOSTIC: TS2322 lib/f.ts:2
 
 // FILE: main.js
 import { f } from "@lib/f.ts";

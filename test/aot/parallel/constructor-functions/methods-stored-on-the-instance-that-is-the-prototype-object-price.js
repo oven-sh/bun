@@ -1,7 +1,7 @@
 // `Derived.prototype = new Base(0); Derived.prototype.area = function () { .. }`, as a decade of libraries linked their classes. The methods are stored onto what `new Base` made, and
 // one of them stands in front of a method of Base. That object is none of the instances of Base: they hide nothing, and a method is called directly on them and on those of the classes below.
 // An object that nobody keeps is not made, and no call and no store looks a name up.
-// COUNT: operations <= 200 Todo: the objects that nobody keeps are still made: 273 operations, of which the allocator asks the run time for room 234 times
+// COUNT: operations <= 200 Todo on linux x64: the objects that nobody keeps are still made: 273 operations, of which the allocator asks the run time for room 234 times. On arm64 its blocks are larger: 69 times, 108 operations
 function Base(size) {
   this.size = size;
 }

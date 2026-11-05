@@ -1,6 +1,6 @@
 // locals-of-generators-set-to-null-behind-yields-let-go.ts with the two forms that a loop steps, in one executable with another program: there `registry.register(x, name)` goes through a native call frame.
 // Prints what the compiler saves: objects that are collected earlier
-// Todo on win32 x64: Not every time: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
+// Todo on win32 x64: compiled, the same ten of its objects were kept in each of four runs of CI: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them. The third object of "every turn" is left out there: plain Bun itself printed KEPT, KEPT, collected, collected for it in those runs
 // Entry points: ./another-program.mjs
 type Thing = { id: number; payload: number[] };
 let made = 0;
@@ -16,6 +16,7 @@ const registry = new FinalizationRegistry<string>(name => finalized.add(name));
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 const lines: string[] = [];
 const odd = (n: number) => n % 2 === 1;
+const referenceWavers = process.platform === "win32" && process.arch === "x64";
 
 function* yieldsInALoop(name: string, turns: number): Generator<number, void> {
   let x: Thing | null = make();
@@ -120,7 +121,7 @@ const forms: [string, () => Generator<number, void>, string[]][] = [
   ["does not assign again", () => assignsAgainOnOneWay("only", "never", odd(2)), ["only"]],
   ["sets to undefined", () => setsToUndefined("undefined"), ["undefined"]],
   ["in a try", () => inATry("try"), ["try"]],
-  ["every turn", () => everyTurn("turn ", 3), ["turn 0", "turn 1", "turn 2"]],
+  ["every turn", () => everyTurn("turn ", 3), referenceWavers ? ["turn 0", "turn 1"] : ["turn 0", "turn 1", "turn 2"]],
 ];
 for (const [form, start, names] of forms) {
   last(start());

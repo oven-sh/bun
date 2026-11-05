@@ -10,7 +10,7 @@
 // An argument that does not fit the parameter is not reported and not converted, and neither is the result: the callee tests what arrives and what it returns.
 
 // FILE: main.ts
-import { add } from "adder";
+import { add } from "adder"; // @ts-expect-error
 export const sum = add(1, "2");
 
 // FILE: tsconfig.json

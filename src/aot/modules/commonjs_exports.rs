@@ -22,7 +22,9 @@ use super::wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 use super::{BindInput, DescribedPart, ModuleRef, WrittenDescriptor, find_library_files};
 use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
-use crate::builtins::resolve::{ModuleObjectOwner, ModuleObjectUse};
+use crate::builtins::resolve::{
+    ModuleObjectOwner, ModuleObjectUse, redeclares_what_wrapper_hands_in,
+};
 use crate::ir::for_each_mut;
 use crate::known_helpers::{Helper, Quiet, Shape as HelperShape};
 use crate::load::SourceKind;
@@ -672,7 +674,7 @@ fn needs_wrapped_body(text: &Text<'_, '_>) -> bool {
     let mut scopes = bound.scopes.iter();
     let mut stores = bound.runtime.unbound_name_stores().iter();
     bound.file_uses_arguments()
-        || !bound.runtime.redeclared_commonjs_variables().is_empty()
+        || redeclares_what_wrapper_hands_in(text.hir, bound)
         || evals.any(|&(call, _)| !decisions.is_dead_expr(call))
         || scopes.any(|scope| matches!(scope.kind, ScopeKind::With(_)))
         || stores.any(|&(target, _)| match bound.binding(target) {

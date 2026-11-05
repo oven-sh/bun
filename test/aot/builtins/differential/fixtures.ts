@@ -21,6 +21,7 @@ import {
 
 export const never: DumpedType = {
   isAnything: false,
+  isMadeOfListedClasses: false,
   hasAnyObject: false,
   hasAnyFunction: false,
   hasPlainData: false,

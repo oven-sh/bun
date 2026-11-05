@@ -1,0 +1,46 @@
+# -- source: a-sum-that-is-changed-under-a-condition-in-a-nest-is-an-int32-at-every-head.ts
+# declare function sink(value: unknown): void;
+# const limits = JSON.parse("[5,4,3,0]") as number[]; let ticks = 0;
+# const tick = [(n: number) => { ticks = (ticks + n) | 0; }, (n: number) => { ticks = (ticks - n) | 0; }][limits[3]!]!;
+# function inside(rows: number, cols: number, mask: number): number {
+#   let a = 0;
+#   for (let r = 0; r < rows; r++) for (let i = 0; i < cols; i++) { tick(i); if ((r ^ i) & mask) a = (a + r * 31 + i) | 0; }
+#   return a;
+# }
+# function inFront(rows: number, cols: number, mask: number): number {
+#   let a = 0;
+#   for (let r = 0; r < rows; r++) { if (r & mask) a = (a ^ r) | 0; for (let i = 0; i < cols; i++) a = (a + r * 31 + i) | 0; }
+#   return a;
+# }
+# function threeDeep(rows: number, cols: number, mask: number): number {
+#   let a = 0;
+#   for (let r = 0; r < rows; r++) { if (r & mask) a = (a ^ r) | 0; for (let s = 0; s < rows; s++) { if (s & mask) a = (a - s) | 0; for (let i = 0; i < cols; i++) { tick(i); if ((s ^ i) & mask) a = (a + r * 31 + i) | 0; } } }
+#   return a;
+# }
+# function behindHandler(rows: number, cols: number, mask: number): number {
+#   let a = 0;
+#   for (let r = 0; r < rows; r++) {
+#     try { if (r === mask) throw new Error("low"); a = (a + r) | 0; if (r > mask) throw new Error("high"); } catch { ticks = (ticks ^ 5) | 0; }
+#     for (let i = 0; i < cols; i++) { if (i > 1) a = (a + 1) | 0; }
+#   }
+#   return a;
+# }
+# sink([inside, inFront, threeDeep, behindHandler].map(sum => sum(limits[0]! | 0, limits[1]! | 0, limits[2]! | 0)).join(" ") + " " + ticks);
+# -- end of source
+# `a` enters the outermost head as the written 0, so its row begins with a guess, int[0, 2^53], and the guess enters the heads inside. What comes round there is a meeting block's parameter: the head's own parameter, guess and all, beside an int32.
+# What is noted, handed up the heads and climbed from is what comes round BESIDE the parameter: meeting blocks and the entries of finished loops are looked through, also for what ENTERS a head inside; a handler's parameter, which is not
+# looked through, counts whole only where it holds more than the parameter and what stood beside. A row inside that fitted under the guess starts its next walk from what enters then. The sums ended as int[-2^53, 2^53] @Int64 at every head.
+# f3 = inside, f4 = inFront, f5 = threeDeep, f6 = behindHandler
+# OPTIONS: check=Validate
+# RUN: walk f3 f4 f5 f6 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: int[-9007199254740992
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: int[-9007199254740992
+# CHECK-LABEL: code f5:Body
+# CHECK-NOT: int[-9007199254740992
+# CHECK-LABEL: code f6:Body
+# CHECK-NOT: int[-9007199254740992
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 954 1274 4742 17 180
+# SHELL: exited with 0

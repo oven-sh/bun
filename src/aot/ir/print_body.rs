@@ -4,7 +4,7 @@ mod tests;
 use std::fmt::Write;
 
 use super::body::{BlockView, Body, TargetView, TerminatorView, ValueView};
-use super::generated::{BlockRole, print_terminator_fields, print_value_fields};
+use super::generated::{BlockFrequency, BlockRole, print_terminator_fields, print_value_fields};
 use super::ids::{Id, ValueId};
 use super::print::Printer;
 
@@ -48,6 +48,9 @@ impl Printer<'_> {
         if let Some(handler) = block.handler() {
             self.out.push_str(" handler=");
             self.print_target(handler);
+        }
+        if block.frequency != BlockFrequency::default() {
+            let _ = write!(self.out, " frequency={}", block.frequency.name());
         }
         self.out.push_str(":\n");
         for value in block.values() {

@@ -51,3 +51,4 @@ for (let i = 0; i < numbers.length; i++) tell(() => unsigned(numbers[i]));
 for (let i = 0; i < numbers.length; i++) tell(() => flipped(numbers[i]));
 tell(() => total(1, "none"));
 report("end");
+declare function report(value: unknown): void;

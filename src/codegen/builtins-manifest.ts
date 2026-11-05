@@ -11,6 +11,7 @@ import {
   functionIds,
   helperModules,
   locate,
+  locateFirstText,
   moduleList,
   nativeStartIndex,
   sourceFiles,
@@ -270,6 +271,14 @@ if (archive) {
     file,
     fs.readFileSync(locate(file)),
   ]);
+  // For a testing word: what `bun run` evaluates, of each module that has a second text for the compiler.
+  const firstTexts = "first-texts/";
+  for (const file of sourceFiles) {
+    const first = locateFirstText(file);
+    if (first !== undefined) files.push([firstTexts + file, fs.readFileSync(first)]);
+  }
+  const moduleOf = (name: string) =>
+    sourceFiles.indexOf(name.startsWith(firstTexts) ? name.slice(firstTexts.length) : name);
   for (const helper of helperModules) files.push([helper.path, fs.readFileSync(helper.source ?? bundledHelpers)]);
   files.push(["private.d.ts", Buffer.from(listOfModules.rest)]);
   for (const [file, text] of listOfModules.listings) files.push([file, Buffer.from(text)]);
@@ -287,7 +296,7 @@ if (archive) {
     };
     return zstdCompressSync(text, options);
   };
-  const frames = files.map(([name, text]) => compress(text, evaluated[sourceFiles.indexOf(name)]));
+  const frames = files.map(([name, text]) => compress(text, evaluated[moduleOf(name)]));
   // The list of the files, compressed, stands behind its length. Its offsets count from where it ends.
   const records = Buffer.alloc(files.length * recordLength);
   let offset = 0;
@@ -299,7 +308,7 @@ if (archive) {
     records.writeUInt32LE(offset, record + 1 + nameLength);
     records.writeUInt32LE(frames[i].length, record + 1 + nameLength + 4);
     // One more than the id of the module whose evaluated text the file follows on.
-    records.writeUInt32LE(sourceFiles.indexOf(name) + 1, record + 1 + nameLength + 8);
+    records.writeUInt32LE(moduleOf(name) + 1, record + 1 + nameLength + 8);
     offset += frames[i].length;
   }
   const list = compress(records);

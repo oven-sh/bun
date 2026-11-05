@@ -1,6 +1,7 @@
 // `bun build --compile --aot` takes --aot-harden=<names>, and Bun.build takes the same names as compile.aotHarden. None is on unless it is asked for.
 // proof-checks: what the compiler has proven of a value is tested where the value arrives, and no cell lies in a frame or is handed back.
-// ignore-told-ranges: every access by position tests the position where it stands, against the length that it reads there.
+// What an element is reached through is such a proof: each access reads where the storage lies, how long it is and of which kind, and stops where it was told otherwise.
+// ignore-told-ranges: the compiler tells no access that its position lies inside: each tests it where it stands, against the length that it reads there.
 // Each is tried against a lie that a word of --aot-testing plants in the compiler: with the name the process stops at the lie and says so. Without it nothing does,
 // but for what every build asks: no build believes unasked what comes out of code that the compiler does not see.
 import { expect } from "bun:test";
@@ -164,6 +165,40 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     });
   }, 120_000);
 
+  test("stops the program at a bound that is false", async () => {
+    using folder = tempDir("aot-harden", { "program.ts": storeBehindTheEnd });
+    await build(String(folder), ["--aot-harden=proof-checks", falseBound]);
+    const { stdout, stderr, exitCode } = await runBuilt(String(folder));
+    expect(stderr).toMatch(stopAtBound);
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  }, 120_000);
+
+  test("leaves no access without its test", async () => {
+    expect((await countsOf(countedLoops, [])).RangeChecksRemoved).toBeGreaterThan(0);
+    expect((await countsOf(countedLoops, ["--aot-harden=proof-checks"])).RangeChecksRemoved).toBe(0);
+  }, 120_000);
+
+  test("gives the same answers in loops over lists, views and texts", async () => {
+    using hardened = tempDir("aot-harden", { "program.ts": countedLoops });
+    using asEver = tempDir("aot-harden", { "program.ts": countedLoops });
+    await build(String(hardened), ["--aot-harden=proof-checks"]);
+    await build(String(asEver), []);
+    const expected = await runBuilt(String(asEver));
+    expect(expected.exitCode).toBe(0);
+    expect(await runBuilt(String(hardened))).toEqual(expected);
+  }, 120_000);
+
+  test("stops at no position that the library's sort hands over", async () => {
+    using hardened = tempDir("aot-harden", { "program.ts": sorts });
+    await build(String(hardened), ["--aot-harden=proof-checks"]);
+    expect(await runBuilt(String(hardened))).toEqual({
+      stdout: "1,3,5,9 9.5,5.5,3.5,1.5 0 310 310.5 0.5 w0 w99\n5 false 1,2,3,, 310 0 1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 120_000);
+
   test("says which words of the compiler it stands for", async () => {
     using folder = tempDir("aot-harden", { "program.ts": program });
     expect(await build(String(folder), ["--aot-harden=proof-checks"])).toContain(
@@ -197,9 +232,7 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
   }, 120_000);
 
   test("leaves no access without its test and reads no bound in front of a loop", async () => {
-    const underProofChecks = await countsOf(countedLoops, ["--aot-harden=proof-checks"]);
-    expect(underProofChecks.RangeChecksRemoved).toBeGreaterThan(0);
-    expect(underProofChecks.KnownInductionsUsed).toBeGreaterThan(0);
+    expect((await countsOf(countedLoops, [])).KnownInductionsUsed).toBeGreaterThan(0);
     const none = { AllocateInFramesChanges: 0, ClosuresInFrames: 0, RangeChecksRemoved: 0, KnownInductionsUsed: 0 };
     expect(await countsOf(countedLoops, ["--aot-harden=proof-checks,ignore-told-ranges"])).toEqual(none);
     expect(await countsOf(countedLoops, ["--aot-harden=ignore-told-ranges", "--aot-harden=proof-checks"])).toEqual(

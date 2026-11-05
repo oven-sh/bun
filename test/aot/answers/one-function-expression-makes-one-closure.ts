@@ -11,3 +11,4 @@ function relay(work: () => number, open: boolean) { if (!open) return 0; return 
 function user(round: number) { let total = 0; for (let at = 0; at < 6; at++) total += relay(() => at + round, at % 3 !== 0); return total; }
 for (let round = 0; round < 3; round++) report(user(round));
 report("end");
+declare function report(value: unknown): void;

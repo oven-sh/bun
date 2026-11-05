@@ -132,6 +132,21 @@ fn find_files_spelled_by(
     found
 }
 
+pub(super) fn list_what_made_names_may_find(
+    texts: &[TextThatSpellsFile],
+    require_in_their_bodies: impl Iterator<Item = FileId>,
+    found_by_name: &[FileId],
+) -> Vec<(FileId, FileId)> {
+    let written = texts.iter().map(|text| (text.written_in, text.spelled));
+    let mut found: Vec<(FileId, FileId)> = written.collect();
+    for file in require_in_their_bodies {
+        found.extend(found_by_name.iter().map(|&named| (file, named)));
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
 pub(super) fn is_every_file_found_by_name(input: &BindInput<'_, '_>, modules: &ModuleSet) -> bool {
     match input.runs_tests {
         true => input.helpers_of_tests_name_files,
@@ -146,11 +161,18 @@ pub(super) fn find_texts_that_spell_files(
     input: &BindInput<'_, '_>,
     modules: &ModuleSet,
 ) -> Option<Vec<TextThatSpellsFile>> {
+    match is_every_file_found_by_name(input, modules) {
+        true => None,
+        false => list_texts_that_spell_files(input),
+    }
+}
+
+pub(super) fn list_texts_that_spell_files(
+    input: &BindInput<'_, '_>,
+) -> Option<Vec<TextThatSpellsFile>> {
     let files = input.files;
     let mut compiled = files.compiled_files().iter();
-    if is_every_file_found_by_name(input, modules)
-        || !compiled.any(|&file| loads_by_unknown_name(files, file, |_| true))
-    {
+    if !compiled.any(|&file| loads_by_unknown_name(files, file, |_| true)) {
         return None;
     }
     let files_by_spelling = index_by_spelling(input);

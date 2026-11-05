@@ -35,7 +35,7 @@ export const neverEvaluated = [
   /^(CompressionStream|DecompressionStream)\b/,
   /^console\./,
   /^process\.(_|abort|exit|reallyExit|kill|chdir|execve|binding|dlopen|loadEnvFile|report|set|initgroups|stdout|stderr|stdin|mainModule|emitWarning|assert|umask|title|debugPort|connected|exitCode|ref|unref)/,
-  /^Bun\.(\$|Archive|FFI|FetchSession|FileSystemRouter|Image|RedisClient|S3Client|Transpiler|build|connect|cron|fetch|file|gc|generateHeapSnapshot|jest|listen|mmap|openInEditor|registerMacro|resolve|resolveSync|serve|shrink|spawn|spawnSync|udpSocket|which|write|dns|secrets|unsafe|password|CSRF|sleepSync|sleep|Cookie|CookieMap|markdown)\b/,
+  /^Bun\.(\$|Archive|FFI|FetchSession|FileSystemRouter|Image|RedisClient|S3Client|Transpiler|build|connect|cron|fetch|file|gc|generateHeapSnapshot|jest|listen|mmap|openInEditor|registerMacro|resolve|resolveSync|serve|shrink|spawn|spawnSync|udpSocket|which|write|dns|secrets|unsafe|password|CSRF|sleepSync|sleep|Cookie|markdown)\b/,
   /^performance\.(addEventListener|removeEventListener|dispatchEvent|onresourcetimingbufferfull|markResourceTiming|timing)/,
   /^Temporal/,
   /^Request\.prototype\.(signal|clone)/,

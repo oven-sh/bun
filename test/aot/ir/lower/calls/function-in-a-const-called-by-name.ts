@@ -49,7 +49,7 @@ export function jumpsOver(k: number) {
     case 0:
       const inCase = () => 1;
       return inCase();
-    default:
+    default: // @ts-expect-error
       return inCase();
   }
 }

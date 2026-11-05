@@ -303,17 +303,34 @@ impl<'s> Folder<'_, 's> {
         };
         match is_decided_by_left {
             Some(true) => {
-                self.exclude_operand(right, |folder| match op {
+                let is_excluded_by_bun_run = |folder: &Self| match op {
                     LogicalOperator::And | LogicalOperator::Or => {
                         folder.is_truthy_in_bun_run(left).is_some()
                     }
                     LogicalOperator::Nullish => folder.is_nullish_in_bun_run(left).is_some(),
-                });
+                };
+                if is_excluded_by_bun_run(self) {
+                    self.stands_alone_in_bun_run.insert(left.idx());
+                }
+                self.exclude_operand(right, is_excluded_by_bun_run);
                 self.copy_condition(e, left);
                 self.folded(left)
             }
             Some(false) => {
                 self.goes_on_to_the_right.push(e);
+                let is_left_out_by_bun_run = match op {
+                    LogicalOperator::And | LogicalOperator::Or => {
+                        self.is_truthy_in_bun_run(left).is_some()
+                            && self.tells_condition_without_effects(left)
+                    }
+                    LogicalOperator::Nullish => {
+                        self.is_nullish_in_bun_run(left) == Some(true)
+                            && self.is_literal_to_bun_run(left)
+                    }
+                };
+                if is_left_out_by_bun_run {
+                    self.stands_alone_in_bun_run.insert(right.idx());
+                }
                 self.copy_condition(e, right);
                 let effects_of_left = self.effects_where_unused(left, |folder| match op {
                     LogicalOperator::And | LogicalOperator::Or => {
@@ -399,6 +416,9 @@ impl<'s> Folder<'_, 's> {
         self.exclude_operand(excluded, |folder| {
             folder.is_test_truthy_in_bun_run(test).is_some()
         });
+        if self.is_test_truthy_in_bun_run(test).is_some() && self.leaves_out_known_test(test) {
+            self.stands_alone_in_bun_run.insert(selected.idx());
+        }
         self.copy_condition(e, selected);
         let effects_of_test =
             self.effects_where_unused(test, |folder| folder.leaves_out_known_test(test));

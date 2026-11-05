@@ -7,7 +7,7 @@
 // module, which the end of the mock had let go of: what the run time then did for the module never reached that record.
 //
 // TODO(4306): the compiled run still calls the factory as soon as the loader comes to the mocked module, so the graph keeps the first mock. The cases marked `failing` say what `bun test`
-// prints, and turn red on the day the compiled run prints it too: then the mark goes.
+// prints, and turn red on the day the compiled run prints it too: then the mark goes. Until then this is a wrong answer and no goal, and nothing says so in the run: the names say it.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
@@ -80,7 +80,10 @@ for (const [name, { body, printsAsPlain }] of Object.entries(forms)) {
       const { compiled } = await run();
       expect({ signalCode: compiled.signalCode, crash: compiled.crash }).toEqual({ signalCode: null, crash: null });
     });
-  (printsAsPlain ? test : test.failing)(`${name}: it prints what bun test prints`, async () => {
+  const wrongToday =
+    "a wrong answer today: under `bun test --aot` the graph gets the mock that was taken back, where `bun test` hands it the file";
+  const title = `${name}: it prints what bun test prints`;
+  (printsAsPlain ? test : test.failing)(printsAsPlain ? title : `${title}: ${wrongToday}`, async () => {
     const { plain, compiled } = await run();
     expect(plain.lines.at(-1)).toMatch(/^seen /);
     expect({ lines: compiled.lines, exitCode: compiled.exitCode }).toEqual({

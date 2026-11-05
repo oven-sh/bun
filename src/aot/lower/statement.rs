@@ -6,6 +6,7 @@ use bun_sema::hir::{ExprId, ExprKind, IdList, StmtId, StmtKind};
 
 use super::control::BreakTargetKind;
 use super::{FunctionLowering, commonjs, dispose, module, scope};
+use crate::builtins::SourceDialect;
 use crate::ir::BlockId;
 use crate::modules::Member;
 
@@ -248,15 +249,30 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
 
-        let then_block = self.create_block();
+        let then_block = self.create_block_of_arm(yes);
         let after = self.create_block();
-        let else_block = no.some().map(|_| self.create_block());
+        let else_block = no.some().map(|no| self.create_block_of_arm(no));
         self.lower_condition(test, then_block, else_block.unwrap_or(after));
         self.lower_if_arm(then_block, yes, after);
         if let Some(else_block) = else_block {
             self.lower_if_arm(else_block, no, after);
         }
         self.continue_in(after);
+    }
+
+    fn create_block_of_arm(&mut self, arm: StmtId) -> BlockId {
+        let hir = self.file.hir;
+        if self.file.source.dialect() == SourceDialect::Runtime
+            && let StmtKind::Block(statements) = hir[arm].kind
+            && statements.len != 0
+            && let StmtKind::Expr(first) | StmtKind::Directive { expr: first, .. } =
+                hir[hir.id_at(statements, 0)].kind
+            && let ExprKind::String(text) = hir[first].kind
+            && self.file.queries.atom_bytes(text) == b"unlikely"
+        {
+            return self.create_unlikely_block();
+        }
+        self.create_block()
     }
 
     fn lower_if_arm(&mut self, block: BlockId, statement: StmtId, after: BlockId) {

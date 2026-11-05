@@ -3770,11 +3770,13 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.symbol_to_string(sym)
         };
+        let subject = self.subject_of_arguments(&[Arg::Sym(sym)]);
         self.error_at(
             at,
             code,
             &[Arg::Bytes(&name), Arg::Number(least), Arg::Number(most)],
-        );
+        )
+        .subject = subject;
         is_js.then_some(most)
     }
 
@@ -4487,7 +4489,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `sig_type_params` for a signature that wasn't queried recently.
     fn look_up_sig_type_params(&mut self, sig: SigId) -> List<'p, TypeId> {
         match self.types().sig(sig) {
-            SigData::Synth { type_params, .. } => return List::Permanent(type_params),
+            SigData::Synth(SynthSig { type_params, .. }) => return List::Permanent(type_params),
             SigData::WithReturn { sig: inner, .. } => return self.sig_type_params(*inner),
             // Most functions have none.
             SigData::Decl { file, func, .. } if self.hir(*file)[*func].type_params.is_empty() => {
@@ -4552,7 +4554,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .filter(|&tp| self.types().map(mapper, tp).is_none())
                     .collect()
             }
-            SigData::Synth { type_params, .. } => type_params.to_vec(),
+            SigData::Synth(SynthSig { type_params, .. }) => type_params.to_vec(),
             SigData::WithReturn { sig: inner, .. } => {
                 let inner = *inner;
                 self.sig_type_params(inner).into_vec()
@@ -4857,7 +4859,7 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::WithReturn { sig: inner, .. } => {
                 return self.sig_params_with_first(*inner, count);
             }
-            SigData::Synth { params, .. } => return self.cached_sig_params(sig, params),
+            SigData::Synth(SynthSig { params, .. }) => return self.cached_sig_params(sig, params),
             // Nothing is cached for these.
             SigData::DefaultConstruct { .. } => {
                 return match self.default_construct_base_sig(sig) {
@@ -5219,13 +5221,13 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn derive_return_type(&mut self, sig: SigId) -> TypeId {
         match *self.types().sig(sig) {
             // `case sig.composite != nil`
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ret: TypeId::UNRESOLVED,
                 ref of,
                 is_union,
                 ref type_params,
                 ..
-            } if of.len() > 1 => self.resolve_return_type(sig, |c| {
+            }) if of.len() > 1 => self.resolve_return_type(sig, |c| {
                 if let Some(as_before) = c.return_type_of_grown_signature(sig) {
                     return as_before;
                 }
@@ -5259,7 +5261,7 @@ impl<'p, 's> Checker<'p, 's> {
             } if self.is_optional_call_signature_of(of) => {
                 self.resolve_return_type(sig, |c| c.return_type_of_optional_call_signature(of))
             }
-            SigData::Synth { ret, .. } | SigData::WithReturn { ret, .. } => ret,
+            SigData::Synth(&SynthSig { ret, .. }) | SigData::WithReturn { ret, .. } => ret,
             // `case sig.target != nil`
             SigData::Decl { file, func, mapper } if self.is_instantiating(mapper) => self
                 .resolve_return_type(sig, |c| {
@@ -5413,7 +5415,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
         let (file, func, mapper) = match *self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_this_parameter(inner),
-            SigData::Synth { this, .. } => return Some((this?, sig)),
+            SigData::Synth(&SynthSig { this, .. }) => return Some((this?, sig)),
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
         };
@@ -5475,9 +5477,9 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn derive_type_predicate(&mut self, sig: SigId) -> Option<Predicate> {
         let (file, func, mapper) = match *self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_predicate(inner),
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ref of, is_union, ..
-            } => {
+            }) => {
                 return match of[..] {
                     [] => None,
                     // `cloneSignature`, `instantiateSignatureEx`: the declaration, the target and

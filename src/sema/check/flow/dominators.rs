@@ -15,21 +15,22 @@ pub(super) struct FlowDominators {
     enclosing_loop: Vec<u32>,
     starts_of_many: Vec<u32>,
     tests: Vec<(u32, u32, u32)>,
+    tests_by_property: Vec<(u32, u32, u32, u32)>,
     about_anything: Vec<(u32, u32)>,
     calls: Vec<(u32, u32)>,
     last_busy_call: Vec<u32>,
 }
 
 struct TestRoots {
-    roots: SmallVec<[u32; 4]>,
+    roots: SmallVec<[(u32, u32); 4]>,
     concerns_anything: bool,
 }
 
 impl NarrowingSubjects for TestRoots {
-    fn add(&mut self, root: u32, _: u32) {
+    fn add(&mut self, root: u32, first: u32) {
         match root {
             0 => self.concerns_anything = true,
-            _ => self.roots.push(root),
+            _ => self.roots.push((root, first)),
         }
     }
 
@@ -105,6 +106,19 @@ impl FlowDominators {
         let after = self.tests.partition_point(|&it| it <= (root, start, up_to));
         match self.tests[..after].last() {
             Some(&(its_root, its_start, node)) if (its_root, its_start) == (root, start) => node,
+            _ => 0,
+        }
+    }
+
+    fn find_last_test_about_property(&self, root: u32, first: u32, start: u32, up_to: u32) -> u32 {
+        let tests = &self.tests_by_property;
+        let after = tests.partition_point(|&it| it <= (root, first, start, up_to));
+        match tests[..after].last() {
+            Some(&(its_root, its_first, its_start, node))
+                if (its_root, its_first, its_start) == (root, first, start) =>
+            {
+                node
+            }
             _ => 0,
         }
     }
@@ -196,7 +210,13 @@ impl Checker<'_, '_> {
                         concerns_anything: false,
                     };
                     self.note_test(file, expr, 0, &mut about);
-                    (index.tests).extend(about.roots.iter().map(|&root| (root, start, i)));
+                    (index.tests).extend(about.roots.iter().map(|&(root, _)| (root, start, i)));
+                    (index.tests_by_property).extend(
+                        about
+                            .roots
+                            .iter()
+                            .map(|&(root, first)| (root, first, start, i)),
+                    );
                     if about.concerns_anything {
                         index.about_anything.push((start, i));
                     }
@@ -205,6 +225,7 @@ impl Checker<'_, '_> {
             }
         }
         index.tests.shared_sort_unstable();
+        index.tests_by_property.shared_sort_unstable();
         index.about_anything.shared_sort_unstable();
         index.calls.shared_sort_unstable();
         index.last_busy_call = (0..index.calls.len() as u32).collect();
@@ -330,9 +351,23 @@ impl Checker<'_, '_> {
         }
         let (last_assignment, _) =
             (self.flow_memo.runs).nodes_about(root, reference, FlowId(up_to));
+        let last_test = match reference.path.first().map(|first| first.name.get()) {
+            None => index.find_last_test_about(root, start, up_to),
+            Some(AccessedName::Some(name)) => index
+                .find_last_test_about_property(root, 0, start, up_to)
+                .max(index.find_last_test_about_property(
+                    root,
+                    name.0.wrapping_add(1),
+                    start,
+                    up_to,
+                )),
+            Some(AccessedName::None | AccessedName::Unresolved(_)) => {
+                index.find_last_test_about_property(root, 0, start, up_to)
+            }
+        };
         let least = last_assignment
             .max(index.enclosing_loop[flow.idx()])
-            .max(index.find_last_test_about(root, start, up_to))
+            .max(last_test)
             .max(index.find_last_about_anything(start, up_to));
         if index.nodes[flow.idx()].dominator < least || least > flow.0 {
             return None;

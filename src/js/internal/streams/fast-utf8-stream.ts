@@ -60,6 +60,7 @@ class Utf8Stream extends EventEmitter {
   #bufs: any[] = [];
   #lens: number[] = [];
   #writing = false;
+  #writesInFlight = 0;
   #ending = false;
   #reopening = false;
   #asyncDrainScheduled = false;
@@ -150,7 +151,15 @@ class Utf8Stream extends EventEmitter {
     // Bound methods instead of node's rest/spread arrows: the arrows allocate an
     // arguments array on every write()/flush(), and the per-write inner release
     // callback allocated a fresh closure per fs.write. Bind once here.
-    const boundRelease = this.#release.bind(this) as (err: any, n: any) => void;
+    const boundRelease = (err: any, n: any) => {
+      try {
+        this.#release(err, n);
+      } finally {
+        if (--this.#writesInFlight === 0 && this.#destroyed) {
+          this.#closeFd();
+        }
+      }
+    };
     if (contentMode === kContentModeBuffer) {
       this.#writingBuf = kEmptyBuffer;
       this.#write = this.#writeBuffer.bind(this);
@@ -161,6 +170,7 @@ class Utf8Stream extends EventEmitter {
         return this.#fs.writeSync(this.#fd, this.#writingBuf);
       }.bind(this);
       this.#fsWrite = function fsWriteBuffer(this: Utf8Stream) {
+        this.#writesInFlight++;
         return this.#fs.write(this.#fd, this.#writingBuf, boundRelease);
       }.bind(this);
     } else {
@@ -173,6 +183,7 @@ class Utf8Stream extends EventEmitter {
         return this.#fs.writeSync(this.#fd, this.#writingBuf, "utf8");
       }.bind(this);
       this.#fsWrite = function fsWriteUtf8(this: Utf8Stream) {
+        this.#writesInFlight++;
         return this.#fs.write(this.#fd, this.#writingBuf, "utf8", boundRelease);
       }.bind(this);
     }
@@ -349,6 +360,7 @@ class Utf8Stream extends EventEmitter {
   #release(err?, n?) {
     if (err) {
       if (
+        !this.#destroyed &&
         (err.code === "EAGAIN" || err.code === "EBUSY") &&
         this.#retryEAGAIN(err, this.#writingBuf.length, this.#len - this.#writingBuf.length)
       ) {
@@ -364,7 +376,7 @@ class Utf8Stream extends EventEmitter {
           }
         } else {
           // Let's give the destination some time to process the chunk.
-          setTimeout(() => this.#fsWrite(), BUSY_WRITE_TIMEOUT);
+          setTimeout(() => (this.#destroyed ? this.#release(err) : this.#fsWrite()), BUSY_WRITE_TIMEOUT);
         }
       } else {
         this.#writing = false;
@@ -398,6 +410,18 @@ class Utf8Stream extends EventEmitter {
       }
     }
 
+    if (this.#destroyed) {
+      this.#writing = false;
+      if (this.#flushPending) {
+        if (this.#len === 0) {
+          this.#scheduleDrain();
+        } else {
+          this.emit("error", $ERR_INVALID_STATE("Utf8Stream is destroyed"));
+        }
+      }
+      return;
+    }
+
     if (this.#fsync) {
       this.#fs.fsyncSync(this.#fd);
     }
@@ -418,14 +442,18 @@ class Utf8Stream extends EventEmitter {
       }
     } else {
       this.#writing = false;
-      if (this.#sync) {
-        if (!this.#asyncDrainScheduled) {
-          this.#asyncDrainScheduled = true;
-          process.nextTick(() => this.#emitDrain());
-        }
-      } else {
-        this.emit("drain");
+      this.#scheduleDrain();
+    }
+  }
+
+  #scheduleDrain() {
+    if (this.#sync) {
+      if (!this.#asyncDrainScheduled) {
+        this.#asyncDrainScheduled = true;
+        process.nextTick(() => this.#emitDrain());
       }
+    } else {
+      this.emit("drain");
     }
   }
 
@@ -519,6 +547,10 @@ class Utf8Stream extends EventEmitter {
       return;
     }
 
+    if (this.#destroyed) {
+      return;
+    }
+
     if (this.#periodicFlushTimer !== undefined) {
       clearInterval(this.#periodicFlushTimer);
     }
@@ -527,6 +559,13 @@ class Utf8Stream extends EventEmitter {
     this.#bufs = [];
     this.#lens = [];
 
+    // Otherwise the callback of the write closes the file.
+    if (this.#writesInFlight === 0) {
+      this.#closeFd();
+    }
+  }
+
+  #closeFd() {
     const done = err => {
       if (err) {
         this.emit("error", err);

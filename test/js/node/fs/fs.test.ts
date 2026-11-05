@@ -8555,6 +8555,142 @@ describe("fs.Utf8Stream", () => {
     });
     await done;
   });
+
+  // Records the stream's calls into node:fs and its events, in their order.
+  function record(
+    dir: string,
+    { byPath = false, ...options }: Record<string, unknown>,
+    write: (...args: any[]) => void = fs.write,
+  ) {
+    const dest = path.join(dir, "out.log");
+    const log: string[] = [];
+    const call =
+      (name: string, target: (...args: any[]) => void) =>
+      (...args: any[]) => {
+        log.push(name);
+        target(...args);
+      };
+    const stream = new fs.Utf8Stream({
+      fd: byPath ? dest : openSync(dest, "w"),
+      sync: false,
+      ...options,
+      fs: { write: call("write", write), fsync: call("fsync", fs.fsync), close: call("close", fs.close) },
+    });
+    const closed = Promise.withResolvers<void>();
+    stream.on("drain", () => log.push("'drain'"));
+    stream.on("finish", () => log.push("'finish'"));
+    stream.on("error", (error: NodeJS.ErrnoException) => log.push(`'error' ${error.code}`));
+    stream.on("close", () => {
+      log.push("'close'");
+      closed.resolve();
+    });
+    return { dest, log, stream, closed: closed.promise };
+  }
+
+  it("destroy() closes the file after the write that is under way", async () => {
+    using dir = tempDir("utf8stream-destroy-write", {});
+    let finishWrite!: () => void;
+    const { dest, log, stream, closed } = record(String(dir), {}, (...args) => {
+      finishWrite = () => (fs.write as any)(...args);
+    });
+    stream.write("hello\n");
+    stream.destroy();
+    expect(log).toEqual(["write"]);
+    finishWrite();
+    await closed;
+    expect(log).toEqual(["write", "fsync", "close", "'close'"]);
+    expect(readFileSync(dest, "utf8")).toBe("hello\n");
+  });
+
+  it("flush() succeeds when destroy() follows it at once", async () => {
+    using dir = tempDir("utf8stream-destroy-flush", {});
+    let finishWrite!: () => void;
+    const { dest, log, stream, closed } = record(String(dir), { minLength: 4096 }, (...args) => {
+      finishWrite = () => (fs.write as any)(...args);
+    });
+    stream.write("hello\n");
+    stream.flush((error?: Error | null) => log.push(`flushed ${error}`));
+    stream.destroy();
+    expect(log).toEqual(["write"]);
+    finishWrite();
+    await closed;
+    expect(log).toEqual(["write", "'drain'", "flushed undefined", "fsync", "close", "'close'"]);
+    expect(readFileSync(dest, "utf8")).toBe("hello\n");
+  });
+
+  it.each(["at once", "in a 'write' listener"])(
+    "destroy() %s closes the file after the rest of a partial write",
+    async when => {
+      using dir = tempDir("utf8stream-destroy-partial", {});
+      let finishWrite: (() => void) | undefined;
+      const rest = Promise.withResolvers<void>();
+      const { dest, log, stream, closed } = record(String(dir), {}, (fd, data, encoding, callback) => {
+        if (data === "hello\n") return fs.write(fd, "hel", encoding, callback);
+        finishWrite = () => fs.write(fd, data, encoding, callback);
+        rest.resolve();
+      });
+      if (when !== "at once") stream.once("write", () => stream.destroy());
+      stream.write("hello\n");
+      if (when === "at once") stream.destroy();
+      await rest.promise;
+      expect(log).toEqual(["write", "write"]);
+      finishWrite!();
+      await closed;
+      expect(log).toEqual(["write", "write", "fsync", "close", "'close'"]);
+      expect(readFileSync(dest, "utf8")).toBe("hello\n");
+    },
+  );
+
+  it("destroy() drops what is buffered behind the write that is under way", async () => {
+    using dir = tempDir("utf8stream-destroy-buffered", {});
+    const { dest, log, stream, closed } = record(String(dir), {});
+    stream.write("first\n");
+    stream.write("second\n");
+    stream.destroy();
+    await closed;
+    expect(log).toEqual(["write", "fsync", "close", "'close'"]);
+    expect(readFileSync(dest, "utf8")).toBe("first\n");
+  });
+
+  it("flush() fails when destroy() drops a part of the data", async () => {
+    using dir = tempDir("utf8stream-destroy-flush-dropped", {});
+    const { dest, log, stream, closed } = record(String(dir), { minLength: 4, maxWrite: 8 });
+    stream.write("first\n");
+    stream.write("second\n");
+    stream.flush((error?: NodeJS.ErrnoException | null) => log.push(`flushed ${error?.code}`));
+    stream.destroy();
+    await closed;
+    expect(log).toEqual([
+      "write",
+      "'error' ERR_INVALID_STATE",
+      "flushed ERR_INVALID_STATE",
+      "fsync",
+      "close",
+      "'close'",
+    ]);
+    expect(readFileSync(dest, "utf8")).toBe("first\n");
+  });
+
+  it("end() and then destroy() end with 'finish' and 'close'", async () => {
+    using dir = tempDir("utf8stream-end-destroy", {});
+    const { dest, log, stream, closed } = record(String(dir), {});
+    stream.write("hello\n");
+    stream.end();
+    stream.destroy();
+    await closed;
+    expect(log).toEqual(["write", "fsync", "close", "'finish'", "'close'"]);
+    expect(readFileSync(dest, "utf8")).toBe("hello\n");
+  });
+
+  it.each(["destroy", "end"])("%s() and then destroy() while the file is being opened", async first => {
+    using dir = tempDir("utf8stream-destroy-opening", {});
+    const { log, stream, closed } = record(String(dir), { byPath: true });
+    stream[first]();
+    stream.destroy();
+    await closed;
+    // Node has no 'finish' after end() here.
+    expect(log.filter(entry => entry !== "'finish'")).toEqual(["fsync", "close", "'close'"]);
+  });
 });
 
 describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows during the read", () => {

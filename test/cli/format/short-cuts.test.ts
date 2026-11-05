@@ -3364,6 +3364,12 @@ describe("TypeScript that the long way rejects", () => {
     "function* g() { f<yield>(a) }",
     "function* g() {\n  f<yield>(a);\n}\n",
     "async function g() { f<await>(a) }",
+    "class A { m(@a(await) b) {} }",
+    "class A { *m(@yield b) {} }",
+    "async function f() { import await = b.c }",
+    "import.meta; await",
+    "x = import.meta.url;\nawait;\n",
+    "type A = [if: T];\nawait",
     // the head of a `for`
     "for (var a = 1 in b);",
     "for (let a = 1 of b);",

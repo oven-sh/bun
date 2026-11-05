@@ -943,6 +943,10 @@ impl Quick {
         let element: i32;
         if self.is_tuple_element_name()? {
             let label_start = self.lexer.tok_start;
+            if self.lexer.tok != tk::Name {
+                // (a word of the language is a name here, unless TypeScript reads the statement a second time)
+                return Err(self.unexpected());
+            }
             let label = self.parse_ident_name()?;
             let flags = if self.eat(tk::Question)? {
                 F_OPTIONAL
@@ -2294,10 +2298,7 @@ impl Quick {
 
     /// `import a = require("b")`, `import a = b.c`. The current token is the name.
     pub(crate) fn ts_parse_import_equals(&mut self, start: i32, import_kind: i32) -> R<i32> {
-        if self.is_kw(kw::Enum) {
-            return Err(self.text_refuse());
-        }
-        let id = self.identifier()?;
+        let id = self.parse_ident()?;
         self.expect(tk::Eq)?;
         let reference: i32;
         if self.word() == w::Require && self.peek()? == tk::ParenL {

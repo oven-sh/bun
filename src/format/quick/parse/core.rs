@@ -3046,9 +3046,10 @@ impl Quick {
             if self.parse.typed == TYPED_TS {
                 // any expression that can be called, but `@a [b]() {}` is a decorator before a computed key
                 let expr_start = self.lexer.tok_start;
-                if self.lexer.tok == tk::Lt {
+                if self.lexer.tok == tk::Lt || self.is_kw(kw::Yield) {
                     return Err(self.text_refuse());
                 }
+                let await_names = self.parse.await_names;
                 let atom = self.parse_expr_atom()?;
                 if self.is_bare_arrow(atom) {
                     return Err(self.text_refuse());
@@ -3056,6 +3057,10 @@ impl Quick {
                 self.parse.in_decorator = 1;
                 expression = self.parse_subscripts(atom, expr_start, false)?;
                 self.parse.in_decorator = 0;
+                if self.parse.await_names != await_names {
+                    // `await` is the operator in a decorator
+                    return Err(self.text_refuse());
+                }
             } else if self.lexer.tok == tk::ParenL {
                 expression = self.parse_paren_and_distinguish()?;
             } else {
@@ -5135,6 +5140,8 @@ impl Quick {
                 if self.parse.is_common_js && self.parse.typed == 0 {
                     return Err(self.fail(start));
                 }
+                // it makes a file of TypeScript a module
+                self.parse.needs_module |= self.parse.typed == TYPED_TS;
                 let meta = self.node0(k::Identifier, start, meta_end);
                 let property = self.identifier()?;
                 return Ok(self.node2(k::MetaProperty, start, self.lexer.prev_end, meta, property));

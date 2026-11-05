@@ -1070,29 +1070,40 @@ pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JS
         // SAFETY: parsing runs no JavaScript. Nor does making the values: what would is left in `pending`. What throws
         // returns without reading `input` again.
         let global = unsafe { cx.heap.global() };
-        let result = parse_to_values(global, input.get(&cx.heap), roots, &mut pending)?;
-        let global = cx.global();
-        for PendingProperty {
-            mapping,
-            key,
-            value,
-        } in pending
-        {
-            mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
-        }
+        let text = input.get(&cx.heap);
+        let result = parse_to_values::<super::WholeText>(global, text, roots, &mut pending)?;
+        define_pending(cx.global(), pending)?;
         Ok(result)
     })
 }
 
 /// A property that waits for the tree to be gone. Its key is a sequence or a mapping, or it comes after one that is.
 /// `ToString` of those is JavaScript, which can free the input that the tree points into.
-struct PendingProperty {
+pub(crate) struct PendingProperty {
     mapping: JSValue,
     key: JSValue,
     value: JSValue,
 }
 
-fn parse_to_values(
+/// Defines the properties that waited. This runs JavaScript: the caller no longer reads the input.
+#[inline]
+pub(crate) fn define_pending(
+    global: &JSGlobalObject,
+    pending: Vec<PendingProperty>,
+) -> JsResult<()> {
+    for PendingProperty {
+        mapping,
+        key,
+        value,
+    } in pending
+    {
+        mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
+    }
+    Ok(())
+}
+
+/// The value of the YAML `input`, but for the properties that it leaves in `pending`. `roots` holds what it makes.
+pub(crate) fn parse_to_values<Caller: super::TextFormatCaller>(
     global: &JSGlobalObject,
     input: &[u8],
     roots: &mut MarkedArgumentBuffer,
@@ -1107,18 +1118,16 @@ fn parse_to_values(
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
                 Err(YamlParseError::SyntaxError) => {
-                    if !log.msgs.is_empty() {
-                        let first_msg = &log.msgs[0];
-                        let error_text = &first_msg.data.text;
-                        return Err(global.throw_value(global.create_syntax_error_instance(
-                            format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
-                        )));
-                    }
-                    return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("YAML Parse error: Unable to parse YAML string"),
-                    )));
+                    return Err(super::throw_parse_error(
+                        global,
+                        log,
+                        "YAML",
+                        "Unable to parse YAML string",
+                        Caller::LINES_BEFORE,
+                    ));
                 }
             };
+        Caller::check_root(global, &root)?;
 
         let mut ctx = ParserCtx {
             seen_objects: HashMap::default(),

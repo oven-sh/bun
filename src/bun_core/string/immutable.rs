@@ -2325,6 +2325,12 @@ pub use crate::strings_impl::utf8_byte_sequence_length;
 /// Strip leading chars in `values_to_strip`.
 pub use crate::strings_impl::trim_left;
 
+/// Width-generic [`trim_left`].
+pub fn trim_left_t<'a, T: PathByte>(str: &'a [T], values_to_strip: &[T]) -> &'a [T] {
+    let kept = str.iter().position(|c| !values_to_strip.contains(c));
+    &str[kept.unwrap_or(str.len())..]
+}
+
 /// Strip trailing chars in `values_to_strip`.
 pub use crate::strings_impl::trim_right;
 

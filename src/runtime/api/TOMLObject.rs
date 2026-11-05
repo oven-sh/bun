@@ -7,6 +7,13 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, TemporalT
 use bun_parsers::toml::TOML;
 
 pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
+    parse_text::<super::WholeText>(heap, input)
+}
+
+pub(crate) fn parse_text<Caller: super::TextFormatCaller>(
+    heap: &JsHeap<'_>,
+    input: &[u8],
+) -> JsResult<JSValue> {
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, its properties are defined
     // and not set, and a date or a time is `Temporal.*.from` of a primitive string, which looks nothing up. What throws
     // returns without reading `input` again.
@@ -22,19 +29,16 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
                     return Err(JsError::OutOfMemory);
                 }
                 Err(_) => {
-                    if let Some(first_msg) = log.msgs.first() {
-                        return Err(global.throw_value(global.create_syntax_error_instance(
-                            format_args!(
-                                "TOML Parse error: {}",
-                                bstr::BStr::new(&first_msg.data.text),
-                            ),
-                        )));
-                    }
-                    return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("TOML Parse error: Unable to parse TOML"),
-                    )));
+                    return Err(super::throw_parse_error(
+                        global,
+                        log,
+                        "TOML",
+                        "Unable to parse TOML",
+                        Caller::LINES_BEFORE,
+                    ));
                 }
             };
+        Caller::check_root(global, &root)?;
 
         super::expr_to_js(root, global)
     })

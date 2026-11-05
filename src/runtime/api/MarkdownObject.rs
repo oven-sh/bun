@@ -1,11 +1,12 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
+use super::{toml_object, yaml_object};
 use crate::generated_bindgen::markdown_object::{
-    AnsiTheme, Autolinks, ComponentOverrides, Headings, MarkdownOptions, ReactOptions,
+    AnsiTheme, Autolinks, ComponentOverrides, FrontMatter, Headings, MarkdownOptions, ReactOptions,
     RenderCallbacks,
 };
-use bun_core::StackCheck;
-use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
+use bun_core::{StackCheck, strings};
+use bun_jsc::bindgen::{self, JsBytes, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer, RangeErrorOptions,
@@ -15,6 +16,7 @@ use bun_jsc::{
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
 use crate::node::StringOrBuffer;
+use bun_md::front_matter;
 use bun_md::parser::{MAX_INPUT_LEN, ParserError};
 use bun_md::root as md;
 
@@ -86,7 +88,8 @@ macro_rules! parser_options {
             no_indented_code_blocks,
             no_html_blocks,
             no_html_spans,
-            tag_filter
+            tag_filter,
+            frontmatter
         )
     };
     ($given:expr; $($flag:ident),*) => {{
@@ -158,6 +161,10 @@ pub(crate) fn ansi<'a>(
     input: JsBytes<'a>,
     theme: &AnsiTheme,
 ) -> JsResult<Box<[u8]>> {
+    let mut options = md::Options::TERMINAL;
+    if let Some(frontmatter) = theme.frontmatter {
+        options.frontmatter = frontmatter;
+    }
     let theme = md::AnsiTheme {
         colors: theme.colors.unwrap_or(true),
         hyperlinks: theme.hyperlinks.unwrap_or(false),
@@ -170,7 +177,7 @@ pub(crate) fn ansi<'a>(
 
     let input = input.get(&cx.heap);
     let input_len = input.len();
-    match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
+    match md::render_to_ansi(input, options, theme) {
         Ok(Some(r)) => Ok(r),
         Ok(None) => {
             // The parser can only return null via JSError
@@ -191,6 +198,99 @@ pub(crate) fn html<'a>(
     let input_len = input.len();
     md::render_to_html_with_options(input, parser_options!(options))
         .map_err(|err| parser_err_to_js(cx.global(), err, input_len))
+}
+
+/// The metadata of `Bun.markdown.frontmatter`: the lines between the fences. The opening fence is the line before them.
+struct Metadata;
+
+impl super::TextFormatCaller for Metadata {
+    const LINES_BEFORE: Option<u32> = Some(1);
+
+    fn check_root(global: &JSGlobalObject, root: &bun_ast::Expr) -> JsResult<()> {
+        use bun_ast::expr::Data;
+        match root.data {
+            // A null root is metadata with nothing in it but comments.
+            Data::EObject(_) | Data::ENull(_) => Ok(()),
+            _ => Err(
+                global.throw_value(global.create_syntax_error_instance(format_args!(
+                    "YAML front matter must be a mapping"
+                ))),
+            ),
+        }
+    }
+}
+
+/// The value of the metadata `utf8` between fences of `marker`. The properties whose keys `ToString` runs JavaScript
+/// for wait in `pending`, and `roots` holds them.
+fn parse_metadata<'a>(
+    heap: &JsHeap<'a>,
+    marker: u8,
+    utf8: &[u8],
+    roots: &mut MarkedArgumentBuffer,
+    pending: &mut Vec<yaml_object::PendingProperty>,
+) -> JsResult<JsLocal<'a>> {
+    // SAFETY: as for `Bun.YAML.parse` and `Bun.TOML.parse`, which this is.
+    let global = unsafe { heap.global() };
+    let data = match marker {
+        b'-' => bun_removable_features::removable_body!(Yaml, Abort, {
+            yaml_object::parse_to_values::<Metadata>(global, utf8, roots, pending)
+        })?,
+        _ => bun_removable_features::removable_body!(Toml, Abort, {
+            toml_object::parse_text::<Metadata>(heap, utf8)
+        })?,
+    };
+    Ok(match data.is_null() {
+        true => heap.create_empty_object().as_value(),
+        false => JsLocal::new(heap, data),
+    })
+}
+
+/// `Bun.markdown.frontmatter(input)`: the metadata that the document starts with, parsed, and the document behind it.
+/// Nothing else reads the metadata: a renderer skips it.
+pub(crate) fn frontmatter<'a>(
+    cx: &mut JsScope<'a>,
+    input: StringOrJsBytes<'a>,
+) -> bindgen::Result<'a, FrontMatter<'a>> {
+    const RULE: front_matter::Rule<'static> = front_matter::Rule::MARKDOWN;
+    MarkedArgumentBuffer::new(|roots| {
+        let heap = &cx.heap;
+        let mut pending = Vec::new();
+        let mut copy = Vec::new();
+        let mut data = JsLocal::NULL;
+        let content = match &input {
+            // `content` shares the characters of the string, which is not converted.
+            StringOrJsBytes::String(text) => {
+                let (bom, block) = match text.is_8bit() {
+                    true => (0, front_matter::detect(text.latin1(), RULE)),
+                    false => {
+                        let units = text.utf16();
+                        let bom = usize::from(units.first() == Some(&0xFEFF));
+                        (bom, front_matter::detect(&units[bom..], RULE))
+                    }
+                };
+                if let Some(block) = &block {
+                    let (start, end) = block.content;
+                    let metadata = text.substring_with_len(bom + start, bom + end).to_utf8();
+                    data = parse_metadata(heap, block.marker, &metadata, roots, &mut pending)?;
+                }
+                let body = block.map_or(0, |block| bom + block.end);
+                heap.create_substring(text, body, text.length())
+            }
+            StringOrJsBytes::Bytes(bytes) => {
+                let text = bytes.get_or_copy_if_shared(heap, &mut copy)?;
+                let document = strings::without_utf8_bom(text);
+                let block = front_matter::detect(document, RULE);
+                if let Some(block) = &block {
+                    let metadata = &document[block.content.0..block.content.1];
+                    data = parse_metadata(heap, block.marker, metadata, roots, &mut pending)?;
+                }
+                heap.create_utf8_string(block.map_or(text, |block| &document[block.end..]))?
+            }
+        };
+        // This can run JavaScript, which can change a buffer: nothing reads the input from here on.
+        yaml_object::define_pending(cx.global(), pending)?;
+        Ok(FrontMatter { data, content })
+    })
 }
 
 /// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.

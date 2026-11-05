@@ -19,9 +19,9 @@ pub(crate) const MARK_HIDES: u8 = 1 << 3;
 /// One of `Extensions::span_bytes`.
 pub(crate) const MARK_EXTENSION: u8 = 1 << 4;
 pub(crate) const MARK_OTHER: u8 = 1 << 5;
-use bun_core::StackCheck;
+use bun_core::{StackCheck, strings};
 
-use super::helpers;
+use super::front_matter;
 use super::html_renderer::HtmlRenderer;
 use super::types::{
     Align, BlockType, Container, ContainerEnds, Extensions, Flags, OFF, Renderer,
@@ -41,6 +41,10 @@ pub(crate) use super::ref_defs::RefDef;
 pub(crate) struct Parser<'a> {
     pub(crate) text: &'a [u8],
     pub(crate) size: OFF,
+    /// Where the Markdown starts in `text`: behind a UTF-8 byte order mark and
+    /// the front matter. Offsets stay those of `text`, which the renderer
+    /// holds too.
+    pub(crate) doc_start: OFF,
     pub(crate) has_carriage_return: bool,
     pub(crate) flags: Flags,
 
@@ -315,10 +319,17 @@ impl<'a> Parser<'a> {
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
         let track = rend.ptr.wants_source();
+        // Who wants to know where things are is told places in `text`, all of it.
+        let doc_start = match track {
+            true => 0,
+            false => markdown_start(text, flags.frontmatter),
+        };
+        let markdown = &text[doc_start..];
         let mut p = Parser {
             text,
             size,
-            has_carriage_return: bun_core::strings::contains_char(text, b'\r'),
+            doc_start: doc_start as OFF,
+            has_carriage_return: strings::contains_char(markdown, b'\r'),
             flags,
             renderer: rend,
             image_nesting_level: 0,
@@ -357,7 +368,7 @@ impl<'a> Parser<'a> {
             last_list_item_starts_with_two_blank_lines: false,
             last_header_opens_list_item: false,
             last_line_is_only_a_task_mark: false,
-            max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
+            max_ref_def_output: 16 * (markdown.len() as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
             track,
             container_sources: Vec::new(),
@@ -485,6 +496,16 @@ impl<'a> Parser<'a> {
 // Silence unused-import warnings for the sibling modules referenced only in
 // the doc-comment above.
 
+/// Where the Markdown of `text` starts: behind a UTF-8 byte order mark, the
+/// front matter if it counts, and a byte order mark right behind that.
+fn markdown_start(text: &[u8], frontmatter: bool) -> usize {
+    let mut rest = strings::without_utf8_bom(text);
+    if frontmatter && let Some(block) = front_matter::detect(rest, front_matter::Rule::MARKDOWN) {
+        rest = strings::without_utf8_bom(&rest[block.end..]);
+    }
+    text.len() - rest.len()
+}
+
 // ========================================
 // Public API
 // ========================================
@@ -494,12 +515,9 @@ pub(crate) fn render_to_html(
     flags: Flags,
     render_opts: RenderOptions,
 ) -> Result<Box<[u8]>, ParserError> {
-    // Skip UTF-8 BOM
-    let input = helpers::skip_utf8_bom(text);
+    let mut html_renderer = HtmlRenderer::init(text, render_opts);
 
-    let mut html_renderer = HtmlRenderer::init(input, render_opts);
-
-    let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
+    let mut parser = Parser::init(text, flags, html_renderer.renderer())?;
 
     parser.process_doc()?;
     drop(parser);
@@ -519,13 +537,7 @@ pub(crate) fn render_with_renderer<'a>(
     extensions: Option<Extensions<'a>>,
 ) -> Result<(), ParserError> {
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
-    // Who wants to know where things are is told places in `text`.
-    let input = match rend.ptr.wants_source() {
-        true => text,
-        false => helpers::skip_utf8_bom(text),
-    };
-
-    let mut p = Parser::init(input, flags, rend)?;
+    let mut p = Parser::init(text, flags, rend)?;
     if let Some(extensions) = extensions {
         p.set_extensions(extensions);
     }

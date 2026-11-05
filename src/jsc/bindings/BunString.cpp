@@ -425,6 +425,17 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC
     return JSValue::encode(result);
 }
 
+// `length` characters of `bunString` from `offset` on, as a JS string. A
+// WTF-backed string shares them with it.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue BunString__substringToJS(JSC::JSGlobalObject* globalObject, const BunString* bunString, size_t offset, size_t length)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::String string = bunString->toWTFString();
+    if (string.isNull())
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+    return JSC::JSValue::encode(JSC::jsSubstring(vm, string, offset, length));
+}
+
 // `tryCreateUninitialized` returns null both for a length it refuses and for a
 // failed allocation; the tag tells transferToJS/toJS which error to throw.
 template<typename CharacterType>

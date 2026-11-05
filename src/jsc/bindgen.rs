@@ -179,6 +179,21 @@ impl<'a> JsHeap<'a> {
             .ok_or_else(|| self.string_too_long())
     }
 
+    /// The characters `start..end` of `string`. A WTF-backed one shares them with the result: nothing is copied.
+    #[inline]
+    pub fn create_substring(
+        &self,
+        string: &bun_core::String,
+        start: usize,
+        end: usize,
+    ) -> JsLocal<'a, JSString> {
+        assert!(start <= end && end <= string.length());
+        // SAFETY: `string` is live for the call, and the characters are in it.
+        JsLocal::from_raw(unsafe {
+            crate::cpp::BunString__substringToJS(self.global_ptr(), string, start, end - start)
+        })
+    }
+
     /// One of the strings every global object has.
     #[inline]
     pub fn common_string(&self, string: CommonString) -> JsLocal<'a, JSString> {

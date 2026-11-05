@@ -31,14 +31,18 @@ const options = {
   noHtmlBlocks: { type: flag, altNames: ["no_html_blocks"] },
   noHtmlSpans: { type: flag, altNames: ["no_html_spans"] },
   tagFilter: { type: flag, altNames: ["tag_filter"] },
+  frontmatter: flag,
 } as const;
 export const MarkdownOptions = b.dictionary(options, { allowArray: true });
 export const ReactOptions = b.dictionary({ reactVersion: b.f64.otherAsNull, ...options }, { allowArray: true });
 
 export const AnsiTheme = b.dictionary(
-  { colors: flag, hyperlinks: flag, kittyGraphics: flag, light: flag, columns: b.f64.otherAsNull },
+  { colors: flag, hyperlinks: flag, kittyGraphics: flag, light: flag, columns: b.f64.otherAsNull, frontmatter: flag },
   ignoresNonObjects,
 );
+
+/** `data` is `null` for a document that starts with no front matter. */
+export const FrontMatter = b.dictionary({ data: b.any, content: b.string.local });
 
 const members = <Name extends string, T>(type: T, names: readonly Name[]) =>
   Object.fromEntries(names.map(name => [name, type])) as Record<Name, T>;
@@ -123,6 +127,13 @@ export const markdown = b.namespace({
     args: { input: b.any, components: ComponentOverrides.otherAsNull, options: ReactOptions.otherAsNull },
     returns: b.any,
     length: 3,
+    ...js,
+  },
+  /** A string is read in its own encoding, and `content` shares its characters. */
+  frontmatter: {
+    args: { input: b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" }) },
+    returns: FrontMatter,
+    expected: { input: "Expected a string or buffer to parse" },
     ...js,
   },
 });

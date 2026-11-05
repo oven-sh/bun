@@ -54,6 +54,10 @@ pub struct Options {
     /// See `compat.rs`: what a parser that follows micromark need not do.
     pub micromark_to_the_letter: bool,
     pub mdx: bool,
+    /// A `---` or `+++` block at the start of the document is metadata, not
+    /// Markdown: see `front_matter.rs`. Not for a renderer that
+    /// `wants_source`.
+    pub frontmatter: bool,
 }
 
 impl Default for Options {
@@ -85,6 +89,7 @@ impl Default for Options {
             micromark: false,
             micromark_to_the_letter: false,
             mdx: false,
+            frontmatter: true,
         }
     }
 }
@@ -118,6 +123,7 @@ impl Options {
         micromark: false,
         micromark_to_the_letter: false,
         mdx: false,
+        frontmatter: false,
     };
 
     pub const TERMINAL: Self = Self {
@@ -130,6 +136,7 @@ impl Options {
         wiki_links: true,
         underline: true,
         latex_math: true,
+        frontmatter: true,
         ..Self::NONE
     };
 
@@ -156,6 +163,7 @@ impl Options {
             micromark: self.micromark,
             micromark_to_the_letter: self.micromark_to_the_letter,
             mdx: self.mdx,
+            frontmatter: self.frontmatter,
         }
     }
 

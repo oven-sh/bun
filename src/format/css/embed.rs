@@ -322,8 +322,15 @@ pub(crate) fn document_of_template(
     scratch: &mut super::Scratch,
 ) -> Option<Doc<'static>> {
     let sink = Sink::to_document();
-    let sink =
-        super::parse_and_print(text, super::Parser::Scss, options, sink, scratch, false).ok()?;
+    let sink = super::parse_and_print(
+        text,
+        super::Parser::Scss,
+        options,
+        sink,
+        scratch,
+        super::Way::Long,
+    )
+    .ok()?;
     let document = sink.into_document().and_then(doc::text_to_doc).ok()?;
     (!document.is_empty_text()
         && (count == 0 || count_placeholders(&document, count) == Some(count)))

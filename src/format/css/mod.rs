@@ -22,7 +22,7 @@ use self::doc::Doc;
 use self::memo::Memo;
 use self::quick::Quick;
 use self::sink::Sink;
-use crate::options::{EmbeddedLanguageFormatting, QuoteStyle, TrailingCommas};
+use crate::options::{EmbeddedLanguageFormatting, LineEnding, QuoteStyle, TrailingCommas};
 use crate::pragma::BeforeParsing;
 use crate::range::Offsets;
 use crate::stack::Stack;
@@ -251,15 +251,30 @@ fn with_semicolons_after_each(text: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
-/// Parses `text`, whose line breaks must be `\n`, and writes it to `sink`. `is_quick` is for a sink that writes to the
-/// output: statements are printed while they're read. If that fails, `Quick::is_refused` is set.
+/// How a style sheet is parsed.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Way {
+    Long,
+    /// For a sink that writes to the output: statements are printed while they're read, if `takes_short_cuts`. If that
+    /// fails, `Quick::is_refused` is set.
+    Quick,
+    /// `Quick`, after `Quick::read_first_lines`: it takes short cuts, and it's parsed as it is.
+    QuickAfterFirstLines,
+}
+
+/// What `quick` knows is what Prettier prints.
+fn takes_short_cuts(options: &FormatOptions) -> bool {
+    !options.no_short_cuts && !options.flavor.is_oxfmt() && options.tailwind.is_none()
+}
+
+/// Parses `text`, whose line breaks must be `\n`, and writes it to `sink`.
 fn parse_and_print<'o>(
     text: &[u8],
     parser: Parser,
     options: &FormatOptions,
     mut sink: Sink<'o>,
     scratch: &'o mut Scratch,
-    is_quick: bool,
+    way: Way,
 ) -> Result<Sink<'o>, FormatError> {
     let Scratch {
         memo,
@@ -272,8 +287,12 @@ fn parse_and_print<'o>(
         false => Cow::Borrowed(text),
     };
     let text = &with_semicolons[..];
+    let is_as_it_is = way == Way::QuickAfterFirstLines;
     // The front matter is replaced with spaces before parsing, so all offsets stay valid.
-    let front_matter = front_matter::parse(text).map(|it| &text[..it.end]);
+    let front_matter = match is_as_it_is {
+        true => None,
+        false => front_matter::parse(text).map(|it| &text[..it.end]),
+    };
     let mut blanked: Cow<'_, [u8]> = match front_matter {
         None => Cow::Borrowed(text),
         Some(front_matter) => {
@@ -287,7 +306,7 @@ fn parse_and_print<'o>(
         }
     };
 
-    if parser == Parser::Less {
+    if parser == Parser::Less && !is_as_it_is {
         for (start, end) in inline_comments_with_quotes(&blanked) {
             for byte in &mut blanked.to_mut()[start..end] {
                 if matches!(byte, b'"' | b'\'' | b'*') {
@@ -301,13 +320,11 @@ fn parse_and_print<'o>(
         true => postcss::Placeholder::Statement,
         false => postcss::Placeholder::AtRule,
     };
-    // What `quick` knows is what Prettier prints.
-    let is_quick = is_quick
-        && !options.no_short_cuts
-        && !options.flavor.is_oxfmt()
-        && front_matter.is_none()
-        && options.tailwind.is_none();
-    quick.start(options);
+    let is_quick =
+        is_as_it_is || (way == Way::Quick && takes_short_cuts(options) && front_matter.is_none());
+    if !is_as_it_is {
+        quick.start(options);
+    }
     let tree = postcss::parse(
         &blanked,
         text,
@@ -438,7 +455,7 @@ pub(crate) fn document(
 ) -> Result<Doc<'static>, FormatError> {
     let mut scratch = Scratch::default();
     let sink = Sink::to_document();
-    let sink = parse_and_print(text, parser, options, sink, &mut scratch, false)?;
+    let sink = parse_and_print(text, parser, options, sink, &mut scratch, Way::Long)?;
     doc::text_to_doc(sink.into_document()?)
 }
 
@@ -467,12 +484,9 @@ pub fn format(
     // printed back unchanged.
     let is_range = start > first || end < original.len();
     let text = bun_core::strings::crlf_as_lf(text);
-    let text = match crate::pragma::before_parsing_css(
-        &text,
-        front_matter::parse(&text).map_or(0, |it| it.end),
-        !is_range,
-        options,
-    ) {
+    let front_matter_len = front_matter::parse(&text).map_or(0, |it| it.end);
+    let text = match crate::pragma::before_parsing_css(&text, front_matter_len, !is_range, options)
+    {
         BeforeParsing::LeaveUnchanged => {
             out.extend_from_slice(original);
             return Ok(());
@@ -491,9 +505,16 @@ pub fn format(
         out.extend_from_slice(BOM);
     }
     if is_range {
-        parse_and_print(text, parser, options, Sink::to_document(), scratch, false)
-            .inspect_err(|_| out.truncate(start))
-            .map_err(in_original)?;
+        parse_and_print(
+            text,
+            parser,
+            options,
+            Sink::to_document(),
+            scratch,
+            Way::Long,
+        )
+        .inspect_err(|_| out.truncate(start))
+        .map_err(in_original)?;
         return doc::print(
             doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)),
             options,
@@ -503,12 +524,30 @@ pub fn format(
     }
     out.reserve(text.len() + text.len() / 8 + 16);
     let is_in_html = options.in_html.root != crate::options::HtmlRoot::None;
+    let mut way = Way::Quick;
+    if takes_short_cuts(options)
+        && !is_in_html
+        && front_matter_len == 0
+        && (parser != Parser::Less || inline_comments_with_quotes(text).is_empty())
+    {
+        scratch.quick.start(options);
+        // A style sheet that's written as it's printed needs no parser and no printer.
+        if let Some((from, end)) = scratch.quick.read_first_lines(text, parser)
+            && options.line_ending.resolve(original) == LineEnding::Lf
+            && !crate::is_too_long(out.len() + (end - from) + 1)
+        {
+            out.extend_from_slice(&text[from..end]);
+            out.push(b'\n');
+            return Ok(());
+        }
+        way = Way::QuickAfterFirstLines;
+    }
     let sink = Sink::to_output(doc::Printer::new(options, original, out), is_in_html);
-    let mut result = parse_and_print(text, parser, options, sink, scratch, true).map(drop);
+    let mut result = parse_and_print(text, parser, options, sink, scratch, way).map(drop);
     if result.is_err() && scratch.quick.is_refused {
         out.truncate(start + if has_bom { BOM.len() } else { 0 });
         let sink = Sink::to_output(doc::Printer::new(options, original, out), is_in_html);
-        result = parse_and_print(text, parser, options, sink, scratch, false).map(drop);
+        result = parse_and_print(text, parser, options, sink, scratch, Way::Long).map(drop);
     }
     result
         .inspect_err(|_| out.truncate(start))

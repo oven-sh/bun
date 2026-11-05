@@ -100,7 +100,7 @@ fn skip(css: &[u8], at: usize, classes: u8) -> usize {
 /// the processor to guess wrong at the end of each name.
 #[inline]
 fn skip_long(css: &[u8], mut at: usize, classes: u8) -> usize {
-    while let Some(bytes) = css.get(at..).and_then(|it| it.first_chunk::<8>()) {
+    while let Some(bytes) = css.get(at..at + 8).and_then(|it| it.first_chunk::<8>()) {
         let others = in_classes(u64::from_le_bytes(*bytes), classes) ^ HIGHEST_BITS;
         if others != 0 {
             return at + (others.trailing_zeros() / 8) as usize;
@@ -263,6 +263,35 @@ struct StandingHead {
     before: Option<(usize, usize)>,
 }
 
+/// Where `read_stretch` starts, as far as it matters to what's printed for the lines from there on.
+#[derive(Copy, Clone)]
+struct Surroundings {
+    syntax: Syntax,
+    page: Page,
+    quote: u8,
+    /// The number of blocks around.
+    level: usize,
+    is_in_declaration: bool,
+    is_in_at_rule: bool,
+    /// Comments are printed from the original text: false if that isn't the text that's read.
+    takes_comments: bool,
+    takes_long_comments: bool,
+    lays_out_values: bool,
+    /// A comment on the line of the statement before it is printed there.
+    is_on_its_line: bool,
+}
+
+/// What `read_stretch` has read, apart from the heads of the blocks that are still open.
+#[derive(Debug, Copy, Clone, Default)]
+pub(crate) struct Stretch {
+    /// The statements that were taken of the innermost block.
+    segment: Option<(usize, usize)>,
+    /// Whether the last of them has a `;`, if that's not as it was before them.
+    semicolon: Option<bool>,
+    /// Where the line starts that ended the stretch because it isn't taken wherever it stands.
+    refused: Option<usize>,
+}
+
 /// True for the at-rules that the printer asks for by name, in any case, when it prints their params or what's in them,
 /// except where that's about something that's never taken. A variable of Less is an at-rule to it, and so is the call of
 /// a mixin: `@import: a;`, `.else();`.
@@ -295,7 +324,31 @@ impl Gap {
     /// The white space from `start` on.
     #[inline]
     fn new(css: &[u8], start: usize) -> Gap {
-        // Most of the time: one or two line breaks, and the indentation.
+        // Most of the time: one or two line breaks, and less than eight blanks.
+        if byte(css, start) == b'\n' {
+            let lines = 1 + u32::from(byte(css, start + 1) == b'\n');
+            let from = start + lines as usize;
+            if let Some(bytes) = css.get(from..from + 8).and_then(|it| it.first_chunk::<8>()) {
+                let others = u64::from_le_bytes(*bytes) ^ (b' ' as u64 * ONES);
+                let blanks = (others.trailing_zeros() / 8) as usize;
+                if let Some(next) = bytes.get(blanks)
+                    && !matches!(next, b'\t' | b'\n' | b'\r' | 0x0C)
+                {
+                    return Gap {
+                        start,
+                        end: from + blanks,
+                        lines,
+                        is_plain: true,
+                    };
+                }
+            }
+        }
+        Gap::of_any_kind(css, start)
+    }
+
+    #[inline(never)]
+    fn of_any_kind(css: &[u8], start: usize) -> Gap {
+        // One or two line breaks, and the indentation.
         if byte(css, start) == b'\n' {
             let lines = 1 + u32::from(byte(css, start + 1) == b'\n');
             let end = skip_long(css, start + lines as usize, INDENTATION);
@@ -366,6 +419,11 @@ pub(crate) struct Quick {
     after_head: usize,
     /// See `Parser::read_standing_lines`.
     standing_heads: Vec<StandingHead>,
+    /// What `read_first_lines` has read, and where it starts, until the parser gets there. Its heads are in
+    /// `standing_heads`.
+    first_stretch: Option<(usize, Stretch)>,
+    /// Where a line starts that `read_stretch` doesn't take.
+    refused_line: Option<usize>,
     values: Values,
     up: Vec<(Option<u32>, Position)>,
     /// The printer couldn't write a run.
@@ -389,12 +447,45 @@ impl Quick {
         self.takes_long_comments = !options.is_in_markdown;
         self.blocks.clear();
         self.next_gap = None;
+        (self.first_stretch, self.refused_line) = (None, None);
         (self.after_run, self.after_head) = (usize::MAX, usize::MAX);
         self.is_refused = false;
     }
 
     fn around(&self) -> Around {
         self.blocks.last().map_or(Around::None, |it| it.around)
+    }
+
+    /// After `start`, for a style sheet that's parsed as it is: reads the lines that stand, from its start on. If that's
+    /// all of it, returns where they start and end: they're what's printed, with a line break after them. If not, the
+    /// parser goes on from what was read.
+    pub(crate) fn read_first_lines(
+        &mut self,
+        css: &[u8],
+        syntax: Syntax,
+    ) -> Option<(usize, usize)> {
+        let start = Gap::new(css, 0).end;
+        let surroundings = Surroundings {
+            syntax,
+            page: self.page,
+            quote: self.quote,
+            level: 0,
+            is_in_declaration: false,
+            is_in_at_rule: false,
+            takes_comments: true,
+            takes_long_comments: self.takes_long_comments,
+            lays_out_values: self.lays_out_values,
+            is_on_its_line: true,
+        };
+        self.standing_heads.clear();
+        let stretch = read_stretch(css, start, surroundings, &mut self.standing_heads);
+        if let (Some(segment), true) = (stretch.segment, self.standing_heads.is_empty())
+            && Gap::new(css, segment.1).end == css.len()
+        {
+            return Some(segment);
+        }
+        self.first_stretch = Some((start, stretch));
+        None
     }
 }
 
@@ -1003,149 +1094,39 @@ impl<'a> Parser<'a> {
     /// same lines, one at a time: a rule that's opened and closed on the way leaves no trace, and all of it is copied
     /// at once.
     fn read_standing_lines(&mut self, start: usize) -> bool {
-        let (css, syntax) = (self.css, self.syntax);
-        let (page, quote, base) = (self.quick.page, self.quick.quote, self.quick.blocks.len());
-        let is_in_declaration = self
-            .quick
-            .blocks
-            .last()
-            .is_some_and(|it| it.is_in_declaration);
-        let around = self.quick.around();
-        if around == Around::Other {
+        let css = self.css;
+        let quick = &mut *self.quick;
+        let around = quick.around();
+        if around == Around::Other || quick.refused_line == Some(start) {
             return false;
         }
-        let is_in_at_rule = around != Around::None;
-        // Comments are printed from the original text.
-        let takes_comments = std::ptr::eq(css, self.original);
-        let takes_long_comments = self.quick.takes_long_comments;
-        let lays_out_values = self.quick.lays_out_values;
-        // A comment on the line of the statement before it is printed there.
-        let is_on_its_line = self.nodes[self.current as usize].last_child == 0
-            || (self.quick.gap.is_plain && self.quick.gap.lines > 0);
-        let mut heads = std::mem::take(&mut self.quick.standing_heads);
-        heads.clear();
-        // The statements that were taken of the innermost block, and whether the last of them has a `;`, if that's
-        // not as it was before them.
-        let mut segment: Option<(usize, usize)> = None;
-        let mut semicolon = None;
-        let mut next_gap = None;
-        let mut at = start;
-        loop {
-            let level = base + heads.len();
-            let room = page.width.saturating_sub(level * page.tab_width);
-            // ───────────── the line
-            let mut head = None;
-            let end = match byte(css, at) {
-                b'}' if !heads.is_empty() => at + 1,
-                b'/' if takes_comments && (at > start || is_on_its_line) => {
-                    match end_of_standing_comment(css, at, syntax, takes_long_comments) {
-                        Some(end) => end,
-                        None => break,
-                    }
-                }
-                b'}' | b'/' => break,
-                b'@' if !(syntax == Syntax::Less && is_less_variable(css, at)) => {
-                    match read_simple_at_rule(css, at, syntax, quote) {
-                        Some(it) if it.end - at <= room && !is_in_declaration => {
-                            if it.has_block {
-                                head =
-                                    Some((it.end - 2, Shape::Line, Some((it.name_end, it.params))));
-                            }
-                            it.end
-                        }
-                        _ => break,
-                    }
-                }
-                _ => {
-                    let lists = lays_out_values.then_some((page, level));
-                    match value::end_of_simple_statement(
-                        css,
-                        at,
-                        syntax,
-                        quote,
-                        is_in_declaration,
-                        lists,
-                    ) {
-                        Some((end, shape)) if shape != Shape::Line || end - at <= room => {
-                            if css.get(end..end + 2) != Some(b" /") {
-                                end
-                            } else if let Some(end) =
-                                end_of_standing_comment(css, end + 1, syntax, false)
-                                && takes_comments
-                                && (shape == Shape::Word
-                                    || (shape == Shape::Line && end - at <= room))
-                            {
-                                // A comment behind a statement stays there, and the line is measured with it.
-                                end
-                            } else {
-                                break;
-                            }
-                        }
-                        Some(_) => break,
-                        None => {
-                            let Some(selectors) = selector::end_of_standing_selectors(
-                                css, at, syntax, quote, page, level,
-                            ) else {
-                                break;
-                            };
-                            if selectors.has_upper
-                                && (is_in_at_rule || heads.iter().any(|it| it.at_rule.is_some()))
-                            {
-                                break;
-                            }
-                            head = Some((selectors.end, selectors.shape, None));
-                            selectors.end + 2
-                        }
-                    }
-                }
-            };
-            // ───────────── what follows it
-            let gap = Gap::new(css, end);
-            let next = byte(css, gap.end);
-            if head.is_none() && !is_alone(css, gap) {
-                break;
-            }
-            next_gap = Some(gap);
-            let mut takes_empty_line = true;
-            if let Some((end, shape, at_rule)) = head {
-                heads.push(StandingHead {
-                    start: at,
-                    end,
-                    shape,
-                    at_rule,
-                    before: segment.take(),
-                });
-                semicolon = None;
-                takes_empty_line = false;
-            } else if css[at] == b'}' {
-                let Some(head) = heads.pop() else {
-                    break;
+        let mut heads = std::mem::take(&mut quick.standing_heads);
+        let stretch = match quick.first_stretch.take() {
+            Some((at, stretch)) if at == start => stretch,
+            _ => {
+                let surroundings = Surroundings {
+                    syntax: self.syntax,
+                    page: quick.page,
+                    quote: quick.quote,
+                    level: quick.blocks.len(),
+                    is_in_declaration: quick.blocks.last().is_some_and(|it| it.is_in_declaration),
+                    is_in_at_rule: around != Around::None,
+                    takes_comments: std::ptr::eq(css, self.original),
+                    takes_long_comments: quick.takes_long_comments,
+                    lays_out_values: quick.lays_out_values,
+                    is_on_its_line: self.nodes[self.current as usize].last_child == 0
+                        || (quick.gap.is_plain && quick.gap.lines > 0),
                 };
-                segment = Some((head.before.map_or(head.start, |it| it.0), end));
-                semicolon = Some(false);
-            } else {
-                segment = Some((segment.map_or(at, |it| it.0), end));
-                if css[at] != b'/' {
-                    semicolon = Some(true);
-                }
+                heads.clear();
+                read_stretch(css, start, surroundings, &mut heads)
             }
-            // ───────────── is the next line where it's printed?
-            let mut level = base + heads.len();
-            if next == b'}' {
-                if level == base {
-                    break;
-                }
-                level -= 1;
-                takes_empty_line = false;
-            }
-            let has_empty_line = takes_empty_line && byte(css, end + 1) == b'\n';
-            let line_break = end + usize::from(has_empty_line);
-            if css.get(end) != Some(&b'\n') || !page.is_line_break(&css[line_break..gap.end], level)
-            {
-                break;
-            }
-            at = gap.end;
-        }
+        };
+        let Stretch {
+            segment,
+            semicolon,
+            refused,
+        } = stretch;
+        quick.refused_line = refused;
 
         // ───────────── what was taken becomes what the long way makes of it
         if segment.is_none() && heads.is_empty() {
@@ -1202,7 +1183,7 @@ impl<'a> Parser<'a> {
             self.add_to_run(slot, start, end);
             self.semicolon = semicolon;
         }
-        self.quick.next_gap = next_gap.filter(|it| it.start == self.tokenizer.pos);
+        self.quick.next_gap = None;
         self.quick.standing_heads = heads;
         true
     }
@@ -1683,6 +1664,149 @@ impl<'a> Parser<'a> {
             node.mixin = true;
             node.identifier = Range::new(start as u32, start as u32 + 1);
         }
+    }
+}
+
+/// See `Parser::read_standing_lines`. Reads lines from `start` on. Appends the heads of the blocks that are open at the
+/// end to `heads`, which is empty.
+fn read_stretch(
+    css: &[u8],
+    start: usize,
+    surroundings: Surroundings,
+    heads: &mut Vec<StandingHead>,
+) -> Stretch {
+    let Surroundings {
+        syntax,
+        page,
+        quote,
+        level: base,
+        is_in_declaration,
+        is_in_at_rule,
+        takes_comments,
+        takes_long_comments,
+        lays_out_values,
+        is_on_its_line,
+    } = surroundings;
+    let mut segment: Option<(usize, usize)> = None;
+    let mut semicolon = None;
+    let mut at = start;
+    // Does it end with a line that isn't taken?
+    let is_refused = loop {
+        let level = base + heads.len();
+        let room = page.width.saturating_sub(level * page.tab_width);
+        // ───────────── the line
+        let mut head = None;
+        let end = match byte(css, at) {
+            b'}' if !heads.is_empty() => at + 1,
+            b'/' if takes_comments && (at > start || is_on_its_line) => {
+                match end_of_standing_comment(css, at, syntax, takes_long_comments) {
+                    Some(end) => end,
+                    None => break true,
+                }
+            }
+            b'}' | b'/' => break true,
+            b'@' if !(syntax == Syntax::Less && is_less_variable(css, at)) => {
+                match read_simple_at_rule(css, at, syntax, quote) {
+                    Some(it) if it.end - at <= room && !is_in_declaration => {
+                        if it.has_block {
+                            head = Some((it.end - 2, Shape::Line, Some((it.name_end, it.params))));
+                        }
+                        it.end
+                    }
+                    _ => break true,
+                }
+            }
+            _ => {
+                let lists = lays_out_values.then_some((page, level));
+                match value::end_of_simple_statement(
+                    css,
+                    at,
+                    syntax,
+                    quote,
+                    is_in_declaration,
+                    lists,
+                ) {
+                    Some((end, shape)) if shape != Shape::Line || end - at <= room => {
+                        if css.get(end..end + 2) != Some(b" /") {
+                            end
+                        } else if let Some(end) =
+                            end_of_standing_comment(css, end + 1, syntax, false)
+                            && takes_comments
+                            && (shape == Shape::Word || (shape == Shape::Line && end - at <= room))
+                        {
+                            // A comment behind a statement stays there, and the line is measured with it.
+                            end
+                        } else {
+                            break true;
+                        }
+                    }
+                    Some(_) => break true,
+                    None => {
+                        let Some(selectors) = selector::end_of_standing_selectors(
+                            css, at, syntax, quote, page, level,
+                        ) else {
+                            break true;
+                        };
+                        if selectors.has_upper
+                            && (is_in_at_rule || heads.iter().any(|it| it.at_rule.is_some()))
+                        {
+                            break true;
+                        }
+                        head = Some((selectors.end, selectors.shape, None));
+                        selectors.end + 2
+                    }
+                }
+            }
+        };
+        // ───────────── what follows it
+        let gap = Gap::new(css, end);
+        let next = byte(css, gap.end);
+        if head.is_none() && !is_alone(css, gap) {
+            break true;
+        }
+        let mut takes_empty_line = true;
+        if let Some((end, shape, at_rule)) = head {
+            heads.push(StandingHead {
+                start: at,
+                end,
+                shape,
+                at_rule,
+                before: segment.take(),
+            });
+            semicolon = None;
+            takes_empty_line = false;
+        } else if css[at] == b'}' {
+            let Some(head) = heads.pop() else {
+                break true;
+            };
+            segment = Some((head.before.map_or(head.start, |it| it.0), end));
+            semicolon = Some(false);
+        } else {
+            segment = Some((segment.map_or(at, |it| it.0), end));
+            if css[at] != b'/' {
+                semicolon = Some(true);
+            }
+        }
+        // ───────────── is the next line where it's printed?
+        let mut level = base + heads.len();
+        if next == b'}' {
+            if level == base {
+                break false;
+            }
+            level -= 1;
+            takes_empty_line = false;
+        }
+        let has_empty_line = takes_empty_line && byte(css, end + 1) == b'\n';
+        let line_break = end + usize::from(has_empty_line);
+        if css.get(end) != Some(&b'\n') || !page.is_line_break(&css[line_break..gap.end], level) {
+            break false;
+        }
+        at = gap.end;
+    };
+    Stretch {
+        segment,
+        semicolon,
+        refused: is_refused.then_some(at),
     }
 }
 

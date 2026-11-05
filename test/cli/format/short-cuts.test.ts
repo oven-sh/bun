@@ -830,6 +830,29 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "standing-at-rules.css":
       '@import "a.css";\n@import "b.css" screen;\n@import \'c.css\';\n@import url(d.css);\n@import "e", "f";\n@IMPORT "g";\n' +
       "@keyframes h {\n}\n@-webkit-keyframes I-j {\n}\n@keyframes url {\n}\n@keyframes k  {\n}\n@keyframes 'l' {\n}\n",
+    // A style sheet that's written as it's printed is copied as a whole.
+    "whole.css": "a {\n  b: c;\n}\n",
+    "whole-without-final-newline.css": "a {\n  b: c;\n}",
+    "whole-between-empty-lines.css": "\n\na {\n  b: c;\n}\n\n\n",
+    "whole-before-blanks.css": "a {\n  b: c;\n}\n  \t\n",
+    "whole-after-blanks.css": "  a {\n  b: c;\n}\n",
+    "whole-before-form-feed.css": "a {\n  b: c;\n}\n\f",
+    "whole-before-no-break-space.css": "a {\n  b: c;\n}\n\u00a0",
+    "whole-after-bom.css": "\ufeffa {\n  b: c;\n}\n",
+    "whole-with-crlf.css": "a {\r\n  b: c;\r\n}\r\n",
+    "whole-with-one-cr.css": "a {\n  b: c;\r}\n",
+    "whole-but-unclosed.css": "a {\n  b: c;\n",
+    "whole-but-closed-twice.css": "a {\n  b: c;\n}\n}\n",
+    "whole-but-for-the-last-line.css": "a {\n  b: c;\n}\nd {\n  e:f;\n}\n",
+    "whole-after-front-matter.css": "---\na: b\n---\n\na {\n  b: c;\n}\n",
+    "whole-like-front-matter.css": "---a {\n  b: c;\n}\n---d {\n}\n",
+    "whole-with-pragma.css": "/** @format */\n\na {\n  b: c;\n}\n",
+    "whole-with-quote-in-comment.less": "// 'a'\nb {\n  // c\n  d: e; // f\n  // \"g\"\n  h: i; // 'j'\n  /* k */\n}\n",
+    "whole.md": "```css\na {\n  b: c;\n}\n```\n",
+    "whole.html": "<style>\n  a {\n    b: c;\n  }\n</style>\n",
+    "numbers-of-every-length.css":
+      "a {\n  b: 1 12 123 1234567 12345678 123456789 1px 123456px 1234567px 12345678px;\n  b: 1.5 1.25em 123.456 1234.567 12345.678px 1.2345678 0.5turn 1.5grad;\n" +
+      "  b: 1% 1234567% 12345678% 1.5% 1.0 1.50 1. 1.px 1hz 1khz 1q 1Q 1x 1e3 1e 1.5e3 1abcdefg 1abcdefgh;\n  b: 1;\n}\nc {\n  d: 1",
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",
@@ -846,6 +869,10 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     ["--single-quote", "--trailing-comma=none"],
     ["--end-of-line=crlf"],
     ["--end-of-line=cr", "--print-width=30"],
+    ["--end-of-line=auto"],
+    ["--insert-pragma"],
+    ["--require-pragma"],
+    ["--range-start=3", "--range-end=9"],
   ];
 
   test.concurrent.each(sets.map(set => set.join(" ")))("with and without them: %s", async set => {

@@ -11,8 +11,8 @@
 use super::super::Parser as Syntax;
 use super::layout::Page;
 use super::{
-    BLANK, DASH, DIGIT, INDENTATION, LOWER, PLAIN, Shape, UNDERSCORE, UPPER, byte, class,
-    is_asked_for_by_name, may_end_with_white_space, skip, skip_long,
+    BLANK, DASH, DIGIT, HIGHEST_BITS, INDENTATION, LOWER, PLAIN, Shape, UNDERSCORE, UPPER, byte,
+    class, in_classes, is_asked_for_by_name, may_end_with_white_space, skip, skip_long,
 };
 
 /// Parentheses that are nested deeper than this are refused. It also bounds how deep `layout.rs` calls itself.
@@ -166,6 +166,37 @@ fn end_of_line_comment(css: &[u8], from: usize) -> usize {
 
 /// A number that's printed as it's written, from the digit at `p`. Returns its end.
 pub(super) fn number(css: &[u8], p: usize) -> Option<usize> {
+    // Most of the time, the number, its unit and the byte after them are within eight bytes.
+    if let Some(bytes) = css.get(p..p + 8).and_then(|it| it.first_chunk::<8>()) {
+        let word = u64::from_le_bytes(*bytes);
+        let no_digits = in_classes(word, DIGIT) ^ HIGHEST_BITS;
+        let no_letters = in_classes(word, LOWER) ^ HIGHEST_BITS;
+        // The index of the first byte from `from` on that has its bit in `stops`, or 8.
+        let next = |stops: u64, from: usize| match stops.checked_shr(8 * from as u32) {
+            Some(rest) if rest != 0 => from + (rest.trailing_zeros() / 8) as usize,
+            _ => 8,
+        };
+        let mut end = next(no_digits, 0);
+        let mut is_as_printed = true;
+        if bytes.get(end) == Some(&b'.') {
+            let dot = end;
+            end = next(no_digits, dot + 1);
+            is_as_printed = end > dot + 1 && bytes[end - 1] != b'0';
+        }
+        if bytes.get(end) == Some(&b'%') {
+            return is_as_printed.then_some(p + end + 1);
+        }
+        let unit_end = next(no_letters, end);
+        if unit_end < 8 {
+            let unit = &bytes[end..unit_end];
+            return (is_as_printed && unit.last() != Some(&b'z') && unit != b"q")
+                .then_some(p + unit_end);
+        }
+    }
+    number_of_any_length(css, p)
+}
+
+fn number_of_any_length(css: &[u8], p: usize) -> Option<usize> {
     let p = skip_long(css, p, DIGIT);
     match byte(css, p) {
         b'.' => fraction(css, p),
@@ -663,16 +694,19 @@ pub(super) fn end_of_simple_statement(
     }
 
     // ───────────── a declaration
-    let (name, in_name, owner) = match (first, byte(css, start + 1)) {
+    let (name, owner) = match (first, byte(css, start + 1)) {
         (b'$', next) if syntax == Syntax::Scss && !next.is_ascii_digit() => {
-            (start + 1, ANY_NAME, Owner::Declaration)
+            (start + 1, Owner::Declaration)
         }
-        (b'-', b'-') => (start + 2, NAME, Owner::CustomProperty),
-        (b'-', _) => (start + 1, NAME, Owner::Declaration),
-        (b'a'..=b'z', _) => (start, NAME, Owner::Declaration),
+        (b'-', b'-') => (start + 2, Owner::CustomProperty),
+        (b'-', _) => (start + 1, Owner::Declaration),
+        (b'a'..=b'z', _) => (start, Owner::Declaration),
         _ => return None,
     };
-    let colon = skip_long(css, name, in_name);
+    let colon = match first {
+        b'$' => skip_long(css, name, ANY_NAME),
+        _ => skip_long(css, name, NAME),
+    };
     if colon == name
         || (first != b'$' && class(css[name]) & LOWER == 0)
         || starts_with_url(css, name)

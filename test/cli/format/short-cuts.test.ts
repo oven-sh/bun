@@ -2259,6 +2259,222 @@ describe.skipIf(!hasFlag)("Vue", () => {
   });
 });
 
+describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
+  const template = "<template>\n  <div :a=\"b\">\n    <p>{{ c }}</p>\n  </div>\n</template>\n";
+  const script = '<script setup lang="ts">\nimport { a } from "a";\nconst b   = a<number>(1)\n</script>\n';
+  const style = "<style scoped>\n.a{color:red}\n\n\n.b {\n  color: blue;\n}\n</style>\n";
+  const inputs = [
+    template,
+    script,
+    style,
+    `${template}\n${script}\n${style}`,
+    `${script}\n${template}\n${style}`,
+    `${script}${template}${style}`,
+    `${script}\n\n\n${template}\n\n\n\n${style}\n\n`,
+    `${template}\n${script}\n${style}`.trimEnd(),
+    `${template}\n${script}`.trimEnd(),
+    `\n${template}\n${script}`,
+    `﻿${template}\n${script}`,
+    `---\na:   1\n---\n\n${template}\n${script}`,
+    `<!-- a -->\n${template}\n<!-- b -->\n${script}<!-- c -->\n`,
+    // A comment that somebody reads.
+    `${template}\n<!-- prettier-ignore -->\n${script}\n<!-- display: inline -->\n${style}`,
+    // With one of these, the text is HTML.
+    `<!doctype html>\n${template}\n${script}`,
+    `${template}\n${script}\n<html></html>\n`,
+    // Other blocks, and what is no block.
+    `${template}\n<i18n>\n{ "a":1 }\n</i18n>\n\n${script}`,
+    `${template}\n<i18n lang="json">\n{ "a":1 }\n</i18n>\n\n${script}`,
+    `<docs>\n<div>\n</docs>\n\n${template}\n${script}`,
+    `${template}\ntext\n${script}`,
+    `${template}\n{{ a }}\n${script}`,
+    `${template}\n<br>\n${script}`,
+    `<div>\n  <p>a</p>\n</div>\n\n${script}`,
+    // What is on the line of a tag.
+    `${template.trimEnd()} ${script}`,
+    `${template.trimEnd()}a\n${script}`,
+    `${script.trimEnd()}<b></b>\n${template}`,
+    // A `<template>` that is not broken, is empty, is in another language, has attributes.
+    "<template>a</template>\n",
+    "<template>\n  a\n</template>\n",
+    "<template>\n  {{ a }}\n</template>\n",
+    "<template>\n  <!-- a -->\n</template>\n",
+    "<template>\n  <b>a</b> c\n</template>\n",
+    "<template>\n  <b>a</b>\n</template>\n",
+    "<template><div></div></template>\n",
+    "<template>\n  <div></div></template>\n",
+    "<template><div></div>\n</template>\n",
+    "<template></template>\n",
+    "<template>\n</template>\n",
+    "<template />\n",
+    "<template>\n<div></div>\n    <p>a</p>\n</template>\n",
+    "<template>\n  <template>\n    <p>a</p>\n  </template>\n  <template #a>b</template>\n</template>\n",
+    '<template lang="pug">\ndiv\n  p a\n</template>\n',
+    '<template lang="html">\n  <div></div>\n</template>\n',
+    "<template functional>\n  <div></div>\n</template>\n",
+    "<template>\n  <div></div>\n</template >\n",
+    "<Template>\n  <div></div>\n</Template>\n",
+    "<template>\n  <div></div>\n",
+    "<template>\n  <div v-pre>{{ a  }}</div>\n</template>\n",
+    // Whether an expression is TypeScript is a matter of a `<script>`, wherever it is.
+    `<template>\n  <div :a="b as c" @d="(e: f) => g!"></div>\n</template>\n\n<script lang="ts">\na;\n</script>\n`,
+    `<script lang="ts">\na;\n</script>\n\n<template>\n  <div :a="b as c" @d="(e: f) => g!"></div>\n</template>\n`,
+    `<script lang="typescript">\na;\n</script>\n\n<template>\n  <div :a="b as c"></div>\n</template>\n`,
+    `<script lang="tsx">\na;\n</script>\n\n<template>\n  <div :a="b as c"></div>\n</template>\n`,
+    `<script>\na;\n</script>\n\n<template>\n  <div :a="b as c"></div>\n</template>\n`,
+    // The attributes of a block.
+    ...[
+      "",
+      " setup",
+      ' lang="ts"',
+      ' lang="tsx"',
+      ' lang="js"',
+      ' lang="jsx"',
+      ' lang="typescript"',
+      ' lang="coffee"',
+      ' lang="json"',
+      ' lang=""',
+      " lang",
+      " lang='ts'",
+      " lang=ts",
+      ' LANG="ts"',
+      ' lang="ts" lang="js"',
+      '  setup   lang="ts"',
+      '\n  setup\n  lang="ts"\n',
+      ' setup="props"',
+      ' setup="{ a,b }"',
+      ' lang="ts" generic="T extends  U"',
+      ' type="module"',
+      ' src="./a.js"',
+      " src",
+      ' :a="b"',
+      ' class="b  a"',
+      ` setup lang="ts" name="${"a".repeat(70)}"`,
+      ` setup ${"a".repeat(40)} ${"b".repeat(40)}`,
+    ].map(attributes => `<script${attributes}>\nconst a   = <T,>(b: T) => b\n</script>\n\n${template}`),
+    ...[
+      "",
+      " scoped",
+      " module",
+      ' lang="css"',
+      ' lang="scss"',
+      ' lang="less"',
+      ' lang="postcss"',
+      ' lang="stylus"',
+      ' lang="sass"',
+      ' lang="ts"',
+      ' module="a"',
+      ' vars="{a,b}"',
+      ' src="a.css"',
+      ' scoped=""',
+    ].map(attributes => `${template}\n<style${attributes}>\n.a{.b{color:red}}\n// c\n</style>\n`),
+    // What is in a `<script>`.
+    ...[
+      "",
+      "\n",
+      " ",
+      "a",
+      "\na",
+      "a\n",
+      "\n\n\na\n\n\n",
+      "\n  a;\n  b;\n",
+      "\na;  \n",
+      "\na(\n",
+      "\n// prettier-ignore\na  =  1;\n",
+      "\nconst a = `\n  b\n`;\n",
+      "\n/*\n a\n  */\n",
+      "\n<!-- a\n",
+      "\n// @flow\na;\n",
+      '\nconst a = "</script";\n',
+      '\nconst a = "<script>";\n',
+      "\na </ b;\n",
+      "\na;\r\nb;\r\n",
+      "\na;\f\n",
+      "\n﻿a;\n",
+      '\nconst a = "中";\n',
+      "\nconst a = css`\n  a {\n  }\n`;\n",
+      "\nreturn a;\n",
+      "\nawait a;\n",
+      "\nconst a = <div />;\n",
+      `\nconst ${"a".repeat(30)} = ${"b".repeat(30)}(${"c".repeat(30)}, ${"d".repeat(30)});\n`,
+    ].flatMap(code => [`<script>${code}</script>\n`, `${template}\n<script lang="ts">${code}</script>\n`]),
+    "<script>\na;\n</script >\n",
+    "<script>\na;\n</SCRIPT>\n",
+    "<script>\na;\n</script\n>\n",
+    "<script>\na;\n",
+    "<script />\n",
+    // What is in a `<style>`.
+    ...[
+      "",
+      "\n",
+      "a{}",
+      "\n  a {\n    b: c;\n  }\n",
+      "\n/*\n a  \n  */\n",
+      "\n/* a */  \n",
+      '\na {\n  b: "c\\\nd";\n}\n',
+      "\na {\n",
+      "\n}\n",
+      "\na {\n  b: c;\r\n}\n",
+      "\n/* prettier-ignore */\na  {\n}\n",
+      "\n---\na: 1\n---\na {\n}\n",
+      "\na {\n  b: v-bind('c.d');\n}\n",
+      `\n${"a".repeat(30)}, ${"b".repeat(30)}, ${"c".repeat(30)} {\n  d: e;\n}\n`,
+      "\n</styl>\n",
+    ].flatMap(code => [`<style>${code}</style>\n`, `${template}\n<style lang="scss">${code}</style>\n`]),
+  ];
+  const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
+
+  test.concurrent.each([
+    [],
+    ["--vue-indent-script-and-style"],
+    ["--vue-indent-script-and-style", "--use-tabs"],
+    ["--vue-indent-script-and-style", "--tab-width=0"],
+    ["--vue-indent-script-and-style", "--embedded-language-formatting=off"],
+    ["--embedded-language-formatting=off"],
+    ["--html-whitespace-sensitivity=strict"],
+    ["--html-whitespace-sensitivity=ignore"],
+    ["--print-width=20"],
+    ["--print-width=1", "--tab-width=4"],
+    ["--end-of-line=crlf"],
+    ["--end-of-line=cr", "--vue-indent-script-and-style"],
+    ["--no-semi", "--single-quote", "--use-tabs"],
+    ["--bracket-same-line"],
+    ["--single-attribute-per-line", "--print-width=30"],
+    ["--insert-pragma"],
+    ["--require-pragma"],
+  ])("the same with and without short cuts: %j", async (...options: string[]) => {
+    const { short, long } = await bothWays(files, options);
+    expect(short).toEqual(long);
+  });
+
+  test("a file that is read from the bytes is formatted", async () => {
+    const { short, long } = await bothWays({ "a.vue": `${script}\n\n\n${template}${style}` }, []);
+    expect(short).toEqual(long);
+    expect(short.written["a.vue"]).toMatchInlineSnapshot(`
+      "<script setup lang="ts">
+      import { a } from "a";
+      const b = a<number>(1);
+      </script>
+
+      <template>
+        <div :a="b">
+          <p>{{ c }}</p>
+        </div>
+      </template>
+      <style scoped>
+      .a {
+        color: red;
+      }
+
+      .b {
+        color: blue;
+      }
+      </style>
+      "
+    `);
+  });
+});
+
 describe.skipIf(!hasFlag)("where lines are written without a document", () => {
   /** Formats `files` with `flags`, and returns what they are afterwards. */
   async function format(files: Record<string, string>, flags: string[]) {

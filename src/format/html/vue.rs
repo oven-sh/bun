@@ -83,13 +83,14 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     pub(crate) fn is_vue_sfc_with_typescript_script(&mut self) -> bool {
         let (tree, options) = (self.tree, self.options);
         *self.has_typescript_script.get_or_insert_with(|| {
-            tree.children(tree.root).any(|child| {
-                tree.is_vue_script_tag(child, options)
-                    && matches!(
-                        tree.attribute(child, b"lang").flatten(),
-                        Some(b"ts" | b"typescript")
-                    )
-            })
+            tree.has_typescript_script_in_run
+                || tree.children(tree.root).any(|child| {
+                    tree.is_vue_script_tag(child, options)
+                        && matches!(
+                            tree.attribute(child, b"lang").flatten(),
+                            Some(b"ts" | b"typescript")
+                        )
+                })
         })
     }
 

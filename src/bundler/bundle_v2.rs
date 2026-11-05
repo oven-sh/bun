@@ -5265,13 +5265,11 @@ pub mod bv2_impl {
                             && importer_is_js
                             && index < this.graph.ast.items_import_records()[importer].len()
                         {
-                            this.free_list.push(result.namespace);
-                            this.free_list.push(result.path);
                             let pretty = this.path_with_pretty_initialized(&path, target).expect("oom");
                             let import_record: &mut ImportRecord =
                                 &mut this.graph.ast.items_import_records_mut()[importer].as_mut_slice()[index];
                             import_record.source_index = Index::INVALID;
-                            import_record.path = path_as_static(&pretty);
+                            import_record.path = pretty;
                             return;
                         }
                     }

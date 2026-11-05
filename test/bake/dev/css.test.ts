@@ -50,9 +50,10 @@ devTest("css module edited without a change of names updates in place", {
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("ran");
+    await c.style("." + (await c.js<string>`document.body.className`)).color.expect.toBe("red");
     // a.ts accepts nothing: sent again, it would reload the page.
     await dev.patch("a.module.css", { find: "red", replace: "blue" });
-    await c.style("body").color.expect.toBe("blue");
+    await c.style("." + (await c.js<string>`document.body.className`)).color.expect.toBe("blue");
   },
 });
 devTest("css module's names reach a server render when one is added", {

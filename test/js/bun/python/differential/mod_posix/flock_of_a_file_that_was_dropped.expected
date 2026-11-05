@@ -1,0 +1,26 @@
+status: 0
+script: 0e3e8268143b7ecf
+---
+locked 0
+locked 1
+locked 2
+locked 3
+locked 4
+locked by number 0
+locked by number 1
+locked by number 2
+exclusive after shared
+held 0
+held 1
+held 2
+given back: 3
+after a thread that has ended
+beside a thread that waits
+True
+BlockingIOError
+['let go', 'got it']
+BlockingIOError
+['let go', 'got it']
+the child has it
+after the child
+0

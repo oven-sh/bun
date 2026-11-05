@@ -1748,6 +1748,8 @@ fn read_stretch(
         |start: usize, end: usize| is_original || css.get(start..end) == original.get(start..end);
     let mut segment: Option<(usize, usize)> = None;
     let mut semicolon = None;
+    // How many of `heads` are those of at-rules.
+    let mut at_rules = 0usize;
     let mut at = start;
     // Does it end with a line that isn't taken?
     let is_refused = loop {
@@ -1817,9 +1819,7 @@ fn read_stretch(
                         ) else {
                             break true;
                         };
-                        if selectors.has_upper
-                            && (is_in_at_rule || heads.iter().any(|it| it.at_rule.is_some()))
-                        {
+                        if selectors.has_upper && (is_in_at_rule || at_rules > 0) {
                             break true;
                         }
                         head = Some((selectors.end, selectors.shape, None));
@@ -1836,6 +1836,7 @@ fn read_stretch(
         }
         let mut takes_empty_line = true;
         if let Some((end, shape, at_rule)) = head {
+            at_rules += usize::from(at_rule.is_some());
             heads.push(StandingHead {
                 start: at,
                 end,
@@ -1849,6 +1850,7 @@ fn read_stretch(
             let Some(head) = heads.pop() else {
                 break true;
             };
+            at_rules = at_rules.saturating_sub(usize::from(head.at_rule.is_some()));
             segment = Some((head.before.map_or(head.start, |it| it.0), end));
             semicolon = Some(false);
         } else {
@@ -2065,13 +2067,13 @@ fn end_of_standing_comment(
             (content, 2)
         }
         b'/' => {
-            let line = &rest[..strings::index_of_any(rest, b"\n\r\x0C")?];
-            let is_taken = match syntax {
-                Syntax::Css => false,
-                Syntax::Scss => true,
-                Syntax::Less => end_of_less_line_comment(css, start).is_some(),
+            let len = match syntax {
+                Syntax::Css => return None,
+                Syntax::Scss => strings::index_of_any(rest, b"\n\r\x0C")?,
+                Syntax::Less => end_of_less_line_comment(css, start)? - (start + 2),
             };
-            if !is_taken || may_end_with_white_space(line) {
+            let line = &rest[..len];
+            if may_end_with_white_space(line) {
                 return None;
             }
             (line, 0)

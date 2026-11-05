@@ -103,11 +103,11 @@ fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
         let Some(at) = text::index_of_from(text, b"//", from) else {
             return Vec::new();
         };
-        let line_end = index_of_any(&text[at..], b"\n\r").map_or(text.len(), |len| at + len);
-        if contains_any(&text[at + 2..line_end], b"\"'*") {
-            break;
+        match index_of_any(&text[at + 2..], b"\n\r\"'*") {
+            None => return Vec::new(),
+            Some(len) if matches!(text[at + 2 + len], b'\n' | b'\r') => from = at + 2 + len,
+            Some(_) => break,
         }
-        from = line_end;
     }
     let mut state = State::Initial;
     let mut state_to_return_from_quotes = State::Initial;

@@ -949,6 +949,9 @@ describe.skipIf(!hasFlag)("style sheets", () => {
       "  --b:\n    some-long-name, another-long-name, yet-another-long-name, one-more-long-name,\n    c !important;\n" +
       "  --b:\n    some-long-name,another-long-name, yet-another-long-name, one-more-long-name,\n    c;\n" +
       "  --b:\n    some-long-name another-long-name yet-another-long-name one-more-long-name and,\n    c;\n}\n",
+    "capitals-in-and-after-at-rules.css":
+      "@media (min-width: 1px) {\n  A {\n  }\n}\nB {\n  @media (min-width: 1px) {\n    C {\n      D {\n      }\n    }\n  }\n  E {\n  }\n}\n" +
+      "@keyframes f {\n  FROM {\n  }\n}\nFROM {\n}\n",
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",

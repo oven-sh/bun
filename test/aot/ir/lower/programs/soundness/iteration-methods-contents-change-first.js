@@ -471,13 +471,13 @@ main();
 // CHECK-NEXT: v11 = NewClosure v10 function=[[f_4]]
 // CHECK-NEXT: v12 = String string="first"
 // CHECK-NEXT: v13 = Call v11, -, v12 calleeName="use"
-// CHECK-NEXT: v14 = Await v13
+// CHECK-NEXT: v14 = Await v13, v0
 // CHECK-NEXT: v15 = GetModuleVariable variable=[[g_5]]
 // CHECK-NEXT: v16 = NewClosure v9 function=[[f_6]]
 // CHECK-NEXT: v17 = Call v15, -, v16 calleeName="h0"
 // CHECK-NEXT: v18 = String string="second"
 // CHECK-NEXT: v19 = Call v11, -, v18 calleeName="use"
-// CHECK-NEXT: v20 = Await v19
+// CHECK-NEXT: v20 = Await v19, v0
 // CHECK-NEXT: v21 = Undefined
 // CHECK-NEXT: Return v21
 // CHECK-NEXT: }
@@ -500,17 +500,17 @@ main();
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.asyncIterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}, {type=anything variableName="r"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_9]], v1: anything):
-// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_9]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="i"
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_9]]
-// CHECK-NEXT: v7 = NewClosure v0, v1 function=[[f_10]]
-// CHECK-NEXT: v8 = NewObject -, v7 layout=[[L_11]] fields=[0]
-// CHECK-NEXT: v9 = FinishObject v8
-// CHECK-NEXT: Return v9
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_9]]):
+// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_9]] field=1
+// CHECK-NEXT: v2 = CheckInitialized v1 name="i"
+// CHECK-NEXT: v3 = Integer
+// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_9]] field=1
+// CHECK-NEXT: v6 = NewClosure v0 function=[[f_10]]
+// CHECK-NEXT: v7 = NewObject -, v6 layout=[[L_11]] fields=[0]
+// CHECK-NEXT: v8 = FinishObject v7
+// CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Base"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_12]]] {

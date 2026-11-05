@@ -15,9 +15,9 @@ fn is_const_written_as_zero(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -
     written.kind == VarKind::Const
         && written.ty.is_none()
         && written.init.is_some()
-        && !hir.is_ambient(hir.node(declaration))
         && matches!(hir[written.init].kind, ExprKind::Number(index)
             if hir.numbers[index as usize].to_bits() == 0)
+        && !hir.is_ambient(hir.node(declaration))
 }
 
 fn comes_from_elsewhere(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
@@ -57,8 +57,9 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(super) fn compute_variable_position(&mut self, symbol: Sym) -> DeclaredType {
-        if self.is_function_binding(symbol) {
-            let ty = match self.find_bound_function(symbol) {
+        let class = self.queries.class_of_binding(symbol);
+        if class.is_some() || self.is_function_binding(symbol) {
+            let ty = match self.find_bound_function(symbol, class) {
                 Some(key) => {
                     let function = self.reference_function(key);
                     self.fragment.types.intern(Type::function(function))
@@ -150,8 +151,8 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_bound_function(&self, symbol: Sym) -> Option<FunctionKey> {
-        let key = match self.queries.class_of_binding(symbol) {
+    fn find_bound_function(&self, symbol: Sym, class: Option<ClassRef>) -> Option<FunctionKey> {
+        let key = match class {
             Some(class) => {
                 let left_out = self.inputs.library_functions.left_out_declarations();
                 match left_out.is_class_left_out(class.file, class.class) {
@@ -169,9 +170,6 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn is_function_binding(&self, symbol: Sym) -> bool {
-        if self.queries.class_of_binding(symbol).is_some() {
-            return true;
-        }
         let files = self.queries.files();
         let mut has_body = false;
         for &(declaring_file, declaration) in files.decls_of(symbol).iter() {

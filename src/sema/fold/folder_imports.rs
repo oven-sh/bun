@@ -13,12 +13,26 @@ pub(super) struct ImportedNames {
     asked_for: Vec<ImportedName>,
     answers: FxHashMap<ImportedName, Option<Constant>>,
     given: Option<FxHashMap<ImportedName, Constant>>,
-    holders: FxHashMap<ExprId, ImportedName>,
+    holders: Vec<ImportedName>,
+    holder_numbers: Vec<u32>,
 }
 
 impl ImportedNames {
     pub(super) fn into_asked_for(self) -> Vec<ImportedName> {
         self.asked_for
+    }
+
+    fn note_holder(&mut self, holder: ExprId, name: ImportedName, expr_count: usize) {
+        if self.holder_numbers.is_empty() {
+            self.holder_numbers = vec![0; expr_count];
+        }
+        self.holders.push(name);
+        self.holder_numbers[holder.idx()] = self.holders.len() as u32;
+    }
+
+    fn find_holder(&self, holder: ExprId) -> Option<ImportedName> {
+        let number = *self.holder_numbers.get(holder.idx())?;
+        Some(self.holders[number.checked_sub(1)? as usize])
     }
 }
 
@@ -75,7 +89,8 @@ impl<'s> Folder<'_, 's> {
         if !self.bound.is_evaluated_ident(ident) || !self.has_static_lookup(ident) {
             return None;
         }
-        self.imported_names.holders.insert(ident, name);
+        let expr_count = self.hir.exprs.len();
+        self.imported_names.note_holder(ident, name, expr_count);
         let is_read = name.export.is_some() && !self.is_assignment_target(ident);
         is_read.then(|| self.fold_imported_name(ident, name))
     }
@@ -90,7 +105,7 @@ impl<'s> Folder<'_, 's> {
             return None;
         }
         let object = self.hir.skip_type_assertions(object);
-        let &holder = self.imported_names.holders.get(&object)?;
+        let holder = self.imported_names.find_holder(object)?;
         let is_read = !self.is_assignment_target(access) && !self.is_delete_operand(access);
         is_read.then(|| self.fold_imported_name(access, ImportedName { member, ..holder }))
     }

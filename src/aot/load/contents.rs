@@ -15,9 +15,7 @@ use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 
-#[cfg(test)]
-pub(crate) use self::entry_points::FoundBecause;
-pub(crate) use self::entry_points::{EntryPointFinder, FinderInput, FoundEntryPoint};
+pub(crate) use self::entry_points::{EntryPointFinder, FinderInput, FoundBecause, FoundEntryPoint};
 pub(crate) use self::load_names::NamedLoads;
 use self::load_names::resolve_loads_through_imported_loaders;
 pub(crate) use self::scan::{ScanInput, scan_file};

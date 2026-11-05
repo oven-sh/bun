@@ -8,8 +8,9 @@ use crate::load::{ProgramFile, ProjectId, Sources};
 use crate::modules::{ModuleGraph, ModuleRef};
 use bun_ast::Loader;
 use bun_sema::atom::{Atom, Interner};
-use bun_sema::check::aot::{ClassDeclaration, FunctionRef};
+use bun_sema::check::aot::{ClassDeclaration, FunctionRef, ObjectOrigin, TypeIdentity};
 use bun_sema::hir::FnId;
+use bun_sort_by_number::number_of_pair;
 use core::cmp::Ordering;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -115,6 +116,7 @@ pub struct KeyContext<'a> {
 }
 
 impl KeyContext<'_> {
+    #[inline]
     pub fn function_key(&self, key: FunctionKey) -> ProgramFunctionKey {
         InProject {
             project: self.project,
@@ -283,7 +285,100 @@ pub(super) fn compare_program_variable_keys(
     })
 }
 
+#[inline]
+fn join_rank(project: ProjectId, variant: u32, words: [u32; 3]) -> u128 {
+    let [first, second, third] = words;
+    let head = (project as u32) << 16 | variant;
+    u128::from(number_of_pair(head, first)) << 64 | u128::from(number_of_pair(second, third))
+}
+
+impl OrderedKey for ProgramFunctionKey {
+    #[inline]
+    fn rank(&self) -> u128 {
+        let (variant, file, second) = match self.key {
+            FunctionKey::ModuleBody(file) => (0, file, 0),
+            FunctionKey::WrappedModuleBody(file) => (1, file, 0),
+            FunctionKey::FaceBody(file) => (2, file, 0),
+            FunctionKey::CheckBody(file) => (3, file, 0),
+            FunctionKey::Instantiation(file) => (4, file, 0),
+            FunctionKey::Source(it) => (5, it.file, it.function.0),
+            FunctionKey::Signature(it) => (6, it.file, it.function.0),
+            FunctionKey::ClassSignature(it) => (7, it.file, it.class.0),
+            FunctionKey::ImplicitConstructor(it) => (8, it.file, it.class.0),
+            FunctionKey::InstanceInitializer(it) => (9, it.file, it.class.0),
+            FunctionKey::StaticInitializer(it) => (10, it.file, it.class.0),
+            FunctionKey::AccessorGetter { file, member } => (11, file, member.0),
+            FunctionKey::AccessorSetter { file, member } => (12, file, member.0),
+            FunctionKey::PrivateNameTest { file, member } => (13, file, member.0),
+        };
+        join_rank(self.project, variant, [file.0, second, 0])
+    }
+
+    fn compare(&self, other: &Self, _: &Interner<'_>) -> Ordering {
+        self.cmp(other)
+    }
+}
+
+impl OrderedKey for ProgramLayoutKey {
+    fn rank(&self) -> u128 {
+        let high = |number: u64| (number >> 32) as u32;
+        let (variant, words) = match self.key {
+            LayoutKey::Class(it) => (0x000, [it.file.0, it.class.0, 0]),
+            LayoutKey::ConstructorFunction(it) => (0x100, [it.file.0, it.function.0, 0]),
+            LayoutKey::Library(_) => (0x200, [0; 3]),
+            LayoutKey::ObjectType {
+                origin,
+                instantiation: TypeIdentity([first, second]),
+            } => match origin {
+                ObjectOrigin::Symbol(it) => (0x300, [it.file.0, it.id.0, high(first)]),
+                ObjectOrigin::TypeLiteral { file, node } => (0x301, [file.0, node.0, high(first)]),
+                ObjectOrigin::MappedType { file, node } => (0x302, [file.0, node.0, high(first)]),
+                ObjectOrigin::ObjectLiteral { file, expression } => {
+                    (0x303, [file.0, expression.0, high(first)])
+                }
+                ObjectOrigin::Computed => (0x304, [high(first), first as u32, high(second)]),
+            },
+            LayoutKey::UntypedLiteral {
+                file,
+                members: TypeIdentity([first, _]),
+            } => (0x400, [file.0, high(first), first as u32]),
+            LayoutKey::CreatedObject { file, call } => (0x500, [file.0, call, 0]),
+            LayoutKey::Container(it) => (0x600, [it.file.0, it.id.0, 0]),
+            LayoutKey::Environment { file, environment } => (0x700, [file.0, environment, 0]),
+        };
+        join_rank(self.project, variant, words)
+    }
+
+    fn compare(&self, other: &Self, _: &Interner<'_>) -> Ordering {
+        self.cmp(other)
+    }
+}
+
 impl OrderedKey for ProgramVariableKey {
+    #[inline]
+    fn rank(&self) -> u128 {
+        let ProgramVariableKey::Declared(declared) = *self else {
+            return u128::from(order_of_variant(*self)) << 120;
+        };
+        let (variant, first, second) = match declared.key {
+            VariableKey::Symbol(it) => (0, it.file.0, it.id.0),
+            VariableKey::SyntheticExport(id) => (1, id.0, 0),
+            VariableKey::Copy(id) => (2, id.0, 0),
+            VariableKey::ModuleExports(file) => (3, file.0, 0),
+            VariableKey::InnerModuleExports(it) => (4, it.file.0, it.function.0),
+            VariableKey::ClassSlot { class, .. } => (5, class.file.0, class.class.0),
+            VariableKey::ModulePath { file, variable } => (6, file.0, variable as u32),
+            VariableKey::PrivateState { state, .. } => (7, state.file.0, state.id.0),
+            VariableKey::RequiredAnswer(it) => (8, it.file.0, it.id.0),
+            VariableKey::RequireMadeForOwnFile(it) => (9, it.file.0, it.id.0),
+            VariableKey::MockOf(file) => (10, file.0, 0),
+            VariableKey::InstantiationState(file) => (11, file.0, 0),
+            VariableKey::EnvironmentMadeAhead(file) => (12, file.0, 0),
+            VariableKey::MockOfRuntimeModule(_) => (13, 0, 0),
+        };
+        join_rank(declared.project, variant, [first, second, 0])
+    }
+
     fn compare(&self, other: &Self, atoms: &Interner<'_>) -> Ordering {
         compare_program_variable_keys(*self, *other, atoms)
     }

@@ -67,7 +67,7 @@ test("end", () => {});
 `,
 };
 
-// `delete require.cache[path]` takes the file from the loader too: ./fixed-runs/isolated/commonjs-file-that-threw-under-an-import-is-taken-out-of-the-cache.txt.
+// `delete require.cache[path]` takes the file from the loader too: ./fixed-runs/isolated-open/commonjs-file-that-threw-under-an-import-is-taken-out-of-the-cache.txt.
 
 // The file is required, calls import() of the module that imports it, and throws: it goes out of require.cache, and in a test run out of the program. The import() still waits
 // then. The loader evaluates the graph once for all such calls and keeps the failure, which a later require() finds there.

@@ -3,7 +3,8 @@
 // What verbatimModuleSyntax forbids in a CommonJS file (TS1287) keeps no program from running, so it stops no build: a .cts file exports in the ordinary way.
 // CHECK: [[A]] = CheckInitialized {{*}}name="A"
 // CHECK-NEXT: Construct [[A]] calleeName="A"
-// CHECK: [[n]] = CheckInitialized {{*}}name="n"
+// CHECK: CheckInitialized {{*}}name="n"
+// CHECK-NEXT: [[n]] = Integer integer=2
 // CHECK-NEXT: Call {{*}}, [[n]] calleeKey="log"
 
 // FILE: main.ts

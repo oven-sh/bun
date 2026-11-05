@@ -120,7 +120,7 @@ const clockReading = (symbol: string) =>
     },
   }) satisfies b.FunctionField;
 
-const characters = [b.readAsCharacters];
+const characters = b.inspected;
 const converted = [b.runs("ToPrimitive")];
 // Native code that asks whether a value is a string says yes to a String object, and runs the object's own toString.
 const stringOrStringObject = b.union(b.string, b.instance("String"));
@@ -153,7 +153,6 @@ const keptByNativeCode = (readMembers: readonly string[], calledMembers: readonl
     b.named(...readMembers),
     ...(calledMembers.length > 0 ? [b.calls(...calledMembers)] : []),
   ),
-  b.membersOfObjectsOnly,
 ];
 
 // Native code copies what it reads out of the options. Each function that it calls has a b.memberCalled of its own, which says its `this`, and each sequence a b.memberCalled of its iterator.
@@ -161,7 +160,6 @@ const readAndKeptIn = (cell: string, readMembers: readonly string[]) => [
   b.storedIn(b.nativeCell(cell)),
   b.reachableValuesStoredIn(b.nativeCell(cell)),
   b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named(...readMembers)),
-  b.membersOfObjectsOnly,
   b.functionsConvertedUnderNamesOnly,
 ];
 
@@ -423,7 +421,7 @@ const inspect = [
     ...operandCodeOnly,
     args: { value: b.any.optional, options: b.any.optional, colors: b.any.optional },
     uses: {
-      value: [b.printedByFormatter(), b.functionsOnlyNamed],
+      value: [b.printedByFormatter()],
       options: membersInspected("depth", "colors", "sorted", "compact"),
       colors: b.inspected,
     },
@@ -956,7 +954,6 @@ const serverMembers = {
           "ToPrimitive",
           b.named("data", "headers"),
         ),
-        b.membersOfObjectsOnly,
         b.memberStoredIn(["data"], b.nativeCell(webSocketDataCell)),
       ],
     },
@@ -1042,7 +1039,6 @@ const subprocessOptionsKept: readonly b.MemberPath[] = [
 
 const subprocessOptionsAt = (operand: b.OperandName) => [
   b.runsTransitively(b.named(...subprocessOptionNames, ...subprocessHandlerNames)),
-  b.membersOfObjectsOnly,
   // What it keeps of them, and what it calls, is listed below.
   b.membersOnlyInspected,
   ...subprocessOptionsConverted.flatMap(name => convertedToString(operand, name)),
@@ -1164,7 +1160,7 @@ const parsesLines = (returns: b.TableType, args: Contents, uses: UsesByOperand) 
       returns,
       capability: "heap",
       throws: true,
-      uses: { input: [b.readAsCharacters, b.readsContents()], ...uses },
+      uses: { input: [b.readsContents()], ...uses },
       reads: viewHeaps,
       implementation: b.generic,
     },

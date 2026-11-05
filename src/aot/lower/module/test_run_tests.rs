@@ -659,6 +659,28 @@ fn name_read_off_a_namespace_that_a_barrel_hands_on_is_asked_in_the_name_of_the_
 }
 
 #[test]
+fn star_over_a_mocked_barrel_lists_the_name_that_the_barrel_leaves_to_its_stars() {
+    let rest = "console.log((await import('./barrel.js')).v);\n";
+    let test_file = write_test_file(&["mocked.js"], rest);
+    let program = link_test_run(&[
+        (TEST_FILE, test_file.as_str()),
+        ("declares.cjs", "exports.v = 'real';\n"),
+        ("other.js", "export const other = 1;\n"),
+        (
+            "mocked.js",
+            "export * from './other.js';\nexport { v } from './declares.cjs';\n",
+        ),
+        ("barrel.js", "export * from './mocked.js';\n"),
+    ]);
+    let printed = print_program(&program);
+    let mut records = printed.lines().filter(|line| line.starts_with("module "));
+    let barrel = records.find(|line| line.contains("path=\"/project/barrel.js\""));
+    let barrel = barrel.expect("the barrel has a record");
+    let step = "name=\"v\" mayBeAbsent=true exportName=\"v\" specifier=\"./mocked.js\"";
+    assert!(barrel.contains(step), "{barrel}");
+}
+
+#[test]
 fn name_read_off_an_object_that_another_object_shows_is_asked_of_its_module() {
     let others = [
         ("declares.js", "export const v = 'real';\n"),

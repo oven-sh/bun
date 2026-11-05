@@ -139,6 +139,28 @@ impl LinkedProject<'_, '_> {
         table::exists_on(global, self.platform).then_some(global)
     }
 
+    #[inline(never)]
+    fn builtin_of_resolved(
+        &self,
+        file: FileId,
+        expr: ExprId,
+        resolved: Resolved,
+    ) -> Option<BuiltinId> {
+        let is_member = || self.files.hir(file).member_key(expr).is_some();
+        match resolved {
+            Resolved::Builtin(path) => Some(path.id),
+            Resolved::Intrinsic(Intrinsic::Builtin(builtin)) => Some(builtin),
+            Resolved::Intrinsic(Intrinsic::Call { .. }) if is_member() => {
+                Some(BuiltinId::FunctionPrototypeCall)
+            }
+            Resolved::Intrinsic(Intrinsic::Apply) if is_member() => {
+                Some(BuiltinId::FunctionPrototypeApply)
+            }
+            Resolved::Intrinsic(Intrinsic::PrivateGlobal) => self.find_private_global(file, expr),
+            Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_) => None,
+        }
+    }
+
     fn runtime_module_export(&self, module: RuntimeModule, name: Atom) -> Linked {
         if table::is_es_module(module) {
             return LinkedBinding::Unknown;
@@ -217,29 +239,20 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
     type Builtin = BuiltinId;
     type Module = ModuleRef;
 
+    #[inline]
     fn hir(&self, file: FileId) -> &File<'s> {
         self.files.hir(file)
     }
 
+    #[inline]
     fn bound(&self, file: FileId) -> &Bound<'s> {
         self.files.bound(file)
     }
 
+    #[inline]
     fn builtin_of_expression(&self, file: FileId, expr: ExprId) -> Option<BuiltinId> {
-        let source = parsed_source(self.files, file)?;
-        let is_member = || self.files.hir(file).member_key(expr).is_some();
-        match source.builtins.of_expr(expr)? {
-            Resolved::Builtin(path) => Some(path.id),
-            Resolved::Intrinsic(Intrinsic::Builtin(builtin)) => Some(builtin),
-            Resolved::Intrinsic(Intrinsic::Call { .. }) if is_member() => {
-                Some(BuiltinId::FunctionPrototypeCall)
-            }
-            Resolved::Intrinsic(Intrinsic::Apply) if is_member() => {
-                Some(BuiltinId::FunctionPrototypeApply)
-            }
-            Resolved::Intrinsic(Intrinsic::PrivateGlobal) => self.find_private_global(file, expr),
-            Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_) => None,
-        }
+        let resolved = parsed_source(self.files, file)?.builtins.of_expr(expr)?;
+        self.builtin_of_resolved(file, expr, resolved)
     }
 
     fn builtin_member(&self, holder: BuiltinId, name: Atom) -> Option<BuiltinId> {

@@ -413,7 +413,7 @@ describe("the debugger", () => {
   });
 });
 
-describe("--watch", () => {
+describe.concurrent("--watch", () => {
   const value = (text: string) => `export const value: number = ${text};\n`;
   const shape = (side: string) => `export type Shape = { side: ${side} };\n`;
   const files = {

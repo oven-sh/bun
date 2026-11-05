@@ -38,6 +38,8 @@ impl<'s> Files<'s> {
     }
 }
 
+type LoadsThatNameEntryPoints = FxHashMap<(Vec<u8>, HostLoader), Vec<Option<NamingLoad>>>;
+
 pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     pub(super) session: &'s Session,
     pub(super) host: &'a dyn CodeHost,
@@ -50,6 +52,7 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     written_entry_points: Vec<CodeTarget<'r>>,
     keys_of_entry_points: FxHashSet<(Cow<'r, [u8]>, HostLoader)>,
     found_entry_points: Guarded<Vec<CodeTarget<'r>>>,
+    loads_that_name_entry_points: Guarded<LoadsThatNameEntryPoints>,
     entry_points_that_run_first: FxHashSet<Vec<u8>>,
     pub(super) is_case_sensitive: bool,
 }
@@ -93,6 +96,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             written_entry_points: entry_points,
             keys_of_entry_points,
             found_entry_points: Guarded::new(Vec::new()),
+            loads_that_name_entry_points: Guarded::new(FxHashMap::default()),
             entry_points_that_run_first,
             is_case_sensitive,
         }
@@ -140,6 +144,30 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         }
         self.found_entry_points.lock().push(target);
         Some(target)
+    }
+
+    pub(super) fn note_load_that_names(&self, path: &[u8], load: Option<NamingLoad>) -> bool {
+        let request = (self.resolver).loader_request(path, CodeImportKind::EntryPoint, None, None);
+        let path = to_path(path, self.is_case_sensitive).into_owned();
+        let mut named_by = self.loads_that_name_entry_points.lock();
+        let loads = named_by
+            .entry((path, self.host.loader_of(&request)))
+            .or_default();
+        let is_new = !loads.contains(&load);
+        if is_new {
+            loads.push(load);
+        }
+        is_new
+    }
+
+    pub(super) fn loads_that_alone_name(&self, key: LoadKey<'_>) -> Option<Vec<NamingLoad>> {
+        let path = to_path(key.path, self.is_case_sensitive);
+        if (self.keys_of_entry_points).contains(&(path.clone(), key.loader)) {
+            return None;
+        }
+        let named_by = self.loads_that_name_entry_points.lock();
+        let loads = named_by.get(&(path.into_owned(), key.loader))?;
+        loads.iter().copied().collect()
     }
 
     pub(super) fn runs_first(&self, key: LoadKey<'_>) -> bool {

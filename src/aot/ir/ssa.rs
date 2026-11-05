@@ -143,26 +143,32 @@ impl SsaState {
         }
     }
 
+    #[inline]
     pub(super) fn add_block(&mut self) {
         self.states.push(BlockState::default());
     }
 
+    #[inline]
     pub(super) fn add_predecessor(&mut self, block: BlockId, predecessor: BlockId) {
         self.states[block.index()].predecessors.push(predecessor);
     }
 
+    #[inline]
     pub(super) fn is_sealed(&self, block: BlockId) -> bool {
         self.states[block.index()].is_sealed
     }
 
+    #[inline]
     pub(super) fn predecessor_count(&self, block: BlockId) -> usize {
         self.states[block.index()].predecessors.len()
     }
 
+    #[inline]
     pub(super) fn variable_count(&self) -> u32 {
         self.variables.len() as u32
     }
 
+    #[inline]
     pub(super) fn create_variable(&mut self, declared: Option<TypeId>) -> LocalVariable {
         let variable = LocalVariable(self.variable_count());
         self.variables.push(VariableState {
@@ -174,6 +180,7 @@ impl SsaState {
         variable
     }
 
+    #[inline]
     fn record_definition_block(&mut self, variable: LocalVariable, block: BlockId) {
         let definition_blocks = &mut self.variables[variable.0 as usize].definition_blocks;
         let is_tracked = definition_blocks.len() <= MAX_SHORTCUT_DEFINITION_BLOCKS;
@@ -182,13 +189,18 @@ impl SsaState {
         }
     }
 
-    fn record_observed_value(&mut self, value: ValueId) {
-        if !self.pending_reads.is_empty() {
+    #[inline]
+    fn record_observed_value(&mut self, value: ValueId, first_value_of_read: usize) {
+        if value.index() >= first_value_of_read && !self.pending_reads.is_empty() {
             self.observed_values.insert(value);
         }
     }
 
+    #[inline]
     fn origin_of(&self, value: ValueId) -> ValueId {
+        if self.narrowed_from.is_empty() {
+            return value;
+        }
         let name = self.narrowed_from.get(&value);
         name.map_or(value, |name| name.origin)
     }
@@ -215,7 +227,11 @@ impl SsaState {
         Some(first)
     }
 
+    #[inline]
     fn count_read(&mut self, value: ValueId) {
+        if self.narrowed_from.is_empty() {
+            return;
+        }
         if let Some(name) = self.narrowed_from.get_mut(&value) {
             name.read_count += 1;
         }
@@ -264,7 +280,7 @@ impl SsaState {
             return Shortcut::No;
         };
         let mut nearest: Option<(u32, bool)> = None;
-        for &definition_block in definition_blocks {
+        for &definition_block in definition_blocks.iter() {
             let dominator = self.states[definition_block.index()].dominator;
             if dominator.is_none_or(|dominator| dominator.root != current.root) {
                 continue;
@@ -339,11 +355,21 @@ impl SsaState {
             self.link_loop_headers(block);
             return;
         }
-        let predecessors = self.states[block.index()].predecessors.clone();
-        for &predecessor in &predecessors {
-            self.link_loop_headers(predecessor);
+        let predecessors = &self.states[block.index()].predecessors;
+        let mut headers = predecessors.iter();
+        if headers.any(|&predecessor| self.is_unlinked_loop_header(predecessor)) {
+            for predecessor in predecessors.clone() {
+                self.link_loop_headers(predecessor);
+            }
         }
-        self.link_below(block, &predecessors);
+        let link = self.find_link_below(block, &self.states[block.index()].predecessors);
+        self.states[block.index()].dominator = Some(link);
+    }
+
+    #[inline]
+    fn is_unlinked_loop_header(&self, block: BlockId) -> bool {
+        let state = &self.states[block.index()];
+        state.is_loop_header && state.dominator.is_none()
     }
 
     fn link_loop_headers(&mut self, mut block: BlockId) {
@@ -368,15 +394,25 @@ impl SsaState {
     }
 
     fn link_below(&mut self, block: BlockId, predecessors: &[BlockId]) {
-        let mut predecessors = predecessors.iter().copied().filter(|&predecessor| {
+        let link = self.find_link_below(block, predecessors);
+        self.states[block.index()].dominator = Some(link);
+    }
+
+    #[inline]
+    fn find_link_below(&self, block: BlockId, predecessors: &[BlockId]) -> DominatorLink {
+        let mut parent = None;
+        let mut is_first = true;
+        for &predecessor in predecessors {
             let dominator = self.states[predecessor.index()].dominator;
-            !dominator.is_some_and(|dominator| self.is_never_entered(dominator.root))
-        });
-        let first = predecessors.next();
-        let mut parent =
-            first.filter(|predecessor| self.states[predecessor.index()].dominator.is_some());
-        for predecessor in predecessors {
-            parent = parent.and_then(|parent| self.lowest_common_ancestor(parent, predecessor));
+            if dominator.is_some_and(|dominator| self.is_never_entered(dominator.root)) {
+                continue;
+            }
+            parent = if is_first {
+                dominator.map(|_| predecessor)
+            } else {
+                parent.and_then(|parent| self.lowest_common_ancestor(parent, predecessor))
+            };
+            is_first = false;
         }
         let link = parent.and_then(|parent| {
             let dominator = self.states[parent.index()].dominator?;
@@ -393,32 +429,54 @@ impl SsaState {
                 root: dominator.root,
             })
         });
-        let link = link.unwrap_or_else(|| DominatorLink::root(block));
-        self.states[block.index()].dominator = Some(link);
+        link.unwrap_or_else(|| DominatorLink::root(block))
     }
 
+    #[inline]
     fn is_never_entered(&self, block: BlockId) -> bool {
+        if block == ENTRY_BLOCK {
+            return false;
+        }
         let state = &self.states[block.index()];
-        block != ENTRY_BLOCK && state.is_sealed && state.predecessors.is_empty()
+        state.is_sealed && state.predecessors.is_empty()
     }
 
     fn unique_predecessors(&self, block: BlockId) -> Predecessors {
-        let mut predecessors = self.states[block.index()].predecessors.clone();
-        predecessors.retain(|predecessor| !self.is_never_entered(*predecessor));
-        predecessors.sort_unstable();
-        predecessors.dedup();
+        let mut predecessors = Predecessors::new();
+        let mut is_sorted = true;
+        for &predecessor in self.states[block.index()].predecessors.iter() {
+            if self.is_never_entered(predecessor) || predecessors.last() == Some(&predecessor) {
+                continue;
+            }
+            is_sorted &= predecessors.last() < Some(&predecessor);
+            predecessors.push(predecessor);
+        }
+        if !is_sorted {
+            predecessors.sort_unstable();
+            predecessors.dedup();
+        }
         predecessors
     }
 }
 
-fn edge_targets(
+#[inline]
+fn for_each_edge_target(
     predecessor: &mut PendingBlock,
     block: BlockId,
-) -> impl Iterator<Item = &mut PendingTarget> {
-    let terminator = predecessor.terminator.iter_mut();
-    let targets = terminator.flat_map(|terminator| terminator.targets.iter_mut());
-    let targets = targets.chain(predecessor.handler.iter_mut());
-    targets.filter(move |target| target.block == block)
+    mut visit: impl FnMut(&mut PendingTarget),
+) {
+    if let Some(terminator) = &mut predecessor.terminator {
+        for target in terminator.targets.iter_mut() {
+            if target.block == block {
+                visit(target);
+            }
+        }
+    }
+    if let Some(handler) = &mut predecessor.handler
+        && handler.block == block
+    {
+        visit(handler);
+    }
 }
 
 impl FunctionBuilder {
@@ -496,6 +554,21 @@ impl FunctionBuilder {
         )
     }
 
+    pub fn is_constant(&self, value: ValueId) -> bool {
+        matches!(
+            self.opcode_of(value),
+            Some(
+                Opcode::Undefined
+                    | Opcode::Null
+                    | Opcode::Boolean
+                    | Opcode::Integer
+                    | Opcode::Double
+                    | Opcode::String
+                    | Opcode::BigInt
+            )
+        )
+    }
+
     pub fn is_new_closure(&self, value: ValueId) -> bool {
         matches!(self.opcode_of(value), Some(Opcode::NewClosure))
     }
@@ -549,8 +622,16 @@ impl FunctionBuilder {
             return;
         }
         state.is_sealed = true;
-        let incomplete_variables = core::mem::take(&mut state.incomplete_variables);
+        let has_incomplete_variables = !state.incomplete_variables.is_empty();
         self.ssa.link_dominator(block);
+        if has_incomplete_variables {
+            self.complete_variables(block);
+        }
+    }
+
+    fn complete_variables(&mut self, block: BlockId) {
+        let state = &mut self.ssa.states[block.index()];
+        let incomplete_variables = core::mem::take(&mut state.incomplete_variables);
         for variable in incomplete_variables {
             for predecessor in self.ssa.unique_predecessors(block) {
                 let value = self.read_variable_in(variable, predecessor);
@@ -565,31 +646,48 @@ impl FunctionBuilder {
         value
     }
 
-    fn read_variable_in(&mut self, variable: LocalVariable, mut block: BlockId) -> ValueId {
+    #[inline]
+    fn read_variable_in(&mut self, variable: LocalVariable, block: BlockId) -> ValueId {
         if let Some(value) = self.ssa.find_dominating_store(variable, block) {
             return value;
         }
+        self.read_variable_without_dominating_store(variable, block)
+    }
+
+    fn read_variable_without_dominating_store(
+        &mut self,
+        variable: LocalVariable,
+        mut block: BlockId,
+    ) -> ValueId {
         debug_assert!(
             self.ssa.pending_reads.is_empty() && self.ssa.observed_values.is_empty(),
             "a read ends before the next one begins"
         );
+        let first_value_of_read = self.values.len();
         loop {
-            let value = self.find_definition(variable, block);
+            let value = self.find_definition(variable, block, first_value_of_read);
             match self.resolve_pending_reads(variable, value) {
                 ControlFlow::Continue(predecessor) => block = predecessor,
                 ControlFlow::Break(value) => {
-                    self.ssa.observed_values.clear();
+                    if !self.ssa.observed_values.is_empty() {
+                        self.ssa.observed_values.clear();
+                    }
                     return value;
                 }
             }
         }
     }
 
-    fn find_definition(&mut self, variable: LocalVariable, mut block: BlockId) -> ValueId {
+    fn find_definition(
+        &mut self,
+        variable: LocalVariable,
+        mut block: BlockId,
+        first_value_of_read: usize,
+    ) -> ValueId {
         let mut single_predecessor_run = 0;
         loop {
             if let Some(definition) = self.ssa.definitions.get(block, variable) {
-                self.ssa.record_observed_value(definition);
+                (self.ssa).record_observed_value(definition, first_value_of_read);
                 return definition;
             }
             let should_try_shortcut =
@@ -597,7 +695,7 @@ impl FunctionBuilder {
             if should_try_shortcut {
                 match self.ssa.find_shortcut(variable, block) {
                     Shortcut::Value(definition) => {
-                        self.ssa.record_observed_value(definition);
+                        (self.ssa).record_observed_value(definition, first_value_of_read);
                         return definition;
                     }
                     Shortcut::To(ancestor) => {
@@ -737,12 +835,13 @@ impl FunctionBuilder {
             return false;
         }
         variable_parameters.pop();
+        let ssa = &mut self.ssa;
         for &predecessor in predecessors {
-            for target in edge_targets(&mut self.blocks[predecessor.index()], block) {
+            for_each_edge_target(&mut self.blocks[predecessor.index()], block, |target| {
                 if let Some(argument) = target.variable_arguments.pop() {
-                    self.ssa.take_back_read(argument);
+                    ssa.take_back_read(argument);
                 }
-            }
+            });
         }
         if parameter.index() + 1 == self.values.len() {
             self.values.pop();
@@ -751,9 +850,10 @@ impl FunctionBuilder {
     }
 
     fn append_argument(&mut self, predecessor: BlockId, block: BlockId, value: ValueId) {
-        for target in edge_targets(&mut self.blocks[predecessor.index()], block) {
+        let ssa = &mut self.ssa;
+        for_each_edge_target(&mut self.blocks[predecessor.index()], block, |target| {
             target.variable_arguments.push(value);
-            self.ssa.count_read(value);
-        }
+            ssa.count_read(value);
+        });
     }
 }

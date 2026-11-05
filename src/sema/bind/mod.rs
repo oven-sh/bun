@@ -419,6 +419,7 @@ pub enum GrowingDecls {
 }
 
 impl GrowingDecls {
+    #[inline]
     fn push(&mut self, decl: Decl) {
         match self {
             GrowingDecls::None => *self = GrowingDecls::One(decl),
@@ -566,19 +567,20 @@ impl<'s> Symbols<'s> {
     /// the merge adds for each `import * as ns`. Without that space the merge, which is single-threaded, would have to
     /// copy the lists.
     fn of(symbols: &[GrowingSymbol], arena: &'s Arena) -> Symbols<'s> {
-        let is_plain = |it: &&GrowingSymbol| {
+        let is_plain = |it: &GrowingSymbol| {
             it.exports.is_none()
                 && it.members.is_none()
                 && it.export_symbol.is_none()
                 && matches!(it.value_declaration, 0 | u32::MAX)
         };
-        let plain = symbols.iter().filter(is_plain).count();
-        let many = symbols.iter().filter(|it| it.decls.len() > 1).count();
         let is_namespace = |decl: &Decl| matches!(decl, Decl::ImportNamespace(_));
-        let namespaces = symbols
-            .iter()
-            .filter(|it| it.decls.iter().any(is_namespace));
-        let namespaces = namespaces.count();
+        let (mut plain, mut many, mut namespaces) = (0usize, 0usize, 0usize);
+        for it in symbols {
+            let decls = &it.decls[..];
+            plain += usize::from(is_plain(it));
+            many += usize::from(decls.len() > 1);
+            namespaces += usize::from(decls.iter().any(is_namespace));
+        }
         let mut all = Symbols {
             list: ArenaVec::new_in(arena),
             rest: ArenaVec::new_in(arena),
@@ -614,6 +616,7 @@ impl<'s> Symbols<'s> {
     }
 
     /// Appends `symbol`. Two or more declarations are copied into `arena`.
+    #[inline]
     pub fn push(&mut self, symbol: Symbol<'_>, arena: &'s Arena) {
         let decls = match *symbol.decls {
             [] => StoredDecls::None,
@@ -641,6 +644,7 @@ impl<'s> Symbols<'s> {
         );
     }
 
+    #[inline]
     fn set_rest(&mut self, index: usize, rest: RestOfSymbol) {
         let slot = &mut self.list[index].rest;
         let is_plain =
@@ -1194,9 +1198,13 @@ fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, u32, b
     let (mut loops, mut reduced): (Vec<Loop>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
     let mut longest = 0;
     for (i, node) in flow.iter().enumerate() {
-        let before = node.antecedents(edges).iter();
-        let before = before.filter(|it| it.idx() < i);
-        below[i] = 1 + before.map(|it| below[it.idx()]).max().unwrap_or(0);
+        let mut longest_before = 0u32;
+        for before in node.antecedents(edges) {
+            if before.idx() < i {
+                longest_before = longest_before.max(below[before.idx()]);
+            }
+        }
+        below[i] = 1 + longest_before;
         longest = longest.max(below[i]);
         match *node {
             Flow::Loop { .. } => loops.push(Loop {
@@ -1935,6 +1943,7 @@ impl<S: Storage> BoundIn<S> {
 
     /// True if the assignment `e` is how `{ name = value }` is stored: a
     /// `ShorthandPropertyAssignment` with an `ObjectAssignmentInitializer`.
+    #[inline]
     pub fn is_shorthand_property_assignment(&self, hir: &File, e: ExprId) -> bool {
         matches!(self.parent_of_expr(e), Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
     }
@@ -1944,12 +1953,27 @@ impl<S: Storage> BoundIn<S> {
     fn assignment_target(
         &self,
         hir: &File,
+        e: ExprId,
+        sees_through_spread: bool,
+    ) -> Option<AssignmentTarget> {
+        match self.assignment_target_or_pattern_around(hir, e, sees_through_spread) {
+            ControlFlow::Continue(pattern) => {
+                self.assignment_target_of_pattern(hir, pattern, sees_through_spread)
+            }
+            ControlFlow::Break(target) => target,
+        }
+    }
+
+    #[inline(never)]
+    fn assignment_target_of_pattern(
+        &self,
+        hir: &File,
         mut e: ExprId,
         sees_through_spread: bool,
     ) -> Option<AssignmentTarget> {
         // Most walks end within a few steps.
         const STEPS_WITHOUT_LOOKUP: u32 = 4;
-        let mut steps = 0;
+        let mut steps = 1;
         loop {
             e = match self.assignment_target_or_pattern_around(hir, e, sees_through_spread) {
                 ControlFlow::Continue(pattern) => pattern,
@@ -2050,6 +2074,7 @@ impl<S: Storage> BoundIn<S> {
     }
 
     /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
+    #[inline]
     pub fn export_symbol_of_value_symbol_if_exported(&self, symbol: SymbolId) -> SymbolId {
         let local = self.symbol(symbol);
         if local.flags.contains(SymFlags::EXPORT_VALUE) && local.export_symbol.is_some() {
@@ -2061,6 +2086,11 @@ impl<S: Storage> BoundIn<S> {
 
     /// The table's entries, in symbol creation order.
     pub fn table(&self, table: TableId) -> &[(Atom, SymbolId)] {
+        self.entries_of_table(table)
+    }
+
+    #[inline]
+    fn entries_of_table(&self, table: TableId) -> &[(Atom, SymbolId)] {
         if table.is_none() {
             return &[];
         }
@@ -2188,27 +2218,32 @@ pub(crate) fn nested_names_of(
     tables: &[(u32, u32)],
     entries: &[(Atom, SymbolId)],
 ) -> Vec<u64> {
-    let is_nested = |s: &&Scope| s.symbol.is_none() && s.parent.is_some() && s.locals.is_some();
-    let nested = || {
-        scopes
-            .iter()
-            .filter(is_nested)
-            .map(|s| tables[s.locals.idx()])
-    };
-    let count: usize = nested().map(|(_, len)| len as usize).sum();
+    let is_nested = |s: &Scope| s.symbol.is_none() && s.parent.is_some() && s.locals.is_some();
+    let mut count = 0usize;
+    for s in scopes {
+        if is_nested(s) {
+            count += tables[s.locals.idx()].1 as usize;
+        }
+    }
     if count == 0 {
         return Vec::new();
     }
     let mut filter = vec![0u64; (count / 8 + 1).next_power_of_two()];
-    let names = nested().flat_map(|(start, len)| &entries[start as usize..(start + len) as usize]);
-    for &(name, _) in names {
-        let (word, bit) = bit_of_nested_name(filter.len(), name);
-        filter[word] |= bit;
+    for s in scopes {
+        if !is_nested(s) {
+            continue;
+        }
+        let (start, len) = tables[s.locals.idx()];
+        for &(name, _) in &entries[start as usize..(start + len) as usize] {
+            let (word, bit) = bit_of_nested_name(filter.len(), name);
+            filter[word] |= bit;
+        }
     }
     filter
 }
 
 /// The word index and the bit for `name` in a `nested_names` of `words` words.
+#[inline]
 fn bit_of_nested_name(words: usize, name: Atom) -> (usize, u64) {
     // Atoms are numbered sequentially, so Fibonacci hashing spreads them out.
     let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
@@ -2394,13 +2429,21 @@ impl Bound<'_> {
     }
 
     /// True if the file has a `typeof x` type.
+    #[inline]
     pub(crate) fn has_type_queries(&self) -> bool {
         !self.type_query_operands.is_empty()
     }
 
     /// `IsInTypeQuery`: the type of `e` is queried, but `e` isn't read.
+    #[inline]
     pub fn is_in_type_query(&self, e: ExprId) -> bool {
-        self.type_query_operands.binary_search(&e).is_ok()
+        self.has_type_queries() && self.is_type_query_operand(e)
+    }
+
+    #[inline(never)]
+    fn is_type_query_operand(&self, e: ExprId) -> bool {
+        let operands = &self.type_query_operands;
+        operands.binary_search_by(|it| it.cmp(&e)).is_ok()
     }
 
     /// True if `e` is `arguments` and refers to the arguments object.
@@ -2524,10 +2567,15 @@ impl Bound<'_> {
     }
 
     pub fn lookup(&self, table: TableId, name: Atom) -> Option<SymbolId> {
-        let entries = self.table(table);
+        let entries = self.entries_of_table(table);
         if entries.len() <= Self::SCANNED {
             return entries.iter().find(|e| e.0 == name).map(|e| e.1);
         }
+        self.lookup_in_large_table(table, name)
+    }
+
+    #[inline(never)]
+    fn lookup_in_large_table(&self, table: TableId, name: Atom) -> Option<SymbolId> {
         let entry_index = *self.large_tables.get(&(table, name))?;
         Some(self.entries[entry_index as usize].1)
     }
@@ -2540,11 +2588,13 @@ impl Bound<'_> {
         self.ids[list.range()].iter().map(|&i| T::from(i))
     }
 
+    #[inline]
     pub fn is_shared(&self, flow: FlowId) -> bool {
         let word = self.flow_shared.get(flow.idx() / 64);
         word.is_some_and(|word| word >> (flow.idx() % 64) & 1 != 0)
     }
 
+    #[inline]
     pub fn edges(&self, start: u32, len: u32) -> &[FlowId] {
         &self.flow_edges[start as usize..(start + len) as usize]
     }
@@ -2648,6 +2698,14 @@ fn map_to_arena<'s, K: Eq + std::hash::Hash, V>(
 
 fn few_map_to_arena<K: Ord, V>(map: FxHashMap<K, V>, arena: &Arena) -> ArenaFewMap<'_, K, V> {
     ArenaFewMap::from_iter_in(map.into_iter(), arena)
+}
+
+#[inline]
+fn few_in_arena<T>(list: Vec<T>, arena: &Arena) -> ArenaFew<'_, T> {
+    match list.is_empty() {
+        true => ArenaFew::default(),
+        false => few_to_arena(list, arena),
+    }
 }
 
 impl BoundBuilder {
@@ -2890,24 +2948,24 @@ impl BoundBuilder {
             nested_names: block.take(&mut self.nested_names, arena),
             ids: block.take(&mut self.ids, arena),
             file_symbol: self.file_symbol,
-            export_stars: few_to_arena(std::mem::take(&mut self.export_stars), arena),
-            ambient_modules: few_to_arena(std::mem::take(&mut self.ambient_modules), arena),
-            pattern_ambient_modules: few_to_arena(
+            export_stars: few_in_arena(std::mem::take(&mut self.export_stars), arena),
+            ambient_modules: few_in_arena(std::mem::take(&mut self.ambient_modules), arena),
+            pattern_ambient_modules: few_in_arena(
                 std::mem::take(&mut self.pattern_ambient_modules),
                 arena,
             ),
-            global_augmentations: few_to_arena(
+            global_augmentations: few_in_arena(
                 std::mem::take(&mut self.global_augmentations),
                 arena,
             ),
-            redeclarations: few_to_arena(std::mem::take(&mut self.redeclarations), arena),
-            umd_globals: few_to_arena(std::mem::take(&mut self.umd_globals), arena),
+            redeclarations: few_in_arena(std::mem::take(&mut self.redeclarations), arena),
+            umd_globals: few_in_arena(std::mem::take(&mut self.umd_globals), arena),
             specifiers: block.take(&mut self.specifiers, arena),
-            module_augmentations: few_to_arena(
+            module_augmentations: few_in_arena(
                 std::mem::take(&mut self.module_augmentations),
                 arena,
             ),
-            ambient_specifiers: few_to_arena(std::mem::take(&mut self.ambient_specifiers), arena),
+            ambient_specifiers: few_in_arena(std::mem::take(&mut self.ambient_specifiers), arena),
             commonjs_indicator: self.commonjs_indicator,
             module_exports_property: self.module_exports_property,
             expr_symbol: Narrow::moved_into(&mut block, arena, &mut self.expr_symbol),
@@ -2940,59 +2998,59 @@ impl BoundBuilder {
             interface_symbol: block.take(&mut self.interface_symbol, arena),
             interface_scope: block.take(&mut self.interface_scope, arena),
             interface_contains_this: block.take(&mut self.interface_contains_this, arena),
-            enum_scope: few_to_arena(std::mem::take(&mut self.enum_scope), arena),
-            module_scope: few_to_arena(std::mem::take(&mut self.module_scope), arena),
+            enum_scope: few_in_arena(std::mem::take(&mut self.enum_scope), arena),
+            module_scope: few_in_arena(std::mem::take(&mut self.module_scope), arena),
             alias_symbol: block.take(&mut self.alias_symbol, arena),
             alias_scope: block.take(&mut self.alias_scope, arena),
-            enum_symbol: few_to_arena(std::mem::take(&mut self.enum_symbol), arena),
-            enum_member_symbol: few_to_arena(std::mem::take(&mut self.enum_member_symbol), arena),
-            enum_member_owner: few_to_arena(std::mem::take(&mut self.enum_member_owner), arena),
-            module_symbol: few_to_arena(std::mem::take(&mut self.module_symbol), arena),
-            module_instance_state: few_to_arena(
+            enum_symbol: few_in_arena(std::mem::take(&mut self.enum_symbol), arena),
+            enum_member_symbol: few_in_arena(std::mem::take(&mut self.enum_member_symbol), arena),
+            enum_member_owner: few_in_arena(std::mem::take(&mut self.enum_member_owner), arena),
+            module_symbol: few_in_arena(std::mem::take(&mut self.module_symbol), arena),
+            module_instance_state: few_in_arena(
                 std::mem::take(&mut self.module_instance_state),
                 arena,
             ),
             var_stmt: block.take(&mut self.var_stmt, arena),
             assignments: block.take(&mut self.assignments, arena),
-            type_query_operands: few_to_arena(std::mem::take(&mut self.type_query_operands), arena),
-            assignment_patterns: few_to_arena(std::mem::take(&mut self.assignment_patterns), arena),
+            type_query_operands: few_in_arena(std::mem::take(&mut self.type_query_operands), arena),
+            assignment_patterns: few_in_arena(std::mem::take(&mut self.assignment_patterns), arena),
             lists_assignment_patterns: self.lists_assignment_patterns,
-            unchecked_exprs: few_to_arena(std::mem::take(&mut self.unchecked_exprs), arena),
-            unchecked_types: few_to_arena(std::mem::take(&mut self.unchecked_types), arena),
-            infer_positions: few_to_arena(std::mem::take(&mut self.infer_positions), arena),
-            expando_declarations: few_to_arena(
+            unchecked_exprs: few_in_arena(std::mem::take(&mut self.unchecked_exprs), arena),
+            unchecked_types: few_in_arena(std::mem::take(&mut self.unchecked_types), arena),
+            infer_positions: few_in_arena(std::mem::take(&mut self.infer_positions), arena),
+            expando_declarations: few_in_arena(
                 std::mem::take(&mut self.expando_declarations),
                 arena,
             ),
-            computed_symbols: few_to_arena(std::mem::take(&mut self.computed_symbols), arena),
+            computed_symbols: few_in_arena(std::mem::take(&mut self.computed_symbols), arena),
             case_stmt: block.take(&mut self.case_stmt, arena),
             stmt_flow: Narrow::moved_into(&mut block, arena, &mut self.stmt_flow),
             case_fallthrough: block.take(&mut self.case_fallthrough, arena),
-            hoisted_vars: few_to_arena(std::mem::take(&mut self.hoisted_vars), arena),
-            rejected_decorators: few_to_arena(std::mem::take(&mut self.rejected_decorators), arena),
-            unused_labels: few_to_arena(std::mem::take(&mut self.unused_labels), arena),
+            hoisted_vars: few_in_arena(std::mem::take(&mut self.hoisted_vars), arena),
+            rejected_decorators: few_in_arena(std::mem::take(&mut self.rejected_decorators), arena),
+            unused_labels: few_in_arena(std::mem::take(&mut self.unused_labels), arena),
             import_scope: block.take(&mut self.import_scope, arena),
-            import_equals_scope: few_to_arena(std::mem::take(&mut self.import_equals_scope), arena),
+            import_equals_scope: few_in_arena(std::mem::take(&mut self.import_equals_scope), arena),
             export_scope: block.take(&mut self.export_scope, arena),
             expr_scope: few_map_to_arena(std::mem::take(&mut self.expr_scope), arena),
             private_class: few_map_to_arena(std::mem::take(&mut self.private_class), arena),
-            private_names_outside_class_bodies: few_to_arena(
+            private_names_outside_class_bodies: few_in_arena(
                 std::mem::take(&mut self.private_names_outside_class_bodies),
                 arena,
             ),
-            classes_of_private_names: few_to_arena(
+            classes_of_private_names: few_in_arena(
                 std::mem::take(&mut self.classes_of_private_names),
                 arena,
             ),
             free_idents: block.take(&mut self.free_idents, arena),
             alias_idents: block.take(&mut self.alias_idents, arena),
-            arguments_objects: few_to_arena(std::mem::take(&mut self.arguments_objects), arena),
-            identifiers_in_parameters: few_to_arena(
+            arguments_objects: few_in_arena(std::mem::take(&mut self.arguments_objects), arena),
+            identifiers_in_parameters: few_in_arena(
                 std::mem::take(&mut self.identifiers_in_parameters),
                 arena,
             ),
-            jsdoc_param_errors: few_to_arena(std::mem::take(&mut self.jsdoc_param_errors), arena),
-            names_resolved_for_arguments: few_to_arena(
+            jsdoc_param_errors: few_in_arena(std::mem::take(&mut self.jsdoc_param_errors), arena),
+            names_resolved_for_arguments: few_in_arena(
                 std::mem::take(&mut self.names_resolved_for_arguments),
                 arena,
             ),

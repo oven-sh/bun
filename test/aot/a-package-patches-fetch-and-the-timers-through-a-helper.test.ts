@@ -1,4 +1,4 @@
-// A package that helps tests replaces `fetch` or a timer through a helper that is handed the object and the name: ./fixed-runs/open/package-patches-fetch-and-the-timers-through-a-helper.txt.
+// A package that helps tests replaces `fetch` or a timer through a helper that is handed the object and the name.
 // Where no build can read the object or the name the write is refused, and the refusal says how the write can be seen.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";

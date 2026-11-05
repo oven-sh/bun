@@ -12,11 +12,12 @@ use bun_sema::hir::{
     self, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, MemberKey, NodeData, PatId,
     PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarDeclId,
 };
-use bun_sema::module_format::evaluates_own_this;
+use bun_sema::module_format::ThisPositions;
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::cell::OnceCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -116,6 +117,7 @@ struct Finder<'a, 's> {
     by_callback: Vec<(FnId, u32)>,
     by_symbol: Vec<(SymbolId, Role, u32)>,
     names_super: bool,
+    this_positions: OnceCell<ThisPositions>,
 }
 
 fn find_by_key<K: Ord + Copy, T: Copy>(
@@ -249,8 +251,10 @@ impl Finder<'_, '_> {
             && !record.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
             && record.this_param.is_none()
             && matches!(record.body, FnBody::Block(_));
-        let reads_this =
-            bound.fns[callback.idx()].contains_this || evaluates_own_this(hir, callback);
+        let reads_this = bound.fns[callback.idx()].contains_this || {
+            let positions = self.this_positions.get_or_init(|| ThisPositions::of(hir));
+            positions.evaluates_own_this(hir, callback)
+        };
         if !is_plain || has_own_name || sees_its_call || reads_this {
             return false;
         }
@@ -676,6 +680,7 @@ fn find_in_file(files: &Files<'_>, helpers: &KnownHelpers, file: FileId) -> File
         by_callback: Vec::new(),
         by_symbol: Vec::new(),
         names_super: false,
+        this_positions: OnceCell::new(),
     };
     finder.collect_exported_symbols();
     finder.collect_candidates();

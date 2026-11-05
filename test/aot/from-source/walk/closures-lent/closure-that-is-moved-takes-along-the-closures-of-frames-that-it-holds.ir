@@ -1,4 +1,4 @@
-# Three frames deep. The arrow of `maker` lies in the frame of `maker`. The arrow of `middle` holds it and lies in the frame of `middle`: `keepLater` only calls what arrives. The arrow of `keepLater` is pushed to a list, so it is made in the heap, and what it captures is moved: the arrow of `middle`, and with it the arrow of `maker`, which no code of `keepLater` names.
+# Three frames deep. The arrow of `keepLater` is pushed to a list: it goes to a callee out of sight, which may keep it and what it holds, so `g` does not count as only called. That goes up: the arrow of `middle` is handed to a place that is not only called, so `f` is not either. All three arrows are made in the heap by their makers, and nothing is moved. (The mover that takes along what a closure holds has its native tests.)
 # f1 = keepLater, f2 = middle, f4 = maker, f3 = deep
 # -- source: closure-that-is-moved-takes-along-the-closures-of-frames-that-it-holds.ts
 # declare function print(...values: unknown[]): void;
@@ -14,22 +14,23 @@
 # print(kept[0](), kept[1](), kept[0]());
 # -- end of source
 # RUN: bytes f4 mechanisms=all-Inlining
-# CHECK: NewSlimClosureInFrame.Plain
+# CHECK: NewSlimClosure.Plain
 # RUN(MAKER): bytes f4 mechanisms=all-Inlining
-# MAKER-NOT: NewSlimClosure.
+# MAKER-NOT: NewSlimClosureInFrame
 # RUN(MIDDLE): bytes f2 mechanisms=all-Inlining
-# MIDDLE: NewSlimClosureInFrame.Plain
+# MIDDLE: NewSlimClosure.Plain
 # RUN(LENT): bytes f2 mechanisms=all-Inlining
-# LENT-NOT: NewSlimClosure.
+# LENT-NOT: NewSlimClosureInFrame
 # RUN(ASKED): bytes f2 mechanisms=all-Inlining
 # ASKED-NOT: operationAOTMoveClosureToHeap
 # RUN(MOVED): bytes f1 mechanisms=all-Inlining
-# MOVED: operationAOTMoveClosureToHeap
+# MOVED-NOT: operationAOTMoveClosureToHeap
 # RUN(WORDS): link functions mechanisms=all
 # WORDS-LABEL: function f1
-# WORDS: parameter 0 {{*}}only-called captured
+# WORDS-NOT: only-called
 # WORDS-LABEL: function f2
-# WORDS: parameter 0 {{*}}only-called captured
+# WORDS-NOT: only-called
+# WORDS-LABEL: function f3
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 3 3
 # ANSWERS-NEXT: 20100

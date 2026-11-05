@@ -122,6 +122,7 @@ pub(super) struct Text<'a, 'h, 'b, 'd> {
 }
 
 impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
+    #[inline]
     pub(super) fn of(
         hir: &'a File<'h>,
         bound: &'a Bound<'b>,
@@ -601,6 +602,7 @@ pub fn find_holder_of_require_made_for_choice(
         return None;
     }
     let text = Text::of(hir, bound, None);
+    let given = find_arguments_of_create_require(text, call, StepsLeft::ALL)?;
     if find_made_require(text, call, StepsLeft::ALL).is_some() {
         return None;
     }
@@ -608,7 +610,7 @@ pub fn find_holder_of_require_made_for_choice(
     let ExprKind::Call(written) = expr_kind(hir, call)? else {
         return None;
     };
-    let given = find_arguments_of_create_require(text, call, StepsLeft::ALL)?;
+
     Some((holder, (given.start - hir[written].args.start) as usize))
 }
 
@@ -1102,7 +1104,12 @@ pub(super) fn follow_settled_bindings(hir: &File<'_>, bound: &Bound<'_>, e: Expr
 }
 
 pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    if !bound.may_name_own_require() {
+    if !bound.may_name_own_require()
+        || !matches!(
+            expr_kind(hir, hir.skip_type_assertions(e)),
+            Some(ExprKind::Ident(_))
+        )
+    {
         return false;
     }
     let mut held = settled_chain(hir, bound, e).skip(1);

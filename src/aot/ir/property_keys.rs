@@ -80,24 +80,37 @@ impl PropertyKey {
     }
 }
 
+fn compare_behind_text(first: &PropertyKey, second: &PropertyKey) -> Ordering {
+    let fields = |key: &PropertyKey| {
+        let PropertyKey {
+            kind: _,
+            text: _,
+            owner,
+            symbol,
+            module,
+            call_number,
+        } = *key;
+        (owner, symbol, module, call_number)
+    };
+    fields(first).cmp(&fields(second))
+}
+
 impl Ord for PropertyKey {
+    #[inline]
     fn cmp(&self, other: &PropertyKey) -> Ordering {
-        let fields = |key: &PropertyKey| {
-            let PropertyKey {
-                kind,
-                text,
-                owner,
-                symbol,
-                module,
-                call_number,
-            } = *key;
-            (kind, text, owner, symbol, module, call_number)
+        let kind_and_text = |key: &PropertyKey| {
+            let text = key.text.map_or(0, |text| text.to_word() + 1);
+            (key.kind as u32, text)
         };
-        fields(self).cmp(&fields(other))
+        match kind_and_text(self).cmp(&kind_and_text(other)) {
+            Ordering::Equal => compare_behind_text(self, other),
+            ordering => ordering,
+        }
     }
 }
 
 impl PartialOrd for PropertyKey {
+    #[inline]
     fn partial_cmp(&self, other: &PropertyKey) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -157,6 +170,7 @@ impl PropertyKeyTable {
         &self.list[id.index()]
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.list.len()
     }
@@ -166,6 +180,7 @@ impl PropertyKeyTable {
         self.list.is_empty()
     }
 
+    #[inline]
     pub fn as_slice(&self) -> &[PropertyKey] {
         &self.list
     }

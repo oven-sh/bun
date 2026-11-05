@@ -2,8 +2,8 @@ use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
 use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
 use super::parameters::{find_values_passed_for_pattern, is_exported};
 use super::{
-    ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, WHERE_FILE_LIES,
-    call_site_arguments, call_site_kind,
+    ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
+    write_question_where_file_lies,
 };
 use crate::atom::{Atom, known};
 use crate::bind::{
@@ -20,7 +20,7 @@ use crate::hir::{
     MemberKind, NodeData, PatId, PatKind, PropKey, PropKind, StmtKind, TextOfOtherFile, UnOp,
     is_proto_setter,
 };
-use crate::util::{FxHashSet, SharedSort};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_core::strings;
 use std::cell::{Cell, OnceCell, RefCell};
 
@@ -193,6 +193,13 @@ struct Follower<'i, 'a, 's> {
     folder: Folder,
     open_parameters: Vec<ExprId>,
     stand_in: Option<SymbolId>,
+    calls_of_resolvers: RefCell<FxHashMap<Vec<u8>, CallsUnderName>>,
+}
+
+#[derive(Default)]
+struct CallsUnderName {
+    calls: FxHashSet<ExprId>,
+    are_asked_for: bool,
 }
 
 const STAND_IN: &[u8] = b"\0";
@@ -236,6 +243,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             folder,
             open_parameters: Vec::new(),
             stand_in: None,
+            calls_of_resolvers: RefCell::default(),
         }
     }
 }
@@ -386,7 +394,8 @@ fn find_alternatives_with(mut follower: Follower<'_, '_, '_>, argument: ExprId) 
         {
             return None;
         }
-        if resolved_form.is_some() && text.start.starts_with(b"./../") {
+        let is_asked_of_resolver = resolved_form.is_some() && !inputs.hir.runs_beside_loader;
+        if is_asked_of_resolver && text.start.starts_with(b"./../") {
             text.start.drain(..2);
         }
         if let Some(end) = &mut text.end {
@@ -479,27 +488,57 @@ impl Follower<'_, '_, '_> {
     }
 
     fn ask_where_file_lies(&self, answer: &Held) {
-        if let Held::Resolved(name, ResolvedForm::Path) = answer
+        if let Held::Resolved(name, ResolvedForm::Path | ResolvedForm::Url) = answer
             && name.end.is_none()
             && !self.inputs.hir.runs_beside_loader
         {
-            let atoms = self.inputs.atoms;
-            let asked = (atoms.intern(&name.start), atoms.intern(WHERE_FILE_LIES));
-            self.asked_of_data_files.0.borrow_mut().push(asked);
+            let mut calls = self.calls_of_resolvers.borrow_mut();
+            let Some(known) = calls.get_mut(&name.start) else {
+                return;
+            };
+            if !std::mem::replace(&mut known.are_asked_for, true) {
+                for &call in &known.calls {
+                    self.ask_where_file_of_call_lies(&name.start, call);
+                }
+            }
         }
     }
 
-    fn find_where_file_lies(&self, name: &Text, form: ResolvedForm) -> Option<Held> {
+    fn ask_where_file_of_call_lies(&self, name: &[u8], call: ExprId) {
+        let atoms = self.inputs.atoms;
+        let question = atoms.intern(&write_question_where_file_lies(call));
+        let asked = (atoms.intern(name), question);
+        self.asked_of_data_files.0.borrow_mut().push(asked);
+    }
+
+    fn note_call_of_resolver(&self, name: &[u8], call: ExprId) {
+        let mut calls = self.calls_of_resolvers.borrow_mut();
+        if !calls.contains_key(name) {
+            calls.insert(name.to_vec(), CallsUnderName::default());
+        }
+        let Some(known) = calls.get_mut(name) else {
+            return;
+        };
+        if known.calls.insert(call) && known.are_asked_for {
+            self.ask_where_file_of_call_lies(name, call);
+        }
+    }
+
+    fn find_where_file_lies(&self, call: ExprId, name: &Text, form: ResolvedForm) -> Option<Held> {
         let &ScanInputs { hir, atoms, .. } = self.inputs;
-        if form != ResolvedForm::Path || name.end.is_some() {
+        if name.end.is_some() {
             return None;
         }
-        let asked = (atoms.intern(&name.start), atoms.intern(WHERE_FILE_LIES));
-        let mut known = hir.texts_of_data_files.iter();
-        let known = known.find(|it| (it.specifier, it.path) == asked)?;
+        let question = atoms.intern(&write_question_where_file_lies(call));
+        let asked = (atoms.intern(&name.start), question);
+        let answers = &hir.texts_of_data_files;
+        let key = (asked.0.0, asked.1.0);
+        let at = answers.binary_search_by_key(&key, |it| (it.specifier.0, it.path.0));
+        let known = answers[at.ok()?];
         self.asked_of_data_files.0.borrow_mut().push(asked);
         Some(Held::Text(Text {
             starts_at_own_directory: true,
+            is_file_url: form == ResolvedForm::Url,
             ..Text::whole(atoms.bytes(known.text))
         }))
     }
@@ -1823,7 +1862,7 @@ impl Follower<'_, '_, '_> {
             }]);
         }
         if let Some((name, form)) = self.find_name_asked_of_resolver(e) {
-            return self.values_answered_by_resolver(name, form);
+            return self.values_answered_by_resolver(e, name, form);
         }
         if let Some((table, lists_keys)) = self.find_listing_of_object(call) {
             return self.values_of_listing(table, lists_keys);
@@ -1894,12 +1933,18 @@ impl Follower<'_, '_, '_> {
             .then(|| (hir.id_at(arguments, 0), form))
     }
 
-    fn values_answered_by_resolver(&mut self, name: ExprId, form: ResolvedForm) -> Option<Values> {
+    fn values_answered_by_resolver(
+        &mut self,
+        call: ExprId,
+        name: ExprId,
+        form: ResolvedForm,
+    ) -> Option<Values> {
         let mut values = Values::new();
         for name in self.values_of(name)? {
             match name {
                 Held::Text(name) | Held::Resolved(name, _) | Held::Url(name) => {
-                    let known = self.find_where_file_lies(&name, form);
+                    let known = self.find_where_file_lies(call, &name, form);
+                    self.note_call_of_resolver(&name.start, call);
                     add(&mut values, known.unwrap_or(Held::Resolved(name, form)));
                 }
                 Held::Itself(_) | Held::BelowItself(_) => return None,
@@ -2157,7 +2202,9 @@ impl Follower<'_, '_, '_> {
         }
         let of_url = self.find_export_of(callee, &[b"url", b"node:url"]);
         let of_path = || self.find_export_of_path(callee);
-        let function = atoms.bytes(of_url.or_else(of_path)?);
+        let export = of_url.or_else(of_path)?;
+        let is_dirname = of_url.is_none() && export == known::meta_dirname;
+        let function = atoms.bytes(export);
         let convert: fn(Held) -> Option<Held> = match (of_url.is_some(), function) {
             (true, b"fileURLToPath") => |value| match value {
                 Held::Resolved(name, Url | UrlObject) => Some(Held::Resolved(name, Path)),
@@ -2176,14 +2223,14 @@ impl Follower<'_, '_, '_> {
                 Held::Resolved(_, Path) => Some(value),
                 _ => None,
             },
-            (false, b"dirname") if !hir.runs_beside_loader => |value| match value {
+            (false, _) if is_dirname && !hir.runs_beside_loader => |value| match value {
                 Held::Text(path) => folder_of_path(&path).map(Held::Text),
                 _ => None,
             },
             _ => return None,
         };
         let values = self.values_of(argument)?;
-        if function == b"dirname" {
+        if is_dirname {
             values.iter().for_each(|it| self.ask_where_file_lies(it));
         }
         let converted = values.into_iter().map(convert);

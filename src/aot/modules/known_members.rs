@@ -215,11 +215,20 @@ fn find_parent(hir: &hir::File<'_>, bound: &Bound<'_>, expression: ExprId) -> (E
     }
 }
 
-fn is_read(hir: &hir::File<'_>, bound: &Bound<'_>, access: ExprId) -> bool {
-    let (outermost, parent) = find_parent(hir, bound, access);
+fn is_read_under(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    outermost: ExprId,
+    parent: Parent,
+) -> bool {
     let is_deleted = matches!(parent, Parent::Expr(parent)
         if matches!(hir[parent].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
     !is_deleted && bound.get_assignment_target(hir, outermost).is_none()
+}
+
+fn is_read(hir: &hir::File<'_>, bound: &Bound<'_>, access: ExprId) -> bool {
+    let (outermost, parent) = find_parent(hir, bound, access);
+    is_read_under(hir, bound, outermost, parent)
 }
 
 fn is_plain_read(hir: &hir::File<'_>, bound: &Bound<'_>, access: ExprId) -> bool {
@@ -232,20 +241,27 @@ fn is_plain_read(hir: &hir::File<'_>, bound: &Bound<'_>, access: ExprId) -> bool
         },
         _ => false,
     };
-    !is_callee && is_read(hir, bound, access)
+    !is_callee && is_read_under(hir, bound, outermost, parent)
 }
 
-fn is_link_of_no_chain(hir: &hir::File<'_>, access: ExprId) -> bool {
-    matches!(
-        hir[access].kind,
+fn find_object_of_link_of_no_chain(hir: &hir::File<'_>, access: ExprId) -> Option<ExprId> {
+    match hir[access].kind {
         ExprKind::Dot {
-            chain: Chain::No,
-            ..
-        } | ExprKind::Index {
+            obj,
             chain: Chain::No,
             ..
         }
-    )
+        | ExprKind::Index {
+            obj,
+            chain: Chain::No,
+            ..
+        } => Some(obj),
+        _ => None,
+    }
+}
+
+fn is_link_of_no_chain(hir: &hir::File<'_>, access: ExprId) -> bool {
+    find_object_of_link_of_no_chain(hir, access).is_some()
 }
 
 fn is_written_as_string(hir: &hir::File<'_>, initializer: ExprId) -> bool {
@@ -403,13 +419,24 @@ impl<'a, 's> KnownObjects<'a, 's> {
         }
     }
 
-    fn follow_imports(&self, mut defined: Sym) -> Option<Sym> {
+    #[inline]
+    fn find_row(&self, file: FileId) -> Option<&'a FileRow> {
+        let index = self.graph.row_by_file.get(file.idx()).copied().flatten()?;
+        Some(&self.graph.rows[index as usize])
+    }
+
+    fn follow_imports(&self, mut defined: Sym) -> Option<(Sym, &'a FileRow)> {
         loop {
-            if !self.graph.has_record(defined.file) {
-                return None;
+            let row = self.find_row(defined.file)?;
+            let is_among_imports = matches!(
+                (row.imports.first(), row.imports.last()),
+                (Some(first), Some(last)) if first.0 <= defined.id && defined.id <= last.0
+            );
+            if !is_among_imports {
+                return Some((defined, row));
             }
             match self.graph.import_binding(defined.file, defined.id) {
-                ImportBinding::Local => return Some(defined),
+                ImportBinding::Local => return Some((defined, row)),
                 ImportBinding::Variable(elsewhere) if elsewhere != defined => defined = elsewhere,
                 _ => return None,
             }
@@ -422,12 +449,11 @@ impl<'a, 's> KnownObjects<'a, 's> {
     }
 
     pub(crate) fn find_enum(&self, file: FileId, expression: ExprId) -> Option<Sym> {
-        if !self.graph.has_record(file) {
-            return None;
-        }
+        let row = self.find_row(file)?;
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
         let expression = hir.skip_type_assertions(expression);
         let named = match hir[expression].kind {
+            ExprKind::Ident(_) if hir.enums.is_empty() && row.imports.is_empty() => return None,
             ExprKind::Ident(_) => match bound.binding(expression) {
                 Binding::Symbol(id) => Sym { file, id },
                 Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => return None,
@@ -446,11 +472,17 @@ impl<'a, 's> KnownObjects<'a, 's> {
             }
             _ => return None,
         };
-        let defined = self.follow_imports(named)?;
+        let (defined, _) = self.follow_imports(named)?;
         if defined.file != file && self.may_be_replaced(defined) {
             return None;
         }
-        let (hir, bound) = (self.files.hir(defined.file), self.files.bound(defined.file));
+        let (hir, bound) = match defined.file == file {
+            true => (hir, bound),
+            false => (self.files.hir(defined.file), self.files.bound(defined.file)),
+        };
+        if hir.enums.is_empty() {
+            return None;
+        }
         let is_made_at_top_of_file = |&declaration: &Decl| match declaration {
             Decl::Enum(declaration) => {
                 let node = &hir[declaration];
@@ -537,21 +569,25 @@ impl<'a, 's> KnownObjects<'a, 's> {
         access: ExprId,
     ) -> Option<(Sym, EnumId, EnumMemberId)> {
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
-        if !is_link_of_no_chain(hir, access) || !is_read(hir, bound, access) {
-            return None;
+        let object = find_object_of_link_of_no_chain(hir, access)?;
+        let declares_enums = !hir.enums.is_empty();
+        if declares_enums {
+            if !is_read(hir, bound, access) {
+                return None;
+            }
+            if let Some(member) = find_member_followed_by_transpiler(self.files, file, access) {
+                let declaration = bound.enum_member_owner[member.idx()];
+                let id = bound.declared_symbol(Decl::Enum(declaration));
+                return Some((Sym { file, id }, declaration, member));
+            }
         }
-        if let Some(member) = find_member_followed_by_transpiler(self.files, file, access) {
-            let declaration = bound.enum_member_owner[member.idx()];
-            let id = bound.declared_symbol(Decl::Enum(declaration));
-            return Some((Sym { file, id }, declaration, member));
+        let enumeration = self.find_enum(file, object)?;
+        if enumeration.file == file || !(declares_enums || is_read(hir, bound, access)) {
+            return None;
         }
         let atoms = &self.files.atoms;
         let link = find_link_followed_by_transpiler(hir, access, |name| atoms.bytes(name));
-        let (object, name) = link?;
-        let enumeration = self.find_enum(file, object)?;
-        if enumeration.file == file {
-            return None;
-        }
+        let (_, name) = link?;
         let (declaration, member) = self.find_member(enumeration, name)?;
         Some((enumeration, declaration, member))
     }
@@ -664,12 +700,12 @@ impl<'a, 's> KnownObjects<'a, 's> {
     pub(crate) fn find_lookup(&self, file: FileId, object: ExprId) -> Option<Sym> {
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
         let (outermost, parent) = find_parent(hir, bound, object);
-        let is_lookup = match parent {
+        let mut link = None;
+        let may_be_lookup = match parent {
             Parent::Expr(parent) => match hir[parent].kind {
                 ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                    obj == outermost
-                        && is_link_of_no_chain(hir, parent)
-                        && is_plain_read(hir, bound, parent)
+                    link = Some(parent);
+                    obj == outermost && is_link_of_no_chain(hir, parent)
                 }
                 ExprKind::Binary {
                     op: BinOp::In,
@@ -683,14 +719,17 @@ impl<'a, 's> KnownObjects<'a, 's> {
             }
             _ => false,
         };
-        match is_lookup {
-            true => self.find_enum(file, object),
-            false => None,
+        if !may_be_lookup {
+            return None;
         }
+        let enumeration = self.find_enum(file, object)?;
+        link.is_none_or(|link| is_plain_read(hir, bound, link))
+            .then_some(enumeration)
     }
 
     fn is_data_module(&self, file: FileId) -> bool {
-        self.graph.has_record(file) && self.graph.kind(file) == ModuleKind::Data
+        self.find_row(file)
+            .is_some_and(|row| row.interop.kind == ModuleKind::Data)
     }
 
     fn is_reached_through_variables_alone(&self, file: FileId) -> bool {
@@ -753,8 +792,8 @@ impl<'a, 's> KnownObjects<'a, 's> {
     }
 
     pub(crate) fn find_data_variable(&self, variable: Sym) -> Option<(Sym, Constant)> {
-        let variable = self.follow_imports(variable)?;
-        if !self.is_data_module(variable.file) || self.may_be_replaced(variable) {
+        let (variable, row) = self.follow_imports(variable)?;
+        if row.interop.kind != ModuleKind::Data || self.may_be_replaced(variable) {
             return None;
         }
         let (hir, bound) = (
@@ -790,17 +829,15 @@ impl<'a, 's> KnownObjects<'a, 's> {
     }
 
     fn find_data_value(&self, file: FileId, access: ExprId) -> Option<(Sym, Constant)> {
+        let row = self.find_row(file)?;
+        if row.interop.kind != ModuleKind::Data && row.imports.is_empty() {
+            return None;
+        }
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
-        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
-        let mut link = hir.skip_type_assertions(access);
+        let outermost_link = hir.skip_type_assertions(access);
+        let mut link = outermost_link;
         let root = loop {
-            if !is_link_of_no_chain(hir, link) {
-                return None;
-            }
-            let Some((object, MemberKey::Name(name))) = hir.member_key(link) else {
-                return None;
-            };
-            names.push(name);
+            let object = find_object_of_link_of_no_chain(hir, link)?;
             link = hir.skip_type_assertions(object);
             if matches!(hir[link].kind, ExprKind::Ident(_)) {
                 break link;
@@ -809,12 +846,21 @@ impl<'a, 's> KnownObjects<'a, 's> {
         let Binding::Symbol(id) = bound.binding(root) else {
             return None;
         };
-        let object = self.follow_imports(Sym { file, id })?;
-        if !self.is_data_module(object.file)
+        let (object, row) = self.follow_imports(Sym { file, id })?;
+        if row.interop.kind != ModuleKind::Data
             || self.may_be_replaced(object)
             || self.find_variable_with_object(object.file) != Some(object)
         {
             return None;
+        }
+        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
+        let mut link = outermost_link;
+        while link != root {
+            let Some((object, MemberKey::Name(name))) = hir.member_key(link) else {
+                return None;
+            };
+            names.push(name);
+            link = hir.skip_type_assertions(object);
         }
         let mut value = self.find_data_in(object)?;
         for &name in names.iter().rev() {

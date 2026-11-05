@@ -4,7 +4,7 @@ import { answering, promiseOf } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const objectOrUndefined = b.union(b.object, b.undefined);
-const convertedToCharacters = [b.readAsCharacters, b.runs("ToPrimitive")];
+const convertedToCharacters = [b.runs("ToPrimitive")];
 const runsCodeOfOperands = {
   capability: "js",
   throws: true,

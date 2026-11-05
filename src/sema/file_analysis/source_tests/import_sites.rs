@@ -1122,6 +1122,47 @@ fn names_of_loads_ask_for_texts_of_other_files() {
     }
 }
 
+const ASKED_WHERE_FILES_LIE: &[(&str, &str, &[&str])] = &[
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join(path.dirname(require.resolve("b/package.json")), x));"#,
+        &["b/package.json"],
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"), other = require("module").createRequire(__dirname + "/c/d.cjs");
+           require(path.join(path.dirname(require.resolve("b/package.json")), x));
+           require(path.join(path.dirname(other.resolve("b/package.json")), x));"#,
+        &["b/package.json", "b/package.json"],
+    ),
+    (
+        "a.mjs",
+        r#"import path from "path"; import { fileURLToPath } from "url";
+           await import(path.join(path.dirname(fileURLToPath(import.meta.resolve("b/package.json"))), x));"#,
+        &["b/package.json"],
+    ),
+    ("a.cjs", r#"require(require.resolve("b"));"#, &[]),
+    ("a.cjs", r#"console.log(require.resolve("b") + x);"#, &[]),
+];
+
+#[test]
+fn what_goes_on_from_answer_of_resolver_asks_where_file_lies_for_each_call() {
+    for &(path, text, expected) in ASKED_WHERE_FILES_LIE {
+        analyzed(path, text, |s| {
+            let asked = s.analysis.asked_of_data_files.iter();
+            let mut asked: Vec<(&str, &str)> = asked
+                .map(|it| (s.workspace.text(it.0), s.workspace.text(it.1)))
+                .collect();
+            asked.sort_unstable();
+            asked.dedup();
+            let mark = bun_sema::import_sites::WHERE_FILE_LIES;
+            let questions = asked.iter().filter(|it| it.1.as_bytes().starts_with(mark));
+            let names: Vec<&str> = questions.map(|it| it.0).collect();
+            assert_eq!(names, expected, "{text}");
+        });
+    }
+}
+
 #[test]
 fn call_of_require_made_for_own_file_is_site() {
     let programs = MADE_REQUIRES.iter().chain(REQUIRES_AS_VALUES);

@@ -11,7 +11,7 @@
 // MAIN: module {{*}}path="{{*}}/main.ts"{{*}} namesOfStatements=["./helper.ts"]
 
 // RUN(HELPER): link
-// HELPER: module {{*}}path="{{*}}/helper.ts"{{*}} namesOfStatements=["./leaf.ts", "./other.ts", "./leaf.ts", "node:os"]
+// HELPER: module {{*}}path="{{*}}/helper.ts"{{*}} namesOfStatements=["./leaf.ts", "./other.ts", "node:os"]
 
 // FILE: main.ts
 import { seen } from "./helper.ts";

@@ -143,6 +143,7 @@ fn leave_calls_of_test_run_to_loader(input: &BindInput<'_, '_>, scans: &mut Scan
                 ImportSiteKind::ImportCall(_)
                     | ImportSiteKind::Require(_)
                     | ImportSiteKind::ImportMetaRequire(_)
+                    | ImportSiteKind::ImportEquals(_)
             );
             if let (true, ImportSpecifier::Constant(spelling), &mut ScannedSite::Module(module)) =
                 (is_call, site.specifier, &mut *answer)

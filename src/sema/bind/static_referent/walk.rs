@@ -127,7 +127,7 @@ pub(super) fn find_place_of_plain_parameter(
     if !is_plain_name || function == FnId::NONE {
         return None;
     }
-    let index = hir[function].params.iter().position(|it| it == parameter)?;
+    let index = hir[function].params.position_of(parameter.idx())?;
     Some((function, index))
 }
 
@@ -428,40 +428,56 @@ impl<T: Copy + Eq + Hash> Trail<T> {
         }
     }
 
+    #[inline]
     fn seen(&self) -> &[T] {
-        &self.items[self.first_seen..]
+        let items: &[T] = &self.items;
+        &items[self.first_seen..]
     }
 
+    #[inline]
     fn last_place_of(&self, item: T) -> Option<usize> {
-        match &self.places {
-            Some(places) => {
-                let place = *places.get(&item)?.last()? as usize;
-                (place >= self.first_seen).then_some(place)
-            }
-            None => {
-                let place = self.seen().iter().rposition(|&it| it == item)?;
-                Some(self.first_seen + place)
-            }
+        if self.places.is_some() {
+            return self.last_indexed_place_of(item);
         }
+        let place = self.seen().iter().rposition(|&it| it == item)?;
+        Some(self.first_seen + place)
     }
 
+    #[cold]
+    #[inline(never)]
+    fn last_indexed_place_of(&self, item: T) -> Option<usize> {
+        let place = *self.places.as_ref()?.get(&item)?.last()? as usize;
+        (place >= self.first_seen).then_some(place)
+    }
+
+    #[inline]
     fn contains(&self, item: T) -> bool {
         self.last_place_of(item).is_some()
     }
 
+    #[inline]
     fn push(&mut self, item: T) {
-        let place = self.items.len() as u32;
         self.items.push(item);
+        if self.places.is_some() || self.items.len() > Self::LONG {
+            self.index_last_item(item);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn index_last_item(&mut self, item: T) {
         match &mut self.places {
-            Some(places) => places.entry(item).or_default().push(place),
-            None if self.items.len() > Self::LONG => {
+            Some(places) => {
+                let place = self.items.len() as u32 - 1;
+                places.entry(item).or_default().push(place);
+            }
+            None => {
                 let mut places = FxHashMap::<T, SmallVec<[u32; 1]>>::default();
                 for (place, &item) in self.items.iter().enumerate() {
                     places.entry(item).or_default().push(place as u32);
                 }
                 self.places = Some(places);
             }
-            None => {}
         }
     }
 
@@ -476,20 +492,29 @@ impl<T: Copy + Eq + Hash> Trail<T> {
         }
     }
 
+    #[inline]
     fn go_back_to(&mut self, place: PlaceInTrail) {
         while self.items.len() > place.len {
             let Some(item) = self.items.pop() else { break };
-            let Some(places) = &mut self.places else {
-                continue;
-            };
-            if let Some(places_of_item) = places.get_mut(&item) {
-                places_of_item.pop();
-                if places_of_item.is_empty() {
-                    places.remove(&item);
-                }
+            if self.places.is_some() {
+                self.forget_last_place_of(item);
             }
         }
         self.first_seen = place.first_seen;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn forget_last_place_of(&mut self, item: T) {
+        let Some(places) = &mut self.places else {
+            return;
+        };
+        if let Some(places_of_item) = places.get_mut(&item) {
+            places_of_item.pop();
+            if places_of_item.is_empty() {
+                places.remove(&item);
+            }
+        }
     }
 }
 
@@ -565,7 +590,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         let answers_of_trails = self.answers_of_trails;
         let mut places = SmallVec::new();
         let found = self.run_from(step, &mut places);
-        if self.answers_of_trails == answers_of_trails {
+        if !places.is_empty() && self.answers_of_trails == answers_of_trails {
             self.found_from
                 .extend(places.into_iter().map(|place| (place, found)));
         }
@@ -583,8 +608,8 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 Step::Symbol(name) if self.open_branches != 0 => {
                     let place = PlaceOfWalk {
                         name,
-                        pending_members: self.pending_members.clone(),
-                        entered_calls: self.entered_calls.clone(),
+                        pending_members: SmallVec::from_slice(&self.pending_members),
+                        entered_calls: SmallVec::from_slice(&self.entered_calls),
                         certainty: self.certainty,
                         follows_stored_members: self.follows_stored_members,
                     };
@@ -628,7 +653,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         let entered_callees = self.entered_callees.place();
         let open_calls = self.open_calls.place();
         let followed_stores = self.followed_stores.place();
-        let pending_members = self.pending_members.clone();
+        let pending_members = SmallVec::<[Atom; 4]>::from_slice(&self.pending_members);
         let (certainty, follows_stored_members) = (self.certainty, self.follows_stored_members);
         self.open_branches += 1;
         let result = walk_on(self);
@@ -727,16 +752,22 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
 
     fn step_expression(&mut self, file: FileId, expr: ExprId) -> StepOf<'s, C> {
         let context = self.context;
-        let hir = context.hir(file);
+        let (hir, bound) = (context.hir(file), context.bound(file));
         let expr = hir.skip_type_assertions(expr);
-        if reads_module_exports(hir, context.bound(file), expr) {
+        let member = match hir[expr].kind {
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => hir.member_key(expr),
+            _ => None,
+        };
+        if let Some((object, MemberKey::Name(known::exports))) = member
+            && is_free_common_js(hir, bound, object, CommonJsVariable::Module)
+        {
             return self.step_module_exports(file);
         }
         if let Some(builtin) = context.builtin_of_expression(file, expr) {
             return Step::Found(StaticReferent::Builtin(builtin));
         }
         match hir[expr].kind {
-            ExprKind::Ident(_) => self.step_identifier(file, expr),
+            ExprKind::Ident(_) => self.step_identifier(file, bound, expr),
             ExprKind::Binary {
                 op: BinOp::Comma,
                 right,
@@ -750,7 +781,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 }
                 let symbol_named_by = |arm: ExprId| {
                     let arm = hir.skip_type_assertions(arm);
-                    match (hir[arm].kind, context.bound(file).binding(arm)) {
+                    match (hir[arm].kind, bound.binding(arm)) {
                         (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
                         _ => None,
                     }
@@ -781,7 +812,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             }
             | ExprKind::Index {
                 chain: Chain::No, ..
-            } => match hir.member_key(expr) {
+            } => match member {
                 Some((object, MemberKey::Name(name))) => {
                     self.pending_members.push(name);
                     Step::Expression(file, object)
@@ -795,7 +826,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             } => Step::Expression(file, value),
             ExprKind::Object(properties) => self.step_object_literal(file, properties),
             ExprKind::Binary { op: BinOp::Or, .. } => {
-                match find_value_unless_this_of_file_has_one(hir, context.bound(file), expr) {
+                match find_value_unless_this_of_file_has_one(hir, bound, expr) {
                     Some(value) => {
                         self.certainty = ReferentCertainty::Expected;
                         Step::Expression(file, value)
@@ -807,7 +838,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 Some(loaded) => self.step_loaded_value(loaded),
                 None => match hir[hir.skip_type_assertions(hir[site].callee)].kind {
                     ExprKind::Fn(function) => {
-                        match find_only_returned_value(hir, context.bound(file), function) {
+                        match find_only_returned_value(hir, bound, function) {
                             Some(value) => Step::Expression(file, value),
                             None => unknown(UnknownReferent::NotAReference),
                         }
@@ -857,8 +888,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
     }
 
-    fn step_identifier(&self, file: FileId, ident: ExprId) -> StepOf<'s, C> {
-        let bound = self.context.bound(file);
+    fn step_identifier(&self, file: FileId, bound: &Bound<'s>, ident: ExprId) -> StepOf<'s, C> {
         if !bound.runtime.is_computed() {
             return unknown(UnknownReferent::NotCompiled);
         }

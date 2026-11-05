@@ -52,6 +52,10 @@
     "default": 57400,
     "asan": 229600
   },
+  "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-compiled-test-quotes-the-file-where-bun-test-quotes-a-value.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -168,6 +172,10 @@
     "default": 5200,
     "asan": 20800
   },
+  "aot/a-method-of-a-receiver-whose-class-is-proven-asks-whether-it-is-as-made.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-module-that-a-test-takes-out-of-the-cache-runs-again-whoever-imports-it.test.ts": {
     "default": 11600,
     "asan": 46400
@@ -264,6 +272,10 @@
     "default": 19600,
     "asan": 78400
   },
+  "aot/a-spy-or-a-mock-that-is-refused-to-a-file-outside-the-build-names-that-file.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-statement-imports-a-module-whose-first-fetch-threw-or-still-runs.test.ts": {
     "default": 19700,
     "asan": 78800
@@ -293,6 +305,10 @@
     "asan": 48800
   },
   "aot/a-test-replaces-a-member-of-the-prototype-of-all-views.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-test-replaces-a-static-that-has-code-in-line.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -904,9 +920,21 @@
     "default": 7000,
     "asan": 28000
   },
-  "aot/mock-laid-over.test.ts": {
-    "default": 900000,
-    "asan": 3600000
+  "aot/mock-laid-over-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mock-laid-over-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mock-laid-over-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mock-laid-over-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/mock-manual-folder.test.ts": {
     "default": 1000,
@@ -1063,6 +1091,10 @@
   "aot/plugin-resolves-name.test.ts": {
     "default": 4400,
     "asan": 17600
+  },
+  "aot/plugins-are-asked-where-plain-bun-asks.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/plugins-by-name.test.ts": {
     "default": 6900,
@@ -1356,10 +1388,6 @@
     "default": 700,
     "asan": 2800
   },
-  "aot/symbol-and-bigint-are-constructors.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
   "aot/table-sizes-log.test.ts": {
     "default": 500,
     "asan": 2000
@@ -1551,6 +1579,14 @@
   "aot/what-require-answered-behind-a-mock-of-a-built-in-module-stays-behind-an-import.test.ts": {
     "default": 2900,
     "asan": 11600
+  },
+  "aot/what-require-made-of-a-data-file-stays-with-require-in-a-test-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/what-the-code-of-a-package-left-out-may-load-is-whole.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/what-the-program-asks-for-inside-a-request-to-the-host-the-program-asks-for.test.ts": {
     "default": 51500,

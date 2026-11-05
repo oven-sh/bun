@@ -44,7 +44,10 @@ impl ConvertedValues {
     fn record(&mut self, function: FunctionId, value: ValueId, position: DeclaredType) {
         self.enter(function);
         if self.values.len() <= value.index() {
-            self.values.resize(value.index() + 1, None);
+            self.values.reserve(value.index() + 1 - self.values.len());
+            while self.values.len() <= value.index() {
+                self.values.push(None);
+            }
         }
         self.values[value.index()] = Some(ConvertedValue {
             ty: position.ty,

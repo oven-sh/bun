@@ -477,18 +477,23 @@ const cases: Record<string, Case> = {
     // What is read-only goes by all that an executable holds.
     entryPoints: [],
     disk: {
-      "assigns.mjs": `const attempt = (name, assign) => { try { assign(); console.log(name, "assigned"); } catch (error) { console.log(name, error.name + ":", error.message.split(" (bun compile")[0]); } };
+      "assigns.mjs": `import { mock } from "node:test";
+        const attempt = (name, assign) => { try { assign(); console.log(name, "assigned"); } catch (error) { console.log(name, error.name + ":", error.message.split(" (bun compile")[0]); } };
         const { nextTick } = process, { map } = Array.prototype;
         export default () => {
           attempt("process.nextTick", () => { process.nextTick = function (...args) { return nextTick.apply(this, args); }; });
           attempt("Array.prototype.map", () => { Array.prototype.map = function (...args) { return map.apply(this, args); }; });
+          attempt("node:test", () => { try { mock.timers.enable({ apis: ["Date"] }); } finally { mock.timers.reset(); } });
         };`,
     },
-    prints: "the program maps 2\nprocess.nextTick assigned\nArray.prototype.map assigned\n",
+    prints: "the program maps 2\nprocess.nextTick assigned\nArray.prototype.map assigned\nnode:test assigned\n",
     differs:
       "the program maps 2\nprocess.nextTick TypeError: Cannot assign to process.nextTick because built-in objects are read-only in a compiled executable, and the build saw no assignment to this one. " +
       "Code that is loaded from disk can replace it only where the executable's own code assigns to it too, spelled out as in process.nextTick = value\n" +
-      "Array.prototype.map TypeError: Cannot assign to Array.prototype.map because built-in objects are read-only in a compiled executable\n",
+      "Array.prototype.map TypeError: Cannot assign to Array.prototype.map because built-in objects are read-only in a compiled executable\n" +
+      // Nor does a module of Node.js that only such a file loads.
+      "node:test TypeError: Cannot assign to Date because built-in objects are read-only in a compiled executable, and the build saw no assignment to this one. " +
+      "Code that is loaded from disk can replace it only where the executable's own code assigns to it too, spelled out as in Date = value\n",
   },
   "a file with code that the executable carries as an asset": {
     program: {

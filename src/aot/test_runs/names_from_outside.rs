@@ -15,33 +15,47 @@ use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
 use super::FileOfRun;
 use super::out_of_sight::find_outermost_assertion;
+use crate::builtins::table::MemberLookup;
 use crate::builtins::{BuiltinId, ResolvedBuiltins, table};
 use crate::load::sources::parsed_source;
 
-fn hands_each_item_to_callback(method: &[u8]) -> bool {
+fn find_member_of(holder: BuiltinId, atoms: &Interner<'_>, name: Atom) -> Option<BuiltinId> {
+    match table::member(holder, table::find_name(atoms.bytes(name))?) {
+        MemberLookup::Found(member) => Some(table::canonical_id(member)),
+        _ => None,
+    }
+}
+
+fn hands_each_item_to_callback(method: BuiltinId) -> bool {
     matches!(
         method,
-        b"forEach" | b"map" | b"flatMap" | b"filter" | b"some" | b"every" | b"find"
+        BuiltinId::ArrayPrototypeForEach
+            | BuiltinId::ArrayPrototypeMap
+            | BuiltinId::ArrayPrototypeFlatMap
+            | BuiltinId::ArrayPrototypeFilter
+            | BuiltinId::ArrayPrototypeSome
+            | BuiltinId::ArrayPrototypeEvery
+            | BuiltinId::ArrayPrototypeFind
     )
 }
 
-fn leaves_its_list_as_it_is(method: &[u8]) -> bool {
+fn leaves_its_list_as_it_is(method: BuiltinId) -> bool {
     hands_each_item_to_callback(method)
         || matches!(
             method,
-            b"at"
-                | b"concat"
-                | b"entries"
-                | b"findIndex"
-                | b"findLast"
-                | b"includes"
-                | b"indexOf"
-                | b"join"
-                | b"keys"
-                | b"lastIndexOf"
-                | b"reduce"
-                | b"slice"
-                | b"values"
+            BuiltinId::ArrayPrototypeAt
+                | BuiltinId::ArrayPrototypeConcat
+                | BuiltinId::ArrayPrototypeEntries
+                | BuiltinId::ArrayPrototypeFindIndex
+                | BuiltinId::ArrayPrototypeFindLast
+                | BuiltinId::ArrayPrototypeIncludes
+                | BuiltinId::ArrayPrototypeIndexOf
+                | BuiltinId::ArrayPrototypeJoin
+                | BuiltinId::ArrayPrototypeKeys
+                | BuiltinId::ArrayPrototypeLastIndexOf
+                | BuiltinId::ArrayPrototypeReduce
+                | BuiltinId::ArrayPrototypeSlice
+                | BuiltinId::ArrayPrototypeValues
         )
 }
 
@@ -104,8 +118,9 @@ pub(crate) fn find_items_handed_to_callback(
     else {
         return None;
     };
+    let method = find_member_of(BuiltinId::ArrayPrototype, atoms, method)?;
     match hir[hir.skip_type_assertions(list)].kind {
-        ExprKind::Array(items) if hands_each_item_to_callback(atoms.bytes(method)) => Some(items),
+        ExprKind::Array(items) if hands_each_item_to_callback(method) => Some(items),
         _ => None,
     }
 }
@@ -448,7 +463,9 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
                 Parent::Expr(user) => match hir[user].kind {
                     ExprKind::Call(call) if hir[call].callee == read => matches!(
                         key,
-                        MemberKey::Name(method) if leaves_its_list_as_it_is(atoms.bytes(method))
+                        MemberKey::Name(method)
+                            if find_member_of(BuiltinId::ArrayPrototype, atoms, method)
+                                .is_some_and(leaves_its_list_as_it_is)
                     ),
                     ExprKind::Assign { target, .. } => target != read,
                     ExprKind::Unary { op, .. } => !matches!(
@@ -697,7 +714,8 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         match (hir.member_key(callee), hir[callee].kind) {
             (Some((list, MemberKey::Name(method))), _)
                 if place == 0
-                    && hands_each_item_to_callback(atoms.bytes(method))
+                    && find_member_of(BuiltinId::ArrayPrototype, atoms, method)
+                        .is_some_and(hands_each_item_to_callback)
                     && hir.ids(hir[call].args).next() == Some(callback) =>
             {
                 state.path.push(Step::AnyElement);
@@ -734,7 +752,8 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         };
         let callee = hir.member_key(hir.skip_type_assertions(hir[call].callee));
         if let Some((list, MemberKey::Name(method))) = callee
-            && atoms.bytes(method) == b"filter"
+            && find_member_of(BuiltinId::ArrayPrototype, atoms, method)
+                == Some(BuiltinId::ArrayPrototypeFilter)
             && state.path.last() == Some(&Step::AnyElement)
         {
             return self.follow(state, list);
@@ -744,7 +763,8 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         else {
             return Read::NotRead;
         };
-        if atoms.bytes(method) != b"split" || atoms.bytes(at).is_empty() {
+        let method = find_member_of(BuiltinId::StringPrototype, atoms, method);
+        if method != Some(BuiltinId::StringPrototypeSplit) || atoms.bytes(at).is_empty() {
             return Read::NotRead;
         }
         let (read, wholes) = self.follow_apart(state, whole);

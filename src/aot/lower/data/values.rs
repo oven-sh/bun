@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::ir::generated::{DataMember, DataNode};
-use crate::ir::{PositionFlags, PropertyKeyId, TypeTable};
+use crate::ir::{LayoutId, PositionFlags, PropertyKeyId, TypeTable};
 use crate::lower::{FileLowering, FunctionLowering, positions};
 
 const MAX_LINEAR_SEARCH_MEMBERS: usize = 8;
@@ -271,6 +271,25 @@ fn finish_object_literal(
             *member_indexes.entry(key).or_insert(next_index)
         };
         match members.get_mut(index) {
+            Some(member) => member.value = value,
+            None => members.push(DataMember { key, value }),
+        }
+    }
+    DataNode::Object { layout, members }
+}
+
+pub(super) fn create_object_node(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    layout: LayoutId,
+    entries: &[(Constant, Constant)],
+) -> DataNode {
+    let mut members: Vec<DataMember> = Vec::with_capacity(entries.len());
+    let mut places: FxHashMap<PropertyKeyId, usize> = FxHashMap::default();
+    for &(key, value) in entries {
+        let key = file.to_property_key(key);
+        let value = file.create_leaf(value);
+        let place = *places.entry(key).or_insert(members.len());
+        match members.get_mut(place) {
             Some(member) => member.value = value,
             None => members.push(DataMember { key, value }),
         }

@@ -367,7 +367,7 @@ fn enums_and_namespaces() {
 }
 
 #[test]
-fn no_name_finds_parameter_of_block_of_container() {
+fn only_name_of_enum_finds_parameter_of_block_of_container() {
     let text = "namespace N { export const a = 1; N; } namespace N { N; } enum E { A = 1, B = E.A } \
                 declare enum D { A } namespace T { export type T = 1; }";
     analyzed("a.ts", text, |s| {
@@ -388,6 +388,7 @@ fn no_name_finds_parameter_of_block_of_container() {
         assert_ne!(parameters[0], parameters[1]);
         let variable = Binding::Symbol(bound.declared_symbol(Decl::Module(ModuleId(0))));
         assert_eq!([s.binding("N", 0), s.binding("N", 1)], [variable, variable]);
+        assert_eq!(s.binding("E", 0), Binding::Symbol(parameters[2]));
         for erased in [bound.enum_scope[1], bound.module_scope[2]] {
             assert_eq!(bound.container_parameter(erased), SymbolId::NONE);
         }

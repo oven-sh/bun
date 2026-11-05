@@ -73,7 +73,7 @@ fn the_block_of_a_field_begins_at_its_name_or_behind_its_brackets() {
 }
 
 #[test]
-fn the_name_of_a_decorated_field_is_printed_behind_the_class() {
+fn a_decorated_field_is_named_behind_the_class_and_leaves_work_to_a_made_constructor() {
     let places = describe(
         "function mark(value: undefined, context: unknown) {}
 export class Kept {
@@ -82,7 +82,116 @@ export class Kept {
 }
 ",
     );
-    assert_eq!(places, ["b 0 96", "f 0 52 0 13", "b 83 92", "o 83 84 72",]);
+    assert_eq!(
+        places,
+        [
+            "b 0 96",
+            "f 0 52 0 13",
+            "b 83 92",
+            "o 83 84 72",
+            "f 71 72 0 71",
+            "o 53 66 71",
+        ]
+    );
+}
+
+#[test]
+fn an_accessor_field_is_a_getter_a_setter_and_work_for_a_made_constructor() {
+    let places = describe(
+        "export class Kept {
+  accessor read = 1;
+}
+",
+    );
+    assert_eq!(
+        places,
+        [
+            "b 0 43",
+            "b 31 39",
+            "f 31 32 0 31",
+            "f 23 24 0 23",
+            "o 31 32 23",
+            "o 0 13 23",
+            "f 18 19 0 18",
+            "o 0 13 18",
+        ]
+    );
+}
+
+#[test]
+fn a_decorated_method_begins_at_its_decorator_and_a_bare_field_takes_what_runs_for_each_object() {
+    let places = describe(
+        "function log(value: Function, context: unknown) {}
+export class Marked {
+  @log
+  method() {}
+  bare;
+}
+",
+    );
+    assert_eq!(
+        places,
+        [
+            "b 0 104",
+            "f 0 50 0 12",
+            "f 75 93 0 88",
+            "o 82 88 72",
+            "b 71 72",
+            "o 51 64 71",
+            "s 96 97 4",
+        ]
+    );
+}
+
+#[test]
+fn the_decorators_of_a_private_method_count_with_the_method_whose_key_holds_them() {
+    let places = describe(
+        "function log(value: Function, context: unknown) {}
+export class Hidden {
+  @log
+  #method() {}
+  open() {}
+}
+",
+    );
+    assert_eq!(
+        places,
+        [
+            "b 0 109",
+            "f 0 50 0 12",
+            "f 82 94 0 89",
+            "f 97 106 0 101",
+            "o 82 89 72",
+            "s 76 79 3",
+            "f 71 72 0 71",
+            "o 51 64 71",
+        ]
+    );
+}
+
+#[test]
+fn a_method_is_made_for_decorators_that_no_key_can_hold() {
+    let places = describe(
+        "function log(value: Function, context: unknown) {}
+export class Sealed {
+  @log
+  #method() {}
+}
+",
+    );
+    assert_eq!(
+        places,
+        [
+            "b 0 97",
+            "f 0 50 0 12",
+            "f 82 94 0 89",
+            "o 82 89 72",
+            "f 76 79 0 76",
+            "s 76 79 4",
+            "f 71 72 0 71",
+            "o 51 64 71",
+        ]
+    );
 }
 
 #[test]

@@ -386,15 +386,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn find_module_exports_access(&self, access: ExprId) -> Option<ModuleRef> {
         let file = &*self.file;
         let (object, key) = file.hir.member_key(access)?;
+        let is_named_exports = key == MemberKey::Name(known::exports);
+        let is_in_plain_body = file.body_form() == BodyForm::Plain;
+        if !is_named_exports && !is_in_plain_body {
+            return None;
+        }
         match self.current_module() {
             module @ ModuleRef::Inner { callback, .. } => {
                 let object = file.skip_type_syntax(object);
-                let names_exports = key == MemberKey::Name(known::exports)
+                let names_exports = is_named_exports
                     && file.names_symbol(object, file.inner_parameter(callback, 1));
                 names_exports.then_some(module)
             }
             module @ ModuleRef::File(_) => {
-                let is_own = file.body_form() == BodyForm::Plain
+                let is_own = is_in_plain_body
                     && matches!(
                         file.builtins.of_pure_expr(access),
                         Some(Resolved::Builtin(path)) if path.id == BuiltinId::ModuleObjectExports
@@ -434,17 +439,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(value) = self.try_lower_module_field(expression) {
             return Some(value);
         }
-        if let Some(module) = self.find_module_exports_access(expression) {
+        let kind = self.file.hir.exprs.get(expression.idx())?.kind;
+        if matches!(kind, ExprKind::Dot { .. } | ExprKind::Index { .. })
+            && let Some(module) = self.find_module_exports_access(expression)
+        {
             let value = emit_module_value(self, module);
             return Some(value.unwrap_or_else(|| self.builder.boolean(true)));
         }
         let file = &*self.file;
-        if file.body_form() != BodyForm::Plain {
+        if !matches!(kind, ExprKind::Ident(_)) || file.body_form() != BodyForm::Plain {
             return None;
         }
-        let ExprKind::Ident(_) = file.hir[expression].kind else {
-            return None;
-        };
         match file.bound.binding(expression) {
             Binding::CommonJs(variable) => Some(self.get_commonjs_variable(variable)),
             Binding::Symbol(_) | Binding::Arguments(_) | Binding::Free => None,
@@ -482,7 +487,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call: ExprId,
     ) -> Option<ValueId> {
         let hir = self.file.hir;
-        let member = find_bound_member(self.file, call)?;
+
         let ExprKind::Call(site) = hir[call].kind else {
             return None;
         };
@@ -490,6 +495,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if arguments.len() != 3 {
             return None;
         }
+        let member = find_bound_member(self.file, call)?;
         let described = self.file.find_described_value(hir.id_at(arguments, 2));
         let is_lowered_here = matches!(
             (member, described),

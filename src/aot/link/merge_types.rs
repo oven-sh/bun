@@ -69,6 +69,7 @@ impl TypesByHeight {
 
 const END_OF_LIST: u32 = 0;
 
+#[inline]
 fn push_program_ids<I: Id>(
     row: &mut Vec<u32>,
     named: &[I],
@@ -80,6 +81,7 @@ fn push_program_ids<I: Id>(
     Some(())
 }
 
+#[inline]
 fn push_sorted_list<I: Id>(
     row: &mut Vec<u32>,
     named: &[I],
@@ -128,7 +130,9 @@ fn push_row(row: &mut Vec<u32>, ty: &Type, map: &IdMap<'_>) -> Option<()> {
         row.push(END_OF_LIST);
     }
     row.push(END_OF_LIST);
-    row.extend(builtins.iter().map(|id| id.to_wire() + 1));
+    for id in builtins {
+        row.push(id.to_wire() + 1);
+    }
     row.push(END_OF_LIST);
     push_sorted_list(row, functions, map.functions)
 }
@@ -143,6 +147,38 @@ fn compare_rows(a: &[u32], b: &[u32]) -> Ordering {
     #[cfg(test)]
     COMPARISONS.set(COMPARISONS.get() + 1);
     a.cmp(b)
+}
+
+fn compare_rows_behind(a: &[u32], b: &[u32], words_alike: usize) -> (Ordering, usize) {
+    #[cfg(test)]
+    COMPARISONS.set(COMPARISONS.get() + 1);
+    let shorter = a.len().min(b.len());
+    let (front_of_a, front_of_b) = (&a[..shorter], &b[..shorter]);
+    let mut at = words_alike;
+    while at < shorter && front_of_a[at] == front_of_b[at] {
+        at += 1;
+    }
+    let order = match at < shorter {
+        true => front_of_a[at].cmp(&front_of_b[at]),
+        false => a.len().cmp(&b.len()),
+    };
+    (order, at)
+}
+
+fn count_splitters_up_to(splitters: &[&[u32]], row: &[u32]) -> usize {
+    let (mut low, mut high) = (0, splitters.len());
+    let (mut alike_below, mut alike_above) = (0, 0);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let words_alike = alike_below.min(alike_above);
+        let (order, words_alike) = compare_rows_behind(splitters[middle], row, words_alike);
+        if order.is_le() {
+            (low, alike_below) = (middle + 1, words_alike);
+        } else {
+            (high, alike_above) = (middle, words_alike);
+        }
+    }
+    low
 }
 
 const TYPES_IN_A_RUN: usize = if cfg!(test) { 64 } else { 1 << 12 };
@@ -366,10 +402,7 @@ fn group_by_bucket(
     part: usize,
     listed: &[Entry],
 ) -> Grouped<Listed> {
-    let bucket_of = |entry: &Entry| {
-        let row = row_at(runs, *entry);
-        splitters.partition_point(|splitter| compare_rows(splitter, row).is_le()) as u32
-    };
+    let bucket_of = |entry: &Entry| count_splitters_up_to(splitters, row_at(runs, *entry)) as u32;
     let buckets: Vec<u32> = listed.iter().map(bucket_of).collect();
     let listed = (0u32..).zip(listed).map(|(place, &entry)| Listed {
         entry,
@@ -378,6 +411,24 @@ fn group_by_bucket(
     });
     let listed: Vec<Listed> = listed.collect();
     Grouped::new(&listed, &buckets, splitters.len() + 1)
+}
+
+fn count_words_alike_in_front(words: &[u32], rows: &[(Range<usize>, Listed)]) -> usize {
+    let Some(((first, _), others)) = rows.split_first() else {
+        return 0;
+    };
+    let first = &words[first.clone()];
+    let mut words_alike = first.len();
+    for (row, _) in others {
+        let row = &words[row.clone()];
+        let compared = words_alike.min(row.len());
+        let (front_of_first, front_of_row) = (&first[..compared], &row[..compared]);
+        words_alike = 0;
+        while words_alike < compared && front_of_first[words_alike] == front_of_row[words_alike] {
+            words_alike += 1;
+        }
+    }
+    words_alike
 }
 
 struct NumberedTypes {
@@ -403,6 +454,10 @@ impl NumberedTypes {
             let start = words.len();
             words.extend_from_slice(row_at(runs, ty.entry));
             rows.push((start..words.len(), ty));
+        }
+        let words_alike = count_words_alike_in_front(&words, &rows);
+        for (row, _) in &mut rows {
+            row.start += words_alike;
         }
         rows.sort_unstable_by(|a, b| compare_rows(&words[a.0.clone()], &words[b.0.clone()]));
         for (id, (_, ty)) in (first_id..).zip(&rows) {
@@ -757,6 +812,25 @@ fn merge_type_lists(
     (merged, program_ids)
 }
 
+#[inline]
+fn copy_list<T: Clone>(list: &[T]) -> Vec<T> {
+    match list.is_empty() {
+        true => Vec::new(),
+        false => list.to_vec(),
+    }
+}
+
+fn copy_type(ty: &Type) -> Type {
+    Type {
+        strings: copy_list(&ty.strings),
+        layouts: copy_list(&ty.layouts),
+        classes: copy_list(&ty.classes),
+        builtins: copy_list(&ty.builtins),
+        functions: copy_list(&ty.functions),
+        ..*ty
+    }
+}
+
 fn make_records_of_lists<'a>(
     lists: &[&[Type]],
     merged: &MergedTypes,
@@ -770,7 +844,7 @@ fn make_records_of_lists<'a>(
         tables,
         number,
     )| {
-        let mut ty = lists[tables as usize][number as usize].clone();
+        let mut ty = copy_type(&lists[tables as usize][number as usize]);
         ty.remap_ids(&map_of(tables));
         ty
     });

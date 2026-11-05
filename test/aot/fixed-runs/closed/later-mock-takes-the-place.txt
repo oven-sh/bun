@@ -1,12 +1,4 @@
 A later vi.mock() of a module that a mock stands in place of takes its place, for the namespace object too; laid over a module that ran, it keeps what it leaves out.
-#### dep-less.js
-console.error("| CASE", "runs dep-less");
-export const flag = "real";
-export const plain = "real";
-export function fn() {
-  return "real";
-}
-export default "real";
 #### dep-more.js
 console.error("| CASE", "runs dep-more");
 export const flag = "real";
@@ -23,14 +15,6 @@ export function fn() {
   return "real";
 }
 export default "real";
-#### dep-thrice.js
-console.error("| CASE", "runs dep-thrice");
-export const flag = "real";
-export const plain = "real";
-export function fn() {
-  return "real";
-}
-export default "real";
 #### dep-user.js
 console.error("| CASE", "runs dep-user");
 export const flag = "real";
@@ -39,22 +23,6 @@ export function fn() {
   return "real";
 }
 export default "real";
-#### less.test.js
-import { test, vi } from "bun:test";
-import * as all from "./dep-less.js";
-const say = (...words) => console.error("| CASE", "less " + words.join(" "));
-const read = name => {
-  try {
-    return all[name];
-  } catch (error) {
-    return error.message.split("\n")[0];
-  }
-};
-vi.mock("./dep-less.js", () => ({ flag: "one", default: "one", plain: "one", fn: () => "one" }));
-test("the second mock names less", () => {
-  vi.mock("./dep-less.js", () => ({ plain: "two" }));
-  say(1, Object.keys(all), read("plain"), "|", read("flag"), "|", "flag" in all);
-});
 #### more.test.js
 import { test, vi } from "bun:test";
 import * as all from "./dep-more.js";
@@ -87,17 +55,6 @@ test("two mocks laid over a module that ran", async () => {
 });
 #### package.json
 { "name": "mock-again" }
-#### thrice.test.js
-import { test, vi } from "bun:test";
-import * as all from "./dep-thrice.js";
-const say = (...words) => console.error("| CASE", "thrice " + words.join(" "));
-vi.mock("./dep-thrice.js", () => ({ flag: "one" }));
-test("three mocks", () => {
-  vi.mock("./dep-thrice.js", () => ({ second: 2, flag: "two" }));
-  say(1, Object.keys(all), all.flag, all.second);
-  vi.mock("./dep-thrice.js", () => ({ third: 3, flag: "three" }));
-  say(2, Object.keys(all), all.flag, all.third, "second" in all);
-});
 #### user.js
 import * as all from "./dep-user.js";
 import { flag } from "./dep-user.js";

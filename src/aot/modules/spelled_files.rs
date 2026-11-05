@@ -9,7 +9,7 @@ use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{ExprId, ExprKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
-use bun_sema::resolve::{ExternalKind, join};
+use bun_sema::resolve::join;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -133,12 +133,11 @@ fn find_files_spelled_by(
 }
 
 pub(super) fn is_every_file_found_by_name(input: &BindInput<'_, '_>, modules: &ModuleSet) -> bool {
-    let mut externals = modules.external_kinds.iter();
     match input.runs_tests {
         true => input.helpers_of_tests_name_files,
         false => {
             (input.runs_in_place || input.files_are_named_out_of_sight)
-                && externals.any(|&(_, kind)| kind == ExternalKind::UncompiledCode)
+                && modules.runs_code_out_of_sight
         }
     }
 }

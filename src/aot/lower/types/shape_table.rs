@@ -25,6 +25,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let Ok(shape) = self.queries.type_shape(ty) else {
             return Mapped::UNKNOWN;
         };
+        self.types.positions.begin_mapping_shape();
         let mut mapped = match shape.kind {
             ShapeKind::Anything(_) | ShapeKind::TypeVariable { constraint: None } => {
                 Mapped::UNKNOWN
@@ -98,6 +99,7 @@ impl FileLowering<'_, '_, '_, '_> {
             ShapeKind::Union(members) => self.map_union(members, children),
             ShapeKind::Int32 { .. } => Mapped::checked(TypeTable::INT32),
         };
+        self.types.positions.end_mapping_shape();
         if !shape.trust.is_trusted() {
             mapped = Mapped::expected(mapped.ty);
         }
@@ -135,6 +137,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    fn holds_numbers(&self, ty: TypeId) -> bool {
+        let ty = self.fragment.types.get(ty);
+        ty.flags.contains(TypeFlags::HAS_INTEGERS) || ty.primitives.contains(Primitives::NUMBER)
+    }
+
     fn is_numeric_enum_member(&mut self, ty: CheckerTypeId) -> bool {
         match self.queries.type_shape(ty) {
             Ok(shape) => matches!(shape.kind, ShapeKind::NumericEnumMember(_)),
@@ -146,8 +153,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut mapped_members: SmallVec<[Mapped; 4]> = SmallVec::with_capacity(members.len() + 1);
         let mut enum_member_count = 0;
         for &member in members {
-            mapped_members.push(self.map_child(children, EdgeKind::Transparent, member));
-            enum_member_count += usize::from(self.is_numeric_enum_member(member));
+            let mapped = self.map_child(children, EdgeKind::Transparent, member);
+            mapped_members.push(mapped);
+            let is_enum_member =
+                self.holds_numbers(mapped.ty) && self.is_numeric_enum_member(member);
+            enum_member_count += usize::from(is_enum_member);
         }
         if enum_member_count > 1 {
             mapped_members.push(Mapped::checked(TypeTable::INT32));
@@ -297,15 +307,31 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 fn holds_reference(ty: &Type) -> bool {
+    let Type {
+        primitives,
+        flags,
+        opaque,
+        environment,
+        minimum: _,
+        maximum: _,
+        strings,
+        layouts,
+        classes,
+        builtins,
+        functions,
+    } = ty;
+    if !functions.is_empty()
+        || !layouts.is_empty()
+        || !classes.is_empty()
+        || !strings.is_empty()
+        || !builtins.is_empty()
+        || opaque.is_some()
+        || environment.is_some()
+    {
+        return true;
+    }
     let raw_primitives = Primitives::NUMBER | Primitives::BOOLEAN | Primitives::NULLISH;
-    let raw_part = Type {
-        primitives: ty.primitives & raw_primitives,
-        flags: ty.flags & TypeFlags::HAS_INTEGERS,
-        minimum: ty.minimum,
-        maximum: ty.maximum,
-        ..Type::default()
-    };
-    *ty != raw_part
+    *primitives != *primitives & raw_primitives || *flags != *flags & TypeFlags::HAS_INTEGERS
 }
 
 fn is_function_class(class: BuiltinClass) -> bool {

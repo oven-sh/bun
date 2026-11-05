@@ -365,6 +365,9 @@ fn no_file_of_an_executable_has_an_object_where_code_reads_the_table_of_loaded_m
     for code in [
         "console.log(require.cache[__filename].loaded);",
         "for (const key of Object.keys(require.cache)) console.log(require.cache[key].exports === module.exports);",
+        "const entry = require.cache[__filename];\nconsole.log(entry && entry.id, entry && entry.filename);",
+        "const entry = require.cache[__filename];\nif (entry) console.log(entry.loaded);",
+        "const entry = require.cache[__filename];",
     ] {
         assert_eq!(describe_files_beside(code), WITHOUT_OBJECTS, "{code}");
     }
@@ -387,6 +390,9 @@ fn every_file_has_an_object_where_code_goes_on_from_an_entry_of_the_table_of_loa
         "console.log(require.cache[__filename].children.length);",
         "console.log(require('node:module')._cache[__filename].parent.id);",
         "console.log(require.cache[__filename]);",
+        "const entry = require.cache[__filename];\nconsole.log(entry);",
+        "const entry = require.cache[__filename];\nconsole.log(entry.children.length);",
+        "let entry = require.cache[__filename];\nentry = entry.parent;\nconsole.log(entry.id);",
     ] {
         assert_eq!(describe_files_beside(code), WITH_OBJECTS, "{code}");
     }

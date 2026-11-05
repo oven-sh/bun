@@ -52,10 +52,12 @@ pub(super) struct ExcludedOperand {
 }
 
 impl<'s> Folder<'_, 's> {
+    #[inline]
     pub(super) fn mark_folded_by_build_alone(&mut self, e: ExprId) {
         self.folded_by_build_alone.insert(e.idx());
     }
 
+    #[inline]
     pub(super) fn is_folded_by_bun_run(&self, e: ExprId) -> bool {
         !self.folded_by_build_alone.contains(e.idx())
             || (self.assumes_minify_syntax.get()
@@ -93,7 +95,7 @@ impl<'s> Folder<'_, 's> {
     pub(super) fn note_fold_under_minify_syntax(&mut self, e: ExprId, value: Value) {
         let is_addition = matches!(self.hir[e].kind, ExprKind::Binary { op: BinOp::Add, .. });
         let is_asked_about =
-            is_addition || matches!(value, Value::Known(_)) || self.conditions.contains_key(&e);
+            is_addition || matches!(value, Value::Known(_)) || self.conditions.get(&e).is_some();
         if self.inputs.minifies_syntax || !is_asked_about {
             return;
         }
@@ -334,6 +336,7 @@ impl<'s> Folder<'_, 's> {
         bound.parent_of_stmt(enumeration) == bound.parent_of_stmt(constant)
     }
 
+    #[inline]
     pub(super) fn is_truthy_in_bun_run(&self, e: ExprId) -> Option<bool> {
         self.condition(e)
             .filter(|_| self.is_folded_by_bun_run(e) || self.is_condition_told_by_shape(e))
@@ -548,7 +551,24 @@ impl<'s> Folder<'_, 's> {
         });
     }
 
+    #[inline]
     pub(super) fn has_operand_folded_by_build_alone(&self, e: ExprId) -> bool {
+        match self.hir[e].kind {
+            ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::Template { .. }
+            | ExprKind::As { .. }
+            | ExprKind::Satisfies { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::NonNull(_)
+            | ExprKind::Instantiation { .. }
+            | ExprKind::BigInt(_) => self.has_operand_folded_by_build_alone_slow(e),
+            _ => false,
+        }
+    }
+
+    fn has_operand_folded_by_build_alone_slow(&self, e: ExprId) -> bool {
         let hir = self.hir;
         let by_build_alone = |operand: ExprId| !self.is_folded_by_bun_run(operand);
         match hir[e].kind {

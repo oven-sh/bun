@@ -19,8 +19,8 @@ use crate::file_analysis::{AnalyzedAgainFrom, FileAnalysis, FileInputs};
 use crate::fold::StoredByMocks;
 use crate::hir_from_data::{DataValue, HostValue};
 use crate::import_sites::{
-    ImportSiteKind, ImportSpecifier, WHERE_FILE_LIES, find_texts_of_exports,
-    write_from_other_folder, write_start_from_other_folder,
+    ImportSiteKind, ImportSpecifier, find_texts_of_exports, write_from_other_folder,
+    write_question_where_file_lies, write_start_from_other_folder,
 };
 use crate::resolve::{
     CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload, ParsedFile,
@@ -523,14 +523,18 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             return false;
         };
         let found = find(&WalkedCode::new(context, state));
-        let added: Vec<CodeTarget<'r>> = (found.iter())
+        let added: Vec<CodeTarget<'r>> = (found.paths.iter())
             .filter_map(|path| context.add_entry_point(path))
             .collect();
+        let mut has_learned = false;
+        for (path, load) in &found.named_by {
+            has_learned |= context.note_load_that_names(path, *load);
+        }
         for &entry_point in &added {
             self.enqueue(state, entry_point, 0);
         }
         if added.is_empty() {
-            return false;
+            return has_learned;
         }
         for entry_point in context.entry_points() {
             let index = state.index_of[&context.canonical_key(entry_point.key)];
@@ -1435,8 +1439,10 @@ fn find_texts_of_data_files(
         let ImportSpecifier::Constant(specifier) = site.specifier else {
             continue;
         };
-        if let ImportSiteKind::RequireResolve(_) = site.kind {
-            let path = atoms.intern(WHERE_FILE_LIES);
+        if let ImportSiteKind::RequireResolve(call) | ImportSiteKind::ImportMetaResolve(call) =
+            site.kind
+        {
+            let path = atoms.intern(&write_question_where_file_lies(call));
             let own_folder = folder_of(file.target.key.path);
             if asked.contains(&(specifier, path))
                 && let Some(answer) = files_of(resolution).next()

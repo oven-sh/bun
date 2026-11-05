@@ -63,6 +63,7 @@ impl FileLowering<'_, '_, '_, '_> {
         !self.inputs.options.obfuscates
     }
 
+    #[inline]
     fn find_shortened_symbol(&self, binding: Binding) -> Option<SymbolId> {
         let Binding::Symbol(symbol) = binding else {
             return None;
@@ -79,9 +80,10 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn short_binding_name(&mut self, binding: Binding) -> Option<StringId> {
+        let symbol = self.find_shortened_symbol(binding)?;
         let mut text = Vec::new();
-        self.append_short_binding_name(binding, &mut text)
-            .then(|| self.intern_bytes(&text))
+        append_number(symbol.idx() % FIRST_CHARACTERS.len(), &mut text);
+        Some(self.intern_bytes(&text))
     }
 
     pub(crate) fn append_short_binding_name(&self, binding: Binding, text: &mut Vec<u8>) -> bool {

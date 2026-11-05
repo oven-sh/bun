@@ -122,15 +122,30 @@ impl<'p, 's> Checker<'p, 's> {
             return Some((*alias, SmallVec::from_slice(type_arguments)));
         }
 
-        self.alias_symbol_of_type(ty)?;
-        self.derive_alias_of_node_type(ty)
+        let (_, _, mapper) = self.alias_node_of_type(ty)?;
+        let alias = self.alias_symbol_of_type(ty)?;
+        Some((alias, self.alias_type_parameters_under(alias, mapper)))
     }
 
-    /// Computes `alias_of_type` for a type that doesn't store its alias.
-    fn derive_alias_of_node_type(&self, ty: TypeId) -> Option<(Sym, AliasArguments)> {
-        let (file, node, mapper) = self.alias_node_of_type(ty)?;
-        let (alias, type_arguments) = self.alias_of_node_under(file, node, mapper)?;
-        Some((alias, SmallVec::from_vec(type_arguments)))
+    fn alias_type_parameters_under(&self, alias: Sym, mapper: MapperId) -> AliasArguments {
+        let mut type_arguments = self.local_type_params_of_symbol(alias);
+        for type_argument in type_arguments.iter_mut() {
+            if let Some(mapped) = self.types().map(mapper, *type_argument) {
+                *type_argument = mapped;
+            }
+        }
+        type_arguments
+    }
+
+    fn alias_type_arguments_from(
+        &self,
+        alias: Sym,
+        stored_or_node: Result<&[TypeId], (FileId, TypeNodeId, MapperId)>,
+    ) -> AliasArguments {
+        match stored_or_node {
+            Ok(stored) => SmallVec::from_slice(stored),
+            Err((_, _, mapper)) => self.alias_type_parameters_under(alias, mapper),
+        }
     }
 
     /// `t.alias.symbol`, without computing the alias type arguments.
@@ -141,6 +156,12 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(cached) = self.links.alias_symbol(ty) {
             return cached;
         }
+        self.derive_and_cache_alias_symbol_of_type(ty)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn derive_and_cache_alias_symbol_of_type(&self, ty: TypeId) -> Option<Sym> {
         let alias = self.derive_alias_symbol_of_type(ty);
         self.links.cache_alias_symbol(ty, alias);
         alias
@@ -158,6 +179,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The type node that identifies `ty`, and its mapper. A type that doesn't store an alias has
     /// the alias whose body is that node.
+    #[inline]
     fn alias_node_of_type(&self, ty: TypeId) -> Option<(FileId, TypeNodeId, MapperId)> {
         Some(match *self.data(ty) {
             TypeData::Anon {
@@ -235,23 +257,45 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<(Sym, AliasArguments, AliasArguments, bool)> {
         // Fast path for the common failure. Two types that don't store an alias only have the same
         // alias if they have the same type node, because an alias declaration has one body.
-        if self.stored_alias(source).is_none() && self.stored_alias(target).is_none() {
-            let (source, target) = (
-                self.alias_node_of_type(source)?,
-                self.alias_node_of_type(target)?,
-            );
-            if (source.0, source.1) != (target.0, target.1) {
-                return None;
-            }
+        let stored_or_node_of_source = match self.stored_alias(source) {
+            Some((_, type_arguments)) => Ok(&type_arguments[..]),
+            None => Err(self.alias_node_of_type(source)?),
+        };
+        let stored_or_node_of_target = match self.stored_alias(target) {
+            Some((_, type_arguments)) => Ok(&type_arguments[..]),
+            None => Err(self.alias_node_of_type(target)?),
+        };
+        if let (Err(source), Err(target)) = (stored_or_node_of_source, stored_or_node_of_target)
+            && (source.0, source.1) != (target.0, target.1)
+        {
+            return None;
         }
+        self.same_alias_by_symbol(
+            source,
+            target,
+            stored_or_node_of_source,
+            stored_or_node_of_target,
+        )
+    }
+
+    #[inline(never)]
+    fn same_alias_by_symbol(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        stored_or_node_of_source: Result<&[TypeId], (FileId, TypeNodeId, MapperId)>,
+        stored_or_node_of_target: Result<&[TypeId], (FileId, TypeNodeId, MapperId)>,
+    ) -> Option<(Sym, AliasArguments, AliasArguments, bool)> {
         // The symbols are compared before any alias type argument is computed.
         let alias = self.alias_symbol_of_type(source)?;
         if self.alias_symbol_of_type(target)? != alias || self.is_in_flight(Query::Declared(alias))
         {
             return None;
         }
-        let ((_, sources), (_, targets)) =
-            (self.alias_of_type(source)?, self.alias_of_type(target)?);
+        let (sources, targets) = (
+            self.alias_type_arguments_from(alias, stored_or_node_of_source),
+            self.alias_type_arguments_from(alias, stored_or_node_of_target),
+        );
         if sources.is_empty() && targets.is_empty() {
             return Some((alias, sources, targets, false));
         }
@@ -419,6 +463,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Applies `getObjectTypeInstantiation`'s `newAlias` to `result`, the instantiation of `ty`
     /// with `mapper`. `newAlias` is `alias`, or else `instantiateTypeAlias(t.alias, m)` if `ty`
     /// stores an alias.
+    #[inline]
     pub(super) fn with_new_alias(
         &mut self,
         ty: TypeId,
@@ -426,8 +471,22 @@ impl<'p, 's> Checker<'p, 's> {
         result: TypeId,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
+        if alias.is_none() && self.stored_alias(ty).is_none() {
+            return result;
+        }
+        self.with_given_or_stored_alias(ty, mapper, result, alias)
+    }
+
+    #[inline(never)]
+    fn with_given_or_stored_alias(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        result: TypeId,
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
         let own_alias = self.stored_alias(ty);
-        if alias.is_none() && own_alias.is_none() || self.types().deferred(result).is_some() {
+        if self.types().deferred(result).is_some() {
             return result;
         }
         // `createDeferredTypeReference`, `instantiateAnonymousType`

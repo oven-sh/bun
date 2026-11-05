@@ -5,8 +5,8 @@ use bun_ast::Loader;
 use bun_core::strings;
 use bun_sema::atom::Atom;
 use bun_sema::hir::{ExprKind, StmtKind};
-use bun_sema::import_sites::{ImportSpecifier, ResolvedForm};
-use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedForm};
+use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files, NamingLoad};
 use bun_sema::resolve::{CodeHost, CodeOptions, Host, is_declaration_file_name, to_path};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_native, to_native};
@@ -33,6 +33,7 @@ pub(crate) enum FoundBecause {
     NamedByData,
     PassedForParameter,
     FollowedFurtherThanBundler,
+    WrittenInArm,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -82,6 +83,7 @@ struct Mention {
     named: Named,
     because: FoundBecause,
     started_at: Option<(Vec<u8>, u32)>,
+    named_by: Option<NamingLoad>,
 }
 
 struct NamedFile {
@@ -245,6 +247,7 @@ impl Mention {
             named: named?,
             because: FoundBecause::StartsWorker,
             started_at: Some((code.file_name(file).to_vec(), start.at.0)),
+            named_by: None,
         })
     }
 }
@@ -287,15 +290,27 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         let mut loads: FxHashMap<(Atom, u32), Vec<(FileId, bool)>> = FxHashMap::default();
         let mut sought: FxHashSet<(Atom, bool)> = FxHashSet::default();
         for &file in code.compiled_files() {
-            for &name in code.analysis(file).names_out_of_data_files {
+            let analysis = code.analysis(file);
+            for &(name, argument) in analysis.names_out_of_data_files {
+                let mut sites = analysis.import_sites.iter();
+                let site = sites.find(|site| site.specifier_node == argument);
+                let requires = site.and_then(|site| match site.kind {
+                    ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => Some(true),
+                    ImportSiteKind::ImportCall(_) => Some(false),
+                    _ => None,
+                });
                 mentions.push(Mention {
                     named: Named::ByName(Question {
                         file_name: code.file_name(file).to_vec(),
-                        read_as: ReadAs::Import,
+                        read_as: match requires {
+                            Some(true) => ReadAs::Require,
+                            Some(false) | None => ReadAs::Import,
+                        },
                         names: vec![(code.atoms().bytes(name).to_vec(), None)],
                     }),
                     because: FoundBecause::NamedByData,
                     started_at: None,
+                    named_by: requires.map(|requires| NamingLoad { file, requires }),
                 });
             }
             if let Some(source) = parsed_source_in(code, file) {
@@ -305,6 +320,20 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 urls.extend_from_slice(&contents.urls_with_code);
                 texts.extend_from_slice(&contents.texts_behind_object_urls);
                 sought.extend(contents.names.sought_from_unknown_folders.iter().copied());
+                let arms = contents.names.written_arms_of_unknown_names.iter();
+                mentions.extend(arms.map(|&(name, requires)| Mention {
+                    named: Named::ByName(Question {
+                        file_name: code.file_name(file).to_vec(),
+                        read_as: match requires {
+                            true => ReadAs::Require,
+                            false => ReadAs::Import,
+                        },
+                        names: vec![(code.atoms().bytes(name).to_vec(), None)],
+                    }),
+                    because: FoundBecause::WrittenInArm,
+                    started_at: None,
+                    named_by: Some(NamingLoad { file, requires }),
+                }));
                 for load in &contents.names.under_parameters {
                     let under_name = loads.entry((load.property, load.place)).or_default();
                     if under_name.last() != Some(&(file, load.requires)) {
@@ -335,6 +364,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     }),
                     because: FoundBecause::PassedForParameter,
                     started_at: None,
+                    named_by: Some(NamingLoad { file, requires }),
                 });
             }
         }
@@ -360,6 +390,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 }),
                 because: FoundBecause::PassedForParameter,
                 started_at: None,
+                named_by: None,
             }));
         }
         if names_worker_constructor {
@@ -376,6 +407,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 named: Named::Url(url),
                 because: FoundBecause::StartsWorker,
                 started_at: None,
+                named_by: None,
             }));
             let bytes = |text: Atom| code.atoms().bytes(text);
             let texts = texts.into_iter().filter_map(|(contents, r#type)| {
@@ -387,6 +419,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 named: Named::Text(text),
                 because: FoundBecause::StartsWorker,
                 started_at: None,
+                named_by: None,
             }));
         }
         if !self.input.options.load.runs_tests {
@@ -398,6 +431,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 },
                 because: FoundBecause::FollowedFurtherThanBundler,
                 started_at: None,
+                named_by: None,
             }));
         }
         mentions.retain(|mention| match &mention.named {
@@ -653,12 +687,12 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         }
     }
 
-    pub(crate) fn find(&self, code: &dyn CodeView<'_>) -> Vec<Vec<u8>> {
+    pub(crate) fn find(&self, code: &dyn CodeView<'_>) -> EntryPointsFound {
         let mut found = self.found.lock();
         let found = &mut *found;
         let mentions = self.collect_mentions(code, found);
         if mentions.is_empty() {
-            return Vec::new();
+            return EntryPointsFound::default();
         }
         let tables = [FileFinderTables::default(), FileFinderTables::default()];
         let finders = FileFinders {
@@ -673,11 +707,13 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             .collect();
         known.extend(found.entry_points.iter().map(|it| it.0.clone()));
         let mut further: Vec<(Vec<u8>, Vec<u8>, FoundEntryPoint)> = Vec::new();
+        let mut loads: Vec<(Vec<u8>, Option<NamingLoad>)> = Vec::new();
         for mention in mentions {
             let Mention {
                 named,
                 because,
                 started_at,
+                named_by,
             } = mention;
             let mut keys_of_answer = Vec::new();
             let (paths, path_of_copy, question) = match named {
@@ -708,6 +744,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             started_at,
                             starts: Vec::new(),
                         };
+                        loads.push((path.clone(), named_by));
                         further.push((self.key_of(&path), path, entry_point));
                     }
                     continue;
@@ -722,6 +759,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             started_at,
                             starts: Vec::new(),
                         };
+                        loads.push((path.clone(), named_by));
                         further.push((self.key_of(&path), path, entry_point));
                     }
                     continue;
@@ -730,6 +768,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             for path in paths {
                 keys_of_answer.push(self.key_of(&path));
                 if known.contains(&self.key_of(&path)) {
+                    loads.push((path, named_by));
                     continue;
                 }
                 let Some(name) = self.find_name(&path, path_of_copy.as_deref()) else {
@@ -748,6 +787,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 };
                 let key = self.key_of(&path);
                 keys_of_answer.push(key.clone());
+                loads.push((path.clone(), named_by));
                 if !known.contains(&key) {
                     further.push((key, path, entry_point));
                 }
@@ -760,7 +800,10 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             }
         }
         if further.is_empty() {
-            return Vec::new();
+            return EntryPointsFound {
+                paths: Vec::new(),
+                named_by: loads,
+            };
         }
         further.shared_sort_unstable();
         further.dedup_by(|repeated, kept| repeated.0 == kept.0);
@@ -775,7 +818,10 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             .cloned()
             .collect();
         self.input.host.begin_at(&source_paths);
-        paths
+        EntryPointsFound {
+            paths,
+            named_by: loads,
+        }
     }
 
     pub(crate) fn take_names_written(&self) -> Vec<EntryPointPaths> {

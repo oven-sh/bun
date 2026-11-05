@@ -1,3 +1,4 @@
+use core::cell::RefCell;
 use core::cmp::Reverse;
 use core::hash::{BuildHasher, Hash};
 use core::mem::{replace, take};
@@ -19,6 +20,7 @@ use bun_sema::module_format::{ThisPositions, evaluates_own_this};
 use bun_sema::program::{CodeAnswer, FileId, Files, Sym};
 use bun_sema::resolve::DeclaredSideEffects;
 use bun_sema::util::{ShardedMap, SharedSort};
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
@@ -356,7 +358,12 @@ struct FileScan<'a, 's> {
     units_reached_together: Vec<(u32, u32)>,
     units_placed_by_text: Vec<(u32, u32)>,
     units_of_private_names: FxHashMap<PrivateNameId, u32>,
+    units_of_references: RefCell<Vec<u32>>,
 }
+
+const UNIT_NOT_ASKED: u32 = u32::MAX;
+const NO_UNIT: u32 = u32::MAX - 1;
+const MOST_COMPARED_ONE_BY_ONE: usize = 16;
 
 impl<'a, 's> FileScan<'a, 's> {
     fn new(input: &'a ProgramReachInput<'a, 's>, file: FileId) -> FileScan<'a, 's> {
@@ -378,7 +385,21 @@ impl<'a, 's> FileScan<'a, 's> {
             units_reached_together: Vec::new(),
             units_placed_by_text: Vec::new(),
             units_of_private_names: FxHashMap::default(),
+            units_of_references: RefCell::new(Vec::new()),
         }
+    }
+
+    fn find_unit_of_reference(&self, symbol: SymbolId) -> Option<u32> {
+        let mut found = self.units_of_references.borrow_mut();
+        if found.len() <= symbol.idx() {
+            found.resize(symbol.idx() + 1, UNIT_NOT_ASKED);
+        }
+        let known = &mut found[symbol.idx()];
+        if *known == UNIT_NOT_ASKED {
+            let unit = self.units.find_unit(self.hir, self.bound, symbol);
+            *known = unit.unwrap_or(NO_UNIT);
+        }
+        (*known != NO_UNIT).then_some(*known)
     }
 
     fn expressions(&self) -> impl Iterator<Item = ExprId> + use<> {
@@ -1124,8 +1145,14 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    fn find_name_read_off_file_between(&self, symbol: SymbolId) -> Option<(FileId, Atom)> {
-        let binding = self.input.graph.import_binding(self.file, symbol);
+    fn find_name_read_off_file_between(
+        &self,
+        symbol: SymbolId,
+        binding: ImportBinding,
+    ) -> Option<(FileId, Atom)> {
+        if !matches!(binding, ImportBinding::Namespace { .. }) {
+            return None;
+        }
         let holder = self.find_file_between(binding, self.find_module_imported_from(symbol))?;
         let name = match *self.bound.symbol(symbol).decls {
             [Decl::ImportSpec(specifier)] => self.hir[specifier].imported,
@@ -1136,15 +1163,28 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     fn interest_in_symbol(&self, symbol: SymbolId, reference: Option<ExprId>) -> Option<Interest> {
+        let binding = self.input.graph.import_binding(self.file, symbol);
+        self.interest_in_symbol_bound_as(symbol, binding, reference)
+    }
+
+    fn interest_in_symbol_bound_as(
+        &self,
+        symbol: SymbolId,
+        binding: ImportBinding,
+        reference: Option<ExprId>,
+    ) -> Option<Interest> {
         if let Some(view) = self.input.graph.holder(self.file, symbol) {
             return match reference {
                 Some(_) => None,
                 None => Some(Interest::EveryExport(module_of_view(view))),
             };
         }
-        match self.input.graph.import_binding(self.file, symbol) {
+        match binding {
             ImportBinding::Local => {
-                let unit = self.units.find_unit(self.hir, self.bound, symbol)?;
+                let unit = match reference {
+                    Some(_) => self.find_unit_of_reference(symbol)?,
+                    None => self.units.find_unit(self.hir, self.bound, symbol)?,
+                };
                 let unit_named = &self.units.units[unit as usize];
                 let is_only_compared = unit_named.is_class
                     && reference.is_some_and(|reference| {
@@ -1200,6 +1240,20 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    fn interest_in_member_of_plain_name(&self, holder: ExprId) -> Option<Option<Interest>> {
+        let (outermost, Parent::Expr(access)) = self.find_parent(holder) else {
+            return None;
+        };
+        if !(self.hir.member_key(access)).is_some_and(|(object, _)| object == outermost) {
+            return None;
+        }
+        let members = self.input.known_objects(&self.known_members);
+        match members.find_enum(self.file, access).is_some() {
+            true => self.interest_in_known_object(access),
+            false => None,
+        }
+    }
+
     fn add_name_that_is_no_expression(&mut self, symbol: SymbolId) {
         let interests = &mut self.units.interests[TOP_LEVEL as usize];
         if is_enum(self.bound, symbol) {
@@ -1222,6 +1276,9 @@ impl<'a, 's> FileScan<'a, 's> {
             .iter()
             .filter_map(|request| find_quiet_file(graph, request.target));
         let imports_quiet_file = quiet_files.clone().next().is_some();
+        let imports = graph.import_bindings(self.file);
+        let has_enums = !hir.enums.is_empty();
+        let names_known_objects = has_enums || graph.kind(self.file) == ModuleKind::Data;
         for reference in self.expressions() {
             if !matches!(hir[reference].kind, ExprKind::Ident(_))
                 || !bound.is_evaluated_ident(reference)
@@ -1238,24 +1295,37 @@ impl<'a, 's> FileScan<'a, 's> {
             if imports_quiet_file && let Some(interest) = self.find_use_of_import(symbol) {
                 self.add_interest(hir[reference].pos, interest);
             }
-            if let Some(variable) = self.find_data_variable(symbol) {
+            let binding = match (imports.first(), imports.last()) {
+                (Some(first), Some(last)) if first.0 <= symbol && symbol <= last.0 => {
+                    graph.import_binding(self.file, symbol)
+                }
+                _ => ImportBinding::Local,
+            };
+            let is_plain_name = !names_known_objects && matches!(binding, ImportBinding::Local);
+            if !is_plain_name && let Some(variable) = self.find_data_variable(symbol) {
                 self.add_interest(hir[reference].pos, Interest::KnownVariable(variable));
                 continue;
             }
-            if let Some(interest) = self.interest_in_known_object(reference) {
+            let known = match is_plain_name {
+                true => self.interest_in_member_of_plain_name(reference),
+                false => self.interest_in_known_object(reference),
+            };
+            if let Some(interest) = known {
                 if let Some(interest) = interest {
                     self.add_interest(hir[reference].pos, interest);
                 }
                 continue;
             }
-            if is_enum(bound, symbol) {
+            if has_enums && is_enum(bound, symbol) {
                 let enumeration = Sym {
                     file: self.file,
                     id: symbol,
                 };
                 self.add_interest(hir[reference].pos, Interest::HandedOnObject(enumeration));
             }
-            if let Some(interest) = self.interest_in_symbol(symbol, Some(reference)) {
+            if let Some(interest) =
+                self.interest_in_symbol_bound_as(symbol, binding, Some(reference))
+            {
                 match self.split_interest_of_heritage(reference, interest) {
                     Some((extending, needed_by_definition)) => {
                         self.units.interests[extending as usize + 1].push(interest);
@@ -1275,7 +1345,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     self.add_interest(hir[reference].pos, handed_on);
                 }
             }
-            if let Some((holder, name)) = self.find_name_read_off_file_between(symbol) {
+            if let Some((holder, name)) = self.find_name_read_off_file_between(symbol, binding) {
                 let read = Interest::Export(ModuleRef::File(holder), name);
                 self.add_interest(hir[reference].pos, read);
             }
@@ -1951,6 +2021,18 @@ impl<'a, 's> FileScan<'a, 's> {
             if interests.len() < 2 {
                 continue;
             }
+            if interests.len() <= MOST_COMPARED_ONE_BY_ONE {
+                let mut kept = 0;
+                for at in 0..interests.len() {
+                    let interest = interests[at];
+                    if !interests[..kept].contains(&interest) {
+                        interests[kept] = interest;
+                        kept += 1;
+                    }
+                }
+                interests.truncate(kept);
+                continue;
+            }
             seen.clear();
             interests.retain(|&interest| seen.insert(interest));
         }
@@ -2136,8 +2218,10 @@ impl<'a, 's> Walk<'a, 's> {
             .collect();
         let mut steps = StepClock::new(Stage::BindModules);
         let mut largest_first: Vec<&mut (FileId, Option<FileUnits>)> = scans.iter_mut().collect();
-        largest_first
-            .sort_unstable_by_key(|scan| (Reverse(input.files.hir(scan.0).exprs.len()), scan.0));
+        largest_first.sort_by_u64(|scan| {
+            let size = input.files.hir(scan.0).exprs.len() as u32;
+            number_of_pair(u32::MAX - size, scan.0.idx() as u32)
+        });
         let asks_what_files_spell = asks_what_files_spell(input);
         for_each_mut(&mut largest_first, in_parallel, &|scan| {
             let file_scan = FileScan::new(input, scan.0);

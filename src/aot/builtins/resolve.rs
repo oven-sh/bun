@@ -137,6 +137,9 @@ impl ImportTargets {
     }
 
     fn module_at(&self, site: ImportSiteKind) -> Option<RuntimeModule> {
+        if self.targets.last().is_none_or(|last| last.0 < site) {
+            return None;
+        }
         let at = self.targets.binary_search_by_key(&site, |target| target.0);
         at.ok().and_then(|at| self.targets[at].1)
     }
@@ -273,12 +276,18 @@ impl ResolvedBuiltins {
         is_listed(table::canonical_id(place)) || is_listed(place)
     }
 
+    #[inline]
     pub fn of_expr(&self, expr: ExprId) -> Option<Resolved> {
         let index = expr.idx();
         let word = *self.expr_bits.get(index / 64)?;
         if word & (1 << (index % 64)) == 0 {
             return None;
         }
+        self.find_listed_expr(expr)
+    }
+
+    #[inline(never)]
+    fn find_listed_expr(&self, expr: ExprId) -> Option<Resolved> {
         let at = self.exprs.binary_search_by_key(&expr, |entry| entry.0);
         at.ok().map(|at| match self.exprs[at].1 {
             Resolved::Builtin(path) => Resolved::Builtin(self.apply_unlocked_list(path)),
@@ -289,9 +298,11 @@ impl ResolvedBuiltins {
         })
     }
 
+    #[inline]
     pub fn of_pure_expr(&self, expr: ExprId) -> Option<Resolved> {
+        let resolved = self.of_expr(expr)?;
         let has_side_effects = self.exprs_with_side_effects.binary_search(&expr).is_ok();
-        self.of_expr(expr).filter(|_| !has_side_effects)
+        (!has_side_effects).then_some(resolved)
     }
 
     pub fn global_path(
@@ -330,6 +341,7 @@ impl ResolvedBuiltins {
         }
     }
 
+    #[inline]
     pub fn builtin_of_expression(&self, expr: ExprId) -> Option<BuiltinId> {
         match self.of_expr(expr)? {
             Resolved::Builtin(path) => Some(path.id),

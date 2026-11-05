@@ -203,17 +203,25 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Substitution { base, constraint } => {
                 self.generic_object_flags_of_all(&[base, constraint])
             }
-            _ => {
-                let flags = self.flags(ty);
-                (
-                    flags & tf::INSTANTIABLE_NON_PRIMITIVE != 0
-                        || self.is_generic_mapped_type(ty)
-                        || self.is_generic_tuple_type(ty),
-                    flags & (tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX) != 0
-                        || self.is_generic_string_like_type(ty),
-                    self.is_mapped_type(ty),
-                )
+            TypeData::Anon {
+                origin: Origin::Mapped(file, node),
+                mapper,
+            } => (
+                self.is_mapped_type_generic(ty, file, node, mapper),
+                false,
+                true,
+            ),
+            TypeData::Tuple { .. } => (self.is_generic_tuple_type(ty), false, false),
+            TypeData::Template { .. } | TypeData::StringMapping { .. } => {
+                (false, self.is_generic_string_like_type(ty), false)
             }
+            TypeData::TypeParam(..)
+            | TypeData::ThisParam(_)
+            | TypeData::Marker(_)
+            | TypeData::IndexedAccess { .. }
+            | TypeData::Cond { .. } => (true, true, false),
+            TypeData::Keyof(_) => (false, true, false),
+            _ => (false, false, false),
         }
     }
 
@@ -1651,7 +1659,19 @@ impl<'p, 's> Checker<'p, 's> {
                 return TypeId::UNRESOLVED;
             };
             // A cache hit skips the lookups below. A miss does them in tsgo's order and fills the cache afterwards.
-            let root = self.conditional_roots.get(&(file, node)).cloned();
+            let root = self.conditional_roots.get(&(file, node)).map(|root| {
+                let mut infer_params = SmallVec::new();
+                for &param in root.infer_params.iter() {
+                    infer_params.push(param);
+                }
+                ConditionalRoot {
+                    check_declared: root.check_declared,
+                    check_variable: root.check_variable,
+                    extends_declared: root.extends_declared,
+                    check_tuples: root.check_tuples,
+                    infer_params,
+                }
+            });
             let mark = self.non_cacheable_mark();
             let (check_declared, check_variable) = match &root {
                 Some(root) => (root.check_declared, root.check_variable),

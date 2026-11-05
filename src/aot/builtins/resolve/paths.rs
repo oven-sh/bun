@@ -160,8 +160,13 @@ impl Resolver<'_, '_> {
         {
             return ExprState::Intrinsic(intrinsic);
         }
-        let held = self.held_value_of(object);
-        let known = self.value_of(object).or(held);
+        let (held, known) = match self.is_resolved(input.hir.skip_type_assertions(object)) {
+            true => {
+                let held = self.held_value_of(object);
+                (held, self.value_of(object).or(held))
+            }
+            false => (None, None),
+        };
         let Some(holder) = known.or_else(|| self.find_made_require(object)) else {
             return ExprState::Unresolved;
         };

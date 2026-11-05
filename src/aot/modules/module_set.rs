@@ -27,6 +27,7 @@ pub(super) struct ModuleSet {
     pub record_files: Vec<FileId>,
     pub other_modules: Vec<ModuleRef>,
     pub external_kinds: Vec<((FileId, Atom), ExternalKind)>,
+    pub runs_code_out_of_sight: bool,
     pub(super) left_to_loader: Vec<((FileId, Atom, Option<Loader>), FileId)>,
     pub wrapped: WrappedModules,
     inner_modules: Vec<(FileId, FnId)>,
@@ -224,6 +225,13 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
             interop.require_result = RequireResult::Namespace;
         }
     }
+    let names_uncompiled_code = |file: &FileId| {
+        let mut externals = scans.of(*file).externals.iter();
+        externals.any(|&(_, kind)| kind == ExternalKind::UncompiledCode)
+    };
+    let runs_code_out_of_sight = !input.runs_tests
+        && (!input.external_packages.is_empty()
+            || compiled_files.iter().any(names_uncompiled_code));
     let forms = find_forms(input, &compiled_files, &interops);
     let sibling_forms = find_sibling_forms(input, &compiled_files, &interops);
     let forms_require_checks_first = answer_require_with_what_the_loader_holds(
@@ -308,6 +316,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         record_files: with_record.collect(),
         other_modules,
         external_kinds,
+        runs_code_out_of_sight,
         left_to_loader,
         wrapped: WrappedModules::default(),
         inner_modules: Vec::new(),

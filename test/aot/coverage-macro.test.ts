@@ -7,6 +7,8 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
+  // A build of Bun with assertions reports the test files too unless it is told otherwise.
+  "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
   "macro.ts": `
 export const make = () => ({ a: { b: 1 }, c: [{}], text: "two\\nlines" });
 export const yes = () => true;

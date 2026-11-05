@@ -48,12 +48,17 @@ pub(crate) struct ScopeState {
 }
 
 impl ScopeState {
+    #[inline]
     pub(super) fn innermost_scope(&self) -> ScopeId {
         let innermost = self.entered.last();
         innermost.map_or(ScopeId::NONE, |entered| entered.scope)
     }
 
-    pub(super) fn find_environment(&self, scope: ScopeId) -> Option<LocalVariable> {
+    pub(in crate::lower) fn is_entered(&self, scope: ScopeId) -> bool {
+        self.entered.iter().any(|entered| entered.scope == scope)
+    }
+
+    pub(in crate::lower) fn find_environment(&self, scope: ScopeId) -> Option<LocalVariable> {
         let mut entered = self.entered.iter().rev();
         entered.find(|entered| entered.scope == scope)?.environment
     }

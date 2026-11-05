@@ -12,37 +12,44 @@ impl ReferencePass<'_, '_> {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
         for (index, expr) in hir.exprs.iter().enumerate() {
             let e = ExprId(index as u32);
-            self.has_import_meta |= matches!(expr.kind, ExprKind::ImportMeta);
-            if bound.parent_of_expr(e) == Parent::None {
-                continue;
-            }
-            if let ExprKind::Assign { op, target, .. } = expr.kind {
-                let is_pattern_default = bound.is_shorthand_property_assignment(hir, e)
-                    || bound.get_assignment_target(hir, e).is_some();
-                if !is_pattern_default {
-                    let kind = op.map_or(StoreKind::Assign, StoreKind::CompoundAssign);
-                    self.collect_store_targets(target, kind);
+            match expr.kind {
+                ExprKind::Assign { op, target, .. } => {
+                    if bound.parent_of_expr(e) == Parent::None {
+                        continue;
+                    }
+                    let is_pattern_default = bound.is_shorthand_property_assignment(hir, e)
+                        || bound.get_assignment_target(hir, e).is_some();
+                    if !is_pattern_default {
+                        let kind = op.map_or(StoreKind::Assign, StoreKind::CompoundAssign);
+                        self.collect_store_targets(target, kind);
+                    }
                 }
-            } else if let ExprKind::Unary { op, operand } = expr.kind
-                && matches!(
-                    op,
-                    UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
-                )
-            {
-                self.collect_store_targets(operand, StoreKind::Update(op));
-            } else if matches!(expr.kind, ExprKind::ImportMeta)
-                && may_modify_import_meta(hir, bound, e)
-            {
-                self.import_meta_may_be_modified = true;
+                ExprKind::Unary {
+                    op: op @ (UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec),
+                    operand,
+                } => {
+                    if bound.parent_of_expr(e) != Parent::None {
+                        self.collect_store_targets(operand, StoreKind::Update(op));
+                    }
+                }
+                ExprKind::ImportMeta => {
+                    self.has_import_meta = true;
+                    if bound.parent_of_expr(e) != Parent::None
+                        && may_modify_import_meta(hir, bound, e)
+                    {
+                        self.import_meta_may_be_modified = true;
+                    }
+                }
+                _ => {}
             }
         }
         for (index, stmt) in hir.stmts.iter().enumerate() {
-            if bound.parent_of_stmt(StmtId(index as u32)) == Parent::None {
-                continue;
-            }
             let (StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }) = stmt.kind else {
                 continue;
             };
+            if bound.parent_of_stmt(StmtId(index as u32)) == Parent::None {
+                continue;
+            }
             if let StmtKind::Expr(target) = hir[left].kind {
                 let is_for_in = matches!(stmt.kind, StmtKind::ForIn { .. });
                 let kind = if is_for_in {
@@ -57,8 +64,9 @@ impl ReferencePass<'_, '_> {
 
     fn collect_store_targets(&mut self, root: ExprId, root_kind: StoreKind) {
         let hir = self.lookup.hir;
-        let mut targets = vec![(root, root_kind)];
-        while let Some((target, kind)) = targets.pop() {
+        let mut targets = Vec::new();
+        let mut next = Some((root, root_kind));
+        while let Some((target, kind)) = next.take().or_else(|| targets.pop()) {
             match hir[target].kind {
                 ExprKind::As { expr, .. }
                 | ExprKind::Satisfies { expr, .. }
@@ -70,7 +78,7 @@ impl ReferencePass<'_, '_> {
                     op: None,
                     target: expr,
                     ..
-                } => targets.push((expr, kind)),
+                } => next = Some((expr, kind)),
                 ExprKind::Ident(_) => self.record_store(target, kind),
                 ExprKind::Array(items) => {
                     let items = hir.ids(items);

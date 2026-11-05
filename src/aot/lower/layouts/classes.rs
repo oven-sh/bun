@@ -13,7 +13,7 @@ use super::OwnFields;
 use super::object_types::can_be_field;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{
-    Field, FieldFlags, Layout, LayoutFlags, LayoutKind, LimitId, StaticField,
+    Field, FieldFlags, FieldForm, Layout, LayoutFlags, LayoutKind, LimitId, StaticField,
 };
 use crate::ir::{
     ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, LayoutKey, OpaqueKind, PropertyKey,
@@ -165,6 +165,19 @@ impl FileLowering<'_, '_, '_, '_> {
                 },
             };
             field.flags |= flags;
+            if known.is_none() {
+                let forms = [
+                    (entry.form.is_read_only, FieldForm::IS_READ_ONLY),
+                    (entry.form.is_not_enumerable, FieldForm::IS_NOT_ENUMERABLE),
+                    (
+                        entry.form.is_not_configurable,
+                        FieldForm::IS_NOT_CONFIGURABLE,
+                    ),
+                ];
+                for (_, form) in forms.into_iter().filter(|&(is_so, _)| is_so) {
+                    field.form |= form;
+                }
+            }
             if known.is_none() || types.written.written().is_some() {
                 field.declared = match is_declared {
                     true => self.create_position_of_declared_field(home, types),

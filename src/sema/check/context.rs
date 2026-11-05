@@ -87,10 +87,17 @@ impl PushedContextualTypes {
     #[inline]
     fn nodes_with_type_variables(&self, file: FileId) -> SmallVec<[ExprId; 4]> {
         let infos = (self.with_type_variables.iter()).map(|&at| &self.infos[at as usize]);
-        infos
-            .filter(|info| info.file == file)
-            .map(|info| info.node)
-            .collect()
+        let mut nodes = SmallVec::new();
+        for info in infos.filter(|info| info.file == file) {
+            nodes.push(info.node);
+        }
+        nodes
+    }
+
+    #[inline]
+    fn has_node_with_type_variables(&self, file: FileId) -> bool {
+        let mut infos = (self.with_type_variables.iter()).map(|&at| &self.infos[at as usize]);
+        infos.any(|info| info.file == file)
     }
 
     #[inline]
@@ -152,6 +159,12 @@ impl PushedContextualTypes {
         if found.is_some() || self.infos.len() <= Self::SEARCHED_ONE_BY_ONE {
             return found;
         }
+        self.higher_place_of(file, node, include_caches)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn higher_place_of(&self, file: FileId, node: ExprId, include_caches: bool) -> Option<usize> {
         let mut places = self
             .higher
             .get(&(file, node))?
@@ -776,11 +789,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The nodes of `file` with a pushed type that may contain type variables.
     pub(super) fn pushed_with_type_variables(&mut self, file: FileId) -> SmallVec<[ExprId; 4]> {
+        self.examine_pushed_contextual_types();
+        self.contextual.nodes_with_type_variables(file)
+    }
+
+    #[inline]
+    pub(super) fn has_pushed_with_type_variables(&mut self, file: FileId) -> bool {
+        self.examine_pushed_contextual_types();
+        self.contextual.has_node_with_type_variables(file)
+    }
+
+    #[inline]
+    fn examine_pushed_contextual_types(&mut self) {
         while let Some(t) = self.contextual.next_unexamined() {
             let has_type_variables = t.is_some_and(|t| self.has_type_variables(t));
             self.contextual.examined(has_type_variables);
         }
-        self.contextual.nodes_with_type_variables(file)
     }
 
     /// `popContextualType`
@@ -802,6 +826,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getContextualType`
+    #[inline]
     pub(super) fn contextual_type(
         &mut self,
         file: FileId,
@@ -821,7 +846,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         let hir = self.hir(file);
         // `getContextualType`: a node inside a `with` statement has no contextual type.
-        if hir.is_in_with(hir[e].pos) {
+        if !hir.with_bodies.is_empty() && hir.is_in_with(hir[e].pos) {
             return None;
         }
         // "Cached contextual types are obtained with no ContextFlags, so we can only consult them
@@ -838,6 +863,7 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.type_of_signature(sig, false))
     }
 
+    #[inline(never)]
     fn contextual_type_from_parent(
         &mut self,
         file: FileId,
@@ -849,7 +875,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getContextualType` has no case for a TypeQuery or QualifiedName parent. The binder
         // parents the operand of a `typeof` type to the enclosing function or property only so that
         // `this` resolves.
-        if bound.is_in_type_query(e) {
+        if !bound.type_query_operands.is_empty() && bound.is_in_type_query(e) {
             return None;
         }
         match bound.parent_of_expr(e) {
@@ -910,9 +936,11 @@ impl<'p, 's> Checker<'p, 's> {
             },
             Parent::Prop(p) => {
                 // `getContextualTypeForObjectLiteralElement`: `element.Type()`
-                let annotation = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
-                if annotation.is_some() {
-                    return Some(self.type_from_node(file, annotation));
+                if !hir.jsdoc_types.is_empty() {
+                    let annotation = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
+                    if annotation.is_some() {
+                        return Some(self.type_from_node(file, annotation));
+                    }
                 }
                 let owner = bound.prop_owner[p.idx()];
                 let prop = &hir[p];
@@ -1204,12 +1232,17 @@ impl<'p, 's> Checker<'p, 's> {
         match &members_to_search {
             Some(members_to_search) => {
                 for at in members_to_search.iter() {
-                    types.extend(self.contextual_property_of_member(parts[at], name, name_type));
+                    if let Some(t) = self.contextual_property_of_member(parts[at], name, name_type)
+                    {
+                        types.push(t);
+                    }
                 }
             }
             None => {
                 for &part in parts {
-                    types.extend(self.contextual_property_of_member(part, name, name_type));
+                    if let Some(t) = self.contextual_property_of_member(part, name, name_type) {
+                        types.push(t);
+                    }
                 }
             }
         }
@@ -2415,7 +2448,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let usage = IterationUse::Element;
             let element = self.iterated_type_or_element_type(usage, part, TypeId::UNDEFINED, None);
-            types.extend(element.filter(|&element| element != TypeId::UNRESOLVED));
+            if let Some(element) = element.filter(|&element| element != TypeId::UNRESOLVED) {
+                types.push(element);
+            }
         }
         if types.is_empty() {
             None
@@ -2426,6 +2461,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     // ───────────────────────────── functions ─────────────────────────────
 
+    #[inline]
     pub(super) fn takes_context(&self, file: FileId, func: FnId) -> Option<ExprId> {
         let f = &self.hir(file)[func];
         match (f.kind, self.bound(file).fns[func.idx()].owner) {

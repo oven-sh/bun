@@ -238,13 +238,9 @@ impl<'p, 's> Checker<'p, 's> {
             params.len().min(args.len())
         };
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::new();
-        pairs.extend(
-            params
-                .iter()
-                .copied()
-                .zip(args.iter().copied())
-                .take(actual),
-        );
+        for (&param, &arg) in params.iter().zip(args).take(actual) {
+            pairs.push((param, arg));
+        }
         pairs.push((self.intern(TypeData::ThisParam(class)), this));
         Some(self.types().mapper_of(&pairs))
     }

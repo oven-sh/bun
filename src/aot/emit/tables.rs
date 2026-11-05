@@ -179,6 +179,17 @@ pub(super) fn create_task<'p, 'o>(source: Source<'p>) -> Task<'p, 'o> {
     }
 }
 
+struct PushedWords<'a>(&'a mut Vec<u32>);
+
+impl Extend<u32> for PushedWords<'_> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = u32>>(&mut self, words: I) {
+        for word in words {
+            self.0.push(word);
+        }
+    }
+}
+
 pub(super) fn write_strings<'a>(strings: &StringsOfTask<'a>, sections: &mut SectionWriter<'a>) {
     let span = sections.push_bytes(strings.bytes());
     let mut offset = span.first;
@@ -192,7 +203,7 @@ pub(super) fn write_strings<'a>(strings: &StringsOfTask<'a>, sections: &mut Sect
             name_class: table.name_class(id),
             builtin_name: table.builtin_name(id),
         };
-        record.append_to(&mut words);
+        record.append_to(&mut PushedWords(&mut words));
         offset += length;
     }
     assert!(

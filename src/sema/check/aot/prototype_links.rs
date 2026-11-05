@@ -17,11 +17,28 @@ use std::sync::OnceLock;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PrototypeOperation {
-    SetPrototype { object: u32, parent: u32 },
-    CreateObject { parent: u32 },
-    LinkClasses { child: u32, parent: u32 },
-    CopyProperties { target: u32 },
-    CallFunction { receiver: u32 },
+    SetPrototype {
+        object: u32,
+        parent: u32,
+    },
+    CreateObject {
+        parent: u32,
+    },
+    LinkClasses {
+        child: u32,
+        parent: u32,
+    },
+    CopyProperties {
+        target: u32,
+    },
+    CallFunction {
+        receiver: u32,
+    },
+    DefineProperty {
+        object: u32,
+        key: u32,
+        descriptor: u32,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -88,9 +105,13 @@ pub(in crate::check) struct PrototypeLinks<'s> {
 }
 
 fn entries_of<T>(entries: &[(FnId, T)], function: FnId) -> &[(FnId, T)] {
+    if entries.is_empty() {
+        return entries;
+    }
     let start = entries.partition_point(|entry| entry.0 < function);
-    let len = entries[start..].partition_point(|entry| entry.0 == function);
-    &entries[start..start + len]
+    let rest = &entries[start..];
+    let len = rest.iter().take_while(|entry| entry.0 == function).count();
+    &rest[..len]
 }
 
 impl<'s> PrototypeLinks<'s> {
@@ -366,7 +387,8 @@ impl EndFinder<'_, '_, '_> {
                     }) => self.find_argument(value, target)?,
                     NamedValue::PrototypeOperation(
                         PrototypeOperation::LinkClasses { .. }
-                        | PrototypeOperation::CallFunction { .. },
+                        | PrototypeOperation::CallFunction { .. }
+                        | PrototypeOperation::DefineProperty { .. },
                     )
                     | NamedValue::Class(_)
                     | NamedValue::Function(_) => return None,
@@ -509,7 +531,8 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
             PrototypeOperation::CallFunction { receiver } => {
                 self.visit_call_passing_receiver(call, receiver);
             }
-            PrototypeOperation::CreateObject { .. } => {}
+            PrototypeOperation::CreateObject { .. } | PrototypeOperation::DefineProperty { .. } => {
+            }
         }
     }
 

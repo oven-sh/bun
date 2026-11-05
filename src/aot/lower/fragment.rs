@@ -3,7 +3,7 @@ mod tests;
 
 use core::hash::Hash;
 use core::mem::{replace, take};
-use std::collections::hash_map::Entry;
+
 use std::sync::Arc;
 
 use bun_sema::erasure::PackedTypeRanges;
@@ -88,19 +88,18 @@ impl<K: Copy + Eq + Hash> KeyTable<K> {
     }
 
     fn number<I: Id>(&mut self, key: K) -> I {
-        match self.ids.entry(key) {
-            Entry::Occupied(entry) => I::new(*entry.get() as usize),
-            Entry::Vacant(entry) => {
-                let id = I::new(self.keys.len());
-                entry.insert(id.to_word());
-                self.keys.push(key);
-                self.named_in.push(0);
-                self.defined_in.push(0);
-                id
-            }
+        if let Some(&id) = self.ids.get(&key) {
+            return I::new(id as usize);
         }
+        let id = I::new(self.keys.len());
+        self.ids.insert(key, id.to_word());
+        self.keys.push(key);
+        self.named_in.push(0);
+        self.defined_in.push(0);
+        id
     }
 
+    #[inline]
     fn name(&mut self, id: impl Id, visit: u32) -> bool {
         replace(&mut self.named_in[id.index()], visit) != visit
     }
@@ -114,10 +113,12 @@ impl<K: Copy + Eq + Hash> KeyTable<K> {
         self.named_in.get(id.index()) == Some(&visit)
     }
 
+    #[inline]
     fn key_of(&self, id: impl Id) -> K {
         self.keys[id.index()]
     }
 
+    #[inline]
     fn is_defined(&self, id: impl Id, visit: u32) -> bool {
         self.defined_in[id.index()] == visit
     }
@@ -134,6 +135,15 @@ impl<K: Copy + Eq + Hash> KeyTable<K> {
             return;
         }
         self.ids.retain(|_, id| (*id as usize) < length);
+        self.named_in.truncate(length);
+        self.defined_in.truncate(length);
+    }
+
+    fn forget_keys_from(&mut self, length: u32) {
+        let length = length as usize;
+        for key in self.keys.drain(length..) {
+            self.ids.remove(&key);
+        }
         self.named_in.truncate(length);
         self.defined_in.truncate(length);
     }
@@ -165,6 +175,7 @@ pub(crate) struct FileMarks {
     key_written_in: Vec<u32>,
 }
 
+#[inline]
 fn set_mark(marked_in: &mut Vec<u32>, id: impl Id, visit: u32) -> bool {
     if marked_in.len() <= id.index() {
         marked_in.resize(id.index() + 1, 0);
@@ -210,6 +221,7 @@ pub(crate) struct FragmentBuilder {
     code_layout_count: Option<usize>,
     variable_keys: KeyTable<VariableKey>,
     module_keys: KeyTable<ModuleRef>,
+    module_of_file: Option<ModuleId>,
     module_failure_keys: KeyTable<modules::ModuleFailureId>,
     functions: Vec<(FunctionId, Arc<Function>)>,
     layouts: Vec<(LayoutId, Layout)>,
@@ -257,6 +269,7 @@ impl FragmentBuilder {
             code_layout_count: None,
             variable_keys: finders.variables.with_keys(tables.variable_keys),
             module_keys: finders.modules.with_keys(tables.module_keys),
+            module_of_file: None,
             module_failure_keys: finders
                 .module_failures
                 .with_keys(tables.module_failure_keys),
@@ -304,6 +317,7 @@ impl FragmentBuilder {
         self.layout_keys.number(key)
     }
 
+    #[inline]
     pub(crate) fn name_layout(&mut self, layout: LayoutId) {
         if self.layout_keys.name(layout, self.visit) {
             self.layouts_named_in_file.push(layout);
@@ -314,10 +328,23 @@ impl FragmentBuilder {
         self.variable_keys.declare(key, self.visit).0
     }
 
+    #[inline]
     pub(crate) fn declare_module(&mut self, module: ModuleRef) -> ModuleId {
-        self.module_keys.declare(module, self.visit).0
+        match self.module_of_file {
+            Some(own) if module == ModuleRef::File(self.file) => own,
+            _ => self.declare_module_in_table(module),
+        }
     }
 
+    fn declare_module_in_table(&mut self, module: ModuleRef) -> ModuleId {
+        let id = self.module_keys.declare(module, self.visit).0;
+        if module == ModuleRef::File(self.file) {
+            self.module_of_file = Some(id);
+        }
+        id
+    }
+
+    #[inline]
     pub(crate) fn module_ref(&self, module: ModuleId) -> ModuleRef {
         self.module_keys.key_of(module)
     }
@@ -329,14 +356,17 @@ impl FragmentBuilder {
         self.module_failure_keys.declare(failure, self.visit).0
     }
 
+    #[inline]
     pub(crate) fn function_key(&self, function: FunctionId) -> FunctionKey {
         self.function_keys.key_of(function)
     }
 
+    #[inline]
     pub(crate) fn layout_key(&self, layout: LayoutId) -> LayoutKey {
         self.layout_keys.key_of(layout)
     }
 
+    #[inline]
     pub(crate) fn layouts_named_in_file(&self) -> &[LayoutId] {
         &self.layouts_named_in_file
     }
@@ -348,10 +378,12 @@ impl FragmentBuilder {
         count
     }
 
+    #[inline]
     pub(crate) fn is_layout_defined(&self, layout: LayoutId) -> bool {
         self.layout_keys.is_defined(layout, self.visit)
     }
 
+    #[inline]
     pub(crate) fn is_variable_defined(&self, variable: VariableId) -> bool {
         self.variable_keys.is_defined(variable, self.visit)
     }
@@ -590,10 +622,16 @@ impl FragmentBuilder {
         self.finish(module, &mut state)
     }
 
-    pub(crate) fn abandon(self, state: &mut TaskState) {
+    pub(crate) fn abandon(mut self, state: &mut TaskState) {
         let last_visit = state.last_visit.take();
         let (file, lengths) = last_visit.expect("`new` notes the visit");
         debug_assert_eq!(file, self.file);
+        self.function_keys.forget_keys_from(lengths.functions);
+        self.layout_keys.forget_keys_from(lengths.layouts);
+        self.variable_keys.forget_keys_from(lengths.variables);
+        self.module_keys.forget_keys_from(lengths.modules);
+        self.module_failure_keys
+            .forget_keys_from(lengths.module_failures);
         drop(self.finish(ModuleFragment::default(), state));
         state.roll_back(lengths);
     }

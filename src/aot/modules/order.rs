@@ -501,7 +501,13 @@ impl<'a, 's> FileText<'a, 's> {
             && self.bound.binding(expression) == Binding::CommonJs(variable)
     }
 
-    fn is_proven_call(&self, site: ImportSiteKind, call: ExprId, kind: ModuleKind) -> bool {
+    fn is_proven_call(
+        &self,
+        site: ImportSiteKind,
+        call: ExprId,
+        kind: ModuleKind,
+        runs_tests: bool,
+    ) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let ExprKind::Call(id) = hir[call].kind else {
             return false;
@@ -515,7 +521,9 @@ impl<'a, 's> FileText<'a, 's> {
         let callee = hir.skip_type_assertions(hir[id].callee);
         match site {
             ImportSiteKind::ImportMetaRequire(_) => {
-                kind == ModuleKind::SourceText && !bound.import_meta_may_be_modified()
+                kind == ModuleKind::SourceText
+                    && !bound.import_meta_may_be_modified()
+                    && (!runs_tests || hir.member_key(callee).is_some())
             }
             ImportSiteKind::Require(_)
                 if self.is_free(callee, CommonJsVariable::Require)
@@ -525,7 +533,10 @@ impl<'a, 's> FileText<'a, 's> {
             }
             ImportSiteKind::Require(_) => match hir.member_key(callee) {
                 Some(_) => false,
-                None => find_own_require(hir, bound, None, callee) == Some(OwnRequire::Made),
+                None => {
+                    !runs_tests
+                        && find_own_require(hir, bound, None, callee) == Some(OwnRequire::Made)
+                }
             },
             _ => false,
         }
@@ -537,6 +548,7 @@ fn plan_file_sites(
     scan: &FileScan,
     modules: &ModuleSet,
     file: FileId,
+    runs_tests: bool,
 ) -> FileSites {
     let mut planned = FileSites::default();
     let sites = files.analysis(file).import_sites;
@@ -579,7 +591,7 @@ fn plan_file_sites(
                 SiteKey::Call(call),
                 Node::Expression(call),
                 hir[call].pos,
-                text.is_proven_call(site.kind, call, scan.interop.kind),
+                text.is_proven_call(site.kind, call, scan.interop.kind, runs_tests),
             ),
             ImportSiteKind::ImportEquals(declaration) => {
                 let (key, statement) = (SiteKey::ImportEquals(declaration), hir[declaration].stmt);
@@ -941,7 +953,7 @@ pub(super) fn compute_order(
         .map(|&file| (file, FileSites::default()))
         .collect();
     for_each_mut(&mut planned, input.in_parallel, &|(file, file_sites)| {
-        *file_sites = plan_file_sites(files, scans.of(*file), modules, *file);
+        *file_sites = plan_file_sites(files, scans.of(*file), modules, *file, input.runs_tests);
     });
     let (edges, importers) = collect_edges(scans, modules, &numbers, &planned);
     let is_code_of_program = find_program_code(input, scans, modules, &numbers);
@@ -1006,8 +1018,8 @@ pub(super) fn compute_order(
     for target in linked_late {
         is_half_at_link[target as usize] = true;
     }
-    let finds_main_by_name =
-        texts_that_spell_files.is_some() && program_loads_by_name_that_no_pattern_holds(input);
+    let finds_main_by_name = modules.runs_code_out_of_sight
+        || (texts_that_spell_files.is_some() && program_loads_by_name_that_no_pattern_holds(input));
     let main_entry_points = (input.sources.entry_points().iter())
         .filter(|entry| entry.kind == EntryPointKind::Main && finds_main_by_name);
     for entry in main_entry_points {

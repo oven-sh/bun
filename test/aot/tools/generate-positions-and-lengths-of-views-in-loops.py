@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# generate-positions-and-lengths-of-views-in-loops.py <folder>: all 92; ../parallel/positions-and-lengths-of-views-in-loops/ holds 24 of them: those that a fault laid into the compiler on purpose has turned red.
+# generate-positions-and-lengths-of-views-in-loops.py <folder>: all 92; ../parallel/positions-and-lengths-of-views-in-loops/ holds 30 of them: those that a fault laid into the compiler on purpose has turned red.
 # Loops that read and write typed arrays, one shape a program, each held to `bun <file>`.
 # A compiler reads the length and the memory of a view once where it can, takes a position for an integer, and takes what a view gives for a number.
 # Each program hands its one loop what makes that wrong: a position behind the end, below zero, with a fraction, NaN, a text; what a view gives behind its end used as a position of another view,

@@ -57,6 +57,7 @@ impl QueryLimit {
 pub struct QueryLimits(pub [u64; QueryLimit::COUNT]);
 
 impl QueryLimits {
+    #[inline]
     pub fn get(&self, limit: QueryLimit) -> u64 {
         self.0[limit as usize]
     }
@@ -94,6 +95,7 @@ pub enum WrittenType {
 }
 
 impl WrittenType {
+    #[inline]
     pub fn written(self) -> Option<TypeId> {
         match self {
             WrittenType::Written(ty) => Some(ty),
@@ -101,6 +103,7 @@ impl WrittenType {
         }
     }
 
+    #[inline]
     pub(super) fn from_result(result: Result<TypeId, GaveUp>) -> WrittenType {
         match result {
             Ok(ty) => WrittenType::Written(ty),
@@ -108,6 +111,7 @@ impl WrittenType {
         }
     }
 
+    #[inline]
     pub(super) fn and_then(
         self,
         next: impl FnOnce(TypeId) -> Result<TypeId, GaveUp>,
@@ -128,6 +132,7 @@ pub struct PositionTypes {
 }
 
 impl PositionTypes {
+    #[inline]
     pub(super) fn unwritten(checked: CheckedType) -> PositionTypes {
         PositionTypes {
             written: WrittenType::Unwritten,
@@ -182,6 +187,7 @@ pub enum MemberName {
 }
 
 impl MemberName {
+    #[inline]
     pub(super) fn atom(self) -> Atom {
         let (MemberName::String(name) | MemberName::Symbol(name) | MemberName::Private(name)) =
             self;
@@ -337,6 +343,14 @@ pub struct ClassMember {
     pub types: PositionTypes,
     pub is_static: bool,
     pub is_optional: bool,
+    pub form: MemberForm,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct MemberForm {
+    pub is_read_only: bool,
+    pub is_not_enumerable: bool,
+    pub is_not_configurable: bool,
 }
 
 pub struct ClassShape<'c> {

@@ -85,6 +85,7 @@ pub(crate) struct ParsedSource {
     pub web_assembly: Option<Vec<u8>>,
     pub has_compiled_components: bool,
     pub parse_failure: Option<Vec<u8>>,
+    pub refused_json: Option<Vec<u8>>,
     pub is_language_assumed: bool,
     pub builtins: ResolvedBuiltins,
     pub library_modules_named_in_text_left_to_run_time: Vec<RuntimeModule>,
@@ -105,6 +106,7 @@ impl ParsedSource {
             web_assembly: None,
             has_compiled_components: false,
             parse_failure: None,
+            refused_json: None,
             is_language_assumed: false,
             builtins: ResolvedBuiltins::default(),
             library_modules_named_in_text_left_to_run_time: Vec::new(),
@@ -179,6 +181,7 @@ pub struct Sources {
     runtime_module_files: Vec<(RuntimeModule, FileId)>,
     modules_named_at_run_time: Vec<RuntimeModule>,
     web_assembly_files: Vec<FileId>,
+    entry_points_found_by_computed_names: Vec<FileId>,
     manifest: &'static Manifest,
     holds_source_paths: Arc<AtomicBool>,
 }
@@ -251,6 +254,10 @@ impl Sources {
 
     pub fn entry_points(&self) -> &[EntryPoint] {
         &self.entry_points
+    }
+
+    pub fn is_entry_point_found_by_computed_name(&self, file: FileId) -> bool {
+        self.entry_points_found_by_computed_names.contains(&file)
     }
 
     pub fn runtime_module_file(&self, module: RuntimeModule) -> Option<FileId> {

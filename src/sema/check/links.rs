@@ -27,7 +27,7 @@
 use super::*;
 use crate::table::{Id, Packed};
 use smallvec::SmallVec;
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::sync::atomic::AtomicU32;
 
 /// `Type.alias.typeArguments`
@@ -89,30 +89,42 @@ impl ByType {
     pub(super) fn get(&self, ty: TypeId) -> u32 {
         match ty.local_number() {
             Some(index) => self.own.get(index as usize).copied().unwrap_or(0),
-            None => match self.pages.get(ty.0 as usize / PAGE) {
-                Some(&page) if page != 0 => self.published[page as usize - 1][ty.0 as usize % PAGE],
-                _ => 0,
-            },
+            None => {
+                let page = self.pages.get(ty.0 as usize / PAGE).copied().unwrap_or(0);
+                match self.published.get((page as usize).wrapping_sub(1)) {
+                    Some(numbers) => numbers[ty.0 as usize % PAGE],
+                    None => 0,
+                }
+            }
         }
     }
 
     pub(super) fn set(&mut self, ty: TypeId, number: u32) {
         let Some(index) = ty.local_number() else {
             let at = ty.0 as usize / PAGE;
-            if at >= self.pages.len() {
-                self.pages.resize(at + 1, 0);
-            }
-            if self.pages[at] == 0 {
-                self.published.push([0; PAGE]);
-                self.pages[at] = self.published.len() as u32;
-            }
-            self.published[self.pages[at] as usize - 1][ty.0 as usize % PAGE] = number;
+            let page = match self.pages.get(at) {
+                Some(&page) if page != 0 => page,
+                _ => self.add_page(at),
+            };
+            self.published[page as usize - 1][ty.0 as usize % PAGE] = number;
             return;
         };
         if index as usize >= self.own.len() {
             self.own.resize(index as usize + 1, 0);
         }
         self.own[index as usize] = number;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn add_page(&mut self, at: usize) -> u32 {
+        if at >= self.pages.len() {
+            self.pages.resize(at + 1, 0);
+        }
+        self.published.push([0; PAGE]);
+        let page = self.published.len() as u32;
+        self.pages[at] = page;
+        page
     }
 }
 
@@ -143,8 +155,7 @@ pub(super) struct TypeLinks {
     uncached_derivations: u64,
     /// True if the task has added to `Program::circular_mapped_constraints`. See `Checker::mapped_keys`.
     has_found_circular_mapped_constraint: bool,
-    /// In a `RefCell` because aliases are looked up through `&Checker`.
-    aliases: RefCell<Aliases>,
+    aliases: Cell<Option<Box<Aliases>>>,
 }
 
 impl TypeLinks {
@@ -161,15 +172,18 @@ impl TypeLinks {
             has_found_circular_mapped_constraint,
             aliases,
         } = self;
-        let Aliases { of, cached } = aliases.get_mut();
+
         rows.clear();
         parts.clear();
         fixed_mapper_rows.clear();
         with_fixed_mappers.clear();
         (*restrictive_resets, *uncached_derivations) = (0, 0);
         *has_found_circular_mapped_constraint = false;
-        of.clear();
-        cached.clear();
+        if let Some(aliases) = aliases.get_mut() {
+            let Aliases { of, cached } = &mut **aliases;
+            of.clear();
+            cached.clear();
+        }
     }
 
     /// Returns 0 if the part isn't cached.
@@ -247,21 +261,27 @@ impl TypeLinks {
     /// Returns `t.alias.symbol`, or `None` if it hasn't been requested yet.
     #[inline]
     pub(super) fn alias_symbol(&self, ty: TypeId) -> Option<Option<Sym>> {
-        let aliases = self.aliases.borrow();
-        match aliases.of.get(ty) {
+        let aliases = self.aliases.take()?;
+        let symbol = match aliases.of.get(ty) {
             0 => None,
             1 => Some(None),
             at => Some(Some(aliases.cached[at as usize - 2])),
-        }
+        };
+        self.aliases.set(Some(aliases));
+        symbol
     }
 
     pub(super) fn cache_alias_symbol(&self, ty: TypeId, alias: Option<Sym>) {
-        let aliases = &mut *self.aliases.borrow_mut();
-        let Some(symbol) = alias else {
-            return aliases.of.set(ty, 1);
+        let mut aliases = self.aliases.take().unwrap_or_default();
+        let number = match alias {
+            Some(symbol) => {
+                aliases.cached.push(symbol);
+                aliases.cached.len() as u32 + 1
+            }
+            None => 1,
         };
-        aliases.cached.push(symbol);
-        aliases.of.set(ty, aliases.cached.len() as u32 + 1);
+        aliases.of.set(ty, number);
+        self.aliases.set(Some(aliases));
     }
 }
 

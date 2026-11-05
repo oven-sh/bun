@@ -151,16 +151,37 @@ impl TypesInProgress {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Default)]
 pub(super) struct ReferenceIndex<'c> {
-    to_bindings: &'c [(SymbolId, ExprId)],
-    to_this: &'c [(FnId, ExprId)],
+    to_bindings: Option<&'c [(SymbolId, ExprId)]>,
+    to_this: Option<&'c [(FnId, ExprId)]>,
 }
 
 fn references_to<K: Copy + Ord>(references: &[(K, ExprId)], subject: K) -> &[(K, ExprId)] {
     let start = references.partition_point(|reference| reference.0 < subject);
     let len = references[start..].partition_point(|reference| reference.0 == subject);
     &references[start..start + len]
+}
+
+fn grouped_by_symbol(references: &[(SymbolId, ExprId)]) -> Vec<(SymbolId, ExprId)> {
+    let symbol_counts = references.iter().map(|reference| reference.0.idx() + 1);
+    let mut next_places = vec![0u32; symbol_counts.max().unwrap_or(0)];
+    for reference in references {
+        next_places[reference.0.idx()] += 1;
+    }
+    let mut first_place = 0;
+    for next_place in &mut next_places {
+        let count = *next_place;
+        *next_place = first_place;
+        first_place += count;
+    }
+    let mut grouped = references.to_vec();
+    for &reference in references {
+        let next_place = &mut next_places[reference.0.idx()];
+        grouped[*next_place as usize] = reference;
+        *next_place += 1;
+    }
+    grouped
 }
 
 bitflags::bitflags! {
@@ -1840,7 +1861,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             PatParent::Param(parameter) => stored.extend(self.find_arguments_in_sight(parameter)),
             PatParent::None | PatParent::Prop(..) | PatParent::Elem(..) => {}
         }
-        for &(_, reference) in references_to(self.reference_index().to_bindings, symbol) {
+        for &(_, reference) in references_to(self.references_to_bindings(), symbol) {
             let mut value = reference;
             let found = loop {
                 match find_use(hir, bound, value) {
@@ -1878,7 +1899,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             callees.push(expression);
         }
         if let Some(name) = find_name_of_function(hir, bound, function) {
-            let references = references_to(self.reference_index().to_bindings, name);
+            let references = references_to(self.references_to_bindings(), name);
             callees.extend(references.iter().map(|reference| reference.1));
         }
         let first_spreads = &mut self.memo.first_spread_arguments;
@@ -2482,7 +2503,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let index = hir[function].params.position_of(parameter.idx())?;
         let callee = find_name_of_function(hir, bound, function)?;
-        let references = references_to(self.reference_index().to_bindings, callee);
+        let references = references_to(self.references_to_bindings(), callee);
         if self.is_exported(callee) {
             return None;
         }
@@ -2659,7 +2680,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn holds_integers(&mut self, walk: &mut Walk, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir(), self.bound());
-        let references = self.reference_index().to_bindings;
+        let references = self.references_to_bindings();
         let answers = &mut self.memo.sums_used_as_int32;
         let has_int32_use = references_to(references, symbol)
             .iter()
@@ -2895,30 +2916,50 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn reference_index(&mut self) -> ReferenceIndex<'c> {
-        if let Some(index) = self.memo.reference_index {
-            return index;
+    fn references_to_bindings(&mut self) -> &'c [(SymbolId, ExprId)] {
+        if let Some(references) = self.memo.reference_index.to_bindings {
+            return references;
         }
-        let index = self.compute_reference_index();
-        self.memo.reference_index = Some(index);
-        index
+        let references = self.compute_references_to_bindings();
+        self.memo.reference_index.to_bindings = Some(references);
+        references
     }
 
-    fn compute_reference_index(&mut self) -> ReferenceIndex<'c> {
+    fn references_to_this(&mut self) -> &'c [(FnId, ExprId)] {
+        if let Some(references) = self.memo.reference_index.to_this {
+            return references;
+        }
+        let references = self.compute_references_to_this();
+        self.memo.reference_index.to_this = Some(references);
+        references
+    }
+
+    fn compute_references_to_bindings(&mut self) -> &'c [(SymbolId, ExprId)] {
         let (file, hir, bound) = (self.file, self.hir(), self.bound());
         let expressions = self.c.exprs_by_kind(file);
-        let mut to_bindings = Vec::new();
+        let mut to_bindings = Vec::with_capacity(expressions.of(ExprTag::Ident).len());
         for &reference in expressions.of(ExprTag::Ident) {
             let is_evaluated = bound.is_evaluated_ident(reference)
                 && self.require_live_expression(reference).is_ok();
+            if !is_evaluated {
+                continue;
+            }
             match bound.binding(reference) {
-                Binding::Symbol(symbol) if is_evaluated => to_bindings.push((symbol, reference)),
-                Binding::Symbol(_)
-                | Binding::Arguments(_)
-                | Binding::CommonJs(_)
-                | Binding::Free => {}
+                Binding::Symbol(symbol) => to_bindings.push((symbol, reference)),
+                Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {}
             }
         }
+        let number_of = |owner: u32, reference: ExprId| number_of_pair(owner, hir[reference].pos);
+        to_bindings = grouped_by_symbol(&to_bindings);
+        if !to_bindings.is_sorted_by_key(|&(symbol, reference)| number_of(symbol.0, reference)) {
+            to_bindings.sort_by_u64(|&(symbol, reference)| number_of(symbol.0, reference));
+        }
+        self.list(&to_bindings)
+    }
+
+    fn compute_references_to_this(&mut self) -> &'c [(FnId, ExprId)] {
+        let (file, hir) = (self.file, self.hir());
+        let expressions = self.c.exprs_by_kind(file);
         let mut to_this = Vec::new();
         for &reference in expressions.of(ExprTag::This) {
             let is_evaluated = self.require_live_expression(reference).is_ok();
@@ -2928,12 +2969,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
         }
         let number_of = |owner: u32, reference: ExprId| number_of_pair(owner, hir[reference].pos);
-        to_bindings.sort_by_u64(|&(symbol, reference)| number_of(symbol.0, reference));
         to_this.sort_by_u64(|&(function, reference)| number_of(function.0, reference));
-        ReferenceIndex {
-            to_bindings: self.list(&to_bindings),
-            to_this: self.list(&to_this),
-        }
+        self.list(&to_this)
     }
 
     fn usage_of(&mut self, walk: &mut Walk, subject: Subject) -> Option<Rc<Usage>> {
@@ -3155,6 +3192,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(super) fn forget_usages_that_lacked_stack(&mut self) {
+        if self.memo.usages_that_lacked_stack.is_empty() {
+            return;
+        }
         for subject in self.memo.usages_that_lacked_stack.drain(..) {
             if let Some(UsageState::NotKept) = self.memo.usages.get(&subject) {
                 self.memo.usages.remove(&subject);
@@ -3167,13 +3207,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         walk.root = &raw const usage;
         match subject {
             Subject::Binding(symbol) => {
-                let references = self.reference_index().to_bindings;
+                let references = self.references_to_bindings();
                 for &(_, reference) in references_to(references, symbol) {
                     self.add_evidence(walk, reference, &mut usage);
                 }
             }
             Subject::This(function) => {
-                let references = self.reference_index().to_this;
+                let references = self.references_to_this();
                 for &(_, reference) in references_to(references, function) {
                     let checked = self.expression_type(reference);
                     if checked.is_ok_and(|checked| self.c.is_any(checked)) {

@@ -6,8 +6,8 @@
 
 use bun_ast::e::{JsonValue, ObjectJSON};
 use bun_core::strings::{
-    BOM, contains, contains_char, is_valid_utf8, rsplit_once_char, split_once_char,
-    without_trailing_slash,
+    BOM, contains, contains_char, is_valid_utf8, last_index_of_char, rsplit_once_char,
+    split_once_char, without_trailing_slash,
 };
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
@@ -39,8 +39,9 @@ pub struct BundledLibs {
 pub const BUNDLED_LIBS: &[u8] = b"/bundled:///libs";
 
 /// `bundled.IsBundled`
+#[inline]
 pub fn is_bundled(path: &[u8]) -> bool {
-    path.starts_with(b"/bundled:")
+    path.first_chunk() == Some(b"/bundled:")
 }
 
 /// `/C:/a` becomes `C:/a`, and `/\\server/share/a` becomes `\\server/share/a`, which Windows accepts.
@@ -457,6 +458,16 @@ struct Split<'a> {
 
 /// `GetDirectoryPath`, `GetBaseFileName`. A root is its own directory and has no name.
 fn split(path: &[u8]) -> Split<'_> {
+    if let Some(separator) = last_index_of_char(path, b'/')
+        && separator > 0
+        && separator + 1 < path.len()
+        && path[separator - 1] != b'/'
+    {
+        return Split {
+            parent: &path[..separator],
+            name: &path[separator + 1..],
+        };
+    }
     let parent = dirname::<Posix>(path);
     // `parent` only ends with a separator when it was cut out of a root.
     if parent.ends_with(b"/") && path.len() <= root_length(path) {
@@ -592,7 +603,7 @@ impl Disk {
 
     fn directory(&self, path: &[u8]) -> &Directory {
         // `SplitPath` drops a trailing separator after the root.
-        let path = match path.ends_with(b"/") {
+        let path = match path.last() == Some(&b'/') {
             true => &path[..without_trailing_slash(path).len().max(root_length(path))],
             false => path,
         };

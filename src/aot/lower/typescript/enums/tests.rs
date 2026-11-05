@@ -1,5 +1,6 @@
 use crate::compile::testing::lower_program_below_object_prototype;
 use crate::ir::Opcode;
+use crate::ir::generated::DataNode;
 
 const DECLARED: (&str, &str) = (
     "a.ts",
@@ -30,7 +31,16 @@ fn defines_members(program: (&str, &str), names_on_object_prototype: &[&str]) ->
         values.any(|value| value.opcode == opcode)
     };
     let stores = has(Opcode::PropSet) || has(Opcode::ElemSet) || has(Opcode::Call);
-    assert_ne!(has(Opcode::ElemDefine), stores, "{}", program.0);
+    let is_record_with_members =
+        |data: &DataNode| matches!(data, DataNode::Object { members, .. } if !members.is_empty());
+    let is_born_as_data =
+        (fragment.data.iter()).any(|(_, data)| is_record_with_members(&data.root));
+    assert_ne!(
+        has(Opcode::ElemDefine) || is_born_as_data,
+        stores,
+        "{}",
+        program.0
+    );
     !stores
 }
 

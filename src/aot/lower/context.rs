@@ -28,6 +28,7 @@ use super::counted_places::CountedPlaces;
 use super::fragment::{FragmentBuilder, ModuleFragment};
 use super::layouts::LayoutState;
 use super::module::{LibraryFunctions, ModuleState};
+use super::object::EnumsThatStayAsBorn;
 use super::quoted_text::QuotedTexts;
 use super::said_types::SaidTypes;
 use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
@@ -199,6 +200,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) literals_named_as_prototype_objects: OnceCell<FxHashSet<ExprId>>,
     shown_names: ShownNames,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
+    pub(in crate::lower) enums_that_stay_as_born: Option<EnumsThatStayAsBorn>,
     pub(in crate::lower) counted_places: Option<CountedPlaces>,
     pub(in crate::lower) quoted_texts: QuotedTexts,
     pub(in crate::lower) known_helpers_lowered: KnownHelpersLowered,
@@ -301,6 +303,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             literals_named_as_prototype_objects: OnceCell::new(),
             shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             enum_member_reads: FxHashMap::default(),
+            enums_that_stay_as_born: None,
             counted_places,
             quoted_texts: QuotedTexts::default(),
             known_helpers_lowered: KnownHelpersLowered::default(),
@@ -409,6 +412,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         self.compiled.analysis.find_resolved_form(argument)
     }
 
+    #[inline]
     pub(crate) fn decisions(&self) -> &'p Decisions<'s> {
         let compiled = self.compiled;
         &compiled.analysis.decisions
@@ -421,6 +425,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             .is_ok()
     }
 
+    #[inline]
     pub(crate) fn is_checked(&self) -> bool {
         match self.role {
             FileRole::Checked => true,

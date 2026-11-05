@@ -135,7 +135,7 @@ fn is_among(files: &[FileId], module: ModuleRef) -> bool {
         ModuleRef::File(file)
         | ModuleRef::Inner { file, .. }
         | ModuleRef::Face(file)
-        | ModuleRef::Check(file) => files.binary_search(&file).is_ok(),
+        | ModuleRef::Check(file) => !files.is_empty() && files.binary_search(&file).is_ok(),
         ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
     }
 }
@@ -418,7 +418,7 @@ impl ModuleGraph {
     }
 
     pub fn is_placeholder(&self, file: FileId) -> bool {
-        self.placeholder_files.binary_search(&file).is_ok()
+        !self.placeholder_files.is_empty() && self.placeholder_files.binary_search(&file).is_ok()
     }
 
     fn pass_requests_through(&mut self, left_out_files: &[FileId]) {
@@ -730,8 +730,9 @@ impl ModuleGraph {
         &self.other_modules
     }
 
+    #[inline]
     pub fn has_record(&self, file: FileId) -> bool {
-        self.find_row(file).is_some()
+        matches!(self.row_by_file.get(file.idx()), Some(Some(_)))
     }
 
     pub fn is_library(&self, file: FileId) -> bool {

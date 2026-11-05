@@ -3,7 +3,7 @@ use super::declaration_kinds::{DeclarationKind, declaration_kind, for_each_name}
 use super::direct_evals::{
     DirectEval, DynamicScopes, compute_dynamic_scopes, find_call_of_name, find_direct_evals,
 };
-use super::lookup::{COMMONJS_VARIABLES, Found, Lookup};
+use super::lookup::{COMMONJS_VARIABLES, Found, Lookup, RecentLookups};
 use super::namespace_exports::ExportedBlockBindings;
 use super::queries::IDENTS_IN_RUN;
 use super::storage::RuntimeReferencesIn;
@@ -200,6 +200,7 @@ impl ReferencePass<'_, '_> {
     fn resolve_idents(&mut self) {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
         let taken_out_by_bundler = self.find_names_that_the_bundler_takes_out();
+        let mut recent = RecentLookups::new(&self.lookup);
         for &(ident, scope) in self.idents {
             let ExprKind::Ident(name) = hir[ident].kind else {
                 continue;
@@ -208,7 +209,7 @@ impl ReferencePass<'_, '_> {
                 continue;
             }
             insert_bit(&mut self.references.evaluated_idents, ident.idx());
-            let mut found = self.lookup.find(scope, name, hir[ident].pos);
+            let mut found = recent.find(&self.lookup, scope, name, hir[ident].pos);
             let written = DefinePath {
                 root: DefineRoot::Global(name),
                 members: &[],
@@ -274,10 +275,10 @@ impl ReferencePass<'_, '_> {
     }
 
     fn is_unevaluated_ident(&self, ident: ExprId, scope: ScopeId, name: Atom) -> bool {
-        let bound = self.lookup.bound;
+        let queried = &self.lookup.bound.type_query_operands;
         name == known::empty
             || self.type_only.has_expr(ident, scope)
-            || bound.type_query_operands.binary_search(&ident).is_ok()
+            || (!queried.is_empty() && queried.binary_search(&ident).is_ok())
             || self.is_unresolved_jsx_name(ident, name)
     }
 

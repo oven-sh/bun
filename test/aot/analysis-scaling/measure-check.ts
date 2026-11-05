@@ -8,9 +8,17 @@ export { openInstructionCounter } from "./measure-here";
 
 export type Cost = { instructions?: number; peakBytes: number };
 
+let timeCounts: boolean | undefined;
+/** macOS as the guest of a virtual machine has no counters: /usr/bin/time prints 0 instructions there. */
+function timeCountsInstructions() {
+  const { stderr } = Bun.spawnSync({ cmd: ["/usr/bin/time", "-l", "/usr/bin/true"], stderr: "pipe" });
+  return Number(/(\d+)\s+instructions retired/.exec(stderr.toString())?.[1]) > 0;
+}
+
 /** Whether what is measured here has `instructions`. */
 export function countsInstructions() {
-  if (process.platform !== "linux") return process.platform === "darwin";
+  if (process.platform === "darwin") return (timeCounts ??= timeCountsInstructions());
+  if (process.platform !== "linux") return false;
   const close = openInstructionCounter(0);
   close?.();
   return !!close;
@@ -99,5 +107,9 @@ export async function measureLeast(cwd: string, args: string[], runs: number): P
 }
 
 declare("a counter of instructions", () =>
-  countsInstructions() ? undefined : "perf_event_open() hands out no counter here",
+  countsInstructions()
+    ? undefined
+    : process.platform === "darwin"
+      ? "/usr/bin/time -l counts no instructions here"
+      : "perf_event_open() hands out no counter here",
 );

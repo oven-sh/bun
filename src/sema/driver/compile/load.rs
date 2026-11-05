@@ -11,7 +11,9 @@ use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
-use bun_sema::program::{CodeView, CompileInputs, FileId, Files, LoggedSteps, RootFileNames};
+use bun_sema::program::{
+    CodeView, CompileInputs, EntryPointsFound, FileId, Files, LoggedSteps, RootFileNames,
+};
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
     CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, ExternalKind, Host,
@@ -128,10 +130,10 @@ pub fn load_program<'s>(
     let find_entry_points = |code: &dyn CodeView<'_>| match request.entry_points {
         EntryPoints::WrittenAndFound(_, find) => {
             let found = find(code);
-            found_entry_paths.lock().extend_from_slice(&found);
+            found_entry_paths.lock().extend_from_slice(&found.paths);
             found
         }
-        _ => Vec::new(),
+        _ => EntryPointsFound::default(),
     };
     steps.end("entry points, project, libraries");
     let files = Files::load_for_compile(

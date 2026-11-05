@@ -9,8 +9,8 @@ const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
 
 const operandCodeOnly = { capability: "js", runsOnlyOperandCode: true } as const;
 
-const characters = [b.readAsCharacters];
-const convertedToCharacters = [b.readAsCharacters, b.runs("ToPrimitive")];
+const characters = b.inspected;
+const convertedToCharacters = [b.runs("ToPrimitive")];
 const readsState = [b.readsContents()];
 const changesState = [b.readsContents(), b.writesContents()];
 const membersInspected = (...names: readonly string[]) => [b.runs(b.named(...names)), b.membersOnlyInspected];
@@ -230,7 +230,7 @@ const keepsData = (className: string, cell: string, getterImplementation: b.Impl
     },
   });
 
-const anyMessage = [b.readAsCharacters, b.readsContents(), b.runs("ToPrimitive")];
+const anyMessage = [b.readsContents(), b.runs("ToPrimitive")];
 const textMessage = characters;
 const binaryMessage = readsState;
 

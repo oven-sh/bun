@@ -19,7 +19,7 @@ use crate::ir::FunctionKey;
 use crate::lower::commonjs;
 use crate::lower::scope::analysis::{find_by_key, shared_sort_unique, sort_unique};
 use crate::lower::scope::lexical_owners::{ScopeObjectSearch, for_each_scope_object};
-use crate::lower::scope::{BindingRef, ScopeInput, ScopeSlot};
+use crate::lower::scope::{BindingRef, ScopeInput, ScopeSlot, order_by_number};
 use crate::modules::ModuleKind;
 
 pub(in crate::lower::scope) fn walk_file(
@@ -29,7 +29,7 @@ pub(in crate::lower::scope) fn walk_file(
     let mut walker = Walker::new(input, lexical_owners);
     walker.walk_module();
     let mut walk = walker.walk;
-    sort_unique(&mut walk.uses);
+    sort_unique_uses(&mut walk.uses, walk.use_counts.len(), walk.functions.len());
     sort_unique(&mut walk.function_references);
     sort_unique(&mut walk.calls_by_name);
     sort_unique(&mut walk.declarations_read_by_every_run);
@@ -120,6 +120,23 @@ pub(in crate::lower::scope) fn walk_file(
     merge_redeclared_functions(&mut walk.hoisted_functions);
     find_starts_of_functions_made_late(input, &mut walk);
     walk
+}
+
+fn sort_unique_uses(
+    uses: &mut Vec<(WalkedFunctionId, BindingRef)>,
+    symbol_count: usize,
+    function_count: usize,
+) {
+    let listed = uses.iter().copied();
+    let mut by_binding = order_by_number(listed, symbol_count + 1, |(_, binding)| match binding {
+        BindingRef::Symbol(symbol) => symbol.idx(),
+        BindingRef::Slot(..) => symbol_count,
+    });
+    let first_slot = by_binding.partition_point(|entry| matches!(entry.1, BindingRef::Symbol(_)));
+    by_binding[first_slot..].sort_unstable();
+    let by_binding = by_binding.iter().copied();
+    *uses = order_by_number(by_binding, function_count, |(function, _)| function.index());
+    uses.dedup();
 }
 
 fn spread_looks_to_what_is_handed_on(input: &ScopeInput<'_, '_>, walk: &mut ScopeWalk) {
@@ -364,9 +381,14 @@ impl<'x, 's> Walker<'x, 's> {
     fn run_pushed_tasks(&mut self) {
         self.stack.reverse();
         while let Some((task, context)) = self.stack.pop() {
-            let first_child = self.stack.len();
+            let mut low = self.stack.len();
             self.run_task(task, context);
-            self.stack[first_child..].reverse();
+            let mut high = self.stack.len();
+            while low + 1 < high {
+                high -= 1;
+                self.stack.swap(low, high);
+                low += 1;
+            }
         }
     }
 
@@ -467,19 +489,29 @@ impl<'x, 's> Walker<'x, 's> {
         }
     }
 
+    pub(super) fn push_present_expressions<const N: usize>(
+        &mut self,
+        expressions: [ExprId; N],
+        context: Context,
+    ) {
+        for expression in expressions {
+            if expression.is_some() {
+                self.push_task(Task::Expression(expression), context);
+            }
+        }
+    }
+
     pub(super) fn push_evaluated_children(&mut self, expression: ExprId, context: Context) {
-        let mut children = std::mem::take(&mut self.children);
-        children.clear();
-        push_children(self.hir, TreeNode::Expr(expression), &mut children);
-        for &child in &children {
+        self.children.clear();
+        push_children(self.hir, TreeNode::Expr(expression), &mut self.children);
+        for &child in &self.children {
             match child {
-                TreeNode::Expr(child) => self.push_task(Task::Expression(child), context),
+                TreeNode::Expr(child) => self.stack.push((Task::Expression(child), context)),
                 _ => {
                     debug_assert!(false, "every child of this expression is an expression");
                 }
             }
         }
-        self.children = children;
     }
 
     pub(super) fn enter_unit(&mut self, function: WalkedFunctionId, scope: ScopeId) -> Context {

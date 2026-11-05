@@ -1,9 +1,11 @@
 // RUN: lower
 
 // What is imported by a path that ends in .ts has the type that its file declares: `typeof value` is `number`. That the number does not fit `string` stops no build.
-// CHECK: [[first]] = CheckInitialized {{*}}name="value"
+// CHECK: CheckInitialized {{*}}name="value"
+// CHECK-NEXT: [[first]] = Integer integer=1
 // CHECK-NEXT: Convert [[first]] declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK: [[second]] = CheckInitialized {{*}}name="value"
+// CHECK: CheckInitialized {{*}}name="value"
+// CHECK-NEXT: [[second]] = Integer integer=1
 // CHECK-NEXT: Convert [[second]] declared={type=number}
 
 // FILE: test/wrong.ts

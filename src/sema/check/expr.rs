@@ -454,7 +454,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let hir = self.hir(file);
-        match hir.checked_kind(e) {
+        let kind = hir.checked_kind(e);
+        match kind {
             ExprKind::Binary { .. } | ExprKind::Call(_) => {
                 self.resolve_chain_innermost_first(file, e);
             }
@@ -468,8 +469,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => {}
         }
-        let (ty, stored) = match self.type_of_plain_literal(file, e) {
-            Some(ty) => (ty, Some(Stored::new())),
+        let (ty, stored, may_be_nested) = match self.type_of_plain_literal(hir, kind) {
+            Some(ty) => (ty, Some(Stored::new()), true),
             None => {
                 // `checkExpressionWithContextualType` has no re-entrancy guard. A visit that began
                 // before the pattern's implied type was requested used the declared types of its
@@ -494,7 +495,10 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     self.drop_reported();
                 }
-                let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
+                let (is_final, may_be_nested) = match self.frames.last() {
+                    Some(it) => (!it.has_read_members_in_place, it.next_of_class != 0),
+                    None => (true, true),
+                };
                 let left = self.leave(Query::Expr(file, e));
                 if let Err(open) = left {
                     cold_path();
@@ -502,7 +506,7 @@ impl<'p, 's> Checker<'p, 's> {
                         self.cache_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
                     }
                 }
-                (ty, left.ok().filter(|_| is_final))
+                (ty, left.ok().filter(|_| is_final), may_be_nested)
             }
         };
         if let Some(stored) = stored
@@ -510,7 +514,9 @@ impl<'p, 's> Checker<'p, 's> {
             && (self.task.file == Some(file) || !self.has_side_effect_for_check_file(file, e))
         {
             self.cache_type_of_expr(file, e, ty, stored);
-            self.note_stored_by_nested_visit(Query::Expr(file, e));
+            if may_be_nested {
+                self.note_stored_by_nested_visit(Query::Expr(file, e));
+            }
             if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
                 self.note_cached_discarding(file, e);
             } else if !self.expressions_cached_with_errors_discarded.is_empty()
@@ -551,9 +557,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// and no result can become provisional while it's computed. Leaves the same state as `enter`
     /// and `leave` would. Also returns `None` where `enter` would fail.
     #[inline]
-    fn type_of_plain_literal(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        let hir = self.hir(file);
-        let kind = hir[e].kind;
+    fn type_of_plain_literal(&mut self, hir: &File, kind: ExprKind) -> Option<TypeId> {
         if !matches!(
             kind,
             ExprKind::Null
@@ -699,8 +703,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// operands, `A.B.C. ..` with hundreds of names.
     fn resolve_chain_innermost_first(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
-        let mut chain: Vec<ExprId> = Vec::new();
-        match hir.checked_kind(e) {
+        let chain = match hir.checked_kind(e) {
             // `checkBinaryLikeExpression` descends through left operands to any depth, and
             // `checkPropertyAccessExpression` through objects.
             ExprKind::Binary { left: first, .. } | ExprKind::Dot { obj: first, .. } => {
@@ -724,6 +727,7 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                     at = next;
                 }
+                let mut chain: Vec<ExprId> = Vec::new();
                 // Stop at the first link whose type is cached.
                 at = first;
                 while let Some(next) = next_link(at)
@@ -735,6 +739,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if chain.len() < 16 {
                     return;
                 }
+                chain
             }
             ExprKind::Call(_) => {
                 // Returns `at`'s receiver, and whether `at` is a call before `e`. Returns `None` at
@@ -759,7 +764,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if len < 16 {
                     return;
                 }
-                chain.reserve_exact(len);
+                let mut chain: Vec<ExprId> = Vec::with_capacity(len);
                 at = e;
                 while let Some((next, is_link)) = next_link(self, at) {
                     if is_link {
@@ -767,9 +772,10 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     at = next;
                 }
+                chain
             }
             _ => return,
-        }
+        };
         for link in chain.into_iter().rev() {
             self.check_expression_worker(file, link);
             // If the type wasn't cached, every later link would recompute it.
@@ -790,8 +796,7 @@ impl<'p, 's> Checker<'p, 's> {
         // that type nor a contextual type pushed for a part along the way has type variables, no
         // `const` type variable can be the contextual type further in.
         let (mut top, mut highest, mut may_be_expected) = (e, ExprId::NONE, false);
-        let pushed_with_type_variables = self.pushed_with_type_variables(file);
-        if pushed_with_type_variables.is_empty() {
+        if !self.has_pushed_with_type_variables(file) {
             let (outermost, is_const_assertion) = self.end_of_const_context(file, e);
             if is_const_assertion {
                 return true;
@@ -801,6 +806,7 @@ impl<'p, 's> Checker<'p, 's> {
                 highest = top;
             }
         } else {
+            let pushed_with_type_variables = self.pushed_with_type_variables(file);
             let mut steps = 0;
             loop {
                 // `isValidConstAssertionArgument`. The contextual type isn't requested for anything
@@ -1099,6 +1105,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the receiver type of a member access or call in a chain, and whether the chain may
     /// have short-circuited earlier.
+    #[inline]
     pub(super) fn chain_receiver(
         &mut self,
         file: FileId,
@@ -1106,6 +1113,20 @@ impl<'p, 's> Checker<'p, 's> {
         chain: Chain,
     ) -> (TypeId, bool) {
         let ty = self.type_of_expr(file, obj);
+        match chain {
+            Chain::No => (ty, false),
+            Chain::Start | Chain::Continue => self.optional_chain_receiver(file, obj, chain, ty),
+        }
+    }
+
+    #[inline(never)]
+    fn optional_chain_receiver(
+        &mut self,
+        file: FileId,
+        obj: ExprId,
+        chain: Chain,
+        ty: TypeId,
+    ) -> (TypeId, bool) {
         match chain {
             Chain::No => (ty, false),
             Chain::Start => {
@@ -1151,6 +1172,18 @@ impl<'p, 's> Checker<'p, 's> {
         obj: ExprId,
         chain: Chain,
     ) -> (LeftOfPropertyAccess, bool) {
+        let is_assignment_target = self.is_assignment_target(file, e);
+        self.left_type_of_property_access_in(file, e, obj, chain, is_assignment_target)
+    }
+
+    fn left_type_of_property_access_in(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        obj: ExprId,
+        chain: Chain,
+        is_assignment_target: bool,
+    ) -> (LeftOfPropertyAccess, bool) {
         let (receiver, mut may_short_circuit) = self.chain_receiver(file, obj, chain);
         // `x.a` on `any` is `any`, regardless of narrowing. (Not so `x["a"]`.)
         let is_any = self.is_any(receiver) || receiver == TypeId::SILENT_NEVER;
@@ -1161,7 +1194,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.check_non_null_type(file, obj, receiver)
         };
         // An assignment target or callee is looked up in the object's widened type.
-        let is_widened = !is_any && (self.is_assignment_target(file, e) || self.is_called(file, e));
+        let is_widened = !is_any && (is_assignment_target || self.is_called(file, e));
         let widened = if is_widened {
             self.get_widened_type(left)
         } else {
@@ -1218,9 +1251,10 @@ impl<'p, 's> Checker<'p, 's> {
             return (TypeId::UNRESOLVED, false);
         };
         let name_pos = hir.name_pos(e);
-        let (access, may_short_circuit) = self.left_type_of_property_access(file, e, obj, chain);
-        let (left, receiver) = (access.left, access.widened);
         let target = self.target_kind(file, e);
+        let (access, may_short_circuit) =
+            self.left_type_of_property_access_in(file, e, obj, chain, target.written);
+        let (left, receiver) = (access.left, access.widened);
         let is_private = self.atoms().is_private_name(name);
         // `parseRightSideOfDot`: in `typeof a.#b` the name is missing.
         if is_private && bound.is_in_type_query(e) {
@@ -2425,6 +2459,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// types. The symbol tables assume every name imported from `export = value` is a property of
     /// the value. An alias that doesn't resolve to a value doesn't match the value meaning, so the
     /// search continues in outer scopes. Returns `None` if `getResolvedSymbol` is `unknownSymbol`.
+    #[inline]
     pub(super) fn value_symbol_of_identifier(
         &mut self,
         file: FileId,
@@ -2432,12 +2467,23 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         found: Sym,
     ) -> Option<Sym> {
+        let (symbol, _) = self.value_symbol_and_flags_of_identifier(file, e, name, found)?;
+        Some(symbol)
+    }
+
+    fn value_symbol_and_flags_of_identifier(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        name: Atom,
+        found: Sym,
+    ) -> Option<(Sym, SymFlags)> {
         let own = self.files().flags(found);
         if !own.contains(SymFlags::ALIAS)
             || own.intersects(SymFlags::VALUE)
             || self.get_symbol(Some(found), SymFlags::VALUE).is_some()
         {
-            return Some(found);
+            return Some((found, own));
         }
         let bound = self.bound(file);
         let scope = [&bound.alias_idents[..], &bound.free_idents[..]]
@@ -2446,8 +2492,10 @@ impl<'p, 's> Checker<'p, 's> {
                 let i = idents.binary_search_by_key(&e, |ident| ident.0).ok()?;
                 Some(idents[i].1)
             })?;
-        self.resolve(file, scope, name, SymFlags::VALUE, false)
-            .unwrap_or(None)
+        let outer = self
+            .resolve(file, scope, name, SymFlags::VALUE, false)
+            .unwrap_or(None)?;
+        Some((outer, self.files().flags(outer)))
     }
 
     /// `checkIdentifier`
@@ -2490,7 +2538,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             };
         };
-        let Some(sym) = self.value_symbol_of_identifier(file, e, name, sym) else {
+        let Some((sym, flags)) = self.value_symbol_and_flags_of_identifier(file, e, name, sym)
+        else {
             self.note_unresolved_identifier(file, e, name);
             return TypeId::ERROR;
         };
@@ -2516,7 +2565,6 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             declared
         };
-        let flags = self.files().flags(sym);
         let declared = if sym.file == file && flags.intersects(SymFlags::VARIABLE) {
             self.narrow_binding(file, e, sym.id, declared)
         } else {
@@ -2609,6 +2657,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getAssignmentTargetKind`
+    #[inline]
     pub(super) fn target_kind(&self, file: FileId, e: ExprId) -> TargetKind {
         let target = self.get_assignment_target(file, e);
         TargetKind {
@@ -2625,6 +2674,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getAssignmentTargetKind(e) != AssignmentKindNone`: `e` is assigned, by `=` or in a pattern
     /// on its left, by an operator that reads it first, or by `++` and `--`.
+    #[inline]
     pub(super) fn is_assignment_target(&self, file: FileId, e: ExprId) -> bool {
         self.get_assignment_target(file, e).is_some()
     }
@@ -2639,6 +2689,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Follows `around` from `e` until it breaks. Returns the last expression reached and what it
     /// broke with. Where a walk ends is cached, so `around` may depend on the syntax alone.
+    #[inline]
     fn walk_outwards<End>(
         &self,
         walk: WalkOutwards,
@@ -2646,10 +2697,20 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         around: impl Fn(ExprId) -> ControlFlow<End, ExprId>,
     ) -> (ExprId, End) {
-        let mut at = match around(e) {
-            ControlFlow::Continue(outer) => outer,
-            ControlFlow::Break(end) => return (e, end),
-        };
+        match around(e) {
+            ControlFlow::Continue(outer) => self.walk_further_outwards(walk, file, outer, around),
+            ControlFlow::Break(end) => (e, end),
+        }
+    }
+
+    #[inline(never)]
+    fn walk_further_outwards<End>(
+        &self,
+        walk: WalkOutwards,
+        file: FileId,
+        mut at: ExprId,
+        around: impl Fn(ExprId) -> ControlFlow<End, ExprId>,
+    ) -> (ExprId, End) {
         let key = file.0 * WalkOutwards::COUNT + walk as u32 + 1;
         let mut passed: SmallVec<[ExprId; 4]> = SmallVec::new();
         let end = loop {
@@ -5638,6 +5699,9 @@ impl<'p, 's> Checker<'p, 's> {
                     self.widen_literal_for_context(ty, expected)
                 };
                 // `node.Type()`
+                if hir.jsdoc_types.is_empty() {
+                    return expression_type;
+                }
                 let annotation = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
                 if annotation.is_none() {
                     return expression_type;

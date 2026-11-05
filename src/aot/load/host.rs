@@ -1236,6 +1236,8 @@ impl CodeHost for LoadHost<'_> {
             if !is_refused_by_json_parse {
                 let mut parsed = parse_data(loader, plugin_module);
                 let source = parsed_source_mut(&mut parsed.payload);
+                let is_read_by_nobody_later =
+                    !load.runs_tests && !self.input.options.aot.runs_in_place && !is_from_plugin;
                 if let Some(failure) = source.parse_failure.take() {
                     let options = CompileParseOptions {
                         path,
@@ -1251,6 +1253,8 @@ impl CodeHost for LoadHost<'_> {
                         payload: Some(Box::new(ParsedSource {
                             plugin_module: source.plugin_module.take(),
                             parse_failure: Some(failure),
+                            refused_json: (loader == Loader::Json && is_read_by_nobody_later)
+                                .then(|| text.to_vec()),
                             byte_count: text.len(),
                             ..ParsedSource::new(SourceKind::Program, Loader::Js)
                         })),

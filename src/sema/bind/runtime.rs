@@ -54,6 +54,7 @@ pub enum CommonJsVariable {
 }
 
 impl CommonJsVariable {
+    #[inline]
     pub fn name(self) -> Atom {
         match self {
             CommonJsVariable::Module => known::module,
@@ -105,6 +106,7 @@ pub enum BindingKind {
 }
 
 impl BindingKind {
+    #[inline]
     pub fn is_immutable(self) -> bool {
         matches!(
             self,
@@ -339,8 +341,8 @@ pub(in crate::bind) fn has_implicit_block(
 }
 
 pub fn has_simple_parameter_list(hir: &File<'_>, function: FnId) -> bool {
-    hir[function].params.iter().all(|parameter| {
-        let node = hir[parameter];
+    let parameters = &hir.params[hir[function].params.range()];
+    parameters.iter().all(|node| {
         matches!(hir[node.pat].kind, PatKind::Ident(_))
             && node.default.is_none()
             && !node.flags.contains(Flags::REST)

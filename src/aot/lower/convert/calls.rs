@@ -230,6 +230,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn convert_arguments(&mut self, call: ExprId, arguments: &mut [ValueId]) {
+        if !self.file.queries.is_int32_written() {
+            return;
+        }
         let hir = self.file.hir;
         let (site, first_parameter) = match hir[call].kind {
             ExprKind::Call(site) | ExprKind::New(site) => (site, 0),
@@ -278,6 +281,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn convert_argument_list(&mut self, call: ExprId, list: ValueId) {
+        if !self.file.queries.is_int32_written() {
+            return;
+        }
         let hir = self.file.hir;
         let (ExprKind::Call(site) | ExprKind::New(site)) = hir[call].kind else {
             return;

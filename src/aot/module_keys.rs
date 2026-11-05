@@ -1,5 +1,6 @@
 use bun_ast::Loader;
 use bun_paths::fs::PathName;
+use core::cmp::Ordering;
 use std::hash::{DefaultHasher, Hasher};
 
 pub fn stamp_of_file(written_seconds: i64, written_nanoseconds: i64, size: u64) -> u64 {
@@ -43,18 +44,42 @@ pub fn loader_by_path_or<E: AsRef<[u8]>>(
 ) -> Loader {
     match loader_named_by_path(table, path) {
         Some(loader) => loader,
-        None if PathName::init(path).ext.is_empty() => Loader::Tsx,
+        None if extension_of(path).is_empty() => Loader::Tsx,
         None => unnamed,
     }
 }
 
+#[inline]
+fn extension_of(path: &[u8]) -> &[u8] {
+    for (index, &byte) in path.iter().enumerate().rev() {
+        match byte {
+            b'.' => return &path[index..],
+            b'/' | b'\\' => break,
+            _ => {}
+        }
+    }
+    PathName::init(path).ext
+}
+
+#[inline]
+fn compare_bytes(first: &[u8], second: &[u8]) -> Ordering {
+    for (a, b) in first.iter().zip(second) {
+        if a != b {
+            return a.cmp(b);
+        }
+    }
+    first.len().cmp(&second.len())
+}
+
 pub fn loader_named_by_path<E: AsRef<[u8]>>(table: &[(E, Loader)], path: &[u8]) -> Option<Loader> {
-    let name = PathName::init(path);
-    let found = match table.binary_search_by(|(extension, _)| extension.as_ref().cmp(name.ext)) {
+    let extension = extension_of(path);
+    let place = table.binary_search_by(|(other, _)| compare_bytes(other.as_ref(), extension));
+    let found = match place {
         Ok(index) => Some(table[index].1),
-        Err(_) => Loader::from_string(name.ext),
+        Err(_) => Loader::from_string(extension),
     };
-    match matches!(found, None | Some(Loader::Json)) && is_jsonc_file_name(name.filename) {
+    let may_be_jsonc = matches!(found, None | Some(Loader::Json));
+    match may_be_jsonc && is_jsonc_file_name(PathName::init(path).filename) {
         true => Some(Loader::Jsonc),
         false => found,
     }

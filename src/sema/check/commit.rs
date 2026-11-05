@@ -264,11 +264,15 @@ impl<'s> Commits<'s> {
         };
         let mut entries = Vec::with_capacity(log.len());
         for &[slot, key] in &log.record_keys {
-            entries.extend(prepare(slot, u64::from(key)));
+            if let Some(entry) = prepare(slot, u64::from(key)) {
+                entries.push(entry);
+            }
         }
         let records = entries.len();
         for &[slot, file, index] in &log.node_keys {
-            entries.extend(prepare(slot, node_word(file, index)));
+            if let Some(entry) = prepare(slot, node_word(file, index)) {
+                entries.push(entry);
+            }
         }
         PreparedLog { entries, records }
     }
@@ -292,10 +296,12 @@ impl<'s> Commits<'s> {
                 .push(CycleCommit { number, ..ring });
             self.numbers.with_a_cycle.store(number, Ordering::Release);
         }
-        for (at, &entry) in prepared.entries.iter().enumerate() {
-            if let Some(table) = tables.get(entry.slot as usize) {
-                let is_stored = table.store_prepared(entry, number);
-                stored[usize::from(at >= prepared.records)] += u64::from(is_stored);
+        let (under_records, under_nodes) = prepared.entries.split_at(prepared.records);
+        for (entries, stored) in [under_records, under_nodes].into_iter().zip(&mut stored) {
+            for &entry in entries {
+                if let Some(table) = tables.get(entry.slot as usize) {
+                    *stored += u64::from(table.store_prepared(entry, number));
+                }
             }
         }
         self.numbers.stored.store(number, Ordering::Release);
@@ -383,14 +389,19 @@ impl View<'_> {
         self.last_idle_commit
             .set(self.numbers.stored.load(Ordering::Acquire));
         let pinned = self.pinned.get();
-        self.touched.borrow_mut().retain(|&file| {
-            if file != pinned
-                && let Some(file_snapshot) = self.file_snapshots.get(file as usize)
-            {
+        let mut touched = self.touched.borrow_mut();
+        let mut is_pinned_touched = false;
+        for &file in touched.iter() {
+            if file == pinned {
+                is_pinned_touched = true;
+            } else if let Some(file_snapshot) = self.file_snapshots.get(file as usize) {
                 file_snapshot.set(0);
             }
-            file == pinned
-        });
+        }
+        touched.clear();
+        if is_pinned_touched {
+            touched.push(pinned);
+        }
     }
 
     /// True if the task is visiting `file`, so what it sees there stays the same until it visits another file.
@@ -726,8 +737,8 @@ impl<'s> Checker<'_, 's> {
     /// error.
     fn is_commit_due(&self) -> bool {
         self.task.commits()
-            && !self.task.is_trusted()
             && self.task.buffer().logged() >= KEYS_PER_COMMIT
+            && !self.task.is_trusted()
     }
 
     /// Call when nothing in progress has looked at a table or is about to store in one.
@@ -749,6 +760,7 @@ impl<'s> Checker<'_, 's> {
     /// - The task has stored, since it was last idle, under a key that the commit has. A task that misses a member
     ///   evaluates it and stores it. See `Task::overlaps_a_cycle_commit`.
     /// - The commit has a key in the file the task is visiting, which doesn't change during the visit.
+    #[inline]
     fn discard_if_missed_cycle_member(&self) {
         let Some(view) = self.task.view() else {
             return;
@@ -759,6 +771,14 @@ impl<'s> Checker<'_, 's> {
         if newest <= last_idle_commit.min(compared) {
             return;
         }
+        self.discard_if_missed_member_of_cycles_up_to(view, newest);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn discard_if_missed_member_of_cycles_up_to(&self, view: &View<'s>, newest: u32) {
+        let (last_idle_commit, compared) =
+            (view.last_idle_commit.get(), view.compared_with_pinned.get());
         // Copied because `identities_of` borrows the task's buffer again.
         let (record_keys, node_keys) = self.task.logged_since_idle();
         let (record_keys, node_keys) = (record_keys.to_vec(), node_keys.to_vec());
@@ -1087,8 +1107,12 @@ impl<'s> Checker<'_, 's> {
             return;
         }
         let uncommitted = &self.task.uncommitted_files;
+        let (mut last_file, mut is_uncommitted) = (NO_FILE, false);
         log.node_keys.retain(|&entry| {
-            let is_uncommitted = uncommitted.contains(&FileId(entry[1]));
+            if entry[1] != last_file {
+                last_file = entry[1];
+                is_uncommitted = uncommitted.contains(&FileId(last_file));
+            }
             if is_uncommitted {
                 withheld.push(entry);
             }

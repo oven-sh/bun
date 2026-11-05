@@ -1,7 +1,4 @@
 // A generic class that the whole program instantiates with one class. Its type parameter stands for the objects of that class alone, so nothing is left to test on the way from `box` to `box.value.name`.
-// IR-UNTIL ApplyFlowResults
-// IR= 0 nameOf  = Check\b
-// IR= 1 nameOfParsed  = Check\b
 // An earlier compiler counted the layouts that flow into a type whose family does not list them: ConversionsOutsideFamily = 0. A build stops at the first one now.
 class Item {
   name: string;

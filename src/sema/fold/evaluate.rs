@@ -4,7 +4,7 @@ use crate::hir::{BinOp, UnOp};
 use crate::util::LocalVec;
 use bun_core::fmt::js_string_to_number;
 use bun_core::strings;
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
 use std::cmp::Ordering;
 
 const MAX_EXACT_INTEGER: u64 = 1 << f64::MANTISSA_DIGITS;
@@ -26,6 +26,7 @@ pub(super) enum Value {
 }
 
 impl From<Constant> for Value {
+    #[inline]
     fn from(constant: Constant) -> Value {
         Value::Known(Primitive::Constant(constant))
     }
@@ -44,6 +45,7 @@ impl Value {
         Value::from(Constant::String(text))
     }
 
+    #[inline]
     pub(super) fn is_number(self) -> bool {
         matches!(self, Value::Known(Primitive::Constant(Constant::Number(_))))
     }
@@ -56,10 +58,12 @@ impl Value {
         }
     }
 
+    #[inline]
     pub(super) fn is_finite_number(self) -> bool {
         matches!(self, Value::Known(Primitive::Constant(Constant::Number(number))) if number.is_finite())
     }
 
+    #[inline]
     pub(super) fn is_nan(self) -> bool {
         matches!(self, Value::Known(Primitive::Constant(Constant::Number(number))) if number.is_nan())
     }
@@ -80,7 +84,7 @@ pub(super) struct Evaluator<'a, 's> {
     max_string_bytes: usize,
     max_pattern_bytes: usize,
     over_limit_count: &'a Cell<u32>,
-    scratch_strings: LocalVec<Box<[u8]>>,
+    scratch_strings: OnceCell<LocalVec<Box<[u8]>>>,
 }
 
 impl<'a, 's> Evaluator<'a, 's> {
@@ -94,8 +98,12 @@ impl<'a, 's> Evaluator<'a, 's> {
             max_string_bytes,
             max_pattern_bytes: max_string_bytes,
             over_limit_count,
-            scratch_strings: LocalVec::new(),
+            scratch_strings: OnceCell::new(),
         }
+    }
+
+    fn scratch_strings(&self) -> &LocalVec<Box<[u8]>> {
+        self.scratch_strings.get_or_init(LocalVec::new)
     }
 
     pub(super) fn with_max_pattern_bytes(self, max_pattern_bytes: usize) -> Self {
@@ -113,6 +121,7 @@ impl<'a, 's> Evaluator<'a, 's> {
         self.max_pattern_bytes
     }
 
+    #[inline]
     pub(super) fn over_limit_count(&self) -> u32 {
         self.over_limit_count.get()
     }
@@ -126,7 +135,7 @@ impl<'a, 's> Evaluator<'a, 's> {
         match primitive {
             Primitive::Constant(constant) => constant,
             Primitive::ScratchString(ScratchString(index)) => {
-                Constant::String(self.atoms.intern(self.scratch_strings.get(index)))
+                Constant::String(self.atoms.intern(self.scratch_strings().get(index)))
             }
         }
     }
@@ -292,7 +301,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                 return Value::Unknown;
             }
         }
-        let index = self.scratch_strings.push(text.into_boxed_slice());
+        let index = self.scratch_strings().push(text.into_boxed_slice());
         Value::Known(Primitive::ScratchString(ScratchString(index)))
     }
 
@@ -366,7 +375,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                 Operand::BigInt(self.atoms.bytes(digits))
             }
             Primitive::ScratchString(ScratchString(index)) => {
-                Operand::String(self.scratch_strings.get(index))
+                Operand::String(self.scratch_strings().get(index))
             }
         }
     }

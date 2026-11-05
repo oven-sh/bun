@@ -322,6 +322,17 @@ fn find_table(table_files: &[FileId], module: ModuleRef) -> Option<usize> {
     }
 }
 
+const NO_TABLE: u32 = u32::MAX;
+
+fn number_tables_by_file(table_files: &[FileId]) -> Vec<u32> {
+    let file_count = table_files.last().map_or(0, |file| file.idx() + 1);
+    let mut table_by_file = vec![NO_TABLE; file_count];
+    for (table, file) in (0u32..).zip(table_files) {
+        table_by_file[file.idx()] = table;
+    }
+    table_by_file
+}
+
 fn star_targets(scans: &Scans, module: &ExportEntries) -> impl Iterator<Item = ModuleRef> {
     let target_of = move |&site: &u32| match scans.of(module.file).sites[site as usize] {
         ScannedSite::Module(target) => Some(target),
@@ -881,6 +892,7 @@ fn resolve_exports_for(
     }
     steps.end("exports: failures, indirect sites");
     let mut tables = ExportTables {
+        table_by_file: number_tables_by_file(&table_files),
         files: table_files,
         tables: nodes.tables,
         star_tables,
@@ -945,6 +957,7 @@ fn resolve_exports_for(
 #[derive(Default)]
 pub(super) struct ExportTables {
     files: Vec<FileId>,
+    table_by_file: Vec<u32>,
     tables: Vec<FileTable>,
     star_tables: Vec<Vec<u32>>,
     results: Vec<(Atom, ResolvedName)>,
@@ -961,6 +974,15 @@ pub(super) struct ExportTables {
 }
 
 impl ExportTables {
+    #[inline]
+    fn find_table(&self, module: ModuleRef) -> Option<usize> {
+        let ModuleRef::File(file) = module else {
+            return None;
+        };
+        let table = *self.table_by_file.get(file.idx())?;
+        (table != NO_TABLE).then_some(table as usize)
+    }
+
     fn follow_getter(&self, resolved: ResolvedName) -> ResolvedName {
         let Resolution::Synthetic { module, name } = resolved.resolution else {
             return resolved;
@@ -1104,8 +1126,11 @@ impl ExportTables {
     }
 
     pub(super) fn own_names(&self, module: FileId) -> &[(Atom, ResolvedName)] {
-        let own_count = self.table_of(module).map_or(0, |table| table.own_count);
-        &self.names(module)[..own_count as usize]
+        let Some(table) = self.table_of(module) else {
+            return &[];
+        };
+        let names = &self.results[table.nodes.start as usize..table.nodes.end as usize];
+        &names[..table.own_count as usize]
     }
 
     pub(super) fn find_indirect_site(&self, module: FileId, position: usize) -> Option<u32> {
@@ -1133,7 +1158,7 @@ impl ExportTables {
     }
 
     pub(super) fn files_searched_for(&self, module: FileId, name: Atom) -> Vec<FileId> {
-        let start = find_table(&self.files, ModuleRef::File(module));
+        let start = self.find_table(ModuleRef::File(module));
         let mut searched: Vec<u32> = start.map(|table| table as u32).into_iter().collect();
         let mut next = 0;
         while let Some(&table) = searched.get(next) {
@@ -1157,7 +1182,7 @@ impl ExportTables {
     }
 
     pub(super) fn has_dynamic_names(&self, module: ModuleRef) -> bool {
-        let Some(table) = find_table(&self.files, module) else {
+        let Some(table) = self.find_table(module) else {
             return true;
         };
         match self.tables[table].dynamic_targets {
@@ -1194,7 +1219,7 @@ impl ExportTables {
     }
 
     pub(super) fn files_named_by_stars(&self, file: FileId) -> impl Iterator<Item = FileId> + '_ {
-        let table = find_table(&self.files, ModuleRef::File(file));
+        let table = self.find_table(ModuleRef::File(file));
         let targets = table.map_or(&[][..], |table| &self.star_tables[table][..]);
         targets.iter().map(|&target| self.files[target as usize])
     }
@@ -1209,7 +1234,7 @@ impl ExportTables {
     }
 
     fn table_of(&self, file: FileId) -> Option<&FileTable> {
-        let table = find_table(&self.files, ModuleRef::File(file))?;
+        let table = self.find_table(ModuleRef::File(file))?;
         Some(&self.tables[table])
     }
 }

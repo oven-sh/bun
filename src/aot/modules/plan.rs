@@ -359,6 +359,10 @@ impl Plan {
         let end = inner_modules.partition_point(|inner| inner.0 <= file);
         start..end
     }
+
+    fn inner_callbacks_of(&self, file: FileId) -> &[FnId] {
+        &self.inner_callbacks[self.inner_modules_of(file)]
+    }
 }
 
 impl ModuleGraph {
@@ -392,15 +396,26 @@ impl ModuleGraph {
         self.plan.has(&self.plan.order.is_code_of_program, module)
     }
 
+    pub fn stored_site(&self, file: FileId, call: ExprId) -> Option<Site> {
+        let site = self.find_stored_site(file, SiteKey::Call(call))?;
+        Some(self.finish_site(site))
+    }
+
     pub fn site(&self, file: FileId, call: ExprId) -> Option<Site> {
-        if let Some(site) = self.find_stored_site(file, SiteKey::Call(call)) {
-            return Some(self.finish_site(site));
+        if let Some(site) = self.stored_site(file, call) {
+            return Some(site);
         }
+        let row = self.row_by_file.get(file.idx()).copied().flatten()?;
+        let sites = &self.rows[row as usize].sites;
+        let (first, last) = (sites.first()?.0, sites.last()?.0);
         let kinds = [
             ImportSiteKind::Require(call),
             ImportSiteKind::ImportMetaRequire(call),
         ];
-        let is_site = |&kind: &ImportSiteKind| self.find_site_answer(file, kind).is_some();
+        let is_site = |&kind: &ImportSiteKind| {
+            let is_within = first <= kind && kind <= last;
+            is_within && sites.binary_search_by_key(&kind, |site| site.0).is_ok()
+        };
         kinds.iter().any(is_site).then_some(Site::AsToday)
     }
 
@@ -525,17 +540,18 @@ impl ModuleGraph {
     }
 
     pub fn member(&self, file: FileId, access: ExprId) -> Option<Member> {
-        if let Some((module, member)) = find(&self.row(file).fixed_members, access) {
+        let row = self.row(file);
+        if let Some((module, member)) = find(&row.fixed_members, access) {
             return Some(self.finish_fixed_member(module, member));
         }
-        let Some(binding) = find(&self.row(file).members, access) else {
+        let Some(binding) = find(&row.members, access) else {
             let member = self.commonjs().own_member(file, access);
             return match self.stores_what_variable_holds(file, access, member) {
                 true => Some(Member::Undefined),
                 false => member,
             };
         };
-        let accessed = find(&self.row(file).accessed, access)?;
+        let accessed = find(&row.accessed, access)?;
         self.finish_member(accessed.module, binding, accessed.is_imported)
     }
 
@@ -799,9 +815,10 @@ impl ModuleGraph {
             .is_some_and(|variable| variable.file == file)
     }
 
+    #[inline]
     pub fn is_replaceable(&self, variable: Sym) -> bool {
         let replaced = &self.plan.replaced_variables;
-        replaced.binary_search(&variable).is_ok()
+        !replaced.is_empty() && replaced.binary_search(&variable).is_ok()
     }
 
     pub fn keeps_error(&self, module: ModuleRef) -> bool {
@@ -881,8 +898,12 @@ impl ModuleGraph {
         }
     }
 
+    #[inline]
     pub fn inner_modules(&self, file: FileId) -> &[FnId] {
-        &self.plan.inner_callbacks[self.plan.inner_modules_of(file)]
+        match self.plan.inner_callbacks.is_empty() {
+            true => &[],
+            false => self.plan.inner_callbacks_of(file),
+        }
     }
 
     pub fn inner_module(&self, file: FileId, callback: FnId) -> Option<ModuleRef> {
@@ -1101,8 +1122,8 @@ impl ModuleGraph {
                 let mut linked = [importer, written.exporter(), owner].into_iter().flatten();
                 !linked.any(|module| self.is_left_out(module))
             };
-            let mut read = self.checks_of(root).iter().filter(is_read);
-            let missing = read.find(|(export, _)| !stored.contains(export))?;
+            let mut checks = self.checks_of(root).iter();
+            let missing = checks.find(|check| !stored.contains(&check.0) && is_read(check))?;
             Some((root, self.synthetic_export(missing.0).module))
         })
     }

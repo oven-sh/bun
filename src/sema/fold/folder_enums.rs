@@ -34,6 +34,7 @@ impl EnumMembers {
         }
     }
 
+    #[inline]
     pub(super) fn is_folded_ahead(&self, e: ExprId) -> bool {
         !self.values.is_empty() && self.folded_ahead.contains(e.idx())
     }
@@ -153,12 +154,8 @@ impl<'s> Folder<'_, 's> {
 
     fn find_enum_member(&self, path: ExprId) -> Option<EnumMemberId> {
         let (hir, bound) = (self.hir, self.bound);
-        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut first = path;
-        while hir.member_key(first).is_some() {
-            let bytes_of = |name| self.atoms.bytes(name);
-            let (object, name) = find_link_followed_by_transpiler(hir, first, bytes_of)?;
-            names.push(name);
+        while let Some((object, _)) = hir.member_key(first) {
             first = hir.skip_type_assertions(object);
         }
         let ExprKind::Ident(_) = hir[first].kind else {
@@ -167,13 +164,32 @@ impl<'s> Folder<'_, 's> {
         let Binding::Symbol(found) = bound.binding(first) else {
             return None;
         };
-        let mut found = bound.export_symbol_of_value_symbol_if_exported(found);
-        if !self.is_enum_or_holds_one(found) || !self.has_static_lookup(first) {
+        if !self.is_enum_or_holds_one(bound.export_symbol_of_value_symbol_if_exported(found)) {
             return None;
         }
-        if !names.is_empty() && !is_declared_around(hir, bound.symbol(found).decls, first) {
+        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
+        let mut link = path;
+        while hir.member_key(link).is_some() {
+            let bytes_of = |name| self.atoms.bytes(name);
+            let (object, name) = find_link_followed_by_transpiler(hir, link, bytes_of)?;
+            names.push(name);
+            link = hir.skip_type_assertions(object);
+        }
+        self.find_enum_member_below(first, found, &names)
+    }
+
+    fn find_enum_member_below(
+        &self,
+        first: ExprId,
+        symbol: SymbolId,
+        names: &[Atom],
+    ) -> Option<EnumMemberId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let root = bound.export_symbol_of_value_symbol_if_exported(symbol);
+        if !self.is_enum_or_holds_one(root) || !self.has_static_lookup(first) {
             return None;
         }
+        let mut found = root;
         for &name in names.iter().rev() {
             let holder = bound.symbol(found);
             if !holder.flags.intersects(SymFlags::NAMESPACE) {
@@ -181,10 +197,14 @@ impl<'s> Folder<'_, 's> {
             }
             found = bound.lookup(holder.exports, name)?;
         }
-        match *bound.symbol(found).decls {
-            [Decl::EnumMember(member)] => bound.last_made_enum_member(member),
-            _ => None,
+        let member = match *bound.symbol(found).decls {
+            [Decl::EnumMember(member)] => member,
+            _ => return None,
+        };
+        if !names.is_empty() && !is_declared_around(hir, bound.symbol(root).decls, first) {
+            return None;
         }
+        bound.last_made_enum_member(member)
     }
 
     pub(super) fn fold_enum_member_read(&mut self, read: ExprId) -> Option<Folded> {
@@ -192,6 +212,22 @@ impl<'s> Folder<'_, 's> {
             return None;
         }
         let member = self.find_enum_member(read)?;
+        self.fold_read_of_enum_member(read, member)
+    }
+
+    pub(super) fn fold_enum_member_named(
+        &mut self,
+        name: ExprId,
+        symbol: SymbolId,
+    ) -> Option<Folded> {
+        if self.enum_members.values.is_empty() {
+            return None;
+        }
+        let member = self.find_enum_member_below(name, symbol, &[])?;
+        self.fold_read_of_enum_member(name, member)
+    }
+
+    fn fold_read_of_enum_member(&mut self, read: ExprId, member: EnumMemberId) -> Option<Folded> {
         let found = self.enum_members.values[member.idx()]?;
         if self.is_assignment_target(read)
             || self.is_delete_operand(read)

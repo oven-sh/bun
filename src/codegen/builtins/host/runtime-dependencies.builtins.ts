@@ -1006,26 +1006,6 @@ export default b.declarations(
       colors: b.bool,
     },
   }),
-  b.namedMemberCall(customInspect, [b.f64, b.nativeCell(inspectOptionsCell), b.nativeCell(inspectCell)]),
-  // ConsoleObject.rs print_to_json and the printer of FormData: the formatter passes nothing.
-  b.namedMemberCall("toJSON", []),
-  // It prints an object that it makes, or a string, with a copy of the options that it was called with: those of the formatter, or whatever somebody who has found the method passes.
-  // The object holds primitives and, for some classes, what the instance holds: the two streams of a TransformStream, the stream and the promises of a reader, the view of a request, the parameters of a URL,
-  // the algorithm of a CryptoKey. For a PerformanceEntry it is what toJSON() of the receiver answers. URLSearchParams prints each name and each value by itself.
-  b.hostMethodCall(customInspect, inspectCell, {
-    times: "Repeatedly",
-    this: b.nativeMemory,
-    args: [b.nativeMemory, b.nativeMemory],
-    result: [b.inspectedByHost],
-  }),
-  // Below the depth that is printed, the method of URLSearchParams answers what `stylize` of its options answers. The formatter calls the method with its own options.
-  [stylizeWithColorCell, stylizeWithNoColorCell].flatMap(cell =>
-    b.hostMethodCall(customInspect, cell, {
-      times: "Once",
-      this: b.nativeCell(inspectOptionsCell),
-      args: [b.string, b.string],
-    }),
-  ),
   b.startup({
     loads: [{ module: "internal/util/inspect", exports: [b.exportRead("inspect", b.keptIn(inspectCell))] }],
     functionsCalledWithLoads: [

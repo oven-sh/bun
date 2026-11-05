@@ -36,10 +36,12 @@ pub struct Handler {
 }
 
 impl Handler {
+    #[inline]
     pub fn block(self) -> BlockId {
         self.block
     }
 
+    #[inline]
     pub fn reading_fields(self) -> Handler {
         Handler {
             reads_fields: true,
@@ -56,10 +58,12 @@ pub struct Edge<'a> {
 }
 
 impl<'a> Edge<'a> {
+    #[inline]
     pub fn to(block: BlockId) -> Edge<'a> {
         Edge::with_arguments(block, &[])
     }
 
+    #[inline]
     pub fn with_arguments(block: BlockId, arguments: &'a [ValueId]) -> Edge<'a> {
         Edge {
             block,
@@ -68,6 +72,7 @@ impl<'a> Edge<'a> {
         }
     }
 
+    #[inline]
     pub fn with_proofs(block: BlockId, proofs: &'a [u32]) -> Edge<'a> {
         Edge {
             block,
@@ -86,12 +91,31 @@ pub struct BuilderScratch {
     pub(super) finish: FinishScratch,
 }
 
+#[inline]
 pub(super) fn recycle_vector<T>(mut vector: Vec<T>, max_spare_capacity: usize) -> Vec<T> {
     if vector.capacity() > max_spare_capacity {
         return Vec::new();
     }
     vector.clear();
     vector
+}
+
+pub(super) struct PushedWords<'a>(pub(super) &'a mut Vec<u32>);
+
+impl Extend<u32> for PushedWords<'_> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = u32>>(&mut self, words: I) {
+        for word in words {
+            self.0.push(word);
+        }
+    }
+}
+
+#[inline]
+pub(super) fn push_words(words: &mut Vec<u32>, pushed: &[u32]) {
+    for &word in pushed {
+        words.push(word);
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -214,13 +238,15 @@ impl FunctionBuilder {
         builder
     }
 
+    #[inline]
     pub fn function(&self) -> &Function {
         &self.function
     }
 
     pub fn entry_value(&self, position: EntryPosition) -> Option<ValueId> {
         let index = self.function.entry_parameter_index(position)?;
-        Some(self.blocks[ENTRY_BLOCK.index()].parameters[index])
+        let parameters: &[ValueId] = &self.blocks[ENTRY_BLOCK.index()].parameters;
+        Some(parameters[index])
     }
 
     pub fn capture(&self, index: u32) -> ValueId {
@@ -290,6 +316,7 @@ impl FunctionBuilder {
         }
     }
 
+    #[inline]
     pub fn handler_of(&self, block: BlockId) -> Option<Handler> {
         self.blocks[block.index()].covering
     }
@@ -323,6 +350,7 @@ impl FunctionBuilder {
         );
     }
 
+    #[inline]
     pub(super) fn add_parameter_value(&mut self, declared: Option<TypeId>) -> ValueId {
         let value = self.next_value_id();
         self.values.push(PendingValue {
@@ -333,6 +361,7 @@ impl FunctionBuilder {
         value
     }
 
+    #[inline]
     fn next_value_id(&self) -> ValueId {
         let index = self.values.len();
         assert!(
@@ -342,32 +371,39 @@ impl FunctionBuilder {
         ValueId::new(index)
     }
 
+    #[inline]
     pub fn switch_to(&mut self, block: BlockId) {
         self.current_block = block;
     }
 
+    #[inline]
     pub fn current_block(&self) -> BlockId {
         self.current_block
     }
 
+    #[inline]
     pub fn is_open(&self) -> bool {
         self.blocks[self.current_block.index()].terminator.is_none()
     }
 
+    #[inline]
     pub fn is_unreachable(&self) -> bool {
         let block = self.current_block;
         !self.is_open()
             || (block != ENTRY_BLOCK && self.ssa.is_sealed(block) && !self.has_predecessors(block))
     }
 
+    #[inline]
     pub fn has_predecessors(&self, block: BlockId) -> bool {
         self.ssa.predecessor_count(block) > 0
     }
 
+    #[inline]
     pub fn set_position(&mut self, position: Option<u32>) {
         self.position = position;
     }
 
+    #[inline]
     pub fn set_tail_position(&mut self, stands: bool) -> bool {
         std::mem::replace(&mut self.stands_in_tail_position, stands)
     }
@@ -396,7 +432,7 @@ impl FunctionBuilder {
             0
         };
         let head = ValueHead {
-            opcode: opcode.to_wire() | mark,
+            opcode: opcode as u32 | mark,
             position: self.position,
         };
         self.append_value(self.current_block, head, fields, false)
@@ -466,6 +502,7 @@ impl FunctionBuilder {
         self.append_value(block, head, fields, at_front)
     }
 
+    #[inline]
     fn append_value(
         &mut self,
         block: BlockId,
@@ -475,8 +512,8 @@ impl FunctionBuilder {
     ) -> ValueId {
         let value = self.next_value_id();
         let at = self.end_of_words();
-        head.append_to(&mut self.words);
-        self.words.extend_from_slice(fields);
+        head.append_to(&mut PushedWords(&mut self.words));
+        push_words(&mut self.words, fields);
         let word_count = self.end_of_words() - at;
 
         let id = value.to_word();
@@ -528,7 +565,10 @@ impl FunctionBuilder {
             self.blocks[block.index()].terminator = Some(PendingTerminator::unreachable());
             return;
         }
-        let targets = edges.iter().map(|edge| self.create_target(edge)).collect();
+        let mut targets: SmallVec<[PendingTarget; 2]> = SmallVec::new();
+        for edge in edges {
+            targets.push(self.create_target(edge));
+        }
         for edge in edges {
             self.ssa.add_predecessor(edge.block, block);
         }
@@ -541,6 +581,7 @@ impl FunctionBuilder {
         });
     }
 
+    #[inline]
     fn create_target(&mut self, edge: &Edge<'_>) -> PendingTarget {
         let target = &self.blocks[edge.block.index()];
         let parameter_count = target.parameters.len();
@@ -573,23 +614,28 @@ impl FunctionBuilder {
         }
     }
 
+    #[inline]
     fn append_pending_ids(&mut self, values: &[ValueId]) -> Range<u32> {
         let start = self.end_of_words();
-        let ids = values.iter().map(|value| value.to_word());
-        self.words.extend(ids);
+        for value in values {
+            self.words.push(value.to_word());
+        }
         start..self.end_of_words()
     }
 
+    #[inline]
     fn append_words(&mut self, words: &[u32]) -> Range<u32> {
         let start = self.end_of_words();
-        self.words.extend_from_slice(words);
+        push_words(&mut self.words, words);
         start..self.end_of_words()
     }
 
+    #[inline]
     fn end_of_words(&self) -> u32 {
         u32::try_from(self.words.len()).expect("the words of a function fit 32 bits")
     }
 
+    #[inline]
     pub fn create_variable(&mut self, declared: Option<TypeId>) -> LocalVariable {
         self.ssa.create_variable(declared)
     }

@@ -16,10 +16,12 @@ impl TypeOnlyCode {
         }
     }
 
+    #[inline]
     pub(super) fn has_scope(&self, scope: ScopeId) -> bool {
         has_bit(&self.scopes, scope.idx())
     }
 
+    #[inline]
     pub(super) fn has_expr(&self, e: ExprId, scope: ScopeId) -> bool {
         self.has_scope(scope) || has_bit(&self.member_keys, e.idx())
     }

@@ -67,6 +67,7 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    #[inline]
     pub fn member_key(&self, e: ExprId) -> Option<(ExprId, MemberKey)> {
         match self.exprs.get(e.idx())?.kind {
             ExprKind::Dot { obj, name, .. }

@@ -8,8 +8,7 @@ import { viaUser } from "./user.js";
 import { viaHelper } from "./helper.js";
 `;
 
-// vi.mock() in a test file leaves what a preload loaded with the mock of the preload. Hoisted, with and without a factory: fixed-runs/closed/mock-over-the-mock-of-a-preload.txt
-// and automock-over-the-mock-of-a-preload.txt. This one is right as one program alone, so it cannot stand in a project that also runs over layers.
+// vi.mock() in a test file leaves what a preload loaded with the mock of the preload. Hoisted, without a factory: fixed-runs/closed/automock-over-the-mock-of-a-preload.txt. This one is right as one program alone, so it cannot stand in a project that also runs over layers.
 test("vi.mock() in a test, behind the imports", async () => {
   using dir = tempDir("aot-mock-over-preload", {
     "package.json": `{ "type": "module" }`,

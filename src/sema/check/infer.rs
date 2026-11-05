@@ -365,9 +365,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `inferFromTypes`
     fn infer_types(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
-        if !self.could_contain_type_variables(target) || self.is_no_infer(target) {
+        if !self.could_contain_type_variables_inlined(target) || self.is_no_infer(target) {
             return;
         }
+        let mut target_data = self.data(target);
+        let stores_target_alias = self.stored_alias(target).is_some();
         // The wildcard is inferred for every type parameter in `target`.
         if source == TypeId::WILDCARD {
             let saved = n.propagated.replace(source);
@@ -375,6 +377,7 @@ impl<'p, 's> Checker<'p, 's> {
             n.propagated = saved;
             return;
         }
+        let (given_source, given_target) = (source, target);
         let (mut source, mut target) = (source, target);
         // The contextual return type may contain unresolved parts where the enclosing calls have no
         // inferences yet.
@@ -385,8 +388,15 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_stack_low() {
             return;
         }
+        let mut source_data = self.data(source);
+        let may_have_same_alias = stores_target_alias
+            || self.stored_alias(source).is_some()
+            || (self.type_node_of_data(source_data))
+                .is_some_and(|node| self.type_node_of_data(target_data) == Some(node));
         // Two instantiations of one alias: infer between the type arguments only. Without type arguments there is nothing to infer.
-        if let Some((alias, sources, targets, _)) = self.same_alias(source, target) {
+        if may_have_same_alias
+            && let Some((alias, sources, targets, _)) = self.same_alias(source, target)
+        {
             if !sources.is_empty() {
                 self.infer_from_type_arguments_once(
                     n,
@@ -399,7 +409,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         if source == target {
-            match self.data(source) {
+            match source_data {
                 TypeData::Union(_) => {
                     for &t in self.parts(source) {
                         self.infer_types(n, t, t);
@@ -415,7 +425,7 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
         }
-        match self.data(target) {
+        match target_data {
             TypeData::Union(_) => {
                 // `never` is a source like any other, not an empty union.
                 let never = [source];
@@ -441,15 +451,16 @@ impl<'p, 's> Checker<'p, 's> {
                 source = self.union(&sources);
             }
             TypeData::Intersection(target_parts)
-                if !target_parts
-                    .iter()
-                    .all(|&t| self.is_object_type(t) && !self.is_generic_mapped_type(t))
+                if !target_parts.iter().all(|&t| {
+                    self.is_plain_object_type(t)
+                        || self.is_mapped_type(t) && !self.is_generic_mapped_type(t)
+                })
                 // From `string[] & { extra: any }` to `string[] & T`: `{ extra: any }` for `T`. But
                 // to `string[] & Iterable<T>` the `string[]` stays, and yields `string` for `T`.
                 && !self.is_union(source) =>
             {
                 let source_only = [source];
-                let mut sources = Unmatched::Borrowed(match self.data(source) {
+                let mut sources = Unmatched::Borrowed(match source_data {
                     TypeData::Intersection(parts) => &parts[..],
                     _ => &source_only[..],
                 });
@@ -463,12 +474,30 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => {}
         }
-        // That may be all that's left of the union or intersection.
-        if self.is_no_infer(target) {
-            return;
+        if target != given_target {
+            // That may be all that's left of the union or intersection.
+            if self.is_no_infer(target) {
+                return;
+            }
+            target_data = self.data(target);
         }
-        target = self.actual_type_variable(target);
-        if self.is_type_variable(target) {
+        if source != given_source {
+            source_data = self.data(source);
+        }
+        if matches!(
+            target_data,
+            TypeData::Substitution { .. } | TypeData::IndexedAccess { .. }
+        ) {
+            target = self.actual_type_variable(target);
+            target_data = self.data(target);
+        }
+        if matches!(
+            target_data,
+            TypeData::TypeParam(..)
+                | TypeData::ThisParam(_)
+                | TypeData::Marker(_)
+                | TypeData::IndexedAccess { .. }
+        ) {
             if let Some(index) = n.index_of(target) {
                 // `ObjectFlagsNonInferrableType`: a type with omitted parts isn't a candidate.
                 // Neither is `nonInferrableAnyType`. It lacks the flag, so a type that contains it
@@ -484,7 +513,7 @@ impl<'p, 's> Checker<'p, 's> {
             let simplified = self.simplified(target, false);
             if simplified != target {
                 self.infer_types(n, source, simplified);
-            } else if let TypeData::IndexedAccess { obj, index, .. } = *self.data(target) {
+            } else if let TypeData::IndexedAccess { obj, index, .. } = *target_data {
                 let index = self.simplified(index, false);
                 if self.is_instantiable(index) {
                     let object = self.simplified(obj, false);
@@ -499,13 +528,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `source.AsTypeReference().node != nil && target.AsTypeReference().node != nil`
         let are_both_deferred =
-            self.types().deferred(source).is_some() && self.types().deferred(target).is_some();
-        match (self.data(source), self.data(target)) {
+            |c: &Self| c.types().deferred(source).is_some() && c.types().deferred(target).is_some();
+        match (source_data, target_data) {
             // Two deferred references go through `invokeOnce`; otherwise inference might not
             // terminate.
             (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. })
                 if (st == tt || self.is_array(source) && self.is_array(target))
-                    && !are_both_deferred =>
+                    && !are_both_deferred(self) =>
             {
                 let st = *st;
                 self.infer_from_type_arguments_once(
@@ -530,7 +559,7 @@ impl<'p, 's> Checker<'p, 's> {
                     readonly: tr,
                     ..
                 },
-            ) if sf == tf && sr == tr && !are_both_deferred => {
+            ) if sf == tf && sr == tr && !are_both_deferred(self) => {
                 self.infer_from_type_arguments_once(
                     n,
                     source,
@@ -598,6 +627,10 @@ impl<'p, 's> Checker<'p, 's> {
                 self.infer_to_template_literal_type(n, source, texts, types)
             }
             _ => {
+                if self.is_plain_object_type(source) && !self.may_be_reduced(source) {
+                    self.invoke_once(n, source, target, Self::infer_from_object_types);
+                    return;
+                }
                 let mut source = self.reduced(source);
                 if self.is_generic_mapped_type(source) && self.is_generic_mapped_type(target) {
                     self.invoke_once(n, source, target, Self::infer_from_generic_mapped_types);
@@ -623,6 +656,27 @@ impl<'p, 's> Checker<'p, 's> {
                     self.invoke_once(n, source, target, Self::infer_from_object_types);
                 }
             }
+        }
+    }
+
+    #[inline]
+    fn type_node_of_data(&self, data: &TypeData<'_>) -> Option<(FileId, TypeNodeId)> {
+        match *data {
+            TypeData::Anon {
+                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
+                ..
+            }
+            | TypeData::Cond { file, node, .. } => Some((file, node)),
+            TypeData::Fns { ref decls, .. } => {
+                let [(file, func)] = decls[..] else {
+                    return None;
+                };
+                match self.bound(file).fns[func.idx()].owner {
+                    crate::bind::FnOwner::Type(node) => Some((file, node)),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -857,7 +911,8 @@ impl<'p, 's> Checker<'p, 's> {
                 .map(|&slot| slot as usize)
         };
         if let Some(seen) = seen {
-            let mut priority = n.visited[seen].2;
+            let visited: &[(TypeId, TypeId, i32)] = &n.visited;
+            let mut priority = visited[seen].2;
             if priority == PRIORITY_IN_PROGRESS {
                 n.unfinished_hits += 1;
                 priority = PRIORITY_CIRCULARITY;
@@ -882,11 +937,13 @@ impl<'p, 's> Checker<'p, 's> {
         let push = 2 * n.source_stack.len() as u32;
         n.source_stack.push((source, push + 1));
         n.target_stack.push((target, push));
-        if self.is_deeply_nested_type(source, [&n.source_stack, &n.target_stack], true, 2) {
-            n.expanding |= 1;
-        }
-        if self.is_deeply_nested_type(target, [&n.source_stack, &n.target_stack], false, 2) {
-            n.expanding |= 2;
+        if push != 0 {
+            if self.is_deeply_nested_type(source, [&n.source_stack, &n.target_stack], true, 2) {
+                n.expanding |= 1;
+            }
+            if self.is_deeply_nested_type(target, [&n.source_stack, &n.target_stack], false, 2) {
+                n.expanding |= 2;
+            }
         }
         if n.expanding != 3 {
             action(self, n, source, target);
@@ -896,7 +953,8 @@ impl<'p, 's> Checker<'p, 's> {
         n.target_stack.pop();
         n.source_stack.pop();
         n.expanding = saved_expanding;
-        n.visited[slot].2 = n.inference_priority;
+        let visited: &mut [(TypeId, TypeId, i32)] = &mut n.visited;
+        visited[slot].2 = n.inference_priority;
         n.inference_priority = n.inference_priority.min(saved_priority);
     }
 
@@ -940,16 +998,18 @@ impl<'p, 's> Checker<'p, 's> {
         let is_in_query = !self.stack.is_empty();
         let mut matched = Matched::default();
         let mut normalized_sources: SmallVec<[Option<TypeId>; 8]> = smallvec![None; sources.len()];
+        let normalized_sources: &mut [Option<TypeId>] = &mut normalized_sources;
         for (j, &t) in targets.iter().enumerate() {
             let mut normalized_target = None;
+            let (target_flags, is_target_primitive) = (self.flags(t), self.has_primitive_flag(t));
             for (i, &s) in sources.iter().enumerate() {
                 let differs_by_flags = is_in_query
                     && self.cuts() == 0
                     && s != t
                     && t != TypeId::MISSING
-                    && (self.flags(s) | self.flags(t)) & may_simplify != 0
+                    && (self.flags(s) | target_flags) & may_simplify != 0
                     && !self.has_primitive_flag(s)
-                    && !self.has_primitive_flag(t)
+                    && !is_target_primitive
                     && !self.is_stack_low()
                     && {
                         let source = match normalized_sources[i] {
@@ -1033,6 +1093,7 @@ impl<'p, 's> Checker<'p, 's> {
                 false => &source_only,
             };
             let mut matched: SmallVec<[bool; 8]> = smallvec![false; sources.len()];
+            let matched: &mut [bool] = &mut matched;
             let mut circularity = false;
             // `Extract<A | B | .., { kind: T }>` is a union of conditional types that differ only
             // where there is no type parameter. Inferring from one source to one target a second
@@ -1108,7 +1169,7 @@ impl<'p, 's> Checker<'p, 's> {
             if type_variable_count == 1 && !circularity {
                 let unmatched: Parts = sources
                     .iter()
-                    .zip(&matched)
+                    .zip(matched.iter())
                     .filter(|(_, m)| !**m)
                     .map(|(&s, _)| s)
                     .collect();
@@ -1803,7 +1864,10 @@ impl<'p, 's> Checker<'p, 's> {
         match_discriminant_properties: bool,
     ) -> bool {
         // `getPropertyOfType(source, name)` creates a union's properties one by one, on request.
-        let source = self.reduced_apparent_type(source);
+        let source = match self.is_own_reduced_apparent_type(source) {
+            true => source,
+            false => self.reduced_apparent_type(source),
+        };
         let sm = match self.is_union(source) {
             true => None,
             false => self.members(source),
@@ -1831,7 +1895,7 @@ impl<'p, 's> Checker<'p, 's> {
         match_discriminant_properties: bool,
     ) -> bool {
         let partial = PropFlags::READ_PARTIAL | PropFlags::WRITE_PARTIAL;
-        if self.is_static_private_name(tp) || tp.flags.intersects(PropFlags::OPTIONAL | partial) {
+        if tp.flags.intersects(PropFlags::OPTIONAL | partial) || self.is_static_private_name(tp) {
             return false;
         }
         let source_prop = match source_members {
@@ -1856,8 +1920,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `resolveStructuredTypeMembers(getReducedApparentType(ty))`, which is where
     /// `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType` look.
     fn members_of_reduced_apparent_type(&mut self, ty: TypeId) -> Option<Members<'p>> {
-        let apparent = self.reduced_apparent_type_as_object(ty);
+        let apparent = match self.is_own_reduced_apparent_type(ty) {
+            true => ty,
+            false => self.reduced_apparent_type_as_object(ty),
+        };
         self.members(apparent)
+    }
+
+    #[inline]
+    fn is_own_reduced_apparent_type(&self, ty: TypeId) -> bool {
+        self.is_plain_object_type(ty)
+            && !self.may_be_reduced(ty)
+            && self.never_in_progress.is_empty()
     }
 
     /// `isTypeOrBaseIdenticalTo`
@@ -2023,7 +2097,7 @@ impl<'p, 's> Checker<'p, 's> {
             let saved_bivariant = n.bivariant;
             n.bivariant |= is_method;
             let strict = is_under_strict_function_types || n.priority & PRIORITY_ALWAYS_STRICT != 0;
-            for (s, t) in self.parameter_type_pairs(source, target) {
+            for &(s, t) in self.parameter_type_pairs(source, target).iter() {
                 if strict {
                     self.infer_from_contravariant_types(n, s, t)
                 } else {
@@ -2082,7 +2156,9 @@ impl<'p, 's> Checker<'p, 's> {
         // `getTypeAtPosition(target, i)`
         self.note_parameter_types_resolved(target, &tp, param_count);
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::with_capacity(param_count + 2);
-        pairs.extend(this_types);
+        if let Some(this_types) = this_types {
+            pairs.push(this_types);
+        }
         for i in 0..param_count {
             let (s, t) = (
                 self.param_type_at(&sp, i).unwrap_or(TypeId::ANY),
@@ -2140,7 +2216,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `inferFromIndexTypes`
     fn infer_from_index_types(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
-        let apparent = self.reduced_apparent_type_as_object(target);
+        let apparent = match self.is_own_reduced_apparent_type(target) {
+            true => target,
+            false => self.reduced_apparent_type_as_object(target),
+        };
         let (Some(sm), Some(tm)) = (self.members(source), self.structured_members(apparent)) else {
             return;
         };
@@ -3253,6 +3332,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// and for every type that the original doesn't look into. Inference to such a type finds no
     /// candidate, but resolves the parts of the source that it visits.
     pub(super) fn could_contain_type_variables(&self, ty: TypeId) -> bool {
+        self.could_contain_type_variables_inlined(ty)
+    }
+
+    #[inline]
+    fn could_contain_type_variables_inlined(&self, ty: TypeId) -> bool {
         let flags = self.flags(ty);
         if self.has_type_variables(ty) || flags & tf::INSTANTIABLE != 0 {
             return true;
@@ -3267,6 +3351,12 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.types().could_contain_type_variables(ty) {
             return known;
         }
+        self.compute_could_contain_type_variables(ty)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn compute_could_contain_type_variables(&self, ty: TypeId) -> bool {
         // The worker reads the type, its mapper, its alias, and symbols' flags and declarations.
         let could_contain = self.could_contain_type_variables_worker(ty);
         (self.types()).set_could_contain_type_variables(ty, could_contain);

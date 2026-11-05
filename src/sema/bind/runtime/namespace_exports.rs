@@ -5,15 +5,22 @@ use super::{BindingKind, RuntimeScopes};
 use crate::bind::{BoundBuilder, Decl, ScopeId, ScopeKind, SymFlags, SymbolId};
 use crate::hir::*;
 
+#[inline]
 pub(super) fn is_block_binding(bound: &BoundBuilder, kind: ScopeKind, local: SymbolId) -> bool {
+    matches!(kind, ScopeKind::Module(_)) && has_no_variable_declaration(bound, local)
+}
+
+fn has_no_variable_declaration(bound: &BoundBuilder, local: SymbolId) -> bool {
     let mut decls = bound.symbols[local.idx()].decls.iter();
-    matches!(kind, ScopeKind::Module(_))
-        && decls.all(|decl| !matches!(decl, Decl::Var(_) | Decl::Require(_)))
+    decls.all(|decl| !matches!(decl, Decl::Var(_) | Decl::Require(_)))
 }
 
 impl Declarations<'_, '_> {
     pub(super) fn create_container_parameters(&mut self) {
         let hir = self.hir;
+        if hir.modules.is_empty() && hir.enums.is_empty() {
+            return;
+        }
         for index in 0..self.bound.scopes.len() {
             let (decl, name) = match self.bound.scopes[index].kind {
                 ScopeKind::Module(it) => match hir[it].name {
@@ -48,6 +55,9 @@ impl ExportedBlockBindings {
         scopes: &RuntimeScopes,
     ) -> ExportedBlockBindings {
         let mut bindings = ExportedBlockBindings::default();
+        if hir.modules.is_empty() {
+            return bindings;
+        }
         for scope in bound.scopes.iter() {
             if !matches!(scope.kind, ScopeKind::Module(_)) {
                 continue;
@@ -82,8 +92,10 @@ impl ExportedBlockBindings {
     }
 
     pub(super) fn record(self, declarations: &mut RuntimeDeclarationsIn<Growable>) {
-        declarations.declared_symbols.extend(self.symbols);
-        declarations.sort();
+        if !self.symbols.is_empty() {
+            declarations.declared_symbols.extend(self.symbols);
+            declarations.sort();
+        }
         for (local, kind) in self.kinds {
             declarations.binding_kinds[local.idx()] = kind;
         }

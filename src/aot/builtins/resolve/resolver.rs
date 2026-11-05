@@ -83,6 +83,21 @@ impl ExprState {
     pub(super) fn of_path(path: Option<BuiltinPath>) -> ExprState {
         ExprState::of_value(path.map(ResolvedValue::object))
     }
+
+    fn is_found(self) -> bool {
+        matches!(
+            self,
+            ExprState::Builtin(_)
+                | ExprState::Held(_)
+                | ExprState::DynamicGlobal(_)
+                | ExprState::Intrinsic(_)
+        )
+    }
+}
+
+enum Step {
+    Dependency(ExprId),
+    State(ExprState),
 }
 
 #[derive(Clone)]
@@ -95,7 +110,7 @@ pub(super) enum AliasSource {
 }
 
 pub struct FileFacts {
-    exprs_by_position: Vec<(u32, u32)>,
+    exprs_by_position: Vec<u64>,
     declared_aliases: Vec<(SymbolId, AliasSource)>,
     aliases_by_position: Vec<(u32, u32)>,
     aliases_by_initializer: Vec<(u32, u32)>,
@@ -116,7 +131,7 @@ impl FileFacts {
         resolver.collect_exported_symbols();
         let mut facts = FileFacts {
             exprs_by_position: (0..hir.exprs.len() as u32)
-                .map(|id| (hir[ExprId(id)].pos, id))
+                .map(|id| (u64::from(hir[ExprId(id)].pos) << 32) | u64::from(id))
                 .collect(),
             declared_aliases: Vec::new(),
             aliases_by_position: Vec::new(),
@@ -140,16 +155,20 @@ impl FileFacts {
             facts.aliases_by_position.push((hir[name].pos, index));
             facts.declared_aliases.push((symbol, source));
         }
-        facts.exprs_by_position.shared_sort_unstable();
+        facts.exprs_by_position.sort_unstable();
         facts.aliases_by_position.shared_sort_unstable();
         facts.aliases_by_initializer.shared_sort_unstable();
         facts
     }
 
     fn ids_within(&self, ranges: &[Range<u32>]) -> Range<u32> {
+        let entries = &self.exprs_by_position[..];
         let mut ids = 0..0;
         for range in ranges {
-            for &(_, id) in entries_within(&self.exprs_by_position, range.clone()) {
+            let start = entries.partition_point(|&entry| entry < u64::from(range.start) << 32);
+            let end = entries.partition_point(|&entry| entry < u64::from(range.end) << 32);
+            for &entry in &entries[start..end.max(start)] {
+                let id = entry as u32;
                 if ids.is_empty() {
                     ids = id..id + 1;
                 }
@@ -208,6 +227,7 @@ pub(super) struct Resolver<'a, 's> {
     evaluated: Range<u32>,
     computed: Vec<ExprId>,
     calls: Vec<ExprId>,
+    pub(super) found_or_this: Vec<ExprId>,
     work_stack: Vec<ExprId>,
 }
 
@@ -340,6 +360,7 @@ impl<'a, 's> Resolver<'a, 's> {
             output: ResolverOutput::default(),
             computed: Vec::new(),
             calls: Vec::new(),
+            found_or_this: Vec::new(),
             work_stack: Vec::new(),
         }
     }
@@ -348,9 +369,11 @@ impl<'a, 's> Resolver<'a, 's> {
         SmallVec::from_slice(self.known_sets.borrow_mut().of(expr))
     }
 
+    #[inline]
     pub(super) fn state(&self, expr: ExprId) -> ExprState {
-        let index = expr.0.checked_sub(self.first_state);
-        let state = index.and_then(|index| self.states.get(index as usize));
+        let state = self
+            .states
+            .get(expr.0.wrapping_sub(self.first_state) as usize);
         state.copied().unwrap_or(ExprState::NotEvaluated)
     }
 
@@ -413,11 +436,16 @@ impl<'a, 's> Resolver<'a, 's> {
         matches!(self.state(expr), ExprState::Unvisited)
     }
 
+    #[inline]
     fn is_within(&self, position: u32) -> bool {
-        self.within.is_none_or(|ranges| {
-            let following = ranges.partition_point(|range| range.start <= position);
-            following > 0 && position < ranges[following - 1].end
-        })
+        match self.within {
+            None => true,
+            Some([range]) => range.contains(&position),
+            Some(ranges) => {
+                let following = ranges.partition_point(|range| range.start <= position);
+                following > 0 && position < ranges[following - 1].end
+            }
+        }
     }
 
     pub(super) fn is_named_outside(&self, symbol: SymbolId) -> bool {
@@ -452,7 +480,6 @@ impl<'a, 's> Resolver<'a, 's> {
             && !is_unevaluated_name()
             && !input.decisions.is_dead_expr(expr)
             && !matches!(input.bound.parent_of_expr(expr), Parent::None)
-            && !input.bound.is_in_type_query(expr)
     }
 
     pub(super) fn evaluated_exprs(&self) -> impl Iterator<Item = ExprId> + use<> {
@@ -461,9 +488,19 @@ impl<'a, 's> Resolver<'a, 's> {
 
     fn mark_unevaluated_exprs(&mut self) {
         let input = self.input;
+        let operands: &[ExprId] = &input.bound.type_query_operands;
+        let first = self.evaluated.start;
+        let mut type_query_operands = &operands[operands.partition_point(|it| it.0 < first)..];
         let mut evaluated = 0..0;
+        self.computed.reserve(self.evaluated.len());
         for expr in self.evaluated_exprs() {
-            if !self.is_evaluated(expr) {
+            while let [operand, rest @ ..] = type_query_operands
+                && *operand < expr
+            {
+                type_query_operands = rest;
+            }
+            let is_in_type_query = type_query_operands.first() == Some(&expr);
+            if is_in_type_query || !self.is_evaluated(expr) {
                 self.set_state(expr, ExprState::NotEvaluated);
                 continue;
             }
@@ -494,6 +531,9 @@ impl<'a, 's> Resolver<'a, 's> {
                 }
                 Decision::GlobalPath(path) => self.resolve_global_path(path),
             };
+            if state.is_found() || matches!(kind, ExprKind::This) {
+                self.found_or_this.push(expr);
+            }
             self.set_state(expr, state);
         }
         self.evaluated = evaluated;
@@ -510,25 +550,61 @@ impl<'a, 's> Resolver<'a, 's> {
                 self.resolve(expr);
             }
         }
+        self.found_or_this.sort_unstable();
     }
 
     fn resolve(&mut self, start: ExprId) {
-        if self.find_unvisited_dependency(start).is_none() {
-            let state = self.compute_state(start);
-            self.set_state(start, state);
-            return;
-        }
-        self.work_stack.push(start);
-        while let Some(&expr) = self.work_stack.last() {
-            if let Some(dependency) = self.find_unvisited_dependency(expr) {
-                self.set_state(expr, ExprState::InProgress);
-                self.work_stack.push(dependency);
-                continue;
+        let mut expr = start;
+        loop {
+            match self.take_step(expr) {
+                Step::Dependency(dependency) => {
+                    self.set_state(expr, ExprState::InProgress);
+                    self.work_stack.push(expr);
+                    expr = dependency;
+                }
+                Step::State(state) => {
+                    if state.is_found() {
+                        self.found_or_this.push(expr);
+                    }
+                    self.set_state(expr, state);
+                    match self.work_stack.pop() {
+                        Some(waiting) => expr = waiting,
+                        None => return,
+                    }
+                }
             }
-            let state = self.compute_state(expr);
-            self.set_state(expr, state);
-            self.work_stack.pop();
         }
+    }
+
+    fn take_step(&mut self, expr: ExprId) -> Step {
+        let ExprKind::Ident(name) = self.input.hir[expr].kind else {
+            return match self.find_unvisited_dependency(expr) {
+                Some(dependency) => Step::Dependency(dependency),
+                None => Step::State(self.compute_state(expr)),
+            };
+        };
+        let symbol = match self.input.bound.binding(expr) {
+            Binding::Symbol(symbol) => symbol,
+            Binding::Free => return Step::State(self.compute_free_name_state(expr, name)),
+            Binding::CommonJs(variable) => {
+                return Step::State(self.compute_commonjs_state(expr, variable, name));
+            }
+            Binding::Arguments(_) => return Step::State(ExprState::Unresolved),
+        };
+        let initializer = match self.aliases.get(&symbol) {
+            Some(AliasSource::Initializer { initializer, .. }) => Some(*initializer),
+            Some(AliasSource::Known(_)) => None,
+            None => return Step::State(ExprState::Unresolved),
+        };
+        match initializer.and_then(|initializer| self.find_unvisited(initializer)) {
+            Some(dependency) => Step::Dependency(dependency),
+            None => Step::State(self.compute_symbol_state(expr, symbol)),
+        }
+    }
+
+    fn find_unvisited(&self, operand: ExprId) -> Option<ExprId> {
+        let operand = self.input.hir.skip_type_assertions(operand);
+        self.is_unvisited(operand).then_some(operand)
     }
 
     fn asks_who_loads(&self, test: ExprId) -> bool {
@@ -561,51 +637,28 @@ impl<'a, 's> Resolver<'a, 's> {
 
     fn find_unvisited_dependency(&self, expr: ExprId) -> Option<ExprId> {
         let hir = self.input.hir;
-        let unvisited = |operand: ExprId| {
-            let operand = hir.skip_type_assertions(operand);
-            self.is_unvisited(operand).then_some(operand)
-        };
         if let Some((object, key)) = hir.member_key(expr) {
-            return unvisited(object).or_else(|| match key {
-                MemberKey::Computed(computed) => unvisited(computed),
+            return self.find_unvisited(object).or_else(|| match key {
+                MemberKey::Computed(computed) => self.find_unvisited(computed),
                 MemberKey::Name(_) | MemberKey::PrivateName(_) => None,
             });
         }
-        if let ExprKind::Binary {
-            op: BinOp::Comma | BinOp::And,
-            right,
-            ..
-        } = hir[expr].kind
-        {
-            return unvisited(right);
-        }
-        if let ExprKind::Call(call) = hir[expr].kind {
-            return unvisited(hir[call].callee);
-        }
-        if let ExprKind::Cond { branches, .. } = hir[expr].kind {
-            return unvisited(hir.branches(branches).no);
-        }
-        if !matches!(hir[expr].kind, ExprKind::Ident(_)) {
-            return None;
-        }
-        let Binding::Symbol(symbol) = self.input.bound.binding(expr) else {
-            return None;
-        };
-        match self.aliases.get(&symbol)? {
-            AliasSource::Initializer { initializer, .. } => unvisited(*initializer),
-            AliasSource::Known(_) => None,
+        match hir[expr].kind {
+            ExprKind::Binary {
+                op: BinOp::Comma | BinOp::And,
+                right,
+                ..
+            } => self.find_unvisited(right),
+            ExprKind::Call(call) => self.find_unvisited(hir[call].callee),
+            ExprKind::Cond { branches, .. } => self.find_unvisited(hir.branches(branches).no),
+            _ => None,
         }
     }
 
     #[rustfmt::skip]
     fn compute_state(&mut self, expr: ExprId) -> ExprState {
         match self.input.hir[expr].kind {
-            ExprKind::Ident(name) => match self.input.bound.binding(expr) {
-                Binding::Free => self.compute_free_name_state(expr, name),
-                Binding::Symbol(symbol) => self.compute_symbol_state(expr, symbol),
-                Binding::CommonJs(variable) => self.compute_commonjs_state(expr, variable, name),
-                Binding::Arguments(_) => ExprState::Unresolved,
-            },
+
             ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 match find_module_printed_as_require(self.input.hir, self.input.bound, expr) {
                     Some(module) => self.compute_commonjs_state(module, CommonJsVariable::Require, known::require),
@@ -681,7 +734,7 @@ impl<'a, 's> Resolver<'a, 's> {
         let mut exprs = Vec::new();
         let mut expr_bits = vec![0u64; input.hir.exprs.len().div_ceil(64)];
         let mut exprs_with_side_effects = Vec::new();
-        for expr in self.evaluated.map(ExprId) {
+        for &expr in &self.found_or_this {
             let resolved = match self.states[(expr.0 - self.first_state) as usize] {
                 ExprState::Builtin(ResolvedValue {
                     path,

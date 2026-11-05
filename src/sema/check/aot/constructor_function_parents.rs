@@ -1,6 +1,7 @@
 use super::answers::{
     CheckedType, ClassDeclaration, ClassMember, ClassMemberSource, ClassParent, ClassRef,
-    ClassShape, FunctionRef, GaveUp, MemberName, ObjectMemberKind, PositionTypes, QueryLimit,
+    ClassShape, FunctionRef, GaveUp, MemberForm, MemberName, ObjectMemberKind, PositionTypes,
+    QueryLimit,
 };
 use super::prototype_links::{LinkEnd, PrototypeLink, PrototypeLinks, list_in};
 use super::queries::Queries;
@@ -16,7 +17,7 @@ use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::types::{TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -163,17 +164,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub fn library_declarations_of_type(&mut self, ty: TypeId) -> SmallVec<[ClassDeclaration; 1]> {
-        let parts: SmallVec<[TypeId; 2]> = match self.c.data(ty) {
-            TypeData::Intersection(parts) => parts.iter().copied().collect(),
-            _ => smallvec![ty],
+        let parts = match self.c.data(ty) {
+            TypeData::Intersection(parts) => &parts[..],
+            _ => std::slice::from_ref(&ty),
         };
-        let origins = parts.into_iter().map(|part| self.object_origin(part));
-        let origins: SmallVec<[ObjectOrigin; 2]> = origins.collect();
-        let declarations = origins.into_iter().filter_map(|origin| match origin {
-            ObjectOrigin::Symbol(class) => self.find_library_declaration_of_class(class),
-            _ => None,
-        });
-        declarations.collect()
+        let mut declarations = SmallVec::new();
+        for &part in parts {
+            if let ObjectOrigin::Symbol(class) = self.object_origin(part)
+                && let Some(declaration) = self.find_library_declaration_of_class(class)
+            {
+                declarations.push(declaration);
+            }
+        }
+        declarations
     }
 
     fn find_library_declaration_of_class(&self, class: Sym) -> Option<ClassDeclaration> {
@@ -490,6 +493,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 types: PositionTypes::unwritten(checked),
                 is_static: false,
                 is_optional: true,
+                form: MemberForm::default(),
             };
             members.add(hir[property.value].pos, member);
         }

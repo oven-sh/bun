@@ -882,6 +882,47 @@ fn constructor_that_is_looked_up_at_run_time_counts_as_the_global() {
 }
 
 #[test]
+fn written_arm_of_a_name_that_is_unknown_otherwise_is_an_entry_point() {
+    let rows: [(&str, &[&str]); 7] = [
+        (
+            r#"require(process.env.CONF || "./conf.cjs");"#,
+            &["conf.cjs WrittenInArm"],
+        ),
+        (
+            r#"require(process.env.CONF ?? "./conf.cjs");"#,
+            &["conf.cjs WrittenInArm"],
+        ),
+        (
+            r#"require(process.argv[2] ? process.argv[2] : "./conf.cjs");"#,
+            &["conf.cjs WrittenInArm"],
+        ),
+        (
+            r#"import(process.env.CONF || "./conf.cjs");"#,
+            &["conf.cjs WrittenInArm"],
+        ),
+        (
+            r#"const name = process.env.CONF || "./conf.cjs"; require(name);"#,
+            &["conf.cjs WrittenInArm"],
+        ),
+        (
+            r#"let name = process.env.CONF || "./conf.cjs"; name = process.argv[2]; require(name);"#,
+            &[],
+        ),
+        (
+            r#"require(process.env.CONF); console.log("./conf.cjs");"#,
+            &[],
+        ),
+    ];
+    for (text, found) in rows {
+        let project = executable(&[("main.cjs", text), ("conf.cjs", "exports.name = 1;")]);
+        load(&project, |loaded| {
+            let names = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(names, found, "{text}");
+        });
+    }
+}
+
+#[test]
 fn worker_start_with_an_unknown_name_is_recorded() {
     let project = executable(&[("main.ts", "new Worker(process.argv[2]);")]);
     load(&project, |loaded| {
@@ -1402,6 +1443,83 @@ fn file_followed_further_than_the_bundler_is_an_entry_point_beside_a_plugin() {
             );
             assert!(find_file(files_of(loaded), "a.ts").is_some(), "{plugin}");
             assert_found_follow_written(loaded, 1);
+        });
+    }
+}
+
+#[test]
+fn file_found_for_a_load_is_read_as_that_load_reads_it() {
+    use bun_sema::module_format::ModuleFormat::{CommonJs, Esm};
+    const NO_KIND: &str = "globalThis.ran = true;";
+    const PLUG: (&str, &str) = ("plug.mjs", r#"import "./plain.cjs";"#);
+    let rows: [(&[(&str, &str)], &str, _); 6] = [
+        (
+            &[
+                ("main.cjs", r#"require(require("./config.json").plugin);"#),
+                ("config.json", r#"{ "plugin": "./plug.mjs" }"#),
+                PLUG,
+                ("plain.cjs", NO_KIND),
+            ],
+            "plain.cjs",
+            CommonJs,
+        ),
+        (
+            &[
+                (
+                    "main.mjs",
+                    r#"import config from "./config.json"; await import(config.setup);"#,
+                ),
+                ("config.json", r#"{ "setup": "./setup.cjs" }"#),
+                ("setup.cjs", NO_KIND),
+            ],
+            "setup.cjs",
+            Esm,
+        ),
+        (
+            &[
+                ("main.cjs", r#"require("./tools.cjs").load("./plug.mjs");"#),
+                ("tools.cjs", "exports.load = name => require(name);"),
+                PLUG,
+                ("plain.cjs", NO_KIND),
+            ],
+            "plain.cjs",
+            CommonJs,
+        ),
+        (
+            &[
+                ("main.cjs", r#"require("./plug.mjs");"#),
+                PLUG,
+                ("plain.cjs", NO_KIND),
+            ],
+            "plain.cjs",
+            CommonJs,
+        ),
+        (
+            &[
+                (
+                    "main.mjs",
+                    r#"import * as tools from "./tools.mjs"; await tools.load("./setup.cjs");"#,
+                ),
+                ("tools.mjs", "export const load = name => import(name);"),
+                ("setup.cjs", NO_KIND),
+            ],
+            "setup.cjs",
+            Esm,
+        ),
+        (
+            &[
+                ("main.mjs", r#"await import("./setup.cjs");"#),
+                ("setup.cjs", NO_KIND),
+            ],
+            "setup.cjs",
+            Esm,
+        ),
+    ];
+    for (files, asked, format) in rows {
+        load(&executable(files), |loaded| {
+            let loaded = files_of(loaded);
+            let analysis = loaded.analysis(file_named(loaded, asked));
+            assert_eq!(analysis.module_format, format, "{}", files[0].1);
         });
     }
 }

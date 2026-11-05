@@ -1318,7 +1318,11 @@ impl Checker<'_, '_> {
                         passed.push(at);
                     }
                     steps += 1;
-                    parent = self.parent_of_node(file, parent);
+                    parent = match parent {
+                        Parent::Expr(x) if x.is_some() => bound.parent_of_expr(x),
+                        Parent::Stmt(s) if s.is_some() => bound.parent_of_stmt(s),
+                        _ => self.parent_of_node(file, parent),
+                    };
                     continue;
                 }
             };
@@ -2387,10 +2391,8 @@ impl Files<'_> {
                 return Some(found);
             }
             // `GetSpellingSuggestion` first gets each candidate's name, then computes its edit distance.
-            let is_candidate = |&(candidate, sym): &(Atom, Sym)| {
-                files.is_spelling_candidate(sym, meaning, &mut *symbols)
-                    && is_close(text, files.atoms.bytes(candidate))
-            };
+            let is_candidate =
+                |&(_, sym): &(Atom, Sym)| files.is_spelling_candidate(sym, meaning, &mut *symbols);
             let named = |(candidate, sym): (Atom, Sym)| {
                 (
                     files.atoms.bytes(candidate),

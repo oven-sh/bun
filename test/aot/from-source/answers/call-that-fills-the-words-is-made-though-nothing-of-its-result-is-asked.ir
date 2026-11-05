@@ -1,0 +1,14 @@
+# -- source: main.js
+# function fixedList() { const kept = [1, 2, 3]; return () => { let sum = 0; for (let i = 0; i < 10; i++) sum += kept.length; return sum; }; }
+# print(fixedList()());
+# -- end of source
+# The closure that fixedList() gives is known by its type and holds no word, so the second call asks nothing of the first. By Link's effects the first only allocates.
+# It stores what the arrow reads: a call that leads to such a function is taken to do anything, and stays.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK: = CallDirect {{*}}function=f2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 30
+# RUN(CAPTURED): run-in-shell mechanisms=all-PromotedEnvironments
+# CAPTURED: 30

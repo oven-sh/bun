@@ -44,10 +44,14 @@ async function generate(): Promise<{ entries: Entry[]; bindings: string }> {
   return { entries, bindings: readFileSync(join(String(directory), "BunAOTHostBindings.cpp"), "utf8") };
 }
 
+// A run of the generator takes many seconds: one serves both cases.
+let generating: ReturnType<typeof generate> | undefined;
+const generatedOnce = () => (generating ??= generate());
+
 test.skipIf(generated === undefined)(
   "a pointer to a member of a removable class is recorded as its feature's",
   async () => {
-    const { entries, bindings } = await generate();
+    const { entries, bindings } = await generatedOnce();
     const removableClasses = new Set(
       entries
         .filter(
@@ -85,7 +89,7 @@ test.skipIf(generated === undefined)(
 test.skipIf(generated === undefined)(
   "a pointer to a function of a namespace is recorded as the feature's of the $bindgen that hands the namespace out",
   async () => {
-    const { entries, bindings } = await generate();
+    const { entries, bindings } = await generatedOnce();
     const featureOfBinding = new Map(
       entries.flatMap(({ path, uses }) => {
         const [, file, name] = /^native:Bindgen:(\w+)\.bind\.ts:(\w+)$/.exec(path) ?? [];

@@ -103,7 +103,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.file.hir.is_in_jsdoc(self.file.hir[statement].start) {
             return;
         }
-        self.count_statement(statement);
+        if self.file.counted_places.is_some() {
+            self.count_statement(statement);
+        }
         if commonjs::is_erased(self.file, statement) {
             self.lower_read_of_unmade_callee(statement);
             return;
@@ -230,9 +232,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         let decisions = self.file.decisions();
-        let in_bun_run = decisions.as_folded_by_bun_run();
         let has_live_else = no.is_some() && !decisions.is_dead_stmt(no);
         if decisions.is_dead_stmt(yes) {
+            let in_bun_run = decisions.as_folded_by_bun_run();
             self.lower_test_with_known_answer(test, in_bun_run.is_dead_stmt(yes));
             if has_live_else {
                 self.lower_statement(no);
@@ -240,6 +242,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         if no.is_some() && !has_live_else {
+            let in_bun_run = decisions.as_folded_by_bun_run();
             self.lower_test_with_known_answer(test, in_bun_run.is_dead_stmt(no));
             self.lower_statement(yes);
             return;

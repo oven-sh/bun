@@ -511,12 +511,25 @@ impl<'s> Task<'s> {
         }
     }
 
+    #[inline]
+    pub(super) fn cycles_end_below(&self, height: usize) -> bool {
+        self.cycle_ends_below.get() < height
+    }
+
+    #[inline]
     fn end_log_range_of_cycles(&self) {
-        if let Some(from) = self.cycle_since_idle.take() {
-            let logged = self.buffer().log_lengths();
-            self.logged_at_cycles.borrow_mut().push([from, logged]);
+        if let Some(from) = self.cycle_since_idle.get() {
+            self.end_log_range_of_cycles_since(from);
         }
         self.cycle_ends_below.set(0);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn end_log_range_of_cycles_since(&self, from: [usize; 2]) {
+        self.cycle_since_idle.set(None);
+        let logged = self.buffer().log_lengths();
+        self.logged_at_cycles.borrow_mut().push([from, logged]);
     }
 
     /// The keys the task has stored under since it was last idle, except for its immediate writes.

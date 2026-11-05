@@ -34,6 +34,8 @@ inline bool hasCompiledModules() { return !!JSC::AOT::Image::current(); }
 std::optional<JSC::AOT::ModuleID> compiledModuleForPath(const WTF::String& path);
 std::optional<JSC::AOT::ModuleID> moduleThatMockReplaces(const WTF::String& path);
 inline bool isCompiledModule(const WTF::String& path) { return compiledModuleForPath(path).has_value(); }
+// The file that called the native function of this frame, where it is a file on disk and none of the compiled ones: the loader brought it when the program ran. Else null: the origin of a text that node:vm runs is no file.
+WTF::String fileOfCallerThatWasNotCompiled(JSC::VM&, JSC::CallFrame*);
 std::optional<bool> isHiddenFromRequireCache(const WTF::String& key);
 
 // The attributes say as what the file is asked for, and the executable may hold it as that. Null: the import has none.
@@ -97,6 +99,8 @@ inline void willRequire(JSC::JSGlobalObject* globalObject, JSC::JSValue specifie
 }
 // For a built-in that runs machine code or script the compiler did not see, or hands out objects it took for unreachable.
 JSC::JSValue errorIfUnseenCodeIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);
+std::optional<JSC::EncodedJSValue> takeAnswerKeptForLoader(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, bool& engineAsks);
+void keepAnswerForLoader(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, JSC::JSValue answerOrWhatWasThrown, bool isThrown);
 // False in an executable whose program was compiled ahead of time without --compile-inspector: a debugger reaches what the compiler took for unreachable.
 bool isDebuggerAdmitted();
 JSC::JSValue errorIfDebuggerIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);

@@ -50,7 +50,11 @@ pub struct FilePrivateStates {
 }
 
 impl FilePrivateStates {
+    #[inline]
     pub fn site(&self, call: ExprId) -> Option<PrivateStateSite> {
+        if self.sites.is_empty() {
+            return None;
+        }
         find_by_key(&self.sites, call).copied()
     }
 
@@ -112,10 +116,15 @@ pub(super) fn find_in_file(input: &ResolveInput<'_, '_>, file: FileId) -> FilePr
         decisions: &compiled.analysis.decisions,
         candidates: Vec::new(),
     };
-    let creations = (0..finder.hir.exprs.len() as u32).map(ExprId);
-    finder.candidates = creations
-        .filter_map(|creation| finder.find_candidate(creation))
-        .collect();
+    let mut candidates = Vec::new();
+    for (index, expression) in finder.hir.exprs.iter().enumerate() {
+        if matches!(expression.kind, ExprKind::New(_))
+            && let Some(candidate) = finder.find_candidate(ExprId(index as u32))
+        {
+            candidates.push(candidate);
+        }
+    }
+    finder.candidates = candidates;
     finder
         .candidates
         .shared_sort_unstable_by_key(|candidate| candidate.symbol);

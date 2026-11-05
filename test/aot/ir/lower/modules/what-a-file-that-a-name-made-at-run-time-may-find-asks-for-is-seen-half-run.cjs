@@ -13,7 +13,8 @@ const asker = require("./asker.cjs");
 console.log(asker.seen, typeof served);
 
 // FILE: served.cjs
-require(process.env.MADE_UP_PLUG || "./asker.cjs");
+console.log("./asker.cjs");
+require(process.env.MADE_UP_PLUG);
 module.exports = function serve() {};
 
 // FILE: asker.cjs

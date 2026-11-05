@@ -1,0 +1,19 @@
+// Whichever build of the loop runs, and wherever it is left.
+const show = (value: any): string => (Object.is(value, -0) ? "-0" : typeof value === "bigint" ? value + "n" : String(value));
+const attempt = (run: () => unknown): string => {
+  try {
+    return show(run());
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+};
+function hidden<T>(value: unknown): T {
+  (globalThis as any).handedOn = value;
+  return (globalThis as any).handedOn as T;
+}
+const hook = hidden<(i: number) => void>(() => {});
+const marks = new Int32Array(4);
+let turns = 0;
+const short = hidden<Int32Array>(new Int32Array([10, 20]));
+function work(view: Int32Array): unknown { let s = 0; for (let i = 0; i < view.length; i++) s = (s + view[i - 1]! + view[i]!) | 0; return s; }
+for (const made of [[1, -2, 3, 4], [7], [], [5, 6, 7, 8, 9, 10]]) console.log(attempt(() => work(hidden(new Int32Array(made)))));

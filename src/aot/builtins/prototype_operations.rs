@@ -23,6 +23,13 @@ pub fn prototype_operation_of(builtin: BuiltinId) -> Option<PrototypeOperation> 
             parent: 2,
         }),
         BuiltinId::ObjectAssign => Some(PrototypeOperation::CopyProperties { target: 0 }),
+        BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty => {
+            Some(PrototypeOperation::DefineProperty {
+                object: 0,
+                key: 1,
+                descriptor: 2,
+            })
+        }
         BuiltinId::FunctionPrototypeCall | BuiltinId::FunctionPrototypeApply => {
             Some(PrototypeOperation::CallFunction { receiver: 0 })
         }

@@ -1,8 +1,8 @@
 use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, PrivateMembers, ScopeId, SymbolId};
 use bun_sema::fold::{Decision, TreeNode};
 use bun_sema::hir::{
-    BinOp, Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId, PatKind, PropId,
-    PropKey, Span, UnOp,
+    BinOp, Branches, Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId,
+    PatKind, PropId, PropKey, Span, UnOp,
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxCallee, JsxImport, RequireCallForm,
@@ -128,6 +128,17 @@ impl Walker<'_, '_> {
             | ExprKind::Regex { .. }
             | ExprKind::JsxText(_)
             | ExprKind::ImportMeta => {}
+            ExprKind::Binary { left, right, .. } => {
+                self.push_present_expressions([left, right], context);
+            }
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = self.hir.branches(branches);
+                self.push_present_expressions([test, yes, no], context);
+            }
+            ExprKind::Spread(operand)
+            | ExprKind::Await(operand)
+            | ExprKind::As { expr: operand, .. }
+            | ExprKind::NonNull(operand) => self.push_present_expressions([operand], context),
             _ => self.push_evaluated_children(expression, context),
         }
     }
@@ -191,18 +202,18 @@ impl Walker<'_, '_> {
 
     fn visit_name(&mut self, identifier: ExprId, binding: Binding, context: Context) {
         let (bound, function) = (self.bound, context.function);
+        let is_store = bound.is_store_target(identifier);
         if let Binding::Symbol(symbol) = binding
-            && (!self.is_only_called_or_tested[identifier.idx()]
-                || bound.is_store_target(identifier))
+            && (!self.is_only_called_or_tested[identifier.idx()] || is_store)
         {
             self.walk.is_looked_at[symbol.idx()] = true;
         }
-        if let (Binding::Symbol(symbol), true) = (binding, bound.is_store_target(identifier)) {
+        if let (Binding::Symbol(symbol), true) = (binding, is_store) {
             self.walk.symbol_stores.push((symbol, identifier, function));
             self.walk.last_store_times[symbol.idx()] = u32::MAX;
             self.pending_stores.push(symbol);
         }
-        self.record_binding_use(context, binding, bound.is_store_target(identifier));
+        self.record_binding_use(context, binding, is_store);
         if let Some(start) = bound.dynamic_lookup_scope(NodeData::Expr(identifier)) {
             let looked_for = find_binding_looked_for(bound, start, binding);
             let declaring_scope = self.declaring_scope(looked_for);
@@ -302,7 +313,11 @@ impl Walker<'_, '_> {
             self.record_private_name(access, context);
             self.push_expressions([object], context);
         }
-        self.push_expressions([index], context);
+        if index.is_some() {
+            self.push_expressions([index], context);
+        } else {
+            self.number_walked += 1;
+        }
     }
 
     fn names_variable_of_inner_module(&self, access: ExprId) -> bool {
@@ -513,8 +528,9 @@ impl Walker<'_, '_> {
             }
             Some(_) | None => None,
         };
-        let read = read.map(|read| (context.function, read));
-        self.walk.argument_reads.extend(read);
+        if let Some(read) = read {
+            self.walk.argument_reads.push((context.function, read));
+        }
     }
 
     fn visit_jsx(&mut self, expression: ExprId, jsx: JsxId, context: Context) {
@@ -586,6 +602,25 @@ impl Walker<'_, '_> {
 
     pub(super) fn visit_pattern(&mut self, pattern: PatId, role: PatternRole, context: Context) {
         let hir = self.hir;
+        if let Some(name) = pattern.some()
+            && matches!(hir[name].kind, PatKind::Ident(_))
+        {
+            match role {
+                PatternRole::UnstoredVar => return,
+                PatternRole::StoredVar => self.record_declarator_store(name, context),
+                PatternRole::LexicalDeclaration | PatternRole::Parameter => {}
+            }
+            if let Binding::Symbol(symbol) = self.bound.initialized_binding(name) {
+                let task = match role {
+                    PatternRole::Parameter => Task::InitializeParameter(symbol),
+                    PatternRole::UnstoredVar
+                    | PatternRole::StoredVar
+                    | PatternRole::LexicalDeclaration => Task::InitializeSymbol(symbol),
+                };
+                self.push_task(task, context);
+            }
+            return;
+        }
         let mut initialized: SmallVec<[SymbolId; 4]> = SmallVec::new();
         let mut pending: SmallVec<[TreeNode; 8]> = SmallVec::new();
         pending.extend(pattern.some().map(TreeNode::Pattern));

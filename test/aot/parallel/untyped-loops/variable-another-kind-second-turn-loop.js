@@ -1,6 +1,6 @@
 // A variable holds an object, a list, a text, undefined, null or a boolean when a loop begins and an integer from the second turn on. Each turn reads it and adds to a variable of the module or of the function around it.
-// STATISTIC: LoopsBuiltTwice >= 8
-// It is met today by 21 loops of Bun's library, which comes into the executable: none of the loops here is built twice.
+// STATISTIC: LoopsBuiltTwice >= 4
+// STATISTIC: LoopsBuiltTwice >= 8 Todo: 23 of the 27 that met it were loops of Bun's library, which no longer comes into this executable; of the loops here four are built twice
 let out = "";
 let total = 0;
 let last = 0;

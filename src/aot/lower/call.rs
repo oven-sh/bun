@@ -66,8 +66,17 @@ pub(in crate::lower) struct CallOptions<'t> {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_arguments(&mut self, arguments: IdList<ExprId>) -> Arguments {
-        let arguments: SmallVec<[ExprId; 4]> = self.file.hir.ids(arguments).collect();
-        self.lower_argument_slice(&arguments)
+        let hir = self.file.hir;
+        let is_spread = |argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
+        if hir.ids(arguments).any(is_spread) {
+            let arguments: SmallVec<[ExprId; 4]> = hir.ids(arguments).collect();
+            return self.lower_argument_slice(&arguments);
+        }
+        let mut values: SmallVec<[ValueId; 4]> = SmallVec::new();
+        for argument in hir.ids(arguments) {
+            values.push(self.lower_expression(argument));
+        }
+        Arguments::Values(values)
     }
 
     pub(crate) fn emit_construct(
@@ -125,12 +134,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(value) = self.try_lower_known_call(call) {
             return value;
         }
-        match builtins.of_expr(inner) {
+        let (is_resolved, named) = match builtins.of_expr(inner) {
             Some(Resolved::Intrinsic(intrinsic)) => {
                 return intrinsic::lower_intrinsic_call(self, call, intrinsic, evaluation);
             }
-            Some(Resolved::Builtin(_) | Resolved::DynamicGlobal(_)) | None => {}
-        }
+            Some(Resolved::Builtin(path)) => (true, Some(path.id)),
+            Some(Resolved::DynamicGlobal(_)) => (true, None),
+            None => (false, None),
+        };
         if let Some(text) = builtins.evaluated_text(call) {
             return self.lower_evaluated_text_call(call, text, exit, evaluation.tail);
         }
@@ -138,11 +149,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return value;
         }
 
-        let expected = self.file.find_callee_by_signature(call, inner);
+        let expected = match is_resolved {
+            true => None,
+            false => self.file.find_callee_by_signature(call),
+        };
         let mut callee = self.lower_callee(site.callee, exit, expected);
         callee.function = self.leave_chain_if_nullish(site, callee.function, exit);
         let arguments = self.lower_arguments(site.args);
-        self.emit_call_expression(call, callee, arguments, evaluation.tail)
+        self.emit_call_of_named(call, site, named, callee, arguments, evaluation.tail)
     }
 
     fn lower_call_of_declaration(
@@ -275,7 +289,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         options: CallOptions<'_>,
         expected_result: Option<ExpectedResultId>,
     ) -> ValueId {
-        let Some(on_answer) = self.callees_read_on_answers.remove(&callee.function) else {
+        let on_answer = match self.callees_read_on_answers.is_empty() {
+            true => None,
+            false => self.callees_read_on_answers.remove(&callee.function),
+        };
+        let Some(on_answer) = on_answer else {
             return self.emit_call_of_one_callee(callee, arguments, options, expected_result);
         };
         let split = self.split_on_type(on_answer, TypeTable::ABSENT);
@@ -368,14 +386,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         call: ExprId,
         callee: Callee,
+        arguments: Arguments,
+        tail: Tail<'_>,
+    ) -> ValueId {
+        let site = call_site(self.file, call);
+        let named = self.file.skip_type_syntax(site.callee);
+        let named = self.file.builtins.builtin_of_expression(named);
+        self.emit_call_of_named(call, site, named, callee, arguments, tail)
+    }
+
+    fn emit_call_of_named(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        named: Option<BuiltinId>,
+        callee: Callee,
         mut arguments: Arguments,
         tail: Tail<'_>,
     ) -> ValueId {
         let hir = self.file.hir;
-        let site = call_site(self.file, call);
         self.convert_argument_values(call, &mut arguments);
-        let named = self.file.skip_type_syntax(site.callee);
-        let named = self.file.builtins.builtin_of_expression(named);
         if matches!(hir[call].kind, ExprKind::Call(_)) && named.is_some_and(table::stubs_global) {
             arguments = self.hand_global_object_to_stub(arguments);
         }
@@ -383,7 +413,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             tail: Tail::No,
             is_never_inlined: false,
             is_done_in_place: false,
-            call_number: self.file.number_symbol_call(call),
+            call_number: self.file.number_symbol_call(call, named),
         };
         let expected = self.find_expected_result(call);
         self.set_position(self.file.call_position(site));
@@ -467,7 +497,15 @@ impl FileLowering<'_, '_, '_, '_> {
         calls_symbol.then_some(u32::from(number))
     }
 
-    fn number_symbol_call(&mut self, call: ExprId) -> Option<u32> {
+    #[inline]
+    fn number_symbol_call(&mut self, call: ExprId, named: Option<BuiltinId>) -> Option<u32> {
+        match named {
+            Some(BuiltinId::Symbol | BuiltinId::SymbolFor) => self.number_symbol_made_by(call),
+            _ => None,
+        }
+    }
+
+    fn number_symbol_made_by(&mut self, call: ExprId) -> Option<u32> {
         self.intern_key_of_registered_symbol(call);
         let number = self.find_number_of_symbol_call(call)?;
         let description = match self.hir.ids(call_site(self, call).args).next() {
@@ -503,10 +541,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_callee_by_signature(&mut self, call: ExprId, inner: ExprId) -> Option<BuiltinId> {
-        if self.builtins.of_expr(inner).is_some() {
-            return None;
-        }
+    fn find_callee_by_signature(&mut self, call: ExprId) -> Option<BuiltinId> {
         let declaration = match self.queries.only_declaration_called(call) {
             Some(function) => function,
             None => self.queries.resolved_call(call).ok()??.declaration?,

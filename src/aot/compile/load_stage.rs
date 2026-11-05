@@ -27,7 +27,7 @@ use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
 use bun_sema::hir::{ExprId, ExprKind};
-use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
+use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, SharedSort};
@@ -420,7 +420,7 @@ impl<'a> Build<'a> {
                     code: request.code,
                     options,
                 });
-                let find = |code: &dyn CodeView<'_>| -> Vec<Vec<u8>> { finder.find(code) };
+                let find = |code: &dyn CodeView<'_>| -> EntryPointsFound { finder.find(code) };
                 let request_that_finds = CompileRequest {
                     entry_points: EntryPoints::WrittenAndFound(&options.entry_points, &find),
                     ..*request

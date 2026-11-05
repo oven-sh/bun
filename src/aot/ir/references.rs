@@ -113,6 +113,7 @@ fn remap_word<I: Id>(word: u32, map: &[Option<I>]) -> u32 {
 }
 
 impl IdMap<'_> {
+    #[inline]
     pub fn remap_word(&self, kind: ReferenceKind, word: u32) -> u32 {
         match kind {
             ReferenceKind::String => remap_word(word, self.strings),

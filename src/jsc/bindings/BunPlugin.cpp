@@ -3560,7 +3560,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 
 #if ENABLE(AOT)
     if (auto compiledModule = globalObject->vm().hasCompiledCode() ? JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::moduleThatMockReplaces(specifier)) : std::nullopt; compiledModule && !JSC::AOT::mayBeMocked(globalObject, *compiledModule)) {
-        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, JSC::AOT::refusedMockMessage(globalObject, specifier)));
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, JSC::AOT::refusedMockMessage(globalObject, specifier, Bun::fileOfCallerThatWasNotCompiled(vm, callframe))));
         return {};
     }
 #endif
@@ -5099,7 +5099,19 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject, (JSC::JSGlobalObject
 
 extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* from)
 {
+#if ENABLE(AOT)
+    bool engineAsks = false;
+    if (std::optional<JSC::EncodedJSValue> kept = Bun::takeAnswerKeptForLoader(globalObject, namespaceString, path, from, engineAsks))
+        return *kept;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSC::EncodedJSValue answer = globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
+    JSC::Exception* thrown = scope.exception();
+    if (engineAsks) [[unlikely]]
+        Bun::keepAnswerForLoader(globalObject, namespaceString, path, from, thrown ? thrown->value() : JSC::JSValue::decode(answer), !!thrown);
+    return answer;
+#else
     return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
+#endif
 }
 
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject* globalObject)

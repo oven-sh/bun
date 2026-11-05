@@ -25,18 +25,21 @@ impl<'s> Folder<'_, 's> {
                 .in_bun_run
                 .extend(operand.filter(|_| is_excluded_by_bun_run));
         }
-        let stmts = (0..self.hir.stmts.len()).map(|index| StmtId(index as u32));
-        let reached = stmts.filter(|&stmt| self.bound.parent_of_stmt(stmt) != Parent::None);
-        for stmt in reached {
+        for stmt in (0..self.hir.stmts.len()).map(|index| StmtId(index as u32)) {
+            if self.bound.parent_of_stmt(stmt) == Parent::None {
+                continue;
+            }
             if let StmtKind::If { test, yes, no } = self.hir[stmt].kind {
                 let excluded = match self.condition(test) {
                     Some(true) => no.some(),
                     Some(false) => yes.some(),
                     None => None,
                 };
-                roots.all.extend(excluded.map(TreeNode::Stmt));
-                if self.is_test_truthy_in_bun_run(test).is_some() {
-                    roots.in_bun_run.extend(excluded.map(TreeNode::Stmt));
+                if let Some(excluded) = excluded {
+                    roots.all.push(TreeNode::Stmt(excluded));
+                    if self.is_test_truthy_in_bun_run(test).is_some() {
+                        roots.in_bun_run.push(TreeNode::Stmt(excluded));
+                    }
                 }
             } else {
                 self.push_excluded_parts(stmt, &mut roots.all);
@@ -169,7 +172,19 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
+    #[inline]
     fn always_leaves_list(&self, statement: StmtId) -> bool {
+        match self.hir[statement].kind {
+            StmtKind::Return(_)
+            | StmtKind::Throw(_)
+            | StmtKind::Break(_)
+            | StmtKind::Continue(_) => true,
+            StmtKind::If { .. } | StmtKind::Block(_) => self.always_leaves_list_slow(statement),
+            _ => false,
+        }
+    }
+
+    fn always_leaves_list_slow(&self, statement: StmtId) -> bool {
         let mut current = statement;
         loop {
             let StmtKind::If { test, yes, no } = self.hir[current].kind else {

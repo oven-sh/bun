@@ -11,7 +11,7 @@ use super::inferred_from_use::{
     MembersByName, ReferenceIndex, Subject, TypeState, TypesInProgress, Usage, UsageState,
 };
 use super::kept_answers::{
-    GaveUpAnswers, KeptFact, KeptMemo, ObjectAnswers, TypeAnswers, TypeQuestion,
+    GaveUpAnswers, KeptFact, KeptMemo, ObjectAnswers, ObjectRow, TypeAnswers, TypeQuestion, TypeRow,
 };
 use super::prototype_links::NamedValues;
 use super::trust::Trust;
@@ -54,6 +54,8 @@ pub struct Queries<'c, 'p, 's> {
     closed_cycles_before: u32,
     union_members_compared_before: u64,
     depth: u32,
+    stack_base_of_task: usize,
+    flow_analysis_disabled_around: Vec<(u32, Vec<FileId>)>,
     unstable_answers: u64,
     has_met_inferred_member: bool,
     flow_analysis_was_disabled: Vec<FileId>,
@@ -97,7 +99,7 @@ pub(super) struct Memo<'c> {
     literal_contexts: FxHashMap<ExprId, Option<TypeId>>,
     pub(super) unwritten_forms: FxHashMap<(FileId, TypeNodeId), GaveUp>,
     pub(super) alias_forms: FxHashMap<Sym, AliasForm>,
-    pub(super) reference_index: Option<ReferenceIndex<'c>>,
+    pub(super) reference_index: ReferenceIndex<'c>,
     pub(super) first_spread_arguments: FxHashMap<ExprId, u32>,
     pub(super) exported_symbols: Option<FxHashSet<Sym>>,
     pub(super) parameters_taking_elements: FxHashMap<(Atom, usize), u8>,
@@ -123,23 +125,6 @@ pub(super) enum AliasScan {
     InProgress,
     MentionsUntrustedAlias,
     MentionsNone,
-}
-
-struct CutState {
-    ran_out_of_stack: bool,
-    flow_analysis_disabled: Vec<FileId>,
-}
-
-impl CutState {
-    fn reason(&self) -> Option<GaveUp> {
-        if self.ran_out_of_stack {
-            Some(GaveUp::OutOfStack)
-        } else if !self.flow_analysis_disabled.is_empty() {
-            Some(GaveUp::FlowAnalysisDisabled)
-        } else {
-            None
-        }
-    }
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -176,6 +161,8 @@ impl<'p, 's> Checker<'p, 's> {
             closed_cycles_before,
             union_members_compared_before,
             depth: 0,
+            stack_base_of_task: 0,
+            flow_analysis_disabled_around: Vec::new(),
             unstable_answers: 0,
             has_met_inferred_member: false,
             flow_analysis_was_disabled,
@@ -252,39 +239,61 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     #[inline(never)]
-    fn take_cut_state(&mut self) -> CutState {
+    fn begin_question(&mut self) -> (u64, bool) {
         self.forget_what_a_question_leaves();
-        CutState {
-            ran_out_of_stack: self.c.ran_out_of_stack.replace(false),
-            flow_analysis_disabled: std::mem::take(&mut self.c.flow_analysis_disabled),
+        if !self.c.flow_analysis_disabled.is_empty() {
+            self.set_flow_analysis_disabled_aside();
         }
+        if self.depth == 0 {
+            self.stack_base_of_task = self.c.begin_stack_of_question();
+        }
+        self.depth += 1;
+        (
+            self.c.instantiation_limit_hits,
+            self.c.ran_out_of_stack.replace(false),
+        )
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn set_flow_analysis_disabled_aside(&mut self) {
+        let disabled = std::mem::take(&mut self.c.flow_analysis_disabled);
+        self.flow_analysis_disabled_around
+            .push((self.depth, disabled));
     }
 
     #[inline(never)]
-    fn end_question(
-        &mut self,
-        enclosing: CutState,
-        limit_hits: u64,
-        stack_of_task: Option<usize>,
-    ) -> Option<GaveUp> {
+    fn end_question(&mut self, limit_hits: u64, had_run_out_of_stack: bool) -> Option<GaveUp> {
         self.depth -= 1;
-        if let Some(base) = stack_of_task {
-            self.c.end_stack_of_question(base);
+        if self.depth == 0 {
+            self.c.end_stack_of_question(self.stack_base_of_task);
+            self.statistics.asked += 1;
         }
         if self.c.leaves_depth_limit_unreported && self.c.instantiation_limit_hits != limit_hits {
             self.unstable_answers += 1;
         }
         self.forget_what_a_question_leaves();
-        let ran_out_of_stack = (self.c.ran_out_of_stack).replace(enclosing.ran_out_of_stack);
-        let own = CutState {
-            ran_out_of_stack,
-            flow_analysis_disabled: std::mem::replace(
-                &mut self.c.flow_analysis_disabled,
-                enclosing.flow_analysis_disabled,
-            ),
-        };
-        self.lacks_stack |= own.ran_out_of_stack;
-        own.reason()
+        let ran_out_of_stack = (self.c.ran_out_of_stack).replace(had_run_out_of_stack);
+        self.lacks_stack |= ran_out_of_stack;
+        let is_flow_analysis_disabled = !self.c.flow_analysis_disabled.is_empty();
+        if is_flow_analysis_disabled || !self.flow_analysis_disabled_around.is_empty() {
+            self.put_flow_analysis_disabled_back();
+        }
+        if ran_out_of_stack {
+            Some(GaveUp::OutOfStack)
+        } else if is_flow_analysis_disabled {
+            Some(GaveUp::FlowAnalysisDisabled)
+        } else {
+            None
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn put_flow_analysis_disabled_back(&mut self) {
+        let depth = self.depth;
+        let around = (self.flow_analysis_disabled_around).pop_if(|around| around.0 == depth);
+        self.c.flow_analysis_disabled = around.map_or_else(Vec::new, |around| around.1);
     }
 
     pub(super) fn ask<T>(
@@ -292,31 +301,30 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         compute: impl FnOnce(&mut Self) -> Result<T, GaveUp>,
     ) -> Result<T, GaveUp> {
         debug_assert!(self.c.stack.is_empty());
-        let is_outermost = self.depth == 0;
         if self.answers_nothing || self.lacks_stack {
-            let reason = match self.answers_nothing {
-                true => GaveUp::Unresolved,
-                false => GaveUp::OutOfStack,
-            };
-            self.note_gave_up(reason, is_outermost);
-            return Err(reason);
+            return Err(self.refuse_question());
         }
-        let enclosing = self.take_cut_state();
-        let limit_hits = self.c.instantiation_limit_hits;
-        let stack_of_task = is_outermost.then(|| self.c.begin_stack_of_question());
-        self.depth += 1;
+        let (limit_hits, had_run_out_of_stack) = self.begin_question();
         let computed = compute(self);
-        let answer = match self.end_question(enclosing, limit_hits, stack_of_task) {
+        let answer = match self.end_question(limit_hits, had_run_out_of_stack) {
             Some(reason) => Err(reason),
             None => computed,
         };
-        if is_outermost {
-            self.statistics.asked += 1;
-        }
         if let Err(reason) = answer {
-            self.note_gave_up(reason, is_outermost);
+            self.note_gave_up(reason, self.depth == 0);
         }
         answer
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn refuse_question(&mut self) -> GaveUp {
+        let reason = match self.answers_nothing {
+            true => GaveUp::Unresolved,
+            false => GaveUp::OutOfStack,
+        };
+        self.note_gave_up(reason, self.depth == 0);
+        reason
     }
 
     #[cold]
@@ -376,15 +384,30 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
+    #[inline]
     fn answer_as_known<T>(&mut self, stored: Result<T, GaveUp>) -> Result<T, GaveUp> {
-        if stored.is_err() {
-            return self.ask(|_| stored);
+        match stored {
+            Ok(known) => {
+                self.note_answer_is_known();
+                Ok(known)
+            }
+            Err(reason) => Err(self.give_up_as_known(reason)),
         }
+    }
+
+    #[inline]
+    fn note_answer_is_known(&mut self) {
         match self.depth {
             0 => self.statistics.asked += 1,
             _ => self.forget_what_a_question_leaves(),
         }
-        stored
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn give_up_as_known(&mut self, reason: GaveUp) -> GaveUp {
+        let asked = self.ask(|_| Err::<(), GaveUp>(reason));
+        asked.err().unwrap_or(reason)
     }
 
     pub(super) fn note_inferred_member(&mut self) {
@@ -417,6 +440,17 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if let Some(known) = *slot(self.kept.type_at(row)) {
             return self.answer_as_known(Ok(known));
         }
+        self.ask_about_type(ty, row, question, slot, compute)
+    }
+
+    fn ask_about_type<T: Copy>(
+        &mut self,
+        ty: TypeId,
+        row: TypeRow,
+        question: TypeQuestion,
+        slot: for<'m> fn(&'m mut TypeAnswers<'c>) -> &'m mut Option<T>,
+        compute: impl FnOnce(&mut Self) -> Result<T, GaveUp>,
+    ) -> Result<T, GaveUp> {
         if let Some(reason) = self.find_gave_up(ty, question) {
             return self.answer_as_known(Err(reason));
         }
@@ -472,6 +506,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    #[inline]
     pub fn count_unstable_answers(&self) -> u64 {
         self.unstable_answers
     }
@@ -522,6 +557,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.file
     }
 
+    #[inline]
     pub fn files(&self) -> &'p Files<'s> {
         self.c.files()
     }
@@ -543,6 +579,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         role.unwrap_or(FileRole::TypesOnly)
     }
 
+    #[inline]
     pub fn is_stack_low(&self) -> bool {
         self.c.is_stack_low()
     }
@@ -584,6 +621,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
+    #[inline]
     pub fn class_of_binding(&self, symbol: Sym) -> Option<ClassRef> {
         self.compute_class_of_binding(symbol)
     }
@@ -791,11 +829,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     pub fn without_nullish(&mut self, ty: TypeId) -> CheckedType {
         let ty = self.resolved(ty)?;
+        if !self.c.is_union(ty) {
+            return Ok(match self.c.is_nullish(ty) {
+                true => TypeId::NEVER,
+                false => ty,
+            });
+        }
         let is_union_of_many = self.c.parts(ty).len() > 8;
         if is_union_of_many && let Some(&known) = self.memo.unions_without_nullish.get(&ty) {
             return Ok(known);
         }
-        let grown = self.c.growth_of(ty).and_then(|growth| {
+        let growth = match is_union_of_many {
+            true => self.c.growth_of(ty),
+            false => None,
+        };
+        let grown = growth.and_then(|growth| {
             let so_far = *self.memo.unions_without_nullish.get(&growth.from)?;
             let keeps_added = !self.c.is_nullish(growth.added);
             self.c.filter_grown_union(ty, growth, so_far, keeps_added)
@@ -973,15 +1021,25 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             return known;
         }
-        let was_known = self.memo.variables.contains_key(&symbol);
-        let written = self.memoized_record(
-            symbol,
-            |memo| &mut memo.variables,
-            |queries| queries.compute_written_variable_type(symbol),
-        );
+        if self.depth == 0 {
+            self.statistics.asked += 1;
+        }
+        if let Some(&stored) = self.memo.variables.get(&symbol) {
+            return stored;
+        }
+        let unstable_answers = self.unstable_answers;
+        self.depth += 1;
+        let written = self.compute_written_variable_type(symbol);
+        self.depth -= 1;
         let is_answer = !matches!(written, WrittenType::GaveUp(_));
-        if !was_known && is_answer && self.memo.variables.remove(&symbol).is_some() {
+        if self.unstable_answers != unstable_answers {
+            if is_answer && self.memo.variables.remove(&symbol).is_some() {
+                self.kept.variables.insert(symbol, written);
+            }
+        } else if is_answer {
             self.kept.variables.insert(symbol, written);
+        } else {
+            self.memo.variables.insert(symbol, written);
         }
         written
     }
@@ -1059,9 +1117,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             return known;
         }
-        let was_known = table(&mut self.memo).contains_key(&key);
+        let was_known = !holds_everywhere_else || table(&mut self.memo).contains_key(&key);
         let shape = self.memoized_record(key, table, compute);
-        if !was_known && holds_everywhere_else && table(&mut self.memo).remove(&key).is_some() {
+        if !was_known && table(&mut self.memo).remove(&key).is_some() {
             kept(&mut self.kept).insert(key, shape);
         }
         shape
@@ -1219,8 +1277,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub fn type_shape(&mut self, ty: TypeId) -> Result<TypeShape<'c>, GaveUp> {
-        self.kept_about_type(
+        let row = self.kept.type_row(ty);
+        if let Some(known) = self.kept.type_at(row).shape {
+            self.note_answer_is_known();
+            return Ok(known);
+        }
+        self.ask_for_type_shape(ty, row)
+    }
+
+    #[inline(never)]
+    fn ask_for_type_shape(&mut self, ty: TypeId, row: TypeRow) -> Result<TypeShape<'c>, GaveUp> {
+        self.ask_about_type(
             ty,
+            row,
             TypeQuestion::Shape,
             |answers| &mut answers.shape,
             |queries| queries.compute_type_shape(ty),
@@ -1387,7 +1456,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         });
         let is_answer = !matches!(types.written, WrittenType::GaveUp(_)) && types.checked.is_ok();
         if is_answer && !is_inferred && self.unstable_answers == unstable_answers {
-            self.keep_member_types(object_type, member, types);
+            self.keep_member_types(object_type, row, member, types);
         }
         types
     }
@@ -1409,10 +1478,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn keep_member_types(
         &mut self,
         object_type: TypeId,
+        row: ObjectRow,
         member: ListedMember,
         types: PositionTypes,
     ) {
-        let row = self.kept.object_row(object_type);
         if !self.kept.has_room_for_member_types(row) {
             let declared = self.declared_type_of_this(object_type);
             let count = self
@@ -1467,6 +1536,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .has_other_optional_members_than_mapped_type(object_type)
     }
 
+    #[inline]
     pub fn object_origin(&mut self, object_type: TypeId) -> ObjectOrigin {
         self.compute_object_origin(object_type)
     }
@@ -1479,14 +1549,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let identity = self.c.recursion_identity_of_family(ty);
         let is_instantiation =
             |&on_path: &TypeId| self.c.recursion_identity_of_family(on_path) == identity;
-        let family: Vec<TypeId> = path.iter().copied().filter(is_instantiation).collect();
-        let Some(last) = family
-            .len()
-            .checked_sub(MAX_DEPTH)
-            .map(|start| &family[start..])
-        else {
-            return false;
-        };
+        let mut family = path.iter().rev().copied().filter(is_instantiation);
+        let mut last = [ty; MAX_DEPTH];
+        for place in last.iter_mut().rev() {
+            let Some(on_path) = family.next() else {
+                return false;
+            };
+            *place = on_path;
+        }
         let types = self.c.types();
         let mut neighbors = last.iter().zip(last.iter().skip(1));
         neighbors.all(|(&outer, &inner)| types.nesting_order(inner, outer).is_gt())
@@ -1537,6 +1607,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(ty)
     }
 
+    #[inline]
     pub(super) fn require_live_expression(&self, expression: ExprId) -> Result<(), GaveUp> {
         let is_unreached = self.bound().parent_of_expr(expression) == Parent::None;
         match is_unreached || self.c.is_dead_expression(self.file, expression) {

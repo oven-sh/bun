@@ -51,7 +51,6 @@ export const addServerName = b.fn({
         "ToPrimitive",
         table.named(...tlsOptionNames),
       ),
-      table.membersOfObjectsOnly,
     ],
   },
 });

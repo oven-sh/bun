@@ -171,9 +171,10 @@ impl Places {
         self.count = 0;
     }
 
+    #[inline]
     pub(in crate::lower) fn place(&mut self, index: usize) -> usize {
         if self.entries.len() <= index {
-            self.entries.resize(index + 1, 0);
+            self.add_entries_up_to(index);
         }
         let entry = &mut self.entries[index];
         if *entry < self.first {
@@ -183,6 +184,14 @@ impl Places {
         (*entry - self.first) as usize
     }
 
+    #[cold]
+    #[inline(never)]
+    fn add_entries_up_to(&mut self, index: usize) {
+        let length = (index + 1).max(2 * self.entries.len());
+        self.entries.resize(length, 0);
+    }
+
+    #[inline]
     pub(in crate::lower) fn find(&self, index: usize) -> Option<usize> {
         let place = self.entries.get(index)?.checked_sub(self.first)?;
         Some(place as usize)
@@ -252,12 +261,15 @@ impl TaskState {
             tables: self.tables,
             finders: self.finders,
             marks: self.marks,
+            layout_places: Places::default(),
+            function_places: Places::default(),
             memo: self.memo.hand_on(carried),
+            orders: KnownOrders::default(),
             is_of_program: carried.and(self.is_of_program),
             atoms: self.atoms,
             atom_keys: self.atom_keys,
             visit: self.visit,
-            ..TaskState::new()
+            last_visit: None,
         };
         let tables = next.tables.take();
         let ends_with_lost_visit = tables.lengths() != committed_lengths;

@@ -1,1 +1,0 @@
-globalThis.ran.push("lamp");

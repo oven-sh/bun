@@ -892,6 +892,11 @@ impl<'s> Interner<'s> {
         if self.first == 0 {
             return None;
         }
+        self.find_below_first(spread, text)
+    }
+
+    #[inline(never)]
+    fn find_below_first(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         let Tables { slots, texts, .. } = self.base;
         let matches = |i: u32| i < self.first && &**texts.get(i) == text;
         slots.find(spread, matches).map(Atom)

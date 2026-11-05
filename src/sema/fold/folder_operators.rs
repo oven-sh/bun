@@ -4,7 +4,7 @@ use super::inputs::RuntimeValueKind;
 use super::{Constant, Decision, literal_constant};
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, CommonJsVariable};
-use crate::hir::{BinOp, Branches, ExprId, ExprKind, IdList, UnOp};
+use crate::hir::{BinOp, Branches, Chain, ExprId, ExprKind, IdList, UnOp};
 use crate::import_sites::is_free_common_js;
 
 #[derive(Copy, Clone)]
@@ -38,7 +38,11 @@ impl<'s> Folder<'_, 's> {
             | ExprKind::Instantiation { expr, .. } => self.fold_cast(e, expr),
             ExprKind::Ident(name) => self.fold_ident(e, name),
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
-                match self.fold_short_circuit(e, obj, chain) {
+                let short_circuited = match chain {
+                    Chain::No => None,
+                    Chain::Start | Chain::Continue => self.fold_short_circuit(e, obj, chain),
+                };
+                match short_circuited {
                     Some(folded) => folded,
                     None => self.fold_member(e, chain),
                 }

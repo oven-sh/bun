@@ -2,11 +2,12 @@
 // # the method is read, then an operand runs code, then the call is made: a call by value. Its stub looks at the receiver: as made now, so as made at the read. Whatever the operand does to the receiver, what was READ is what is called
 // # f10 = tell, f11 = twice, f1 = gather, f2 = fill, f3 = keep, f4 = once, f5 = keysOf, f6 = probe, f7 = run
 // # RUN(PUSHED): bytes f1:Body mechanisms=all-Inlining
-// # PUSHED: CallMethodOfBuiltinClassByValue.ArrayPush
+// # where the receiver's class is proven the read is a look at the receiver alone, and the stub of the call fetches the method that was left unread if the operand has changed the receiver since
+// # PUSHED: CallMethodThatMayBeUnread.ArrayPush
 // # RUN(SET): bytes f2:Body mechanisms=all-Inlining
-// # SET: CallMethodOfBuiltinClassByValue.MapSet
+// # SET: CallMethodOfProvenBuiltinClassByValue.MapSet
 // # RUN(ADDED): bytes f3:Body mechanisms=all-Inlining
-// # ADDED: CallMethodOfBuiltinClassByValue.SetAdd
+// # ADDED: CallMethodThatMayBeUnread.SetAdd
 // # RUN(ONCE): bytes f4:Body mechanisms=all-Inlining
 // # ONCE: CallMethodOfBuiltinClassByValue.ArrayPush
 // # RUN(PROBED): bytes f6:Body mechanisms=all-Inlining

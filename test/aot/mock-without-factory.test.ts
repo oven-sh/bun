@@ -1,7 +1,6 @@
 // `vi.mock("./lib", { spy: true })` replaces every function of the module by a mock function that still runs it. The test runner reads the module's exports for that, under a key of
 // its own, and a compiled run refused the key: "Cannot load '..?actual&spy'".
-// What else a mock without a factory once got wrong stands in ./fixed-runs: closed/automock-*, closed/automocked-*, closed/require-of-an-automocked-commonjs-file,
-// closed/second-factory-by-domock and open/automock-behind-a-factory-and-a-reset. This case is silent beside others.
+// What else a mock without a factory once got wrong stands in ./fixed-runs: closed/automock-* and open/automock-behind-a-factory-and-a-reset. This case is silent beside others.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";

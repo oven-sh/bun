@@ -88,6 +88,7 @@ impl Unions<'_> {
     }
 }
 
+#[inline]
 fn unite_fields(united: &mut Field, other: &Field, said: &mut Vec<DeclaredType>) {
     if other.declared.is_said() {
         said.push(other.declared);
@@ -98,23 +99,22 @@ fn unite_fields(united: &mut Field, other: &Field, said: &mut Vec<DeclaredType>)
     united.flags = united.flags.without(flags_that_all_give) | given_by_all;
 }
 
+#[inline]
 fn find_twin<'a>(other: &'a Layout, index: usize, field: &Field) -> Option<&'a Field> {
     let is_twin = |twin: &&Field| (twin.key, twin.computed_key) == (field.key, field.computed_key);
     let at_same_place = other.fields.get(index).filter(is_twin);
     at_same_place.or_else(|| other.fields.iter().find(is_twin))
 }
 
-fn unite_layouts<'a>(
+fn unite_layouts(
     united: &mut Layout,
-    others: &(impl Iterator<Item = &'a Layout> + Clone),
+    others: &[&Layout],
     types: &TypeTable,
     leave_open: &mut dyn FnMut(u32, OpenPosition),
 ) {
     let field_count = united.fields.len();
     debug_assert!(
-        others
-            .clone()
-            .all(|other| other.fields.len() == field_count),
+        others.iter().all(|it| it.fields.len() == field_count),
         "one key is one set of names"
     );
     let mut said: Vec<DeclaredType> = Vec::new();
@@ -123,7 +123,7 @@ fn unite_layouts<'a>(
         if field.declared.is_said() {
             said.push(field.declared);
         }
-        for other in others.clone() {
+        for &other in others {
             match find_twin(other, index, field) {
                 Some(twin) => unite_fields(field, twin, &mut said),
                 None => field.flags = field.flags.without(FieldFlags::IS_REQUIRED),
@@ -226,6 +226,7 @@ fn collect_views_of_literals(
     for definitions in listed.chunk_by(|left, right| left.0 == right.0) {
         let mut view = create_view(id, definitions[0].1);
         let rest = definitions[1..].iter().map(|&(_, definition)| definition);
+        let rest: Vec<&Layout> = rest.collect();
         let layout = UnitedLayout::View(united.views.len() as u32);
         let open_fields = &mut united.open_fields;
         unite_layouts(&mut view, &rest, types, &mut |field, position| {
@@ -284,8 +285,7 @@ pub(super) fn unite_layout_definitions(
                 .collect();
             collect_views_of_literals(id, layout, &definitions, known_types, &mut united);
             let open_fields = &mut united.open_fields;
-            let others = definitions.iter().copied();
-            unite_layouts(layout, &others, known_types, &mut |field, position| {
+            unite_layouts(layout, &definitions, known_types, &mut |field, position| {
                 open_fields.push(OpenField {
                     layout: UnitedLayout::OfProgram(id),
                     field,

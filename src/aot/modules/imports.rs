@@ -226,49 +226,126 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) input: &'a BindInput<'a, 's>,
     files_that_sites_name: OnceLock<Vec<bool>>,
     exported_by_mocked_modules: OnceLock<ExportedByMockedModules>,
-    defaults_spied_on: OnceLock<DefaultsSpiedOn>,
+    defaults_spied_on: OnceLock<FxHashSet<ModuleRef>>,
 }
 
 #[derive(Default)]
-struct DefaultsSpiedOn {
+struct NamespacesInSight {
     modules: FxHashSet<ModuleRef>,
     is_every_module: bool,
 }
 
-fn find_defaults_spied_on(context: &BindContext<'_, '_>) -> DefaultsSpiedOn {
-    let mut found = DefaultsSpiedOn::default();
+fn find_namespaces_in_sight(context: &BindContext<'_, '_>) -> NamespacesInSight {
+    let (files, modules) = (context.files, context.modules);
+    let mut found = NamespacesInSight {
+        modules: FxHashSet::default(),
+        is_every_module: context.input.hands_on_any_module,
+    };
+    for &file in &modules.compiled_files {
+        let (hir, analysis, scan) = (
+            files.hir(file),
+            files.analysis(file),
+            context.scans.of(file),
+        );
+        for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
+            let answers_with_exports = match site.kind {
+                ImportSiteKind::Import(import) if hir[import].namespace.is_some() => false,
+                ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportByTestRunner(_) => false,
+                ImportSiteKind::ImportEquals(_)
+                | ImportSiteKind::Require(_)
+                | ImportSiteKind::ImportMetaRequire(_)
+                | ImportSiteKind::RequireByTestRunner(_) => true,
+                ImportSiteKind::JsxRuntime
+                | ImportSiteKind::JsxPackage
+                | ImportSiteKind::Import(_)
+                | ImportSiteKind::ExportFrom(_)
+                | ImportSiteKind::ExportStar(_)
+                | ImportSiteKind::RequireResolve(_)
+                | ImportSiteKind::ImportMetaResolve(_)
+                | ImportSiteKind::GetBuiltinModule(_)
+                | ImportSiteKind::MockModule(_) => continue,
+            };
+            let mut add = |module: ModuleRef| {
+                let module = modules.module_behind(module);
+                if !answers_with_exports || modules.interop(module).kind != ModuleKind::CommonJs {
+                    found.modules.insert(module);
+                }
+            };
+            match answer {
+                &ScannedSite::Module(module) => add(module),
+                ScannedSite::Candidates(spelled) => {
+                    match find_modules_of_alternatives(analysis, scan, &site.specifier, spelled) {
+                        Some(named) => named.into_iter().for_each(add),
+                        None => found.is_every_module = true,
+                    }
+                }
+                ScannedSite::AllModules => found.is_every_module = true,
+                ScannedSite::Unresolved | ScannedSite::Erased => {}
+            }
+        }
+        for &(_, resolved) in context.tables.names(file) {
+            if let Resolution::Namespace { module, .. } = resolved.resolution {
+                found.modules.insert(modules.module_behind(module));
+            }
+        }
+    }
+    found
+}
+
+fn find_defaults_spied_on(context: &BindContext<'_, '_>) -> FxHashSet<ModuleRef> {
+    let mut found = FxHashSet::default();
     if !context.runs_tests {
         return found;
     }
+    let (files, modules, tables) = (context.files, context.modules, context.tables);
     let run = &context.input.run;
-    let in_texts = run.exports_spied_in_text.iter().map(|spied| spied.1);
-    let mut names: FxHashSet<Atom> = run.names_spied.iter().copied().chain(in_texts).collect();
+    let mut names: FxHashSet<Atom> = run.names_spied.iter().copied().collect();
     let mut is_any_name = run.spies_under_any_name;
-    for &file in &context.modules.compiled_files {
-        let Some(source) = parsed_source(context.files, file) else {
+    for &file in &modules.compiled_files {
+        let Some(source) = parsed_source(files, file) else {
             is_any_name = true;
             continue;
         };
         is_any_name |= source.builtins.hands_spy_on();
         for spy in source.builtins.spy_calls() {
-            is_any_name |= spy.name.is_none();
+            is_any_name |= spy.name.is_none() && !source.of_run.spies_read.contains(&spy.call);
             names.extend(spy.name);
         }
     }
-    found.is_every_module = is_any_name || names.contains(&known::default);
-    if found.is_every_module || names.is_empty() {
+    let mut add = |resolution: Resolution| {
+        if let Resolution::Synthetic { module, name } = resolution
+            && name == known::default
+        {
+            found.insert(module);
+        }
+    };
+    if !run.exports_spied_in_text.is_empty() {
+        for &file in &modules.compiled_files {
+            let path = files.module(file).file_name();
+            for name in run.names_spied_in_text_on(&files.atoms, path) {
+                add(tables
+                    .resolve_in(modules, ModuleRef::File(file), name)
+                    .resolution);
+            }
+        }
+    }
+    if !is_any_name && names.is_empty() {
         return found;
     }
-    for &file in &context.modules.compiled_files {
-        for &(name, resolved) in context.tables.names(file) {
-            if let Resolution::Synthetic {
-                module,
-                name: handed_on,
-            } = resolved.resolution
-                && handed_on == known::default
-                && names.contains(&name)
-            {
-                found.modules.insert(module);
+    let in_sight = find_namespaces_in_sight(context);
+    for &file in &modules.compiled_files {
+        let module = ModuleRef::File(file);
+        if !in_sight.is_every_module && !in_sight.modules.contains(&module) {
+            continue;
+        }
+        if is_any_name || names.contains(&known::default) {
+            add(tables
+                .resolve_in(modules, module, known::default)
+                .resolution);
+        }
+        for &(name, resolved) in tables.names(file) {
+            if is_any_name || names.contains(&name) {
+                add(resolved.resolution);
             }
         }
     }
@@ -610,8 +687,7 @@ impl<'a, 's> FileBinder<'a, 's> {
         interop.kind == ModuleKind::CommonJs
             && !context.mocked.contains(exporter)
             && !context.evicted.contains(exporter)
-            && !spied_on.is_every_module
-            && !spied_on.modules.contains(&exporter)
+            && !spied_on.contains(&exporter)
             && context.order.is_code_of_program(exporter)
             && match (context.marker)(exporter) {
                 Some(false) => true,
@@ -894,8 +970,8 @@ impl<'a, 's> FileBinder<'a, 's> {
                 variable.file != self.file && exported.variables.contains(&variable)
             }
             Resolution::Namespace { module, .. } => exported.namespaces.contains(&module),
-            Resolution::Synthetic { module, name } => {
-                exported.names_of_files.contains(&(module, name))
+            Resolution::Synthetic { module, name } | Resolution::LiveName { module, name } => {
+                exported.names_found_in_run.contains(&(module, name))
             }
             _ => false,
         }
@@ -1173,7 +1249,7 @@ impl<'a, 's> FileBinder<'a, 's> {
 struct ExportedByMockedModules {
     variables: FxHashSet<Sym>,
     namespaces: FxHashSet<ModuleRef>,
-    names_of_files: FxHashSet<(ModuleRef, Atom)>,
+    names_found_in_run: FxHashSet<(ModuleRef, Atom)>,
 }
 
 fn find_what_mocked_modules_export(context: &BindContext<'_, '_>) -> ExportedByMockedModules {
@@ -1190,8 +1266,8 @@ fn find_what_mocked_modules_export(context: &BindContext<'_, '_>) -> ExportedByM
                 Resolution::Namespace { module, .. } => {
                     exported.namespaces.insert(module);
                 }
-                Resolution::Synthetic { module, name } => {
-                    exported.names_of_files.insert((module, name));
+                Resolution::Synthetic { module, name } | Resolution::LiveName { module, name } => {
+                    exported.names_found_in_run.insert((module, name));
                 }
                 _ => {}
             }

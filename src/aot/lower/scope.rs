@@ -97,6 +97,30 @@ fn find_entry<K: Copy + PartialEq, V: Copy>(entries: &[(K, V)], key: K) -> Optio
     Some(entry.1)
 }
 
+fn order_by_number<T: Copy>(
+    list: impl ExactSizeIterator<Item = T> + Clone,
+    number_count: usize,
+    number_of: impl Fn(T) -> usize,
+) -> Vec<T> {
+    let Some(first) = list.clone().next() else {
+        return Vec::new();
+    };
+    let mut places = vec![0u32; number_count + 1];
+    for entry in list.clone() {
+        places[number_of(entry) + 1] += 1;
+    }
+    for number in 0..number_count {
+        places[number + 1] += places[number];
+    }
+    let mut ordered = vec![first; list.len()];
+    for entry in list {
+        let place = &mut places[number_of(entry)];
+        ordered[*place as usize] = entry;
+        *place += 1;
+    }
+    ordered
+}
+
 pub(crate) fn analyze_scopes(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
     plan::analyze(input)
 }

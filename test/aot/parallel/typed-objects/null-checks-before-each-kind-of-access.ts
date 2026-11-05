@@ -1,5 +1,6 @@
 // A read, store, update, comparison or test of a field of `o!` throws a TypeError that names the same property, value and position as in plain Bun when `o` is null or undefined, whatever instruction the access becomes.
-// STATISTIC: NullChecksFoldedIntoAccesses >= 20
+// STATISTIC: NullChecksFoldedIntoAccesses >= 9
+// STATISTIC: NullChecksFoldedIntoAccesses >= 20 Todo: thirty of the 39 that met it were accesses of Bun's library, which no longer comes into this executable; of the accesses here nine fold their check
 class Item {
   next: Item | null = null;
   count = 0;

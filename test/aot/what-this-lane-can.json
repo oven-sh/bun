@@ -108,7 +108,7 @@
     "the tests of the engine": null,
     "the scripts of the shell": true,
     "a Bun that trims": true,
-    "a counter of instructions": true,
+    "a counter of instructions": null,
     "one process watches another": false,
     "a hardened build": false,
     "a locked environment": false,

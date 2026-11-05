@@ -328,6 +328,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    #[inline]
     pub(super) fn identifier_name(&self, identifier: ExprId) -> Atom {
         let ExprKind::Ident(name) = self.hir[identifier].kind else {
             unreachable!("the expression is an identifier");

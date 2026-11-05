@@ -33,7 +33,15 @@ fn implicit_reference_order(reference: &ImplicitReference) -> ImplicitReferenceO
     }
 }
 
-fn sort_by_key<T, K: Ord>(list: &mut [T], mut key: impl FnMut(&T) -> K) {
+#[inline]
+fn sort_by_key<T, K: Ord>(list: &mut [T], key: impl FnMut(&T) -> K) {
+    if list.len() > 1 {
+        sort_several_by_key(list, key);
+    }
+}
+
+#[inline(never)]
+fn sort_several_by_key<T, K: Ord>(list: &mut [T], mut key: impl FnMut(&T) -> K) {
     if !list.is_sorted_by_key(&mut key) {
         list.shared_sort_by_key(key);
     }
@@ -45,12 +53,19 @@ trait Stored<'s, T> {
 
 impl<'s, T: Copy> Stored<'s, T> for Fixed<'s, T> {
     fn from_growable(mut list: Vec<T>, arena: &'s Arena) -> Self {
+        if list.is_empty() {
+            return Fixed::default();
+        }
         copy_to_arena(&mut list, arena)
     }
 }
 
 impl<'s, T> Stored<'s, T> for ArenaFew<'s, T> {
+    #[inline]
     fn from_growable(list: Vec<T>, arena: &'s Arena) -> Self {
+        if list.is_empty() {
+            return ArenaFew::default();
+        }
         few_to_arena(list, arena)
     }
 }

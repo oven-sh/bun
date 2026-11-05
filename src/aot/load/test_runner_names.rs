@@ -26,7 +26,15 @@ const NAME_OF_VITEST_PREFIX: &[u8] = b"%vitest:";
 const MODULE_OF_BUN: &[u8] = b"bun";
 const LOCAL_NAME_OF_BUN: &[u8] = b"%bun";
 
+#[inline]
 pub(crate) fn written_name_of_local(name: &[u8]) -> &[u8] {
+    match name.first() {
+        Some(b'%') => written_name_of_marked_local(name),
+        _ => name,
+    }
+}
+
+fn written_name_of_marked_local(name: &[u8]) -> &[u8] {
     name_asked_of_scope_objects(name)
         .or_else(|| crate::load::react_compiler::module_items::name_of_outlined_function(name))
         .unwrap_or(name)
@@ -70,7 +78,7 @@ pub(crate) fn skip_to_written_use<'a>(
 }
 
 pub(crate) fn name_asked_of_scope_objects(name: &[u8]) -> Option<&[u8]> {
-    if !name.starts_with(b"%") {
+    if name.first() != Some(&b'%') {
         return Some(name);
     }
     let prefixes = [LOCAL_NAME_PREFIX, NAME_OF_VITEST_PREFIX];

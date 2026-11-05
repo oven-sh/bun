@@ -34,23 +34,54 @@ pub trait SharedSort<T> {
     fn shared_sort_unstable_by_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K);
 }
 
+const MOST_SORTED_BY_INSERTION: usize = 20;
+
+fn sort_by_insertion<T>(items: &mut [T], compare: &mut impl FnMut(&T, &T) -> std::cmp::Ordering) {
+    for end in 1..items.len() {
+        let mut at = end;
+        while at > 0 && compare(&items[at], &items[at - 1]) == std::cmp::Ordering::Less {
+            items.swap(at, at - 1);
+            at -= 1;
+        }
+    }
+}
+
+fn try_sort_in_place<T>(
+    items: &mut [T],
+    compare: &mut impl FnMut(&T, &T) -> std::cmp::Ordering,
+) -> bool {
+    if items.len() <= MOST_SORTED_BY_INSERTION {
+        sort_by_insertion(items, compare);
+        return true;
+    }
+    items.is_sorted_by(|before, after| compare(after, before) != std::cmp::Ordering::Less)
+}
+
 impl<T> SharedSort<T> for [T] {
     fn shared_sort(&mut self)
     where
         T: Ord,
     {
-        index_sort::sort_slice_by(self, T::cmp);
+        if !try_sort_in_place(self, &mut T::cmp) {
+            index_sort::sort_slice_by(self, T::cmp);
+        }
     }
 
     /// Some of TypeScript's comparisons aren't total orders, and the standard library's sorts may panic on those. The
     /// checker follows the Go version of TypeScript, and with a comparison like that only Go's own stable sort
     /// algorithm produces the same order.
-    fn shared_sort_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
+    fn shared_sort_by(&mut self, mut compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
+        if self.len() <= MOST_SORTED_BY_INSERTION {
+            return sort_by_insertion(self, &mut compare);
+        }
         index_sort::go_stable_sort_slice_by(self, compare);
     }
 
     fn shared_sort_by_key<K: Ord>(&mut self, mut key: impl FnMut(&T) -> K) {
-        index_sort::sort_slice_by(self, |a, b| key(a).cmp(&key(b)));
+        let mut compare = |a: &T, b: &T| key(a).cmp(&key(b));
+        if !try_sort_in_place(self, &mut compare) {
+            index_sort::sort_slice_by(self, compare);
+        }
     }
 
     fn shared_sort_by_cached_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K) {
@@ -66,15 +97,22 @@ impl<T> SharedSort<T> for [T] {
     where
         T: Ord,
     {
-        index_sort::sort_slice_unstable_by(self, T::cmp);
+        if !try_sort_in_place(self, &mut T::cmp) {
+            index_sort::sort_slice_unstable_by(self, T::cmp);
+        }
     }
 
-    fn shared_sort_unstable_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
-        index_sort::sort_slice_unstable_by(self, compare);
+    fn shared_sort_unstable_by(&mut self, mut compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
+        if !try_sort_in_place(self, &mut compare) {
+            index_sort::sort_slice_unstable_by(self, compare);
+        }
     }
 
     fn shared_sort_unstable_by_key<K: Ord>(&mut self, mut key: impl FnMut(&T) -> K) {
-        index_sort::sort_slice_unstable_by(self, |a, b| key(a).cmp(&key(b)));
+        let mut compare = |a: &T, b: &T| key(a).cmp(&key(b));
+        if !try_sort_in_place(self, &mut compare) {
+            index_sort::sort_slice_unstable_by(self, compare);
+        }
     }
 }
 
@@ -179,12 +217,14 @@ impl PositionSet {
 
     #[inline]
     pub(crate) fn insert(&mut self, position: usize) {
-        self.0[position / 64] |= 1 << (position % 64);
+        let words: &mut [u64] = &mut self.0;
+        words[position / 64] |= 1 << (position % 64);
     }
 
     #[inline]
     pub(crate) fn contains(&self, position: usize) -> bool {
-        self.0[position / 64] >> (position % 64) & 1 != 0
+        let words: &[u64] = &self.0;
+        words[position / 64] >> (position % 64) & 1 != 0
     }
 
     /// Iterates over the positions in ascending order.

@@ -142,6 +142,59 @@ impl MarkedSlots {
         }
         *self = bigger;
     }
+
+    #[inline]
+    fn find_or_vacancy(
+        &self,
+        spread: u64,
+        mut is_match: impl FnMut(u32) -> bool,
+    ) -> Result<u32, Vacancy> {
+        let (slots, marks): (&[u64], &[u8]) = (&self.slots, &self.marks);
+        let table_len = marks.len();
+        if table_len == 0 {
+            return Err(Vacancy::UNKNOWN);
+        }
+        let (tag, mask) = (spread as u32, table_len - 1);
+        let mut at = TaskPlacement::start(tag) & mask;
+        loop {
+            let mark = marks[at];
+            if mark == 0 {
+                return Err(Vacancy { at, table_len });
+            }
+            if mark == mark_of(tag) {
+                let packed = slots[at];
+                if (packed >> 32) as u32 == tag && is_match(packed as u32 - 1) {
+                    return Ok(packed as u32 - 1);
+                }
+            }
+            at = (at + 1) & mask;
+        }
+    }
+
+    #[inline]
+    fn fill(&mut self, count: usize, vacancy: Vacancy, spread: u64, number: u32) {
+        if is_too_full(count, self.marks.len()) {
+            self.grow(count);
+        }
+        let at = match self.marks.get(vacancy.at) {
+            Some(0) if vacancy.table_len == self.marks.len() => vacancy.at,
+            _ => self.free_slot(spread as u32),
+        };
+        self.put(at, slot_value(spread, number));
+    }
+
+    fn clear(&mut self, count: usize) {
+        if count != 0 && self.marks.len() <= 4 * slots_for::<TaskPlacement>(count, 0) {
+            self.marks.fill(0);
+        } else if count != 0 {
+            *self = MarkedSlots::default();
+        }
+    }
+
+    #[cfg(test)]
+    fn is_like_new(&self) -> bool {
+        self.marks.iter().all(|&mark| mark == 0)
+    }
 }
 
 /// A hash index: finds a value's index by the value's hash. The one thread that owns it adds entries through a shared
@@ -183,29 +236,9 @@ impl HashIndex {
     pub fn find_or_vacancy(
         &self,
         spread: u64,
-        mut is_match: impl FnMut(u32) -> bool,
+        is_match: impl FnMut(u32) -> bool,
     ) -> Result<u32, Vacancy> {
-        let table = self.table.borrow();
-        let (slots, marks): (&[u64], &[u8]) = (&table.slots, &table.marks);
-        let table_len = marks.len();
-        if table_len == 0 {
-            return Err(Vacancy::UNKNOWN);
-        }
-        let (tag, mask) = (spread as u32, table_len - 1);
-        let mut at = TaskPlacement::start(tag) & mask;
-        loop {
-            let mark = marks[at];
-            if mark == 0 {
-                return Err(Vacancy { at, table_len });
-            }
-            if mark == mark_of(tag) {
-                let packed = slots[at];
-                if (packed >> 32) as u32 == tag && is_match(packed as u32 - 1) {
-                    return Ok(packed as u32 - 1);
-                }
-            }
-            at = (at + 1) & mask;
-        }
+        self.table.borrow().find_or_vacancy(spread, is_match)
     }
 
     #[inline]
@@ -220,33 +253,20 @@ impl HashIndex {
     pub fn fill(&self, vacancy: Vacancy, spread: u64, number: u32) {
         let count = self.count.get() + 1;
         self.count.set(count);
-        let mut table = self.table.borrow_mut();
-        if is_too_full(count, table.marks.len()) {
-            table.grow(count);
-        }
-        let at = match table.marks.get(vacancy.at) {
-            Some(0) if vacancy.table_len == table.marks.len() => vacancy.at,
-            _ => table.free_slot(spread as u32),
-        };
-        table.put(at, slot_value(spread, number));
+        (self.table.borrow_mut()).fill(count, vacancy, spread, number);
     }
 
     /// Keeps the table for the next task, so it doesn't have to regrow the table step by step or allocate fresh memory.
     /// A table that this task barely used is freed instead, so clearing takes time proportional to what was added.
     pub fn clear(&mut self) {
         let count = self.count.replace(0);
-        let table = self.table.get_mut();
-        if count != 0 && table.marks.len() <= 4 * slots_for::<TaskPlacement>(count, 0) {
-            table.marks.fill(0);
-        } else if count != 0 {
-            *table = MarkedSlots::default();
-        }
+        self.table.get_mut().clear(count);
     }
 
     /// True if nothing can be found. The number of free slots doesn't count.
     #[cfg(test)]
     pub(crate) fn is_like_new(&self) -> bool {
-        self.count.get() == 0 && self.table.borrow().marks.iter().all(|&mark| mark == 0)
+        self.count.get() == 0 && self.table.borrow().is_like_new()
     }
 }
 
@@ -255,14 +275,14 @@ impl HashIndex {
 /// precomputed hash when the key has no `Default`.
 pub struct Hashed<K, V> {
     entries: Vec<(K, V)>,
-    found: HashIndex,
+    found: MarkedSlots,
 }
 
 impl<K, V> Default for Hashed<K, V> {
     fn default() -> Self {
         Hashed {
             entries: Vec::new(),
-            found: HashIndex::default(),
+            found: MarkedSlots::default(),
         }
     }
 }
@@ -271,9 +291,7 @@ impl<K: Eq, V> Hashed<K, V> {
     /// Returns the insertion-order index of the entry for `key`. Here and below, `spread` is the hash of `key`.
     #[inline]
     pub fn index_of(&self, spread: u64, key: &K) -> Option<u32> {
-        (self.found).find(spread, |entry_index| {
-            self.entries[entry_index as usize].0 == *key
-        })
+        self.index_or_vacancy(spread, key).ok()
     }
 
     #[inline]
@@ -312,7 +330,7 @@ impl<K: Eq, V> Hashed<K, V> {
 
     fn add(&mut self, vacancy: Vacancy, spread: u64, key: K, value: V) -> u32 {
         let entry_index = self.entries.len() as u32;
-        self.found.fill(vacancy, spread, entry_index);
+        (self.found).fill(self.entries.len() + 1, vacancy, spread, entry_index);
         self.entries.push((key, value));
         entry_index
     }
@@ -419,6 +437,20 @@ impl Pages {
 
     #[inline]
     fn cell(&mut self, directory: &mut Vec<u32>, at: usize) -> &mut u32 {
+        let list = directory.get(at / PAGE / PAGE).copied().unwrap_or(0) as usize;
+        let page = match list {
+            0 => 0,
+            _ => self.pool[list][at / PAGE % PAGE] as usize,
+        };
+        match page {
+            0 => self.add_cell(directory, at),
+            _ => &mut self.pool[page][at % PAGE],
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn add_cell(&mut self, directory: &mut Vec<u32>, at: usize) -> &mut u32 {
         let list = cell_at(directory, at / PAGE / PAGE);
         if *list == 0 {
             *list = self.add();
@@ -545,7 +577,7 @@ impl<T> Reusable for LocalVec<T> {
 
 impl<K, V> Reusable for Hashed<K, V> {
     fn clear(&mut self) {
-        self.found.clear();
+        self.found.clear(self.entries.len());
         clear_cells(&mut self.entries);
     }
     #[cfg(test)]
@@ -663,7 +695,8 @@ impl<'s> Half<'s> {
         }
     }
 
-    #[inline]
+    #[cold]
+    #[inline(never)]
     fn sparse_cell(&self, word: u64) -> u32 {
         (self.sparse.get(spread_word(word), &word)).map_or(0, |&raw| raw)
     }
@@ -686,7 +719,9 @@ impl<'s> Half<'s> {
         (*file, *ordinal, *nodes) = (NO_FILE, 0, 0);
         *published_in_row = PublishedInRow::Unknown;
         directory.clear();
-        earlier.clear();
+        if !earlier.is_empty() {
+            earlier.clear();
+        }
         sparse.clear();
     }
 

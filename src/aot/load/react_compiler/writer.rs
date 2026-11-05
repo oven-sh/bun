@@ -10,7 +10,7 @@ use bun_sema::hir::{
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::JsxSettings;
 use bun_sema::session::Arena;
-use bun_sema::util::SharedSort;
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Debug)]
@@ -83,16 +83,27 @@ impl SourceRanges {
                 (expression.pos, shape, expression.end)
             })
             .collect();
-        ranges.shared_sort_unstable();
+        ranges.sort_by_u32(|range| range.2);
+        ranges.sort_by_u64(|range| number_of_pair(range.0, range.1 as u32));
         SourceRanges(ranges)
     }
 
-    fn starting_at(&self, start: u32, shape: NodeShape) -> &[(u32, NodeShape, u32)] {
+    fn not_before(&self, start: u32, shape: NodeShape) -> &[(u32, NodeShape, u32)] {
+        let number = number_of_pair(start, shape as u32);
         let first = self
             .0
-            .partition_point(|range| (range.0, range.1) < (start, shape));
-        let count = self.0[first..].partition_point(|range| (range.0, range.1) == (start, shape));
-        &self.0[first..first + count]
+            .partition_point(|range| number_of_pair(range.0, range.1 as u32) < number);
+        &self.0[first..]
+    }
+
+    fn first_starting_at(&self, start: u32, shape: NodeShape) -> Option<&(u32, NodeShape, u32)> {
+        let first = self.not_before(start, shape).first();
+        first.filter(|range| (range.0, range.1) == (start, shape))
+    }
+
+    fn starting_at(&self, start: u32, shape: NodeShape) -> &[(u32, NodeShape, u32)] {
+        let rest = self.not_before(start, shape);
+        &rest[..rest.partition_point(|range| (range.0, range.1) == (start, shape))]
     }
 }
 
@@ -222,16 +233,18 @@ impl<'a, 's> TreeWriter<'a, 's> {
 
     fn source_range_of(&mut self, loc: Loc, shape: NodeShape) -> Option<(u32, u32)> {
         let start = u32::try_from(loc.start).ok()?;
-        let ranges = self.source_ranges.starting_at(start, shape);
-        let index = match shape {
+        let range = match shape {
             NodeShape::Call | NodeShape::New | NodeShape::Member => {
+                let ranges = self.source_ranges.starting_at(start, shape);
                 let used = self.function.used_ranges.entry((start, shape)).or_insert(0);
                 *used += 1;
-                (*used - 1).min(ranges.len().saturating_sub(1))
+                ranges.get((*used - 1).min(ranges.len().saturating_sub(1)))
             }
-            NodeShape::Function | NodeShape::Other => 0,
+            NodeShape::Function | NodeShape::Other => {
+                self.source_ranges.first_starting_at(start, shape)
+            }
         };
-        Some((start, ranges.get(index).map_or(start, |range| range.2)))
+        Some((start, range.map_or(start, |range| range.2)))
     }
 
     fn create_function_context(

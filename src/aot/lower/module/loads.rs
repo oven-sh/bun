@@ -14,7 +14,7 @@ use bun_sema::import_sites::{
     holds_import_meta_require, is_create_require_behind_get_builtin_module, is_made_require,
     is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
 };
-use bun_sema::program::{FileId, Sym};
+use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::FxHashMap;
 use smallvec::{SmallVec, smallvec};
@@ -27,14 +27,15 @@ use crate::ir::{BlockId, Edge, ModuleId, StringId, TypeTable, ValueId, VariableI
 use crate::load::contents::load_names::{
     PathAlone, modules_named_in, resolve_loads_through_imported_loaders,
 };
-use crate::load::loader_aliases::resolve_loader_alias;
+use crate::load::loader_aliases::{LoaderAlias, resolve_loader_alias};
 use crate::load::sources::parsed_source;
 use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
 use crate::modules::{
-    Candidates, ModuleFailureId, ModuleKind, ModuleRef, Site, SiteAnswer, SpelledModule,
+    Candidates, ImportBinding, ModuleFailureId, ModuleKind, ModuleRef, Site, SiteAnswer,
+    SpelledModule,
 };
 
 #[derive(Copy, Clone)]
@@ -149,9 +150,14 @@ impl FileLowering<'_, '_, '_, '_> {
                     && may_require_get_members(self.hir, self.bound)
             }
         };
+        let may_holder_be_replaced = matches!(self.hir[root].kind, ExprKind::Ident(_))
+            && matches!(self.bound.binding(root), Binding::Symbol(_))
+            && self.inputs.modules.holds_replaceable_variable(self.file);
         match table::entry(root_path.id).scope {
             Scope::Realm => CalleeKnowledge::Expected(callee_path.id),
-            Scope::Module if may_member_be_replaced => CalleeKnowledge::Expected(callee_path.id),
+            Scope::Module if may_member_be_replaced || may_holder_be_replaced => {
+                CalleeKnowledge::Expected(callee_path.id)
+            }
             Scope::Module => match self.inputs.modules.kind(self.file) {
                 ModuleKind::CommonJs => match root_path.mutability {
                     Mutability::AlwaysLocked => CalleeKnowledge::Bound,
@@ -418,14 +424,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if let Some(evaluated) = self.try_lower_inner_module_call(call) {
                 return Some(evaluated);
             }
-            if let Some(loaded) = self.try_lower_library_module_named_to_made_require(call, id) {
+            let is_module_named = hir.ids(arguments).next().is_some_and(|argument| {
+                names_library_module(self.file.queries.files(), self.file.file, argument)
+            });
+            let has_spread = has_spread_argument(hir, arguments);
+            if is_module_named
+                && !has_spread
+                && let Some(loaded) = self.try_lower_library_module_named_to_made_require(call, id)
+            {
                 return Some(loaded);
             }
-            if let Some(made) = self.try_lower_create_require_behind_test(call, id, chain_exit) {
-                return Some(made);
+            if !has_spread {
+                if let Some(made) = self.try_lower_create_require_behind_test(call, id, chain_exit)
+                {
+                    return Some(made);
+                }
+                if let Some(made) = self.try_lower_create_require_for_choice(call, id, chain_exit) {
+                    return Some(made);
+                }
             }
-            if let Some(made) = self.try_lower_create_require_for_choice(call, id, chain_exit) {
-                return Some(made);
+            if !is_module_named {
+                return None;
             }
             return self.try_lower_choice_of_builtin_modules(call, id, chain_exit);
         };
@@ -449,9 +468,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let made = require_call.map_or(callee, |found| found.require);
         let is_replaced = |builtin: BuiltinId| replaced.binary_search(&(builtin as u32)).is_ok();
         let modules = self.file.inputs.modules;
-        let is_maker_replaced = is_replaced(BuiltinId::FunctionPrototypeCall)
-            || modules.may_be_mocked(ModuleRef::Runtime(RuntimeModule::NodeModule))
-            || modules.holds_replaceable_variable(self.file.file)
+        let is_maker_replaced = self.may_tests_replace_what_was_made()
+            || is_replaced(BuiltinId::FunctionPrototypeCall)
             || is_replaced(BuiltinId::NodeModuleCreateRequire)
                 && !is_made_by_imported_name(hir, bound, made);
         if is_maker_replaced
@@ -475,7 +493,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             _ => None,
         };
-        let is_way_proof = !modules.runs_tests() && exporter.is_some();
+        let is_way_proof = exporter.is_some() && !self.may_way_from_file_be_replaced(exporter);
         let other_values = match is_of_other_file && !is_way_proof {
             true => OtherValues::Any,
             false => find_other_values_of_own_require(hir, bound, decisions, made),
@@ -544,7 +562,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 },
             }
         } else if holds_import_meta_require(hir, bound, callee) {
-            match bound.import_meta_may_be_modified() {
+            let may_be_another = bound.import_meta_may_be_modified()
+                || modules.holds_replaceable_variable(self.file.file);
+            match may_be_another {
                 true => CalleeTest::Expected(BuiltinId::ModuleRequire),
                 false => CalleeTest::IsFilled,
             }
@@ -598,9 +618,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> Option<ValueId> {
         let hir = self.file.hir;
         let (written, arguments) = (hir[id].callee, hir[id].args);
-        if has_spread_argument(hir, arguments)
-            || !is_create_require_behind_get_builtin_module(hir, self.file.bound, written)
-        {
+        if !is_create_require_behind_get_builtin_module(hir, self.file.bound, written) {
             return None;
         }
         let mut callee = self.lower_callee(written, chain_exit, None);
@@ -636,9 +654,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> Option<ValueId> {
         let hir = self.file.hir;
         let (written, arguments) = (hir[id].callee, hir[id].args);
-        if has_spread_argument(hir, arguments) {
-            return None;
-        }
         let (holder, place) = find_holder_of_require_made_for_choice(hir, self.file.bound, call)?;
         let mut callee = self.lower_callee(written, chain_exit, None);
         if hir[id].chain == Chain::Start {
@@ -687,6 +702,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .ensure_variable(VariableKey::RequireMadeForOwnFile(holder))
     }
 
+    fn may_tests_replace_what_was_made(&self) -> bool {
+        let modules = self.file.inputs.modules;
+        modules.runs_tests()
+            && (modules.may_be_mocked(ModuleRef::Runtime(RuntimeModule::NodeModule))
+                || modules.holds_replaceable_variable(self.file.file))
+    }
+
+    fn may_loader_be_replaced(&self, alias: Option<LoaderAlias>) -> bool {
+        match alias {
+            Some(LoaderAlias::Import(_)) => self.may_way_from_file_be_replaced(None),
+            Some(LoaderAlias::Local) | None => self.may_tests_replace_what_was_made(),
+        }
+    }
+
+    fn may_way_from_file_be_replaced(&self, exporter: Option<FileId>) -> bool {
+        let modules = self.file.inputs.modules;
+        let mut imported = modules.import_bindings(self.file.file).iter();
+        modules.runs_tests()
+            || modules.reaches_mock(self.file.file)
+            || exporter.is_some_and(|from| {
+                modules.may_be_mocked(ModuleRef::File(from))
+                    || modules.holds_replaceable_variable(from)
+            })
+            || imported.any(|&(_, binding)| {
+                matches!(binding, ImportBinding::Variable(it) if modules.is_replaceable(it))
+            })
+    }
+
     fn emit_test_of_value(&mut self, value: ValueId, test: CalleeTest) -> Option<ValueId> {
         match test {
             CalleeTest::IsTruthy => Some(self.builder.to_boolean(value)),
@@ -728,7 +771,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let arguments = hir[id].args;
         let is_plain_call = matches!(hir[id].chain, Chain::No) && arguments.len() == 1;
-        if !is_plain_call || has_spread_argument(hir, arguments) {
+        if !is_plain_call {
             return None;
         }
         let argument = hir.id_at(arguments, 0);
@@ -741,9 +784,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let is_made_require = is_made_require(hir, self.file.bound, hir[id].callee);
         let decisions = self.file.decisions();
-        if !is_made_require
-            && resolve_loader_alias(hir, self.file.bound, decisions, hir[id].callee).is_none()
-        {
+        let alias = resolve_loader_alias(hir, self.file.bound, decisions, hir[id].callee);
+        if !is_made_require && alias.is_none() || self.may_loader_be_replaced(alias) {
             return None;
         }
         let written = self.file.skip_type_syntax(argument);
@@ -810,7 +852,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             CalleeKnowledge::Expected(expected) => CalleeTest::Expected(expected),
             CalleeKnowledge::Unresolved => {
                 let (bound, decisions) = (self.file.bound, self.file.decisions());
-                resolve_loader_alias(hir, bound, decisions, hir[id].callee)?;
+                let alias = resolve_loader_alias(hir, bound, decisions, hir[id].callee)?;
+                if self.may_loader_be_replaced(Some(alias)) {
+                    return None;
+                }
                 CalleeTest::IsFilled
             }
             CalleeKnowledge::Bound => return None,
@@ -842,7 +887,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             looks_in_cache: true,
             is_read_by_transpiler: true,
         };
-        Some(self.emit_require(&site, None))
+        let written = match (site.answer, site.specifier) {
+            (SiteAnswer::Computed(_), ImportSpecifier::Constant(written)) => {
+                Some(self.emit_name_as_given(written, None))
+            }
+            _ => None,
+        };
+        Some(self.emit_require(&site, written))
     }
 
     fn emit_expected_callee(&mut self, expected: BuiltinId) -> ValueId {
@@ -2366,6 +2417,12 @@ fn is_made_by_imported_name(hir: &hir::File<'_>, bound: &Bound<'_>, made: ExprId
         }
     }
     false
+}
+
+fn names_library_module(files: &Files<'_>, file: FileId, argument: ExprId) -> bool {
+    resolve_loads_through_imported_loaders(files, file);
+    parsed_source(files, file)
+        .is_some_and(|source| !modules_named_in(source.named_modules(), argument).is_empty())
 }
 
 fn has_spread_argument(hir: &hir::File<'_>, arguments: IdList<ExprId>) -> bool {

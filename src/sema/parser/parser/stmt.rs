@@ -252,7 +252,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `isStartOfDeclaration`
     pub(crate) fn is_start_of_declaration(&mut self) -> bool {
         // Fast path for the most common case, where the text is enough to know the scan's answer.
-        if self.token() == T::Import && self.is_followed_by(b" {") {
+        let is_known_by_text = match self.token() {
+            T::Import => self.is_followed_by_bytes(b" {"),
+            T::Export => {
+                self.is_followed_by_bytes(b" const ")
+                    || self.is_followed_by_bytes(b" function ")
+                    || self.is_followed_by_bytes(b" class ")
+                    || self.is_followed_by_bytes(b" default ")
+                    || self.is_followed_by_bytes(b" {")
+            }
+            _ => false,
+        };
+        if is_known_by_text {
             return true;
         }
         // The scan steps over one modifier at a time and keeps no state, so it gives the same answer from each of them.

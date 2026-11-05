@@ -83,6 +83,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         file.fragment.define_function(function, finished);
     }
 
+    #[inline]
     pub(crate) fn set_position(&mut self, position: u32) {
         self.position = position;
         self.builder.set_position(Some(position));
@@ -181,11 +182,18 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         self.continue_in_new_block();
     }
 
+    #[inline]
     pub(crate) fn enter_nesting(&mut self, position: u32) -> bool {
         if !self.file.queries.is_stack_low() && bun_core::StackCheck::init().is_safe_to_recurse() {
             self.nesting_depth += 1;
             return true;
         }
+        self.refuse_nesting(position)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn refuse_nesting(&mut self, position: u32) -> bool {
         if !self.has_reported_nesting {
             self.has_reported_nesting = true;
             self.file.queries.answer_nothing_from_now_on();
@@ -198,6 +206,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         false
     }
 
+    #[inline]
     pub(crate) fn leave_nesting(&mut self) {
         debug_assert!(self.nesting_depth > 0, "enter_nesting returned true");
         self.nesting_depth -= 1;

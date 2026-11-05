@@ -32,6 +32,7 @@ impl Queries<'_, '_, '_> {
         ty.local_number().is_none()
     }
 
+    #[inline]
     pub fn row_of_type(&mut self, ty: TypeId) -> u32 {
         self.kept.type_row(ty).number()
     }

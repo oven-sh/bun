@@ -37,6 +37,7 @@ pub struct StringTable {
 }
 
 impl StringTable {
+    #[inline]
     pub fn hash_of(bytes: &[u8]) -> u64 {
         std::hash::BuildHasher::hash_one(&rustc_hash::FxBuildHasher, bytes)
     }
@@ -112,12 +113,24 @@ impl StringTable {
     }
 
     pub fn intern(&mut self, bytes: &[u8]) -> StringId {
-        let joined = join_surrogate_pairs(bytes);
-        let bytes = joined.as_deref().unwrap_or(bytes);
         let hash = StringTable::hash_of(bytes);
         if let Some(id) = self.find_hashed(hash, bytes) {
             return id;
         }
+        if bytes.is_ascii() {
+            return self.add_hashed(hash, bytes);
+        }
+        let Some(joined) = join_surrogate_pairs(bytes) else {
+            return self.add_hashed(hash, bytes);
+        };
+        let hash = StringTable::hash_of(&joined);
+        if let Some(id) = self.find_hashed(hash, &joined) {
+            return id;
+        }
+        self.add_hashed(hash, &joined)
+    }
+
+    fn add_hashed(&mut self, hash: u64, bytes: &[u8]) -> StringId {
         let id = StringId::new(self.len());
         self.bytes.extend_from_slice(bytes);
         self.ends.push(self.bytes.len());
@@ -189,6 +202,7 @@ impl StringTable {
         self.builtin_names[id.index()]
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.ends.len()
     }

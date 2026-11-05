@@ -110,6 +110,8 @@ fn find_files_reached_from_entry_points<Next: Iterator<Item = FileId>>(
     let is_text = |file: FileId| is_name_of_text(input.sources.diagnostic_path(file));
     let entry_points = input.sources.entry_points().iter();
     let entry_points = entry_points.filter(|entry_point| !is_text(entry_point.file));
+    let is_written = |file: FileId| !input.sources.is_entry_point_found_by_computed_name(file);
+    let entry_points = entry_points.filter(|entry_point| is_written(entry_point.file));
     let mut left: Vec<FileId> = entry_points.map(|entry_point| entry_point.file).collect();
     while let Some(file) = left.pop() {
         if !core::mem::replace(&mut is_reached[file.idx()], true) {

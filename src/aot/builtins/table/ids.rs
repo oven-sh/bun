@@ -11,10 +11,12 @@ macro_rules! dense_enum {
         impl $type {
             pub const COUNT: u32 = $count as u32;
 
+            #[inline]
             pub const fn to_wire(self) -> u32 {
                 self as u32
             }
 
+            #[inline]
             pub fn from_wire(word: u32) -> Option<Self> {
                 Self::ALL.get(word as usize).copied()
             }
@@ -42,6 +44,7 @@ macro_rules! named_enum {
                 Some($by_token[position])
             }
 
+            #[inline]
             pub(crate) fn index(self) -> usize {
                 self as usize
             }
@@ -60,10 +63,12 @@ named_enum!(BuiltinClass, CLASS_TOKENS, CLASSES_BY_TOKEN);
 named_enum!(RuntimeModule, MODULE_TOKENS, MODULES_BY_TOKEN);
 
 impl RuntimeModule {
+    #[inline]
     pub fn from_registry_id(id: u32) -> Option<RuntimeModule> {
         RuntimeModule::from_wire(id)
     }
 
+    #[inline]
     pub fn registry_id(self) -> u32 {
         self.to_wire()
     }
@@ -72,16 +77,19 @@ impl RuntimeModule {
 impl BuiltinName {
     pub const COUNT: u32 = NAME_COUNT as u32;
 
+    #[inline]
     pub const fn to_wire(self) -> u32 {
         self.0
     }
 
+    #[inline]
     pub fn from_wire(word: u32) -> Option<BuiltinName> {
         (word < Self::COUNT).then_some(BuiltinName(word))
     }
 }
 
 impl RuntimeFunction {
+    #[inline]
     pub const fn to_wire(self) -> u32 {
         self.0
     }

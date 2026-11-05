@@ -3,7 +3,8 @@
 // The checker finds the file as Bun does: what is written `typeof value` is the number that the file declares. A name that it does not find gives no Convert.
 
 // CHECK-LABEL: function {{*}}kind=Module
-// CHECK: [[value]] = CheckInitialized {{*}}name="value"
+// CHECK: CheckInitialized {{*}}name="value"
+// CHECK-NEXT: [[value]] = Integer integer=1
 // CHECK-NEXT: = Convert [[value]] declared={type=number}
 
 // FILE: main.ts

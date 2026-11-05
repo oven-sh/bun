@@ -241,7 +241,7 @@ fn what_a_load_by_an_unknown_name_may_find_is_exposed() {
         main,
         (
             "served.cjs",
-            "require(process.env.PLUG || './asker.cjs'); module.exports = function () {};",
+            "console.log('./asker.cjs'); require(process.env.PLUG); module.exports = function () {};",
         ),
         asker,
     ];
@@ -282,6 +282,38 @@ fn the_main_entry_point_that_an_unknown_name_may_find_is_seen_half_done() {
     for (asker, seen_half_done) in rows {
         let files = [main, ("asker.cjs", asker), page];
         assert_eq!(half(&files), seen_half_done, "{asker}");
+    }
+}
+
+#[test]
+fn the_main_entry_point_is_seen_half_done_where_a_package_is_left_out() {
+    let files = [
+        (
+            "main.cjs",
+            "require('./asker.cjs'); module.exports = function () {};",
+        ),
+        ("asker.cjs", "exports.x = 1;"),
+    ];
+    let packages = [b"left-out".to_vec()];
+    let rows: [(&[Vec<u8>], bool, &[&str]); 3] = [
+        (&packages, false, &["main.cjs"]),
+        (&packages, true, &[]),
+        (&[], false, &[]),
+    ];
+    for (external_packages, runs_tests, seen_half_done) in rows {
+        with_graph(&files, |_, input| {
+            let input = &BindInput {
+                external_packages,
+                runs_tests,
+                ..*input
+            };
+            let scans = scan_files(input);
+            let modules = collect_modules(input, &scans);
+            let (order, _) = compute_order(input, &scans, &modules);
+            let is_half = |name: &&str| order.half(ModuleRef::File(file_named(input, name)));
+            let half: Vec<&str> = files.iter().map(|file| file.0).filter(is_half).collect();
+            assert_eq!(half, seen_half_done, "in a test run: {runs_tests}");
+        });
     }
 }
 

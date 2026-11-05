@@ -4,7 +4,7 @@ import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 // The runner chooses the fixtures of a test by the properties that its callback destructures, which it reads out of the text of the callback.
-// That every form of callback gets its fixtures: ./fixed-runs/closed/fixtures-for-*.txt. Here are the runs whose tests fail, held to their words.
+// That a callback gets its fixtures: ./fixed-runs/closed/fixtures-for-a-callback-with-jsx.txt. Here are the runs whose tests fail, held to their words.
 const refused = `
   import { test, beforeAll } from "bun:test";
   const local = test.extend<{ state: number }>({ state: 5 });

@@ -41,6 +41,7 @@ enum Read {
 
 impl Read {
     /// True if the result has the parameter at `index`.
+    #[inline]
     fn has(self, index: usize) -> bool {
         match self {
             Read::First(_) => true,
@@ -49,6 +50,7 @@ impl Read {
     }
 
     /// True if the caller reads the type of the parameter at `index`, which isn't a rest parameter.
+    #[inline]
     fn asks_for(self, index: usize) -> bool {
         match self {
             Read::First(count) => index < count,
@@ -1653,14 +1655,41 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Same, for callers that only read them.
     pub(super) fn local_type_params_of_symbol(&self, sym: Sym) -> SmallVec<[TypeId; 4]> {
-        if let Some((file, params)) = self.files().only_type_param_list(sym) {
-            let distinct = self.distinct_type_params(file, params);
-            return distinct.map(|tp| self.type_param(file, tp)).collect();
+        match self.files().only_type_param_list(sym) {
+            Some((file, params)) => self.types_of_distinct_type_params(file, params),
+            None => self.local_type_params_of_several_declarations(sym),
         }
+    }
+
+    fn types_of_distinct_type_params(
+        &self,
+        file: FileId,
+        params: Span<TypeParamId>,
+    ) -> SmallVec<[TypeId; 4]> {
+        let hir = self.hir(file);
+        let mut types = SmallVec::new();
+        'params: for tp in params.iter() {
+            let name = hir[tp].name;
+            if name != Atom::NONE && name != known::empty {
+                for earlier in params.iter() {
+                    if earlier == tp {
+                        break;
+                    }
+                    if hir[earlier].name == name {
+                        continue 'params;
+                    }
+                }
+            }
+            types.push(self.type_param(file, tp));
+        }
+        types
+    }
+
+    #[inline(never)]
+    fn local_type_params_of_several_declarations(&self, sym: Sym) -> SmallVec<[TypeId; 4]> {
         let lists = self.files().type_param_lists(sym);
         if let [(file, params)] = lists[..] {
-            let distinct = self.distinct_type_params(file, params);
-            return distinct.map(|tp| self.type_param(file, tp)).collect();
+            return self.types_of_distinct_type_params(file, params);
         }
         // Each declaration has its own type parameters here. They're taken from a single
         // declaration as far as it has them, so that whatever a constraint or a default references
@@ -2875,6 +2904,9 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── type syntax ─────────────────────────────
 
     pub fn types_from_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) -> Vec<TypeId> {
+        if nodes.is_empty() {
+            return Vec::new();
+        }
         let hir = self.hir(file);
         hir.ids(nodes)
             .map(|n| self.type_from_node(file, n))
@@ -3401,15 +3433,16 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     return intended;
                 }
-                let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
+
                 // `resolveTypeReferenceName`: `getUnresolvedSymbolForEntityName`
                 // `NameResolver.Resolve`: for `const` the walk ends without an error at an `as const`.
                 let is_const_assertion = |n| matches!(hir.data(n), NodeData::Expr(e) if matches!(hir[e].kind, ExprKind::AsConst(_)));
                 let ignore_errors = self.bound(file).is_unchecked_type(node.idx())
-                    || names.first() == Some(&known::r#const)
+                    || hir.texts(name).next() == Some(known::r#const)
                         && (hir.find_ancestor(hir.node(node), is_const_assertion)).is_some();
                 let Some(sym) = self.resolve_type_reference_name(file, scope, name, ignore_errors)
                 else {
+                    let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                     let args = self.types_from_nodes(file, args);
                     return self.unresolved_name_type(&names, &args);
                 };
@@ -3567,9 +3600,12 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Sym> {
         let found = self.resolve_entity_name(file, scope, name, SymFlags::TYPE, ignore_errors)?;
         // `resolveEntityName` resolves an alias to the first symbol in the chain that has a type meaning.
-        let target = match self.combined_symbol_of_resolved_alias(found) {
-            Some(combined) => combined,
-            None => self.files().resolve_alias_as(found, SymFlags::TYPE)?,
+        let target = match self.files().flags(found).contains(SymFlags::ALIAS) {
+            true => match self.combined_symbol_of_resolved_alias(found) {
+                Some(combined) => combined,
+                None => self.files().resolve_alias_as(found, SymFlags::TYPE)?,
+            },
+            false => found,
         };
         // `getSymbol` only returns a symbol that has the requested meaning.
         self.files()
@@ -3638,7 +3674,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// true if `typeParameters` is nil whatever the alias declares. `getDeclaredTypeOfTypeAlias` assigns it after a
     /// `popTypeResolution` that succeeds, so not while the alias is being resolved, and not after a cycle.
     fn type_alias_links(&mut self, sym: Sym) -> (TypeId, bool) {
-        let declared = self.declared_type(sym);
+        if let Some(known) = self.p.declared_types.get(&self.task, &sym) {
+            return known;
+        }
+        let declared = self.resolve_declared_type(sym);
         let has_no_type_parameters = match self.p.declared_types.get(&self.task, &sym) {
             Some((_, has_no_type_parameters)) => has_no_type_parameters,
             // `pushTypeResolution` has just failed.
@@ -3670,7 +3709,9 @@ impl<'p, 's> Checker<'p, 's> {
         let has_no_type_parameters = !is_class_or_interface
             && flags.contains(SymFlags::TYPE_ALIAS)
             && self.type_alias_links(sym).1;
-        let (least, most) = if has_no_type_parameters {
+        let declares_none = has_no_type_parameters
+            || (self.files().only_type_param_list(sym)).is_some_and(|list| list.1.is_empty());
+        let (least, most) = if declares_none {
             (0, 0)
         } else {
             self.files().type_argument_arity(sym)
@@ -5376,7 +5417,8 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
         };
-        if self.hir(file)[func].this_param.is_some() {
+        let declaration = &self.hir(file)[func];
+        if declaration.this_param.is_some() {
             let declared = self.type_of_this_parameter(file, func);
             let ty = self.instantiate(declared, mapper);
             // `instantiateSymbol(sig.thisParameter, m)`, as for the parameters.
@@ -5392,7 +5434,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getSignatureFromDeclaration`: "If only one accessor includes a this-type annotation, the
         // other behaves as if it had the same type annotation"
-        let other_kind = match self.hir(file)[func].kind {
+        let other_kind = match declaration.kind {
             FnKind::Getter => Some(FnKind::Setter),
             FnKind::Setter => Some(FnKind::Getter),
             _ => None,

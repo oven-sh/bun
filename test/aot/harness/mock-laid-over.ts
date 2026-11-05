@@ -433,13 +433,20 @@ export function packed(all: Map<string, Project>, columns: string[]): Project {
  * changes how the whole run answers: a fault of another column went out of sight beside one. AOT_WHOLE=1, on a bench: all 696 projects, each alone.
  * mock-laid-over.known.txt holds every key that differs, a line `<project> | <reader> | <export>: <loud | SILENT> | <what is printed> | at <the moments>`: a line that is
  * cured, one that changes and a new one all fail. BUN_AOT_REWRITE_MOCK_LAID_OVER=1 writes the lines of what ran anew.
+ * One file took five minutes, and CI's runner tries a file that fails four times. So `parts` files share the projects, each a stretch of the sorted names, and the packed
+ * runs go with the first.
  */
-export function mockLaidOver() {
+export function mockLaidOver(part: number, parts: number) {
   const all = new Map([...modules(), ...builtinModules()]);
-  const withoutMockingPreload = witnesses.filter(column => !column.includes(".laid-by-preload."));
-  test("the columns of real programs and a witness for each fault", () => judge("packed", packed(all, withoutMockingPreload), 5000), 300_000);
-  test("the same beside preloads that lay mocks", () => judge("packed beside preloads that mock", packed(all, witnesses), 5000), 300_000);
-  if (runsWholeGrids) for (const [name, project] of all) test(name, () => judge(name, project, 10), 180_000);
+  if (part === 1) {
+    const withoutMockingPreload = witnesses.filter(column => !column.includes(".laid-by-preload."));
+    test("the columns of real programs and a witness for each fault", () => judge("packed", packed(all, withoutMockingPreload), 5000), 300_000);
+    test("the same beside preloads that lay mocks", () => judge("packed beside preloads that mock", packed(all, witnesses), 5000), 300_000);
+  }
+  const names = [...all.keys()].sort();
+  const stretch = Math.ceil(names.length / parts);
+  const mine = names.slice((part - 1) * stretch, part * stretch);
+  if (runsWholeGrids) for (const name of mine) test(name, () => judge(name, all.get(name)!, 10), 180_000);
   afterAll(() => {
     if (!rewrite) return;
     const now = readFileSync(list, "utf8").split("\n");

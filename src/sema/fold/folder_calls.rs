@@ -3,7 +3,7 @@ use super::feature_flags::find_feature_flag;
 use super::folder::{Effects, Folded, Folder};
 use super::known_sets::{name_of_join, name_of_replace, name_of_split};
 use super::{Constant, Decision, MadeByCall, slice_in};
-use crate::atom::known;
+use crate::atom::{Atom, known};
 use crate::bind::Binding;
 use crate::hir::{Call, Chain, ExprId, ExprKind, IdList, MemberKey};
 use crate::hir_from_data::DataValue;
@@ -11,15 +11,16 @@ use crate::import_sites::{ImportSpecifier, call_site_arguments, may_construct_wo
 
 impl<'s> Folder<'_, 's> {
     pub(super) fn fold_call(&mut self, e: ExprId, call: Call) -> Folded {
+        let callee = self.hir.skip_type_assertions(call.callee);
         if call.chain == Chain::No
-            && self.is_feature_callee(call.callee)
+            && self.is_feature_callee(callee)
             && !self.inputs.features_are_unknown()
         {
             return self.fold_feature_call(e);
         }
         let find_code = |folder: &Self| folder.find_char_code_in_written_text(call);
-        let callee = self.hir.skip_type_assertions(call.callee);
-        if let Some((_, MemberKey::Name(known::charCodeAt))) = self.hir.member_key(callee)
+        let key = self.hir.member_key(callee);
+        if let Some((_, MemberKey::Name(known::charCodeAt))) = key
             && let Some(code) = self.holds_under_minify_syntax(find_code)
         {
             if find_code(self).is_none() {
@@ -35,16 +36,34 @@ impl<'s> Folder<'_, 's> {
         if is_dropped {
             return self.decide(e, Decision::Constant(Constant::Undefined));
         }
-        if let Some(folded) = self.fold_short_circuit(e, call.callee, call.chain) {
+        if call.chain != Chain::No
+            && let Some(folded) = self.fold_short_circuit(e, call.callee, call.chain)
+        {
             return folded;
         }
         if let Some(given) = call_site_arguments(self.hir, self.bound, e) {
             self.record_specifier(given);
         }
-        if let Some(pieces) = self.split_written_text(call) {
+        let ExprKind::Dot {
+            obj,
+            name,
+            chain: Chain::No,
+            ..
+        } = self.hir[callee].kind
+        else {
+            return Folded::UNKNOWN;
+        };
+        if call.chain != Chain::No {
+            return Folded::UNKNOWN;
+        }
+        if call.args.len() == 1
+            && let Some(pieces) = self.split_written_text(call, obj, name)
+        {
             return self.decide(e, Decision::Data(pieces));
         }
-        if let Some(joined) = self.fold_join_of_constants(call) {
+        if let Some((list, MemberKey::Name(known::join))) = key
+            && let Some(joined) = self.fold_join_of_constants(call, list)
+        {
             return match (joined.value, joined.effects) {
                 (Value::Known(text), Effects::None) => {
                     let text = self.evaluator.to_constant(text);
@@ -53,7 +72,10 @@ impl<'s> Folder<'_, 's> {
                 _ => joined,
             };
         }
-        self.fold_replace_at_end_of_text(call)
+        if call.args.len() != 2 {
+            return Folded::UNKNOWN;
+        }
+        self.fold_replace_at_end_of_text(call, obj, name)
             .unwrap_or(Folded::UNKNOWN)
     }
 
@@ -92,22 +114,9 @@ impl<'s> Folder<'_, 's> {
         (is_inside && bytes.is_ascii()).then(|| f64::from(bytes[index as usize]))
     }
 
-    fn fold_join_of_constants(&self, call: Call) -> Option<Folded> {
+    fn fold_join_of_constants(&self, call: Call, list: ExprId) -> Option<Folded> {
         let hir = self.hir;
-        let callee = hir.skip_type_assertions(call.callee);
-        let ExprKind::Dot {
-            chain: Chain::No, ..
-        } = hir[callee].kind
-        else {
-            return None;
-        };
-        let (list, MemberKey::Name(name)) = hir.member_key(callee)? else {
-            return None;
-        };
-        if call.chain != Chain::No
-            || self.atoms.bytes(name) != b"join"
-            || name_of_join(self.inputs, self.atoms) != Some(name)
-        {
+        if name_of_join(self.inputs, self.atoms) != Some(known::join) {
             return None;
         }
         let mut arguments = hir.ids(call.args);
@@ -183,23 +192,8 @@ impl<'s> Folder<'_, 's> {
         effects
     }
 
-    fn split_written_text(&self, call: Call) -> Option<&'s DataValue<'s>> {
-        let hir = self.hir;
-        let callee = hir.skip_type_assertions(call.callee);
-        let ExprKind::Dot {
-            obj,
-            name,
-            chain: Chain::No,
-            ..
-        } = hir[callee].kind
-        else {
-            return None;
-        };
-        let mut arguments = hir.ids(call.args);
-        let separator = arguments.next()?;
-        if call.chain != Chain::No || arguments.next().is_some() {
-            return None;
-        }
+    fn split_written_text(&self, call: Call, obj: ExprId, name: Atom) -> Option<&'s DataValue<'s>> {
+        let separator = self.hir.ids(call.args).next()?;
         let (text, separator) = (self.written_text(obj)?, self.written_text(separator)?);
         if name_of_split(self.inputs, self.atoms) != Some(name) {
             return None;
@@ -228,21 +222,8 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    fn fold_replace_at_end_of_text(&self, call: Call) -> Option<Folded> {
+    fn fold_replace_at_end_of_text(&self, call: Call, obj: ExprId, name: Atom) -> Option<Folded> {
         let hir = self.hir;
-        let callee = hir.skip_type_assertions(call.callee);
-        let ExprKind::Dot {
-            obj,
-            name,
-            chain: Chain::No,
-            ..
-        } = hir[callee].kind
-        else {
-            return None;
-        };
-        if call.chain != Chain::No {
-            return None;
-        }
         let mut arguments = hir.ids(call.args);
         let (pattern, replacement) = (arguments.next()?, arguments.next()?);
         let ExprKind::Regex { pattern, flags } = hir[pattern].kind else {
@@ -307,7 +288,7 @@ impl<'s> Folder<'_, 's> {
         if self.feature_symbol.is_none() {
             return false;
         }
-        let callee = self.hir.skip_type_assertions(callee);
+
         matches!(self.hir[callee].kind, ExprKind::Ident(_))
             && self.bound.binding(callee) == Binding::Symbol(self.feature_symbol)
     }

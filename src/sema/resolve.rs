@@ -502,20 +502,22 @@ impl ScriptKind {
 
     /// `GetScriptKindFromFileName`
     pub fn from_file_name(path: &[u8]) -> Option<ScriptKind> {
-        const KINDS: [(&[u8], ScriptKind); 8] = [
-            (b".js", ScriptKind::Js),
-            (b".cjs", ScriptKind::Js),
-            (b".mjs", ScriptKind::Js),
-            (b".jsx", ScriptKind::Jsx),
-            (b".ts", ScriptKind::Ts),
-            (b".cts", ScriptKind::Ts),
-            (b".mts", ScriptKind::Ts),
-            (b".tsx", ScriptKind::Tsx),
-        ];
-        let extension = &path[strings::last_index_of_char(path, b'.')?..];
-        let mut kinds = KINDS.iter();
-        let found = kinds.find(|(name, _)| extension.eq_ignore_ascii_case(name))?;
-        Some(found.1)
+        let lower = u8::to_ascii_lowercase;
+        match path {
+            [.., b'.', a, b] => match [lower(a), lower(b)] {
+                [b'j', b's'] => Some(ScriptKind::Js),
+                [b't', b's'] => Some(ScriptKind::Ts),
+                _ => None,
+            },
+            [.., b'.', a, b, c] => match [lower(a), lower(b), lower(c)] {
+                [b'c' | b'm', b'j', b's'] => Some(ScriptKind::Js),
+                [b'j', b's', b'x'] => Some(ScriptKind::Jsx),
+                [b'c' | b'm', b't', b's'] => Some(ScriptKind::Ts),
+                [b't', b's', b'x'] => Some(ScriptKind::Tsx),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// True if this isn't the language that the name `path` implies. JavaScript can contain JSX
@@ -1482,13 +1484,31 @@ pub struct AsRequire<'a> {
 pub fn ancestors(dir: &[u8]) -> impl Iterator<Item = &[u8]> {
     let root = root_length(dir);
     std::iter::successors(Some(dir), move |&dir| {
-        (root < dir.len()).then(|| dirname::<Posix>(dir))
+        (root < dir.len()).then(|| parent_directory(dir))
     })
+}
+
+#[inline]
+fn parent_directory(mut path: &[u8]) -> &[u8] {
+    loop {
+        match strings::last_index_of_char(path, b'/') {
+            None => return b"",
+            Some(0) => return b"/",
+            Some(separator) if separator == path.len() - 1 => path = &path[..separator],
+            Some(separator) => return &path[..separator],
+        }
+    }
+}
+
+#[inline]
+fn ends_with(path: &[u8], suffix: &[u8]) -> bool {
+    let mut path = path.iter().rev();
+    suffix.iter().rev().all(|byte| path.next() == Some(byte))
 }
 
 /// The path of `name` in `dir`: `CombinePaths` for a `name` without a root.
 pub fn inside(dir: &[u8], name: &[u8]) -> Vec<u8> {
-    let separator: &[u8] = if dir.ends_with(b"/") { b"" } else { b"/" };
+    let separator: &[u8] = if dir.last() == Some(&b'/') { b"" } else { b"/" };
     [dir, separator, name].concat()
 }
 
@@ -1522,6 +1542,9 @@ fn get_encoded_root_length(path: &[u8]) -> isize {
         _ => {}
     }
     // URL
+    if !strings::contains_char(path, b':') {
+        return 0;
+    }
     let Some(scheme_end) = strings::index_of(path, b"://") else {
         return 0;
     };
@@ -1568,6 +1591,7 @@ pub fn root_length(path: &[u8]) -> usize {
         [b'/', volume, b':'] | [b'/', volume, b':', b'/', ..] if volume.is_ascii_alphabetic() => 3,
         [b'/', b'^'] | [b'/', b'^', b'/', ..] => 2,
         [b'/', b'/', ..] => unc_root_length(path),
+        [b'/', rest @ ..] if !strings::contains_char(rest, b':') => 1,
         [b'/', rest @ ..] => match get_encoded_root_length(rest) {
             url if url < 0 => 1 + url_root_without_separator(&rest[..!url as usize]).len(),
             _ => 1,
@@ -1623,9 +1647,10 @@ pub(crate) fn get_path_components(path: &[u8]) -> SmallVec<[&[u8]; 8]> {
 /// directory listing. Returns `None` if `path` is already absolute and normalized.
 fn normalized_for_lookup(path: &[u8]) -> Option<Vec<u8>> {
     let names = &path[get_root_length(path)..];
-    let is_normalized = path.starts_with(b"/")
+    let mut split = strings::split(names, b"/");
+    let is_normalized = path.first() == Some(&b'/')
         && (names.is_empty()
-            || !strings::split(names, b"/").any(|it| matches!(it, b"" | b"." | b".."))
+            || !split.any(|it| matches!(it, b"" | b"." | b".."))
             // In the checker's format a URL's root has a `/` before it.
             || get_encoded_root_length(&path[1..]) < 0);
     (!is_normalized).then(|| join(b"/", path))
@@ -1705,10 +1730,15 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
 /// above `out`'s root or its first `share` bytes.
 #[inline]
 fn append_names(out: &mut Vec<u8>, share: usize, names: &[u8]) {
-    for part in strings::split_any(names, b"/\\") {
-        match part {
-            b"" | b"." => {}
+    let (mut run, mut start) = (0..0usize, 0usize);
+    loop {
+        let rest = &names[start..];
+        let is_separator = |&byte: &u8| matches!(byte, b'/' | b'\\');
+        let end = start + rest.iter().position(is_separator).unwrap_or(rest.len());
+        match &names[start..end] {
+            b"" | b"." => append_run(out, &names[std::mem::take(&mut run)]),
             b".." => {
+                append_run(out, &names[std::mem::take(&mut run)]);
                 let parent = strings::last_index_of_char(out, b'/').unwrap_or(0);
                 // Only a root's last separator is at the start or right after another separator.
                 let root = match parent == 0 || out[parent - 1] == b'/' {
@@ -1717,11 +1747,25 @@ fn append_names(out: &mut Vec<u8>, share: usize, names: &[u8]) {
                 };
                 out.truncate(parent.max(share).max(if root > 1 { root } else { 0 }));
             }
+            _ if !run.is_empty() && names[start - 1] == b'/' => run.end = end,
             _ => {
-                out.push(b'/');
-                out.extend_from_slice(part);
+                append_run(out, &names[run]);
+                run = start..end;
             }
         }
+        if end == names.len() {
+            break;
+        }
+        start = end + 1;
+    }
+    append_run(out, &names[run]);
+}
+
+#[inline]
+fn append_run(out: &mut Vec<u8>, run: &[u8]) {
+    if !run.is_empty() {
+        out.push(b'/');
+        out.extend_from_slice(run);
     }
 }
 
@@ -2316,8 +2360,9 @@ pub(crate) fn extra_supported_extensions<'h>(
 }
 
 /// `FileExtensionIs`: a path that's nothing but the extension doesn't count.
+#[inline]
 pub(crate) fn file_extension_is(path: &[u8], extension: &[u8]) -> bool {
-    path.len() > extension.len() && path.ends_with(extension)
+    path.len() > extension.len() && ends_with(path, extension)
 }
 
 /// `FileExtensionIsOneOf`
@@ -2387,10 +2432,11 @@ pub fn is_declaration_file_name(path: &[u8]) -> bool {
         return !get_declaration_file_extension(path).is_empty();
     }
     // The base name is the end of such a path, from its last separator on.
+    let base = || &path[path.iter().rposition(is_separator).map_or(0, |at| at + 1)..];
     SUPPORTED_DECLARATION_EXTENSIONS
         .into_iter()
-        .any(|extension| path.ends_with(extension))
-        || (path.ends_with(b".ts") && strings::contains(get_base_file_name(path), b".d."))
+        .any(|extension| ends_with(path, extension))
+        || (ends_with(path, b".ts") && strings::contains(base(), b".d."))
 }
 
 /// `GetDeclarationFileExtension`: for `a.d.b.d.json.ts` it's `.d.b.d.json.ts`, from the first `.d.`
@@ -2427,7 +2473,8 @@ pub fn node_module_path_parts(path: &[u8]) -> Option<(usize, usize, usize)> {
             .get(part_start + 1..)
             .and_then(|rest| strings::index_of_char_usize(rest, b'/'))
             .map(|at| part_start + 1 + at);
-        let is_node_modules = path[part_start..].starts_with(b"/node_modules/");
+        let is_node_modules = path.get(part_start + 1) == Some(&b'n')
+            && path[part_start..].starts_with(b"/node_modules/");
         state = match state {
             State::BeforeNodeModules if is_node_modules => {
                 top_level_node_modules = part_start;
@@ -2622,7 +2669,7 @@ impl<'h> Resolver<'h> {
         // The directories handled so far. Thousands of files share hundreds of directories.
         let mut visited_directories: FxHashSet<&[u8]> = FxHashSet::default();
         for path in emitted {
-            let file_directory = dirname::<Posix>(path);
+            let file_directory = parent_directory(path);
             if !visited_directories.insert(file_directory) {
                 continue;
             }
@@ -2707,7 +2754,7 @@ impl<'h> Resolver<'h> {
             return self.is_file(&normalized);
         }
         // Most misses are in directories that don't exist.
-        let result = self.is_dir(dirname::<Posix>(path)) && self.host.is_file(path);
+        let result = self.is_dir(parent_directory(path)) && self.host.is_file(path);
         *self.caches.files.insert_ref(self.keep(path), result)
     }
 
@@ -3014,7 +3061,7 @@ impl<'h> Resolver<'h> {
             as_import: how.as_import,
             ..self.look(ResolutionMode::Require, true, &outcome)
         };
-        let from_dir = dirname::<Posix>(from);
+        let from_dir = parent_directory(from);
         match is_relative(spec) {
             true => {
                 // `resolve`: only `.`, `..` and a specifier that ends in `/` have to be a
@@ -3067,7 +3114,7 @@ impl<'h> Resolver<'h> {
 
     /// `resolveNodeLikeWorker`
     fn resolve_with(&self, spec: &[u8], from: &[u8], look: Look) -> Option<Vec<u8>> {
-        let from_dir = dirname::<Posix>(from);
+        let from_dir = parent_directory(from);
         // `createResolvedModuleHandlingSymlink`: a file that a non-relative name resolves to in a
         // package is replaced by its real path.
         let follows_links = !self.options.preserve_symlinks && !is_relative(spec);
@@ -3200,7 +3247,7 @@ impl<'h> Resolver<'h> {
     /// The format that the `package.json` nearest to `path` declares for its `.js` files: `Import`
     /// for `"type": "module"`, `Require` for `"type": "commonjs"`.
     pub(crate) fn package_type(&self, path: &[u8]) -> ResolutionMode {
-        match self.package_scope(dirname::<Posix>(path)) {
+        match self.package_scope(parent_directory(path)) {
             Some((_, package)) => match package.json.get(b"type").and_then(Json::as_str) {
                 Some(b"module") => ResolutionMode::Import,
                 Some(b"commonjs") => ResolutionMode::Require,
@@ -3213,13 +3260,13 @@ impl<'h> Resolver<'h> {
     /// `loadSourceFileMetaData`, `PackageJsonDirectory`: the directory of the `package.json`
     /// nearest to the file at `path`.
     pub fn package_json_directory<'d>(&self, path: &'d [u8]) -> Option<&'d [u8]> {
-        Some(self.package_scope(dirname::<Posix>(path))?.0)
+        Some(self.package_scope(parent_directory(path))?.0)
     }
 
     /// `loadSourceFileMetaData`: the `package.json` nearest to the file at `path`
     /// (`PackageJsonDirectory`), if it exists and yields no `PackageJsonType`.
     pub fn package_json_without_type(&self, path: &[u8]) -> Option<Vec<u8>> {
-        let (dir, package) = self.package_scope(dirname::<Posix>(path))?;
+        let (dir, package) = self.package_scope(parent_directory(path))?;
         let is_requested = self.options.resolves_like_node
             && format_by_extension(path) == ResolutionMode::None
             || strings::contains(path, b"/node_modules/");
@@ -3321,7 +3368,7 @@ impl<'h> Resolver<'h> {
         mode: ResolutionMode,
         tracer: Option<&Tracer>,
     ) -> Option<(Vec<u8>, bool, Option<PackageId<'h>>)> {
-        let from_dir = dirname::<Posix>(from);
+        let from_dir = parent_directory(from);
         // `ResolvedTypeReferenceDirective` has no `ResolvedUsingTsExtension`.
         let outcome = Outcome::default();
         let look = self.look(mode, false, &outcome);
@@ -3592,7 +3639,7 @@ impl<'h> Resolver<'h> {
         if !has_trailing_directory_separator(candidate) {
             // Without a tracer, `is_file` finds nothing in a directory that doesn't exist.
             if is_traced {
-                let parent = dirname::<Posix>(path);
+                let parent = parent_directory(path);
                 if !self.is_dir(parent) {
                     look.trace(6148, &[Arg::Path(parent)]);
                     return None;
@@ -3806,7 +3853,7 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Option<Vec<u8>> {
         // No file is looked up in a directory that doesn't exist. Without a tracer, `is_file` takes care of that.
-        if look.tracer.is_some() && !self.is_dir(dirname::<Posix>(stem)) {
+        if look.tracer.is_some() && !self.is_dir(parent_directory(stem)) {
             return None;
         }
         let (typescript, declaration, javascript): (&[&[u8]], &[u8], &[&[u8]]) =
@@ -4937,7 +4984,7 @@ pub(crate) fn paths_of_types_versions(json: &Json) -> Option<Paths> {
 fn resolution_key(redirect: u32, spec: &[u8], from: &[u8], mode: ResolutionMode) -> Vec<u8> {
     [
         &redirect.to_le_bytes()[..],
-        dirname::<Posix>(from),
+        parent_directory(from),
         match mode {
             ResolutionMode::None => b"//0",
             ResolutionMode::Import => b"//1",

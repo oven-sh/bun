@@ -58,6 +58,29 @@ pub(crate) struct MarkedNodes {
     pub(super) functions: PositionSet,
 }
 
+pub(super) struct Conditions(Vec<Option<bool>>);
+
+impl Conditions {
+    fn new(len: usize) -> Conditions {
+        Conditions(vec![None; len])
+    }
+
+    #[inline]
+    pub(super) fn get<'a>(&'a self, e: &'a ExprId) -> Option<&'a bool> {
+        self.0.get(e.idx())?.as_ref()
+    }
+
+    #[inline]
+    pub(super) fn insert(&mut self, e: ExprId, is_truthy: bool) {
+        self.0[e.idx()] = Some(is_truthy);
+    }
+
+    fn keys(&self) -> impl Iterator<Item = ExprId> {
+        let conditions = (0..).map(ExprId).zip(&self.0);
+        conditions.filter_map(|(e, condition)| condition.map(|_| e))
+    }
+}
+
 pub(super) struct Folder<'a, 's> {
     pub(super) hir: &'a File<'s>,
     pub(super) bound: &'a Bound<'s>,
@@ -74,6 +97,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) written_in_place: FxHashMap<ExprId, ExprId>,
     pub(super) process_imports: OnceCell<Vec<SymbolId>>,
     pub(super) exported_variables: OnceCell<Vec<SymbolId>>,
+    pub(super) initializers_of_stable_bindings: Vec<Cell<Option<Option<ExprId>>>>,
     pub(super) list_holders: ListHolders,
     pub(super) imported_names: ImportedNames,
     pub(super) enum_members: EnumMembers,
@@ -97,7 +121,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) places_always_computed: OnceCell<PositionSet>,
     pub(super) conditions_told_by_shape: PositionSet,
     pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
-    pub(super) conditions: FxHashMap<ExprId, bool>,
+    pub(super) conditions: Conditions,
     pub(super) short_circuited_links: PositionSet,
     pub(super) goes_on_to_the_right: Vec<ExprId>,
     pub(super) is_main_of_import_meta_written: OnceCell<bool>,
@@ -132,6 +156,7 @@ pub(super) fn run<'s>(
         written_in_place: FxHashMap::default(),
         process_imports: OnceCell::new(),
         exported_variables: OnceCell::new(),
+        initializers_of_stable_bindings: vec![Cell::new(None); bound.symbols.len()],
         list_holders: ListHolders::default(),
         imported_names: ImportedNames::default(),
         enum_members: EnumMembers::none(),
@@ -155,7 +180,7 @@ pub(super) fn run<'s>(
         places_always_computed: OnceCell::new(),
         conditions_told_by_shape: PositionSet::new(hir.exprs.len()),
         nullish_logical_results: FxHashMap::default(),
-        conditions: FxHashMap::default(),
+        conditions: Conditions::new(hir.exprs.len()),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
         goes_on_to_the_right: Vec::new(),
         is_main_of_import_meta_written: OnceCell::new(),
@@ -197,11 +222,11 @@ impl<'s> Folder<'_, 's> {
             self.strings_over_limit.push(e);
         }
         let is_nan = folded.value.is_nan();
-        let is_marked_by_its_own_rule = self.folded_by_build_alone.contains(index);
         let is_left_to_run_time = is_nan && self.converts_an_operand_to_a_number(e);
         let is_folded_by_build_alone =
             self.has_operand_folded_by_build_alone(e) || is_left_to_run_time;
         if is_folded_by_build_alone {
+            let is_marked_by_its_own_rule = self.folded_by_build_alone.contains(index);
             self.folded_by_build_alone.insert(index);
             if self.tells_condition_by_shape(e) {
                 self.conditions_told_by_shape.insert(index);
@@ -245,6 +270,7 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
+    #[inline]
     pub(super) fn folded(&self, e: ExprId) -> Folded {
         match (self.values.get(e.idx()), self.effects.get(e.idx())) {
             (Some(&value), Some(&effects)) => Folded::new(value, effects),
@@ -252,6 +278,7 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
+    #[inline]
     pub(super) fn condition(&self, e: ExprId) -> Option<bool> {
         match self.folded(e).value {
             Value::Known(value) => Some(self.evaluator.to_boolean(value)),
@@ -290,11 +317,11 @@ impl<'s> Folder<'_, 's> {
 
     fn collect_constants(&self, dead: &MarkedNodes) -> Vec<FoldedConstant> {
         let mut constants = Vec::new();
-        for (index, node) in self.hir.exprs.iter().enumerate() {
-            if matches!(self.values[index], Value::Unknown) || dead.exprs.contains(index) {
+        for (index, value) in self.values.iter().enumerate() {
+            if matches!(value, Value::Unknown) || dead.exprs.contains(index) {
                 continue;
             }
-            if literal_constant(self.hir, node.kind).is_some() {
+            if literal_constant(self.hir, self.hir.exprs[index].kind).is_some() {
                 continue;
             }
             let expr = ExprId(index as u32);
@@ -337,7 +364,7 @@ impl<'s> Folder<'_, 's> {
 
     fn collect_truthy_without_effects(&self) -> PositionSet {
         let mut found = PositionSet::new(self.hir.exprs.len());
-        for &e in self.conditions.keys() {
+        for e in self.conditions.keys() {
             if self.is_truthy_without_effects(e) {
                 found.insert(e.idx());
             }
@@ -389,13 +416,18 @@ impl<'s> Folder<'_, 's> {
             dead_in_bun_run.unwrap_or((dead_exprs, dead_stmts));
         let (dead_exprs_under_minify_syntax, dead_stmts_under_minify_syntax) =
             dead_under_minify_syntax.unwrap_or((dead_exprs_in_bun_run, dead_stmts_in_bun_run));
+        let constants = self.collect_constants(&dead);
         let decisions = Decisions {
             decided: slice_in(&self.decided, arena),
             is_decided: NodeBits::of_ascending(
                 self.decided.iter().map(|entry| entry.0.idx()),
                 arena,
             ),
-            constants: slice_in(&self.collect_constants(&dead), arena),
+            constants: slice_in(&constants, arena),
+            is_constant: NodeBits::of_ascending(
+                constants.iter().map(|entry| entry.expr.idx()),
+                arena,
+            ),
             strings_and_numbers_of_bun_run_alone: NodeBits::freeze(
                 &self.collect_strings_and_numbers_of_bun_run_alone(&dead),
                 arena,

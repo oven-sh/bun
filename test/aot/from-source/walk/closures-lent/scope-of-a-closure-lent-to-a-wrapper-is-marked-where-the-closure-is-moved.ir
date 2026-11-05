@@ -1,4 +1,4 @@
-# The arrow of `counter` holds the scope of `n` and lies in the frame: `later` only calls it. The maker sets no mark on the scope, and hands the cell back where it returns. But `later` captures the arrow in a closure of the heap, so the arrow is moved, and the mover marks the scope that it holds: that cell is not handed back, and each kept arrow goes on counting in the `n` of its own call.
+# `later` captures what arrives in an arrow that `push` takes, out of sight: `f` does not count as only called, so the arrow of `counter` is made in the heap and keeps the scope of `n`: the cell is never handed back.
 # `plain` lends to `twice`, which captures nothing: its cell is the next call's.
 # f1 = later, f2 = twice, f3 = counter, f4 = plain
 # -- source: scope-of-a-closure-lent-to-a-wrapper-is-marked-where-the-closure-is-moved.ts
@@ -11,11 +11,11 @@
 # print(counter(10), counter(20), kept[0](), kept[1](), kept[0](), plain(1), counter(30), plain(2), kept[0](), kept[1](), kept[2]());
 # -- end of source
 # RUN: walk f3 mechanisms=all-Inlining
-# CHECK: ReleaseEnvironment
+# CHECK-NOT: ReleaseEnvironment
 # RUN(MARK): emit f3 mechanisms=all-Inlining
 # MARK-NOT: Store8({{*}}collectorState
 # RUN(FRAME): bytes f3 mechanisms=all-Inlining
-# FRAME-NOT: NewSlimClosure.
+# FRAME: NewSlimClosure.Plain
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 11 21 11 21 12 8 31 11 13 22 31
 # RUN(CALLED): run-in-shell mechanisms=all-Inlining

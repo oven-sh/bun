@@ -1,4 +1,4 @@
-# `inner` captures `f`. `outer` only hands on to `inner`, and `first` only to `outer`: what is lent to either may come to lie in a closure, so the second word goes up to both.
+# `inner` captures `f`. `outer` only hands on to `inner`, and `first` only to `outer`: neither makes a closure over `f`, so the second word stays with `inner`: where `inner` is copied in line its own frame says so.
 # `twoLevels` captures `f` in an arrow that captures it again: the capture of the outer arrow bears both words, that of the inner arrow the first alone.
 # `byName` calls a function that it declares: the capture is handed over at the call and no closure is made, so `f` bears the first word alone.
 # f1 = each, f2 = inner, f3 = outer, f4 = first, f5 = twoLevels, f6 = byName, f7 = maker
@@ -20,9 +20,11 @@
 # CHECK-LABEL: function f2
 # CHECK: parameter 1 {{*}}only-called captured
 # CHECK-LABEL: function f3
-# CHECK: parameter 1 {{*}}only-called captured
+# CHECK: parameter 1 {{*}}only-called
+# CHECK-NOT: captured
 # CHECK-LABEL: function f4
-# CHECK: parameter 1 {{*}}only-called captured
+# CHECK: parameter 1 {{*}}only-called
+# CHECK-NOT: captured
 # CHECK-LABEL: function f5
 # CHECK: parameter 1 {{*}}only-called captured
 # CHECK-LABEL: function f6

@@ -134,7 +134,11 @@ impl Resolver<'_, '_> {
     }
 
     fn resolve_alias(&self, symbol: SymbolId) -> Option<ResolvedValue> {
-        match self.aliases.get(&symbol)? {
+        self.resolve_alias_source(self.aliases.get(&symbol)?)
+    }
+
+    fn resolve_alias_source(&self, source: &AliasSource) -> Option<ResolvedValue> {
+        match source {
             AliasSource::Known(value) => Some(*value),
             AliasSource::Initializer {
                 initializer,
@@ -179,16 +183,25 @@ impl Resolver<'_, '_> {
                 let held = self.held_value_of(initializer);
                 held.filter(|held| table::is_of_test_runner(held.path.id))
             }
+            ExprKind::Index { .. } | ExprKind::Dot { .. } => {
+                let held = self.held_value_of(initializer);
+                held.filter(|held| table::canonical_id(held.path.id) == BuiltinId::ModuleObject)
+            }
             _ => self.find_module_object_behind_tests(initializer),
         }
     }
 
     fn only_holds_its_object(&self, symbol: SymbolId) -> bool {
-        match self.aliases.get(&symbol) {
-            Some(AliasSource::Initializer { initializer, .. }) => {
+        let source = self.aliases.get(&symbol);
+        source.is_some_and(|source| self.is_source_of_object_only_held(source))
+    }
+
+    fn is_source_of_object_only_held(&self, source: &AliasSource) -> bool {
+        match source {
+            AliasSource::Initializer { initializer, .. } => {
                 self.find_object_only_held_by(*initializer).is_some()
             }
-            Some(AliasSource::Known(_)) | None => false,
+            AliasSource::Known(_) => false,
         }
     }
 
@@ -209,11 +222,11 @@ impl Resolver<'_, '_> {
 
     pub(super) fn collect_symbol_paths(&self) -> Vec<(SymbolId, BuiltinPath)> {
         let mut paths = Vec::new();
-        for &symbol in self.aliases.keys() {
-            if self.only_holds_its_object(symbol) {
+        for (&symbol, source) in &self.aliases {
+            if self.is_source_of_object_only_held(source) {
                 continue;
             }
-            match self.resolve_alias(symbol) {
+            match self.resolve_alias_source(source) {
                 Some(ResolvedValue {
                     path,
                     kind: HolderKind::Object,

@@ -1215,7 +1215,7 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn reach_function(&mut self, function: RuntimeFunction) {
-        if let Some(&(file, unit)) = self.function_by_id.get(&function) {
+        if let Some((file, unit)) = self.function_by_id.remove(&function) {
             self.reach_unit(file, unit);
         }
     }

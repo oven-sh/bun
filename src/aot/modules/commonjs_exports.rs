@@ -2056,6 +2056,7 @@ struct ModuleIndex {
 }
 
 impl ModuleIndex {
+    #[inline]
     fn find(&self, module: ModuleRef) -> Option<usize> {
         match module {
             ModuleRef::File(file) => {
@@ -2624,6 +2625,7 @@ impl CommonJsExports {
         }
     }
 
+    #[inline]
     fn number_of(&self, module: ModuleRef) -> Option<usize> {
         self.index.find(module)
     }
@@ -2761,8 +2763,14 @@ impl CommonJsExports {
         }
     }
 
+    #[inline]
     pub fn own_member(&self, file: FileId, access: ExprId) -> Option<Member> {
-        let (number, entry) = self.find_own_access(file, access)?;
+        let number = self.find_module_of_access(file, access)?;
+        self.own_member_in(number, access)
+    }
+
+    fn own_member_in(&self, number: usize, access: ExprId) -> Option<Member> {
+        let entry = self.find_own_access_in(number, access)?;
         let text = &self.modules[number];
         if !self.keeps_names(number) {
             return Some(Member::OnObject);
@@ -2777,14 +2785,28 @@ impl CommonJsExports {
         Some(member.unwrap_or(Member::Undefined))
     }
 
-    fn find_own_access(&self, file: FileId, access: ExprId) -> Option<(usize, OwnAccess)> {
-        let number = match find(&self.accesses_of_inner_modules, (file, access)) {
-            Some(number) => number as usize,
-            None => self.number_of(ModuleRef::File(file))?,
+    #[inline]
+    fn find_module_of_access(&self, file: FileId, access: ExprId) -> Option<usize> {
+        let of_inner_modules = &self.accesses_of_inner_modules;
+        let inner_module = match of_inner_modules.is_empty() {
+            true => None,
+            false => find(of_inner_modules, (file, access)),
         };
+        match inner_module {
+            Some(number) => Some(number as usize),
+            None => self.number_of(ModuleRef::File(file)),
+        }
+    }
+
+    fn find_own_access_in(&self, number: usize, access: ExprId) -> Option<OwnAccess> {
         let accesses = &self.modules[number].own_accesses;
         let at = accesses.binary_search_by_key(&access, |it| it.node);
-        Some((number, accesses[at.ok()?]))
+        Some(accesses[at.ok()?])
+    }
+
+    fn find_own_access(&self, file: FileId, access: ExprId) -> Option<(usize, OwnAccess)> {
+        let number = self.find_module_of_access(file, access)?;
+        Some((number, self.find_own_access_in(number, access)?))
     }
 
     pub fn module_of_store_of_nothing(&self, file: FileId, access: ExprId) -> Option<ModuleRef> {
@@ -2841,19 +2863,26 @@ impl CommonJsExports {
             && self.settled(owner, name)
     }
 
+    #[inline]
     pub fn erased(&self, file: FileId, statement: StmtId) -> bool {
-        if let Some(number) = find(&self.statements_of_inner_modules, (file, statement)) {
+        if !self.statements_of_inner_modules.is_empty()
+            && let Some(number) = find(&self.statements_of_inner_modules, (file, statement))
+        {
             return self.keeps_names(number as usize);
         }
-        self.number_of(ModuleRef::File(file)).is_some_and(|number| {
-            self.keeps_names(number)
-                && self.modules[number]
-                    .erased
-                    .binary_search(&statement)
-                    .is_ok()
-        })
+        self.number_of(ModuleRef::File(file))
+            .is_some_and(|number| self.is_erased_in(number, statement))
     }
 
+    fn is_erased_in(&self, number: usize, statement: StmtId) -> bool {
+        self.keeps_names(number)
+            && self.modules[number]
+                .erased
+                .binary_search(&statement)
+                .is_ok()
+    }
+
+    #[inline]
     pub fn is_evaluated_at_store(&self, file: FileId, statement: StmtId) -> bool {
         self.number_of(ModuleRef::File(file)).is_some_and(|number| {
             self.keeps_names(number) && self.modules[number].evaluated_at_store == Some(statement)

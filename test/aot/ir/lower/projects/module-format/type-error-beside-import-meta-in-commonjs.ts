@@ -5,8 +5,9 @@
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: = ModuleBuiltin builtin=ImportMeta
 // CHECK: [[text]] = String string="text"
-// CHECK-NEXT: [[wrong]] = Convert [[text]] declared={type=number}
-// CHECK: = Call {{*}}, [[wrong]] calleeKey="log"
+// CHECK-NEXT: = Convert [[text]] declared={type=number}
+// CHECK: [[wrong]] = String string="text"
+// CHECK-NEXT: = Call {{*}}, [[wrong]] calleeKey="log"
 
 // FILE: main.ts
 console.log(typeof import.meta.url);

@@ -37,9 +37,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_single_declaration: declarations.len() == 1
                 && bound.symbol(exported).decls.len() == 1
                 && !is_stored_by_code
-                && !self.is_inside_name_with_two_tables(bound.symbol_scope(binding)),
+                && !self.is_inside_name_with_two_tables(bound.symbol_scope(binding))
+                && !(is_exported && self.is_member_of_container(exported)),
             ends_dead_zone: has_dead_zone && first == Some(&declaration),
         }
+    }
+
+    fn is_member_of_container(&self, member: SymbolId) -> bool {
+        let bound = self.file.bound;
+        let outer = bound.symbol(member).parent;
+        outer.is_some() && outer != bound.file_symbol
     }
 
     fn is_inside_name_with_two_tables(&self, scope: ScopeId) -> bool {

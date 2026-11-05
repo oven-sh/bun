@@ -130,7 +130,19 @@ impl<'s> CodeView<'s> for Files<'s> {
     }
 }
 
-pub type FindsEntryPoints<'a> = dyn Fn(&dyn CodeView<'_>) -> Vec<Vec<u8>> + Sync + 'a;
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct NamingLoad {
+    pub file: FileId,
+    pub requires: bool,
+}
+
+#[derive(Default)]
+pub struct EntryPointsFound {
+    pub paths: Vec<Vec<u8>>,
+    pub named_by: Vec<(Vec<u8>, Option<NamingLoad>)>,
+}
+
+pub type FindsEntryPoints<'a> = dyn Fn(&dyn CodeView<'_>) -> EntryPointsFound + Sync + 'a;
 
 pub(super) struct CodeGraph<'s> {
     pub(super) is_compile_build: bool,

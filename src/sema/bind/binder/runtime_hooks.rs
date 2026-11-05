@@ -67,16 +67,17 @@ impl Binder<'_, '_> {
 
     #[inline(always)]
     pub(super) fn note_private_reference(&mut self, reference: ExprId) {
-        if self.options.runtime.is_some() {
+        if (self.f.expr_flags(reference)).contains(ExprFlags::PRIVATE_NAME)
+            && self.options.runtime.is_some()
+        {
             self.note_private_reference_for_runtime(reference);
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn note_private_reference_for_runtime(&mut self, reference: ExprId) {
         let f = self.f;
-        if !f.expr_flags(reference).contains(ExprFlags::PRIVATE_NAME) {
-            return;
-        }
         let (ExprKind::PrivateIdentifier(name) | ExprKind::Dot { name, .. }) =
             f.checked_kind(reference)
         else {

@@ -38,9 +38,14 @@ for (const name of ["spy", "mock"])
   expect(said(plain.stdout + "\n" + plain.stderr)).toEqual(["SAID spy: no error", "SAID mock: no error"]);
   const compiled = await run([bunExe(), "test", "--aot"], String(dir), bunEnv);
   const lib = join(String(dir), "src", "lib.js");
-  expect(said(compiled.stdout + "\n" + compiled.stderr)).toEqual([
-    `SAID spy: TypeError: Cannot spy on 'answer' of "${lib}" because the build didn't see a test spy on it. Spell out the module and the name where the spy is made: import * as module from "<path>"; spyOn(module, "answer") ${page}`,
-    `SAID mock: TypeError: mock(module, fn) cannot replace "${lib}" because the build didn't see a test mock it. Spell out the module's path where the mock is made: mock.module("<path>", factory) ${page}`,
+  // The file that spies and mocks was written while the tests ran, under a name of the run.
+  const lines = said(compiled.stdout + "\n" + compiled.stderr).map(line =>
+    line.replace(/"[^"]*late\.mjs"/, `"late.mjs"`),
+  );
+  const notCompiled = `wasn't compiled with your tests: the build couldn't follow the path that loads it. Import that file by a constant path, or put its path together from import.meta.dir: import(import.meta.dir + "/folder/" + name) ${page}`;
+  expect(lines).toEqual([
+    `SAID spy: TypeError: Cannot spy on 'answer' of "${lib}" because "late.mjs", which makes the spy, ${notCompiled}`,
+    `SAID mock: TypeError: mock(module, fn) cannot replace "${lib}" because "late.mjs", which makes the mock, ${notCompiled}`,
   ]);
 }, 600000);
 

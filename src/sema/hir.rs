@@ -180,7 +180,7 @@ macro_rules! impl_run {
             }
             #[inline]
             pub fn range(self) -> std::ops::Range<usize> {
-                self.start as usize..(self.start + self.len) as usize
+                self.start as usize..self.start as usize + self.len as usize
             }
         }
     };
@@ -356,20 +356,33 @@ pub struct ArenaFewMap<'s, K, V>(ArenaFew<'s, (K, V)>);
 impl<'s, K: Ord, V> ArenaFewMap<'s, K, V> {
     pub fn from_iter_in(entries: impl Iterator<Item = (K, V)>, arena: &'s Arena) -> Self {
         let mut entries: Vec<(K, V)> = entries.collect();
+        if entries.is_empty() {
+            return ArenaFewMap(ArenaFew::default());
+        }
         entries.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
         ArenaFewMap(ArenaFew::from_iter_in(entries.into_iter(), arena))
     }
 
+    #[inline]
     pub fn get(&self, key: &K) -> Option<&V> {
+        match self.0.is_empty() {
+            true => None,
+            false => self.find(key),
+        }
+    }
+
+    fn find(&self, key: &K) -> Option<&V> {
         let at = self.0.binary_search_by(|entry| entry.0.cmp(key)).ok()?;
         Some(&self.0[at].1)
     }
 
+    #[inline]
     pub fn contains_key(&self, key: &K) -> bool {
         self.get(key).is_some()
     }
 
     /// `contains_key`, under the name a set uses.
+    #[inline]
     pub fn contains(&self, key: &K) -> bool {
         self.get(key).is_some()
     }
@@ -502,6 +515,7 @@ unsafe impl<'s, T> Send for Fixed<'s, T> where FixedHeld<'s, T>: Send {}
 unsafe impl<'s, T> Sync for Fixed<'s, T> where FixedHeld<'s, T>: Sync {}
 
 impl<T> Default for Fixed<'_, T> {
+    #[inline]
     fn default() -> Self {
         Fixed::lent(&mut [])
     }
@@ -596,6 +610,7 @@ impl Default for ListBlock<'_> {
 impl<'s> ListBlock<'s> {
     pub(crate) const ALIGNMENT: usize = align_of::<u128>();
 
+    #[inline]
     pub(crate) fn room_for<T>(list: &[T]) -> usize {
         size_of_val(list).next_multiple_of(ListBlock::ALIGNMENT)
     }
@@ -680,7 +695,15 @@ impl<'s> ListBlock<'s> {
     }
 
     /// `copy`, and clears `list`, which keeps its capacity.
+    #[inline]
     pub(crate) fn take<T: Copy>(&mut self, list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
+        if list.is_empty() {
+            return Fixed::default();
+        }
+        self.take_items(list, arena)
+    }
+
+    fn take_items<T: Copy>(&mut self, list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
         let exact = self.copy(list, arena);
         list.clear();
         exact
@@ -798,9 +821,8 @@ impl<'s, T: Id> Narrow<'s, T> {
     }
 
     fn all_fit(list: &[T]) -> bool {
-        let fits =
-            |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
-        list.iter().fold(true, fits)
+        let bits = |found: u32, &id: &T| found | id.into().wrapping_add(1);
+        list.iter().fold(0, bits) <= u32::from(u16::MAX)
     }
 
     /// `ListBlock::room_for` of what `moved_into` makes of `list`.
@@ -882,6 +904,7 @@ pub struct LazyCells {
     pub(crate) class_extends_ranges: LazyCell<RangeSet<Box<[TextRange]>>>,
     /// `File::keyword_identifiers`
     pub(crate) keyword_identifiers: LazyCell<Box<[Node]>>,
+    pub(crate) has_ambient_nodes: LazyCell<bool>,
 }
 
 /// A `OnceLock` that can be emptied while nothing reads the file.
@@ -891,12 +914,14 @@ pub(crate) struct LazyCell<T>(std::cell::UnsafeCell<OnceLock<T>>);
 unsafe impl<T: Send + Sync> Sync for LazyCell<T> {}
 
 impl<T> Default for LazyCell<T> {
+    #[inline]
     fn default() -> Self {
         LazyCell::new()
     }
 }
 
 impl<T> LazyCell<T> {
+    #[inline]
     const fn new() -> LazyCell<T> {
         LazyCell(std::cell::UnsafeCell::new(OnceLock::new()))
     }
@@ -930,17 +955,26 @@ static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     type_query_ranges: LazyCell::new(),
     class_extends_ranges: LazyCell::new(),
     keyword_identifiers: LazyCell::new(),
+    has_ambient_nodes: LazyCell::new(),
 };
 
 /// Copies `list` to a block of exactly its size in `arena` and clears it. `list` keeps its capacity.
+#[inline]
 pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
+    if list.is_empty() {
+        return Fixed::default();
+    }
     let exact = Fixed::copied_in(arena, list);
     list.clear();
     exact
 }
 
+#[inline]
 pub(crate) fn few_to_arena<'s, T>(list: Vec<T>, arena: &'s Arena) -> ArenaFew<'s, T> {
-    ArenaFew::from_iter_in(list.into_iter(), arena)
+    match list.is_empty() {
+        true => ArenaFew::default(),
+        false => ArenaFew::from_iter_in(list.into_iter(), arena),
+    }
 }
 
 bitflags::bitflags! {
@@ -1414,17 +1448,19 @@ pub struct ExprsByKind {
 impl ExprsByKind {
     pub fn new(file: &File) -> ExprsByKind {
         let mut starts = [0u32; ExprTag::COUNT + 1];
-        let tag_of = |i: usize| file.checked_kind(ExprId(i as u32)).tag();
-        for i in 0..file.exprs.len() {
-            starts[tag_of(i) as usize + 1] += 1;
-        }
+        let tags = (0..file.exprs.len()).map(|i| {
+            let tag = file.checked_kind(ExprId(i as u32)).tag();
+            starts[tag as usize + 1] += 1;
+            tag
+        });
+        let tags: Vec<ExprTag> = tags.collect();
         for i in 0..ExprTag::COUNT {
             starts[i + 1] += starts[i];
         }
         let mut next = starts;
-        let mut ids = vec![ExprId::NONE; file.exprs.len()];
-        for i in 0..file.exprs.len() {
-            let at = &mut next[tag_of(i) as usize];
+        let mut ids = vec![ExprId::NONE; tags.len()];
+        for (i, &tag) in tags.iter().enumerate() {
+            let at = &mut next[tag as usize];
             ids[*at as usize] = ExprId(i as u32);
             *at += 1;
         }
@@ -3205,7 +3241,12 @@ impl<S: Storage> FileIn<S> {
         }
     }
     /// `NodeFlagsInWithStatement` for the node at `pos`.
+    #[inline]
     pub fn is_in_with(&self, pos: u32) -> bool {
+        !self.with_bodies.is_empty() && self.is_in_with_body(pos)
+    }
+
+    fn is_in_with_body(&self, pos: u32) -> bool {
         self.with_bodies
             .iter()
             .any(|&(start, end)| (start..end).contains(&pos))
@@ -3213,7 +3254,12 @@ impl<S: Storage> FileIn<S> {
 
     /// `NodeFlagsJSDoc`, `NodeFlagsReparsed` for the node at `pos`: true if it's in a JSDoc comment of a JavaScript
     /// file.
+    #[inline]
     pub fn is_in_jsdoc(&self, pos: u32) -> bool {
+        !self.jsdoc_comments.is_empty() && self.is_in_jsdoc_comment(pos)
+    }
+
+    fn is_in_jsdoc_comment(&self, pos: u32) -> bool {
         let after = self.jsdoc_comments.partition_point(|c| c.0 <= pos);
         after > 0 && pos < self.jsdoc_comments[after - 1].1
     }
@@ -3235,7 +3281,15 @@ impl<S: Storage> FileIn<S> {
     }
 
     /// Returns the type that a `@type` tag assigns to `owner`, or `NONE` if there is none.
+    #[inline]
     pub fn jsdoc_type(&self, owner: JsDocTypeOwner) -> TypeNodeId {
+        match self.jsdoc_types.is_empty() {
+            true => TypeNodeId::NONE,
+            false => self.find_jsdoc_type(owner),
+        }
+    }
+
+    fn find_jsdoc_type(&self, owner: JsDocTypeOwner) -> TypeNodeId {
         match self.jsdoc_types.binary_search_by_key(&owner, |t| t.0) {
             Ok(index) => self.jsdoc_types[index].1,
             Err(_) => TypeNodeId::NONE,
@@ -3352,7 +3406,8 @@ impl FileBuilder {
     }
     pub fn store_branches(&mut self, branches: Branches) -> BranchesAt {
         let at = self.ids.len() as u32;
-        self.ids.extend([branches.yes.0, branches.no.0]);
+        self.ids.push(branches.yes.0);
+        self.ids.push(branches.no.0);
         BranchesAt(at)
     }
     pub fn store_list<T>(&mut self, list: IdList<T>) -> ListAt<T> {
@@ -3407,8 +3462,9 @@ impl FileBuilder {
     /// `A.B.C`: each name with its position.
     pub fn entity_name(&mut self, names: impl Iterator<Item = (Atom, u32)>) -> Span<NameId> {
         let start = self.names.len();
-        self.names
-            .extend(names.map(|(text, packed_pos)| Name { text, packed_pos }));
+        for (text, packed_pos) in names {
+            self.names.push(Name { text, packed_pos });
+        }
         for name in self.names.iter_mut().skip(start + 1) {
             name.packed_pos |= Name::QUALIFIED;
         }
@@ -3799,6 +3855,7 @@ impl<'s> File<'s> {
             cells.type_query_ranges.clear();
             cells.class_extends_ranges.clear();
             cells.keyword_identifiers.clear();
+            cells.has_ambient_nodes.clear();
         }
     }
 }

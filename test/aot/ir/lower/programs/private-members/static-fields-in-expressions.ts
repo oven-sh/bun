@@ -61,17 +61,18 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: v2 = NewObject layout=[[L_2]]
 // CHECK-NEXT: v3 = NewClosure function=[[f_3]]
 // CHECK-NEXT: v4 = NewClass v3 layout=[[L_4]]
-// CHECK-NEXT: v5 = NewClosure v0 function=[[f_5]]
-// CHECK-NEXT: v6 = NewClosure v1, v2, v0, v4, v5 function=[[f_6]]
-// CHECK-NEXT: DefineMethod v4, v6 layout=[[L_4]] side=Static key="rows"
-// CHECK-NEXT: v8 = NewClosure v1, v2, v4 function=[[f_7]]
-// CHECK-NEXT: DefineMethod v4, v8 layout=[[L_4]] side=Static index=1 key="later"
-// CHECK-NEXT: v10 = FinishClass v4 layout=[[L_4]]
-// CHECK-NEXT: v11 = Convert v10 declared={type=[[f_3]] flags=[IsFromCompiler]}
-// CHECK-NEXT: PutEnvironmentField v1, v11 layout=[[L_1]]
-// CHECK-NEXT: v13 = Convert v10 declared={type=function flags=[IsFromCompiler]}
-// CHECK-NEXT: v14 = CallDirect v2, v0, v11, v4, v13 function=[[f_8]]
-// CHECK-NEXT: Return v10
+// CHECK-NEXT: PutEnvironmentField v2, v4 layout=[[L_2]]
+// CHECK-NEXT: v6 = NewClosure v0 function=[[f_5]]
+// CHECK-NEXT: v7 = NewClosure v1, v2, v0, v6 function=[[f_6]]
+// CHECK-NEXT: DefineMethod v4, v7 layout=[[L_4]] side=Static key="rows"
+// CHECK-NEXT: v9 = NewClosure v1, v2 function=[[f_7]]
+// CHECK-NEXT: DefineMethod v4, v9 layout=[[L_4]] side=Static index=1 key="later"
+// CHECK-NEXT: v11 = FinishClass v4 layout=[[L_4]]
+// CHECK-NEXT: v12 = Convert v11 declared={type=[[f_3]] flags=[IsFromCompiler]}
+// CHECK-NEXT: PutEnvironmentField v1, v12 layout=[[L_1]]
+// CHECK-NEXT: v14 = Convert v11 declared={type=function flags=[IsFromCompiler]}
+// CHECK-NEXT: v15 = CallDirect v2, v0, v12, v14 function=[[f_8]]
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_9]]] {
@@ -84,8 +85,8 @@ A.later("first").then(() => B.later("second"));
 // CHECK-LABEL: function {{*}}name="#g"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] captures=[{type=number variableName="n"}] thisType={type=function flags=[IsExpected]} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number, v1: function, v2: function):
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v4 = Yield v0
+// CHECK-NEXT: InitialYield v1
+// CHECK-NEXT: v4 = Yield v0, v1
 // CHECK-NEXT: v5 = ResultAt v4
 // CHECK-NEXT: v6 = ResultAt v4 index=1
 // CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
@@ -96,7 +97,7 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: b3():
 // CHECK-NEXT: v7 = Integer integer=1
 // CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = Yield v8
+// CHECK-NEXT: v9 = Yield v8, v1
 // CHECK-NEXT: v10 = ResultAt v9
 // CHECK-NEXT: v11 = ResultAt v9 index=1
 // CHECK-NEXT: Switch v11 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
@@ -109,21 +110,22 @@ A.later("first").then(() => B.later("second"));
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=[[f_3]] flags=[IsFromCompiler] variableName="C"}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: [[f_3]], v2: function, v3: anything, v4: undefined|null|Array<undefined|null|string>):
-// CHECK-NEXT: v5 = StrictEq v1, v2
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=[[f_3]] flags=[IsFromCompiler] variableName="C"}] thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
+// CHECK-NEXT: b0(v0: env [[L_2]], v1: [[f_3]], v2: anything, v3: undefined|null|Array<undefined|null|string>):
+// CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_2]]
+// CHECK-NEXT: v5 = StrictEq v1, v4
 // CHECK-NEXT: Branch v5 -> taken b1(), notTaken b4()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_2]] field=5
+// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_2]] field=6
 // CHECK-NEXT: v7 = TypeTest v6 testedType=absent
 // CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b3(| 0)
 // CHECK-NEXT: b2(v8):
 // CHECK-NEXT: v9 = NewRuntimeError runtimeError=InvalidPrivateRead
 // CHECK-NEXT: Throw v9
 // CHECK-NEXT: b3(v10):
-// CHECK-NEXT: v11 = StrictEq v3, v10
+// CHECK-NEXT: v11 = StrictEq v2, v10
 // CHECK-NEXT: v12 = Integer
-// CHECK-NEXT: v13 = ElemGet v4, v12
+// CHECK-NEXT: v13 = ElemGet v3, v12
 // CHECK-NEXT: v14 = Add v11, v13
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: b4():

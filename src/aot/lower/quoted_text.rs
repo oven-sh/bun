@@ -1167,12 +1167,15 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         (gaps == 0).then_some((start as u32, end as u32))
     }
 
+    #[inline]
+    fn quotes_texts(&self) -> bool {
+        !self.inputs.options.obfuscates && self.inputs.options.embeds_function_text
+    }
+
     fn quote_at(&mut self, position: u32, expression: ExprId) {
-        if self.inputs.options.obfuscates || !self.inputs.options.embeds_function_text {
-            return;
-        }
         let expression = self.skip_to_written_expression(expression);
-        if !self.quoted_texts.places.contains_key(&expression) {
+        let mut place = self.quoted_texts.places.get(&expression).copied();
+        if place.is_none() {
             let outermost = self.outermost_printed_expression_around(expression);
             if !self.quoted_texts.printed.insert(outermost) {
                 return;
@@ -1184,8 +1187,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 }
                 printer.expression(outermost, Level::Lowest, Around::default());
             });
+            place = self.quoted_texts.places.get(&expression).copied();
         }
-        if let Some(&(start, end)) = self.quoted_texts.places.get(&expression) {
+        if let Some((start, end)) = place {
             self.quoted_texts.quoted.push(QuotedText {
                 position,
                 start,
@@ -1260,9 +1264,12 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    #[inline]
     pub(in crate::lower) fn quote_if_next_fails(&mut self, expression: ExprId) {
-        let position = self.position();
-        self.file.quote_at(position, expression);
+        if self.file.quotes_texts() {
+            let position = self.position();
+            self.file.quote_at(position, expression);
+        }
     }
 
     pub(in crate::lower) fn report_at_member(&mut self, access: ExprId) {
@@ -1270,8 +1277,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             unreachable!("report_at_member takes a Dot or an Index expression");
         };
         self.set_position(self.file.last_token_position_of(object));
-        let quoted = self.file.find_expression_quoted_for_member(access);
-        self.quote_if_next_fails(quoted);
+        if self.file.quotes_texts() {
+            let quoted = self.file.find_expression_quoted_for_member(access);
+            self.quote_if_next_fails(quoted);
+        }
     }
 
     pub(in crate::lower) fn report_at_operator(&mut self, binary: ExprId) {
@@ -1330,7 +1339,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         print: impl FnOnce(&mut Printer<'_, '_, '_, '_, '_>),
     ) {
         let position = self.position();
-        if self.file.inputs.options.obfuscates || !self.file.inputs.options.embeds_function_text {
+        if !self.file.quotes_texts() {
             return;
         }
         if let Some((start, end)) = self.file.print_quoted_text(print) {

@@ -1,11 +1,12 @@
-use super::answers::ObjectMemberKind;
+use super::answers::{MemberForm, ObjectMemberKind};
+use super::prototype_links::{NamedValue, PrototypeOperation};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent, SymbolId};
 use crate::check::Program;
 use crate::hir::{
-    self, BinOp, ClassId, ExprId, ExprKind, ExprTag, FnId, FnKind, MemberKey, PropKey, PropKind,
-    StmtId, StmtKind,
+    self, BinOp, CallId, ClassId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, MemberKey,
+    PatKind, PropKey, PropKind, StmtId, StmtKind,
 };
 use crate::program::FileId;
 use crate::session::Arena;
@@ -57,6 +58,8 @@ pub(super) struct ThisStore {
     pub(super) value: ExprId,
     pub(super) form: StoreForm,
     pub(super) is_in_every_construction: bool,
+    pub(super) defined: MemberForm,
+    pub(super) is_stored_by_callee: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -125,6 +128,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut binding_stores = Vec::new();
         let mut first_exits = FxHashMap::default();
         let mut has_asked_checker = false;
+        let handed_this = self.find_parameters_handed_this(file);
         for &assign in assigns.of(ExprTag::Assign) {
             let ExprKind::Assign { op, target, value } = hir[assign].kind else {
                 continue;
@@ -153,6 +157,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             };
             let object = hir.skip_type_assertions(object);
             let object = find_prototype_object_held_by(hir, bound, object).unwrap_or(object);
+            for owner in owners_handing_this_to(&handed_this, bound_symbol(hir, bound, object)) {
+                this_stores.push(ThisStore {
+                    owner,
+                    name,
+                    assign,
+                    value,
+                    form,
+                    is_in_every_construction: false,
+                    defined: MemberForm::default(),
+                    is_stored_by_callee: true,
+                });
+            }
             if let Some(this) = find_this_held_by(hir, bound, object) {
                 if let Some(owner) = self.this_owner(file, this) {
                     let is_in_every_construction = form == StoreForm::Plain
@@ -164,6 +180,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                         value,
                         form,
                         is_in_every_construction,
+                        defined: MemberForm::default(),
+                        is_stored_by_callee: false,
                     });
                 }
             } else if let Some(symbol) = bound_symbol(hir, bound, object) {
@@ -194,6 +212,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 });
             }
         }
+        self.add_definitions_on_this(file, &handed_this, &mut this_stores);
         this_stores.shared_sort_unstable_by_key(|store| {
             (store.owner, hir[store.assign].pos, store.assign)
         });
@@ -212,6 +231,124 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             this_stores: list_in(self.c.arena, &this_stores),
             binding_stores: list_in(self.c.arena, &binding_stores),
         })
+    }
+
+    fn find_parameters_handed_this(&mut self, file: FileId) -> Vec<(SymbolId, ThisOwner)> {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let expressions = self.c.exprs_by_kind(file);
+        let mut handed = Vec::new();
+        for &site in expressions.of(ExprTag::Call) {
+            let ExprKind::Call(call) = hir[site].kind else {
+                continue;
+            };
+            let operands = hir.ids(hir[call].args);
+            let operands = operands.take_while(|&it| !matches!(hir[it].kind, ExprKind::Spread(_)));
+            let mut holders = operands
+                .enumerate()
+                .filter_map(|(index, operand)| {
+                    let operand = hir.skip_type_assertions(operand);
+                    Some((index, find_this_that_may_be_held_by(hir, bound, operand)?))
+                })
+                .peekable();
+            if holders.peek().is_none() || self.is_never_evaluated(file, site) {
+                continue;
+            }
+            let callee = self
+                .inputs
+                .named_values
+                .find_named_value(file, hir[call].callee);
+            let Some(NamedValue::Function(callee)) = callee else {
+                continue;
+            };
+            if callee.file != file {
+                continue;
+            }
+            for (index, this) in holders {
+                let owner = self.this_owner(file, this);
+                let parameter = find_plain_parameter(hir, bound, callee.function, index);
+                if let (Some(owner @ (ThisOwner::Instance(_) | ThisOwner::Function(_))), Some(it)) =
+                    (owner, parameter)
+                {
+                    handed.push((it, owner));
+                }
+            }
+        }
+        handed.sort_unstable();
+        handed.dedup();
+        handed
+    }
+
+    fn is_never_evaluated(&self, file: FileId, expression: ExprId) -> bool {
+        self.c.bound(file).parent_of_expr(expression) == Parent::None
+            || self.c.is_dead_expression(file, expression)
+    }
+
+    fn add_definitions_on_this(
+        &mut self,
+        file: FileId,
+        handed_this: &[(SymbolId, ThisOwner)],
+        this_stores: &mut Vec<ThisStore>,
+    ) {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let expressions = self.c.exprs_by_kind(file);
+        for &site in expressions.of(ExprTag::Call) {
+            let ExprKind::Call(call) = hir[site].kind else {
+                continue;
+            };
+            let is_given_this = hir.ids(hir[call].args).any(|operand| {
+                let operand = hir.skip_type_assertions(operand);
+                find_this_that_may_be_held_by(hir, bound, operand).is_some()
+                    || owners_handing_this_to(handed_this, bound_symbol(hir, bound, operand))
+                        .next()
+                        .is_some()
+            });
+            if !is_given_this {
+                continue;
+            }
+            let callee = self
+                .inputs
+                .named_values
+                .find_named_value(file, hir[call].callee);
+            let Some(NamedValue::PrototypeOperation(PrototypeOperation::DefineProperty {
+                object,
+                key,
+                descriptor,
+            })) = callee
+            else {
+                continue;
+            };
+            let operands = [object, key, descriptor].map(|at| find_operand_at(hir, call, at));
+            let [Some(object), Some(key), Some(descriptor)] = operands else {
+                continue;
+            };
+            let ExprKind::String(name) = hir[key].kind else {
+                continue;
+            };
+            let Some((defined, value)) = find_written_data_descriptor(hir, bound, descriptor)
+            else {
+                continue;
+            };
+            if name == known::__proto__ || self.is_never_evaluated(file, site) {
+                continue;
+            }
+            let own = find_this_that_may_be_held_by(hir, bound, object)
+                .and_then(|this| self.this_owner(file, this))
+                .filter(|owner| !matches!(owner, ThisOwner::Static(_)));
+            let handed = owners_handing_this_to(handed_this, bound_symbol(hir, bound, object));
+            let own = own.into_iter().map(|owner| (owner, false));
+            for (owner, is_stored_by_callee) in own.chain(handed.map(|owner| (owner, true))) {
+                this_stores.push(ThisStore {
+                    owner,
+                    name,
+                    assign: site,
+                    value,
+                    form: StoreForm::Plain,
+                    is_in_every_construction: false,
+                    defined,
+                    is_stored_by_callee,
+                });
+            }
+        }
     }
 
     fn this_owner(&self, file: FileId, this: ExprId) -> Option<ThisOwner> {
@@ -395,6 +532,127 @@ fn add_prototype_literal_stores(
             PropKey::Name(_) | PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => {}
         }
     }
+}
+
+fn find_this_that_may_be_held_by(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    object: ExprId,
+) -> Option<ExprId> {
+    if let Some(this) = find_this_held_by(hir, bound, object) {
+        return Some(this);
+    }
+    let variable = bound_symbol(hir, bound, object)?;
+    if !bound.is_stable_binding(variable) {
+        return None;
+    }
+    let BindingInitializer::Expression(value) = bound.binding_initializer(hir, variable) else {
+        return None;
+    };
+    let ExprKind::Cond { branches, .. } = hir[hir.skip_type_assertions(value)].kind else {
+        return None;
+    };
+    let hir::Branches { yes, no } = hir.branches(branches);
+    let mut arms = [yes, no]
+        .into_iter()
+        .map(|arm| hir.skip_type_assertions(arm));
+    arms.find(|&arm| matches!(hir[arm].kind, ExprKind::This))
+}
+
+fn owners_handing_this_to(
+    handed_this: &[(SymbolId, ThisOwner)],
+    parameter: Option<SymbolId>,
+) -> impl Iterator<Item = ThisOwner> + '_ {
+    let of_parameter = match parameter {
+        Some(parameter) => {
+            let start = handed_this.partition_point(|&(symbol, _)| symbol < parameter);
+            let len = handed_this[start..].partition_point(|&(symbol, _)| symbol == parameter);
+            &handed_this[start..start + len]
+        }
+        None => &[],
+    };
+    of_parameter.iter().map(|&(_, owner)| owner)
+}
+
+fn find_plain_parameter(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+    index: usize,
+) -> Option<SymbolId> {
+    let written = &hir[hir[function].params.iter().nth(index)?];
+    let is_plain_name = matches!(hir[written.pat].kind, PatKind::Ident(_))
+        && written.default.is_none()
+        && !written.flags.contains(Flags::REST);
+    let symbol = bound.pat_symbol[written.pat.idx()];
+    (is_plain_name && bound.is_stable_binding(symbol)).then_some(symbol)
+}
+
+fn find_operand_at(hir: &hir::File<'_>, call: CallId, index: u32) -> Option<ExprId> {
+    let mut operands = hir.ids(hir[call].args).take(index as usize + 1);
+    if operands
+        .clone()
+        .any(|operand| matches!(hir[operand].kind, ExprKind::Spread(_)))
+    {
+        return None;
+    }
+    Some(hir.skip_type_assertions(operands.nth(index as usize)?))
+}
+
+fn find_written_data_descriptor(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    descriptor: ExprId,
+) -> Option<(MemberForm, ExprId)> {
+    let (literal, is_in_place) = match hir[descriptor].kind {
+        ExprKind::Object(_) => (descriptor, true),
+        _ => {
+            let holder = bound_symbol(hir, bound, descriptor)?;
+            if !bound.is_stable_binding(holder) {
+                return None;
+            }
+            let BindingInitializer::Expression(held) = bound.binding_initializer(hir, holder)
+            else {
+                return None;
+            };
+            (hir.skip_type_assertions(held), false)
+        }
+    };
+    let ExprKind::Object(properties) = hir[literal].kind else {
+        return None;
+    };
+    let mut form = MemberForm {
+        is_read_only: true,
+        is_not_enumerable: true,
+        is_not_configurable: true,
+    };
+    let mut value = ExprId::NONE;
+    for id in properties.iter() {
+        let property = &hir[id];
+        let (PropKind::Init, PropKey::Name(name)) = (property.kind, hir.runtime_property_key(id))
+        else {
+            return None;
+        };
+        if name == known::value {
+            value = property.value;
+            continue;
+        }
+        let is_set = match hir[hir.skip_type_assertions(property.value)].kind {
+            ExprKind::True => true,
+            ExprKind::False => false,
+            _ => return None,
+        };
+        if name == known::writable {
+            form.is_read_only = !is_set;
+        } else if name == known::enumerable {
+            form.is_not_enumerable = !is_set;
+        } else if name == known::configurable {
+            form.is_not_configurable = !is_set;
+        } else {
+            return None;
+        }
+    }
+    Some((form, if is_in_place { value } else { ExprId::NONE }))
 }
 
 fn find_this_held_by(hir: &hir::File<'_>, bound: &Bound<'_>, object: ExprId) -> Option<ExprId> {

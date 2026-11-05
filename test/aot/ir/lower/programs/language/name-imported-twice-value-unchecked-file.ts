@@ -3,12 +3,16 @@
 // `named` and `star` read one variable of the other file, `byDefault` and `once` another.
 // CHECK: [[namedRead]] = GetModuleVariable variable=[[second]]
 // CHECK-NEXT: CheckInitialized [[namedRead]] name="named"
+// CHECK-NEXT: String string="second"
 // CHECK-NEXT: [[defaultRead]] = GetModuleVariable variable=[[first]]
 // CHECK-NEXT: CheckInitialized [[defaultRead]] name="byDefault"
+// CHECK-NEXT: String string="first"
 // CHECK-NEXT: [[starRead]] = GetModuleVariable variable=[[second]]
 // CHECK-NEXT: CheckInitialized [[starRead]] name="star"
+// CHECK-NEXT: String string="second"
 // CHECK-NEXT: [[onceRead]] = GetModuleVariable variable=[[first]]
 // CHECK-NEXT: CheckInitialized [[onceRead]] name="once"
+// CHECK-NEXT: String string="first"
 
 // RUN(DISTINCT): lower
 // DISTINCT: GetModuleVariable variable=[[second]]

@@ -1,0 +1,10 @@
+const { jest } = require("bun:test");
+const punycode = require("node:punycode");
+console.log(punycode.ucs2.decode("ab").join());
+const actual = jest.requireActual("node:punycode");
+console.log(actual === punycode);
+actual.version = 7;
+console.log(typeof punycode.version);
+actual.toASCII = () => "mine";
+console.log(punycode.toASCII("a.b"));
+console.log(actual.ucs2.decode({ length: 1, charCodeAt: () => 65 }).join());

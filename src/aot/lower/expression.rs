@@ -55,6 +55,7 @@ impl<'t> Evaluation<'t> {
         name: None,
     };
 
+    #[inline]
     pub(in crate::lower) fn at_tail(tail: Tail<'t>) -> Evaluation<'t> {
         Evaluation {
             tail,
@@ -269,7 +270,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.builder.undefined();
         }
         self.set_position(position);
-        let counted = self.enter_counted_expression(expression);
+        let counted = match self.file.counted_places.is_some() {
+            true => self.enter_counted_expression(expression),
+            false => self.counted_expression,
+        };
         let value = self.lower_by_decision(expression, evaluation);
         let is_read = matches!(
             self.file.hir[expression].kind,
@@ -333,16 +337,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Decision::GlobalPath(path) => return self.lower_global_path(expression, path),
             Decision::Unknown => {}
         }
-        if let Some(value) = self.try_lower_mention(expression) {
+        let may_be_mention = matches!(
+            self.file.hir[expression].kind,
+            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }
+        ) || !self.file.builtins.module_object_mentions().is_empty();
+        if may_be_mention && let Some(value) = self.try_lower_mention(expression) {
             return value;
         }
-        if let Some(Resolved::Builtin(path)) = self.file.builtins.of_pure_expr(expression)
+        let resolved = self.file.builtins.of_expr(expression);
+        if resolved.is_some()
+            && let Some(Resolved::Builtin(path)) = self.file.builtins.of_pure_expr(expression)
             && let Some(builtin) = path.locked_builtin()
             && !self.file.names_source_path(expression)
         {
             return self.emit_locked_builtin(builtin);
         }
-        match self.file.builtins.of_expr(expression) {
+        match resolved {
             Some(Resolved::Builtin(path))
                 if !matches!(self.file.hir[expression].kind, ExprKind::Ident(_)) =>
             {
@@ -365,7 +375,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Missing | ExprKind::Super | ExprKind::PrivateIdentifier(_) => {
                 self.builder.undefined()
             }
-            ExprKind::Ident(_) => self.lower_identifier(expression),
+            ExprKind::Ident(_) => self.lower_unless_constant(expression, |lowering, read| {
+                lowering.lower_identifier(read)
+            }),
             ExprKind::This => self.lower_this_expression(),
             ExprKind::NewTarget(_) => self.get_new_target(),
             ExprKind::Null => self.emit_constant(Constant::Null),
@@ -496,7 +508,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let runs_for_its_checks = has_dead_zone && !self.file.decisions().reads_member(inner);
         if runs_for_its_checks {
-            lower(self, expression);
+            let lowered = lower(self, expression);
+            if self.builder.is_constant(lowered) {
+                return lowered;
+            }
         } else {
             self.lower_member_reads(inner);
         }
@@ -620,6 +635,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    #[inline]
     pub(crate) fn skip_type_syntax(&self, expression: ExprId) -> ExprId {
         self.hir.skip_type_assertions(expression)
     }

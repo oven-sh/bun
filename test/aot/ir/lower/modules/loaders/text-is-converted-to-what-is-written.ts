@@ -1,7 +1,8 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: [[read]] = GetModuleVariable
-// CHECK-NEXT: [[note]] = CheckInitialized [[read]] name="note"
+// CHECK-NEXT: CheckInitialized [[read]] name="note"
+// CHECK-NEXT: [[note]] = String string="hello\n"
 // CHECK-NEXT: = Convert [[note]] declared={type=number}
 
 // Nobody compares the type of the import with the annotation: the program builds, and the text is converted to what is written.

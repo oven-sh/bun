@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function id(x: any): any;
+# function byValue(start: number) { let count = start; return () => ++count; }
+# function twice(start: number) { let count = start; return () => ++count; }
+# function inLoop(start: number) { let count = start; return () => ++count; }
+# const first = byValue(10), second = id(byValue)(20);
+# const third = twice(30), fourth = twice(40);
+# const others: Array<() => number> = [];
+# for (let turn = 0; turn < 2; turn++) others.push(inLoop(turn * 100));
+# print(first(), second(), first(), second(), third(), fourth(), third(), others[0](), others[1](), others[0]());
+# -- end of source
+# byValue() is written once as a callee and is entered a second time through a value that Link loses sight of. twice() has two calls, and the one call of inLoop() comes again. Each entry has a scope of its own.
+# RUN(UNITS): plan units mechanisms=all
+# UNITS-NOT: Void
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 11 21 12 22 31 41 32 1 101 2

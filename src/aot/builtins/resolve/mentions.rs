@@ -5,12 +5,13 @@ use super::resolver::{ExprState, ResolvedValue, Resolver};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic,
 };
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::decorator_metadata::{MetadataReference, entity_names};
 use bun_sema::bind::{Binding, FnOwner, ImplicitReference, ImplicitReferenceKind, Parent};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    self, CallId, ExportSpecId, ExprId, ExprKind, FnKind, MemberKey, PatId, PatKind, PropKey,
+    self, BinOp, CallId, ExportSpecId, ExprId, ExprKind, FnKind, MemberKey, PatId, PatKind,
+    PropKey, PropKind,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use smallvec::{SmallVec, smallvec};
@@ -31,6 +32,7 @@ fn makes_require(id: BuiltinId) -> bool {
 }
 
 #[rustfmt::skip]
+#[inline]
 pub(super) fn mentioned_id(state: ExprState) -> Option<BuiltinId> {
     let intrinsic = match state {
         ExprState::Builtin(value) | ExprState::Held(value) => return Some(value.path.id),
@@ -182,66 +184,242 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn classify_mentions(&mut self) {
-        for expr in self.evaluated_exprs() {
-            let state = match self.state(expr) {
-                ExprState::Unresolved if matches!(self.input.hir[expr].kind, ExprKind::This) => {
-                    if let Some(global) = self.find_global_out_of_sight_through(expr) {
-                        self.mention(global);
-                        self.expose(global);
-                    }
-                    continue;
+        if self.loads_node_module {
+            for expr in self.evaluated_exprs() {
+                self.classify_mention(expr);
+            }
+            return;
+        }
+        for index in 0..self.found_or_this.len() {
+            let expr = self.found_or_this[index];
+            self.classify_mention(expr);
+        }
+    }
+
+    fn classify_mention(&mut self, expr: ExprId) {
+        let state = match self.state(expr) {
+            ExprState::Unresolved if matches!(self.input.hir[expr].kind, ExprKind::This) => {
+                if let Some(global) = self.find_global_out_of_sight_through(expr) {
+                    self.mention(global);
+                    self.expose(global);
                 }
-                ExprState::Unresolved => match self.find_made_require(expr) {
-                    Some(made) => ExprState::Held(made),
-                    None => continue,
-                },
-                state => state,
+                return;
+            }
+            ExprState::Unresolved => match self.find_made_require(expr) {
+                Some(made) => ExprState::Held(made),
+                None => return,
+            },
+            state => state,
+        };
+        if let ExprState::DynamicGlobal(path) = state {
+            self.mention(path.id);
+            self.expose(path.id);
+            return;
+        }
+        if let ExprState::Intrinsic(Intrinsic::LinkedFunction(function)) = state {
+            self.output.linked_functions.push(function);
+            return;
+        }
+        let Some(id) = mentioned_id(state) else {
+            return;
+        };
+        let makes_value =
+            !matches!(state, ExprState::Held(_)) || self.input.hir.member_key(expr).is_some();
+        if makes_value && self.is_called_with_other_texts(expr, id) {
+            self.output.called_with_other_texts.push(id);
+        } else if makes_value {
+            self.output.mentioned.push(id);
+        }
+        if is_module_cache(id) {
+            self.note_use_of_module_cache(expr);
+        }
+        if is_table_of_loaders(id) {
+            self.note_use_of_table_of_loaders(expr);
+        }
+        if is_function_that_loader_calls(id) {
+            self.note_use_of_function_that_loader_calls(expr);
+        }
+        match self.classify_use(expr) {
+            MentionUse::Called(call) if self.is_import_site(call) => {}
+            MentionUse::Called(call) => {
+                self.output.called.push(id);
+                if makes_require(id) && self.find_made_require(call).is_none() {
+                    self.output.called.push(BuiltinId::ModuleRequire);
+                }
+            }
+            MentionUse::Inspected | MentionUse::Holder | MentionUse::Aliased => {}
+            MentionUse::ReadByComputedKey => self.expose(id),
+            MentionUse::Exposed => self.expose_to_user(expr, id),
+            MentionUse::Destructured(pattern) => {
+                match self.value_of(expr).or_else(|| self.held_value_of(expr)) {
+                    Some(value) => self.destructure(value, pattern),
+                    None => self.expose(id),
+                }
+            }
+        }
+    }
+
+    fn find_call_taking_first(&self, operand: ExprId) -> Option<(ExprId, CallId, BuiltinId)> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let Parent::Expr(user) = bound.parent_of_expr(operand) else {
+            return None;
+        };
+        let ExprKind::Call(call) = hir[user].kind else {
+            return None;
+        };
+        if hir.ids(hir[call].args).next() != Some(operand) {
+            return None;
+        }
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let function = mentioned_id(self.state(callee))?;
+        Some((user, call, table::canonical_id(function)))
+    }
+
+    fn is_answer_dropped(&self, call: ExprId) -> bool {
+        matches!(self.classify_use(call), MentionUse::Inspected)
+    }
+
+    fn is_only_looked_at(&self, value: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        match self.classify_use(value) {
+            MentionUse::Inspected => true,
+            MentionUse::Aliased => {
+                let Parent::VarInit(declaration) =
+                    bound.parent_of_expr(self.outermost_assertion_of(value))
+                else {
+                    return false;
+                };
+                let holder = bound.initialized_binding(hir[declaration].pat);
+                let mut reads = (0..hir.exprs.len() as u32).map(ExprId).filter(|&read| {
+                    matches!(hir[read].kind, ExprKind::Ident(_)) && bound.binding(read) == holder
+                });
+                matches!(holder, Binding::Symbol(_))
+                    && reads.all(|read| self.is_only_looked_at(read))
+            }
+            MentionUse::Exposed => {
+                let operand = self.outermost_assertion_of(value);
+                match self.find_call_taking_first(operand) {
+                    Some((
+                        answer,
+                        _,
+                        BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf,
+                    )) => self.is_only_looked_at(answer),
+                    Some((_, _, BuiltinId::ReflectSetPrototypeOf)) => {
+                        self.input.dialect == SourceDialect::Runtime
+                    }
+                    Some((answer, _, BuiltinId::ObjectSetPrototypeOf)) => {
+                        self.input.dialect == SourceDialect::Runtime
+                            && self.is_answer_dropped(answer)
+                    }
+                    _ => false,
+                }
+            }
+            MentionUse::Holder
+            | MentionUse::ReadByComputedKey
+            | MentionUse::Called(_)
+            | MentionUse::Destructured(_) => false,
+        }
+    }
+
+    fn hands_holder_to_nobody(&self, descriptor: ExprId) -> bool {
+        let hir = self.input.hir;
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(descriptor)].kind else {
+            return false;
+        };
+        properties.iter().all(|property| {
+            let property = &hir[property];
+            let PropKey::Name(name) = property.key else {
+                return false;
             };
-            if let ExprState::DynamicGlobal(path) = state {
-                self.mention(path.id);
-                self.expose(path.id);
-                continue;
-            }
-            if let ExprState::Intrinsic(Intrinsic::LinkedFunction(function)) = state {
-                self.output.linked_functions.push(function);
-                continue;
-            }
-            let Some(id) = mentioned_id(state) else {
-                continue;
-            };
-            let makes_value =
-                !matches!(state, ExprState::Held(_)) || self.input.hir.member_key(expr).is_some();
-            if makes_value && self.is_called_with_other_texts(expr, id) {
-                self.output.called_with_other_texts.push(id);
-            } else if makes_value {
-                self.output.mentioned.push(id);
-            }
-            if is_module_cache(id) {
-                self.note_use_of_module_cache(expr);
-            }
-            if is_table_of_loaders(id) {
-                self.note_use_of_table_of_loaders(expr);
-            }
-            if is_function_that_loader_calls(id) {
-                self.note_use_of_function_that_loader_calls(expr);
-            }
-            match self.classify_use(expr) {
-                MentionUse::Called(call) if self.is_import_site(call) => {}
-                MentionUse::Called(call) => {
-                    self.output.called.push(id);
-                    if makes_require(id) && self.find_made_require(call).is_none() {
-                        self.output.called.push(BuiltinId::ModuleRequire);
-                    }
+            let is_accessor = name == known::get || name == known::set;
+            match property.kind {
+                PropKind::Init if is_accessor => {
+                    let function = hir.skip_type_assertions(property.value);
+                    matches!(hir[function].kind, ExprKind::Fn(function) if hir[function].kind == FnKind::Arrow)
                 }
-                MentionUse::Inspected | MentionUse::Holder | MentionUse::Aliased => {}
-                MentionUse::ReadByComputedKey | MentionUse::Exposed => self.expose(id),
-                MentionUse::Destructured(pattern) => {
-                    match self.value_of(expr).or_else(|| self.held_value_of(expr)) {
-                        Some(value) => self.destructure(value, pattern),
-                        None => self.expose(id),
-                    }
+                PropKind::Init | PropKind::Shorthand | PropKind::Method => !is_accessor,
+                PropKind::Spread | PropKind::Getter | PropKind::Setter => false,
+            }
+        })
+    }
+
+    fn expose_to_user(&mut self, object: ExprId, id: BuiltinId) {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let operand = self.outermost_assertion_of(object);
+        match bound.parent_of_expr(operand) {
+            Parent::Expr(user) => {
+                if let ExprKind::Binary {
+                    op: BinOp::In,
+                    left,
+                    right,
+                } = hir[user].kind
+                    && right == operand
+                {
+                    return self.search_for(object, id, left);
                 }
             }
+            _ => {}
+        }
+        let Some((answer, call, function)) = self.find_call_taking_first(operand) else {
+            return self.expose(id);
+        };
+        let mut further = hir.ids(hir[call].args).skip(1);
+        let (second, third) = (further.next(), further.next());
+        match (function, second, third) {
+            (BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf, ..)
+                if self.is_only_looked_at(answer) => {}
+            (BuiltinId::ReflectDefineProperty, Some(key), Some(descriptor))
+                if self.hands_holder_to_nobody(descriptor) =>
+            {
+                self.search_for(object, id, key);
+            }
+            (BuiltinId::ObjectDefineProperty, Some(key), Some(descriptor))
+                if self.is_answer_dropped(answer) && self.hands_holder_to_nobody(descriptor) =>
+            {
+                self.search_for(object, id, key);
+            }
+            (BuiltinId::ObjectDefineProperties, Some(descriptors), _)
+                if self.is_answer_dropped(answer) =>
+            {
+                self.search_for_keys_of(object, id, descriptors);
+            }
+            _ => self.expose(id),
+        }
+    }
+
+    fn search_for(&mut self, object: ExprId, id: BuiltinId, key: ExprId) {
+        let hir = self.input.hir;
+        match hir[hir.skip_type_assertions(key)].kind {
+            ExprKind::String(name) => self.mention_member(object, name),
+            _ => self.expose(id),
+        }
+    }
+
+    fn search_for_keys_of(&mut self, object: ExprId, id: BuiltinId, descriptors: ExprId) {
+        let hir = self.input.hir;
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(descriptors)].kind else {
+            return self.expose(id);
+        };
+        let is_written_out = properties.iter().all(|property| {
+            let property = &hir[property];
+            matches!(property.key, PropKey::Name(_))
+                && property.kind == PropKind::Init
+                && self.hands_holder_to_nobody(property.value)
+        });
+        if !is_written_out {
+            return self.expose(id);
+        }
+        for property in properties.iter() {
+            if let PropKey::Name(name) = hir[property].key {
+                self.mention_member(object, name);
+            }
+        }
+    }
+
+    fn mention_member(&mut self, object: ExprId, name: Atom) {
+        let holder = self.value_of(object).or_else(|| self.held_value_of(object));
+        if let Some(member) = holder.and_then(|holder| self.find_named_member(holder, name)) {
+            self.mention(member.id);
         }
     }
 

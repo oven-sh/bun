@@ -151,11 +151,10 @@ function firstLinesThatDiffer([first, second]: string[][], read = (lines: string
   return undefined;
 }
 
-// f12, L7, g3: what one program numbers its functions, layouts and variables. site(f12, v5)@5: an instance of a summary. allocationClass=17: a row of a
+// f12, L7, g3: what one program numbers its functions, layouts and variables. site(f12, v5)@5: an instance of a summary. callees=17: a row of a
 // table of Facts or of the plan. Each becomes the place of its first mention, so two texts that differ in nothing else are equal.
 // Values and blocks are numbered by the unit. A position, which has a blank in front of its @, is the file's.
-const fieldsThatNameRows =
-  "subject|accessSite|allocationSite|allocationClass|callees|entrypoints|fieldAccess|orderWord";
+const fieldsThatNameRows = "subject|callees|entrypoints";
 const numbersOfTheProgram = new RegExp(
   String.raw`"(?:[^"\\]|\\.)*"|\b(?:[A-Za-z]|(?:${fieldsThatNameRows})=)\d+\b|(?<=[\w)])@\d+`,
   "g",

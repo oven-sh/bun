@@ -12,7 +12,9 @@ use crate::ir::{ClassSlot, VariableKey};
 use crate::lower::captures::{CapturedBinding, is_initialized_before};
 use crate::lower::class;
 use crate::lower::scope::analysis::{find_by_key, sort_unique};
-use crate::lower::scope::{BindingForm, BindingRef, Initialization, ScopeSlot, WalkedFunctionId};
+use crate::lower::scope::{
+    BindingForm, BindingRef, Initialization, ScopeSlot, WalkedFunctionId, order_by_number,
+};
 use crate::modules::{ExportBinding, ModuleKind};
 
 type Users = SmallVec<[(BindingRef, WalkedFunctionId); 8]>;
@@ -26,9 +28,17 @@ pub(super) fn compute_sharing(
     let eval_bindings = uses.eval_uses.iter().map(|eval_use| eval_use.binding);
     let mut seen_by_eval: Vec<BindingRef> = eval_bindings.collect();
     sort_unique(&mut seen_by_eval);
+    debug_assert!(
+        uses.uses.is_sorted(),
+        "the users of a binding stand in order"
+    );
     let users = uses.uses.iter().map(|&(user, binding)| (binding, user));
-    let mut by_binding: Vec<(BindingRef, WalkedFunctionId)> = users.collect();
-    by_binding.sort_unstable();
+    let mut by_binding = order_by_number(users, forms.len() + 1, |(binding, _)| match binding {
+        BindingRef::Symbol(symbol) => symbol.idx(),
+        BindingRef::Slot(..) => forms.len(),
+    });
+    let first_slot = by_binding.partition_point(|entry| matches!(entry.0, BindingRef::Symbol(_)));
+    by_binding[first_slot..].sort_unstable();
     let mut sharing = BindingSharing::default();
     let mut registries = Vec::new();
     for mut run in by_binding.chunk_by(|first, second| first.0 == second.0) {
@@ -75,8 +85,9 @@ pub(super) fn compute_sharing(
             BindingRef::Symbol(_) | BindingRef::Slot(..) => {}
         }
         sharing.captured.push(captured);
-        let run_uses = run.iter().map(|&(binding, user)| (user, binding));
-        sharing.captured_uses.extend(run_uses);
+        for &(binding, user) in run {
+            sharing.captured_uses.push((user, binding));
+        }
     }
     let used_count = sharing.variables.len();
     for &symbol in &exported {
@@ -91,12 +102,19 @@ pub(super) fn compute_sharing(
     sharing
         .captured
         .sort_unstable_by_key(|captured| captured.binding);
-    sharing.registries = registries.iter().map(|entry| entry.1).collect();
-    sharing.registries.sort_unstable();
-    hold_in_every_closure(context, registries, &mut sharing.captured_uses);
+    registries.sort_unstable();
+    hold_in_every_closure(context, &registries, &mut sharing.captured_uses);
+    sharing.registries = registries;
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
     collect_what_is_stored_under_handlers(context, forms, &mut sharing);
-    sharing.captured_uses.sort_unstable();
+    if sharing.registries.is_empty() {
+        let captured_uses = sharing.captured_uses.iter().copied();
+        let function_count = context.walk.functions.len();
+        sharing.captured_uses =
+            order_by_number(captured_uses, function_count, |(user, _)| user.index());
+    } else {
+        sharing.captured_uses.sort_unstable();
+    }
     sharing.variables.shared_sort_unstable();
     sharing.shared.sort_unstable();
     sharing
@@ -104,13 +122,12 @@ pub(super) fn compute_sharing(
 
 fn hold_in_every_closure(
     context: &Context<'_, '_>,
-    mut held: Vec<(ScopeId, BindingRef)>,
+    held: &[(ScopeId, BindingRef)],
     uses: &mut Vec<(WalkedFunctionId, BindingRef)>,
 ) {
     if held.is_empty() {
         return;
     }
-    held.sort_unstable();
     let scopes = &context.input.bound.scopes;
     let mut is_met = vec![false; context.walk.functions.len()];
     for (scope, &function) in scopes.iter().zip(&context.scope_functions) {

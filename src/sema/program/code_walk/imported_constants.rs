@@ -4,6 +4,7 @@ use crate::fold::{Constant, FoldedValue};
 use crate::hir::ExprFlags;
 use crate::module_format::ModuleFormat;
 use crate::resolve::{CodeResolution, SiteResolution};
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -79,7 +80,7 @@ impl NamesLookedUp {
         if self.reader_count_without_repeats == 0 {
             self.reader_count_without_repeats = self.readers.len();
         } else if self.readers.len() > 2 * self.reader_count_without_repeats {
-            self.readers.shared_sort_unstable();
+            (self.readers).sort_by_u64(|pair| number_of_pair(pair.0, pair.1));
             self.readers.dedup();
             self.reader_count_without_repeats = self.readers.len();
         }
@@ -362,7 +363,12 @@ impl<'s> Exports<'_, 's, '_> {
         }
         self.resolved.insert((file, name), None);
         let export = self.resolve_anew(file, name);
-        self.resolved.insert((file, name), Some(export));
+        match self.resolved.get_mut(&(file, name)) {
+            Some(resolved) => *resolved = Some(export),
+            None => {
+                self.resolved.insert((file, name), Some(export));
+            }
+        }
         export
     }
 
@@ -682,7 +688,7 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
             readers.chain(parsed.iter().copied()).collect()
         }
     };
-    asked.shared_sort_unstable();
+    asked.sort_by_u32(|&file| file);
     asked.dedup();
     let look_up = |share: &[u32]| {
         let mut exports = Exports::new(&state.files, &looked_up, &stars);
@@ -695,7 +701,7 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
             let found: Vec<ImportedConstant> = names
                 .filter_map(|&name| exports.find_constant(index, name))
                 .collect();
-            exports.files_read.shared_sort_unstable();
+            exports.files_read.sort_by_u32(|&file| file);
             exports.files_read.dedup();
             reads.extend(exports.files_read.drain(..).map(|read| (read, index)));
             if !are_same(&found, &file.imported_constants) {

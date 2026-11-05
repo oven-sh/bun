@@ -4,7 +4,7 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 // A helper that is no test file uses `vi` without importing it: there the name only may be the runner's, and the build must still see what importMock() loads.
-// In a larger project the fault doesn't show. The forms that stub a global are fixed-runs/closed/free-vi-beside-an-import.
+// In a larger project the fault doesn't show.
 const files = {
   "package.json": `{ "name": "p", "type": "module" }`,
   "lib.js": `export function plain() { return "real"; }\n`,

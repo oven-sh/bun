@@ -1,3 +1,4 @@
+use core::cmp::Ordering;
 use core::ops::Range;
 
 use bun_sema::bind::{CodeUnit, ScopeId, SymbolId};
@@ -11,16 +12,48 @@ use crate::ir::generated::FunctionFlags;
 use crate::ir::{FunctionKey, VariableKey};
 use crate::lower::captures::Capture;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(in crate::lower) enum BindingRef {
     Symbol(SymbolId),
     Slot(ScopeId, ScopeSlot),
 }
 
+impl Ord for BindingRef {
+    #[inline]
+    fn cmp(&self, other: &BindingRef) -> Ordering {
+        match (self, other) {
+            (BindingRef::Symbol(symbol), BindingRef::Symbol(other)) => symbol.cmp(other),
+            _ => self.compare_with_slot(other),
+        }
+    }
+}
+
+impl PartialOrd for BindingRef {
+    #[inline]
+    fn partial_cmp(&self, other: &BindingRef) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl BindingRef {
+    #[inline(never)]
+    fn compare_with_slot(&self, other: &BindingRef) -> Ordering {
+        match (self, other) {
+            (BindingRef::Symbol(symbol), BindingRef::Symbol(other)) => symbol.cmp(other),
+            (BindingRef::Symbol(_), BindingRef::Slot(..)) => Ordering::Less,
+            (BindingRef::Slot(..), BindingRef::Symbol(_)) => Ordering::Greater,
+            (BindingRef::Slot(scope, slot), BindingRef::Slot(other_scope, other_slot)) => {
+                scope.cmp(other_scope).then_with(|| slot.cmp(other_slot))
+            }
+        }
+    }
+
+    #[inline]
     pub(in crate::lower) fn is_listed_in(self, symbols: &[SymbolId]) -> bool {
         match self {
-            BindingRef::Symbol(symbol) => symbols.binary_search(&symbol).is_ok(),
+            BindingRef::Symbol(symbol) => {
+                !symbols.is_empty() && symbols.binary_search(&symbol).is_ok()
+            }
             BindingRef::Slot(..) => false,
         }
     }
@@ -98,6 +131,12 @@ pub(super) struct GroupedList<T> {
 
 impl<T: Copy> GroupedList<T> {
     pub(super) fn new(group_count: usize, entries: &[(usize, T)]) -> GroupedList<T> {
+        if entries.is_empty() {
+            return GroupedList {
+                starts: Vec::new(),
+                items: Vec::new(),
+            };
+        }
         let mut starts = vec![0; group_count + 1];
         for &(group, _) in entries {
             starts[group + 1] += 1;
@@ -108,14 +147,16 @@ impl<T: Copy> GroupedList<T> {
             *start = total;
         }
         let mut items: Vec<T> = entries.iter().map(|entry| entry.1).collect();
-        let mut next = starts.clone();
         for &(group, item) in entries {
-            items[next[group] as usize] = item;
-            next[group] += 1;
+            items[starts[group] as usize] = item;
+            starts[group] += 1;
         }
+        starts.copy_within(..group_count, 1);
+        starts[0] = 0;
         GroupedList { starts, items }
     }
 
+    #[inline]
     pub(super) fn get(&self, group: usize) -> &[T] {
         match self.starts.get(group..group + 2) {
             Some(&[start, end]) => &self.items[start as usize..end as usize],
@@ -160,13 +201,14 @@ pub(crate) struct ScopeAnalysis {
     pub(super) initial_functions: Vec<(SymbolId, FnId)>,
     pub(super) switch_scopes: Vec<ScopeId>,
     pub(super) functions: Vec<FunctionSummary>,
+    pub(super) summaries_of_source_functions: Vec<u32>,
     pub(super) captures: Vec<Capture>,
     pub(super) arguments_objects: ArgumentsObjects,
     pub(super) loops: LoopStores,
     pub(super) tries: StoresUnderHandlers,
     pub(super) field_initializers: Vec<(MemberId, FunctionKey)>,
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
-    pub(super) registries: Vec<BindingRef>,
+    pub(super) registries: Vec<(ScopeId, BindingRef)>,
     pub(super) has_wrapper_parameters: bool,
 }
 
@@ -175,17 +217,27 @@ pub(super) fn find_by_key<K: Copy + Ord, V: Copy>(list: &[(K, V)], key: K) -> Op
     Some(list[index].1)
 }
 
+#[inline]
 pub(super) fn sort_unique<T: Ord>(list: &mut Vec<T>) {
+    if list.len() > 1 {
+        sort_unique_of_several(list);
+    }
+}
+
+fn sort_unique_of_several<T: Ord>(list: &mut Vec<T>) {
     list.sort_unstable();
     list.dedup();
 }
 
 pub(super) fn shared_sort_unique<T: Ord>(list: &mut Vec<T>) {
-    list.shared_sort_unstable();
-    list.dedup();
+    if list.len() > 1 {
+        list.shared_sort_unstable();
+        list.dedup();
+    }
 }
 
 impl ScopeAnalysis {
+    #[inline]
     pub(in crate::lower) fn form(&self, symbol: SymbolId) -> BindingForm {
         let form = self.forms.get(symbol.idx());
         form.copied().unwrap_or(BindingForm::NotAValue)
@@ -205,7 +257,11 @@ impl ScopeAnalysis {
         self.created_at_each_read.binary_search(&symbol).is_ok()
     }
 
+    #[inline]
     pub(in crate::lower) fn function_made_at_first_read(&self, symbol: SymbolId) -> Option<FnId> {
+        if self.made_at_first_read.is_empty() {
+            return None;
+        }
         find_by_key(&self.made_at_first_read, symbol)
     }
 
@@ -225,28 +281,33 @@ impl ScopeAnalysis {
         Some(calls[index].1)
     }
 
+    #[inline]
     pub(in crate::lower) fn placement(&self, binding: BindingRef) -> Option<Placement> {
         match binding {
-            BindingRef::Symbol(symbol) => match self.form(symbol) {
-                BindingForm::Stored => Some(self.symbol_placements[symbol.idx()]),
+            BindingRef::Symbol(symbol) => match self.forms.get(symbol.idx()) {
+                Some(BindingForm::Stored) => Some(self.symbol_placements[symbol.idx()]),
                 _ => None,
             },
             BindingRef::Slot(scope, slot) => find_by_key(&self.slot_placements, (scope, slot)),
         }
     }
 
+    #[inline]
     pub(in crate::lower) fn bindings(&self, scope: ScopeId) -> &[BindingRef] {
         self.bindings.get(scope.idx())
     }
 
+    #[inline]
     pub(in crate::lower) fn environment_fields(&self, scope: ScopeId) -> &[BindingRef] {
         self.environment_fields.get(scope.idx())
     }
 
+    #[inline]
     pub(in crate::lower) fn has_environment(&self, scope: ScopeId) -> bool {
         !self.environment_fields(scope).is_empty()
     }
 
+    #[inline]
     pub(in crate::lower) fn hoisted_functions(&self, scope: ScopeId) -> &[(SymbolId, FnId)] {
         self.hoisted_functions.get(scope.idx())
     }
@@ -255,8 +316,9 @@ impl ScopeAnalysis {
         find_by_key(&self.initial_functions, symbol)
     }
 
+    #[inline]
     pub(in crate::lower) fn is_switch_scope(&self, scope: ScopeId) -> bool {
-        self.switch_scopes.binary_search(&scope).is_ok()
+        !self.switch_scopes.is_empty() && self.switch_scopes.binary_search(&scope).is_ok()
     }
 
     pub(in crate::lower) fn captures(&self, key: FunctionKey) -> &[Capture] {
@@ -292,10 +354,11 @@ impl ScopeAnalysis {
         holders.binary_search(&(function, symbol)).is_ok()
     }
 
-    pub(in crate::lower) fn may_hold_registry(&self, binding: BindingRef) -> bool {
-        self.registries.binary_search(&binding).is_ok()
+    pub(in crate::lower) fn list_registries(&self) -> &[(ScopeId, BindingRef)] {
+        &self.registries
     }
 
+    #[inline]
     pub(in crate::lower) fn has_wrapper_parameters(&self) -> bool {
         self.has_wrapper_parameters
     }
@@ -334,7 +397,22 @@ impl ScopeAnalysis {
         }
     }
 
+    #[inline]
     fn find_function(&self, key: FunctionKey) -> Option<&FunctionSummary> {
+        match key {
+            FunctionKey::Source(source) if source.file == self.file => {
+                let summaries = &self.summaries_of_source_functions;
+                let index = *summaries.get(source.function.idx())?;
+                self.functions.get(index as usize)
+            }
+            _ => match self.functions.first() {
+                Some(first) if first.key == key => Some(first),
+                _ => self.find_function_by_key(key),
+            },
+        }
+    }
+
+    fn find_function_by_key(&self, key: FunctionKey) -> Option<&FunctionSummary> {
         let functions = &self.functions;
         let index = functions.binary_search_by_key(&key, |function| function.key);
         index.ok().map(|index| &functions[index])

@@ -1,4 +1,5 @@
 // Preloaded into one of Bun's own test files: every `bun test` that the file starts gets `--aot`, and a byte in the file AOT_CHILDREN_STARTED counts it.
+import { isASAN } from "harness";
 import { appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -12,6 +13,12 @@ const withoutPreload: Record<string, string> = {
   [join(repository, "test")]: join(import.meta.dir, "children-in-test.toml"),
 };
 
+// A compiled run keeps a part of the stack from the program: docs/compiler/compatibility.mdx, "Smaller differences". A child whose command sets the size of its stack gets
+// that much more, in KB, so that the program has what the file meant it to have.
+const stackKeptFromProgram = (isASAN ? 3 : 1) * 256;
+const withStackKeptFromProgram = (word: string) =>
+  word.replace(/\bulimit -s (\d+)\b/g, (_, size) => `ulimit -s ${Number(size) + stackKeptFromProgram}`);
+
 // A child run that never ends ends with the run that started it, however that one ends. What takes its environment from this process has it from here.
 const endsWithItsParent = { BUN_FEATURE_FLAG_NO_ORPHANS: "1" };
 Object.assign(process.env, endsWithItsParent);
@@ -19,7 +26,7 @@ Object.assign(process.env, endsWithItsParent);
 function underAot<Start extends (...args: any[]) => any>(start: Start): Start {
   return function (this: unknown, first: string[] | Options, second?: Omit<Options, "cmd">) {
     const options: Options = Array.isArray(first) ? { ...second, cmd: first } : { ...first };
-    const cmd = [...options.cmd];
+    const cmd = options.cmd.map(withStackKeptFromProgram);
     // ./run.ts puts words in front of a command.
     const bun = cmd.indexOf(process.execPath);
     if (bun < 0 || cmd[bun + 1] !== "test") return start.call(this, first, second);

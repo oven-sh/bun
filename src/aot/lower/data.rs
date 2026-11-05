@@ -2,7 +2,7 @@ mod values;
 
 use bun_sema::atom::known;
 use bun_sema::bind::BindingInitializer;
-use bun_sema::fold::Decision;
+use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::ExprId;
 use rustc_hash::FxHashMap;
 use smallvec::smallvec;
@@ -13,7 +13,7 @@ use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{Data, DataNode, LimitId};
-use crate::ir::{DataId, ValueId};
+use crate::ir::{DataId, LayoutId, ValueId};
 use crate::modules::ExportBinding;
 
 #[derive(Default)]
@@ -42,6 +42,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         self.convert_int32_members(expression);
         let data = add_record(self.file, expression, root);
+        self.builder.data(data)
+    }
+
+    pub(in crate::lower) fn lower_data_of_object(
+        &mut self,
+        literal: ExprId,
+        layout: LayoutId,
+        entries: &[(Constant, Constant)],
+    ) -> ValueId {
+        if let Some(&data) = self.file.modules.data.records.get(&literal) {
+            return self.builder.data(data);
+        }
+        let root = values::create_object_node(self.file, layout, entries);
+        let data = add_record(self.file, literal, root);
         self.builder.data(data)
     }
 

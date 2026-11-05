@@ -160,12 +160,12 @@ for (const replacement of [0, 1, 2, 6, "2", 2.5, -1, null, 4294967295]) attempt(
 // CHECK-LABEL: function {{*}}name="memberBehindAGetter"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number>):
-// CHECK-NEXT: v3 = NewObject layout=[[L_2]]
+// CHECK-NEXT: v3 = NewObject -, v1, v2 layout=[[L_2]] fields=[0, 1]
 // CHECK-NEXT: v4 = Integer
 // CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v3, v5 layout=[[L_2]]
+// CHECK-NEXT: PutEnvironmentField v3, v5 layout=[[L_2]] field=2
 // CHECK-NEXT: v7 = NewObject layout=[[L_3]]
-// CHECK-NEXT: v8 = NewClosure v3, v1, v2 function=[[f_4]]
+// CHECK-NEXT: v8 = NewClosure v3 function=[[f_4]]
 // CHECK-NEXT: DefineGetter v7, v8 key="factor"
 // CHECK-NEXT: v10 = FinishObject v7
 // CHECK-NEXT: v11 = Data data=[[d_5]]
@@ -210,25 +210,29 @@ for (const replacement of [0, 1, 2, 6, "2", 2.5, -1, null, 4294967295]) attempt(
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="factor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=anything variableName="at"}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected] variableName="replacement"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: anything, v2: undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number>):
-// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="reads"
-// CHECK-NEXT: v5 = ToNumeric v4
-// CHECK-NEXT: v6 = Increment v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="reads"
-// CHECK-NEXT: PutEnvironmentField v0, v7 layout=[[L_2]]
-// CHECK-NEXT: v11 = Integer integer=3
-// CHECK-NEXT: v12 = Mul v1, v11
-// CHECK-NEXT: v13 = Integer integer=2
-// CHECK-NEXT: v14 = Add v12, v13
-// CHECK-NEXT: v15 = Greater v5, v14
-// CHECK-NEXT: Branch v15 -> taken b2(v2), notTaken b1()
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_2]]):
+// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_2]] field=2
+// CHECK-NEXT: v2 = CheckInitialized v1 name="reads"
+// CHECK-NEXT: v3 = ToNumeric v2
+// CHECK-NEXT: v4 = Increment v3
+// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_2]] field=2
+// CHECK-NEXT: v7 = CheckInitialized v6 name="reads"
+// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_2]] field=2
+// CHECK-NEXT: v9 = GetEnvironmentField v0 layout=[[L_2]]
+// CHECK-NEXT: v10 = Integer integer=3
+// CHECK-NEXT: v11 = Mul v9, v10
+// CHECK-NEXT: v12 = Integer integer=2
+// CHECK-NEXT: v13 = Add v11, v12
+// CHECK-NEXT: v14 = Greater v3, v13
+// CHECK-NEXT: Branch v14 -> taken b1(), notTaken b2()
 // CHECK-NEXT: b1():
+// CHECK-NEXT: v15 = GetEnvironmentField v0 layout=[[L_2]] field=1
+// CHECK-NEXT: Jump -> next b3(v15)
+// CHECK-NEXT: b2():
 // CHECK-NEXT: v16 = Integer integer=2
-// CHECK-NEXT: Jump -> next b2(v16)
-// CHECK-NEXT: b2(v17):
+// CHECK-NEXT: Jump -> next b3(v16)
+// CHECK-NEXT: b3(v17):
 // CHECK-NEXT: Return v17
 // CHECK-NEXT: }

@@ -87,22 +87,50 @@ pub(super) fn normalize_uses(
             normalize_binding(context, forms, user, binding)
         }
     };
-    let stored_uses = walk.uses.iter();
-    let stored_uses = stored_uses.filter_map(|&(user, used)| Some((user, normalize(user, used)?)));
-    let mut uses: Vec<(WalkedFunctionId, BindingRef)> = stored_uses.collect();
+    debug_assert!(walk.uses.is_sorted_by(|first, second| first < second));
+    let mut uses: Vec<(WalkedFunctionId, BindingRef)> = Vec::with_capacity(walk.uses.len());
+    let mut entry_captures: Vec<(WalkedFunctionId, BindingRef)> = Vec::new();
+    let mut is_in_order = true;
+    for &(user, used) in &walk.uses {
+        let is_kept = match used {
+            BindingRef::Symbol(symbol) => matches!(forms[symbol.idx()], BindingForm::Stored),
+            BindingRef::Slot(_, ScopeSlot::CommonJs(_)) => !has_mapped_wrapper_parameters,
+            BindingRef::Slot(..) => true,
+        };
+        let binding = match is_kept {
+            true => used,
+            false => {
+                let Some(binding) = normalize(user, used) else {
+                    continue;
+                };
+                is_in_order = false;
+                binding
+            }
+        };
+        if let BindingRef::Slot(scope, ScopeSlot::HomeObject) = binding
+            && let Some(function) = context.scope_functions[scope.idx()]
+        {
+            entry_captures.push((function, binding));
+        }
+        uses.push((user, binding));
+    }
     for (index, &walked) in walk.function_of_fn.iter().enumerate() {
         if arguments_objects.functions[index] == ArgumentsObject::Mapped
             && let Some(walked) = walked
         {
             let callee = BindingRef::Slot(bound.fns[index].scope, ScopeSlot::Callee);
             uses.push((walked, callee));
+            is_in_order = false;
         }
     }
     if has_mapped_wrapper_parameters {
         let callee = BindingRef::Slot(context.file_scope, ScopeSlot::Callee);
         uses.push((WalkedFunctionId::MODULE_BODY, callee));
+        is_in_order = false;
     }
-    sort_unique(&mut uses);
+    if !is_in_order {
+        sort_unique(&mut uses);
+    }
 
     let stored_eval_uses = walk.eval_uses.iter().filter_map(|&eval_use| {
         let binding = normalize(eval_use.function, eval_use.binding)?;
@@ -123,13 +151,6 @@ pub(super) fn normalize_uses(
     let mut references: Vec<(WalkedFunctionId, WalkedFunctionId)> = walked_references.collect();
     sort_unique(&mut references);
 
-    let home_objects = uses.iter().filter_map(|&(_, binding)| {
-        let BindingRef::Slot(scope, ScopeSlot::HomeObject) = binding else {
-            return None;
-        };
-        Some((context.scope_functions[scope.idx()]?, binding))
-    });
-    let mut entry_captures: Vec<(WalkedFunctionId, BindingRef)> = home_objects.collect();
     sort_unique(&mut entry_captures);
 
     NormalizedUses {
@@ -140,6 +161,7 @@ pub(super) fn normalize_uses(
     }
 }
 
+#[inline]
 fn compute_form(context: &Context<'_, '_>, symbol: SymbolId, kind: BindingKind) -> BindingForm {
     let (input, bound) = (context.input, context.input.bound);
     if kind == BindingKind::NoBinding {

@@ -324,7 +324,8 @@ else console.log("went on", lowest(how));
   ])("the terminal is out of raw mode again: %s", async how => {
     let shown = "";
     const child = Bun.spawn({
-      cmd: ["sh", "-c", 'ulimit -c 0; "$0" "$@"; stty -a', join(cwd, "app"), how, "", "raw"],
+      // A stack without a limit never runs out: it grows until the kernel ends the process, and no handler sees that. CI's machines set no limit.
+      cmd: ["sh", "-c", 'ulimit -c 0; ulimit -s 8192; "$0" "$@"; stty -a', join(cwd, "app"), how, "", "raw"],
       cwd,
       env: { ...bunEnv, ...quiet, ...forTesting },
       terminal: {

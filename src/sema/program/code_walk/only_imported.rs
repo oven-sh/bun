@@ -460,7 +460,17 @@ fn find_files_that_require_may_load(
     let mut to_visit: Vec<u32> = Vec::new();
     for entry_point in &context.entry_points() {
         let index = state.index_of[&context.canonical_key(entry_point.key)];
-        named_behind[index as usize] = order.load_in(order.host());
+        let Some(loads) = context.loads_that_alone_name(entry_point.key) else {
+            named_behind[index as usize] = order.load_in(order.host());
+            continue;
+        };
+        for load in loads.iter().filter(|load| load.requires) {
+            let behind = order.load_in(load.file.0);
+            order.note(&behind, &mut named_behind[index as usize]);
+            if is_module(index) && order.note(&behind, &mut imported_behind[index as usize]) {
+                to_visit.push(index);
+            }
+        }
     }
     for (index, file) in (0..).zip(files) {
         let awaited = find_awaited_imports(file);

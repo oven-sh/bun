@@ -1,4 +1,4 @@
-# The arrow of `later` only calls `f`, and a call takes the arrow: `f` is only called, and the arrow of `maker` lies in the frame. But the call is `push`, which keeps the arrow, so the finished code makes it in the heap. In front of that the state byte of `f` is asked, and what bears the mark of a frame is moved: the arrow captures the copy.
+# The arrow of `later` only calls `f`, but the call that takes the arrow is `push`, out of sight: whoever is called there may keep the arrow, and with it `f`. So `f` does not count as only called: the arrow of `maker` is made in the heap by its own stub, and nothing is asked or moved where `later` makes its arrow. (Once it was lent, and `later` called the run time at every call to bring it to the heap.)
 # The arrows are called when the frames of their makers are long gone, behind a collection and a recursion that writes over the stack.
 # f1 = later, f3 = maker, f2 = deep
 # -- source: capture-that-may-lie-in-a-frame-is-brought-to-the-heap-where-its-closure-is-made-there.ts
@@ -14,13 +14,13 @@
 # print(kept[0](), kept[1](), kept[2](), kept[0](), kept[0] === kept[1]);
 # -- end of source
 # RUN: bytes f3 mechanisms=all-Inlining
-# CHECK: NewSlimClosureInFrame.Plain
+# CHECK: NewSlimClosure.Plain
 # RUN(MAKER): bytes f3 mechanisms=all-Inlining
-# MAKER-NOT: NewSlimClosure.
+# MAKER-NOT: NewSlimClosureInFrame
 # RUN(HEAP): bytes f1 mechanisms=all-Inlining
 # HEAP: NewSlimClosure.Plain
 # RUN(MOVED): bytes f1 mechanisms=all-Inlining
-# MOVED: operationAOTMoveClosureToHeap
+# MOVED-NOT: operationAOTMoveClosureToHeap
 # RUN(WITHHELD): bytes f1 mechanisms=all-Inlining-CellsInFrames
 # WITHHELD-NOT: operationAOTMoveClosureToHeap
 # RUN(ANSWERS): run-in-shell

@@ -176,6 +176,7 @@ pub struct Decisions<'s> {
     decided: &'s [(ExprId, Decision<'s>)],
     is_decided: NodeBits<'s>,
     constants: &'s [FoldedConstant],
+    is_constant: NodeBits<'s>,
     strings_and_numbers_of_bun_run_alone: NodeBits<'s>,
     folded_with: FoldInputs<'s>,
     specifiers: &'s [(ExprId, ImportSpecifier)],
@@ -213,6 +214,22 @@ impl<'s> Decisions<'s> {
         }
     }
 
+    #[inline]
+    fn find_folded_constant(&self, expr: ExprId) -> Option<&'s FoldedConstant> {
+        if !self.is_constant.has(expr.idx()) {
+            return None;
+        }
+        self.find_listed_constant(expr)
+    }
+
+    #[inline(never)]
+    fn find_listed_constant(&self, expr: ExprId) -> Option<&'s FoldedConstant> {
+        let constants = self.constants;
+        let found = constants.binary_search_by_key(&expr, |entry| entry.expr);
+        found.ok().map(|index| &constants[index])
+    }
+
+    #[inline]
     pub fn constant(&self, hir: &File<'_>, expr: ExprId) -> FoldedValue {
         let Some(node) = hir.exprs.get(expr.idx()) else {
             return FoldedValue::Unknown;
@@ -220,18 +237,16 @@ impl<'s> Decisions<'s> {
         if let Some(constant) = literal_constant(hir, node.kind) {
             return FoldedValue::Constant(constant);
         }
-        let found = self
-            .constants
-            .binary_search_by_key(&expr, |entry| entry.expr);
-        match found.map(|index| self.constants[index]) {
-            Ok(entry) if entry.checks_dead_zone => {
+        match self.find_folded_constant(expr) {
+            Some(entry) if entry.checks_dead_zone => {
                 FoldedValue::ConstantOutsideDeadZone(entry.constant)
             }
-            Ok(entry) => FoldedValue::Constant(entry.constant),
-            Err(_) => FoldedValue::Unknown,
+            Some(entry) => FoldedValue::Constant(entry.constant),
+            None => FoldedValue::Unknown,
         }
     }
 
+    #[inline]
     pub fn is_constant_in_bun_run(&self, hir: &File<'_>, expr: ExprId) -> bool {
         let Some(node) = hir.exprs.get(expr.idx()) else {
             return false;
@@ -239,10 +254,8 @@ impl<'s> Decisions<'s> {
         if literal_constant(hir, node.kind).is_some() {
             return true;
         }
-        let found = self
-            .constants
-            .binary_search_by_key(&expr, |entry| entry.expr);
-        found.is_ok_and(|index| self.constants[index].is_known_to_bun_run)
+        let found = self.find_folded_constant(expr);
+        found.is_some_and(|entry| entry.is_known_to_bun_run)
     }
 
     pub fn is_string_or_number_in_bun_run(&self, hir: &File<'_>, expr: ExprId) -> bool {
@@ -458,6 +471,7 @@ pub(crate) fn slice_in<'s, T: Copy>(list: &[T], arena: &'s Arena) -> &'s [T] {
     arena.alloc_slice_copy(list)
 }
 
+#[inline]
 fn literal_constant(hir: &File<'_>, kind: ExprKind) -> Option<Constant> {
     Some(match kind {
         ExprKind::Null => Constant::Null,

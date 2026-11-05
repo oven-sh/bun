@@ -89,7 +89,10 @@ impl Body {
         let cells = Cell::from_mut(&mut *self.code).as_slice_of_cells();
         walk_body(cells, self.block_count, &mut |field, at| match field {
             FieldWord::Operand => {}
-            FieldWord::Reference(kind) => cells[at].set(map.remap_word(kind, cells[at].get())),
+            FieldWord::Reference(kind) => {
+                let cell = &cells[at];
+                cell.set(map.remap_word(kind, cell.get()));
+            }
         });
     }
 }

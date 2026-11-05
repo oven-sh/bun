@@ -269,7 +269,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // This comes before the query is entered, because `lateBindMember` resolves the names of
         // the other members, which may re-enter this query.
-        let mut flags = self.files().flags(sym);
+        let table_flags = self.files().flags(sym);
+        let mut flags = table_flags;
         let (mut members, mut declarations) = (SmallVec::new(), List::default());
         if flags.intersects(SymFlags::CLASS_MEMBER) {
             (flags, value_declaration, declarations) = self.merged_symbol_of_property(sym);
@@ -357,7 +358,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.resolution_start = resolution_start;
         // For `module` and `exports`, `getTypeOfVariableOrParameterOrPropertyWorker` returns
         // without `popTypeResolution`: only a `pushTypeResolution` that fails reports.
-        let is_module_exports = self.files().flags(sym).contains(SymFlags::MODULE_EXPORTS);
+        let is_module_exports = table_flags.contains(SymFlags::MODULE_EXPORTS);
         let left = match is_module_exports {
             true => self.leave_without_pop(sym),
             false => self.leave(Query::Symbol(sym)),
@@ -404,7 +405,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.is_deferred_to_assign_parameter_type(file, pat, ty)) => {}
             // `getTypeOfEnumMember` assigns `links.resolvedType` regardless of what a nested call
             // assigned.
-            Ok(stored) if self.files().flags(sym).contains(SymFlags::ENUM_MEMBER) => {
+            Ok(stored) if table_flags.contains(SymFlags::ENUM_MEMBER) => {
                 self.p.symbol_types.rewrite(&self.task, sym, ty, stored);
             }
             Ok(stored) => {
@@ -1198,9 +1199,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// the result unless types are needed, which is when the alias chain doesn't resolve to a
     /// symbol, or there's a symbol to combine on it. `combineValueAndTypeSymbols` returns a
     /// `typeSymbol` that's already a value unchanged, so flags with a value meaning are final too.
+    #[inline]
     fn symbol_flags_by_types(
         &mut self,
-        mut symbol: Sym,
+        symbol: Sym,
         table_flags: SymFlags,
         exclude_type_only_meanings: bool,
     ) -> SymFlags {
@@ -1210,6 +1212,16 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return table_flags;
         }
+        self.symbol_flags_along_aliases(symbol, exclude_type_only_meanings)
+    }
+
+    #[inline(never)]
+    fn symbol_flags_along_aliases(
+        &mut self,
+        mut symbol: Sym,
+        exclude_type_only_meanings: bool,
+    ) -> SymFlags {
+        let files = self.files();
         let mut flags = files.flags(symbol);
         let mut seen_symbols: SmallVec<[Sym; 4]> = SmallVec::new();
         while files.flags(symbol).contains(SymFlags::ALIAS)
@@ -1297,7 +1309,10 @@ impl<'p, 's> Checker<'p, 's> {
         ignore_errors: bool,
     ) -> Option<Sym> {
         let files = self.files();
-        let texts: SmallVec<[Atom; 4]> = self.hir(file).texts(names).collect();
+        let mut texts: SmallVec<[Atom; 4]> = SmallVec::new();
+        for text in self.hir(file).texts(names) {
+            texts.push(text);
+        }
         let found = files.resolve_entity_with(file, scope, &texts, meaning, !ignore_errors, self);
         if found.is_none() && !ignore_errors {
             self.report_unresolved_entity_name(file, scope, names, meaning);
@@ -1504,6 +1519,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let mode = files.mode_of_import(file, hir[import].mode);
                 Some((hir[import].spec, mode))
             }
+            Decl::ImportSpec(s) if hir[s].imported != known::default => None,
+            Decl::ExportSpec(s) if hir[s].local != known::default => None,
             Decl::ImportSpec(_) | Decl::ExportSpec(_) => {
                 let (spec, mode, name) = files.external_module_member_of(file, decl)?;
                 (name == known::default).then_some((spec, mode))
@@ -3797,11 +3814,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// on this.
     #[inline]
     pub(super) fn is_resolved_on_request(&self, file: FileId, p: ParamId) -> bool {
-        let (hir, func) = (self.hir(file), self.bound(file).param_fn[p.idx()]);
-        matches!(hir[hir[p].pat].kind, PatKind::Object(_) | PatKind::Array(_))
-            && hir[p].ty.is_none()
-            && func.is_some()
-            && !self.is_function_expression_or_object_literal_method(file, func)
+        let hir = self.hir(file);
+        if !matches!(hir[hir[p].pat].kind, PatKind::Object(_) | PatKind::Array(_))
+            || hir[p].ty.is_some()
+        {
+            return false;
+        }
+        let func = self.bound(file).param_fn[p.idx()];
+        func.is_some() && !self.is_function_expression_or_object_literal_method(file, func)
     }
 
     /// `IsFunctionExpressionOrArrowFunction(func) || IsObjectLiteralMethod(func)`: the functions

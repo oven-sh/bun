@@ -22,7 +22,7 @@ const parsesArguments = (length: number, returns: table.TableType) =>
 const uses = {
   this: table.inspected,
   args: [
-    ...table.hostOptionBag([
+    ...table.optionBag([
       "bigint",
       "encoding",
       "flag",

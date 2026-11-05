@@ -44,13 +44,19 @@ fn leave_type(walk: &mut Walk) {
     let Some(finished) = walk.path.pop() else {
         return;
     };
-    walk.open.push(finished.explored);
-    if finished.lowest_link == finished.index {
-        let component: Component = walk.open.drain(finished.open_start..).collect();
-        for member in &component {
-            walk.states.insert(member.ty, NodeState::Closed);
+    let closes_component = finished.lowest_link == finished.index;
+    if closes_component && walk.open.len() == finished.open_start {
+        walk.states.insert(finished.explored.ty, NodeState::Closed);
+        walk.components.push(smallvec![finished.explored]);
+    } else {
+        walk.open.push(finished.explored);
+        if closes_component {
+            let component: Component = walk.open.drain(finished.open_start..).collect();
+            for member in component.iter() {
+                walk.states.insert(member.ty, NodeState::Closed);
+            }
+            walk.components.push(component);
         }
-        walk.components.push(component);
     }
     if let Some(parent) = walk.path.last_mut() {
         parent.lowest_link = parent.lowest_link.min(finished.lowest_link);

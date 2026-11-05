@@ -182,16 +182,23 @@ impl Resolver<'_, '_> {
                 mutability: Mutability::ConstantUnlessWritten,
             }));
         }
-        if let Some(runner) = self.find_runner_that_stub_answers(expr) {
-            let runner = ResolvedValue::object(BuiltinPath {
-                id: runner,
-                mutability: Mutability::ConstantUnlessWritten,
-            });
-            return ExprState::Builtin(runner.with_side_effects());
-        }
-        if self.is_call_of_bun_jest(expr) {
-            let runner = imported_namespace_value(RuntimeModule::BunTest);
-            return ExprState::Held(runner.with_side_effects());
+        let callee = match input.hir[expr].kind {
+            ExprKind::Call(call) => Some(input.hir.skip_type_assertions(input.hir[call].callee)),
+            _ => None,
+        };
+        let function = callee.and_then(|callee| mentioned_id(self.state(callee)));
+        if let (Some(callee), Some(function)) = (callee, function) {
+            if let Some(runner) = self.find_runner_that_stub_answers(callee, function) {
+                let runner = ResolvedValue::object(BuiltinPath {
+                    id: runner,
+                    mutability: Mutability::ConstantUnlessWritten,
+                });
+                return ExprState::Builtin(runner.with_side_effects());
+            }
+            if table::canonical_id(function) == table::canonical_id(BuiltinId::BunJest) {
+                let runner = imported_namespace_value(RuntimeModule::BunTest);
+                return ExprState::Held(runner.with_side_effects());
+            }
         }
         if input.dialect == SourceDialect::Runtime {
             return self.compute_native_call_state(expr);
@@ -225,25 +232,11 @@ impl Resolver<'_, '_> {
         false
     }
 
-    fn is_call_of_bun_jest(&self, expr: ExprId) -> bool {
-        let hir = self.input.hir;
-        let ExprKind::Call(call) = hir[expr].kind else {
-            return false;
-        };
-        let callee = hir.skip_type_assertions(hir[call].callee);
-        mentioned_id(self.state(callee)).is_some_and(|callee| {
-            table::canonical_id(callee) == table::canonical_id(BuiltinId::BunJest)
-        })
-    }
-
-    fn find_runner_that_stub_answers(&self, expr: ExprId) -> Option<BuiltinId> {
-        let hir = self.input.hir;
-        let ExprKind::Call(call) = hir[expr].kind else {
+    fn find_runner_that_stub_answers(&self, callee: ExprId, stub: BuiltinId) -> Option<BuiltinId> {
+        if !table::stubs_global(stub) {
             return None;
-        };
-        let callee = hir.skip_type_assertions(hir[call].callee);
-        let stub = mentioned_id(self.state(callee)).filter(|&stub| table::stubs_global(stub))?;
-        let (receiver, _) = hir.member_key(callee)?;
+        }
+        let (receiver, _) = self.input.hir.member_key(callee)?;
         let receiver = table::canonical_id(self.value_of(receiver)?.path.id);
         (table::entry(table::canonical_id(stub)).holder == Some(receiver)).then_some(receiver)
     }

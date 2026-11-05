@@ -1238,7 +1238,11 @@
     "aot/tool-loads-a-plugin.test.ts",
     "aot/what-this-lane-can.test.ts",
     "aot/helper-loads.test.ts",
-    "aot/mock-laid-over.test.ts",
+    "aot/a-spy-or-a-mock-that-is-refused-to-a-file-outside-the-build-names-that-file.test.ts",
+    "aot/mock-laid-over-1.test.ts",
+    "aot/mock-laid-over-2.test.ts",
+    "aot/mock-laid-over-3.test.ts",
+    "aot/mock-laid-over-4.test.ts",
     "aot/refused-spies-and-mocks.test.ts",
     "aot/delayed-imports.test.ts",
     "aot/import-cycles.test.ts",
@@ -1418,9 +1422,14 @@
     "aot/a-name-left-to-the-host-is-answered-with-a-file-of-the-image.test.ts",
     "aot/type-errors-under-a-tsconfig-that-needs-another-program.test.ts",
     "aot/a-commonjs-file-that-a-module-imports-is-handed-to-nobody-who-asks-by-a-name-made-at-run-time.test.ts",
+    "aot/plugins-are-asked-where-plain-bun-asks.test.ts",
     "aot/whether-a-module-waits-for-its-cycle-costs-the-same-in-a-larger-program.test.ts",
+    "aot/a-test-replaces-a-static-that-has-code-in-line.test.ts",
+    "aot/a-method-of-a-receiver-whose-class-is-proven-asks-whether-it-is-as-made.test.ts",
+    "aot/what-require-made-of-a-data-file-stays-with-require-in-a-test-run.test.ts",
+    "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
-    "aot/symbol-and-bigint-are-constructors.test.ts",
-    "aot/typescript-that-tsc-rejects.test.ts"
+    "aot/typescript-that-tsc-rejects.test.ts",
+    "aot/what-the-code-of-a-package-left-out-may-load-is-whole.test.ts"
   ]
 }

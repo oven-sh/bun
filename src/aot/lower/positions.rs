@@ -38,7 +38,21 @@ pub(in crate::lower) struct PositionState {
     constant_zeros: FxHashSet<Sym>,
     functions: FxHashMap<FnId, Rc<FunctionPositions>>,
     listed_nullish: FxHashMap<CheckerTypeId, Primitives>,
+    built: FxHashMap<(Option<CheckerTypeId>, Option<CheckerTypeId>), DeclaredType>,
+    shapes_being_mapped: u32,
     has_int32_promise: bool,
+}
+
+impl PositionState {
+    #[inline]
+    pub(in crate::lower) fn begin_mapping_shape(&mut self) {
+        self.shapes_being_mapped += 1;
+    }
+
+    #[inline]
+    pub(in crate::lower) fn end_mapping_shape(&mut self) {
+        self.shapes_being_mapped -= 1;
+    }
 }
 
 const MAX_DEPTH_OF_LISTED_MEMBERS: u32 = 8;
@@ -114,6 +128,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let held = self.fragment.types.get(source.mapped.ty).primitives;
         let omitted = (held & Primitives::NULLISH).without(source.listed_nullish);
         let mut flags = PositionFlags::default();
+        if omitted == Primitives::default() {
+            return flags;
+        }
         if omitted.contains(Primitives::NULL) {
             flags |= PositionFlags::OMITS_NULL;
         }
@@ -129,7 +146,13 @@ impl FileLowering<'_, '_, '_, '_> {
         let Some(written) = types.written.written() else {
             return checked;
         };
-        let mut source = self.map_source(written, true);
+        let mut source = match checked {
+            Some(checked) if checked.ty == written => PositionSource {
+                is_annotation: true,
+                ..checked
+            },
+            _ => self.map_source(written, true),
+        };
         if source.mapped.ty == TypeTable::ANYTHING {
             return checked.map(|checked| PositionSource {
                 mapped: Mapped::expected(checked.mapped.ty),
@@ -152,7 +175,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let is_tested = self.is_checked()
             && source.mapped.is_checked
             && source.mapped.ty != TypeTable::ANYTHING;
-        if !is_tested || !source.is_annotation || !types::lists_int32(self, source.ty) {
+        if !is_tested
+            || !source.is_annotation
+            || !self.queries.is_int32_written()
+            || !types::lists_int32(self, source.ty)
+        {
             return PositionFlags::default();
         }
         match self.is_in_dependency() {
@@ -170,7 +197,7 @@ impl FileLowering<'_, '_, '_, '_> {
         DeclaredType::new(mapped, None, flags)
     }
 
-    fn build_position_of_types(&mut self, types: PositionTypes) -> DeclaredType {
+    fn build_position_anew(&mut self, types: PositionTypes) -> DeclaredType {
         let Some(source) = self.choose_source(types) else {
             return DeclaredType::untyped();
         };
@@ -178,9 +205,27 @@ impl FileLowering<'_, '_, '_, '_> {
         self.finish_position(source, flags)
     }
 
+    fn build_position_of_types(&mut self, types: PositionTypes) -> DeclaredType {
+        if self.types.positions.shapes_being_mapped != 0 {
+            return self.build_position_anew(types);
+        }
+        let key = (types.written.written(), types.checked.ok());
+        if let Some(&position) = self.types.positions.built.get(&key) {
+            return position;
+        }
+        let unstable_answers_before = self.queries.count_unstable_answers();
+        let position = self.build_position_anew(types);
+        if self.queries.count_unstable_answers() == unstable_answers_before {
+            self.types.positions.built.insert(key, position);
+        }
+        position
+    }
+
     pub(crate) fn create_position(&mut self, types: PositionTypes) -> DeclaredType {
         let position = self.build_position_of_types(types);
-        self.note_layouts_of_objects(position.ty);
+        if !self.fragment.types.get(position.ty).layouts.is_empty() {
+            self.note_layouts_of_objects(position.ty);
+        }
         position
     }
 
@@ -283,6 +328,7 @@ impl FileLowering<'_, '_, '_, '_> {
         self.named_variable(symbol).position
     }
 
+    #[inline]
     pub(in crate::lower) fn is_constant_zero(&mut self, symbol: SymbolId) -> bool {
         self.named_variable(symbol).is_constant_zero
     }

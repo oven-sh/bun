@@ -32,10 +32,12 @@ pub(super) enum Relation {
 
 impl Relation {
     /// `relation == assignableRelation || relation == comparableRelation`
+    #[inline]
     pub(super) fn is_lenient(self) -> bool {
         matches!(self, Relation::Assignable | Relation::Comparable)
     }
 
+    #[inline]
     pub(super) fn is_subtype(self) -> bool {
         matches!(self, Relation::Subtype | Relation::StrictSubtype)
     }
@@ -317,6 +319,7 @@ impl Relater {
     }
 
     /// `r.relationCount = count`, at the start of a comparison.
+    #[inline]
     pub(super) fn set_relation_count(&mut self, count: i32) {
         self.relation_count = count;
         self.waits_for_commit_below = count - ENTRIES_SHARED_RIGHT_AWAY;
@@ -334,9 +337,18 @@ impl Relater {
     #[inline]
     fn push_maybe_key(&mut self, key: Key) {
         self.maybe_keys.push(key);
+        if !self.maybe_keys_set.is_empty()
+            || self.maybe_keys.len() > shortcuts::MAYBE_KEYS_LINEAR_LIMIT
+        {
+            self.add_to_maybe_keys_set(key);
+        }
+    }
+
+    #[inline(never)]
+    fn add_to_maybe_keys_set(&mut self, key: Key) {
         if !self.maybe_keys_set.is_empty() {
             self.maybe_keys_set.insert(key);
-        } else if self.maybe_keys.len() > shortcuts::MAYBE_KEYS_LINEAR_LIMIT {
+        } else {
             self.maybe_keys_set.extend(self.maybe_keys.iter().copied());
         }
     }
@@ -348,6 +360,15 @@ impl Relater {
             self.maybe_keys_set.remove(&key);
         }
         Some(key)
+    }
+
+    #[inline]
+    fn forget_maybe_keys_from(&mut self, start: usize) {
+        while self.maybe_keys.len() > start {
+            if self.pop_maybe_key().is_none() {
+                break;
+            }
+        }
     }
 }
 
@@ -767,6 +788,26 @@ impl<'p, 's> Checker<'p, 's> {
         data: &'p TypeData<'p>,
         writing: bool,
     ) -> (TypeId, &'p TypeData<'p>) {
+        if matches!(
+            data,
+            TypeData::Anon { .. }
+                | TypeData::Fns { .. }
+                | TypeData::Synth(_)
+                | TypeData::TypeParam(..)
+                | TypeData::Intrinsic(_)
+        ) {
+            return (ty, data);
+        }
+        self.normalized_as_of_other_kind(ty, data, writing)
+    }
+
+    #[inline(never)]
+    fn normalized_as_of_other_kind(
+        &mut self,
+        ty: TypeId,
+        data: &'p TypeData<'p>,
+        writing: bool,
+    ) -> (TypeId, &'p TypeData<'p>) {
         // `ObjectFlagsIdenticalBaseTypeCalculated`, and no equivalent base type.
         if is_normalized_kind(data)
             && (!matches!(data, TypeData::Ref { .. })
@@ -777,7 +818,16 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(data, TypeData::Union(_)) && !self.may_be_reduced(ty) {
             return (ty, data);
         }
-        let normalized = self.normalized(ty, writing);
+        let normalized = match data {
+            TypeData::Union(_) | TypeData::Intersection(_) => {
+                let simpler = self.normalized_union_or_intersection(ty, data, writing);
+                if simpler == ty {
+                    return (ty, data);
+                }
+                self.normalized(simpler, writing)
+            }
+            _ => self.normalized(ty, writing),
+        };
         if normalized == ty {
             return (ty, data);
         }
@@ -872,7 +922,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isEmptyResolvedType` of the resolved members of `ty`.
     fn is_empty_resolved_type(&mut self, ty: TypeId) -> bool {
-        !self.is_any_function_type(ty)
+        self.is_empty_resolved_type_as(ty, self.data(ty))
+    }
+
+    #[inline]
+    fn is_empty_resolved_type_as(&mut self, ty: TypeId, data: &TypeData) -> bool {
+        !matches!(data, TypeData::Synth(shape) if Self::is_any_function_shape(shape))
             && (self.members(ty)).is_some_and(|m| Self::lists_nothing(m.whole_shape()))
     }
 
@@ -888,7 +943,7 @@ impl<'p, 's> Checker<'p, 's> {
             data => {
                 is_object_kind(data)
                     && !(is_mapped_kind(data) && self.is_generic(ty))
-                    && self.is_empty_resolved_type(ty)
+                    && self.is_empty_resolved_type_as(ty, data)
             }
         }
     }
@@ -1011,6 +1066,7 @@ impl<'p, 's> Checker<'p, 's> {
         match members.resolved.prop(name) {
             Some(_) if self.is_type_only_member(ty, name) => None,
             Some(prop) => Some((prop, members.mapper)),
+            None if self.is_outside_inherited_names(name) => None,
             None => self.augmented_property(ty, inherited, name),
         }
     }
@@ -1126,6 +1182,7 @@ impl<'p, 's> Checker<'p, 's> {
         match members.resolved.prop(name) {
             Some(_) if self.is_type_only_member(ty, name) => None,
             Some(prop) => Some((prop, members.mapper)),
+            None if self.is_outside_inherited_names(name) => None,
             None => {
                 let mut inherited = self.inherited_of(members.shape());
                 self.augmented_property(ty, &mut inherited, name)
@@ -1232,6 +1289,12 @@ impl<'p, 's> Checker<'p, 's> {
                 || name_set.is_some_and(|names| !names.contains(&name)))
     }
 
+    #[inline]
+    fn is_outside_inherited_names(&self, name: Atom) -> bool {
+        let n = name.0 as usize;
+        self.inherited_names[n / 64 % 4] & 1 << (n % 64) == 0 && self.inherited_names != [0; 4]
+    }
+
     fn inherited_property(
         &mut self,
         from: &mut Inherited<'p>,
@@ -1282,9 +1345,10 @@ impl<'p, 's> Checker<'p, 's> {
         if source == target {
             return true;
         }
-        if are_literals_of_one_kind(sd, td) {
+        if are_literals_of_one_kind(sd, td) || Self::are_enum_members_with_other_values(sd, td) {
             return false;
         }
+        let are_objects = is_object_kind(sd) && is_object_kind(td);
         if relation != Relation::Identity {
             if relation == Relation::Comparable
                 && !target.is_never()
@@ -1293,9 +1357,13 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return true;
             }
-        } else if (self.flags(source) | self.flags(target))
-            & (tf::UNION_OR_INTERSECTION | tf::INDEXED_ACCESS | tf::CONDITIONAL | tf::SUBSTITUTION)
-            == 0
+        } else if !are_objects
+            && (self.flags(source) | self.flags(target))
+                & (tf::UNION_OR_INTERSECTION
+                    | tf::INDEXED_ACCESS
+                    | tf::CONDITIONAL
+                    | tf::SUBSTITUTION)
+                == 0
         {
             // Types that may simplify to another form are excluded, so the flags are the same.
             if self.flags(source) != self.flags(target) {
@@ -1313,7 +1381,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let mut missed = None;
-        if is_object_kind(sd) && is_object_kind(td) {
+        if are_objects {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
             if entries_for_query.is_none()
                 && let Some(entry) = self.known_relation(&key.0)
@@ -1364,9 +1432,9 @@ impl<'p, 's> Checker<'p, 's> {
         entries_for_query: Option<i32>,
         state: u8,
     ) -> bool {
-        let question = Key(source, target, QUESTION_KEY | state << 4);
+        let question = || Key(source, target, QUESTION_KEY | state << 4);
         if entries_for_query.is_some()
-            && let Some(entry) = self.p.relations.get(&self.task, &question)
+            && let Some(entry) = self.p.relations.get(&self.task, &question())
         {
             self.relation_too_complex |= entry & COMPLEXITY_OVERFLOW != 0;
             return entry & SUCCEEDED != 0;
@@ -1423,7 +1491,9 @@ impl<'p, 's> Checker<'p, 's> {
         let is_too_complex = overflow && has_run_out && self.cycles == r.cycles;
         let hit_cached_overflow = r.hit_cached_overflow;
         r.maybe_keys.clear();
-        r.maybe_keys_set.clear();
+        if !r.maybe_keys_set.is_empty() {
+            r.maybe_keys_set.clear();
+        }
         r.source_stack.clear();
         r.target_stack.clear();
         r.source_identities.clear();
@@ -1484,7 +1554,7 @@ impl<'p, 's> Checker<'p, 's> {
                     false if !overflow => FAILED,
                     false => FAILED | COMPLEXITY_OVERFLOW,
                 };
-                self.insert_relation(question, entry, stored);
+                self.insert_relation(question(), entry, stored);
             }
         }
         // `checkTypeRelatedToEx` records an overflow "such that we don't attempt the overflowing operation
@@ -1610,6 +1680,7 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         }
         if s & t & tf::ENUM_LIKE != 0
+            && (s & t & (tf::ENUM | tf::UNION) != 0 || is_same_value)
             && let (Some(a), Some(b)) = (
                 self.symbol_of_enum_like(source),
                 self.symbol_of_enum_like(target),
@@ -1667,6 +1738,15 @@ impl<'p, 's> Checker<'p, 's> {
             (EnumValue::Number(a), EnumValue::Number(b)) => f64::from_bits(a) == f64::from_bits(b),
             _ => a == b,
         }
+    }
+
+    #[inline]
+    fn are_enum_members_with_other_values(source: &TypeData, target: &TypeData) -> bool {
+        matches!(
+            (source, target),
+            (TypeData::EnumLit { value: a, .. }, TypeData::EnumLit { value: b, .. })
+                if !Self::is_equal_value(*a, *b)
+        )
     }
 
     /// `t.symbol`, of a type with `TypeFlagsEnumLike`.
@@ -1762,11 +1842,12 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn normalized(&mut self, ty: TypeId, writing: bool) -> TypeId {
         let mut t = ty;
         loop {
-            let n = match self.data(t) {
+            let data = self.data(t);
+            let n = match data {
                 // A union only changes if one of its members is an intersection.
                 TypeData::Union(_) if !self.may_be_reduced(t) => return t,
                 TypeData::Union(_) | TypeData::Intersection(_) => {
-                    self.normalized_union_or_intersection(t, writing)
+                    self.normalized_union_or_intersection(t, data, writing)
                 }
                 TypeData::IndexedAccess { .. } | TypeData::Cond { .. } => {
                     self.simplified(t, writing)
@@ -1804,12 +1885,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getNormalizedUnionOrIntersectionType`
-    fn normalized_union_or_intersection(&mut self, t: TypeId, writing: bool) -> TypeId {
+    fn normalized_union_or_intersection(
+        &mut self,
+        t: TypeId,
+        data: &'p TypeData<'p>,
+        writing: bool,
+    ) -> TypeId {
         let reduced = self.reduced(t);
         if reduced != t {
             return reduced;
         }
-        if let TypeData::Intersection(parts) = self.data(t) {
+        if let TypeData::Intersection(parts) = data {
             // `Partial<T>[K] & {}` is `T[K] & {}`.
             if !self.maybe_type_of_kind(t, tf::INSTANTIABLE) {
                 return t;
@@ -3263,11 +3349,14 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::TRUE;
         }
         if relation == Relation::Identity {
-            if self.flags(source) != self.flags(target) {
-                return Ternary::FALSE;
-            }
-            if self.flags(source) & tf::SINGLETON != 0 {
-                return Ternary::TRUE;
+            if !(is_object_kind(sd) && is_object_kind(td)) {
+                let flags = self.flags(source);
+                if flags != self.flags(target) {
+                    return Ternary::FALSE;
+                }
+                if flags & tf::SINGLETON != 0 {
+                    return Ternary::TRUE;
+                }
             }
             return self.recursive_type_related_to::<false>(
                 r, source, sd, target, td, STATE_NONE, recursion,
@@ -3296,7 +3385,8 @@ impl<'p, 's> Checker<'p, 's> {
                 td = self.data(target);
             }
         }
-        let are_distinct_literals = are_literals_of_one_kind(sd, td);
+        let are_distinct_literals =
+            are_literals_of_one_kind(sd, td) || Self::are_enum_members_with_other_values(sd, td);
         let error_reporter = REPORT.then_some(&mut *r);
         if !(is_from_related && source == original_source && target == original_target)
             && !are_distinct_literals
@@ -3339,7 +3429,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && (relation != Relation::Comparable || self.is_unit(source))
                 && !(matches!(sd, TypeData::Ref { .. })
                     && self.is_reference_to_global(source, known::Object, 0))
-                && self.is_weak_type(target)
+                && self.is_weak_type_as(target, td)
                 && {
                     let apparent = self.reduced_apparent_type_as_object(source);
                     self.members(apparent)
@@ -3699,6 +3789,14 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Substitution { base, .. } => self.is_weak_type(*base),
             TypeData::Intersection(parts) => parts.iter().all(|&p| self.is_weak_type(p)),
             _ => false,
+        }
+    }
+
+    #[inline]
+    fn is_weak_type_as(&mut self, t: TypeId, data: &TypeData) -> bool {
+        match is_object_kind(data) {
+            true => self.members(t).is_some_and(|m| m.resolved.is_weak()),
+            false => self.is_weak_type(t),
         }
     }
 
@@ -4252,7 +4350,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_reference =
             |data: &TypeData| matches!(data, TypeData::Ref { .. } | TypeData::Tuple { .. });
         if is_reference(sd) && is_reference(td) {
-            return self.relation_key(source, target, relation, state, false);
+            return self.relation_key_of_references(source, target, relation, state);
         }
         let flags = relation as u8 | state << 4;
         if relation == Relation::Identity && self.content_order(source, target).is_gt() {
@@ -4260,6 +4358,17 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             (Key(source, target, flags), false)
         }
+    }
+
+    #[inline(never)]
+    fn relation_key_of_references(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        relation: Relation,
+        state: u8,
+    ) -> (Key, bool) {
+        self.relation_key(source, target, relation, state, false)
     }
 
     /// `writeGenericTypeReferences`. `flags` are the key's flags.
@@ -4304,6 +4413,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the key of the comparison that `recursive_type_related_to` makes. `sd` and `td` are
     /// the `TypeData` of `source` and `target`.
+    #[inline]
     fn recursive_relation_key(
         &mut self,
         r: &mut Relater,
@@ -4471,11 +4581,15 @@ impl<'p, 's> Checker<'p, 's> {
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
             r.source_stack.pop();
-            r.source_identities.truncate(r.source_stack.len());
+            if r.source_identities.len() > r.source_stack.len() {
+                r.source_identities.truncate(r.source_stack.len());
+            }
         }
         if recursion & REC_TARGET != 0 {
             r.target_stack.pop();
-            r.target_identities.truncate(r.target_stack.len());
+            if r.target_identities.len() > r.target_stack.len() {
+                r.target_identities.truncate(r.target_stack.len());
+            }
         }
         r.expanding = save_expanding;
         if result.holds() {
@@ -4525,7 +4639,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             r.relation_count -= 1;
-            self.reset_maybe_stack(r, maybe_start, propagating, MaybeKeys::Forgotten, stored);
+            r.forget_maybe_keys_from(maybe_start);
         }
         result
     }
@@ -4683,6 +4797,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// that `t` is an instantiation of, each created later than the previous one. A homomorphic
     /// mapped type is as deeply nested as the type it's applied to. `stacks` are the source stack
     /// and the target stack, and `stack` is the source stack if `is_source`.
+    #[inline]
     pub(super) fn is_deeply_nested_type(
         &mut self,
         t: TypeId,
@@ -4690,7 +4805,8 @@ impl<'p, 's> Checker<'p, 's> {
         is_source: bool,
         max_depth: usize,
     ) -> bool {
-        self.is_deeply_nested_among(t, stacks, is_source, &[], max_depth)
+        stacks[usize::from(!is_source)].len() >= max_depth
+            && self.is_deeply_nested_among(t, stacks, is_source, &[], max_depth)
     }
 
     /// `isDeeplyNestedType(source, sourceStack, sourceDepth, 10)` for a conditional type. On the way into
@@ -4802,9 +4918,20 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         for &(on_stack, _) in &stack[identities.len()..] {
+            let identity = self.plain_recursion_identity(on_stack);
+            let may_match = if identity == NOT_PLAIN {
+                self.identities_that_may_match(on_stack)
+            } else if matches!(
+                self.data(on_stack),
+                TypeData::Ref { .. } | TypeData::Tuple { .. }
+            ) {
+                identity_bit(identity) | identity_bit((0, on_stack.0, 0))
+            } else {
+                identity_bit(identity)
+            };
             identities.push(OnStack {
-                identity: self.plain_recursion_identity(on_stack),
-                may_match: self.identities_that_may_match(on_stack),
+                identity,
+                may_match,
             });
         }
         let (
@@ -5004,7 +5131,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `data` is the `TypeData` of `t`.
     #[inline]
     fn recursion_identity_as(&self, t: TypeId, data: &TypeData) -> RecursionId {
-        self.recursion_identity_given(t, data, self.types().is_from_type_node(t))
+        let is_from_type_node = matches!(data, TypeData::Ref { .. } | TypeData::Tuple { .. })
+            && self.types().is_from_type_node(t);
+        self.recursion_identity_given(t, data, is_from_type_node)
     }
 
     /// `data` is the `TypeData` of `t`, `is_from_type_node` its `ObjectFlagsFromTypeNode`.
@@ -5446,7 +5575,7 @@ impl<'p, 's> Checker<'p, 's> {
         // For two instantiations of the same generic alias, relate the type arguments by variance.
         // tsgo limits alias variance probing to object and conditional source types. The target can
         // be any type with that alias, including a union.
-        if self.flags(source) & (tf::OBJECT | tf::CONDITIONAL) != 0
+        if (is_object_kind(sd) || matches!(sd, TypeData::EvolvingArray(_) | TypeData::Cond { .. }))
             && let Some((alias, source_args, target_args, true)) = self.same_alias(source, target)
             && {
                 let params = self.type_params_of_symbol(alias);
@@ -6207,15 +6336,25 @@ impl<'p, 's> Checker<'p, 's> {
             state,
             &mut both,
         );
+        let target_members = match td {
+            TypeData::Synth(_) => None,
+            _ => both.map(|(_, tm)| tm),
+        };
+        let lacks_signatures =
+            |construct| target_members.is_some_and(|tm| !tm.has_signatures_of_kind(construct));
         if result.holds() {
-            result &= self.signatures_related_to_among::<REPORT>(
-                r, source, sd, target, td, false, state, both,
-            );
-            if result.holds() {
+            if !lacks_signatures(false) {
                 result &= self.signatures_related_to_among::<REPORT>(
-                    r, source, sd, target, td, true, state, both,
+                    r, source, sd, target, td, false, state, both,
                 );
-                if result.holds() {
+            }
+            if result.holds() {
+                if !lacks_signatures(true) {
+                    result &= self.signatures_related_to_among::<REPORT>(
+                        r, source, sd, target, td, true, state, both,
+                    );
+                }
+                if result.holds() && !both.is_some_and(|(_, tm)| tm.index_infos().is_empty()) {
                     result &= self.index_signatures_related_to_among::<REPORT>(
                         r,
                         source,
@@ -6707,7 +6846,7 @@ impl<'p, 's> Checker<'p, 's> {
         // A cached shape doesn't change. An intersection has its signatures elsewhere.
         if self.provisional_shapes.len() == provisional
             && !self.is_intersection(has_properties)
-            && !self.is_intersection(target)
+            && !matches!(td, TypeData::Intersection(_))
         {
             *both = Some((sm, tm));
         }
@@ -6782,7 +6921,7 @@ impl<'p, 's> Checker<'p, 's> {
             source
         };
         for tp in &tm.shape().props {
-            if excluded.contains(&tp.name)
+            if !excluded.is_empty() && excluded.contains(&tp.name)
                 || optionals_only && !tp.flags.contains(PropFlags::OPTIONAL)
                 || target_is_class && tp.name == known::prototype
             {

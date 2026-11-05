@@ -102,6 +102,7 @@ fn has_fixed_callee(
     }
 }
 
+#[inline]
 pub(super) fn expr_kind(hir: &File<'_>, e: ExprId) -> Option<ExprKind> {
     hir.exprs.get(e.idx()).map(|expr| expr.kind)
 }
@@ -172,6 +173,9 @@ fn follow_to_require_call(
         (object, MemberKey::Name(name)) => (hir.skip_type_assertions(object), name),
         (_, MemberKey::PrivateName(_) | MemberKey::Computed(_)) => return None,
     };
+    if !(name == known::call && args.len() > 1 || name == known::apply && args.len() == 2) {
+        return None;
+    }
     follow_to_own_require(text, require, left.without_choices())?;
     if name == known::call && args.len() > 1 {
         return Some(RequireCall {
@@ -271,7 +275,7 @@ fn find_call_site(
     {
         return Some(create_site(ImportSiteKind::MockModule(call), args));
     }
-    if [known::importActual, known::importMock].contains(&name)
+    if (name == known::importActual || name == known::importMock)
         && may_be_export_of_test_runner(hir, bound, object, &[known::vi, known::vitest])
     {
         return Some(create_site(ImportSiteKind::ImportByTestRunner(call), args));
@@ -752,7 +756,7 @@ pub(super) struct ScannedCalls {
     pub(super) exported_file_changers: Vec<ExportedFileChanger>,
     pub(super) asked_of_other_files: Vec<(Atom, Atom)>,
     pub(super) asked_of_data_files: Vec<(Atom, Atom)>,
-    pub(super) names_out_of_data_files: Vec<Atom>,
+    pub(super) names_out_of_data_files: Vec<(Atom, ExprId)>,
     pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, ResolvedFrom)>,
@@ -775,8 +779,19 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     for index in 0..hir.exprs.len() {
         let call = ExprId(index as u32);
         let Some(form) = find_call_form(hir, call) else {
-            names_of_workers.extend(find_name_of_worker(inputs, call, &mut alternatives));
-            keys_stored_in_caches.extend(find_key_stored_in_cache(inputs, call, &mut alternatives));
+            match hir.exprs[index].kind {
+                ExprKind::New(_) => {
+                    if let Some(name) = find_name_of_worker(inputs, call, &mut alternatives) {
+                        names_of_workers.push(name);
+                    }
+                }
+                ExprKind::Index { .. } => {
+                    if let Some(key) = find_key_stored_in_cache(inputs, call, &mut alternatives) {
+                        keys_stored_in_caches.push(key);
+                    }
+                }
+                _ => {}
+            }
             continue;
         };
         let is_dead = decisions.is_dead_expr(call);
@@ -1092,7 +1107,7 @@ struct FoundAlternatives {
     written_names: WrittenNames,
     asked_of_data_files: AskedOfDataFiles,
     asked_of_other_files: AskedOfDataFiles,
-    names_out_of_data_files: Vec<Atom>,
+    names_out_of_data_files: Vec<(Atom, ExprId)>,
 }
 
 fn call_specifier(
@@ -1137,7 +1152,7 @@ fn find_specifier(
     };
     if found.is_out_of_data_file {
         let names = found.alternatives.iter().filter_map(|it| match *it {
-            ImportSpecifier::Constant(name) => Some(name),
+            ImportSpecifier::Constant(name) => Some((name, argument)),
             _ => None,
         });
         alternatives.names_out_of_data_files.extend(names);

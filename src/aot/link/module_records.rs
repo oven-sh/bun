@@ -34,7 +34,7 @@ use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::SharedSort;
 use core::ops::Range;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub(super) struct RecordInput<'a, 's> {
     pub projects: &'a PerProject<LinkProject<'a, 's>>,
@@ -939,6 +939,8 @@ impl RecordBuilder<'_, '_, '_> {
                 ) => Some(name),
                 _ => None,
             });
+            let mut names = FxHashSet::default();
+            let written = written.filter(|&name| names.insert(name));
             record.names_of_statements = written.map(|name| self.intern_atom(name)).collect();
         }
         let is_settled = |export: &&modules::ModuleExport| {

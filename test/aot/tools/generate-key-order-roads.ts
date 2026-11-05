@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 const folder = join(dirname(import.meta.dirname), "parallel", "key-order-roads");
 
 const head = (road: string) => `// The keys of an object that got them in another order than its layout declares are seen by ${road}.
-// Under: --aot-testing=CheckProofsAtRunTime: LinkedLayout::keysMayBeListed
+// Under: --aot-testing=CheckProofsAtRunTime: a proof that nobody sees the order of these keys would be false
 function make(flip) {
   const o = { kind: "point" };
   if (flip) {
@@ -81,7 +81,7 @@ for (const [name, [road, inFront, body]] of Object.entries(cases))
 
 // An object of a class below, and one of a class above: the road comes to one of them, and both are objects of the family.
 const classes = (which: string, made: string) => `// The keys of an instance that got them in another order than its class declares are seen by Object.keys of ${which}.
-// Under: --aot-testing=CheckProofsAtRunTime: LinkedLayout::keysMayBeListed
+// Under: --aot-testing=CheckProofsAtRunTime: a proof that nobody sees the order of these keys would be false
 class Base {
   constructor(flip) {
     if (flip) {

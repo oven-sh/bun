@@ -1390,14 +1390,19 @@ fn is_implicit_glob(last: &[u8]) -> bool {
     strings::index_of_any(last, b".*?").is_none()
 }
 
+#[inline]
 fn is_hidden(name: &[u8]) -> bool {
-    name.starts_with(b".")
+    name.first() == Some(&b'.')
 }
 
+#[inline]
 fn is_package_folder(name: &[u8]) -> bool {
-    name.eq_ignore_ascii_case(b"node_modules")
-        || name.eq_ignore_ascii_case(b"jspm_packages")
-        || name.eq_ignore_ascii_case(b"bower_components")
+    match name.len() {
+        12 => name.eq_ignore_ascii_case(b"node_modules"),
+        13 => name.eq_ignore_ascii_case(b"jspm_packages"),
+        16 => name.eq_ignore_ascii_case(b"bower_components"),
+        _ => false,
+    }
 }
 
 /// `nextPathPartParts`: the path components of `directory`, followed by `name`, which is a single component or empty.
@@ -1412,7 +1417,8 @@ impl<'a> PathParts<'a> {
     /// `""`. Called once per directory, not once per pattern and name in it.
     fn split_directory(directory: &[u8]) -> Vec<&[u8]> {
         let root = directory.starts_with(b"/").then_some(&b""[..]);
-        let names = strings::split(directory, b"/").filter(|p| !p.is_empty());
+        let names = strings::split(directory, b"/");
+        let names = names.filter(|p| !p.is_empty());
         root.into_iter().chain(names).collect()
     }
 
@@ -1542,10 +1548,9 @@ impl GlobPattern {
     /// How many parts of `directory` the literal components at the start match, one each: `match_parts` can start behind them, for every name in the directory.
     fn match_start(&self, directory: &[&[u8]]) -> Option<usize> {
         let mut matched = 0;
-        for (component, part) in self.components.iter().zip(directory) {
-            let Component::Literal(literal) = component else {
-                break;
-            };
+        while let (Some(Component::Literal(literal)), Some(part)) =
+            (self.components.get(matched), directory.get(matched))
+        {
             if !self.equal(literal, part) {
                 return None;
             }
@@ -1555,6 +1560,7 @@ impl GlobPattern {
     }
 
     /// `stringsEqual`
+    #[inline]
     fn equal(&self, a: &[u8], b: &[u8]) -> bool {
         a == b || !self.case_sensitive && equate_string_case_insensitive(a, b)
     }

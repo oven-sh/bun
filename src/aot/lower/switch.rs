@@ -22,6 +22,7 @@ struct ClauseGroup {
 struct CaseTest {
     expression: ExprId,
     constant: FoldedValue,
+    read_off: Option<SymbolId>,
     target: BlockId,
 }
 
@@ -69,11 +70,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         for group in &groups {
             for index in group.first..group.end {
                 match hir[cases.at(index as usize)].test.some() {
-                    Some(expression) => tests.push(CaseTest {
-                        expression,
-                        constant: find_constant(self.file, expression),
-                        target: group.body,
-                    }),
+                    Some(expression) => {
+                        let mut constant = find_constant(self.file, expression);
+                        let mut read_off = None;
+                        if matches!(constant, FoldedValue::Unknown)
+                            && let Some((variable, value)) =
+                                self.file.find_member_of_enum_that_stays_as_born(expression)
+                        {
+                            constant = FoldedValue::Constant(value);
+                            read_off = Some(variable);
+                        }
+                        tests.push(CaseTest {
+                            expression,
+                            constant,
+                            read_off,
+                            target: group.body,
+                        });
+                    }
                     None => default_target = group.body,
                 }
             }

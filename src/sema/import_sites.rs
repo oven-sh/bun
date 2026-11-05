@@ -122,6 +122,10 @@ pub struct ExportedText {
 
 pub const WHERE_FILE_LIES: &[u8] = b"\0\0";
 
+pub(crate) fn write_question_where_file_lies(call: ExprId) -> Vec<u8> {
+    [WHERE_FILE_LIES, call.idx().to_string().as_bytes()].concat()
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum ResolvedForm {
     Path,
@@ -170,7 +174,7 @@ pub(crate) struct ImportScan<'s> {
     pub exported_file_changers: &'s [ExportedFileChanger],
     pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],
-    pub names_out_of_data_files: &'s [Atom],
+    pub names_out_of_data_files: &'s [(Atom, ExprId)],
     pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],

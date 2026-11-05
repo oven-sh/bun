@@ -96,7 +96,7 @@ use crate::atom::{Atom, Atoms, known};
 use crate::bind::{AssignmentKind, AssignmentTarget, Bound, ModuleInstanceState, SymFlags};
 use crate::hir::{self, *};
 use crate::local::MaybeLocal;
-use crate::program::{FileId, Files, Sym};
+use crate::program::{FileId, Files, ModuleCell, Sym};
 use crate::session::{Arena, ArenaBox, Session};
 use crate::session::{ArenaVec, vec_from_iter_in};
 use crate::table::{At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect};
@@ -231,7 +231,15 @@ impl ContextChecks {
         self.checks.is_empty()
     }
 
+    #[inline]
     fn get(&self, file: FileId, func: FnId) -> Option<&ContextCheck> {
+        if self.checks.is_empty() {
+            return None;
+        }
+        self.find(file, func)
+    }
+
+    fn find(&self, file: FileId, func: FnId) -> Option<&ContextCheck> {
         let position = *self.positions.get(&(file, func))?;
         Some(&self.checks[position])
     }
@@ -851,6 +859,7 @@ impl<'s> Program<'s> {
             task: spare.task,
             left_frame: None,
             files: self.files,
+            modules: &self.files.modules,
             variance_type_parameter: Atom::NONE,
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
@@ -1265,7 +1274,7 @@ enum Query {
 impl Hash for Query {
     #[inline(always)]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
+        state.write_isize(self.discriminant());
         match *self {
             Query::Expr(file, e) | Query::ExprInFlowLoop(file, e) | Query::Call(file, e) => {
                 (file, e).hash(state);
@@ -1351,6 +1360,38 @@ fn is_guarded(q: Query) -> bool {
 }
 
 impl Query {
+    #[inline]
+    fn discriminant(&self) -> isize {
+        match self {
+            Query::Expr(..) => 0,
+            Query::ExprInFlowLoop(..) => 1,
+            Query::Symbol(_) => 2,
+            Query::Declared(_) => 3,
+            Query::Return(..) => 4,
+            Query::ReturnAtFirstLook(..) => 5,
+            Query::ReturnOfSignature(_) => 6,
+            Query::Shape(_) => 7,
+            Query::Properties(_) => 8,
+            Query::Bases(_) => 9,
+            Query::BaseConstructor(_) => 10,
+            Query::Constraint(_) => 11,
+            Query::InferredConstraint(_) => 12,
+            Query::Call(..) => 13,
+            Query::Pat(..) => 14,
+            Query::ParameterSymbol(..) => 15,
+            Query::LiteralProp(..) => 16,
+            Query::TypeNode(..) => 17,
+            Query::MappedProp(..) => 18,
+            Query::Enum(..) => 19,
+            Query::Cond(..) => 20,
+            Query::InitializerIsUndefined(..) => 21,
+            Query::TypeArguments(_) => 22,
+            Query::AliasTarget(_) => 23,
+            Query::WriteType(..) => 24,
+            Query::Comparison(_) => 25,
+        }
+    }
+
     /// Returns the file whose syntax the key refers to, or `None` if the key is a type or a signature.
     #[inline]
     fn file_that_names_it(self) -> Option<FileId> {
@@ -1636,6 +1677,7 @@ struct FlowTypeSkip {
 #[repr(C)]
 pub struct Checker<'p, 's> {
     files: &'p Files<'s>,
+    modules: &'p [ModuleCell<'s>],
     pub p: &'p Program<'s>,
     /// The arena of the thread that runs the task. It's for the records the task creates, which may
     /// be published. Everything else that a task allocates is on the regular heap.
@@ -1681,7 +1723,7 @@ pub struct Checker<'p, 's> {
     /// The numbers asked for last among the others, by their bits, each with its name.
     names_of_other_numbers: std::cell::RefCell<Box<[(u64, Atom); 256]>>,
     /// `membersAndExportsLinks`, keyed by container and side.
-    late_bound_members: FxHashMap<(Sym, bool), late_bound::LateBoundMembers>,
+    late_bound_members: late_bound::LateBoundSides,
     /// `symbolNodeLinks.Get(decl).resolvedSymbol != nil`: the declarations that `lateBindMember`
     /// has bound, for the containers in `late_binding`.
     late_bound_declarations: crate::util::FxHashSet<(FileId, crate::bind::Decl)>,
@@ -2470,12 +2512,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     pub fn hir(&self, file: FileId) -> &'p hir::File<'s> {
-        self.files.hir(file)
+        &self.modules[file.idx()].hir
     }
 
     #[inline]
     pub fn bound(&self, file: FileId) -> &'p Bound<'s> {
-        self.files.bound(file)
+        &self.modules[file.idx()].bound
     }
 
     #[inline]
@@ -2636,12 +2678,25 @@ impl<'p, 's> Checker<'p, 's> {
         self.stack_base = base_of_task;
     }
 
+    #[inline]
+    fn stack_in_use(&self) -> isize {
+        self.stack_base.wrapping_sub(stack_pointer()) as isize
+    }
+
+    #[inline]
+    fn note_stack_in_use(&self, used: isize) {
+        if used > self.deepest_stack.get() as isize {
+            cold_path();
+            self.deepest_stack.set(used as usize);
+        }
+    }
+
     /// True if there's little stack left for recursion.
     #[inline]
     pub(crate) fn is_stack_low(&self) -> bool {
-        let used = self.stack_base.saturating_sub(stack_pointer());
-        self.deepest_stack.set(used.max(self.deepest_stack.get()));
-        if used > self.stack_limit {
+        let used = self.stack_in_use();
+        self.note_stack_in_use(used);
+        if used > self.stack_limit as isize {
             cold_path();
             self.ran_out_of_stack.set(true);
             self.times_cut_short.set(self.times_cut_short.get() + 1);
@@ -2685,10 +2740,36 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns false if the query is already in progress further down the stack.
-    #[inline]
     fn enter(&mut self, q: Query) -> bool {
+        let class = self.class_in_progress(q);
         self.work += 1;
         self.found_cycle = false;
+        let used = self.stack_in_use();
+        let height = self.stack.len();
+        if self.work == self.work_trap
+            || used > (self.stack_limit - self.stack_limit / 4) as isize
+            || height >= self.in_progress.len()
+            || height == self.stack.capacity()
+            || self.frames.len() == self.frames.capacity()
+            || self.in_progress[class as usize] != 0
+        {
+            cold_path();
+            return self.enter_slowly(q);
+        }
+        self.note_stack_in_use(used);
+        self.last_enter = EnterOutcome::Entered;
+        if height == 0 {
+            self.reset_instantiation_count_if_idle();
+        }
+        self.in_progress[class as usize] = height as u32 + 1;
+        self.stack.push(q);
+        self.push_frame(class, 0);
+        true
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn enter_slowly(&mut self, q: Query) -> bool {
         if (self.work == self.work_trap || self.is_stack_low()) && self.reject_for_lack_of_stack(q)
         {
             return false;
@@ -2717,6 +2798,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let next_of_class = self.in_progress[class as usize];
         self.in_progress[class as usize] = self.stack.len() as u32;
+        self.push_frame(class, next_of_class);
+        true
+    }
+
+    #[inline]
+    fn push_frame(&mut self, class: u32, next_of_class: u32) {
         // A query made under a context that a non-cacheable query has pushed is non-cacheable too.
         let tainted = !self.inference_contexts.is_empty() && self.is_innermost_tainted();
         // Diagnostics reported under a loop in progress are kept (`taint_from`).
@@ -2744,7 +2831,6 @@ impl<'p, 's> Checker<'p, 's> {
             source_element: self.current_source_element,
             held_back: self.task.held_back(),
         });
-        true
     }
 
     #[inline]
@@ -3686,12 +3772,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Changes whenever a computation is cut short at a point that depends on the depth of the
     /// caller: an instantiation limit was hit, or the native stack ran low.
+    #[inline]
     fn cuts(&self) -> u64 {
         self.limits + self.times_cut_short.get()
     }
 
     /// Changes whenever a query is rejected or a computation is cut short. If it's the same before
     /// and after, what was computed in between is complete and may outlive the frames around it.
+    #[inline]
     fn interruptions(&self) -> (u64, u64, u64) {
         (self.unmarked_rejections, self.cuts(), self.rejected_at)
     }
@@ -3898,6 +3986,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// nodes in their own loops, and nothing marks where the check of a node begins. But whatever such a
     /// check requests begins while nothing is in progress. `enter`, `begin_comparison` and `instantiate`
     /// call this, and every instantiation is under one of them. Returns true if nothing is in progress.
+    #[inline]
     pub(super) fn reset_instantiation_count_if_idle(&mut self) -> bool {
         let is_idle = self.stack.is_empty()
             && self.instantiation_depth == 0
@@ -4038,8 +4127,30 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Pops the frame of `q`. Returns `Ok` if the result is final, with a token that permits storing it. Returns
     /// `Err` if the result depends on a frame that's still in progress, so it may only go to `cache_provisionally`.
-    #[inline]
     fn leave(&mut self, q: Query) -> Result<Stored, Open> {
+        if let Some(frame) = self.frames.last()
+            && frame.next_of_class == 0
+            && !frame.marks.tainted()
+            && self.reported.len() <= frame.reported_from as usize
+            && self.stale_resolutions.is_empty()
+            && self.task.cycles_end_below(self.stack.len())
+        {
+            let (class, circular, held_back) = (frame.class, frame.circular, frame.held_back);
+            let popped = self.stack.pop();
+            debug_assert!(popped == Some(q));
+            self.frames.pop();
+            self.last_enter = EnterOutcome::Entered;
+            self.in_progress[class as usize] = 0;
+            self.left_a_cycle = circular;
+            return Ok(Stored::since(held_back));
+        }
+        cold_path();
+        self.leave_slowly(q)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn leave_slowly(&mut self, q: Query) -> Result<Stored, Open> {
         let popped = self.stack.pop();
         debug_assert!(popped == Some(q));
         self.task.leaves_the_cycles_below(self.stack.len());
@@ -4306,6 +4417,7 @@ impl<'p, 's> Checker<'p, 's> {
         Some(Stored::new())
     }
 
+    #[inline]
     fn is_innermost_tainted(&self) -> bool {
         (self.frames.last()).is_some_and(|frame| frame.marks.tainted())
     }
@@ -4745,7 +4857,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `TypeFlagsPrimitive`, except for the unions that have it: `boolean`, an enum.
     #[inline]
     pub fn is_primitive(&self, ty: TypeId) -> bool {
-        self.flags(ty) & tf::PRIMITIVE != 0 && self.flags(ty) & tf::UNION == 0
+        let flags = self.flags(ty);
+        flags & tf::PRIMITIVE != 0 && flags & tf::UNION == 0
     }
 
     /// True if `f` holds for every member of `ty`.
@@ -5118,10 +5231,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    #[inline]
+    fn is_global_array(&self, target: Sym) -> bool {
+        let name = self.files().symbol(target).name;
+        (name == known::Array || name == known::ReadonlyArray)
+            && self.global_type_of_arity(name, 1) == Some(target)
+    }
+
     /// `isArrayType`
     pub fn is_array(&self, ty: TypeId) -> bool {
-        self.is_reference_to_global(ty, known::Array, 1)
-            || self.is_reference_to_global(ty, known::ReadonlyArray, 1)
+        matches!(self.data(ty), TypeData::Ref { target, .. } if self.is_global_array(*target))
     }
 
     pub fn is_tuple(&self, ty: TypeId) -> bool {
@@ -5129,7 +5248,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn is_array_or_tuple(&self, ty: TypeId) -> bool {
-        self.is_array(ty) || self.is_tuple(ty)
+        match self.data(ty) {
+            TypeData::Ref { target, .. } => self.is_global_array(*target),
+            TypeData::Tuple { .. } => true,
+            _ => false,
+        }
     }
 
     /// `createNormalizedTupleTypeEx`, once the variadic elements that are known have been spread (`normalized_tuple`).

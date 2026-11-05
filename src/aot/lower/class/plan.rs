@@ -8,7 +8,7 @@ use smallvec::{SmallVec, smallvec};
 
 use super::{
     ClassElement, ClassPlan, ClassTransform, FieldSemantics, FieldValue, InitializerCall,
-    InjectionPoint, MadeConstructor,
+    InjectionPoint, KeyThatHoldsDecorators, PrintedForEachObject,
 };
 use crate::ir::ClassSlot;
 use crate::lower::decorators::{self, InitializerLists};
@@ -431,30 +431,148 @@ pub(in crate::lower) fn fields_evaluated_in_constructor(
     fields.collect()
 }
 
-pub(in crate::lower) fn find_constructor_made_by_transpiler(
+pub(in crate::lower) fn is_printed_as_getter_and_setter(
+    hir: &hir::File<'_>,
+    member: MemberId,
+) -> bool {
+    is_auto_accessor(hir, member) && !matches!(hir.runtime_member_key(member), PropKey::Private(_))
+}
+
+fn find_what_standard_decorators_print(
+    hir: &hir::File<'_>,
+    class: ClassId,
+) -> PrintedForEachObject {
+    let of_objects =
+        || runtime_members(hir, class).filter(|&member| !hir[member].flags.contains(Flags::STATIC));
+    let is_decorated = |member: MemberId| has_decorators(hir, hir[member].modifiers);
+    let is_kept_outside_the_object = |member: MemberId| {
+        let is_private = matches!(hir.runtime_member_key(member), PropKey::Private(_));
+        is_printed_as_getter_and_setter(hir, member) || (is_private && is_decorated(member))
+    };
+    let runs_before_first_field = of_objects().any(|member| {
+        let is_field = hir[member].kind == MemberKind::Property && !is_auto_accessor(hir, member);
+        is_decorated(member) && !is_field
+    });
+    let mut printed = PrintedForEachObject {
+        stands_at_statement: runs_before_first_field,
+        ..PrintedForEachObject::default()
+    };
+    let (mut waits_for_field, mut has_field) = (false, false);
+    for member in of_objects().filter(|&member| hir[member].kind == MemberKind::Property) {
+        if is_kept_outside_the_object(member) {
+            waits_for_field = true;
+            printed.stands_at_statement = true;
+            continue;
+        }
+        let takes_what_waits = waits_for_field || (runs_before_first_field && !has_field);
+        if takes_what_waits && !is_decorated(member) && hir[member].init.is_none() {
+            printed.fields_given_a_value.push(member);
+        }
+        has_field = true;
+        waits_for_field = is_decorated(member);
+        printed.stands_at_statement |= waits_for_field;
+    }
+    printed.makes_constructor = waits_for_field || (runs_before_first_field && !has_field);
+    printed
+}
+
+pub(in crate::lower) fn find_keys_that_hold_decorators(
+    hir: &hir::File<'_>,
+    class: ClassId,
+    fields_given_a_value: &[MemberId],
+) -> SmallVec<[KeyThatHoldsDecorators; 2]> {
+    let is_decorated = |member: MemberId| has_decorators(hir, hir[member].modifiers);
+    let key_of = |member: MemberId| hir.runtime_member_key(member);
+    let is_private = |member: MemberId| matches!(key_of(member), PropKey::Private(_));
+    let is_kept_outside_the_class = |member: MemberId| {
+        let has_same_name = |&other: &MemberId| key_of(other) == key_of(member);
+        let mut of_same_name = runtime_members(hir, class).filter(has_same_name);
+        is_private(member) && of_same_name.any(is_decorated)
+    };
+    let mut keys = SmallVec::<[KeyThatHoldsDecorators; 2]>::new();
+    let mut waiting = SmallVec::<[MemberId; 2]>::new();
+    let mut stands_behind_text_of_class = true;
+    for member in runtime_members(hir, class) {
+        let node = hir[member];
+        let kind = hir.runtime_member_kind(member);
+        let is_static = node.flags.contains(Flags::STATIC);
+        if is_private(member) && is_decorated(member) {
+            waiting.push(member);
+        }
+        if !is_private(member) && !matches!(kind, MemberKind::Constructor | MemberKind::StaticBlock)
+        {
+            keys.push(KeyThatHoldsDecorators {
+                member: Some(member),
+                lists: waiting.len() + usize::from(is_decorated(member)),
+                private_members: core::mem::take(&mut waiting),
+                stands_behind_text_of_class,
+            });
+        }
+        let is_storage =
+            is_kept_outside_the_class(member) || is_printed_as_getter_and_setter(hir, member);
+        stands_behind_text_of_class = match kind {
+            MemberKind::Property if is_storage && is_static => {
+                is_decorated(member) || node.init.is_none()
+            }
+            MemberKind::Property if is_storage => {
+                !is_private(member) || stands_behind_text_of_class
+            }
+            MemberKind::Property if node.init.is_none() => {
+                is_decorated(member) || fields_given_a_value.contains(&member)
+            }
+            MemberKind::Property => is_static && is_decorated(member),
+            _ => is_kept_outside_the_class(member) && stands_behind_text_of_class,
+        };
+    }
+    match keys.last_mut() {
+        Some(last) => {
+            last.lists += waiting.len();
+            last.private_members.extend(waiting);
+        }
+        None => keys.push(KeyThatHoldsDecorators {
+            member: None,
+            lists: waiting.len(),
+            private_members: waiting,
+            stands_behind_text_of_class,
+        }),
+    }
+    keys.retain(|key| key.lists > 0);
+    keys
+}
+
+pub(in crate::lower) fn find_what_is_printed_for_each_object(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     compiled: &CompiledModule<'_>,
     fields_under_signed_members: &[MemberId],
     class: ClassId,
-) -> Option<MadeConstructor> {
+) -> PrintedForEachObject {
     let plan = plan_class(hir, bound, compiled, fields_under_signed_members, class);
-    if plan.constructor.is_some() {
-        return None;
-    }
+    let is_assigned =
+        |element: &ClassElement| matches!(element, ClassElement::AssignedField { .. });
+    let moves_fields = plan.injected_elements.iter().any(is_assigned);
     let is_instance_field = |member: MemberId| {
         let node = hir[member];
         node.kind == MemberKind::Property && !node.flags.intersects(Flags::STATIC | Flags::ACCESSOR)
     };
-    if plan.field_semantics == FieldSemantics::Assign
-        && runtime_members(hir, class).any(is_instance_field)
-    {
-        return Some(MadeConstructor::AtBrace);
+    let printed = match plan.transform {
+        ClassTransform::Standard => find_what_standard_decorators_print(hir, class),
+        _ if plan.field_semantics == FieldSemantics::Assign => PrintedForEachObject {
+            makes_constructor: runtime_members(hir, class).any(is_instance_field),
+            ..PrintedForEachObject::default()
+        },
+        ClassTransform::Legacy => PrintedForEachObject {
+            makes_constructor: moves_fields,
+            stands_at_statement: moves_fields && plan.constructor.is_none(),
+            ..PrintedForEachObject::default()
+        },
+        ClassTransform::None => PrintedForEachObject::default(),
+    };
+    PrintedForEachObject {
+        written_constructor: plan.constructor,
+        makes_constructor: printed.makes_constructor && plan.constructor.is_none(),
+        ..printed
     }
-    let is_assigned =
-        |element: &ClassElement| matches!(element, ClassElement::AssignedField { .. });
-    (plan.transform == ClassTransform::Legacy && plan.injected_elements.iter().any(is_assigned))
-        .then_some(MadeConstructor::AtStatement)
 }
 
 pub(in crate::lower) fn is_evaluated_in_constructor(

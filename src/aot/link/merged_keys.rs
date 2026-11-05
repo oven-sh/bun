@@ -10,18 +10,43 @@ use core::cmp::Ordering;
 use core::ops::Range;
 
 pub(super) trait OrderedKey: Copy + Eq + Send + Sync {
+    fn rank(&self) -> u128;
     fn compare(&self, other: &Self, atoms: &Interner<'_>) -> Ordering;
 }
 
-impl OrderedKey for ProgramFunctionKey {
-    fn compare(&self, other: &Self, _: &Interner<'_>) -> Ordering {
-        self.cmp(other)
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct Ranked<K> {
+    rank: u128,
+    key: K,
+}
+
+impl<K: OrderedKey> Ranked<K> {
+    #[inline]
+    fn new(key: &K) -> Ranked<K> {
+        Ranked {
+            rank: key.rank(),
+            key: *key,
+        }
     }
 }
 
-impl OrderedKey for ProgramLayoutKey {
-    fn compare(&self, other: &Self, _: &Interner<'_>) -> Ordering {
-        self.cmp(other)
+impl<K: OrderedKey> OrderedKey for Ranked<K> {
+    #[inline]
+    fn rank(&self) -> u128 {
+        self.rank
+    }
+
+    #[inline]
+    fn compare(&self, other: &Self, atoms: &Interner<'_>) -> Ordering {
+        let by_rank = self.rank.cmp(&other.rank);
+        debug_assert!(
+            by_rank == Ordering::Equal || by_rank == self.key.compare(&other.key, atoms),
+            "the rank of a key goes against its order"
+        );
+        match by_rank {
+            Ordering::Equal if self.key != other.key => self.key.compare(&other.key, atoms),
+            _ => by_rank,
+        }
     }
 }
 
@@ -33,9 +58,10 @@ pub(super) struct MergedKeys<'a, K> {
 
 impl<K: OrderedKey> MergedKeys<'_, K> {
     pub(super) fn find(&self, key: &K) -> Option<u32> {
+        let key = Ranked::new(key);
         let found = self
             .keys
-            .binary_search_by(|other| other.compare(key, self.atoms));
+            .binary_search_by(|other| Ranked::new(other).compare(&key, self.atoms));
         found.ok().map(|index| index as u32)
     }
 }
@@ -44,7 +70,11 @@ const RUN_LENGTH: usize = if cfg!(test) { 64 } else { 1 << 12 };
 const SAMPLE_DISTANCE: usize = RUN_LENGTH / 16;
 const MAX_PART_COUNT: usize = if cfg!(test) { 8 } else { 128 };
 
-fn gather_keys<K: Copy>(lists: &[&[K]], starts: &[usize], range: Range<usize>) -> Vec<K> {
+fn gather_keys<K: OrderedKey>(
+    lists: &[&[K]],
+    starts: &[usize],
+    range: Range<usize>,
+) -> Vec<Ranked<K>> {
     let mut keys = Vec::with_capacity(range.len());
     let first = starts.partition_point(|&start| start <= range.start) - 1;
     for (list, &start) in lists.iter().zip(starts).skip(first) {
@@ -53,7 +83,7 @@ fn gather_keys<K: Copy>(lists: &[&[K]], starts: &[usize], range: Range<usize>) -
         }
         let from = range.start.saturating_sub(start);
         let to = list.len().min(range.end - start);
-        keys.extend_from_slice(&list[from..to]);
+        keys.extend(list[from..to].iter().map(Ranked::new));
     }
     keys
 }
@@ -117,7 +147,7 @@ fn sort_distinct_keys<K: OrderedKey>(
     lists: &[&[K]],
     atoms: &Interner<'_>,
     in_parallel: InParallel<'_>,
-) -> Vec<K> {
+) -> (Vec<Ranked<K>>, Vec<Vec<Ranked<K>>>) {
     let mut starts = Vec::with_capacity(lists.len());
     let mut key_count = 0usize;
     for list in lists {
@@ -126,14 +156,14 @@ fn sort_distinct_keys<K: OrderedKey>(
     }
     let ranges = (0..key_count).step_by(RUN_LENGTH);
     let ranges = ranges.map(|start| start..key_count.min(start + RUN_LENGTH));
-    let mut runs = map_each(ranges.collect(), in_parallel, &|range: Range<usize>| {
+    let runs = map_each(ranges.collect(), in_parallel, &|range: Range<usize>| {
         let mut run = gather_keys(lists, &starts, range);
-        run.shared_sort_unstable_by(|a, b| a.compare(b, atoms));
+        run.sort_unstable_by(|a, b| a.compare(b, atoms));
         run.dedup_by(|a, b| a.compare(b, atoms) == Ordering::Equal);
         run
     });
     if runs.len() < 2 {
-        return runs.pop().unwrap_or_default();
+        return (Vec::new(), runs);
     }
 
     let splitters = choose_splitters(&runs, atoms);
@@ -142,10 +172,22 @@ fn sort_distinct_keys<K: OrderedKey>(
         let from = part.checked_sub(1).map(|previous| &splitters[previous]);
         let to = splitters.get(part);
         let pieces = runs.iter().map(|run| cut_run(run, from, to, atoms));
-        let pieces: Vec<&[K]> = pieces.filter(|piece| !piece.is_empty()).collect();
+        let pieces: Vec<&[Ranked<K>]> = pieces.filter(|piece| !piece.is_empty()).collect();
         merge_runs(&pieces, atoms)
     });
-    parts.concat()
+    (splitters, parts)
+}
+
+fn find_place<K: OrderedKey>(
+    splitters: &[K],
+    parts: &[Vec<K>],
+    key: &K,
+    atoms: &Interner<'_>,
+) -> Option<(usize, usize)> {
+    let is_reached = |splitter: &K| splitter.compare(key, atoms) != Ordering::Greater;
+    let part = splitters.partition_point(is_reached);
+    let place = parts[part].binary_search_by(|other| other.compare(key, atoms));
+    Some((part, place.ok()?))
 }
 
 pub(super) fn merge_keys<'a, K: OrderedKey>(
@@ -153,17 +195,19 @@ pub(super) fn merge_keys<'a, K: OrderedKey>(
     atoms: &'a Interner<'a>,
     in_parallel: InParallel<'_>,
 ) -> MergedKeys<'a, K> {
-    let keys = sort_distinct_keys(lists, atoms, in_parallel);
+    let (splitters, parts) = sort_distinct_keys(lists, atoms, in_parallel);
+    let key_count: usize = parts.iter().map(Vec::len).sum();
+    let mut starts = Vec::with_capacity(parts.len());
+    let mut keys: Vec<K> = Vec::with_capacity(key_count);
+    for part in &parts {
+        starts.push(keys.len());
+        keys.extend(part.iter().map(|ranked| ranked.key));
+    }
     debug_assert!(keys.is_sorted_by(|a, b| a.compare(b, atoms) == Ordering::Less));
     assert!(
         keys.len() <= u32::MAX as usize,
         "a merged index has 32 bits"
     );
-    let mut merged = MergedKeys {
-        keys,
-        local_to_merged: Vec::new(),
-        atoms,
-    };
 
     let unfilled = lists.iter().map(|list| vec![0; list.len()]);
     let mut local_to_merged: Vec<Vec<u32>> = unfilled.collect();
@@ -173,18 +217,21 @@ pub(super) fn merge_keys<'a, K: OrderedKey>(
     }
     for_each_mut(&mut pieces, in_parallel, &|(keys, indexes)| {
         for (key, index) in keys.iter().zip(indexes.iter_mut()) {
-            let found = merged.find(key);
-            let found = found.expect("the keys of every list were merged");
+            let found = find_place(&splitters, &parts, &Ranked::new(key), atoms);
+            let (part, place) = found.expect("the keys of every list were merged");
             debug_assert!(
-                merged.keys[found as usize] == *key,
+                parts[part][place].key == *key,
                 "two keys that differ compare equal"
             );
-            *index = found;
+            *index = (starts[part] + place) as u32;
         }
     });
     drop(pieces);
-    merged.local_to_merged = local_to_merged;
-    merged
+    MergedKeys {
+        keys,
+        local_to_merged,
+        atoms,
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -199,14 +246,17 @@ pub(super) struct Merged<'a> {
 }
 
 impl Merged<'_> {
+    #[inline]
     pub(super) fn function(&self, unit: &LinkUnit, id: FunctionId) -> u32 {
         self.functions.local_to_merged[unit.tables as usize][id.index()]
     }
 
+    #[inline]
     pub(super) fn layout(&self, unit: &LinkUnit, id: LayoutId) -> u32 {
         self.layouts.local_to_merged[unit.tables as usize][id.index()]
     }
 
+    #[inline]
     pub(super) fn variable(&self, unit: &LinkUnit, id: VariableId) -> u32 {
         self.variables.local_to_merged[unit.tables as usize][id.index()]
     }
@@ -232,6 +282,10 @@ mod tests {
     use std::sync::atomic::Ordering::Relaxed;
 
     impl OrderedKey for u64 {
+        fn rank(&self) -> u128 {
+            u128::from(*self / 8)
+        }
+
         fn compare(&self, other: &Self, _: &Interner<'_>) -> Ordering {
             self.cmp(other)
         }

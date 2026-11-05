@@ -15,8 +15,8 @@ use crate::ir::generated::CommonJsParameter;
 use crate::ir::{FunctionKey, PropertyKeyId, Type, TypeId, ValueId, VariableId, VariableKey};
 use crate::load::contents::entry_points::is_relative_path;
 use crate::load::contents::worker_entries::{
-    join_to_url_of_module, read_file_url, resolve_paths, with_forward_slashes, write_file_url,
-    write_url_of_module,
+    join_to_url_of_module, read_file_url, resolve_paths, with_forward_slashes, write_url_of_module,
+    write_url_of_path,
 };
 use crate::load::module_paths::with_separators_of_host;
 use crate::load::sources::parsed_source;
@@ -126,11 +126,14 @@ impl FileLowering<'_, '_, '_, '_> {
     fn compute_state(&self) -> CommonJsState {
         let (hir, bound) = (self.hir, self.bound);
         let has_source_path = self.inputs.sources.has_source_path(self.file);
-        let mut asked = self.compiled.analysis.asked_of_data_files.iter();
-        let asks_where_files_lie =
-            asked.any(|asked| self.queries.atom_bytes(asked.1) == WHERE_FILE_LIES);
+        let mut answers = hir.texts_of_data_files.iter();
+        let knows_where_files_lie = answers.any(|it| {
+            self.queries
+                .atom_bytes(it.path)
+                .starts_with(WHERE_FILE_LIES)
+        });
         let names_source_path = has_source_path
-            && (asks_where_files_lie
+            && (knows_where_files_lie
                 || bound.ident_bindings().iter().any(|&(name, binding)| {
                     matches!(
                         binding,
@@ -309,7 +312,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         self.find_path_text(self.file, BuiltinId::ImportMetaDir)
                     }
                     known::path | known::meta_filename => Some(path),
-                    known::url => write_file_url(&path),
+                    known::url => write_url_of_path(&path),
                     _ => None,
                 }
             }
@@ -433,7 +436,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if !self.inputs.reads_source_paths {
             return None;
         }
-        write_file_url(&self.inputs.sources.source_path(file)?)
+        write_url_of_path(&self.inputs.sources.source_path(file)?)
     }
 
     pub(in crate::lower) fn find_url_and_name_joined_to_own_url(
@@ -893,6 +896,16 @@ pub(super) fn emit_entry_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_of_a_module_is_a_text_of_the_build() {
+        let path = |path: &[u8]| find_text_in_path(path, false, BuiltinId::ImportMetaPath);
+        let url = |of: &[u8]| write_url_of_path(&path(of)?);
+        let text = |text: &[u8]| Some(text.to_vec());
+
+        assert_eq!(url(b"/a/b.js"), text(b"file:///a/b.js"));
+        assert_eq!(url(br"C:\a\b.js"), text(b"file:///C:/a/b.js"));
+    }
 
     #[test]
     fn path_and_folder_of_a_module_are_texts_of_the_build() {

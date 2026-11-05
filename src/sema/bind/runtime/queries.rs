@@ -41,11 +41,16 @@ pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos:
 
 impl BoundBuilder {
     pub(super) fn find_in_table(&self, table: TableId, name: Atom) -> Option<SymbolId> {
-        let entries = self.table(table);
+        let entries = self.entries_of_table(table);
         if entries.len() <= Self::SCANNED {
             let entry = entries.iter().find(|entry| entry.0 == name);
             return entry.map(|entry| entry.1);
         }
+        self.find_in_large_table(table, name)
+    }
+
+    #[inline(never)]
+    fn find_in_large_table(&self, table: TableId, name: Atom) -> Option<SymbolId> {
         let entry_index = *self.large_tables.get(&(table, name))?;
         Some(self.entries[entry_index as usize].1)
     }
@@ -60,11 +65,13 @@ impl<S: Storage> RuntimeDeclarationsIn<S> {
 }
 
 impl<S: Storage> BoundIn<S> {
+    #[inline]
     pub fn binding_kind(&self, symbol: SymbolId) -> BindingKind {
         let kind = self.runtime.declarations.binding_kinds.get(symbol.idx());
         kind.copied().unwrap_or(BindingKind::NoBinding)
     }
 
+    #[inline]
     pub fn symbol_scope(&self, symbol: SymbolId) -> ScopeId {
         let scope = self.runtime.declarations.symbol_scopes.get(symbol.idx());
         scope.copied().unwrap_or(ScopeId::NONE)
@@ -204,6 +211,7 @@ impl<S: Storage> BoundIn<S> {
         Binding::from_symbol(self.symbol_of_expr(ident))
     }
 
+    #[inline]
     pub(super) fn declared_pattern_symbol(&self, pattern: PatId) -> SymbolId {
         let declared = &self.runtime.declarations.declared_symbols;
         find_symbol(declared, Decl::Var(pattern))
@@ -215,12 +223,16 @@ impl<S: Storage> BoundIn<S> {
             return declared;
         }
         let exported = self.export_symbol_of_value_symbol_if_exported(declared);
+        if exported == declared {
+            return declared;
+        }
         match self.symbol(exported).parent == self.file_symbol {
             true => exported,
             false => declared,
         }
     }
 
+    #[inline]
     pub(super) fn declared_binding_symbol(&self, decl: Decl) -> Option<SymbolId> {
         let declarations = &self.runtime.declarations;
         Some(match decl {
@@ -247,6 +259,7 @@ impl<S: Storage> BoundIn<S> {
         })
     }
 
+    #[inline]
     pub(super) fn initialized_pattern_binding(&self, name: PatId) -> Binding {
         match find_entry(&self.runtime.references.initialized_bindings, name) {
             Some(&binding) => binding,
@@ -349,12 +362,16 @@ impl Bound<'_> {
     }
 
     pub fn binding(&self, ident: ExprId) -> Binding {
-        let references = &self.runtime.references;
         let run = ident.idx() / IDENTS_IN_RUN;
-        let entries = match references.ident_binding_runs.get(run..run + 2) {
-            Some(&[start, end]) => &references.ident_bindings[start as usize..end as usize],
-            _ => &[],
-        };
+        match self.runtime.references.ident_binding_runs.get(run..run + 2) {
+            Some(&[start, end]) if start != end => self.binding_in_run(ident, start, end),
+            _ => self.default_binding(ident),
+        }
+    }
+
+    #[inline(never)]
+    fn binding_in_run(&self, ident: ExprId, start: u32, end: u32) -> Binding {
+        let entries = &self.runtime.references.ident_bindings[start as usize..end as usize];
         match entries.iter().find(|entry| entry.0 == ident) {
             Some(&(_, binding)) => self.binding_under_goal(binding),
             None => self.default_binding(ident),
@@ -443,6 +460,7 @@ impl Bound<'_> {
         self.binding_under_goal(self.initialized_pattern_binding(name))
     }
 
+    #[inline]
     pub fn dynamic_lookup_scope(&self, node: NodeData) -> Option<ScopeId> {
         let references = &self.runtime.references;
         if references.dynamic_ident_lookups.is_empty()
@@ -450,6 +468,13 @@ impl Bound<'_> {
         {
             return None;
         }
+        self.find_dynamic_lookup_scope(node)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn find_dynamic_lookup_scope(&self, node: NodeData) -> Option<ScopeId> {
+        let references = &self.runtime.references;
         match node {
             NodeData::Expr(ident) => find_entry(&references.dynamic_ident_lookups, ident).copied(),
             NodeData::Pat(name) => {
@@ -485,6 +510,7 @@ impl Bound<'_> {
         })
     }
 
+    #[inline]
     pub fn code_unit(&self, scope: ScopeId) -> CodeUnit {
         let unit = self.runtime.declarations.scope_units.get(scope.idx());
         unit.copied().unwrap_or(CodeUnit::File)
@@ -512,6 +538,7 @@ impl Bound<'_> {
         self.runtime.import_meta_may_be_modified
     }
 
+    #[inline]
     pub fn may_name_own_require(&self) -> bool {
         self.runtime.may_name_own_require
     }
@@ -523,6 +550,7 @@ impl Bound<'_> {
         &stores[start..start + len]
     }
 
+    #[inline]
     pub fn is_store_target(&self, ident: ExprId) -> bool {
         has_bit(&self.runtime.references.store_targets, ident.idx())
     }
@@ -535,35 +563,54 @@ impl Bound<'_> {
         find_entry(&self.runtime.references.eval_scopes, call)
     }
 
+    #[inline]
     pub fn binding_stability_ignoring(
         &self,
         symbol: SymbolId,
         is_dead_store: &dyn Fn(ExprId) -> bool,
     ) -> BindingStability {
-        let recorded = self.runtime.stability.stabilities.get(symbol.idx());
-        let recorded = recorded.copied().unwrap_or_default();
-        if recorded != BindingStability::Stable || self.binding_kind(symbol).is_immutable() {
-            return recorded;
-        }
-        let mut stores = self.stores_to(symbol).iter();
-        match stores.any(|store| !is_dead_store(store.target)) {
-            true => BindingStability::Stored,
-            false => BindingStability::Stable,
+        match self.binding_stability(symbol) {
+            BindingStability::Stored => self.stability_of_stored_binding(symbol, is_dead_store),
+            recorded => recorded,
         }
     }
 
+    #[inline(never)]
+    fn stability_of_stored_binding(
+        &self,
+        symbol: SymbolId,
+        is_dead_store: &dyn Fn(ExprId) -> bool,
+    ) -> BindingStability {
+        let stores = &self.runtime.references.stores[..];
+        let start = stores.partition_point(|store| store.symbol < symbol);
+        for store in &stores[start..] {
+            if store.symbol != symbol {
+                break;
+            }
+            if !is_dead_store(store.target) {
+                return BindingStability::Stored;
+            }
+        }
+        BindingStability::Stable
+    }
+
+    #[inline]
     pub fn binding_stability(&self, symbol: SymbolId) -> BindingStability {
-        self.binding_stability_ignoring(symbol, &|_| false)
+        let recorded = self.runtime.stability.stabilities.get(symbol.idx());
+        recorded.copied().unwrap_or_default()
     }
 
+    #[inline]
     pub fn is_stable_binding(&self, symbol: SymbolId) -> bool {
         self.binding_stability(symbol) == BindingStability::Stable
     }
 
+    #[inline]
     pub fn binding_initializer(&self, hir: &File<'_>, symbol: SymbolId) -> BindingInitializer {
         stability::find_binding_initializer(hir, self, symbol)
     }
 
+    #[inline]
     pub fn initializing_declaration(&self, symbol: SymbolId) -> Option<Decl> {
         let recorded = self.runtime.stability.initializers.get(symbol.idx());
         recorded.copied().flatten()
@@ -625,6 +672,7 @@ impl Bound<'_> {
         }
     }
 
+    #[inline]
     pub fn is_evaluated_ident(&self, e: ExprId) -> bool {
         has_bit(&self.runtime.references.evaluated_idents, e.idx())
     }

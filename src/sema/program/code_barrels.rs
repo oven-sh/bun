@@ -128,7 +128,7 @@ impl BarrelRequests {
         else {
             unreachable!("a file is parsed once, or forgotten in between");
         };
-        let mut pending: Vec<(u32, Asked)> = Vec::new();
+        let mut pending: Vec<(u32, Asked)> = Vec::with_capacity(asked.len() + 1);
         let Some(shape) = barrel else {
             for (target, asked) in (0..).zip(asked) {
                 pending.push((load(file, target), asked));
@@ -197,13 +197,40 @@ impl BarrelRequests {
 }
 
 #[derive(Default)]
+struct SymbolSet {
+    has: Vec<bool>,
+}
+
+impl SymbolSet {
+    fn for_symbols_of(bound: &Bound<'_>) -> SymbolSet {
+        SymbolSet {
+            has: vec![false; bound.symbols.len()],
+        }
+    }
+
+    #[inline]
+    fn set(&mut self, symbol: SymbolId, is_inside: bool) {
+        let index = symbol.idx();
+        if index >= self.has.len() {
+            self.has.resize(index + 1, false);
+        }
+        self.has[index] = is_inside;
+    }
+
+    #[inline]
+    fn contains(&self, symbol: SymbolId) -> bool {
+        self.has.get(symbol.idx()).copied().unwrap_or(false)
+    }
+}
+
+#[derive(Default)]
 struct ImportUses {
     members_read: FxHashMap<SymbolId, Vec<Atom>>,
     used_otherwise: FxHashSet<SymbolId>,
     exported: FxHashSet<SymbolId>,
     reads_of_sites: Vec<Option<ObjectReads>>,
     holders: FxHashMap<SymbolId, HolderUses>,
-    mentioned: FxHashSet<SymbolId>,
+    mentioned: SymbolSet,
 }
 
 #[derive(Default)]
@@ -247,6 +274,15 @@ impl Summary<'_, '_> {
         })
     }
 
+    #[inline]
+    fn is_import(&self, local: SymbolId, answers: &mut [Option<bool>]) -> bool {
+        match answers.get_mut(local.idx()) {
+            Some(Some(is_import)) => *is_import,
+            Some(unknown) => *unknown.insert(self.find_import(local).is_some()),
+            None => self.find_import(local).is_some(),
+        }
+    }
+
     fn has_value(&self, symbol: SymbolId) -> bool {
         self.analysis
             .unused_import_symbols
@@ -278,7 +314,8 @@ impl Summary<'_, '_> {
         }
     }
 
-    fn for_each_mention(&self, then: &mut dyn FnMut(ExprId, SymbolId)) {
+    #[inline]
+    fn for_each_mention(&self, mut then: impl FnMut(ExprId, SymbolId)) {
         let (hir, bound) = (self.hir, self.bound);
         for mention in (0..hir.exprs.len() as u32).map(ExprId) {
             if matches!(hir[mention].kind, ExprKind::Ident(_))
@@ -307,16 +344,22 @@ impl Summary<'_, '_> {
             return;
         }
         let mut is_first_pass = true;
+        if follows_bindings {
+            uses.mentioned = SymbolSet::for_symbols_of(bound);
+        }
+        let mut followed = SymbolSet::for_symbols_of(bound);
+        let mut imports_known: Vec<Option<bool>> = vec![None; bound.symbols.len()];
         while is_first_pass || !holders.is_empty() {
             for &holder in &holders {
                 uses.holders.entry(holder).or_default();
+                followed.set(holder, true);
             }
             let mut found = Vec::new();
-            self.for_each_mention(&mut |mention, symbol| {
+            self.for_each_mention(|mention, symbol| {
                 if is_first_pass && follows_bindings {
-                    uses.mentioned.insert(symbol);
+                    uses.mentioned.set(symbol, true);
                 }
-                if holders.contains(&symbol) {
+                if followed.contains(symbol) {
                     let holder = uses.holders.entry(symbol).or_default();
                     match self.find_reads_of_mention(mention) {
                         Some(reads) => {
@@ -325,7 +368,7 @@ impl Summary<'_, '_> {
                         }
                         None => holder.is_used_otherwise = true,
                     }
-                } else if is_first_pass && self.find_import(symbol).is_some() {
+                } else if is_first_pass && self.is_import(symbol, &mut imports_known) {
                     match self.find_member_read_from(mention) {
                         Some(name) => uses.members_read.entry(symbol).or_default().push(name),
                         None => {
@@ -334,6 +377,9 @@ impl Summary<'_, '_> {
                     }
                 }
             });
+            for &holder in &holders {
+                followed.set(holder, false);
+            }
             found.retain(|holder| !uses.holders.contains_key(holder));
             holders = found;
             is_first_pass = false;
@@ -367,21 +413,25 @@ impl Summary<'_, '_> {
     fn bindings_of(&self, import: ImportId) -> Vec<(SymbolId, Option<Atom>)> {
         let (hir, bound) = (self.hir, self.bound);
         let node = &hir[import];
-        let mut bindings = Vec::new();
+        let mut bindings = Vec::with_capacity(node.named.len() + 2);
+        let mut add = |symbol: SymbolId, imported: Option<Atom>| {
+            if self.has_value(symbol) {
+                bindings.push((symbol, imported));
+            }
+        };
         if !node.default.is_none() {
             let symbol = bound.declared_symbol(Decl::ImportDefault(import));
-            bindings.push((symbol, Some(known::default)));
+            add(symbol, Some(known::default));
         }
         if !node.namespace.is_none() {
-            bindings.push((bound.declared_symbol(Decl::ImportNamespace(import)), None));
+            add(bound.declared_symbol(Decl::ImportNamespace(import)), None);
         }
         for specifier in node.named.iter() {
             if !hir[specifier].type_only {
                 let symbol = bound.declared_symbol(Decl::ImportSpec(specifier));
-                bindings.push((symbol, Some(hir[specifier].imported)));
+                add(symbol, Some(hir[specifier].imported));
             }
         }
-        bindings.retain(|&(symbol, _)| self.has_value(symbol));
         bindings
     }
 
@@ -398,16 +448,17 @@ impl Summary<'_, '_> {
     }
 
     fn asked_by_import(&self, import: ImportId) -> Asked {
-        let mut names = Vec::new();
-        for (symbol, imported) in self.bindings_of(import) {
-            match (imported, self.find_members_read(symbol)) {
-                (Some(name), _) => names.push(name),
-                (None, Some(members))
-                    if !self.hir[import].is_deferred && !self.runs_all_that_is_loaded =>
-                {
-                    names.extend_from_slice(members);
-                }
-                (None, _) => return Asked::All,
+        let follows_members = !self.hir[import].is_deferred && !self.runs_all_that_is_loaded;
+        let bindings = self.bindings_of(import);
+        let mut names = Vec::with_capacity(bindings.len());
+        for (symbol, imported) in bindings {
+            if let Some(name) = imported {
+                names.push(name);
+                continue;
+            }
+            match self.find_members_read(symbol) {
+                Some(members) if follows_members => names.extend_from_slice(members),
+                _ => return Asked::All,
             }
         }
         Asked::Names(names)
@@ -421,7 +472,7 @@ impl Summary<'_, '_> {
     ) -> bool {
         let uses = &self.uses;
         let is_used = |binding: &SymbolId| {
-            uses.mentioned.contains(binding)
+            uses.mentioned.contains(*binding)
                 || uses.exported.contains(binding)
                 || uses.used_otherwise.contains(binding)
         };

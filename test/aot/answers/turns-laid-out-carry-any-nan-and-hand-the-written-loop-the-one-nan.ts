@@ -4,10 +4,10 @@
 // # NaNs of eight kinds of bits stand at every index, and nowhere; what comes out is looked at boxed: its type, its text, whether it is the NaN.
 // # OPTIONS: check=Validate
 // # f2 = sum, f3 = lastSeen, f4 = firstNaN, f5 = sumOfFloats
-// # eight reads laid out and the one of the written loop
+// # eight reads laid out and the one of the written loop. The view is made over a buffer, and of such a view Link no longer says that it stays as its class has made it (the buffer might grow): the closed copy of the loop reads its length by name: a tenth
 // # RUN(SUM): emit f2 mechanisms=all
 // # SUM-LABEL: unit f2:Body
-// # SUM-COUNT-9: = Load({{*}}TypedArrayProperties
+// # SUM-COUNT-10: = Load({{*}}TypedArrayProperties
 // # SUM-NOT: = Load({{*}}TypedArrayProperties
 // # the sum goes from turn to turn untested
 // # RUN(UNTESTED): emit f2 mechanisms=all

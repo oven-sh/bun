@@ -35,10 +35,12 @@ pub struct RowsCarriedOver<'a> {
 }
 
 impl RowsCarriedOver<'_> {
+    #[inline]
     pub fn new_row(&self, old_row: u32) -> Option<u32> {
         self.new_rows.get(old_row as usize)?.checked_sub(1)
     }
 
+    #[inline]
     pub fn count(&self) -> usize {
         self.count
     }
@@ -49,6 +51,7 @@ impl KeptAnswers {
         let arena = self.arena.take().unwrap_or_default();
         let mut memo = std::mem::take(&mut self.memo);
         memo.visit += 1;
+        memo.last_row = None;
         (memo, arena)
     }
 
@@ -79,7 +82,7 @@ impl KeptAnswers {
             return;
         };
         let old_arena = self.arena.take();
-        let old = std::mem::take(&mut self.memo);
+        let mut old = std::mem::take(&mut self.memo);
         let arena: Box<Arena> = Box::default();
         let (memo, new_rows) = old.copy_shared_rows(&arena);
         // SAFETY: `arena` is the only source of its references, and `put_back` lays both down together.
@@ -209,6 +212,7 @@ pub(super) struct KeptMemo<'c> {
     pub(super) alias_reads: FxHashMap<Sym, bool>,
     pub(super) store_indexes: FxHashMap<FileId, StoreIndex<'c>>,
     visit: u32,
+    last_row: Option<(TypeId, TypeRow)>,
 }
 
 #[derive(Copy, Clone)]
@@ -240,8 +244,10 @@ impl<'c> KeptMemo<'c> {
             alias_reads,
             store_indexes,
             visit,
+            last_row,
         } = self;
         *visit = 0;
+        *last_row = None;
         rows.clear();
         types.clear();
         objects.clear();
@@ -266,13 +272,20 @@ impl<'c> KeptMemo<'c> {
 
     #[inline]
     pub(super) fn type_row(&mut self, ty: TypeId) -> TypeRow {
-        match self.rows.get(ty) {
+        if let Some((last, row)) = self.last_row
+            && last == ty
+        {
+            return row;
+        }
+        let row = match self.rows.get(ty) {
             0 => self.add_type(ty),
             row => {
                 self.types[row as usize - 1].seen_in = self.visit;
                 TypeRow(row - 1)
             }
-        }
+        };
+        self.last_row = Some((ty, row));
+        row
     }
 
     #[cold]
@@ -294,13 +307,41 @@ impl<'c> KeptMemo<'c> {
         TypeRow(count - 1)
     }
 
-    fn copy_shared_rows<'n>(&self, arena: &'n Arena) -> (KeptMemo<'n>, Vec<u32>) {
+    fn copy_shared_rows<'n>(&mut self, arena: &'n Arena) -> (KeptMemo<'n>, Vec<u32>)
+    where
+        'c: 'n,
+    {
         let mut next = KeptMemo {
+            rows: std::mem::take(&mut self.rows),
+            signature_results: std::mem::take(&mut self.signature_results),
+            variables: std::mem::take(&mut self.variables),
+            written_forms: std::mem::take(&mut self.written_forms),
+            alias_scans: std::mem::take(&mut self.alias_scans),
+            alias_reads: std::mem::take(&mut self.alias_reads),
             visit: self.visit,
             ..KeptMemo::default()
         };
-        let mut new_rows = vec![0u32; self.types.len()];
-        for (answers, new_row) in self.types.iter().zip(&mut new_rows) {
+        next.rows.clear();
+        next.signature_results.clear();
+        next.variables.clear();
+        next.written_forms.clear();
+        next.alias_scans.clear();
+        next.alias_reads.clear();
+        let mut types: Vec<TypeAnswers<'n>> = std::mem::take(&mut self.types);
+        let (mut object_count, mut member_type_count) = (0, 0);
+        for answers in &types {
+            if answers.seen_in != answers.made_in && answers.object != 0 {
+                let object = &self.objects[answers.object as usize - 1];
+                object_count += 1;
+                member_type_count += object.member_type_count as usize;
+            }
+        }
+        next.objects.reserve_exact(object_count);
+        next.member_types.reserve_exact(member_type_count);
+        let mut new_rows = vec![0u32; types.len()];
+        let mut carried_count = 0;
+        for (row, new_row) in new_rows.iter_mut().enumerate() {
+            let answers = &types[row];
             if answers.seen_in == answers.made_in {
                 continue;
             }
@@ -329,7 +370,7 @@ impl<'c> KeptMemo<'c> {
                     next.objects.len() as u32
                 }
             };
-            next.types.push(TypeAnswers {
+            let carried = TypeAnswers {
                 shape: answers.shape.map(|shape| copy_shape(shape, arena)),
                 identity: answers.identity,
                 awaited: answers.awaited,
@@ -339,10 +380,15 @@ impl<'c> KeptMemo<'c> {
                 ty: answers.ty,
                 made_in: answers.made_in,
                 seen_in: answers.seen_in,
-            });
-            *new_row = next.types.len() as u32;
-            next.rows.set(answers.ty, *new_row);
+            };
+            let ty = carried.ty;
+            types[carried_count] = carried;
+            carried_count += 1;
+            *new_row = carried_count as u32;
+            next.rows.set(ty, *new_row);
         }
+        types.truncate(carried_count);
+        next.types = types;
         (next, new_rows)
     }
 

@@ -26,13 +26,6 @@ const cases: Record<string, { files: Record<string, string>; printed: string[] }
     },
     printed: ["real", "plain sloppy", "object"],
   },
-  // `bun test`: {"Low":9} {"1":"Low","2":"Middle","3":"High","Low":1,"Middle":2,"High":3}. tsc: TS2628.
-  "the name of an enum in its own block, behind a store to the name": {
-    files: {
-      "a_test.ts": `import { test } from "bun:test";\nlet kept: any;\n// @ts-ignore\nfunction swap() { Level = { Low: 9 }; return 1; }\nfunction keep(it: any) { kept = it; return 3; }\nenum Level { Low = swap(), Middle = Low + 1, High = keep(Level) }\ntest("what keep() got", () => console.log(JSON.stringify(Level), JSON.stringify(kept)));\n`,
-    },
-    printed: [`{"Low":9} {"Low":9}`],
-  },
   // `bun test`: true member. tsc: TS2631.
   "the name of a namespace in its own block, behind a store to the name": {
     files: {

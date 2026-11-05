@@ -164,6 +164,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `lookAhead(isUnambiguouslyStartOfFunctionType)`
     fn is_at_parameters_of_function_type(&mut self) -> bool {
+        if !self.recovers()
+            && let Some(answer) = self.look_ahead(Self::is_start_of_function_type_by_tokens)
+        {
+            return answer;
+        }
         // A pattern after the `(` has to be parsed to get past it, including the types in it, and each `(` in those
         // types asks this question again, twice. So an answer that took a long scan is cached. Otherwise each level of
         // `({[a as ({[b as ..` takes three times as long as the level inside it.
@@ -193,6 +198,28 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 .insert(insert_at, (at.0, at.1, answer));
         }
         answer
+    }
+
+    fn is_start_of_function_type_by_tokens(&mut self) -> Option<bool> {
+        self.next();
+        if matches!(self.token(), T::CloseParen | T::DotDotDot) {
+            return Some(true);
+        }
+        if self.token().is_modifier() || matches!(self.token(), T::OpenBracket | T::OpenBrace) {
+            return None;
+        }
+        if !self.is_identifier() && self.token() != T::This {
+            return Some(false);
+        }
+        self.next();
+        Some(match self.token() {
+            T::Colon | T::Comma | T::Question | T::Equals => true,
+            T::CloseParen => {
+                self.next();
+                self.token() == T::EqualsGreaterThan
+            }
+            _ => false,
+        })
     }
 
     /// `isUnambiguouslyStartOfFunctionType`
@@ -753,10 +780,23 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             _ => return self.type_reference(),
         };
         // `parseKeywordAndNoDot`
-        if matches!(self.lx.first_byte_of_next(), 0 | b'.') && self.peek() == T::Dot {
+        if !matches!(self.lx.first_byte_of_next(), 0 | b'.') {
+            return self.token_type(TypeNodeKind::Keyword(keyword));
+        }
+        if COMMENTS {
+            return match self.peek() {
+                T::Dot => self.type_reference(),
+                _ => self.token_type(TypeNodeKind::Keyword(keyword)),
+            };
+        }
+        let mark = self.lx.mark();
+        let ty = self.token_type(TypeNodeKind::Keyword(keyword));
+        if self.token() == T::Dot {
+            self.pop_type();
+            self.lx.reset(mark);
             return self.type_reference();
         }
-        self.token_type(TypeNodeKind::Keyword(keyword))
+        ty
     }
 
     /// `parseJSDocAllType`, `parseJSDocNullableType`, `parseJSDocNonNullableType`. The checker reports them.
@@ -855,6 +895,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => self.missing_identifier(1110, 0),
         };
         self.note_name_in_type(first.0, first.1);
+        if self.token() != T::Dot {
+            return self.f.entity_name(std::iter::once(first));
+        }
         self.s.names.push(first);
         // `checkTypeReferenceNode`: `A.<T>`
         if self.rest_of_entity_name() && !self.newline_before() {

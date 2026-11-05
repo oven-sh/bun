@@ -18,6 +18,7 @@ use crate::hir::*;
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 
 impl RuntimeScopes {
+    #[inline]
     pub(super) fn is_scope_binding(&self, bound: &BoundBuilder, symbol: SymbolId) -> bool {
         let flags = bound.symbols[symbol.idx()].flags;
         !has_bit(&bound.runtime.declarations.valueless_symbols, symbol.idx())
@@ -143,10 +144,13 @@ impl Declarations<'_, '_> {
             if let Some(CodeUnit::FieldInitializer(member)) = unit {
                 field_initializer_scopes.push((member, ScopeId(index as u32)));
             }
-            let parent = self
-                .bound
-                .runtime_parent_scope(hir, ScopeId(index as u32))
-                .some();
+            let parent = match scope.kind {
+                ScopeKind::ClassDecorators(_) => {
+                    self.bound.runtime_parent_scope(hir, ScopeId(index as u32))
+                }
+                _ => scope.parent,
+            };
+            let parent = parent.some();
             let inherited = parent.map_or(CodeUnit::File, |parent| units[parent.idx()]);
             units.push(unit.unwrap_or(inherited));
             let is_strict = is_strict.unwrap_or_else(|| {
@@ -179,6 +183,9 @@ impl Declarations<'_, '_> {
         };
         let mut bound_without_export = Vec::new();
         for (index, symbol) in bound.symbols.iter().enumerate() {
+            if !symbol.flags.contains(SymFlags::EXPORT_VALUE) {
+                continue;
+            }
             let binding = bound.file_binding(SymbolId(index as u32));
             let is_bound_without_export = || {
                 symbol.decls.iter().any(|&d| {
@@ -354,7 +361,7 @@ impl Declarations<'_, '_> {
         let mut pending = Vec::new();
         let mut flags = vec![FunctionFlags::empty(); hir.fns.len()];
         for (index, func) in hir.fns.iter().enumerate() {
-            if matches!(func.body, FnBody::None) {
+            if matches!(func.body, FnBody::None) || func.params.is_empty() {
                 continue;
             }
             if has_parameter_expressions(hir, func, &mut pending) {

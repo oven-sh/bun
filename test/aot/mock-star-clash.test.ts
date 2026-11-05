@@ -4,8 +4,8 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 // Two `export *` of a barrel bring the same name. Without a mock the name is ambiguous, and the barrel does not have it. What a mock gives makes no name ambiguous:
-// the first star that has the name keeps it, as in Vitest. Here the mocked file is reached through a ring of stars. The other forms are cases of
-// fixed-runs/isolated: stars-clash-beside-a-mock and stars-clash-under-a-mock-laid-over. This one is wrong there today, beside a mock under a computed name.
+// the first star that has the name keeps it, as in Vitest. Here the mocked file is reached through a ring of stars. The other forms are a case of
+// fixed-runs/isolated: stars-clash-beside-a-mock. This one is wrong there today, beside a mock under a computed name.
 const files = {
   "package.json": `{ "type": "module" }`,
   "clash.js": `export const x = "clash x";\nexport const other = "other";`,

@@ -63,13 +63,25 @@ pub fn find_link_followed_by_transpiler<'a>(
     link: ExprId,
     bytes_of: impl FnOnce(Atom) -> &'a [u8],
 ) -> Option<(ExprId, Atom)> {
-    let (object, MemberKey::Name(name)) = hir.member_key(link)? else {
+    find_link_under_key_followed_by_transpiler(hir, link, hir.member_key(link)?, bytes_of)
+}
+
+#[inline]
+fn find_link_under_key_followed_by_transpiler<'a>(
+    hir: &hir::File<'_>,
+    link: ExprId,
+    member_key: (ExprId, MemberKey),
+    bytes_of: impl FnOnce(Atom) -> &'a [u8],
+) -> Option<(ExprId, Atom)> {
+    let (object, MemberKey::Name(name)) = member_key else {
         return None;
     };
     let is_optional = hir
         .expr_flags(link)
         .contains(ExprFlags::OPTIONAL_CHAIN_LINK);
-    let is_followed = !is_optional && hir.is_name_resolved_by_transpiler(link, bytes_of(name));
+    let is_followed = !is_optional
+        && (!hir.is_written_in_brackets(link)
+            || hir.is_name_resolved_by_transpiler(link, bytes_of(name)));
     is_followed.then_some((object, name))
 }
 
@@ -114,8 +126,9 @@ fn follow_member_path(
     let hir = files.hir(file);
     let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
     let mut first = path;
-    while hir.member_key(first).is_some() {
-        let link = find_link_followed_by_transpiler(hir, first, |name| files.atoms.bytes(name));
+    while let Some(member_key) = hir.member_key(first) {
+        let bytes_of = |name| files.atoms.bytes(name);
+        let link = find_link_under_key_followed_by_transpiler(hir, first, member_key, bytes_of);
         let (object, name) = link?;
         names.push(name);
         first = hir.skip_type_assertions(object);
@@ -227,6 +240,7 @@ fn has_compiled_value(
         })
 }
 
+#[inline]
 pub fn find_member_followed_by_transpiler(
     files: &Files<'_>,
     file: FileId,
@@ -235,6 +249,15 @@ pub fn find_member_followed_by_transpiler(
     if files.hir(file).enums.is_empty() {
         return None;
     }
+    find_member_of_own_enum_followed_by_transpiler(files, file, access)
+}
+
+#[inline(never)]
+fn find_member_of_own_enum_followed_by_transpiler(
+    files: &Files<'_>,
+    file: FileId,
+    access: ExprId,
+) -> Option<EnumMemberId> {
     let end = follow_member_path(files, file, access, |first| {
         let symbol = files.bound(file).symbol_of_expr(first);
         if !symbol.is_some() {

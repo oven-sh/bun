@@ -46,7 +46,7 @@ struct BindingSharing {
     stored_under_handlers: Vec<Vec<BindingRef>>,
     fields_for_handlers: Vec<BindingRef>,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
-    registries: Vec<BindingRef>,
+    registries: Vec<(ScopeId, BindingRef)>,
 }
 
 struct Placements {
@@ -64,7 +64,7 @@ struct Parts {
     stored_under_handlers: Vec<Vec<BindingRef>>,
     captures: CapturePlan,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
-    registries: Vec<BindingRef>,
+    registries: Vec<(ScopeId, BindingRef)>,
 }
 
 impl<'x, 's> Context<'x, 's> {
@@ -108,11 +108,13 @@ impl<'x, 's> Context<'x, 's> {
         context
     }
 
+    #[inline]
     fn declaring_scope(&self, symbol: SymbolId) -> ScopeId {
         let scope = self.input.bound.symbol_scope(symbol);
         scope.some().unwrap_or(self.file_scope)
     }
 
+    #[inline]
     fn scope_of(&self, binding: BindingRef) -> ScopeId {
         match binding {
             BindingRef::Symbol(symbol) => self.declaring_scope(symbol),
@@ -120,6 +122,7 @@ impl<'x, 's> Context<'x, 's> {
         }
     }
 
+    #[inline]
     fn owner_of(&self, binding: BindingRef) -> Option<WalkedFunctionId> {
         self.scope_functions[self.scope_of(binding).idx()]
     }
@@ -130,6 +133,7 @@ impl<'x, 's> Context<'x, 's> {
         bound.binding_stability_ignoring(symbol, &is_ignored) == BindingStability::Stable
     }
 
+    #[inline]
     fn is_holder_without_value(&self, binding: BindingRef) -> bool {
         binding.is_listed_in(&self.holders_without_value)
     }

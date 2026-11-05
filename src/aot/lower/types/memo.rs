@@ -78,9 +78,13 @@ pub(in crate::lower) struct TypeMemo {
 }
 
 impl TypeMemo {
+    #[inline]
     fn entry_at(&mut self, row: usize) -> &mut MemoEntry {
         if self.rows.len() <= row {
-            self.rows.resize(row + 1, MemoEntry::EMPTY);
+            self.rows.reserve(row + 1 - self.rows.len());
+            while self.rows.len() <= row {
+                self.rows.push(MemoEntry::EMPTY);
+            }
         }
         &mut self.rows[row]
     }
@@ -92,6 +96,9 @@ impl TypeMemo {
     }
 
     fn is_plain(&mut self, types: &TypeTable, ty: TypeId) -> bool {
+        if let Some(&is_plain) = self.is_plain.get(ty.index()) {
+            return is_plain;
+        }
         let described_types = types.types().iter().take(ty.index() + 1);
         for described in described_types.skip(self.is_plain.len()) {
             let known = &self.is_plain;
@@ -125,8 +132,11 @@ impl TypeMemo {
             };
             let first = entry.first_function_type as usize;
             let first_function_type = next.function_types.len() as u32;
-            next.function_types
-                .extend_from_slice(&function_types[first..][..entry.function_type_count as usize]);
+            if entry.function_type_count != 0 {
+                let count = entry.function_type_count as usize;
+                next.function_types
+                    .extend_from_slice(&function_types[first..][..count]);
+            }
             *next.entry_at(new_row as usize) = MemoEntry {
                 first_function_type,
                 ..*entry
@@ -223,19 +233,18 @@ fn find_what_is_left_in_file(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(super) fn meet_again(&mut self, explored: &ExploredType) -> bool {
+    pub(super) fn meet_again(&mut self, explored: &ExploredType, row: usize) -> bool {
         if self.queries.answers_only_what_is_known() {
             return false;
         }
         let ty = explored.ty;
-        let row = self.queries.row_of_type(ty) as usize;
         let Some(&entry) = self.task.memo.rows.get(row) else {
             return false;
         };
         if entry.left_in_file == LeftInFile::Unknown {
             return false;
         }
-        for edge in &explored.edges {
+        for edge in explored.edges.iter() {
             let part = self.queries.row_of_type(edge.target) as usize;
             let part = self.task.memo.rows.get(part);
             if edge.target == ty || part.is_none_or(|part| part.found_in > entry.found_in) {
@@ -305,6 +314,11 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(super) fn find_mapped(&mut self, ty: CheckerTypeId) -> Option<MappedType> {
         let row = self.queries.row_of_type(ty) as usize;
+        self.find_mapped_in_row(row)
+    }
+
+    #[inline]
+    pub(super) fn find_mapped_in_row(&mut self, row: usize) -> Option<MappedType> {
         let visit = self.task.visit;
         let entry = self.task.memo.rows.get_mut(row)?;
         if entry.seen_in != visit && !entry.is_alike_in_every_file {
@@ -320,6 +334,7 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn keep_mapped(
         &mut self,
         ty: CheckerTypeId,
+        row: usize,
         entry: MappedType,
         unstable_answers_before: u64,
         function_types: Option<&[FunctionId]>,
@@ -339,14 +354,15 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.queries.count_unstable_answers() != unstable_answers_before {
             left_in_file = LeftInFile::Unknown;
         }
-        let row = self.queries.row_of_type(ty) as usize;
         let visit = self.task.visit;
         let weight = entry.weight.unwrap_or(NO_WEIGHT);
         let memo = &mut self.task.memo;
         let first_function_type = memo.function_types.len() as u32;
         let function_types = function_types.filter(|_| left_in_file != LeftInFile::Unknown);
-        memo.function_types
-            .extend_from_slice(function_types.unwrap_or_default());
+        let function_types = function_types.unwrap_or_default();
+        if !function_types.is_empty() {
+            memo.function_types.extend_from_slice(function_types);
+        }
         let function_type_count = memo.function_types.len() as u32 - first_function_type;
         let kept = memo.entry_at(row);
         if kept.seen_in == 0 || kept.mapped != entry.mapped || kept.weight != weight {

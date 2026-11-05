@@ -274,13 +274,13 @@ function initializeProxyReceiver(emitter: any, opts?: $Node.EventEmitterOptions)
   if (opts?.captureRejections) {
     validateBoolean(opts.captureRejections, "options.captureRejections");
     emitter[kCapture] = !!opts.captureRejections;
-    emitter.emit = emitWithRejectionCapture;
+    storeEmitWithRejectionCapture(emitter);
   } else {
     emitter[kCapture] = EventEmitterPrototype[kCapture];
     const capture = EventEmitterPrototype[kCapture];
     emitter[kCapture] = capture;
     if (capture) {
-      emitter.emit = emitWithRejectionCapture;
+      storeEmitWithRejectionCapture(emitter);
     }
   }
 }

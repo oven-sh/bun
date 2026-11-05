@@ -67,7 +67,7 @@ lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().v
 // CHECK-LABEL: function {{*}}name="generated"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: InitialYield
+// CHECK-NEXT: InitialYield v0
 // CHECK-NEXT: v3 = Data data=[[d_5]]
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -75,7 +75,7 @@ lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().v
 // CHECK-NEXT: v5 = PropGet v3 key="n"
 // CHECK-NEXT: v6 = Increment v5
 // CHECK-NEXT: PropSet v3, v6 key="n"
-// CHECK-NEXT: v8 = Yield v3
+// CHECK-NEXT: v8 = Yield v3, v0
 // CHECK-NEXT: v9 = ResultAt v8
 // CHECK-NEXT: v10 = ResultAt v8 index=1
 // CHECK-NEXT: Switch v10 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
@@ -100,20 +100,24 @@ lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().v
 // CHECK-NEXT: ReturnCall v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="add"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=env [[L_7]] flags=[IsFromCompiler]}, {type=anything variableName="table"}, {type=anything variableName="list"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_7]], v1: anything, v2: anything, v3: anything, v4: anything):
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_7]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="made"
-// CHECK-NEXT: v7 = Increment v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v9 = GetEnvironmentField v0 layout=[[L_7]]
-// CHECK-NEXT: v10 = CheckInitialized v9 name="made"
-// CHECK-NEXT: PutEnvironmentField v0, v8 layout=[[L_7]]
-// CHECK-NEXT: v12 = PropGet v1 key="set"
-// CHECK-NEXT: v13 = GetEnvironmentField v0 layout=[[L_7]]
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=env [[L_7]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_7]], v1: anything, v2: anything):
+// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_7]] field=2
+// CHECK-NEXT: v4 = CheckInitialized v3 name="made"
+// CHECK-NEXT: v5 = Increment v4
+// CHECK-NEXT: v6 = Convert v5 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v7 = GetEnvironmentField v0 layout=[[L_7]] field=2
+// CHECK-NEXT: v8 = CheckInitialized v7 name="made"
+// CHECK-NEXT: PutEnvironmentField v0, v6 layout=[[L_7]] field=2
+// CHECK-NEXT: v10 = GetEnvironmentField v0 layout=[[L_7]]
+// CHECK-NEXT: v11 = CheckInitialized v10 name="table"
+// CHECK-NEXT: v12 = PropGet v11 key="set"
+// CHECK-NEXT: v13 = GetEnvironmentField v0 layout=[[L_7]] field=2
 // CHECK-NEXT: v14 = CheckInitialized v13 name="made"
-// CHECK-NEXT: v15 = Call v12, v1, v4, v14 calleeKey="set" calleeName="table.set"
-// CHECK-NEXT: v16 = PropGet v2 key="push"
-// CHECK-NEXT: v17 = Call v16, v2, v4 calleeKey="push" calleeName="list.push"
-// CHECK-NEXT: Return v3
+// CHECK-NEXT: v15 = Call v12, v11, v2, v14 calleeKey="set" calleeName="table.set"
+// CHECK-NEXT: v16 = GetEnvironmentField v0 layout=[[L_7]] field=1
+// CHECK-NEXT: v17 = CheckInitialized v16 name="list"
+// CHECK-NEXT: v18 = PropGet v17 key="push"
+// CHECK-NEXT: v19 = Call v18, v17, v2 calleeKey="push" calleeName="list.push"
+// CHECK-NEXT: Return v1
 // CHECK-NEXT: }

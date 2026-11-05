@@ -64,18 +64,13 @@ fn reached_from(
             mut exports_read,
             functions,
         } = collector.collected;
-        let listed = |set: &DynamicBitSet| {
-            let modules = RuntimeModule::ALL.into_iter();
-            modules
-                .filter(|module| set.is_set(module.to_wire() as usize))
-                .collect()
-        };
+
         exports_read.shared_sort_unstable();
         exports_read.dedup();
         let rows = 0..table::runtime_functions().len() as u32;
         Box::new(Reached {
-            modules: listed(&modules),
-            modules_read_whole: listed(&modules_read_whole),
+            modules: list_modules(&modules),
+            modules_read_whole: list_modules(&modules_read_whole),
             exports_read: exports_read.into(),
             functions: rows.filter(|&row| functions.is_set(row as usize)).collect(),
             has_unknown_module_loader: collector.has_unknown_module_loader,
@@ -121,6 +116,13 @@ fn create_id_set(id_count: u32) -> DynamicBitSet {
     DynamicBitSet::init_empty(id_count as usize).unwrap_or_oom()
 }
 
+fn list_modules(set: &DynamicBitSet) -> Box<[RuntimeModule]> {
+    let mut set_modules = set.iterator::<true, true>();
+    std::iter::from_fn(|| set_modules.next())
+        .filter_map(|module| RuntimeModule::from_wire(module as u32))
+        .collect()
+}
+
 impl Collected {
     fn new() -> Collected {
         Collected {
@@ -132,9 +134,6 @@ impl Collected {
     }
 
     fn finish(mut self, platform: Platforms) -> RuntimeUses {
-        let modules = RuntimeModule::ALL
-            .into_iter()
-            .filter(|module| self.modules.is_set(module.to_wire() as usize));
         let is_read_whole =
             |module: &RuntimeModule| self.modules_read_whole.is_set(module.to_wire() as usize);
         self.exports_read
@@ -148,11 +147,8 @@ impl Collected {
             .filter(|data| data.platforms.contains(platform))
             .map(|data| data.function);
         RuntimeUses {
-            modules: modules.collect(),
-            modules_read_whole: RuntimeModule::ALL
-                .into_iter()
-                .filter(is_read_whole)
-                .collect(),
+            modules: list_modules(&self.modules),
+            modules_read_whole: list_modules(&self.modules_read_whole),
             exports_read: self.exports_read.clone().into(),
             functions: functions.collect(),
         }

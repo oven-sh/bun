@@ -37,6 +37,7 @@ const NOT_EXPOSED: &[(&str, BuiltinId)] = &[
     ("({ [Math]: 1 });", BuiltinId::Math),
     ("switch (Math) {}", BuiltinId::Math),
     ("switch (x) { case Math: }", BuiltinId::Math),
+    ("\"floor\" in Math;", BuiltinId::Math),
     ("Map.prototype.constructor;", BuiltinId::MapPrototype),
     ("Object.prototype.__proto__;", BuiltinId::ObjectPrototype),
     ("Object.prototype.valueOf();", BuiltinId::ObjectPrototype),
@@ -82,8 +83,10 @@ const EXPOSED: &[(&str, BuiltinId)] = &[
     ("throw Math;", BuiltinId::Math),
     ("class A extends Map {}", BuiltinId::Map),
     ("class A { m = Math; }", BuiltinId::Math),
-    ("for (const k in Math) {}", BuiltinId::Math),
     ("for (const k of Math) {}", BuiltinId::Math),
+    ("for (const k in Math) {}", BuiltinId::Math),
+    ("for (const k in f(Math)) {}", BuiltinId::Math),
+    ("k in Math;", BuiltinId::Math),
     ("export default Math;", BuiltinId::Math),
     ("(x ? Math : y).floor;", BuiltinId::Math),
     ("f(x ? Math : y);", BuiltinId::Math),
@@ -135,9 +138,24 @@ const EXPOSED: &[(&str, BuiltinId)] = &[
     ),
 ];
 
-const FOLLOWED: &[&str] = &["Object.keys(process);", "Reflect.ownKeys(process);"];
+const FOLLOWED: &[&str] = &[
+    "Object.keys(process);",
+    "Reflect.ownKeys(process);",
+    "\"own\" in process;",
+    "Object.getPrototypeOf(process);",
+    "Object.getPrototypeOf(process) !== null;",
+    "typeof Reflect.getPrototypeOf(process);",
+    "const above = Object.getPrototypeOf(process); above !== x; if (above instanceof f) {}",
+    "const above = Object.getPrototypeOf(process); Object.getPrototypeOf(above) === null;",
+    "Object.defineProperty(process, \"own\", { value: f, writable: true });",
+    "Object.defineProperty(process, \"own\", { get: () => 1, set: v => {} });",
+    "x = Reflect.defineProperty(process, \"own\", { value: 1 });",
+    "Object.defineProperties(process, { own: { value: 1 }, other: { get: () => 2 } });",
+];
 
 const HANDED_OVER: &[&str] = &[
+    "for (const k in process) {}",
+    "for (const k in process as any) {}",
     "f(process);",
     "delete process.title;",
     "const p = process; delete p.title;",
@@ -160,7 +178,40 @@ const HANDED_OVER: &[&str] = &[
     "process.zzz`a`;",
     "process.propertyIsEnumerable(k);",
     "process.__lookupGetter__(k);",
-    "for (const k in process) {}",
+    "f(Object.getPrototypeOf(process));",
+    "x = Object.getPrototypeOf(process);",
+    "Object.getPrototypeOf(process).on;",
+    "Object.getPrototypeOf(process)[k];",
+    "Object.getPrototypeOf(x || process);",
+    "Object.getPrototypeOf(x, process);",
+    "const above = Object.getPrototypeOf(process); f(above);",
+    "const above = Object.getPrototypeOf(process); above.on;",
+    "const above = Object.getPrototypeOf(process); above.own = f;",
+    "let above = Object.getPrototypeOf(process); above = x;",
+    "export const above = Object.getPrototypeOf(process);",
+    "const above = Object.getPrototypeOf(process); Object.setPrototypeOf(above, x);",
+    "const above = Object.getPrototypeOf(process); Reflect.setPrototypeOf(above, x);",
+    "const above = Object.getPrototypeOf(process); Object.defineProperty(above, \"own\", { value: 1 });",
+    "x = Object.defineProperty(process, \"own\", { value: 1 });",
+    "f(Object.defineProperties(process, { own: { value: 1 } }));",
+    "Object.defineProperty(process, k, { value: 1 });",
+    "Object.defineProperty(process, \"own\");",
+    "Object.defineProperty(process, ...l);",
+    "Object.defineProperty(process, \"own\", d);",
+    "Object.defineProperty(process, \"own\", { ...d });",
+    "Object.defineProperty(process, \"own\", { [k]: f });",
+    "Object.defineProperty(process, \"own\", { get() { return this; } });",
+    "Object.defineProperty(process, \"own\", { get: function () { return this; } });",
+    "Object.defineProperty(process, \"own\", { get: f });",
+    "Object.defineProperty(process, \"own\", { get });",
+    "Object.defineProperty(process, \"own\", { set(v) { x = this; } });",
+    "Object.defineProperty(process, \"own\", { get value() { return 1; } });",
+    "Reflect.defineProperty(process, \"own\", { get() { return this; } });",
+    "Object.defineProperties(process, d);",
+    "Object.defineProperties(process, { own: d });",
+    "Object.defineProperties(process, { [k]: { value: 1 } });",
+    "Object.defineProperties(process, { ...d });",
+    "Object.defineProperties(process, { own: { get() { return this; } } });",
     "f.call(process);",
     "f.bind(process);",
     "function f() {} f.call(process);",
@@ -197,6 +248,34 @@ fn object_whose_every_use_is_in_sight_is_not_exposed() {
             assert!(case.resolved.exposed().is_empty(), "{source}");
         });
     }
+}
+
+#[test]
+fn name_that_is_searched_for_is_a_mention_of_the_member() {
+    for source in [
+        "\"stdout\" in process;",
+        "Object.defineProperty(process, \"stdout\", { value: 1 });",
+        "Reflect.defineProperty(process, \"stdout\", { value: 1 });",
+        "Object.defineProperties(process, { own: { value: 1 }, stdout: { value: 1 } });",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.mentions(BuiltinId::ProcessStdout), "{source}");
+            assert!(case.resolved.exposed().is_empty(), "{source}");
+        });
+    }
+}
+
+#[test]
+fn code_of_bun_may_link_what_stands_above_an_object_again() {
+    let source = "const above = Object.getPrototypeOf(process); if (above !== null) Object.setPrototypeOf(above, x);";
+    with_case(RUNTIME, source, |case| {
+        assert!(case.mentions(BuiltinId::Process));
+        assert!(case.resolved.exposed().is_empty());
+    });
+    let kept = "const above = Object.getPrototypeOf(process); y = Object.setPrototypeOf(above, x);";
+    with_case(RUNTIME, kept, |case| {
+        assert!(case.exposes(BuiltinId::Process))
+    });
 }
 
 #[test]

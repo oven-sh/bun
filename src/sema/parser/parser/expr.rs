@@ -7,6 +7,7 @@ use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
+#[inline]
 fn binary_operator(token: T) -> BinOp {
     match token {
         T::Plus => BinOp::Add,
@@ -387,7 +388,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let kind = match self.token() {
             T::Identifier => ExprKind::Ident(self.note_identifier(self.lx.atom, self.lx.start)),
             T::String => ExprKind::String(self.lx.atom),
-            T::Number => ExprKind::Number(self.f.number(self.lx.number)),
+            T::Number => {
+                let number = self.f.numbers.len() as u32;
+                self.f.numbers.push(self.lx.number);
+                ExprKind::Number(number)
+            }
             T::This => ExprKind::This,
             T::True => ExprKind::True,
             T::False => ExprKind::False,
@@ -1959,7 +1964,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.call_specifier(argument, SpecifierKind::RequireCall);
             }
         }
-        let type_args = self.f.store_list(type_args);
+        let type_args = match type_args.is_empty() {
+            true => ListAt::EMPTY,
+            false => self.f.store_list(type_args),
+        };
         let call = self.f.add_call(Call {
             callee,
             args,
@@ -2293,8 +2301,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let parts = self.s.ids.get(base..).unwrap_or_default();
         let start = self.f.ids.len() as u32;
-        self.f.ids.extend(parts.iter().skip(1).step_by(2));
-        self.f.ids.extend(parts.iter().step_by(2));
+        if let Some((&head, spans)) = parts.split_first() {
+            let (spans, _) = spans.as_chunks::<2>();
+            for &[expression, _] in spans {
+                self.f.ids.push(expression);
+            }
+            self.f.ids.push(head);
+            for &[_, text] in spans {
+                self.f.ids.push(text);
+            }
+        }
         let count = (parts.len() / 2) as u32;
         self.s.ids.truncate(base);
         self.take_template_parts(parts_base);

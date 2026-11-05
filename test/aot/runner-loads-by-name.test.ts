@@ -1,6 +1,6 @@
 // `jest.requireActual("./lib")`, `jest.requireMock("./lib")` and `jest.createMockFromModule("./lib")`: native code of the test runner loads the module. The build follows the
 // name as it follows that of a `require()`, and the module is one that the host may ask for. Plain `bun test` says what is right.
-// vi.importMock() and vi.importActual(): ./fixed-runs/few/import-mock.txt, ./fixed-runs/closed/import-actual-in-a-helper.txt.
+// vi.importActual(): ./fixed-runs/closed/import-actual-in-a-helper.txt.
 // The project stands alone: in the company of many test files the fault did not show.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";

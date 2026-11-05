@@ -36,7 +36,15 @@ pub(super) fn compute_stability(input: &mut RuntimeInput<'_, '_>) {
     pass.add_containers();
     pass.add_expressions();
     let symbols = (0..pass.initializers.len() as u32).map(SymbolId);
-    let stabilities = symbols.map(|symbol| pass.classify(symbol)).collect();
+    let mut stabilities: Vec<_> = symbols.map(|symbol| pass.classify(symbol)).collect();
+    for store in pass.bound.runtime.references.stores.iter() {
+        if let Some(recorded) = stabilities.get_mut(store.symbol.idx())
+            && *recorded == BindingStability::Stable
+            && !pass.bound.binding_kind(store.symbol).is_immutable()
+        {
+            *recorded = BindingStability::Stored;
+        }
+    }
     let initializers = pass.initializers.iter().map(|recorded| match *recorded {
         Initializers::One(decl) => Some(decl),
         Initializers::None | Initializers::Several => None,
@@ -303,6 +311,7 @@ impl StabilityPass<'_, '_> {
     }
 }
 
+#[inline(never)]
 fn find_pattern_initializer(hir: &File<'_>, bound: &Bound<'_>, name: PatId) -> BindingInitializer {
     let mut path: SmallVec<[Atom; 2]> = SmallVec::new();
     let mut pattern = name;
@@ -351,7 +360,13 @@ pub(super) fn find_binding_initializer(
         Decl::Fn(function) => BindingInitializer::Function(function),
         Decl::Module(module) => BindingInitializer::Namespace(module),
         Decl::Enum(id) => BindingInitializer::Enum(id),
-        Decl::Var(name) | Decl::Require(name) => find_pattern_initializer(hir, bound, name),
+        Decl::Var(name) | Decl::Require(name) => match bound.pat_parent[name.idx()] {
+            PatParent::Var(declaration) => match hir[declaration].init.some() {
+                Some(source) => BindingInitializer::Expression(source),
+                None => BindingInitializer::Opaque,
+            },
+            _ => find_pattern_initializer(hir, bound, name),
+        },
         Decl::ExportExpr(statement) => {
             let (StmtKind::ExportDefault(value) | StmtKind::ExportAssign(value)) =
                 hir[statement].kind

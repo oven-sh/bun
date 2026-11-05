@@ -1,4 +1,6 @@
-use bun_sema::bind::{Binding, Bound, CodeUnit, Decl, SymbolId, has_simple_parameter_list};
+use bun_sema::bind::{
+    Binding, Bound, CodeUnit, Decl, ScopeId, SymbolId, has_simple_parameter_list,
+};
 use bun_sema::hir::{self, FnId, FnKind, ParamId, PatId, PatKind};
 use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
@@ -7,7 +9,7 @@ use crate::ir::generated::FunctionFlags;
 use crate::ir::{DeclaredType, ValueId};
 use crate::lower::captures::Capture;
 use crate::lower::pattern::{DefaultHolder, PatternNode, apply_default_with};
-use crate::lower::scope::{BindingForm, BindingRef, ScopeSlot, Storage};
+use crate::lower::scope::{BindingForm, BindingRef, DeadZone, ScopeSlot, Storage};
 use crate::lower::{FileLowering, FunctionLowering, scope};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -106,21 +108,33 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 values.push(value);
             }
         }
-        let scopes = &self.file.scopes;
-        for (index, &capture) in scopes.captures(self.key).iter().enumerate() {
-            let holds_registry = match capture {
-                Capture::Value(binding) => scopes.may_hold_registry(binding),
-                Capture::Environment(scope) => {
-                    let mut fields = scopes.environment_fields(scope).iter();
-                    fields.any(|&field| scopes.may_hold_registry(field))
-                }
-            };
-            let value = self.get_capture(index);
-            if holds_registry && !values.contains(&value) {
-                values.push(value);
+        for index in 0..self.file.scopes.list_registries().len() {
+            let (scope, binding) = self.file.scopes.list_registries()[index];
+            match self.find_holder_of_registry(scope, binding) {
+                Some(value) if !values.contains(&value) => values.push(value),
+                Some(_) | None => {}
             }
         }
         values
+    }
+
+    fn find_holder_of_registry(&mut self, scope: ScopeId, binding: BindingRef) -> Option<ValueId> {
+        if let Some(copy) = self.find_captured_value(Capture::Value(binding)) {
+            return Some(copy);
+        }
+        match self.file.scopes.placement(binding)?.storage {
+            Storage::Field { scope, .. } => {
+                let captured = self.find_captured_value(Capture::Environment(scope));
+                let entered = self.scopes.find_environment(scope);
+                (captured.is_some() || entered.is_some()).then(|| self.get_environment(scope))
+            }
+            Storage::Local if self.scopes.is_entered(scope) => {
+                let local = self.scopes.find_local(binding)?;
+                let is_initialized = local.dead_zone != DeadZone::Uninitialized;
+                is_initialized.then(|| self.builder.read_variable(local.variable))
+            }
+            Storage::Local | Storage::Variable(_) => None,
+        }
     }
 }
 

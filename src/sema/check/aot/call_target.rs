@@ -293,6 +293,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn explicit_arguments_mapper(&mut self, of: FileId, func: FnId, site: CallId) -> MapperId {
         let hir = self.hir();
         let arguments = hir.list_at(hir[site].type_args);
+        if arguments.is_empty() {
+            return MapperId::IDENTITY;
+        }
         let parameters = self.c.hir(of)[func].type_params;
         let mut pairs: SmallVec<[(TypeId, TypeId); 4]> = SmallVec::new();
         for (parameter, argument) in parameters.iter().zip(hir.ids(arguments)) {
@@ -308,6 +311,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn instantiate_signature_type(&mut self, declared: TypeId, mapper: MapperId) -> CheckedType {
         let declared = self.resolved(declared)?;
         let ty = self.c.instantiate(declared, mapper);
+        if ty == declared {
+            return Ok(ty);
+        }
         self.resolved(ty)
     }
 

@@ -24,6 +24,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
+#[inline]
 pub(super) fn normalize_binding(file: &FileLowering<'_, '_, '_, '_>, binding: Binding) -> Binding {
     match binding {
         Binding::Arguments(CodeUnit::File) if !file.scopes.has_wrapper_parameters() => {

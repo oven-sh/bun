@@ -72,6 +72,8 @@ It makes no difference how the test does it: an assignment, a helper that takes 
 
 A helper that only your tests import, like `test-utils/patch.ts`, is one of their files wherever it lies. A helper that your program imports too counts as part of your program, and there an assignment to a built-in throws as it does in the executable. Import from `bun:test` in it, or name it as a preload.
 
+A helper also has to be compiled with your tests, because the build reads what a run replaces in the files that it compiles. It follows `import("./rows/" + name)`, `import(import.meta.dir + "/rows/" + name)` and `import(new URL("./rows/" + name, import.meta.url).href)`, and compiles every file that they can name. It doesn't follow a folder that's taken out of a URL first, as in `const folder = fileURLToPath(new URL("./rows/", import.meta.url)); await import(folder + name)`. Those files are loaded when the tests run, and a `spyOn(namespace, "name")` or `vi.doMock()` in one of them throws a `TypeError` that names the file.
+
 A few more methods are read-only only in a run whose build has skipped the call. Code that TypeScript compiled for an older target keeps `#count` in a `WeakMap`. The build turns it into a field of the object, so nothing calls `WeakMap.prototype.get` for it. A test that replaces `get` where the build can read the name works, because the build then keeps the `WeakMap`: `WeakMap.prototype.get = fake` or `spyOn(WeakMap.prototype, "get")`. One that reaches the prototype another way, like `globalThis[name].prototype.get = fake`, throws a `TypeError` that names the method and says what to write instead.
 
 A name on `Object.prototype` isn't a way to name a file either. The build reads which files `require(table[key])` and `import(table[key])` can load off the object that's written in your code. After `Object.prototype.extra = "./two.cjs"`, `require(table.extra)` throws an error that names the file instead of loading it.
@@ -124,6 +126,7 @@ await import("./plugins/" + name + ".ts"); // finds plugins/*.ts
 await import(new URL(`./plugins/${name}.ts`, import.meta.url)); // same
 await import(`@/plugins/${name}.ts`); // same, with "paths": { "@/*": ["./*"] } in tsconfig.json
 await import(`locales/data/${name}.js`); // finds node_modules/locales/data/*.js
+await import(process.env.PLUGIN || "./plugins/a.ts"); // compiles plugins/a.ts
 await import(name); // finds the entry points, and files whose path is a string in your code
 ```
 
@@ -131,7 +134,7 @@ The build compiles every file it can reach from your entry point. Where a path i
 
 `import.meta.glob()` is expanded at build time, as in `bun build`, and every file that matches is compiled. A call that can't be expanded, like one whose pattern isn't a string literal, gets a warning from the build and throws a `TypeError` when your program reaches it.
 
-A file that only a non-constant path can reach doesn't stop the build if it has a syntax error, like a `.json` file with comments or a broken fixture in a package. Importing it throws when your program runs, with the same error as under `bun run`. A file that you import by a constant path still stops the build.
+A file that only a non-constant path can reach doesn't stop the build if it has a syntax error, like a `.json` file with comments or a broken fixture in a package. Importing it throws when your program runs, with the same error as under `bun run`. A file of code that you import by a constant path still stops the build, and so does a data file that an `import` statement names. A data file that `require()` or `import()` names only gets a warning. Loading such a `.json` file throws the same `SyntaxError` as under `bun run`.
 
 For a mistake that JavaScript finds only when it reads the file, like an invalid regular expression, the message also ends with the line and column: `Invalid regular expression: missing ) (1:16)`. None of the files that are imported together with such a file run, as under `bun run`. `bun run` reports a mistake that its transpiler finds, like a name that is declared twice, as a `BuildMessage`. Compiled code throws a `SyntaxError` for it, in the compiler's words.
 
@@ -538,7 +541,6 @@ Few programs notice these.
 | `f.name` after `const f = true ? () => 3 : null` or `const f = null ?? (() => 1)` | `"f"`: the transpiler drops the test, so the engine sees `const f = () => 3` | `""`, as the language says                            |
 | `new Below()` after `Object.setPrototypeOf(Below, CString)`, of `bun:ffi`         | The string that `new CString()` returns                                      | Throws a `TypeError`: `this` has to be an object      |
 | A name imported from a CommonJS file that was still running, after a later import | What the file had exported when that import was linked                       | What the file had exported when it ended              |
-| `Level` inside `enum Level { .. }`, once an initializer has run `Level = {}`      | The enum's object                                                            | What was assigned                                     |
 | `res.write()` after `req.socket._writableState = copy`, in `node:http`            | Goes by the `highWaterMark` of the copy                                      | Goes by the one that the socket had                   |
 
 `Bun.$` is compiled into an executable if your code writes `Bun`, even as `Bun[name]`. If it reaches the shell only as `globalThis[a][b]`, with neither name written anywhere, it gets a function that throws `Bun.$ was not compiled into this executable` when you call it. That function has none of the shell's members, so `typeof shell.escape` is `"undefined"`. Write `Bun.$` once anywhere in your program to keep it.
@@ -554,6 +556,8 @@ A `.js` file without `import` or `export` is CommonJS if `require`, `module` or 
 If `NODE_UNIQUE_ID` is set in the environment and no `node:cluster` primary started the process, an executable that never imports `node:cluster` listens as usual with `node:http`, `node:net` and `node:dgram`, and leaves the variable in `process.env`. `bun run` listens with `node:http` and deletes the variable, but with `node:net` and `node:dgram` it waits for a primary and never listens. Node.js never listens with any of the three.
 
 A `NaN` that you write to a typed array or a `DataView` can have other bytes than under `bun run`, which the language leaves to the implementation: on x64, the sum of `Infinity` and `-Infinity` read from a `Float64Array` is stored as `7ff8000000000000`, where `bun run` stores `fff8000000000000`.
+
+An executable keeps 256 KB of the stack of every thread for the runtime's own code. Deep recursion throws `RangeError: Maximum call stack size exceeded` that much sooner than under `bun run`, and with a very small stack (`ulimit -s`) the program throws it at the start: it needs about 512 KB where `bun run` needs about 192 KB. `bun test --aot` is the same.
 
 `CString` of `bun:ffi` answers `new` with a string, not an object. A class that gets it as its parent from `Object.setPrototypeOf()`, `Reflect.setPrototypeOf()` or `__proto__` throws `TypeError: The constructor did not return an object` at `super()`. `new CString(ptr)` itself returns the string as under `bun run`.
 

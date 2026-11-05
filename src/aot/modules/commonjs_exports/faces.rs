@@ -191,49 +191,68 @@ fn find_modules_that_lead_to(
     imports: &[(FileId, FileId)],
     file_count: usize,
 ) -> Vec<bool> {
-    let importers = imports.iter();
-    let mut importers: Vec<(FileId, FileId)> = importers
-        .map(|&(importer, imported)| (imported, importer))
-        .collect();
-    importers.sort_unstable();
+    let mut ends = find_first_places(imports.iter().map(|import| import.1), file_count);
+    let mut importers = vec![FileId(0); imports.len()];
+    for &(importer, imported) in imports {
+        let place = &mut ends[imported.idx()];
+        importers[*place as usize] = importer;
+        *place += 1;
+    }
     let mut leads_there = vec![false; file_count];
     let mut pending = targets;
     while let Some(file) = pending.pop() {
         if core::mem::replace(&mut leads_there[file.idx()], true) {
             continue;
         }
-        let first = importers.partition_point(|entry| entry.0 < file);
-        let of_file = importers[first..].iter();
-        let of_file = of_file.take_while(|entry| entry.0 == file);
-        pending.extend(of_file.map(|entry| entry.1));
+        let first = match file.idx() {
+            0 => 0,
+            index => ends[index - 1],
+        };
+        pending.extend_from_slice(&importers[first as usize..ends[file.idx()] as usize]);
     }
     leads_there
+}
+
+fn find_first_places(files: impl Iterator<Item = FileId>, file_count: usize) -> Vec<u32> {
+    let mut first_places = vec![0u32; file_count + 1];
+    for file in files {
+        first_places[file.idx() + 1] += 1;
+    }
+    for file in 0..file_count {
+        first_places[file + 1] += first_places[file];
+    }
+    first_places
 }
 
 fn list_importers_in_link_order(
     root: FileId,
     imports: &[(FileId, FileId)],
+    first_imports: &[u32],
     is_importer: &[bool],
 ) -> Vec<FileId> {
-    let first_import_of = |file: FileId| imports.partition_point(|import| import.0 < file);
+    let first_import_of = |file: FileId| first_imports[file.idx()] as usize;
     let mut order = Vec::new();
     let mut is_visited = vec![false; is_importer.len()];
     is_visited[root.idx()] = true;
-    let mut path = vec![(root, first_import_of(root))];
-    while let Some((file, next)) = path.last_mut() {
-        let file = *file;
-        match imports.get(*next) {
+    let mut path = Vec::new();
+    let (mut file, mut next) = (root, first_import_of(root));
+    loop {
+        match imports.get(next) {
             Some(&(importer, imported)) if importer == file => {
-                *next += 1;
+                next += 1;
                 if !core::mem::replace(&mut is_visited[imported.idx()], true) {
-                    path.push((imported, first_import_of(imported)));
+                    path.push((file, next));
+                    (file, next) = (imported, first_import_of(imported));
                 }
             }
             _ => {
                 if is_importer[file.idx()] {
                     order.push(file);
                 }
-                path.pop();
+                let Some(outer) = path.pop() else {
+                    break;
+                };
+                (file, next) = outer;
             }
         }
     }
@@ -260,6 +279,7 @@ impl DecisionInputs {
         let mut links = collect_imports_between_es_modules(scans, modules);
         let leads_to_importer = find_modules_that_lead_to(importers, &links, file_count);
         links.retain(|link| leads_to_importer[link.1.idx()]);
+        let first_links = find_first_places(links.iter().map(|link| link.0), file_count);
         let roots = modules.compiled_files.iter().copied();
         let roots = roots.filter(|&root| leads_to_importer[root.idx()]);
         let roots = roots.filter(|&root| (input.is_prefix_root)(root));
@@ -269,7 +289,7 @@ impl DecisionInputs {
             root,
             linked,
         )| {
-            *linked = list_importers_in_link_order(*root, &links, &is_importer);
+            *linked = list_importers_in_link_order(*root, &links, &first_links, &is_importer);
         });
     }
 }
@@ -633,7 +653,9 @@ mod tests {
         }
         let leads_there = find_modules_that_lead_to(importers, &imports, FILE_COUNT);
         imports.retain(|import| leads_there[import.1.idx()]);
-        let order = list_importers_in_link_order(FileId(root), &imports, &is_importer);
+        let first_imports = find_first_places(imports.iter().map(|import| import.0), FILE_COUNT);
+        let root = FileId(root);
+        let order = list_importers_in_link_order(root, &imports, &first_imports, &is_importer);
         order.into_iter().map(|file| file.0).collect()
     }
 

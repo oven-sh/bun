@@ -14,6 +14,7 @@ impl Mapped {
         is_checked: true,
     };
 
+    #[inline]
     pub fn checked(ty: TypeId) -> Mapped {
         Mapped {
             ty,
@@ -21,6 +22,7 @@ impl Mapped {
         }
     }
 
+    #[inline]
     pub fn expected(ty: TypeId) -> Mapped {
         Mapped {
             ty,
@@ -30,6 +32,7 @@ impl Mapped {
 }
 
 impl DeclaredCapture {
+    #[inline]
     pub fn new(declared: DeclaredType, variable_name: Option<StringId>) -> DeclaredCapture {
         DeclaredCapture {
             ty: declared.ty,
@@ -55,6 +58,7 @@ impl From<DeclaredType> for DeclaredCapture {
 }
 
 impl DeclaredType {
+    #[inline]
     pub fn new(mapped: Mapped, site: Option<TypeSiteId>, flags: PositionFlags) -> DeclaredType {
         let says_something = mapped.ty != TypeTable::ANYTHING;
         let is_expected = says_something && !mapped.is_checked;
@@ -72,10 +76,12 @@ impl DeclaredType {
         }
     }
 
+    #[inline]
     pub fn untyped() -> DeclaredType {
         DeclaredType::new(Mapped::UNKNOWN, None, PositionFlags::default())
     }
 
+    #[inline]
     pub fn unsaid() -> DeclaredType {
         DeclaredType {
             ty: TypeTable::NEVER,
@@ -84,10 +90,12 @@ impl DeclaredType {
         }
     }
 
+    #[inline]
     pub fn is_said(self) -> bool {
         self.ty != TypeTable::NEVER
     }
 
+    #[inline]
     pub fn from_compiler(ty: TypeId) -> DeclaredType {
         DeclaredType::new(Mapped::checked(ty), None, PositionFlags::IS_FROM_COMPILER)
     }
@@ -97,6 +105,7 @@ impl DeclaredType {
         DeclaredType::new(Mapped::checked(ty), None, flags)
     }
 
+    #[inline]
     pub fn is_expected(self) -> bool {
         self.flags.contains(PositionFlags::IS_EXPECTED)
     }

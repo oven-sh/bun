@@ -11,7 +11,15 @@ use super::type_union::{normalize_type, normalize_without_table};
 use crate::builtins::id::{BuiltinClass, BuiltinId};
 use crate::builtins::table::{BuiltinKind, canonical_id, class_data, entry, well_known_symbol};
 
+fn copy_of_list<T: Clone>(list: &[T]) -> Vec<T> {
+    match list {
+        [] => Vec::new(),
+        _ => list.to_vec(),
+    }
+}
+
 impl Type {
+    #[inline]
     pub fn never() -> Type {
         Type::default()
     }
@@ -117,8 +125,9 @@ impl Type {
         }
     }
 
+    #[inline]
     pub fn integer_range(&self) -> Option<(i64, i64)> {
-        let has_integers = self.flags.contains(TypeFlags::HAS_INTEGERS);
+        let has_integers = self.flags.0 & TypeFlags::HAS_INTEGERS.0 != 0;
         has_integers.then_some((self.minimum, self.maximum))
     }
 
@@ -133,6 +142,7 @@ impl Type {
         has_every_primitive && self.flags.contains(TypeFlags::ANY_OBJECT)
     }
 
+    #[inline]
     pub fn is_internal(&self) -> bool {
         self.opaque.is_some() || self.environment.is_some()
     }
@@ -158,8 +168,10 @@ pub struct TypeTable {
     types: Vec<Type>,
     hashes: Vec<u64>,
     type_ids: HashTable<TypeId>,
+    spare_union: Type,
 }
 
+#[inline]
 pub(super) fn hash_of<T: core::hash::Hash>(value: &T) -> u64 {
     FxBuildHasher.hash_one(value)
 }
@@ -241,6 +253,7 @@ impl TypeTable {
             types: Vec::with_capacity(Self::WELL_KNOWN_COUNT),
             hashes: Vec::with_capacity(Self::WELL_KNOWN_COUNT),
             type_ids: HashTable::with_capacity(Self::WELL_KNOWN_COUNT),
+            spare_union: Type::never(),
         };
         for (id, ty) in well_known_types {
             let interned = table.intern(ty);
@@ -278,6 +291,7 @@ impl TypeTable {
             types,
             hashes,
             type_ids,
+            spare_union: Type::never(),
         }
     }
 
@@ -287,6 +301,76 @@ impl TypeTable {
         if let Some(id) = self.find_hashed(hash, &ty) {
             return id;
         }
+        self.add_hashed(hash, ty)
+    }
+
+    pub(super) fn types_and_spare_union(&mut self) -> (&[Type], &mut Type) {
+        (&self.types, &mut self.spare_union)
+    }
+
+    pub(super) fn intern_spare_union(&mut self) -> TypeId {
+        if !normalize_without_table(&mut self.spare_union) {
+            let union = core::mem::take(&mut self.spare_union);
+            return self.intern(union);
+        }
+        let hash = hash_of(&self.spare_union);
+        if let Some(id) = self.find_hashed(hash, &self.spare_union) {
+            return id;
+        }
+        let Type {
+            primitives,
+            flags,
+            opaque,
+            environment,
+            minimum,
+            maximum,
+            ref strings,
+            ref layouts,
+            ref classes,
+            ref builtins,
+            ref functions,
+        } = self.spare_union;
+        let union = Type {
+            primitives,
+            flags,
+            opaque,
+            environment,
+            minimum,
+            maximum,
+            strings: copy_of_list(strings),
+            layouts: copy_of_list(layouts),
+            classes: copy_of_list(classes),
+            builtins: copy_of_list(builtins),
+            functions: copy_of_list(functions),
+        };
+        self.add_hashed(hash, union)
+    }
+
+    pub(super) fn clear_spare_union(&mut self) {
+        let Type {
+            primitives,
+            flags,
+            opaque,
+            environment,
+            minimum,
+            maximum,
+            strings,
+            layouts,
+            classes,
+            builtins,
+            functions,
+        } = &mut self.spare_union;
+        (*primitives, *flags) = (Primitives::default(), TypeFlags::default());
+        (*opaque, *environment) = (None, None);
+        (*minimum, *maximum) = (0, 0);
+        strings.clear();
+        layouts.clear();
+        classes.clear();
+        builtins.clear();
+        functions.clear();
+    }
+
+    fn add_hashed(&mut self, hash: u64, ty: Type) -> TypeId {
         let count = self.types.len();
         debug_assert!(ty.references_only_types_below(count));
         let id = TypeId::new(count);
@@ -309,7 +393,8 @@ impl TypeTable {
     }
 
     pub fn with_nullish(&mut self, ty: TypeId) -> TypeId {
-        if self.get(ty).primitives.contains(Primitives::NULLISH) {
+        let nullish = Primitives::NULLISH.0;
+        if self.get(ty).primitives.0 & nullish == nullish {
             return ty;
         }
         self.union(ty, Self::NULLISH)
@@ -320,10 +405,12 @@ impl TypeTable {
         &self.types[id.index()]
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.types.len()
     }
 
+    #[inline]
     pub fn types(&self) -> &[Type] {
         &self.types
     }

@@ -802,6 +802,16 @@ export const shapes: Shape[] = [
       "main.js": `function call(f, d) { return d ? call(f, d - 1) : f(); }\nfunction row(n) {\n  let f = () => n;\n${lines(size, index => `  if (n & ${1 << index % 20}) { const g = f; f = () => call(g, 1) + ${index}; }`)}  return call(f, 1);\n}\nlet sum = 0;\nfor (let i = 0; i < 50; i++) sum += row(i);\nconsole.log(sum);\n`,
     }),
   },
+  // Which scopes a closure holds was asked by going down every capture of every closure that it captures, with no memory of what had been looked into: two to the closures.
+  {
+    name: "closures that each capture the one before under two names over a scope that is handed back",
+    counted: "closures",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function both(a, b) { return () => a() + b(); }\nfunction looks(job) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return typeof job === "function" ? work : 0; }\nfunction chain(take, start, wants) {\n  let total = start;\n  function add() { total++; }\n  add();\n  if (!wants) return 0;\n  const c0 = () => total;\n${lines(size, index => `  const c${index + 1} = both(c${index}, c${index});`)}  const got = take(c${size});\n  return got + 1;\n}\nconsole.log(chain(looks, 5, true), chain(looks, 5, false));\n`,
+    }),
+  },
   // Each function without a loop was walked whole again for each of its writers: writers x values.
   {
     name: "one function that stores numbers into many fields",
@@ -990,6 +1000,24 @@ export const shapes: Shape[] = [
         `class Item { skip: boolean; weight: number; constructor(skip: boolean, weight: number) { this.skip = skip; this.weight = weight; } }\nconst items: Item[] = [new Item(false, 2), JSON.parse('{"skip":false,"weight":3}'), new Item(false, 5)];\nfunction drive(list: Item[]): number {\n  let sum = 0;\n` +
         lines(size, index => `  const i${index} = list[${index % 3}]; if (i${index}.skip) return -1; sum = (sum + i${index}.weight) | 0;`) +
         `  return sum;\n}\nlet last = 0;\nfor (let round = 0; round < 300; round++) last = drive(items);\nconsole.log(last);\n`,
+    }),
+  },
+  {
+    // The ways on which a guess failed go on beside the way on which all held, a rung a line. Every block of the second chain has the first line for its dominator, and the climb to it
+    // from line k took k steps. The code generator finds dominators only where a value that is made behind the entry is read far below.
+    name: "lines that each read an element of their own, return early if it says so and add its field to a sum, with a value from the start read at the end",
+    counted: "lines",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `class Item { skip: boolean; weight: number; constructor(skip: boolean, weight: number) { this.skip = skip; this.weight = weight; } }\nconst items: Item[] = [];\n` +
+        `for (let index = 0; index < ${size + 1}; index++) items.push(index % 3 === 1 ? JSON.parse('{"skip":false,"weight":3}') : new Item(false, index));\n` +
+        `function drive(list: Item[]): number {\n  let sum = 0;\n  let base = 1;\n  if (list.length > 2) base = list.length | 0;\n` +
+        lines(size, index => `  const i${index} = list[${index}]; if (i${index}.skip) return -1; sum = (sum + i${index}.weight) | 0;`) +
+        `  return (sum + base) | 0;\n}\nlet last = 0;\nfor (let round = 0; round < 300; round++) last = drive(items);\nconsole.log(last);\n`,
     }),
   },
   {
@@ -1187,6 +1215,20 @@ export const shapes: Shape[] = [
         `function Base() { if (new.target) this.tag = "base"; }\nconst pick = JSON.parse("true");\nconst a0 = pick ? Base : Base;\n` +
         lines(size, index => `const a${index + 1} = pick ? a${index} : a${index};`) +
         `class Top extends a${size} {}\nconsole.log(new Top().tag, typeof a${size}());\n`,
+    }),
+  },
+  // Nobody reads what the choices give: their arms are empty once the dead code has gone, and each asks the same tests of `pick`. An edge is led past every test that its way has decided:
+  // led from the first choice to the last, the edge out of each choice went over all the choices behind it.
+  {
+    name: "choices on one test whose values nobody reads",
+    counted: "choices",
+    size: 2500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function chosen(pick, base) {\n` +
+        lines(size, index => `  const a${index + 1} = pick ? base + ${index + 1} : base - ${index + 1};`) +
+        `  return base;\n}\nconsole.log(chosen(JSON.parse("true"), 1), chosen(JSON.parse("0"), 2));\n`,
     }),
   },
   // A lookup that goes up a row of classes notes a condition for each class that it passes, in a sorted list, once for each access of each constructor.
@@ -1727,6 +1769,19 @@ export const shapes: Shape[] = [
         `let sum = 0;\nlet current = null;\n` +
         lines(size, index => `class Kind${index} { weigh() { return ${index}; } }\nif ((sum & ${index}) == 0) current = new Kind${index}();\nsum += current.weigh();`) +
         `console.log(sum);\n`,
+    }),
+  },
+  {
+    // Which fields of `this` are filled is followed from block to block. Every block kept a list of all the fills so far, 12 bytes each, and a choice makes three blocks: 8,000 stores took 1.9 GB.
+    name: "stores of one of two values under names of their own on this, in one constructor",
+    counted: "stores",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class Panel {\n  constructor(flag) {\n    let work = 0;\n    for (let i = 0; i < 2; i++) work = (work + i) | 0;\n    this.work = work;\n` +
+        lines(size, index => `    this.k${index} = flag ? ${index} : ${index + 1};`) +
+        `  }\n}\nconst panel = new Panel(JSON.parse("true"));\nconsole.log(Object.keys(panel).length, panel.work);\n`,
     }),
   },
   {
@@ -2847,6 +2902,18 @@ console.log(typeof outmost.inner);
         `    x = (x + o.step) | 0;\n  }\n  return s + x;\n}\nconsole.log(big(5, 3, { step: 7 }), big(0, 3, { step: 7 }), big(-9, 2, { step: -1 }));\n`,
     }),
   },
+  {
+    name: "records whose fields are stored behind their literals in one body",
+    counted: "literals",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `type Made = { a: number; b?: number };\nconst out: Made[] = [];\nfunction take(o: Made) { out.push(o); }\nfunction build(seed: number) {\n` +
+        lines(size, index => `  const o${index}: Made = { a: seed + ${index} }; o${index}.b = ${index}; take(o${index});`) +
+        `}\nbuild(1);\nlet total = 0;\nfor (let i = 0; i < out.length; i++) total += out[i].a + out[i].b!;\nconsole.log(total);\n`,
+    }),
+  },
   // What a spread copies was read anew for each spread, object by object, and for an object of a list that is written as data the whole list was walked to find it:
   // the cube of the size: 2000 objects and 2000 spreads took 800,000 million instructions in one step of flow's results.
   {
@@ -3342,6 +3409,21 @@ console.log(typeof outmost.inner);
         lines(size, index => `  for (let k = 0; k < n; k++) l${index}.push(change(k));`) +
         `  return [${upTo(size, index => `l${index}`).join(", ")}];\n}\n` +
         `const changes = [(k: number) => k, (k: number) => k * 2];\nlet total = 0;\nfor (let round = 0; round < 4; round++) for (const list of many(3, changes[round % 2])) total += list.length;\nconsole.log(total);\n`,
+    }),
+  },
+  {
+    // Whoever follows the names noted the call of the resolver at every reading and walked its notes at every question: elements x elements.
+    name: "elements of a list that go on from the folder of what one require.resolve() answers",
+    counted: "elements",
+    size: 2000,
+    entry: "main.cjs",
+    write: size => ({
+      "main.cjs":
+        `const path = require("node:path");\nconst root = path.dirname(require.resolve("some-package/package.json"));\nlet count = 0;\nfor (const file of [\n` +
+        lines(size, () => `  path.join(root, "lib", "part.cjs"),`) +
+        `]) count += require(file).one;\nconsole.log(count);\n`,
+      "node_modules/some-package/package.json": `{ "name": "some-package", "version": "1.0.0" }\n`,
+      "node_modules/some-package/lib/part.cjs": "exports.one = 1;\n",
     }),
   },
 ];

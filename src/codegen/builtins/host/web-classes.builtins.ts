@@ -53,11 +53,7 @@ const membersInspected = (...names: readonly string[]) => [b.runs(b.named(...nam
 const headerProtocols = ["OwnKeys", "OwnValues", "PrototypeChain", "Iterate", "ToPrimitive"] as const;
 
 const responseOptionNames = ["headers", "status", "statusText", "method"];
-const responseOptions = [
-  b.readsContents(),
-  b.runsTransitively(...headerProtocols, b.named(...responseOptionNames)),
-  b.membersOfObjectsOnly,
-];
+const responseOptions = [b.readsContents(), b.runsTransitively(...headerProtocols, b.named(...responseOptionNames))];
 
 // An async generator function is called, and any other object is asked for @@asyncIterator, inside the call.
 const bodyOfAnyKind = [
@@ -109,7 +105,6 @@ const requestOptionsAt = (operand: b.OperandName) => [
     ...headerProtocols.filter(protocol => protocol !== "Iterate"),
     b.named(...requestOptionNames, "length", "next"),
   ),
-  b.membersOfObjectsOnly,
   asksForIterator(operand, "@@iterator", "headers"),
   asksForIterator(operand, "@@iterator", "headers", b.everyOwnValue),
   asksForIterator(operand, "@@asyncIterator", "body"),
@@ -155,7 +150,7 @@ const responseInitParts = ["status", "statusText", "headers"];
 const usesOfResponseInitParts = {
   status: [b.runs("ToPrimitive")],
   statusText: [b.runs("ToPrimitive")],
-  headers: [b.readsContents(), b.runsTransitively(...headerProtocols), b.membersOfObjectsOnly],
+  headers: [b.readsContents(), b.runsTransitively(...headerProtocols)],
 };
 const argsOfResponseInitParts = { status: b.any, statusText: b.any, headers: b.any };
 
@@ -381,7 +376,7 @@ const removesFile = {
   ...operandCodeOnly,
   args: { options: anythingOrAbsent },
   returns: settledWithAnyReason(b.union(b.undefined, b.bool, b.instance("Error")).unaliased),
-  uses: { this: stateRead, options: b.hostOptionBag(s3OptionNames) },
+  uses: { this: stateRead, options: b.optionBag(s3OptionNames) },
   reads: externalState,
   writes: externalState,
 } satisfies b.FunctionField;
@@ -486,7 +481,7 @@ const membersOfBlob = {
           b.writesContents(),
           b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
         ],
-        options: b.hostOptionBag(["createPath", ...s3OptionNames]),
+        options: b.optionBag(["createPath", ...s3OptionNames]),
       },
       reads: operandHeaps,
       writes: externalState,
@@ -496,7 +491,7 @@ const membersOfBlob = {
     ...operandCodeOnly,
     args: { options: anythingOrAbsent },
     returns: b.union(b.instance("FileSink"), b.instance("NetworkSink")).fresh,
-    uses: { this: stateUpdate, options: b.hostOptionBag(["fd", "path", ...s3OptionNames]) },
+    uses: { this: stateUpdate, options: b.optionBag(["fd", "path", ...s3OptionNames]) },
     reads: externalState,
     writes: externalState,
   },

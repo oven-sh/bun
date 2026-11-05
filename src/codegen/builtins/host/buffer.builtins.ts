@@ -32,7 +32,7 @@ const createdFrom = (implementation: b.ImplementationSpec): b.FunctionField[] =>
     returns: newBuffer,
     capability: "heap",
     throws: true,
-    uses: { string: [b.readAsCharacters], encoding: b.inspected },
+    uses: { string: b.inspected, encoding: b.inspected },
     implementation,
   },
   {
@@ -151,7 +151,7 @@ const encodedWrite = {
   capability: "js",
   throws: true,
   runsOnlyOperandCode: true,
-  uses: { this: writesBytes, string: [b.readAsCharacters], offset: converted, length: converted },
+  uses: { this: writesBytes, string: b.inspected, offset: converted, length: converted },
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
@@ -290,7 +290,7 @@ export default b.declarations(
           returns: b.int(0, 3 * (2 ** 31 - 1)),
           capability: "heap",
           throws: true,
-          uses: { string: [b.readAsCharacters], encoding: b.inspected },
+          uses: { string: b.inspected, encoding: b.inspected },
           implementation: b.inline("StringUTF8ByteLength", { otherwise: b.hostCall }),
         },
         {
@@ -496,7 +496,7 @@ export default b.declarations(
         capability: "js",
         throws: true,
         runsOnlyOperandCode: true,
-        uses: { this: writesBytes, string: [b.readAsCharacters], encoding: converted },
+        uses: { this: writesBytes, string: b.inspected, encoding: converted },
         implementation: b.hostCall,
       },
       asciiSlice: decodedRange,

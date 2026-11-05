@@ -70,6 +70,7 @@ fn replace_written_type(lookup: MemberLookup, written: WrittenType) -> MemberLoo
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    #[inline]
     pub(super) fn declared_type_of_this(&mut self, ty: TypeId) -> TypeId {
         if let TypeData::ThisParam(symbol) = self.c.data(ty) {
             return self.c.declared_type(*symbol);
@@ -325,6 +326,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return Ok(&[]);
         };
         let members = self.c.structured(members);
+        if members.index_infos().is_empty() {
+            return Ok(&[]);
+        }
         let mut list = Vec::with_capacity(members.index_infos().len());
         for info in members.index_infos() {
             if !info.is_enum_number_index_info {

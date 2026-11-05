@@ -18,7 +18,7 @@
 # CHECK-LABEL: code f1:Body
 # CHECK: [[crate]]: L0 @Cell = NewObject layout=L0
 # CHECK: = FinishBirth [[crate]]
-# CHECK: = PutSlot [[crate]], -, {{*}} key="tint"
+# CHECK: = PutSlot [[crate]], {{*}} key="tint"
 # CHECK-NOT: = GetSlot [[crate]]
 # CHECK: = IsSlotFilled [[crate]] key="tint"
 # RUN(LOOP): walk f2 mechanisms=all
@@ -38,6 +38,6 @@
 # KIND-LABEL: code f4:Body
 # KIND: [[crate]]: L0 @Cell = NewObject layout=L0
 # KIND: = FinishBirth [[crate]]
-# KIND: = PutSlot [[crate]], -, {{*}} key="tint"
+# KIND: = PutSlot [[crate]], {{*}} key="tint"
 # KIND-NOT: = IsSlotFilled
 # KIND: = GetSlot [[crate]] key="tint" receivers=[L0] level=Proven [holdsDeclaredType]

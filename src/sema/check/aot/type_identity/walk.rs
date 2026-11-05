@@ -22,12 +22,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(in crate::check::aot) fn compute_object_origin(&mut self, ty: TypeId) -> ObjectOrigin {
-        let ty = self.declared_type_of_this(ty);
-        let data = self.c.data(ty);
+        let (ty, data) = match self.c.data(ty) {
+            TypeData::ThisParam(symbol) => {
+                let declared = self.c.declared_type(*symbol);
+                (declared, self.c.data(declared))
+            }
+            data => (ty, data),
+        };
         if let TypeData::Ref { target, .. } = data {
             return ObjectOrigin::Symbol(self.files().canonical(*target));
         }
-        if let Some((alias, _)) = self.c.alias_of_type(ty)
+        let alias = match self.c.stored_alias(ty) {
+            Some((alias, _)) => Some(*alias),
+            None => self.c.alias_symbol_of_type(ty),
+        };
+        if let Some(alias) = alias
             && is_top_level_alias(self, alias)
         {
             return ObjectOrigin::Symbol(alias);

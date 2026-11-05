@@ -5,6 +5,7 @@ mod literal;
 use smallvec::SmallVec;
 
 pub(in crate::lower) use self::builder::set_prototype;
+pub(in crate::lower) use self::emitted_enum::EnumsThatStayAsBorn;
 pub(crate) use self::literal::lower_object_literal;
 use super::FunctionLowering;
 use crate::ir::{LayoutId, PropertyKeyId, ValueId};

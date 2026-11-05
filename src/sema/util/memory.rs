@@ -138,10 +138,18 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
 
     /// Frees the chunks that are longer than `longest`.
     fn release(&mut self, longest: usize) {
-        for (chunk, base) in self.bases.iter_mut().enumerate().take(32) {
-            let len = Self::len_of(chunk);
+        for (chunk, base) in self
+            .bases
+            .iter_mut()
+            .enumerate()
+            .take((32 - FIRST) as usize)
+        {
             let base = base.get_mut();
-            if len > longest && !base.is_null() {
+            if base.is_null() {
+                continue;
+            }
+            let len = Self::len_of(chunk);
+            if len > longest {
                 let first = std::mem::replace(base, null_mut()).wrapping_add(len);
                 #[cfg(bun_asan)]
                 {

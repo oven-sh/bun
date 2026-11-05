@@ -447,6 +447,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             }
         }
     }
+    for &(module, _) in &replaced_names {
+        commonjs_exports.look_at(module);
+    }
     for file_imports in &imports {
         for &(module, name) in &file_imports.called_namespace_members {
             commonjs_exports.call_through_namespace(module, name);

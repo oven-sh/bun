@@ -13,7 +13,7 @@ use super::{
 use crate::builtins::RuntimeModule;
 use crate::diagnostics::{DiagnosticBuffer, InternalError};
 use crate::ir::{InParallel, for_each_mut};
-use crate::load::contents::FoundEntryPoint;
+use crate::load::contents::{FoundBecause, FoundEntryPoint};
 use crate::load::loaders::{BY_NAME, loader_by_name};
 use crate::load::module_paths::{
     FileMaps, PathContext, PathInput, are_all_different, check_unique_public_paths,
@@ -98,6 +98,7 @@ pub(crate) fn freeze_sources(
         runtime_module_files: all.runtime_module_files,
         modules_named_at_run_time: input.modules_named_at_run_time.to_vec(),
         web_assembly_files: all.web_assembly_files,
+        entry_points_found_by_computed_names: find_entry_points_found_by_computed_names(input),
         manifest: input.manifest,
         holds_source_paths: Default::default(),
     };
@@ -236,6 +237,26 @@ fn freeze_file(
         diagnostic_path,
     });
     Ok(())
+}
+
+fn find_entry_points_found_by_computed_names(input: &FreezeInput<'_, '_>) -> Vec<FileId> {
+    if input.project != ProjectId::Application {
+        return Vec::new();
+    }
+    let entry_points = input.files.entry_points();
+    let written_count = entry_points
+        .len()
+        .saturating_sub(input.found_entry_points.len());
+    let found = entry_points[written_count..].iter();
+    let found = found.zip(input.found_entry_points).filter(|(_, found)| {
+        matches!(
+            found.because,
+            FoundBecause::NamedByData
+                | FoundBecause::PassedForParameter
+                | FoundBecause::WrittenInArm
+        )
+    });
+    found.map(|(&file, _)| file).collect()
 }
 
 fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) -> Vec<EntryPoint> {

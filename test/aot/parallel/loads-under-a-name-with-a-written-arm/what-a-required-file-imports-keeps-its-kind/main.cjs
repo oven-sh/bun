@@ -1,4 +1,4 @@
-// The name of the load is chosen at run time, and the executable holds no file for it: it says so. `bun <file>` loads plug.mjs and prints "sloppy | default [object Module]". No build may print another kind for plain.cjs.
+// The name of the load is chosen at run time, and the arm that is written is what runs: the executable holds plug.mjs and loads it as `bun <file>` does, which prints "sloppy | default [object Module]". No build may print another kind for plain.cjs.
 let told;
 try {
   const plug = require(process.env.MADE_UP_PLUG || "./plug.mjs");
@@ -7,6 +7,3 @@ try {
   told = "not loaded";
 }
 console.log(told);
-/* Output:
-not loaded
-*/

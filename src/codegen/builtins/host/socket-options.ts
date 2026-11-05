@@ -109,7 +109,6 @@ export const socketOptions = [
   b.storedIn(b.nativeCell(socketOptionsCell)),
   b.reachableValuesStoredIn(b.nativeCell(socketOptionsCell)),
   b.runsTransitively(b.named(...socketOptionNames)),
-  b.membersOfObjectsOnly,
   ...["hostname", "host", "port"].flatMap(name => convertedToString("options", name)),
   ...convertedToString("options", "socket", "binaryType"),
   ...sequencesOfTLSOptions.map(name => iterated("options", "tls", name)),

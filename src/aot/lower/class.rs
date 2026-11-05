@@ -23,9 +23,11 @@ pub(in crate::lower) use self::fields::is_called_by_evaluated_text;
 pub(crate) use self::fields::static_field_position;
 pub(in crate::lower) use self::plan::{
     brand_is_of_methods, class_slots, decorators_of, fields_evaluated_in_constructor,
-    find_constructor_made_by_transpiler, find_fields_under_signed_members, has_decorators,
-    has_instance_brand, has_private_static_storage, is_auto_accessor, is_declaration_only,
-    is_decorated_private_name, is_derived_class, is_evaluated_in_constructor, runtime_members,
+    find_fields_under_signed_members, find_keys_that_hold_decorators,
+    find_what_is_printed_for_each_object, has_decorators, has_instance_brand,
+    has_private_static_storage, is_auto_accessor, is_declaration_only, is_decorated_private_name,
+    is_derived_class, is_evaluated_in_constructor, is_printed_as_getter_and_setter,
+    runtime_members,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -35,10 +37,25 @@ pub(in crate::lower) enum ClassTransform {
     Legacy,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(in crate::lower) enum MadeConstructor {
-    AtBrace,
-    AtStatement,
+#[derive(Default)]
+pub(in crate::lower) struct PrintedForEachObject {
+    pub(in crate::lower) written_constructor: Option<FnId>,
+    pub(in crate::lower) makes_constructor: bool,
+    pub(in crate::lower) stands_at_statement: bool,
+    pub(in crate::lower) fields_given_a_value: SmallVec<[MemberId; 2]>,
+}
+
+pub(in crate::lower) struct KeyThatHoldsDecorators {
+    pub(in crate::lower) member: Option<MemberId>,
+    pub(in crate::lower) private_members: SmallVec<[MemberId; 2]>,
+    pub(in crate::lower) lists: usize,
+    pub(in crate::lower) stands_behind_text_of_class: bool,
+}
+
+impl KeyThatHoldsDecorators {
+    pub(in crate::lower) fn shows_place_of_class(&self) -> bool {
+        self.lists > 1 || !self.stands_behind_text_of_class
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

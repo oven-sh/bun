@@ -455,7 +455,7 @@ export default b.declarations(
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,
-    uses: { options: b.hostOptionBag(["directory", "portable"]) },
+    uses: { options: b.optionBag(["directory", "portable"]) },
     reads: externalState,
     writes: externalState,
     implementation: b.generic,

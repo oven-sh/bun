@@ -22,10 +22,12 @@ pub enum ExportLookup {
     Found(BuiltinId),
 }
 
+#[inline]
 pub fn entry(id: BuiltinId) -> &'static BuiltinEntry {
-    &ENTRIES[id.index()]
+    &ENTRIES[id as usize]
 }
 
+#[inline]
 pub fn has_flag(id: BuiltinId, flag: BuiltinFlags) -> bool {
     entry(id).flags.contains(flag)
 }
@@ -67,8 +69,9 @@ pub fn contents_index(class: BuiltinClass, slot: ContentsSlot) -> Option<usize> 
         .position(|&candidate| candidate == slot)
 }
 
+#[inline]
 pub fn module_data(module: RuntimeModule) -> &'static ModuleData {
-    &MODULES[module.index()]
+    &MODULES[module as usize]
 }
 
 pub fn namespace_of(module: RuntimeModule) -> BuiltinId {
@@ -87,6 +90,7 @@ pub fn is_es_module(module: RuntimeModule) -> bool {
         .contains(ModuleFlags::IS_ES_MODULE)
 }
 
+#[inline]
 pub fn members(holder: BuiltinId) -> &'static [BuiltinId] {
     let holder = entry(holder);
     &BUILTINS_IN_ORDER[holder.first_member as usize..][..holder.member_count as usize]
@@ -140,6 +144,7 @@ pub fn member(holder: BuiltinId, name: BuiltinName) -> MemberLookup {
     }
 }
 
+#[inline]
 pub fn canonical_id(id: BuiltinId) -> BuiltinId {
     entry(id).same_object_as.unwrap_or(id)
 }
@@ -198,6 +203,7 @@ pub fn root_of(id: BuiltinId) -> BuiltinId {
     root
 }
 
+#[inline]
 pub fn exists_on(id: BuiltinId, platform: Platforms) -> bool {
     entry(id).platforms.contains(platform)
 }
@@ -343,12 +349,17 @@ pub fn name_of_symbol(symbol: WellKnownSymbol) -> BuiltinName {
 }
 
 pub fn module_by_specifier(specifier: &[u8]) -> Option<RuntimeModule> {
+    let first = MODULES_BY_SPECIFIER.first();
+    if first.is_some_and(|&first| specifier < module_data(first).specifier.as_bytes()) {
+        return None;
+    }
     let position = MODULES_BY_SPECIFIER
         .binary_search_by(|&module| module_data(module).specifier.as_bytes().cmp(specifier))
         .ok()?;
     Some(MODULES_BY_SPECIFIER[position])
 }
 
+#[inline]
 pub fn runtime_functions() -> &'static [RuntimeFunctionData] {
     RUNTIME_FUNCTIONS
 }

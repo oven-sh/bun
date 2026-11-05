@@ -36,6 +36,7 @@
 #include <JavaScriptCore/ScriptFetchParameters.h>
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/Symbol.h>
+#include <wtf/FileSystem.h>
 #include <wtf/SetForScope.h>
 
 #if ENABLE(AOT)
@@ -217,6 +218,17 @@ std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
     return module && AOT::isNativeModule(*module) ? std::nullopt : module;
 }
 
+String fileOfCallerThatWasNotCompiled(VM& vm, CallFrame* callFrame)
+{
+    SourceOrigin origin = callFrame->callerSourceOrigin(vm);
+    const URL& url = origin.url();
+    if (origin.isNull() || !url.isValid() || !url.protocolIsFile())
+        return {};
+    String path = url.fileSystemPath();
+    bool isFile = FileSystem::fileTypeFollowingSymlinks(path) == FileSystem::FileType::Regular;
+    return isFile && !isCompiledModule(path) ? path : String();
+}
+
 std::optional<bool> isHiddenFromRequireCache(const String& key)
 {
     auto module = moduleThatAnswersToPath(key);
@@ -260,34 +272,117 @@ static bool isGivenByPlugin(Zig::GlobalObject* global, const String& name)
     return given && given->isCallable();
 }
 
-static bool mayAnswerForName(JSGlobalObject* globalObject, const String& name)
+static bool hasPluginsThatAnswerForNames(JSGlobalObject* globalObject)
 {
     auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    if (isGivenByPlugin(global, name))
+    if (!global->onResolvePlugins.isEmpty())
         return true;
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
-    auto& resolvers = global->onResolvePlugins;
-    String whole = name;
-    bool isTaken = resolvers.fileNamespace.find(globalObject, whole);
-    if (size_t colon = name.find(':'); !isTaken && colon != notFound) {
-        String space = name.left(colon);
-        auto* group = resolvers.group(space == "file"_s ? String() : space);
-        String rest = name.substring(colon + 1);
-        isTaken = group && group->find(globalObject, rest);
+    auto* modules = global->onLoadPlugins.virtualModules;
+    if (!modules)
+        return false;
+    for (auto& given : modules->values()) {
+        if (given && given.get()->isCallable())
+            return true;
     }
-    (void)scope.tryClearException();
-    return isTaken;
+    return false;
+}
+
+struct AnswerOfPlugins {
+    JSGlobalObject* realm;
+    String question;
+    String importer;
+    JSC::Strong<JSC::Unknown> value;
+    bool isThrown;
+};
+
+struct AnswersOfPlugins {
+    Vector<Vector<AnswerOfPlugins>, 2> gotByEngine;
+    UncheckedKeyHashMap<String, Vector<AnswerOfPlugins, 1>> keptForLoader;
+    bool engineAsks { false };
+    bool pluginsAreSilent { false };
+};
+
+static AnswersOfPlugins& answersOfPluginsOnThisThread()
+{
+    static thread_local NeverDestroyed<AnswersOfPlugins> answers;
+    return answers;
+}
+
+static String questionOf(const BunString* space, const BunString* name, const BunString* importer)
+{
+    return makeString(space ? space->toWTFString() : String(), '\n', name->toWTFString(), '\n', importer->toWTFString());
+}
+
+std::optional<JSC::EncodedJSValue> takeAnswerKeptForLoader(JSGlobalObject* globalObject, const BunString* space, const BunString* name, const BunString* importer, bool& engineAsks)
+{
+    AnswersOfPlugins& answers = answersOfPluginsOnThisThread();
+    if (answers.pluginsAreSilent) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    engineAsks = std::exchange(answers.engineAsks, false);
+    if (engineAsks || answers.keptForLoader.isEmpty()) [[likely]]
+        return std::nullopt;
+    auto kept = answers.keptForLoader.find(questionOf(space, name, importer));
+    if (kept == answers.keptForLoader.end())
+        return std::nullopt;
+    size_t index = kept->value.findIf([&](const AnswerOfPlugins& answer) {
+        return answer.realm == globalObject;
+    });
+    if (index == notFound)
+        return std::nullopt;
+    JSValue value = kept->value[index].value.get();
+    bool isThrown = kept->value[index].isThrown;
+    kept->value.removeAt(index);
+    if (kept->value.isEmpty())
+        answers.keptForLoader.remove(kept);
+    if (!isThrown)
+        return JSValue::encode(value);
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    throwException(globalObject, scope, value);
+    return JSC::EncodedJSValue {};
+}
+
+void keepAnswerForLoader(JSGlobalObject* globalObject, const BunString* space, const BunString* name, const BunString* importer, JSValue answerOrWhatWasThrown, bool isThrown)
+{
+    AnswersOfPlugins& answers = answersOfPluginsOnThisThread();
+    answers.engineAsks = true;
+    answers.gotByEngine.last().append({ globalObject, questionOf(space, name, importer), importer->toWTFString(), JSC::Strong<JSC::Unknown>(getVM(globalObject), answerOrWhatWasThrown), isThrown });
+}
+
+extern "C" void Bun__AOT__setPluginsSilent(bool areSilent)
+{
+    answersOfPluginsOnThisThread().pluginsAreSilent = areSilent;
+}
+
+static void askingAboutNames(JSGlobalObject*, const ScopedLambda<bool(const String& importer)>* leavesWhereAskingEnds)
+{
+    AnswersOfPlugins& answers = answersOfPluginsOnThisThread();
+    if (!leavesWhereAskingEnds) {
+        answers.gotByEngine.append(Vector<AnswerOfPlugins>());
+        return;
+    }
+    for (AnswerOfPlugins& answer : answers.gotByEngine.takeLast()) {
+        if (!(*leavesWhereAskingEnds)(answer.importer))
+            continue;
+        String question = answer.question;
+        answers.keptForLoader.ensure(question, [] {
+                                 return Vector<AnswerOfPlugins, 1>();
+                             })
+            .iterator->value.append(WTF::move(answer));
+    }
 }
 
 static bool answersForName(JSGlobalObject* globalObject, const String& name, const String& importer)
 {
     auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     bool answers = isGivenByPlugin(global, name);
-    if (!answers) {
+    if (!answers && !global->onResolvePlugins.isEmpty()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
         BunString nameArgument = Bun::toString(name);
         BunString importerArgument = Bun::toString(importer);
-        answers = Bun__AOT__onResolveAnswersFor(globalObject, &nameArgument, &importerArgument);
+        {
+            SetForScope engineAsks(answersOfPluginsOnThisThread().engineAsks, true);
+            answers = Bun__AOT__onResolveAnswersFor(globalObject, &nameArgument, &importerArgument);
+        }
         (void)scope.tryClearException();
     }
     if (answers)
@@ -1323,8 +1418,9 @@ const AOT::ModuleHost compiledModuleHost = {
     &runMock,
     &loadsSynchronously,
     &loadsFileItself,
-    &mayAnswerForName,
+    &hasPluginsThatAnswerForNames,
     &answersForName,
+    &askingAboutNames,
     &mockOperations,
     &stampOfFile,
     &givesOriginalBesideMock,
@@ -1338,7 +1434,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &keepsTexts,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 36 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 37 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

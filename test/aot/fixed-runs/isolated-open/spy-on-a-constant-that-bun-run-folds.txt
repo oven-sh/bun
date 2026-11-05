@@ -1,4 +1,5 @@
-A file reads its own exported constants, whose values bun run works out from enums and literals: the reads keep those values under spyOn() on the namespace.
+A file reads its own exported constants, whose values bun run works out from enums and literals. Under spyOn() on the namespace such a read gives that value, where bun run has written it
+into the function, or the spy, as the language says and compiled code does.
 #### spy.test.mjs
 import { test, spyOn } from "bun:test";
 const show = value => (typeof value === "function" ? "function" : String(value));
@@ -6,9 +7,12 @@ for (const file of ["from-enums.ts", "from-literals.mjs"]) {
   test(file, async () => {
     const ns = await import("./src/" + file);
     const read = ns.read;
-    console.log("| CASE", file, "before:", read().map(show).join());
+    const before = read();
+    console.log("| CASE", file, "before:", before.map(show).join());
     for (const name of Object.keys(ns)) if (name !== "read") spyOn(ns, name);
-    console.log("| CASE", file, "spied:", read().map(show).join());
+    const spied = read();
+    const isEither = spied.every((value, at) => typeof value === "function" || Object.is(value, before[at]));
+    console.log("| CASE", file, "spied:", isEither ? "each the spy or the value from before" : spied.map(show).join());
   });
 }
 #### src/from-enums.ts

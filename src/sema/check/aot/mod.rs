@@ -36,9 +36,10 @@ mod written_type;
 pub use answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexKey, IndexSignature,
-    ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove, ObjectMember,
-    ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics, SignatureParameter,
-    SignatureShape, SymbolCreation, TypeArgument, TypeParameterRef, WrittenParameter, WrittenType,
+    ListedMember, MemberForm, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove,
+    ObjectMember, ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics,
+    SignatureParameter, SignatureShape, SymbolCreation, TypeArgument, TypeParameterRef,
+    WrittenParameter, WrittenType,
 };
 pub use builtin_types::{
     BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,

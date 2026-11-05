@@ -936,6 +936,10 @@ pub(crate) fn write_url_of_module(public_path: &[u8]) -> Option<Vec<u8>> {
     write_file_url(&with_forward_slashes(public_path.to_vec()))
 }
 
+pub(crate) fn write_url_of_path(path: &[u8]) -> Option<Vec<u8>> {
+    write_file_url(&with_separators_of_program(path))
+}
+
 pub(crate) fn join_to_url_of_module(public_path: &[u8], name: &[u8]) -> Option<Vec<u8>> {
     let url = write_url_of_module(public_path)?;
     let written = strings::split(&url[b"file://".len()..], b"/");
@@ -1067,6 +1071,11 @@ mod tests {
         let url = write_file_url(b"C:/a/b.ts");
         assert_eq!(url.as_deref(), Some(&b"file:///C:/a/b.ts"[..]));
         assert_eq!(write_file_url(b"a/b.ts"), None);
+        let url = write_url_of_path(br"C:\a\b.ts");
+        assert_eq!(url.as_deref(), Some(&b"file:///C:/a/b.ts"[..]));
+        let url = write_url_of_path(br"/a\b.ts");
+        assert_eq!(url.as_deref(), Some(&b"file:///a%5Cb.ts"[..]));
+        assert_eq!(write_file_url(br"C:\a\b.ts"), None);
     }
 
     #[test]

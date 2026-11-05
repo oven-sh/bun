@@ -1405,6 +1405,50 @@ fn spy_on_a_name_of_a_module_replaces_that_export_alone() {
 }
 
 #[test]
+fn default_of_a_commonjs_file_is_its_copy_where_a_spy_may_reach_it_through_a_namespace() {
+    let user = (
+        "user.js",
+        "import d from './c.cjs'; export const use = () => d.x();",
+    );
+    let file = ("c.cjs", "module.exports = { x() { return 1; } };");
+    let barrel = ("barrel.js", "export { default as renamed } from './c.cjs';");
+    let other = ("other.cjs", "module.exports = { y() { return 2; } };");
+    let head = "import { spyOn } from 'bun:test'; import './user.js';";
+    let run = |text: &str, check: &dyn Fn(&BoundProgram<'_, '_, '_>)| {
+        let main = format!("{head} {text}");
+        let files = [("main.test.js", main.as_str()), user, file, barrel, other];
+        with_test_run(&files, |program| check(program));
+    };
+    let reached = [
+        "import * as ns from './c.cjs'; spyOn(ns, 'default');",
+        "import * as ns from './c.cjs'; for (const name in ns) spyOn(ns, name);",
+        "import * as handed from './barrel.js'; spyOn(handed, 'renamed');",
+        "const ns = await import('./c.cjs'); spyOn(ns, 'default');",
+        "import * as ns from './c.cjs'; const box = { ns }; spyOn(box.ns, ['de', 'fault'].join(''));",
+    ];
+    for text in reached {
+        run(text, &|program| {
+            let export = program.synthetic_export("user.js", "d");
+            assert_eq!(export.module, program.module("c.cjs"), "{text}");
+            assert!(export.is_replaceable, "{text}");
+        });
+    }
+    let left_alone = [
+        "",
+        "const box = { ping() {} }; spyOn(box, ['pi', 'ng'].join(''));",
+        "import * as ns from './other.cjs'; spyOn(ns, 'default');",
+        "const held = require('./c.cjs'); const box = { ping() {} }; spyOn(box, held.x());",
+    ];
+    for text in left_alone {
+        run(text, &|program| {
+            let module = program.module("c.cjs");
+            let whole = ImportBinding::Exports { module };
+            assert_eq!(program.binding("user.js", "d"), whole, "{text}");
+        });
+    }
+}
+
+#[test]
 fn spy_on_a_name_that_the_loader_fills_replaces_that_name_alone() {
     let main = "
         import { spyOn } from 'bun:test';

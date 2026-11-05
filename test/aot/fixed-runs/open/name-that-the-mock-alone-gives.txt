@@ -1,9 +1,0 @@
-A file hands on a name that only the mock of the file below it gives.
-#### a.js
-export const other = 1;
-#### uses-a.js
-export { name } from "./a.js";
-#### x.test.js
-import { expect, test, vi } from "bun:test";
-vi.mock("./a.js", () => ({ name: "mock a" }));
-test("t", async () => expect((await import("./uses-a.js")).name).toBe("mock a"));

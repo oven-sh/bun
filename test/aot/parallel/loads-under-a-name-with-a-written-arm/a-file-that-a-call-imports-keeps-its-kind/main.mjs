@@ -1,4 +1,4 @@
-// The name of the load is chosen at run time, and the executable holds no file for it: it says so. `bun <file>` loads setup.cjs and prints "strict |  [object Module]", as a compiled executable does where the name is written outright; `bun build --compile` prints "sloppy | default [object Module]".
+// The name of the load is chosen at run time, and the arm that is written is what runs: the executable holds setup.cjs and loads it as `bun <file>` does, which prints "strict |  [object Module]", as where the name is written outright; `bun build --compile` prints "sloppy | default [object Module]".
 let told;
 try {
   const loaded = await import(process.env.MADE_UP_SETUP || "./setup.cjs");
@@ -7,6 +7,3 @@ try {
   told = "not loaded";
 }
 console.log(told);
-/* Output:
-not loaded
-*/

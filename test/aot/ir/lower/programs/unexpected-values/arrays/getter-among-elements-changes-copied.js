@@ -164,23 +164,26 @@ for (const use in uses) for (const change in changes) attempt(use + ", the gette
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=undefined|null|function flags=[IsExpected] variableName="change"}, {type=anything variableName="list"}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: undefined|null|function, v2: anything):
-// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="calls"
-// CHECK-NEXT: v5 = ToNumeric v4
-// CHECK-NEXT: v6 = Increment v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="calls"
-// CHECK-NEXT: PutEnvironmentField v0, v7 layout=[[L_2]]
-// CHECK-NEXT: v11 = Integer
-// CHECK-NEXT: v12 = StrictEq v5, v11
-// CHECK-NEXT: Branch v12 -> taken b1(), notTaken b2()
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_2]]):
+// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_2]] field=2
+// CHECK-NEXT: v2 = CheckInitialized v1 name="calls"
+// CHECK-NEXT: v3 = ToNumeric v2
+// CHECK-NEXT: v4 = Increment v3
+// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_2]] field=2
+// CHECK-NEXT: v7 = CheckInitialized v6 name="calls"
+// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_2]] field=2
+// CHECK-NEXT: v9 = Integer
+// CHECK-NEXT: v10 = StrictEq v3, v9
+// CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v13 = Call v1, -, v2 calleeName="change"
+// CHECK-NEXT: v11 = GetEnvironmentField v0 layout=[[L_2]]
+// CHECK-NEXT: v12 = GetEnvironmentField v0 layout=[[L_2]] field=1
+// CHECK-NEXT: v13 = CheckInitialized v12 name="list"
+// CHECK-NEXT: v14 = Call v11, -, v13 calleeName="change"
 // CHECK-NEXT: Jump -> next b2()
 // CHECK-NEXT: b2():
-// CHECK-NEXT: v14 = String string="got"
-// CHECK-NEXT: Return v14
+// CHECK-NEXT: v15 = String string="got"
+// CHECK-NEXT: Return v15
 // CHECK-NEXT: }

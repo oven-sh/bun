@@ -1,6 +1,6 @@
 use super::answers::{
     ClassDeclaration, ClassMember, ClassMemberSource, ClassRef, ClassShape, FunctionRef, GaveUp,
-    MemberName, ObjectMemberKind, PositionTypes,
+    MemberForm, MemberName, ObjectMemberKind, PositionTypes,
 };
 use super::class_stores::{
     BindingStore, BindingStoreKind, StoreForm, StoreIndex, ThisOwner,
@@ -33,6 +33,8 @@ struct StoreCandidate {
     value: ExprId,
     form: StoreForm,
     is_in_every_construction: bool,
+    defined: MemberForm,
+    is_stored_by_callee: bool,
 }
 
 impl StoreCandidate {
@@ -124,6 +126,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         {
             return None;
         }
+        let stores_by_itself = candidates
+            .stores
+            .iter()
+            .any(|store| store.is_of_constructor_function() && !store.is_stored_by_callee);
+        if !stores_by_itself {
+            let only_hands_on = FunctionRef { file, function };
+            if !self.is_held_by_name_or_returned(only_hands_on)
+                || !self.is_used_like_constructor(only_hands_on)
+            {
+                return None;
+            }
+        }
         let mut members = Vec::new();
         let names_stored_in_prototype = self.names_stored_in_prototype(&candidates);
         self.add_stores(file, &mut members, candidates);
@@ -195,6 +209,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 types,
                 is_static: false,
                 is_optional: flags.contains(Flags::OPTIONAL),
+                form: MemberForm::default(),
             });
         }
     }
@@ -289,6 +304,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             types,
             is_static,
             is_optional,
+            form: MemberForm::default(),
         })
     }
 
@@ -394,6 +410,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 types: PositionTypes::unwritten(checked),
                 is_static,
                 is_optional: !is_always_stored,
+                form: candidate.defined,
             });
         }
     }
@@ -497,6 +514,8 @@ fn store_candidates(
             value: store.value,
             form: store.form,
             is_in_every_construction: store.is_in_every_construction,
+            defined: store.defined,
+            is_stored_by_callee: store.is_stored_by_callee,
         }));
     }
     let inner = inner.filter(|&inner| outer != Some(inner));
@@ -536,12 +555,14 @@ fn binding_candidate(store: &BindingStore) -> StoreCandidate {
         value: store.value,
         form: store.form,
         is_in_every_construction: false,
+        defined: MemberForm::default(),
+        is_stored_by_callee: false,
     }
 }
 
 fn find_stored_value(stores: &[StoreCandidate], candidate: &StoreCandidate) -> Option<ExprId> {
     match candidate.form {
-        StoreForm::Plain | StoreForm::Logical => Some(candidate.value),
+        StoreForm::Plain | StoreForm::Logical => candidate.value.some(),
         StoreForm::Compound => {
             let mut to_same_place = stores
                 .iter()

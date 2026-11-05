@@ -35,6 +35,7 @@
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include "JavaScriptCore/AOTHost.h"
 #include "BunPlugin.h"
+#include "BunCompiledModules.h"
 #include "NodeVM.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -3135,7 +3136,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
             RETURN_IF_EXCEPTION(scope, true);
             if (!isReplaced)
-                throwTypeError(globalObject, scope, JSC::AOT::refusedSpyOnExportMessage(object, propertyKey.impl()));
+                throwTypeError(globalObject, scope, JSC::AOT::refusedSpyOnExportMessage(object, propertyKey.impl(), Bun::fileOfCallerThatWasNotCompiled(vm, callframe)));
             return true;
         }
 #endif

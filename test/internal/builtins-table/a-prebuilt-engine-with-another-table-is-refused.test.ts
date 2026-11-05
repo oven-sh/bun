@@ -45,7 +45,8 @@ function copyOfEngine(): { root: ReturnType<typeof tempDir>; generatedCopy: stri
   return { root, generatedCopy };
 }
 
-test.skipIf(generated === undefined)(
+// A run of the generator takes many seconds, and each case has folders of its own: they run side by side.
+test.concurrent.skipIf(generated === undefined)(
   "an engine compiled with this tree's table is accepted",
   async () => {
     const { root, generatedCopy } = copyOfEngine();
@@ -57,7 +58,7 @@ test.skipIf(generated === undefined)(
   isASAN ? 300_000 : 120_000,
 );
 
-test.skipIf(generated === undefined)(
+test.concurrent.skipIf(generated === undefined)(
   "an engine compiled with another position for one built-in that it names is refused by name",
   async () => {
     const { root, generatedCopy } = copyOfEngine();
@@ -78,7 +79,7 @@ test.skipIf(generated === undefined)(
   isASAN ? 300_000 : 120_000,
 );
 
-test.skipIf(generated === undefined)(
+test.concurrent.skipIf(generated === undefined)(
   "the table that the engine's own programs were linked with is not compared",
   async () => {
     const { root, generatedCopy } = copyOfEngine();
@@ -91,7 +92,7 @@ test.skipIf(generated === undefined)(
   isASAN ? 300_000 : 120_000,
 );
 
-test.skipIf(generated === undefined)(
+test.concurrent.skipIf(generated === undefined)(
   "a native method that a schema gains needs no other engine",
   async () => {
     const { root, generatedCopy } = copyOfEngine();

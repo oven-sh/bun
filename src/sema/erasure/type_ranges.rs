@@ -6,7 +6,7 @@ use crate::hir::{
     is_nested_namespace, is_parenthesized, modifier_text, parameter_properties, start_of,
 };
 use crate::session::Arena;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -281,6 +281,7 @@ struct Finder<'a, 's> {
     replaced: Vec<ReplacedText>,
     ends_of_statements: Vec<u32>,
     comments_passed: RefCell<Vec<u32>>,
+    comments_before_last_asked: Cell<usize>,
 }
 
 fn is_part_of_name(byte: u8) -> bool {
@@ -304,6 +305,7 @@ impl<'a, 's> Finder<'a, 's> {
             replaced: Vec::new(),
             ends_of_statements: Vec::new(),
             comments_passed: RefCell::default(),
+            comments_before_last_asked: Cell::new(0),
         }
     }
 
@@ -439,17 +441,36 @@ impl<'a, 's> Finder<'a, 's> {
     fn skip_trivia(&self, mut at: usize) -> usize {
         loop {
             at = self.skip_spaces(at);
-            let rest = self.text.get(at..).unwrap_or_default();
-            if rest.starts_with(b"//") {
-                let length = rest.iter().position(|&byte| is_line_break(byte));
-                at += length.unwrap_or(rest.len());
-            } else if rest.starts_with(b"/*") {
-                let length = bun_core::strings::index_of(&rest[2..], b"*/");
-                at += length.map_or(rest.len(), |length| length + 4);
-            } else {
+            if self.byte(at) != b'/' {
                 return at;
             }
+            let rest = self.text.get(at..).unwrap_or_default();
+            match self.byte(at + 1) {
+                b'/' => {
+                    let length = rest.iter().position(|&byte| is_line_break(byte));
+                    at += length.unwrap_or(rest.len());
+                }
+                b'*' => {
+                    let length = bun_core::strings::index_of(&rest[2..], b"*/");
+                    at += length.map_or(rest.len(), |length| length + 4);
+                }
+                _ => return at,
+            }
         }
+    }
+
+    fn count_comments_before(&self, at: usize) -> usize {
+        let comments = &self.file.comments;
+        let starts_before = |comment: &Comment| (comment.pos as usize) < at;
+        let last_asked = self.comments_before_last_asked.get();
+        let last = last_asked.checked_sub(1).map(|last| &comments[last]);
+        let next = comments.get(last_asked);
+        if last.is_none_or(starts_before) && !next.is_some_and(starts_before) {
+            return last_asked;
+        }
+        let before = comments.partition_point(starts_before);
+        self.comments_before_last_asked.set(before);
+        before
     }
 
     fn skip_trivia_back(&self, mut at: usize) -> usize {
@@ -458,7 +479,7 @@ impl<'a, 's> Finder<'a, 's> {
             while is_space(self.byte_before(at)) {
                 at -= 1;
             }
-            let before = comments.partition_point(|comment| (comment.pos as usize) < at);
+            let before = self.count_comments_before(at);
             match before.checked_sub(1) {
                 Some(last) if comments[last].end as usize >= at => {
                     self.comments_passed.borrow_mut().push(last as u32);
@@ -488,7 +509,7 @@ impl<'a, 's> Finder<'a, 's> {
 
     fn add_whole(&mut self, start: u32, end: u32) {
         self.add(start, end);
-        let end = end as usize;
+        let end = self.skip_trivia(end as usize);
         if self.is_followed_by_one_of(end, b"([`+-/<*") || self.is_followed_by_operator_word(end) {
             self.ends_of_statements.push(start);
         }
@@ -529,7 +550,10 @@ impl<'a, 's> Finder<'a, 's> {
             return;
         };
         let name_end = self.file[name].end as usize;
-        let mark = self.skip_trivia(name_end);
+        let mark = match has_mark {
+            true => self.skip_trivia(name_end),
+            false => name_end,
+        };
         let mark_end = match has_mark && matches!(self.byte(mark), b'?' | b'!') {
             true => mark + 1,
             false => name_end,
@@ -670,6 +694,9 @@ impl<'a, 's> Finder<'a, 's> {
             name_end = self.skip_trivia_back(name_end - 1);
         }
         let before = self.text.get(..name_end).unwrap_or_default();
+        if !matches!(before.last(), Some(b'c' | b't')) {
+            return;
+        }
         let is_named_like_modifier = [&b"static"[..], b"get", b"set"].iter().any(|&word| {
             (before.strip_suffix(word))
                 .is_some_and(|front| !front.last().is_some_and(|&byte| is_part_of_name(byte)))

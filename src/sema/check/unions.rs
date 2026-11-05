@@ -95,7 +95,32 @@ struct Ranked<'p> {
     /// `sort_name`, once `has_name` is set. Most members are never compared with a member of another run that has the
     /// same flags.
     name: Option<&'p [u8]>,
+    name_start: u64,
     has_name: bool,
+}
+
+impl Ranked<'_> {
+    #[inline]
+    fn compare_names(&self, other: &Self) -> std::cmp::Ordering {
+        self.name_start
+            .cmp(&other.name_start)
+            .then_with(|| some_first(self.name, other.name))
+    }
+}
+
+fn start_of_name(name: Option<&[u8]>) -> u64 {
+    let Some(name) = name else {
+        return u64::MAX;
+    };
+    match name.first_chunk::<8>() {
+        Some(start) => u64::from_be_bytes(*start),
+        None => {
+            let start = name
+                .iter()
+                .fold(0u64, |start, &byte| start << 8 | u64::from(byte));
+            start.checked_shl(8 * (8 - name.len()) as u32).unwrap_or(0)
+        }
+    }
 }
 
 type Run<'p> = smallvec::SmallVec<[Ranked<'p>; 16]>;
@@ -1664,13 +1689,15 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         match self.data(ty) {
             TypeData::Union(members) => {
-                let types: &[TypeId] = match self.origin(ty) {
+                let origin = self.origin(ty);
+                let may_hold_unions = matches!(origin, UnionOrigin::Union(_));
+                let types: &[TypeId] = match origin {
                     UnionOrigin::Union(origin) => origin,
                     _ => members,
                 };
                 let mut mapped: smallvec::SmallVec<[TypeId; 8]> = smallvec::SmallVec::new();
                 for &s in types {
-                    mapped.push(if self.is_union(s) {
+                    mapped.push(if may_hold_unions && self.is_union(s) {
                         self.map_type_ex(s, f, no_reductions)
                     } else {
                         f(self, s)
@@ -3056,6 +3083,7 @@ impl<'p, 's> Checker<'p, 's> {
             ty,
             flags: self.sort_order_flags(ty),
             name: None,
+            name_start: u64::MAX,
             has_name: false,
         }
     }
@@ -3064,6 +3092,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn look_up_name(&self, ranked: &mut Ranked<'p>) {
         if !ranked.has_name {
             ranked.name = self.sort_name(ranked.ty, ranked.flags);
+            ranked.name_start = start_of_name(ranked.name);
             ranked.has_name = true;
         }
     }
@@ -3076,13 +3105,12 @@ impl<'p, 's> Checker<'p, 's> {
         for ranked in types.iter_mut() {
             self.look_up_name(ranked);
         }
-        types.sort_by(|a, b| {
-            a.flags
-                .cmp(&b.flags)
-                .then_with(|| some_first(a.name, b.name))
-        });
+        types.sort_by(|a, b| a.flags.cmp(&b.flags).then_with(|| a.compare_names(b)));
         let mut buffer = Vec::new();
         for same_name_group in types.chunk_by_mut(|a, b| (a.flags, a.name) == (b.flags, b.name)) {
+            if same_name_group.len() < 2 {
+                continue;
+            }
             let mut compare = |a: &Ranked<'p>, b: &Ranked<'p>| match a.ty == b.ty {
                 true => std::cmp::Ordering::Equal,
                 false => self.compare_types(a.ty, b.ty),
@@ -3336,7 +3364,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.look_up_name(a);
         self.look_up_name(b);
-        some_first(a.name, b.name).then_with(|| self.compare_types(a.ty, b.ty))
+        a.compare_names(b)
+            .then_with(|| self.compare_types(a.ty, b.ty))
     }
 
     /// `containsType` for the members of a union. It tests identity, and comparing two types costs more than a linear

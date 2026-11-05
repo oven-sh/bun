@@ -1,5 +1,5 @@
 // The keys of an object that got them in another order than its layout declares are seen by Object.keys of what has met an object of another kind in a list.
-// Under: --aot-testing=CheckProofsAtRunTime: LinkedLayout::keysMayBeListed
+// Under: --aot-testing=CheckProofsAtRunTime: a proof that nobody sees the order of these keys would be false
 function make(flip) {
   const o = { kind: "point" };
   if (flip) {

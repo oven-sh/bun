@@ -24,11 +24,51 @@ pub(super) struct Lookup<'a, 's> {
     pub dynamic: DynamicScopes,
 }
 
+#[derive(Copy, Clone)]
 pub(super) struct Found {
     pub binding: Binding,
     pub scope: ScopeId,
     pub entered_from: ScopeKind,
     pub dynamic_scope: ScopeId,
+}
+
+pub(super) struct RecentLookups {
+    is_position_ignored: bool,
+    entries: [Option<(ScopeId, Atom, Found)>; 64],
+}
+
+impl RecentLookups {
+    pub(super) fn new(lookup: &Lookup<'_, '_>) -> RecentLookups {
+        let dynamic = &lookup.dynamic;
+        RecentLookups {
+            is_position_ignored: dynamic.scopes.is_empty()
+                && dynamic.parameter_eval_scopes.is_empty(),
+            entries: [None; 64],
+        }
+    }
+
+    #[inline]
+    pub(super) fn find(
+        &mut self,
+        lookup: &Lookup<'_, '_>,
+        start: ScopeId,
+        name: Atom,
+        pos: u32,
+    ) -> Found {
+        if !self.is_position_ignored {
+            return lookup.find(start, name, pos);
+        }
+        let key = u64::from(start.0) << 32 | u64::from(name.0);
+        let entry = &mut self.entries[(key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 58) as usize];
+        match *entry {
+            Some((scope, found_name, found)) if scope == start && found_name == name => found,
+            _ => {
+                let found = lookup.find(start, name, pos);
+                *entry = Some((start, name, found));
+                found
+            }
+        }
+    }
 }
 
 impl Lookup<'_, '_> {
@@ -44,7 +84,7 @@ impl Lookup<'_, '_> {
             if matches!(scope.kind, ScopeKind::With(_)) && dynamic_scope.is_none() {
                 dynamic_scope = at;
             }
-            if let Some(binding) = self.find_in_scope(at, from, name) {
+            if let Some(binding) = self.find_in_scope(at, scope, from, name) {
                 return Found {
                     binding,
                     scope: at,
@@ -60,7 +100,10 @@ impl Lookup<'_, '_> {
             }
             from = scope.kind;
             inner = at;
-            at = self.bound.runtime_parent_scope(self.hir, at);
+            at = match scope.kind {
+                ScopeKind::ClassDecorators(_) => self.bound.runtime_parent_scope(self.hir, at),
+                _ => scope.parent,
+            };
         }
         Found {
             binding: Binding::Free,
@@ -109,9 +152,15 @@ impl Lookup<'_, '_> {
             && !is_among_parameters(self.hir, function, found.entered_from, pos)
     }
 
-    fn find_in_scope(&self, at: ScopeId, from: ScopeKind, name: Atom) -> Option<Binding> {
+    #[inline]
+    fn find_in_scope(
+        &self,
+        at: ScopeId,
+        scope: &Scope,
+        from: ScopeKind,
+        name: Atom,
+    ) -> Option<Binding> {
         let bound = self.bound;
-        let scope = &bound.scopes[at.idx()];
         if let Some(local) = bound.find_in_table(scope.locals, name)
             && let Some(binding) = self.local_binding(scope.kind, from, name, local)
         {
@@ -125,12 +174,19 @@ impl Lookup<'_, '_> {
         if let Some(member) = self.find_exported_member(at, scope, name) {
             return Some(Binding::Symbol(member));
         }
+        let parameters = &bound.runtime.declarations.container_parameters;
+        if let ScopeKind::Enum(it) = scope.kind
+            && self.hir[it].name == name
+            && let Some(parameter) = find_symbol(parameters, at)
+        {
+            return Some(Binding::Symbol(parameter));
+        }
         if name == known::arguments
             && let Some(binding) = self.find_arguments_object(scope.kind)
         {
             return Some(binding);
         }
-        if scope.kind != ScopeKind::File {
+        if !matches!(scope.kind, ScopeKind::File) {
             return None;
         }
         let mut variables = COMMONJS_VARIABLES.into_iter();
@@ -157,7 +213,9 @@ impl Lookup<'_, '_> {
         {
             return None;
         }
-        let symbol = if is_block_binding(bound, kind, local) {
+        let is_of_block =
+            matches!(kind, ScopeKind::Module(_)) && is_block_binding(bound, kind, local);
+        let symbol = if is_of_block {
             local
         } else {
             bound.export_symbol_of_value_symbol_if_exported(local)

@@ -452,17 +452,24 @@ impl Resolver<'_, '_> {
         Some((owner, object_use))
     }
 
-    fn find_ways_that_pattern_reads(
+    fn push_ways_that_pattern_reads(
         &self,
         object: ExprId,
-    ) -> SmallVec<[(ModuleObjectOwner, ModuleObjectUse); 2]> {
+        mentions: &mut Vec<ModuleObjectMention>,
+    ) {
         let hir = self.input.hir;
-        let mut ways = SmallVec::new();
         let Some(owner) = self.find_owner(object) else {
-            return ways;
+            return;
         };
         let MentionUse::Destructured(pattern) = self.classify_use(object) else {
-            return ways;
+            return;
+        };
+        let mut push = |owner: ModuleObjectOwner, object_use: ModuleObjectUse| {
+            mentions.push(ModuleObjectMention {
+                expr: object,
+                owner,
+                object_use,
+            });
         };
         let mut work_stack: SmallVec<[(ModuleObjectOwner, PatId); 2]> = smallvec![(owner, pattern)];
         while let Some((owner, pattern)) = work_stack.pop() {
@@ -480,55 +487,60 @@ impl Resolver<'_, '_> {
                         self.find_named_member(some_module_object(), name)
                     }
                     _ => {
-                        ways.push((owner, ModuleObjectUse::HandedOn));
+                        push(owner, ModuleObjectUse::HandedOn);
                         continue;
                     }
                 };
                 match member.map(|member| table::canonical_id(member.id)) {
                     Some(BuiltinId::ModuleObjectParent) => {
-                        ways.push((owner, ModuleObjectUse::Parent));
+                        push(owner, ModuleObjectUse::Parent);
                         work_stack.push((ModuleObjectOwner::Related, prop.value));
                     }
                     Some(BuiltinId::ModuleObjectChildren) => {
-                        ways.push((owner, ModuleObjectUse::Children));
+                        push(owner, ModuleObjectUse::Children);
                     }
                     _ => {}
                 }
             }
         }
-        ways
     }
 
     fn find_way_that_computed_key_reads(
         &self,
         member: ExprId,
     ) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
-        let hir = self.input.hir;
-        let (object, MemberKey::Computed(_)) = hir.member_key(member)? else {
+        let (object, MemberKey::Computed(_)) = self.input.hir.member_key(member)? else {
             return None;
         };
-        let (ExprState::Builtin(value) | ExprState::Held(value)) =
-            self.state(hir.skip_type_assertions(object))
-        else {
-            return None;
-        };
-        let holds_main_module = matches!(
-            table::canonical_id(value.path.id),
-            BuiltinId::ModuleRequire | BuiltinId::Process
-        );
-        (holds_main_module && self.is_plain_read(member))
+        (self.holds_main_module(object) && self.is_plain_read(member))
             .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn))
     }
 
-    fn find_require_out_of_sight(&self, e: ExprId) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
-        let is_out_of_sight = match self.state(e) {
+    fn holds_main_module(&self, object: ExprId) -> bool {
+        let (ExprState::Builtin(value) | ExprState::Held(value)) =
+            self.state(self.input.hir.skip_type_assertions(object))
+        else {
+            return false;
+        };
+        matches!(
+            table::canonical_id(value.path.id),
+            BuiltinId::ModuleRequire | BuiltinId::Process
+        )
+    }
+
+    fn find_require_out_of_sight(
+        &self,
+        e: ExprId,
+        state: ExprState,
+        id: Option<BuiltinId>,
+    ) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
+        let is_out_of_sight = match state {
             ExprState::Unresolved => {
                 self.find_made_require(e).is_some()
                     && matches!(self.classify_use(e), MentionUse::Exposed)
                     && !matches!(self.input.bound.parent_of_expr(e), Parent::VarInit(_))
             }
-            state => {
-                let id = mentioned_id(state).map(table::canonical_id);
+            _ => {
                 id == Some(BuiltinId::NodeModuleCreateRequire)
                     && match self.classify_use(e) {
                         MentionUse::Called(call) => self.find_made_require(call).is_none(),
@@ -542,8 +554,12 @@ impl Resolver<'_, '_> {
         is_out_of_sight.then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn))
     }
 
-    fn may_store_path_of_main_module(&self, e: ExprId, holds_path: Option<BuiltinId>) -> bool {
-        let id = mentioned_id(self.state(e)).map(table::canonical_id);
+    fn may_store_path_of_main_module(
+        &self,
+        e: ExprId,
+        id: Option<BuiltinId>,
+        holds_path: Option<BuiltinId>,
+    ) -> bool {
         if id.is_some() && id == holds_path {
             return !self.is_plain_read(e);
         }
@@ -554,55 +570,90 @@ impl Resolver<'_, '_> {
             )
     }
 
+    #[inline(never)]
+    fn push_module_object_mentions_at(
+        &self,
+        expr: ExprId,
+        holds_path: Option<BuiltinId>,
+        mentions: &mut Vec<ModuleObjectMention>,
+    ) -> bool {
+        let hir = self.input.hir;
+        let state = self.state(expr);
+        let id = mentioned_id(state).map(table::canonical_id);
+        let may_store_path = self.may_store_path_of_main_module(expr, id, holds_path);
+        if let Some((owner, object_use)) = self.find_require_out_of_sight(expr, state, id) {
+            mentions.push(ModuleObjectMention {
+                expr,
+                owner,
+                object_use,
+            });
+            return may_store_path;
+        }
+        if matches!(hir[expr].kind, ExprKind::This) {
+            let is_evaluated = matches!(state, ExprState::Unresolved);
+            let global = self.find_global_out_of_sight_through(expr);
+            if is_evaluated && global.is_some_and(leads_to_main_module) {
+                let (owner, object_use) = HOLDER_HANDED_ON;
+                mentions.push(ModuleObjectMention {
+                    expr,
+                    owner,
+                    object_use,
+                });
+            }
+            return may_store_path;
+        }
+        let stands_for_builtin = matches!(state, ExprState::Builtin(_) | ExprState::Held(_));
+        if !stands_for_builtin
+            && !matches!(hir[expr].kind, ExprKind::Index { .. })
+            && hir.type_assertion_operand(expr).is_none()
+        {
+            return may_store_path;
+        }
+        let found = self.find_module_object_mention(expr).into_iter();
+        for (owner, object_use) in found.chain(self.find_way_that_computed_key_reads(expr)) {
+            mentions.push(ModuleObjectMention {
+                expr,
+                owner,
+                object_use,
+            });
+        }
+        self.push_ways_that_pattern_reads(expr, mentions);
+        may_store_path
+    }
+
     pub(super) fn collect_module_object_mentions(&mut self) {
         if self.input.dialect != SourceDialect::Program {
             return;
         }
         let hir = self.input.hir;
-        let main = table::find_name(b"main");
+        let main = self.input.names.get(known::main);
         let holds_path = main.and_then(|main| table::own_member(BuiltinId::Bun, main));
         let holds_path = holds_path.map(table::canonical_id);
         let mut may_store_path = false;
         let mut mentions = Vec::new();
-        for expr in self.evaluated_exprs() {
-            may_store_path |= self.may_store_path_of_main_module(expr, holds_path);
-            if let Some((owner, object_use)) = self.find_require_out_of_sight(expr) {
-                mentions.push(ModuleObjectMention {
-                    expr,
-                    owner,
-                    object_use,
-                });
-                continue;
-            }
-            if matches!(hir[expr].kind, ExprKind::This) {
-                let is_evaluated = matches!(self.state(expr), ExprState::Unresolved);
-                let global = self.find_global_out_of_sight_through(expr);
-                if is_evaluated && global.is_some_and(leads_to_main_module) {
-                    let (owner, object_use) = HOLDER_HANDED_ON;
-                    mentions.push(ModuleObjectMention {
-                        expr,
-                        owner,
-                        object_use,
-                    });
+        let mut found_or_this = &self.found_or_this[..];
+        let is_read_off =
+            |&found: &ExprId| self.find_owner(found).is_some() || self.holds_main_module(found);
+        if self.loads_node_module || found_or_this.iter().any(is_read_off) {
+            for expr in self.evaluated_exprs() {
+                while let [listed, rest @ ..] = found_or_this
+                    && *listed < expr
+                {
+                    found_or_this = rest;
                 }
-                continue;
+                if self.loads_node_module
+                    || found_or_this.first() == Some(&expr)
+                    || matches!(hir[expr].kind, ExprKind::Index { .. })
+                    || hir.type_assertion_operand(expr).is_some()
+                {
+                    may_store_path |=
+                        self.push_module_object_mentions_at(expr, holds_path, &mut mentions);
+                }
             }
-            let stands_for_builtin =
-                matches!(self.state(expr), ExprState::Builtin(_) | ExprState::Held(_));
-            if !stands_for_builtin
-                && !matches!(hir[expr].kind, ExprKind::Index { .. })
-                && hir.type_assertion_operand(expr).is_none()
-            {
-                continue;
-            }
-            let found = self.find_module_object_mention(expr).into_iter();
-            let found = found.chain(self.find_way_that_computed_key_reads(expr));
-            for (owner, object_use) in found.chain(self.find_ways_that_pattern_reads(expr)) {
-                mentions.push(ModuleObjectMention {
-                    expr,
-                    owner,
-                    object_use,
-                });
+        } else {
+            for &expr in found_or_this {
+                may_store_path |=
+                    self.push_module_object_mentions_at(expr, holds_path, &mut mentions);
             }
         }
         if self.exposes_own_module_object {

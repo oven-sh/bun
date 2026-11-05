@@ -21,11 +21,10 @@
 # CALLS-LABEL: code f2:Body
 # CALLS: [[closure]]: f4 @Cell = GetDeferredClosureSlot {{*}}key="add" {{*}}# uses=1 onlyUser=[[capture]]
 # CALLS-NEXT: [[capture]]: env {{*}} = GetCapture [[closure]] function=f4
-# Where the allocation is in sight the call asks the slot all the same: what the allocation lists says nothing of what has been stored since.
+# Where the allocation is in sight and nothing has been stored or has run since, the call reads nothing: the scope is what the allocation lists.
 # RUN(INSIGHT): walk f3 mechanisms=all
 # INSIGHT-LABEL: code f3:Body
-# INSIGHT: [[read]]: {{*}} = GetDeferredClosureSlot
-# INSIGHT-NEXT: = GetCapture [[read]]
+# INSIGHT-NOT: GetDeferredClosureSlot
 # RUN(WITHHELD): walk f1 mechanisms=all-Deferral
 # WITHHELD-NOT: closureForm=Deferred
 # RUN(ANSWERS): run-in-shell

@@ -7,6 +7,7 @@ import { test } from "./supported";
 const compiled = {
   "late.ts": "export const value = 'as it was compiled';\n",
   "late.cjs": "exports.value = 'as it was compiled';\n",
+  "sp\u00e4t/\u665a.ts": "export const value = 'as it was compiled';\n",
   "late.json": '{"value":"as it was compiled"}\n',
   "other.json": '{"value":"as it was compiled"}\n',
   "above.ts": 'import { value } from "./late.ts";\nexport const seen = "above sees: " + value;\n',
@@ -30,6 +31,13 @@ const cases: Record<string, string> = {
   await say("import()", async () => (await import("./late.ts")).value);
   writeFileSync(here + "/late.cjs", "exports.value = 'written by the test';\\n");
   await say("require()", () => require("./late.cjs").value);`,
+  "under a name beyond ASCII written anew before its first load": `
+  await say("beside", async () => (await import("./beside.ts")).value);
+  writeFileSync(here + "/sp\u00e4t/\u665a.ts", "export const value = 'written by the test';\\n");
+  await say("import()", async () => (await import("./sp\u00e4t/\u665a.ts")).value);`,
+  "under a name beyond ASCII as it was compiled": `
+  await say("import()", async () => (await import("./sp\u00e4t/\u665a.ts")).value);
+  await say("again", async () => (await import("./sp\u00e4t/\u665a.ts")).value);`,
   "of data written anew before its first load": `
   writeFileSync(here + "/late.json", '{"value":"written by the test"}\\n');
   await say("require()", () => require("./late.json").value);

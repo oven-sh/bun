@@ -137,15 +137,42 @@ pub extern "C" fn Bun__AOT__onResolveAnswersFor(
     importer: &bun_core::String,
 ) -> bool {
     use crate::virtual_machine::{ResolveMode, VirtualMachine};
+    let mut query_of_answer = bun_core::String::EMPTY;
     let answer = VirtualMachine::resolve_with_on_resolve::<true>(
         global,
         name,
         importer,
-        None,
+        Some(&mut query_of_answer),
         ResolveMode::Esm,
         false,
     );
-    !matches!(answer, Ok(None))
+    let answer = match answer {
+        Ok(None) => return false,
+        Ok(Some(Ok(answer))) => answer,
+        _ => return true,
+    };
+    unsafe extern "C" {
+        safe fn Bun__AOT__setPluginsSilent(are_silent: bool);
+    }
+    // SAFETY: the VM of this thread is live, and nothing else holds its resolver's options here.
+    let options = unsafe { &mut (*global.bun_vm_ptr()).transpiler.resolver.opts };
+    let installs = core::mem::replace(
+        &mut options.global_cache,
+        bun_resolver::GlobalCache::disable,
+    );
+    Bun__AOT__setPluginsSilent(true);
+    let mut query_of_found = bun_core::String::EMPTY;
+    let found_without_plugins = VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
+        global,
+        name,
+        importer,
+        Some(&mut query_of_found),
+        ResolveMode::Esm,
+    );
+    Bun__AOT__setPluginsSilent(false);
+    // SAFETY: as above.
+    unsafe { (*global.bun_vm_ptr()).transpiler.resolver.opts.global_cache = installs };
+    !matches!(found_without_plugins, Ok(Ok(found)) if found.eql(&answer) && query_of_found.eql(&query_of_answer))
 }
 
 /// BunCompiledModules.cpp. `Dead`: the image is not asked.

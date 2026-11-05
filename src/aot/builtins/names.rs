@@ -58,14 +58,17 @@ impl BuiltinNames {
         }
     }
 
+    #[inline]
     pub fn get(&self, atom: Atom) -> Option<BuiltinName> {
         self.by_atom.get(&atom).copied()
     }
 
+    #[inline]
     pub fn get_private(&self, atom: Atom) -> Option<BuiltinName> {
         self.by_private_atom.get(&atom).copied()
     }
 
+    #[inline]
     pub fn get_symbol_key(&self, atom: Atom) -> Option<BuiltinName> {
         self.by_symbol_key_atom.get(&atom).copied()
     }

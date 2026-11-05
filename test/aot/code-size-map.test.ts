@@ -20,57 +20,14 @@ console.log(fill(count).join(), { count, name: "count" });
 `;
 const files = { "app.ts": source, mapped: {}, unmapped: {} };
 
-interface CodeRange {
-  label: string;
-  value: string;
-  operandRepresentation: string;
-  offset: number;
-  size: number;
-}
-
-interface Literal {
-  value: string;
-  kind: string;
-  computedOperands: number;
-  names: string[];
-}
-
 interface CompiledFunction {
+  name: string;
   size: number;
-  totals: [label: string, bytes: number][];
-  ranges: CodeRange[];
-  literals: Literal[];
-}
-
-interface CountedBranch {
-  trueSide: number;
-  falseSide: number;
-  position: number;
-  path: string;
+  operations: { operation: string; form: string; values: number }[];
 }
 
 const env = { ...bunEnv, NO_COLOR: "1" };
-const labelPattern = /^[A-Z][A-Za-z0-9]*(\.[A-Za-z0-9_]+\/\d+)?\+?\*?$/;
-const representations = [
-  "Unchosen",
-  "Void",
-  "Boolean",
-  "Int32",
-  "Int64",
-  "Double",
-  "OptionalInt64",
-  "OptionalDouble",
-  "Cell",
-  "Cell32",
-  "JSValue",
-  "LiteralString",
-  "RawWord",
-];
-const largestTrapSize = 4;
-const largestFinalJumpSize = 5;
-const digits = expect.stringMatching(/^\d+$/);
-
-const sum = (numbers: number[]) => numbers.reduce((total, number) => total + number, 0);
+const forms = ["Open", "Closed", "Generic"];
 
 async function build(folder: string, output: string, flags: string[], map?: string) {
   const executable = join(folder, output, isWindows ? "app.exe" : "app");
@@ -89,115 +46,50 @@ function groups(fields: string[], width: number) {
   return Array.from({ length: fields.length / width }, (_, index) => fields.slice(index * width, (index + 1) * width));
 }
 
+/** The functions of a map. Behind the row F of each stands its row FO, three columns an entry: an operation, the form of its code, how many values of it are so. */
 function readMap(path: string) {
   const functions: CompiledFunction[] = [];
-  const branches: CountedBranch[] = [];
-  let isOutlined = false;
-  let last = { position: "", size: 0 };
+  let letterBefore = "";
   for (const line of readFileSync(path, "utf8").split("\n")) {
     const [letter, ...fields] = line.split("\t");
-    switch (letter) {
-      case "F":
-        last = { position: fields[0], size: Number(fields[2]) };
-        break;
-      case "O":
-        expect(fields[0]).toBe(last.position);
-        functions.push({
-          size: last.size,
-          totals: groups(fields.slice(1), 2).map(([label, bytes]): [string, number] => [label, Number(bytes)]),
-          ranges: [],
-          literals: [],
-        });
-        break;
-      case "S":
-        functions.at(-1)!.ranges = groups(fields, 5).map(([label, value, operandRepresentation, offset, size]) => ({
-          label,
-          value,
-          operandRepresentation,
-          offset: Number(offset),
-          size: Number(size),
-        }));
-        break;
-      case "V":
-        functions.at(-1)!.literals = groups(fields, 4).map(([value, kind, computedOperands, names]) => ({
-          value,
-          kind,
-          computedOperands: Number(computedOperands),
-          names: names === "-" ? [] : names.split(","),
-        }));
-        break;
-      case "Q":
-        expect(fields.length).toBe(5);
-        branches.push({
-          trueSide: Number(fields[0]),
-          falseSide: Number(fields[1]),
-          position: Number(fields[3]),
-          path: fields[4],
-        });
-        break;
-      case "Y":
-        isOutlined = true;
-        break;
-    }
+    expect(letterBefore === "F").toBe(letter === "FO");
+    if (letter === "F") functions.push({ name: fields[6], size: Number(fields[2]), operations: [] });
+    if (letter === "FO")
+      functions.at(-1)!.operations = groups(fields, 3).map(([operation, form, values]) => ({
+        operation,
+        form,
+        values: Number(values),
+      }));
+    letterBefore = letter;
   }
-  return { functions, branches, isOutlined };
+  return functions;
 }
 
 describe.concurrent("the code size map", () => {
   test(
-    "every byte of a function is in one range, and the totals by label agree with the ranges",
+    "behind each function stand the operations that its code was made of, each with its form",
     () =>
       slot(async () => {
         using dir = tempDir("aot-code-size-map", files);
         const map = join(String(dir), "app.map");
         await build(String(dir), "mapped", [], map);
-        const { functions, branches, isOutlined } = readMap(map);
-        expect(functions.length).toBeGreaterThan(0);
-        expect(branches).toEqual([]);
+        const functions = readMap(map);
+        expect(functions.map(({ name }) => name)).toContain("fill");
+        expect(functions.filter(({ size }) => !(size > 0))).toEqual([]);
 
-        for (const { size, totals, ranges } of functions) {
-          const total = sum(totals.map(([, bytes]) => bytes));
-          expect(
-            ranges.filter(
-              (range, index) =>
-                range.size <= 0 || range.offset !== (index ? ranges[index - 1].offset + ranges[index - 1].size : 0),
-            ),
-          ).toEqual([]);
-          expect(sum(ranges.map(range => range.size))).toBe(total);
-          // The image drops the trap after the last instruction and the final jump of a function that falls into the next one, and can append entry points that only jump to another function.
-          if (!isOutlined) expect(size).toBeGreaterThanOrEqual(total - largestTrapSize - largestFinalJumpSize);
-
-          const bytesByLabel = new Map<string, number>();
-          for (const range of ranges) {
-            const label = range.label.replace("*", "");
-            bytesByLabel.set(label, (bytesByLabel.get(label) ?? 0) + range.size);
-          }
-          expect([...bytesByLabel].sort()).toEqual([...totals].sort());
-          expect(totals.findIndex(([label]) => label === "-")).toBeLessThanOrEqual(0);
-          expect(ranges.filter(range => (range.label === "-") !== (range.value === "-"))).toEqual([]);
-          expect(
-            ranges.filter(
-              range => range.operandRepresentation !== "-" && !representations.includes(range.operandRepresentation),
-            ),
-          ).toEqual([]);
-          expect(ranges.filter(range => range.value === "-" && range.operandRepresentation !== "-")).toEqual([]);
-        }
-
-        const labels = functions.flatMap(({ ranges }) => ranges.map(range => range.label));
-        expect(labels.filter(label => label !== "-" && !labelPattern.test(label))).toEqual([]);
-        expect(labels.some(label => label.includes("+"))).toBe(true);
-        expect(labels.some(label => label.endsWith("*"))).toBe(true);
-        expect(labels.some(label => /^Call(Builtin|Inline)\.ArrayPrototypePush\/\d+/.test(label))).toBe(true);
-        expect(functions.some(({ ranges }) => ranges.some(range => range.operandRepresentation !== "-"))).toBe(true);
-
-        const literals = functions.flatMap(({ literals }) => literals);
-        expect(literals.flatMap(({ names }) => names).filter(name => name !== "?" && !/^\d+$/.test(name))).toEqual([]);
-        expect(literals).toContainEqual({ value: digits, kind: "o", computedOperands: 1, names: [digits, digits] });
-        const hasLiteralWithCode = ({ ranges, literals }: CompiledFunction) =>
-          literals.some(literal =>
-            ranges.some(range => range.value === literal.value && range.label.startsWith("NewObject")),
-          );
-        expect(functions.some(hasLiteralWithCode)).toBe(true);
+        const operations = functions.flatMap(({ operations }) => operations);
+        expect(
+          operations.filter(
+            ({ operation, form, values }) =>
+              !/^[A-Z][A-Za-z0-9]*$/.test(operation) || !forms.includes(form) || !(values > 0),
+          ),
+        ).toEqual([]);
+        expect(operations.map(({ operation }) => operation)).toContain("NewObject");
+        expect(functions.find(({ name }) => name === "fill")!.operations).toContainEqual({
+          operation: "LoopHint",
+          form: "Open",
+          values: 1,
+        });
       }),
     300_000,
   );

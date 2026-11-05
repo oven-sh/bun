@@ -40,6 +40,10 @@
     "default": 55100,
     "asan": 220400
   },
+  "aot/a-commonjs-file-that-a-module-imports-is-handed-to-nobody-who-asks-by-a-name-made-at-run-time.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-commonjs-file-that-begins-with-a-comment-has-the-names-of-the-test-runner.test.ts": {
     "default": 20600,
     "asan": 82400
@@ -47,6 +51,10 @@
   "aot/a-commonjs-test-file-that-takes-names-out-of-bun-test.test.ts": {
     "default": 57400,
     "asan": 229600
+  },
+  "aot/a-compiled-test-quotes-the-file-where-bun-test-quotes-a-value.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-constant-literal-holds-a-name-that-its-type-does-not-list.test.ts": {
     "default": 60000,
@@ -107,6 +115,10 @@
   "aot/a-function-that-a-file-on-a-cycle-declares-is-there-ahead-of-its-body-in-a-test-run.test.ts": {
     "default": 12900,
     "asan": 51600
+  },
+  "aot/a-generator-driven-by-hand-in-a-test-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-global-below-which-the-build-took-a-constant-stays-locked-in-a-test-run.test.ts": {
     "default": 12300,
@@ -172,6 +184,10 @@
     "default": 14100,
     "asan": 56400
   },
+  "aot/a-name-left-to-the-host-is-answered-with-a-file-of-the-image.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-name-of-the-runner-that-no-file-imports-opens-no-test-run.test.ts": {
     "default": 9600,
     "asan": 38400
@@ -199,6 +215,10 @@
   "aot/a-package-that-asks-whether-jest-is-there-opens-no-export.test.ts": {
     "default": 21400,
     "asan": 85600
+  },
+  "aot/a-path-that-is-missing-at-the-build-is-loaded-below-the-file-that-wrote-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-polyfill-behind-a-test-for-its-member-costs-no-second-build.test.ts": {
     "default": 6200,
@@ -247,6 +267,10 @@
   "aot/a-statement-imports-a-module-whose-first-fetch-threw-or-still-runs.test.ts": {
     "default": 19700,
     "asan": 78800
+  },
+  "aot/a-store-that-nobody-followed-replaces-a-member-above-a-view.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-symbol-of-an-earlier-test-file-is-not-the-symbol-of-this-realm.test.ts": {
     "default": 8800,
@@ -323,6 +347,10 @@
   "aot/a-worker-starts-from-a-path-made-of-dirname-or-filename.test.ts": {
     "default": 13700,
     "asan": 54800
+  },
+  "aot/a-written-path-that-is-missing-at-the-build-is-looked-up-when-the-program-runs.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/accessors-above-objects-in-test-runs.test.ts": {
     "default": 9300,
@@ -577,6 +605,22 @@
     "asan": 240000
   },
   "aot/engine/answers-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-4.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -1008,6 +1052,10 @@
     "default": 400,
     "asan": 1600
   },
+  "aot/perf/members-under-keys.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/plain-json-ring.test.ts": {
     "default": 4500,
     "asan": 18000
@@ -1308,6 +1356,10 @@
     "default": 700,
     "asan": 2800
   },
+  "aot/symbol-and-bigint-are-constructors.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/table-sizes-log.test.ts": {
     "default": 500,
     "asan": 2000
@@ -1392,6 +1444,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-module-object-of-a-file-that-turns-to-the-host-takes-its-exports-along.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-report-of-a-build-comes-with-the-stage-log-alone.test.ts": {
     "default": 1200,
     "asan": 4800
@@ -1423,6 +1479,10 @@
   "aot/tool-loads-a-plugin.test.ts": {
     "default": 1200,
     "asan": 4800
+  },
+  "aot/type-errors-under-a-tsconfig-that-needs-another-program.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/typescript-that-tsc-rejects.test.ts": {
     "default": 60000,
@@ -1503,6 +1563,10 @@
   "aot/where-nothing-speaks-for-the-product-a-file-is-the-tests.test.ts": {
     "default": 2600,
     "asan": 10400
+  },
+  "aot/whether-a-module-waits-for-its-cycle-costs-the-same-in-a-larger-program.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/whoever-lists-require-cache-or-compares-what-an-entry-exports-asks-for-no-export.test.ts": {
     "default": 1800,
@@ -48958,10 +49022,6 @@
     "default": 34900,
     "asan": 255000
   },
-  "aot/a-compiled-test-quotes-what-bun-test-quotes.test.ts": {
-    "default": 400,
-    "asan": 3400
-  },
   "aot/a-compiled-test-run-calls-the-getters-of-library-modules.test.ts": {
     "default": 16400,
     "asan": 68200
@@ -49121,10 +49181,6 @@
   "aot/a-set-or-map-made-of-a-written-list-calls-a-replaced-add-or-set.test.ts": {
     "default": 37100,
     "asan": 166400
-  },
-  "aot/a-short-list-sorted-by-a-field-needs-no-copy.test.ts": {
-    "default": 900,
-    "asan": 31700
   },
   "aot/a-spy-on-a-name-behind-a-star-over-a-module-of-the-library.test.ts": {
     "default": 9400,

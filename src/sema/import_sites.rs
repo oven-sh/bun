@@ -120,6 +120,8 @@ pub struct ExportedText {
     pub starts_at_own_directory: bool,
 }
 
+pub const WHERE_FILE_LIES: &[u8] = b"\0\0";
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum ResolvedForm {
     Path,

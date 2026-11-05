@@ -1,5 +1,5 @@
 // answers: without-library
-// # `list.push(x)` on a parameter of which Link proves that whatever arrives stays as its class makes it: the read of the method is a constant without a test, and the row that asks [Storage, Names] of its receiver sees the same proof: the code of the push stands in line, and no test is built. A list that has left the program is asked.
+// # `list.push(x)` on a parameter of which Link proves that whatever arrives stays as its class makes it: the read of the method is a constant without a test, and the row that asks [Storage, Names] of its receiver sees the same proof: the code of the push stands in line, and no test is built. A list that has left the program is asked, and the frozen one goes that way too: a list whose integrity changes is no longer as its class has made it.
 // # f1 = fill, f2 = fillWhatHasLeft
 // # RUN(INLINE): walk f1 mechanisms=all-Inlining
 // # INLINE-LABEL: code f1:Body
@@ -27,7 +27,7 @@ report(fill(kept, one / 4));
 report(kept.join());
 const frozen: number[] = [1, 2];
 Object.freeze(frozen);
-try { report(fill(frozen, one)); } catch (e) { report((e as Error).name); }
+try { report(fillWhatHasLeft(frozen, one)); } catch (e) { report((e as Error).name); }
 report(frozen.join());
 const handedOut: number[] = [];
 (globalThis as any).handedOutOfThisTest = handedOut;

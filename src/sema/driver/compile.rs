@@ -59,6 +59,7 @@ pub struct CompileRequest<'a, 's> {
     pub threads: NonZeroUsize,
     pub progress: Option<&'a Progress>,
     pub left_out_bodies: Option<&'a LeftOutBodies>,
+    pub discards_first_visits: bool,
 }
 
 pub struct LoadedProgram<'s> {

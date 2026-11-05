@@ -32,11 +32,19 @@ pub struct Place {
 pub struct Handler {
     pub(super) block: BlockId,
     pub(super) visible_variable_count: u32,
+    pub(super) reads_fields: bool,
 }
 
 impl Handler {
     pub fn block(self) -> BlockId {
         self.block
+    }
+
+    pub fn reading_fields(self) -> Handler {
+        Handler {
+            reads_fields: true,
+            ..self
+        }
     }
 }
 
@@ -278,6 +286,7 @@ impl FunctionBuilder {
         Handler {
             block,
             visible_variable_count,
+            reads_fields: false,
         }
     }
 

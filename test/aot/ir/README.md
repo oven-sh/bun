@@ -131,7 +131,8 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
 - **`RUN`.** A file has at least one. Runs with the same options print one build. A prefix is capitals and digits, and it is not the name of
   a directive. A prefix needs at least one check line, or a `SAME` that names it.
 - **`OPTIONS`, `DIAGNOSTIC` and `STATISTIC`** apply to every `RUN` in the file, `OPTIONS(<prefix>)` to the runs of that prefix.
-- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `entry-points-run-again`, `runs-in-place`, `runs-tests`, `platform=darwin | linux | windows` and `threads=<n>`.
+- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `entry-points-run-again`, `runs-in-place`, `runs-tests`, `discards-first-visits`, `platform=darwin | linux | windows` and `threads=<n>`.
+  `discards-first-visits` is `--aot-testing=DiscardsFirstVisits`: every file is visited, the visit is thrown away, and the file is visited again. With `SAME` it holds a build to what it prints without the word.
   `runs-tests` is how `bun test --aot` builds: in place, and each entry point is a test file.
   `runs-in-place` is how `bun run --aot` and `bun test --aot` build: no executable, and where the bundle of `bun build --compile` and `bun run` part, the answer of `bun run`.
   `entry-points-run-again` is what `bun test --aot --rerun-each` builds its test files with. `platform=` turns what the table of built-ins says by platform: which built-ins, exports of Bun's modules and code of

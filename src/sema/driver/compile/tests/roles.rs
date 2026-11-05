@@ -391,6 +391,61 @@ export const copy = value;
 }
 
 #[test]
+fn package_under_the_aot_condition_keeps_its_types_where_it_needs_another_program() {
+    for compiler_options in [
+        r#""strictNullChecks": false"#,
+        r#""strictFunctionTypes": false"#,
+        r#""strictBindCallApply": false"#,
+        r#""strictBuiltinIteratorReturn": false"#,
+        r#""exactOptionalPropertyTypes": true"#,
+        r#""allowJs": true"#,
+        r#""maxNodeModuleJsDepth": 1"#,
+        r#""resolveJsonModule": false"#,
+        r#""allowArbitraryExtensions": true"#,
+        r#""lib": ["es5"]"#,
+    ] {
+        let manifest = format!(
+            r#"{{
+                "name": "shapes",
+                "version": "1.0.0",
+                "exports": {{ ".": {{ "aot": "./index.aot.ts", "default": "./index.js" }} }},
+                "compilerOptions": {{ {compiler_options} }}
+            }}"#
+        );
+        let typed_text = format!("import \"./side.ts\";\n{MISTYPED_SHAPES}");
+        let installed = [
+            ("main.ts", r#"import "shapes";"#),
+            ("node_modules/shapes/package.json", &manifest[..]),
+            ("node_modules/shapes/index.js", INSTALLED_SHAPES),
+            ("node_modules/shapes/index.aot.ts", &typed_text[..]),
+            ("node_modules/shapes/side.ts", UNDEFINED_FOR_A_NUMBER),
+        ];
+        let linked = [
+            ("main.ts", r#"import "./linked/index.aot.ts";"#),
+            ("linked/package.json", &manifest[..]),
+            ("linked/index.js", INSTALLED_SHAPES),
+            ("linked/index.aot.ts", &typed_text[..]),
+            ("linked/side.ts", UNDEFINED_FOR_A_NUMBER),
+        ];
+        for files in [installed, linked] {
+            with_program(&files, &["./main.ts"], 1, |program| {
+                let build = check_only(program);
+                assert_eq!(build.codes(), [0; 0], "{compiler_options}");
+                assert!(build.roles.demoted.is_empty(), "{compiler_options}");
+                for (path, _) in &files[3..] {
+                    let file = program.file(path);
+                    assert!(
+                        program.files().needs_another_program(file),
+                        "{path} {compiler_options}"
+                    );
+                    assert_eq!(build.roles.role(file), FileRole::Checked, "{path}");
+                }
+            });
+        }
+    }
+}
+
+#[test]
 fn mistyped_file_under_the_aot_condition_keeps_its_types() {
     let manifest = r#"{
         "name": "shapes",

@@ -52,6 +52,37 @@ test("a name that only a plugin of the run resolves", async () => {
   expect(await runTests(String(dir), ["--aot"])).toEqual(plain);
 }, 240_000);
 
+// Plain Bun resolves the names of a whole graph before any of its files runs, so a plugin that one of them registers is not asked about the others. Such a file was asked about where a file of its own graph,
+// while it ran, registered a plugin and required it: it left for the loader, and the evaluation that was under way ran its compiled body too.
+test("a file below an importer that runs is asked about no more, and runs once", async () => {
+  using dir = tempDir("plugin-resolves-name-linked", {
+    "top.js": `import "./first.js";\nimport { kind } from "./user.js";\nexport const told = () => kind;`,
+    "first.js": `
+      import { plugin } from "bun";
+      globalThis.asked = [];
+      plugin({ name: "late", setup(build) { build.onResolve({ filter: /^\\.\\/part\\.js$/ }, args => { globalThis.asked.push(args.path); return { path: import.meta.dir + "/fake.js" }; }); } });
+      globalThis.early = require("./user.js").kind;`,
+    "user.js": `import { kind as found } from "./part.js";\nglobalThis.loads = (globalThis.loads ?? 0) + 1;\nexport const kind = found;`,
+    "part.js": `export const kind = "real";`,
+    "fake.js": `export const kind = "fake";`,
+    "linked.test.js": `
+      import { test } from "bun:test";
+      test("linked", async () => {
+        const top = await import("./top.js");
+        console.log(top.told(), globalThis.early, globalThis.loads, globalThis.asked.length);
+      });`,
+  });
+  for (const flags of [[], ["--aot"]]) {
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "./linked.test.js"], String(dir), env);
+    expect({ flags, printed: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({
+      flags,
+      printed: "real real 1 0\n",
+      exitCode: 0,
+    });
+    expect(stderr).not.toContain("ran from source");
+  }
+}, 240_000);
+
 // An executable holds what the build found, and the error for the name is worded by the host's resolver, which is asked where no JavaScript may run: a plugin whose filter matches
 // was called there. A release build refused the call in silence, and an assertion stopped the others.
 test("the error of an executable is made without calling the plugin", async () => {

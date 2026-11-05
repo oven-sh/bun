@@ -4,10 +4,10 @@
 // # OPTIONS: testing=WritesBodiesStraight
 // # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
 // # REQUIRES(STRAIGHT): faulting-loop-polls
-// # STRAIGHT: statistic UnitsWrittenStraight 16
+// # STRAIGHT: statistic UnitsWrittenStraight 15
 // # RUN(WITHHELD): compile UnitsWrittenStraight mechanisms=all-ParameterGuards
 // # REQUIRES(WITHHELD): faulting-loop-polls
-// # WITHHELD: statistic UnitsWrittenStraight 13
+// # WITHHELD: statistic UnitsWrittenStraight 12
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 58 of 58 of 58

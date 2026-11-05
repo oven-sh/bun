@@ -632,6 +632,7 @@ pub(crate) fn describe_code_graph(
         threads: NonZeroUsize::new(host.threads()).unwrap_or(NonZeroUsize::MIN),
         progress: None,
         left_out_bodies: None,
+        discards_first_visits: false,
     };
     let description = match load_program(&session, &host, &request) {
         Ok(loaded) => {

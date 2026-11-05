@@ -146,7 +146,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         self.set_position(node.name_pos);
-        let given = GivenName::under_member(&node, name);
+        let mut given = GivenName::under_member(&node, name);
+        if matches!(name, PropertyName::Computed(_)) {
+            given.name_that_key_spells = self.file.find_name_that_key_spells(member);
+        }
         let closure = self.lower_method(node.func, given, head.value);
         let side = class_side(node);
         self.emit_method_definition(head, side, kind, name, closure, next_method_index);

@@ -6,6 +6,7 @@ use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::loop_updates::is_stored_only_by_own_loop_update;
+use super::tables::ScopeTree;
 use super::{BindingSharing, Context, NormalizedUses};
 use crate::ir::{ClassSlot, VariableKey};
 use crate::lower::captures::{CapturedBinding, is_initialized_before};
@@ -94,6 +95,7 @@ pub(super) fn compute_sharing(
     sharing.registries.sort_unstable();
     hold_in_every_closure(context, registries, &mut sharing.captured_uses);
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
+    collect_what_is_stored_under_handlers(context, forms, &mut sharing);
     sharing.captured_uses.sort_unstable();
     sharing.variables.shared_sort_unstable();
     sharing.shared.sort_unstable();
@@ -390,6 +392,42 @@ fn collect_exported_symbols(context: &Context<'_, '_>, forms: &[BindingForm]) ->
     }
     sort_unique(&mut symbols);
     symbols
+}
+
+fn collect_what_is_stored_under_handlers(
+    context: &Context<'_, '_>,
+    forms: &[BindingForm],
+    sharing: &mut BindingSharing,
+) {
+    let tries = &context.walk.tries;
+    let mut scopes = None;
+    let mut stored: Vec<Vec<BindingRef>> = vec![Vec::new(); tries.len()];
+    let mut fields = Vec::new();
+    for (index, walked) in tries.iter().enumerate().rev() {
+        let mut bindings = std::mem::take(&mut stored[index]);
+        bindings.extend_from_slice(&walked.stored);
+        bindings.retain(|&binding| {
+            matches!(binding, BindingRef::Symbol(symbol) if forms[symbol.idx()] == BindingForm::Stored)
+                && context.owner_of(binding) == Some(walked.function)
+                && scopes
+                    .get_or_insert_with(|| ScopeTree::new(context))
+                    .encloses(context.scope_of(binding), walked.boundary)
+        });
+        if let Some(around) = walked.parent {
+            debug_assert!((around as usize) < index);
+            debug_assert!(tries[around as usize].function == walked.function);
+            stored[around as usize].extend_from_slice(&bindings);
+        }
+        let number_of_stores = bindings.len() as u64;
+        sort_unique(&mut bindings);
+        if bindings.len() as u64 * number_of_stores > u64::from(walked.size) {
+            fields.extend_from_slice(&bindings);
+        }
+        stored[index] = bindings;
+    }
+    sort_unique(&mut fields);
+    sharing.stored_under_handlers = stored;
+    sharing.fields_for_handlers = fields;
 }
 
 fn collect_fields_for_eval(

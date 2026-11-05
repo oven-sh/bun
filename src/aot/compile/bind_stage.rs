@@ -230,6 +230,12 @@ impl Build<'_> {
         known_helpers.keep_private_states_in_collections(&contents.replaced_builtins);
         steps.end_with(|| format!("{project_name}: known helpers"));
         let run_of_library = crate::test_runs::RunContents::default();
+        let plugin_answers_for_names_left_to_host = project == ProjectId::Application
+            && !self.options.load.runs_tests
+            && !self.options.load.externals.is_empty()
+            && crate::load::contents::load_names::names_plugin(view.files());
+        let files_are_named_out_of_sight =
+            self.options.code_from_disk_names_files() || plugin_answers_for_names_left_to_host;
         let BoundModules { mut graph } = modules::bind_modules(&BindInput {
             files: view.files(),
             sources: view.sources,
@@ -256,7 +262,7 @@ impl Build<'_> {
                 && self.options.aot.typescript_drops_absent_exports,
             runs_in_several_realms: project == ProjectId::Application
                 && self.options.aot.runs_in_several_realms,
-            code_from_disk_names_files: self.options.code_from_disk_names_files()
+            files_are_named_out_of_sight: files_are_named_out_of_sight
                 && !self.stays_in_compiled_files,
             helpers_of_tests_name_files: self.options.load.runs_tests
                 && !self.stays_in_compiled_files,
@@ -295,10 +301,9 @@ impl Build<'_> {
         steps.end_with(|| format!("{project_name}: failures of modules, errors of folding"));
         let left_out = match project {
             ProjectId::Application if graph.errors().is_empty() => {
-                let code_on_disk_names_files = !self.options.load.runs_tests
+                let files_are_named_out_of_sight = !self.options.load.runs_tests
                     && !graph.importers_of_uncompiled_code().is_empty()
-                    && (self.options.aot.runs_in_place
-                        || self.options.code_from_disk_names_files());
+                    && (self.options.aot.runs_in_place || files_are_named_out_of_sight);
                 let entry_points = view.files().entry_points().iter().copied();
                 let mut files_started_by_runner: Vec<_> = entry_points
                     .take(written_entry_point_count)
@@ -324,9 +329,9 @@ impl Build<'_> {
                     graph: &graph,
                     known_helpers: &known_helpers,
                     removable: self.options.removable,
-                    any_file_is_named_at_run_time: code_on_disk_names_files
+                    any_file_is_named_at_run_time: files_are_named_out_of_sight
                         || (!self.stays_in_compiled_files && self.options.load.runs_tests),
-                    code_on_disk_names_files,
+                    files_are_named_out_of_sight,
                     isolates_code_from_disk: self.options.aot.isolates_code_from_disk,
                     mocks_any_module: contents.mocks_any_module,
                     files_started_by_runner: &files_started_by_runner,

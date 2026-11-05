@@ -1,0 +1,19 @@
+# -- source: an-operator-of-numbers-does-not-lean-on-their-being-integers.js
+# function mix(x, y) {
+#   let sum = x & 7;
+#   for (let i = 0; i < 16; i++) sum += x * y + i;
+#   return sum;
+# }
+# let answer = 0;
+# for (let i = 0; i < 30; i++) answer += mix(i & 1 ? i : i + 0.5, 3);
+# sink(answer);
+# -- end of source
+# `x & 7` is all that says int32 of `x`, nobody wrote it, and every other call hands a fraction. Link has proven a number, so `x * y` in the loop has the form of numbers, which asks nothing.
+# That they are integers would save a conversion at most. It is no reason for a guard: whatever arrives with a fraction would pay for it with the slow version, where every operation is closed.
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:Body (Double, Int32) -> (Double)
+# CHECK-NOT: unit f1:ParameterGuard
+# RUN(BODY): walk f1 mechanisms=all
+# BODY-LABEL: code f1:Body
+# BODY: b0([[x]]: int[0, 30]|fractional[0, 30] @Double
+# BODY: = Mul [[x]], {{*}} form=Numbers

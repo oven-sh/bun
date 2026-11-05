@@ -1,0 +1,32 @@
+# -- source: closures-that-a-literal-alone-takes-stay-unmade-and-a-call-through-a-slot-reads-the-scope.ts
+# declare function print(...values: unknown[]): void;
+# type Counter = { add: (by: number) => number; get: () => number; reset: () => void };
+# function makeCounter(start: number): Counter { let n = start; return { add: (by: number) => (n += by), get: () => n, reset: () => { n = start; } }; }
+# const kept: Counter[] = [];
+# for (let i = 0; i < 5; i++) kept.push(makeCounter(i));
+# function sum(list: Counter[]): number { let total = 0; for (let i = 0; i < list.length; i++) { list[i].add(1); total += list[i].get(); } return total; }
+# function once(k: number): number { const c = makeCounter(k); c.add(2); return c.get(); }
+# const read = kept[1].get;
+# print(sum(kept), sum(kept), once(5), read === kept[1].get, read());
+# -- end of source
+# The maker: a record without a value stands for each closure that the literal alone takes, and the scope is listed once, for the field that no name finds.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[scope]]: env {{*}} = NewObject
+# CHECK: [[add]]: f4 @Void = NewClosure [[scope]] function=f4 closureForm=Deferred [isMadeOnDemand]
+# CHECK: [[get]]: f5 @Void = NewClosure [[scope]] function=f5 closureForm=Deferred [isMadeOnDemand]
+# CHECK: = NewObject -, [[add]], [[get]], {{*}}, [[scope]] layout=L0 fields=[0, 1, 2, 3]
+# A call through a slot: the read of the slot has one reader, which takes what the closure captures. The emitter loads the scope out of the object and nothing out of the slot.
+# RUN(CALLS): walk f2 mechanisms=all
+# CALLS-LABEL: code f2:Body
+# CALLS: [[closure]]: f4 @Cell = GetDeferredClosureSlot {{*}}key="add" {{*}}# uses=1 onlyUser=[[capture]]
+# CALLS-NEXT: [[capture]]: env {{*}} = GetCapture [[closure]] function=f4
+# Where the allocation is in sight the call asks the slot all the same: what the allocation lists says nothing of what has been stored since.
+# RUN(INSIGHT): walk f3 mechanisms=all
+# INSIGHT-LABEL: code f3:Body
+# INSIGHT: [[read]]: {{*}} = GetDeferredClosureSlot
+# INSIGHT-NEXT: = GetCapture [[read]]
+# RUN(WITHHELD): walk f1 mechanisms=all-Deferral
+# WITHHELD-NOT: closureForm=Deferred
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 15 20 7 true 3

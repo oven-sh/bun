@@ -4,6 +4,7 @@ use super::references::ReferencePass;
 use super::{Binding, StoreKind, SymbolStore};
 use crate::atom::known;
 use crate::bind::{BoundBuilder, Parent, SymbolId};
+use crate::fold::{DefinePath, DefineRoot};
 use crate::hir::*;
 
 impl ReferencePass<'_, '_> {
@@ -118,8 +119,12 @@ impl ReferencePass<'_, '_> {
         if !has_bit(&self.references.evaluated_idents, target.idx()) {
             return;
         }
+        let binding = self.evaluated_ident_binding(target);
+        if self.is_first_name_of_path_in_place(target, binding) {
+            return;
+        }
         insert_bit(&mut self.references.store_targets, target.idx());
-        match self.evaluated_ident_binding(target) {
+        match binding {
             Binding::Symbol(symbol) => {
                 let symbol = self.find_binding_that_takes_store(target, symbol);
                 self.references.stores.push(SymbolStore {
@@ -132,6 +137,20 @@ impl ReferencePass<'_, '_> {
                 self.references.unbound_name_stores.push((target, kind));
             }
         }
+    }
+
+    fn is_first_name_of_path_in_place(&self, ident: ExprId, binding: Binding) -> bool {
+        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let (ExprKind::Ident(name), Binding::Symbol(symbol)) = (hir[ident].kind, binding) else {
+            return false;
+        };
+        let written = DefinePath {
+            root: DefineRoot::Global(name),
+            members: &[],
+        };
+        let mut names_in_place = self.names_in_place.iter();
+        names_in_place.any(|it| !it.is_one_name && it.path == written)
+            && bound.symbols[symbol.idx()].name != name
     }
 
     fn find_binding_that_takes_store(&mut self, target: ExprId, named: SymbolId) -> SymbolId {

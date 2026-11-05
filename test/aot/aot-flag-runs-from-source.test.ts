@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
@@ -425,6 +425,8 @@ describe("--watch", () => {
     "value.ts": value("1"),
     "shape.ts": shape("number"),
   };
+  // A run under --watch starts again in a second or two, ten times that under a sanitizer.
+  const secondsToSayIt = isASAN ? 90 : 30;
   // What a stream has said so far. `until` returns when that holds, and throws if the stream ends first: then it says how the process ended.
   function listen(stream: ReadableStream<Uint8Array>, getEnd: () => Promise<string>) {
     const heard = { text: "", ended: false };
@@ -441,9 +443,18 @@ describe("--watch", () => {
     return {
       heard,
       async until(holds: (text: string) => boolean) {
+        // What is never said is not waited for until the limit of the test: five such cases, tried four times, took two shards of CI with them.
+        const deadline = Date.now() + secondsToSayIt * 1000;
         while (!holds(heard.text)) {
           if (heard.ended) throw new Error(`the stream ended after:\n${heard.text}\n${await getEnd()}`);
-          await new Promise<void>(resolve => (wake = resolve));
+          const left = deadline - Date.now();
+          if (left <= 0) throw new Error(`it is not said within ${secondsToSayIt} s. So far:\n${heard.text}`);
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await new Promise<void>(resolve => {
+            wake = resolve;
+            timer = setTimeout(resolve, left);
+          });
+          clearTimeout(timer);
         }
       },
     };

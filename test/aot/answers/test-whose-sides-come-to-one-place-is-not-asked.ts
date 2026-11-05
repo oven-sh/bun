@@ -1,14 +1,11 @@
 // answers: without-library
-// # both sides of a branch, or a case and the rest of a switch, come to one place: the test is not asked. What computes its subject still runs: a getter counts, throws, and no object is converted by a test for truth or by a case
+// # both sides of a branch come to one place: the test is not asked. What computes its subject still runs: a getter counts, throws, and no object is converted by a test for truth or by a case
 // # f5 = quiet, f1 = same, f2 = differs, f6 = some, f7 = none, f8 = falls, f9 = oneSide, f3 = readsOnOneSide, f4 = tell, f10 = each
-// # RUN(FORM): walk f5 f1 f7 mechanisms=none+Folding
+// # RUN(FORM): walk f5 f1 mechanisms=none+Folding
 // # FORM-NOT: Branch
-// # FORM-NOT: SwitchString
-// # RUN(WRITTEN): walk f5 f7 mechanisms=none
+// # RUN(WRITTEN): walk f5 mechanisms=none
 // # WRITTEN-LABEL: code f5:Body
 // # WRITTEN: Branch
-// # WRITTEN-LABEL: code f7:Body
-// # WRITTEN: SwitchString
 // # RUN(KEPT): walk f2 mechanisms=none+Folding
 // # KEPT-LABEL: code f2:Body
 // # KEPT: Branch

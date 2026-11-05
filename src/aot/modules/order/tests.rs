@@ -245,7 +245,10 @@ fn what_a_load_by_an_unknown_name_may_find_is_exposed() {
         ),
         asker,
     ];
-    assert_eq!(half(&loads_by_unknown_name), ["served.cjs", "asker.cjs"]);
+    assert_eq!(
+        half(&loads_by_unknown_name),
+        ["main.cjs", "served.cjs", "asker.cjs"]
+    );
     let only_spells = [
         main,
         (
@@ -255,6 +258,31 @@ fn what_a_load_by_an_unknown_name_may_find_is_exposed() {
         asker,
     ];
     assert!(half(&only_spells).is_empty());
+}
+
+#[test]
+fn the_main_entry_point_that_an_unknown_name_may_find_is_seen_half_done() {
+    let main = (
+        "main.cjs",
+        "require('./asker.cjs'); module.exports = function () {};",
+    );
+    let page = ("pages/home.js", "exports.x = 1;");
+    let rows: [(&str, &[&str]); 4] = [
+        ("require(process.argv[1]);", &["main.cjs"]),
+        (
+            "require(require('node:path').resolve(process.argv[1]));",
+            &["main.cjs"],
+        ),
+        (
+            "require(`./pages/${process.argv[2]}.js`);",
+            &["pages/home.js"],
+        ),
+        ("console.log(process.argv[1]);", &[]),
+    ];
+    for (asker, seen_half_done) in rows {
+        let files = [main, ("asker.cjs", asker), page];
+        assert_eq!(half(&files), seen_half_done, "{asker}");
+    }
 }
 
 #[test]

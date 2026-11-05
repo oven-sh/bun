@@ -5,6 +5,7 @@ use bun_sema::bind::{
 };
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::Flags;
+use bun_sema::program::Sym;
 use smallvec::SmallVec;
 
 use super::{BindingRef, ScopeSlot, dead_zone};
@@ -65,6 +66,15 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(super) fn location_position(&mut self, binding: BindingRef) -> DeclaredType {
         let mut position = self.stored_position(binding);
+        if let BindingRef::Symbol(id) = binding {
+            let file = self.file;
+            if self.is_checked()
+                && position.ty == TypeTable::ANYTHING
+                && self.inputs.modules.holder(file, id).is_none()
+            {
+                position = self.compute_inferred_position(Sym { file, id });
+            }
+        }
         if dead_zone::has_dead_zone(self, binding) {
             position.ty = self.fragment.types.union(position.ty, TypeTable::ABSENT);
         }

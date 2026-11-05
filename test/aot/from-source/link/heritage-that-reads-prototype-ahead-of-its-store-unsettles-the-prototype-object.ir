@@ -1,0 +1,16 @@
+# -- source: heritage-that-reads-prototype-ahead-of-its-store-unsettles-the-prototype-object.ts
+# interface ShapeLike { area(): number }
+# function Shape(this: ShapeLike) {}
+# class Round extends (Shape as unknown as new () => ShapeLike) {}
+# Shape.prototype = {};
+# (Round.prototype as any).__proto__.area = function () { return 7; };
+# const Make = Shape as unknown as new () => ShapeLike;
+# function measure(): number { return new Make().area(); }
+# sink(measure());
+# -- end of source
+# `class Round extends Shape` reads Shape.prototype and lays Round.prototype below what it finds: the object that Shape was made with. If that read did not count, the one store behind it would settle the prototype object,
+# and `area`, laid on the OLD object through Round.prototype.__proto__, would count as laid ahead of every object of Shape: `new Shape().area()` answered 7 where it throws.
+# RUN: link layouts mechanisms=all
+# CHECK-NOT: prototype-object-settled
+# RUN(NAME): link members mechanisms=all
+# NAME-NOT: "area" {{*}}laid-ahead

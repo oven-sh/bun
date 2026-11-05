@@ -437,6 +437,139 @@ describe.concurrent(
       await bun(root, "app", "add", tarball.trim());
     };
     const only = (name: string) => typed(1, `app/node_modules/${name}/index.aot.ts`);
+    const written = (
+      name: string,
+      compilerOptions: object | undefined,
+      files: Record<string, string>,
+      typedFile = "index.aot.ts",
+    ) =>
+      under(`app/node_modules/${name}`, {
+        "package.json": JSON.stringify({
+          name,
+          version: "1.0.0",
+          type: "module",
+          exports: { ".": { aot: `./${typedFile}`, default: "./index.js" } },
+          compilerOptions,
+        }),
+        ...files,
+      });
+
+    scene(
+      "two packages whose options are neither the program's nor each other's",
+      async root =>
+        expect(await compile(root)).toEqual(
+          compiled(
+            typed(2, "app/node_modules/exact/index.aot.ts", "app/node_modules/loose/index.aot.ts"),
+            "a null -1 2 undefined\n",
+          ),
+        ),
+      {
+        ...written(
+          "loose",
+          { strict: false, lib: ["es2020"] },
+          {
+            "index.js": `export function pick(list, at) {\n  return at < list.length ? list[at] : null;\n}\n`,
+            "index.aot.ts": `export function pick(list: string[], at: number): string {\n  return at < list.length ? list[at] : null;\n}\n`,
+          },
+        ),
+        ...written(
+          "exact",
+          { strict: true, exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true },
+          {
+            "index.js": `export function count(item) {\n  return "count" in item ? item.count : -1;\n}\n`,
+            "index.aot.ts": `export interface Item {\n  name: string;\n  count?: number;\n}\nexport function count(item: Item): number {\n  return "count" in item ? item.count : -1;\n}\n`,
+          },
+        ),
+        ...applicationWith(
+          {},
+          `import { count } from "exact";
+import { pick } from "loose";
+console.log(pick(["a"], 0), pick(["a"], 1), count({ name: "x" }), count({ name: "y", count: 2 }), count({ name: "z", count: undefined }));
+`,
+        ),
+      },
+    );
+
+    scene(
+      "a file of the package that its .aot.ts file imports",
+      async root =>
+        expect(await compile(root)).toEqual(compiled(typed(2, "app/node_modules/pair/index.aot.ts"), "4 null\n")),
+      {
+        ...written(
+          "pair",
+          { strict: false },
+          {
+            "index.js": `export function twice(n) {\n  return n ? n * 2 : null;\n}\n`,
+            "index.aot.ts": `import { double } from "./inner.ts";\nexport function twice(n: number): number {\n  return double(n);\n}\n`,
+            "inner.ts": `export function double(n: number): number {\n  return n ? n * 2 : null;\n}\n`,
+          },
+        ),
+        ...applicationWith({}, `import { twice } from "pair";\nconsole.log(twice(2), twice(0));\n`),
+      },
+    );
+
+    scene(
+      "no null checks, where the package.json has no compilerOptions",
+      async root => expect(await compile(root)).toEqual(compiled(only("bare"), "3 -1 -1\n")),
+      {
+        ...written("bare", undefined, {
+          "index.js": `export function size(text) {\n  return text == null ? -1 : text.length;\n}\n`,
+          "index.aot.ts": `export function size(text: string | null): number {\n  return text == null ? -1 : text.length;\n}\n`,
+        }),
+        ...applicationWith(
+          { strict: false },
+          `import { size } from "bare";\nconst nothing: string = undefined;\nconsole.log(size("abc"), size(null), size(nothing));\n`,
+        ),
+      },
+    );
+
+    scene(
+      "a package that bun link links",
+      async root => {
+        await bun(root, "library", "compile", "--library");
+        await bun(root, "library/dist", "link");
+        await bun(root, "app", "link", "joined");
+        expect(await compile(root)).toEqual(compiled(typed(1, "library/dist/index.aot.ts"), "a,b\n"));
+      },
+      {
+        ...libraryOf("joined", `export function join(list: string[]): string {\n  return list.join();\n}\n`),
+        ...applicationWith(
+          { exactOptionalPropertyTypes: true },
+          `import { join } from "joined";\nconsole.log(join(["a", "b"]));\n`,
+        ),
+      },
+    );
+
+    scene(
+      "another jsxImportSource than the package's",
+      async root => expect(await compile(root)).toEqual(compiled(typed(1), "theirs:a\n")),
+      {
+        ...written(
+          "views",
+          { strict: true, jsx: "react-jsx", jsxImportSource: "theirs" },
+          {
+            "index.js": `import { jsx } from "theirs/jsx-runtime";\nexport const view = jsx("a", {});\n`,
+            "index.aot.tsx": `export const view: string = <a />;\n`,
+          },
+          "index.aot.tsx",
+        ),
+        ...Object.assign(
+          {},
+          ...["theirs", "mine"].map(name => {
+            const runtime = `export const jsx = type => "${name}:" + type;\nexport const jsxDEV = jsx;\n`;
+            return under(`app/node_modules/${name}`, {
+              "package.json": JSON.stringify({ name, version: "1.0.0", type: "module" }),
+              "jsx-runtime.js": runtime,
+              "jsx-dev-runtime.js": runtime,
+            });
+          }),
+        ),
+        ...applicationWith(
+          { exactOptionalPropertyTypes: true, jsx: "react-jsx", jsxImportSource: "mine" },
+          `import { view } from "views";\nconsole.log(view);\n`,
+        ),
+      },
+    );
 
     scene(
       "nodenext, and every flag beyond strict",

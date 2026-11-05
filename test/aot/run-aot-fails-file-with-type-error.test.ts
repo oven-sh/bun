@@ -156,8 +156,7 @@ test("a syntax error fails the test files that reach it, and the others run", as
   const { said, exitCode } = await run(String(dir));
   expect(passed(said)).toEqual(["a fine test", "another fine test"]);
   expect(ran(said).join("\n")).not.toContain("never run");
-  // The build refuses the test file with a mistake of its own. The one that imports a file with a mistake fails when it loads, with the words of `bun test`.
-  expect(said.split("bun test --aot does not run this file").length - 1).toBe(1);
-  expect(said).toContain("error: Unexpected ;");
+  // Both fail when they load, with the words of `bun test`: the test file with a mistake of its own, and the one that imports a file with a mistake.
+  expect(said.split("error: Unexpected ;").length - 1).toBe(2);
   expect(exitCode).toBe(1);
 });

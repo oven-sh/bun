@@ -180,7 +180,6 @@ export const {
   testedByKey,
   tuple,
   typedArrayClass,
-  typesByName,
   u32,
   undefined,
   unfilledHostRoles,

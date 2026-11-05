@@ -494,23 +494,24 @@ main();
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: v2 = Undefined
 // CHECK-NEXT: v3 = Data data=[[d_1]]
-// CHECK-NEXT: v4 = NewObject layout=[[L_2]]
-// CHECK-NEXT: SetLiteralPrototype v4, v3 [refusesOtherValues]
-// CHECK-NEXT: v6 = FinishObject v4
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: PropSet v6, v7 key="v"
-// CHECK-NEXT: v9 = NewClosure v6 function=[[f_3]]
-// CHECK-NEXT: v10 = String string="first"
-// CHECK-NEXT: v11 = Call v9, -, v10 calleeName="use"
-// CHECK-NEXT: v12 = Await v11
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v14 = NewClosure v3 function=[[f_5]]
-// CHECK-NEXT: v15 = Call v13, -, v14 calleeName="h0"
-// CHECK-NEXT: v16 = String string="second"
-// CHECK-NEXT: v17 = Call v9, -, v16 calleeName="use"
-// CHECK-NEXT: v18 = Await v17
-// CHECK-NEXT: v19 = Undefined
-// CHECK-NEXT: Return v19
+// CHECK-NEXT: v4 = Builtin builtin=ObjectCreate
+// CHECK-NEXT: v5 = NewObject layout=[[L_2]]
+// CHECK-NEXT: SetLiteralPrototype v5, v3 [refusesOtherValues]
+// CHECK-NEXT: v7 = FinishObject v5
+// CHECK-NEXT: v8 = Integer integer=1
+// CHECK-NEXT: PropSet v7, v8 key="v"
+// CHECK-NEXT: v10 = NewClosure v7 function=[[f_3]]
+// CHECK-NEXT: v11 = String string="first"
+// CHECK-NEXT: v12 = Call v10, -, v11 calleeName="use"
+// CHECK-NEXT: v13 = Await v12, v0
+// CHECK-NEXT: v14 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v15 = NewClosure v3 function=[[f_5]]
+// CHECK-NEXT: v16 = Call v14, -, v15 calleeName="h0"
+// CHECK-NEXT: v17 = String string="second"
+// CHECK-NEXT: v18 = Call v10, -, v17 calleeName="use"
+// CHECK-NEXT: v19 = Await v18, v0
+// CHECK-NEXT: v20 = Undefined
+// CHECK-NEXT: Return v20
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="awaitFromMap"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=anything}] {
@@ -532,13 +533,13 @@ main();
 // CHECK-NEXT: v15 = NewClosure v4 function=[[f_6]]
 // CHECK-NEXT: v16 = String string="first"
 // CHECK-NEXT: v17 = Call v15, -, v16 calleeName="use"
-// CHECK-NEXT: v18 = Await v17
+// CHECK-NEXT: v18 = Await v17, v0
 // CHECK-NEXT: v19 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v20 = NewClosure v4 function=[[f_7]]
 // CHECK-NEXT: v21 = Call v19, -, v20 calleeName="h0"
 // CHECK-NEXT: v22 = String string="second"
 // CHECK-NEXT: v23 = Call v15, -, v22 calleeName="use"
-// CHECK-NEXT: v24 = Await v23
+// CHECK-NEXT: v24 = Await v23, v0
 // CHECK-NEXT: v25 = Undefined
 // CHECK-NEXT: Return v25
 // CHECK-NEXT: }

@@ -360,7 +360,7 @@ fn assert_same_on_any_number_of_threads(
             known_helpers: bind_input.known_helpers,
             removable: RemovableOptions::default(),
             any_file_is_named_at_run_time: false,
-            code_on_disk_names_files: false,
+            files_are_named_out_of_sight: false,
             isolates_code_from_disk: false,
             mocks_any_module: false,
             files_started_by_runner: &[],

@@ -1,16 +1,18 @@
 // answers: without-library
 // # `number[]` declares no kind of storage: the list has what its maker and the numbers so far have given it. A store and a push choose their arm by the kind that they find, and what the kind refuses (a fraction, -0, NaN, 2^31 in storage for int32; NaN in storage for doubles) goes to the stub, which gives the list another kind.
 // # f1 = show, f2 = describe, f3 = tell, f4 = fill, f5 = count, f6 = setOne, f7 = gather, f8 = sum
-// # In a loop: an arm for each of the three kinds, and the stub of the proven store where none takes the value. No store by key.
+// # In a loop, which is built twice: the row in front of the typed copy asks for the one kind that takes what is stored as it is held, and whether it may be written; there the store is one store.
+// # The other copy has an arm for each of the two kinds of numbers, and the stub of the proven store where neither takes the value. No store by key.
+// # RUN(FILLROW): walk f4 mechanisms=all-Inlining
+// # FILLROW-LABEL: code f4:Body
+// # FILLROW: HasArrayStorage {{*}} arrayStorage=Double [isWritable]
+// # FILLROW: PutDoubleIndex
 // # RUN(FILLINT32): emit f4 mechanisms=all-Inlining
 // # FILLINT32-LABEL: unit f4:Body
 // # FILLINT32: = Store({{*}}indexedInt32Properties
 // # RUN(FILLDOUBLE): emit f4 mechanisms=all-Inlining
 // # FILLDOUBLE-LABEL: unit f4:Body
 // # FILLDOUBLE: = Store({{*}}indexedDoubleProperties
-// # RUN(FILLANY): emit f4 mechanisms=all-Inlining
-// # FILLANY-LABEL: unit f4:Body
-// # FILLANY: = Store({{*}}indexedContiguousProperties
 // # RUN(FILLSTUB): bytes f4:Body mechanisms=all-Inlining
 // # FILLSTUB: ArrayPutAtIndex.Number
 // # RUN(FILLNOT): bytes f4:Body mechanisms=all-Inlining

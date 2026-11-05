@@ -8,7 +8,7 @@ use smallvec::{SmallVec, smallvec};
 
 use super::{
     ClassElement, ClassPlan, ClassTransform, FieldSemantics, FieldValue, InitializerCall,
-    InjectionPoint,
+    InjectionPoint, MadeConstructor,
 };
 use crate::ir::ClassSlot;
 use crate::lower::decorators::{self, InitializerLists};
@@ -429,6 +429,32 @@ pub(in crate::lower) fn fields_evaluated_in_constructor(
         _ => None,
     });
     fields.collect()
+}
+
+pub(in crate::lower) fn find_constructor_made_by_transpiler(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    compiled: &CompiledModule<'_>,
+    fields_under_signed_members: &[MemberId],
+    class: ClassId,
+) -> Option<MadeConstructor> {
+    let plan = plan_class(hir, bound, compiled, fields_under_signed_members, class);
+    if plan.constructor.is_some() {
+        return None;
+    }
+    let is_instance_field = |member: MemberId| {
+        let node = hir[member];
+        node.kind == MemberKind::Property && !node.flags.intersects(Flags::STATIC | Flags::ACCESSOR)
+    };
+    if plan.field_semantics == FieldSemantics::Assign
+        && runtime_members(hir, class).any(is_instance_field)
+    {
+        return Some(MadeConstructor::AtBrace);
+    }
+    let is_assigned =
+        |element: &ClassElement| matches!(element, ClassElement::AssignedField { .. });
+    (plan.transform == ClassTransform::Legacy && plan.injected_elements.iter().any(is_assigned))
+        .then_some(MadeConstructor::AtStatement)
 }
 
 pub(in crate::lower) fn is_evaluated_in_constructor(

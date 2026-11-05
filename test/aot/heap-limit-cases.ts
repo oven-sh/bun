@@ -308,10 +308,12 @@ for (let round = 0; round < 3; round++) console.log(fill(index => BigInt(index) 
 `,
         });
         const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-        // A list that was dropped may still count as held. Then the next error comes where nothing catches it.
+        // A list that was dropped may still count as held. Then the next error comes early: where nothing catches it, or in the next round before its list is long.
         if (exitCode) expect(stderr).toStartWith("RangeError: Out of memory: " + limitOf64MB);
         else expect(stderr).toBe("");
-        expect(stdout).toMatch(exitCode ? /^(RangeError\n){1,3}$/ : /^(RangeError\n){3}$/);
+        expect(stdout).toMatch(
+          exitCode ? /^RangeError\n((RangeError|too few)\n){0,2}$/ : /^RangeError\n((RangeError|too few)\n){2}$/,
+        );
         expect(exitCode).toBeOneOf([0, 1]);
       },
       120_000,

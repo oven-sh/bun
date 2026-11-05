@@ -245,10 +245,11 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             && inputs.sources.kind(file) == load::SourceKind::Program
             && !bun_core::strings::contains(path, b"/node_modules/")
             && !bun_core::strings::contains(path, b"\\node_modules\\");
-        let counted_places = is_counted.then(|| CountedPlaces::find(hir, bound, path));
         let known_member_values = KnownMemberValues::default();
         let members = KnownObjects::new(queries.files(), inputs.modules, &known_member_values);
         let fields_under_signed_members = find_fields_under_signed_members(members, file);
+        let counted_places = is_counted
+            .then(|| CountedPlaces::find(hir, bound, compiled, &fields_under_signed_members, path));
         let may_hold_registries = inputs.makes_registries || file_inputs.makes_registries();
         let files = queries.files();
         let registries = RegistryNames::new(&mut *queries);

@@ -65,7 +65,9 @@ pub(crate) struct FileOfRun {
     pub in_texts_written: FoundInTexts,
     pub in_texts_handed_on: FoundInTexts,
     pub spies_under_names_from_outside: bool,
-    pub spies_under_names_made_of_themselves: bool,
+    pub spies_under_names_that_nobody_reads: bool,
+    pub spies_read: Vec<ExprId>,
+    pub names_of_spies_read: Vec<Atom>,
     pub texts_passed: Vec<(u32, Atom)>,
     pub names_stored_on_unknown_objects: Vec<Atom>,
     pub closed_holders_out_of_sight: Vec<BuiltinId>,
@@ -447,9 +449,14 @@ pub(crate) fn collect_run_contents(
         if of_run.spies_under_names_from_outside {
             helpers.push(file);
         }
-        run.spies_under_any_name |= of_run.spies_under_names_made_of_themselves;
+        run.spies_under_any_name |= of_run.spies_under_names_that_nobody_reads;
+        run.names_spied.extend(&of_run.names_of_spies_read);
         let whose = run.whose[file.idx()];
         let path = files.module(file).file_name();
+        if of_run.spies_under_names_that_nobody_reads {
+            let what = FileLeavesOpen::SpiesUnderNamesFromOutside { texts_passed: 0 };
+            say_file_leaves_open(path, what);
+        }
         let names = &source.contents.names;
         let (modules_mocked, mocks_unspelled_module) = count_modules_mocked(files, file);
         let mocks_unspelled_module = mocks_unspelled_module || builtins.hands_mock_on();

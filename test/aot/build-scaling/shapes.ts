@@ -960,6 +960,38 @@ export const shapes: Shape[] = [
         `const all: Reading[] = [{ code: 0.5, weight: 1 }, { code: 2, weight: 2 }, { code: ${Math.max(size, 1) - 1}, weight: 3 }];\nlet sum = 0;\nfor (const each of all) sum += name(each);\nconsole.log(sum);\n`,
     }),
   },
+  // Every variable that was built twice and lives on rode on every later edge, was asked for at the liveness there, bound at every entry and compared at every join.
+  {
+    name: "lines that each read one of three objects, one of them a stranger, return early if it says so and leave a variable alive to the end",
+    counted: "lines",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `class Item { skip: boolean; weight: number; constructor(skip: boolean, weight: number) { this.skip = skip; this.weight = weight; } }\nconst items: Item[] = [new Item(false, 2), JSON.parse('{"skip":false,"weight":3}'), new Item(false, 5)];\nfunction drive(list: Item[]): number {\n  let sum = 0;\n` +
+        lines(size, index => `  const i${index} = list[${index % 3}]; if (i${index}.skip) return -1; const w${index} = i${index}.weight;`) +
+        lines(size, index => `  sum = (sum + w${index}) | 0;`) +
+        `  return sum;\n}\nlet last = 0;\nfor (let round = 0; round < 300; round++) last = drive(items);\nconsole.log(last);\n`,
+    }),
+  },
+  // The way on which a guess failed comes back into the typed code at the next join. All such ways ended in one merged return, which made one rare region of them, laid in one piece:
+  // each way back led back in the order of blocks and counted as a loop, one inside the other.
+  {
+    name: "lines that each read one of three objects, one of them a stranger, return early if it says so and add its field to a sum",
+    counted: "lines",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `class Item { skip: boolean; weight: number; constructor(skip: boolean, weight: number) { this.skip = skip; this.weight = weight; } }\nconst items: Item[] = [new Item(false, 2), JSON.parse('{"skip":false,"weight":3}'), new Item(false, 5)];\nfunction drive(list: Item[]): number {\n  let sum = 0;\n` +
+        lines(size, index => `  const i${index} = list[${index % 3}]; if (i${index}.skip) return -1; sum = (sum + i${index}.weight) | 0;`) +
+        `  return sum;\n}\nlet last = 0;\nfor (let round = 0; round < 300; round++) last = drive(items);\nconsole.log(last);\n`,
+    }),
+  },
   {
     name: "one literal of many names, each read by name",
     counted: "names",
@@ -2981,6 +3013,31 @@ console.log(typeof outmost.inner);
     }),
   },
   {
+    name: "static fields and static methods of one class, each field read and stored once",
+    counted: "static fields, and static methods",
+    size: 5000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class Table {\n  static first = 0;\n${lines(size, index => `  static m${index}() { return ${index}; }`)}${lines(size, index => `  static k${index} = ${index};`)}}\nlet sum = Table.first;\n` +
+        `${lines(size, index => `sum += Table.k${index}; Table.k${index} = sum;`)}console.log(sum, Object.keys(Table).length);\n`,
+    }),
+  },
+  {
+    name: "static fields and static methods of one class that a test run defines",
+    counted: "static fields, and static methods",
+    size: 10000,
+    entry: "a.test.js",
+    isTestRun: true,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "a.test.js":
+        `import { expect, test } from "bun:test";\n` +
+        `class Table {\n  static first = 0;\n${lines(size, index => `  static m${index}() { return ${index}; }`)}${lines(size, index => `  static k${index} = ${index};`)}}\n` +
+        `test("it has them", () => {\n  expect(Object.keys(Table).length).toBe(${size + 1});\n});\n`,
+    }),
+  },
+  {
     name: "closures of one function that each write a local of their own and one that all share",
     counted: "closures",
     size: 5000,
@@ -3048,7 +3105,8 @@ console.log(typeof outmost.inner);
   {
     name: "lines that each add a text and a number to one text, all of them known, past the longest text that is made",
     counted: "lines",
-    size: 10000,
+    // The text passes that length at some 10,800 lines. A line in front of it is folded away, a line behind it is a join that is emitted, so both sizes lie behind it.
+    size: 20000,
     entry: "main.ts",
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
@@ -3268,6 +3326,22 @@ console.log(typeof outmost.inner);
         `function count(value: string | number[]): number {\n  let total = 0;\n` +
         lines(size, index => `  if (typeof value === "string") for (const unit of value) total += unit.length + ${index}; else total += value.length;`) +
         `  return total;\n}\nconsole.log(count("text"), count([1, 2, 3]));\n`,
+    }),
+  },
+  {
+    name: "lists made at the head of one function, each pushed onto in a loop of its own, all named again in the return",
+    counted: "lists",
+    size: 500,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `function many(n: number, change: (k: number) => number): number[][] {\n` +
+        lines(size, index => `  const l${index}: number[] = [];`) +
+        lines(size, index => `  for (let k = 0; k < n; k++) l${index}.push(change(k));`) +
+        `  return [${upTo(size, index => `l${index}`).join(", ")}];\n}\n` +
+        `const changes = [(k: number) => k, (k: number) => k * 2];\nlet total = 0;\nfor (let round = 0; round < 4; round++) for (const list of many(3, changes[round % 2])) total += list.length;\nconsole.log(total);\n`,
     }),
   },
 ];

@@ -1586,6 +1586,18 @@ fn first_name_of_a_path_in_place_of_a_name_is_bound_where_it_stands() {
 }
 
 #[test]
+fn store_through_a_path_in_place_is_no_store_to_its_first_name() {
+    let text = "function put() { const settings = { level: 1 }; LEVEL = 2; }";
+    folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
+        let target = s.ident("LEVEL", 0);
+        assert!(matches!(s.bound.binding(target), Binding::Symbol(_)));
+        assert!(!s.bound.is_store_target(target));
+        let mut stores = s.bound.runtime.stores().iter();
+        assert!(stores.all(|store| store.target != target));
+    });
+}
+
+#[test]
 fn require_in_place_of_a_name_is_the_variable_at_hand_and_not_that_of_the_file() {
     let text = "LOADER; function pick(require) { return LOADER; }";
     folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {

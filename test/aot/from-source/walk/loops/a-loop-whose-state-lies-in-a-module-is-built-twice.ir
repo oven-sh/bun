@@ -1,0 +1,26 @@
+# -- source: state-in-a-module.ts
+# let text = "";
+# let at: number;
+# let limit: number;
+# function skip() { while (at < limit && text.charCodeAt(at) === 32) at++; return at; }
+# function set(next: string) { text = next; at = 0; limit = next.length; }
+# (globalThis as any).made = skip;
+# (globalThis as any).set = set;
+# set("   x");
+# console.log(String(skip()));
+# -- end of source
+# As a-loop-whose-state-lies-in-an-environment-is-built-twice.ir, with the three in variables of a module. Each variable is asked by itself whether the typed turns write it: they write `at` alone.
+# The dead zones of the three are asked in front of the loop, so no turn of the typed copy checks one.
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK: [[at]]: {{*}} = GetModuleVariable variable=g1 [followsItsStore]
+# CHECK: TypeTest [[at]] testedType=i32|absent
+# CHECK-NOT: = GetModuleVariable
+# CHECK-NOT: = CheckInitialized
+# CHECK: Less {{*}}form=Integers
+# CHECK: GetStringCodeUnit
+# CHECK: Increment {{*}}form=Integers
+# CHECK: PutModuleVariable {{*}}variable=g1

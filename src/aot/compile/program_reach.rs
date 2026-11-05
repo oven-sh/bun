@@ -56,7 +56,7 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub known_helpers: &'a KnownHelpers,
     pub removable: RemovableOptions,
     pub any_file_is_named_at_run_time: bool,
-    pub code_on_disk_names_files: bool,
+    pub files_are_named_out_of_sight: bool,
     pub isolates_code_from_disk: bool,
     pub mocks_any_module: bool,
     pub files_started_by_runner: &'a [FileId],
@@ -1102,26 +1102,37 @@ impl<'a, 's> FileScan<'a, 's> {
         find_quiet_file(self.input.graph, module).map(Interest::UsedImport)
     }
 
-    fn find_name_read_off_file_between(&self, symbol: SymbolId) -> Option<(FileId, Atom)> {
-        let graph = self.input.graph;
+    fn find_file_between(
+        &self,
+        binding: ImportBinding,
+        read_off: Option<ModuleRef>,
+    ) -> Option<FileId> {
         let ImportBinding::Namespace {
             module: ModuleRef::File(target),
             phase: ImportPhase::Evaluation,
-        } = graph.import_binding(self.file, symbol)
+        } = binding
         else {
             return None;
         };
+        match read_off? {
+            ModuleRef::File(holder)
+                if holder != target && self.input.graph.holds_mock_in_variable(target) =>
+            {
+                Some(holder)
+            }
+            _ => None,
+        }
+    }
+
+    fn find_name_read_off_file_between(&self, symbol: SymbolId) -> Option<(FileId, Atom)> {
+        let binding = self.input.graph.import_binding(self.file, symbol);
+        let holder = self.find_file_between(binding, self.find_module_imported_from(symbol))?;
         let name = match *self.bound.symbol(symbol).decls {
             [Decl::ImportSpec(specifier)] => self.hir[specifier].imported,
             [Decl::ImportDefault(_)] => known::default,
             _ => return None,
         };
-        match self.find_module_imported_from(symbol)? {
-            ModuleRef::File(holder) if holder != target && graph.holds_mock_in_variable(target) => {
-                Some((holder, name))
-            }
-            _ => None,
-        }
+        Some((holder, name))
     }
 
     fn interest_in_symbol(&self, symbol: SymbolId, reference: Option<ExprId>) -> Option<Interest> {
@@ -1386,6 +1397,13 @@ impl<'a, 's> FileScan<'a, 's> {
                         {
                             let handed_on = Interest::HandedOnNamespace(module_with_code(module));
                             self.add_interest(hir[access].pos, handed_on);
+                        }
+                        let written_on = graph.find_module_accessed(self.file, access);
+                        if let Some(holder) = self.find_file_between(binding, written_on)
+                            && let Some((_, MemberKey::Name(name))) = hir.member_key(access)
+                        {
+                            let read = Interest::Export(ModuleRef::File(holder), name);
+                            self.add_interest(hir[access].pos, read);
                         }
                         match binding {
                             ImportBinding::Namespace { module, .. }
@@ -1865,11 +1883,16 @@ impl<'a, 's> FileScan<'a, 's> {
         let Some(source) = parsed_source(files, self.file) else {
             return;
         };
+        let decisions = &files.analysis(self.file).decisions;
+        for &table in source.builtins.tables_of_loaders_written() {
+            if !decisions.is_dead_expr(table) && !self.is_folded_away(table) {
+                self.add_interest(hir[table].pos, Interest::StoreOfLoaderFunction(None));
+            }
+        }
         let mut mentioned = source.builtins.mentioned().iter();
         if !mentioned.any(|&builtin| table::canonical_id(builtin) == BuiltinId::NodeModule) {
             return;
         }
-        let decisions = &files.analysis(self.file).decisions;
         for expression in self.expressions() {
             let ExprKind::Assign { target, .. } = hir[expression].kind else {
                 continue;
@@ -2403,7 +2426,7 @@ impl<'a, 's> Walk<'a, 's> {
     ) {
         let input = self.input;
         let mut reacher = Reacher { walk: self, found };
-        if input.code_on_disk_names_files {
+        if input.files_are_named_out_of_sight {
             for file in input.graph.importers_of_uncompiled_code() {
                 loads.hand_on_files_found(&mut reacher, file, None);
             }

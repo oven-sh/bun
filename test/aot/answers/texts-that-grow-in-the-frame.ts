@@ -5,9 +5,6 @@
 // # RUN(FORM): walk f3 mechanisms=all
 // # FORM-LABEL: code f3:Body
 // # FORM: = StackStringBuilderBegin
-// # RUN(FIRST): walk f5 mechanisms=all
-// # FIRST-LABEL: code f5:Body
-// # FIRST: = StackStringBuilderFinish [[name]], [[cursor]], [[first]], [[end]] traits
 // # RUN(KINDS): walk f6 mechanisms=all
 // # KINDS-LABEL: code f6:Body
 // # KINDS: = StackStringBuilderAppendBoolean

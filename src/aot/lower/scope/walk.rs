@@ -34,6 +34,7 @@ pub(in crate::lower) struct WalkedFunction {
     pub(in crate::lower) hoisted_to: Option<ScopeId>,
     pub(in crate::lower) is_made_late: bool,
     pub(in crate::lower) is_only_called_directly: bool,
+    pub(in crate::lower) is_laid_in_literal: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -77,6 +78,16 @@ pub(super) enum ArgumentRead {
 }
 
 #[derive(Debug)]
+pub(super) struct WalkedTry {
+    pub(super) statement: StmtId,
+    pub(super) boundary: ScopeId,
+    pub(super) function: WalkedFunctionId,
+    pub(super) parent: Option<u32>,
+    pub(super) stored: Vec<BindingRef>,
+    pub(super) size: u32,
+}
+
+#[derive(Debug)]
 pub(super) struct WalkedLoop {
     pub(super) statement: StmtId,
     pub(super) boundary: ScopeId,
@@ -98,6 +109,7 @@ pub(super) struct ScopeWalk {
     pub(super) function_references: Vec<(WalkedFunctionId, FnId)>,
     pub(super) calls_by_name: Vec<(ExprId, FnId)>,
     pub(super) made_at_first_read: Vec<(SymbolId, FnId)>,
+    pub(super) functions_laid_in_literals: Vec<FnId>,
     pub(super) created_at_each_read: Vec<SymbolId>,
     pub(super) is_looked_at: Vec<bool>,
     pub(super) names_handed_to_declarations: Vec<(SymbolId, FnId, u32)>,
@@ -117,6 +129,7 @@ pub(super) struct ScopeWalk {
     pub(super) slot_initializations: Vec<((ScopeId, ScopeSlot), u32)>,
     pub(super) hoisted_functions: Vec<(ScopeId, SymbolId, FnId)>,
     pub(super) loops: Vec<WalkedLoop>,
+    pub(super) tries: Vec<WalkedTry>,
     pub(super) symbol_stores: Vec<(SymbolId, ExprId, WalkedFunctionId)>,
     pub(super) last_store_times: Vec<u32>,
     pub(super) is_switch_scope: Vec<bool>,
@@ -137,6 +150,7 @@ enum Task {
     EndStores { first_pending: u32 },
     EndDecoratedClass { first_store: u32 },
     EndLoop(u32),
+    EndTry(u32),
 }
 
 #[derive(Copy, Clone)]
@@ -144,6 +158,7 @@ struct Context {
     function: WalkedFunctionId,
     lexical_scope: ScopeId,
     enclosing_loop: Option<u32>,
+    enclosing_try: Option<u32>,
     is_repeated: bool,
     is_conditional: bool,
 }
@@ -181,6 +196,7 @@ struct Walker<'x, 's> {
     pending_stores: Vec<SymbolId>,
     unconditional_statements: Vec<ExprId>,
     clock: u32,
+    number_walked: u32,
     is_only_called_or_tested: Vec<bool>,
     walk: ScopeWalk,
     stack: Vec<(Task, Context)>,

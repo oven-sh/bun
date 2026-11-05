@@ -326,6 +326,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => None,
         };
         let position = file.hir[access].pos;
+        let handed_on_by = self.find_file_that_hands_on_object(access);
         self.check_member_root(access);
         self.set_position(position);
         let modules = self.file.inputs.modules;
@@ -333,9 +334,29 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             && !modules.synthetic_export(export).is_known_member
         {
             let read = ReadWithoutMock::SyntheticMember { export, access };
-            return Some(emit_behind_mocks(self, binding, None, read));
+            return Some(emit_behind_mocks(self, binding, asked, handed_on_by, read));
         }
-        Some(emit_import_binding_asked(self, binding, name, path, asked))
+        let read = ReadWithoutMock::Binding { name, path };
+        Some(emit_behind_mocks(self, binding, asked, handed_on_by, read))
+    }
+
+    fn find_file_that_hands_on_object(&self, access: ExprId) -> Option<FileId> {
+        let file = &*self.file;
+        let (object, _) = file.hir.member_key(access)?;
+        let object = file.hir.skip_type_assertions(object);
+        match (file.hir[object].kind, file.bound.binding(object)) {
+            (ExprKind::Ident(_), Binding::Symbol(symbol)) => {
+                Some(find_written_import(file, symbol)?.0)
+            }
+            _ => match file
+                .inputs
+                .modules
+                .find_module_accessed(file.file, object)?
+            {
+                ModuleRef::File(holder) => Some(holder),
+                _ => None,
+            },
+        }
     }
 }
 
@@ -376,7 +397,7 @@ pub(super) fn emit_import_binding_asked(
     asked: Option<(FileId, Atom)>,
 ) -> ValueId {
     let read = ReadWithoutMock::Binding { name, path };
-    emit_behind_mocks(lowering, binding, asked, read)
+    emit_behind_mocks(lowering, binding, asked, None, read)
 }
 
 #[derive(Copy, Clone)]
@@ -410,6 +431,7 @@ fn emit_behind_mocks(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: ImportBinding,
     asked: Option<(FileId, Atom)>,
+    handed_on_by: Option<FileId>,
     read: ReadWithoutMock,
 ) -> ValueId {
     let modules = lowering.file.inputs.modules;
@@ -425,7 +447,7 @@ fn emit_behind_mocks(
         let holder = lowering.emit_module_namespace(holder, ImportPhase::Evaluation);
         return lowering.emit_named_read(holder, name);
     }
-    emit_behind_stations(lowering, binding, asked, &mut |lowering| {
+    emit_behind_stations(lowering, binding, asked, handed_on_by, &mut |lowering| {
         emit_read_without_mock(lowering, binding, read)
     })
 }

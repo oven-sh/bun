@@ -41,8 +41,7 @@
 // RUN(PATH): lower
 // PATH-LABEL: function {{*}}name="path"
 // PATH-NOT: Return
-// PATH: [[joined]] = String string="/$bunfs/job.js"
-// PATH-NEXT: = StrictEq {{*}}, [[joined]]
+// PATH: SwitchString {{*}} strings=[{{*}}"/$bunfs/job.js"]
 
 // RUN(SHORT): lower
 // SHORT-LABEL: function {{*}}name="withoutExtension"

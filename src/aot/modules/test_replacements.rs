@@ -6,6 +6,7 @@ use super::plan::{ModuleRef, View};
 use super::requests::ScannedSite;
 use crate::builtins::{BuiltinId, BuiltinName, ResolvedBuiltins, RuntimeModule, table};
 use crate::load::sources::parsed_source;
+use crate::test_runs::names_from_outside::find_items_handed_to_callback;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
@@ -49,17 +50,46 @@ impl FileBinder<'_, '_> {
             if self.analysis.decisions.is_dead_expr(spy.call) {
                 continue;
             }
-            match (self.find_module_object(&names, spy.object), spy.name) {
-                (Some(object), Some(name)) => self.replace_export(object, name),
-                (Some(object), None) => {
-                    let module = object.module();
-                    self.imports.namespaces_spied_on_whole.push(module);
+            let objects = self.find_module_objects(&names, spy.object);
+            match (&objects[..], spy.name) {
+                ([], Some(name)) => self.imports.spies_on_unknown_objects.names.push(name),
+                ([], None) if source.of_run.spies_read.contains(&spy.call) => {}
+                ([], None) => self.imports.spies_on_unknown_objects.is_any_name = true,
+                (objects, Some(name)) => {
+                    for &object in objects {
+                        self.replace_export(object, name);
+                    }
                 }
-                (None, Some(name)) => self.imports.spies_on_unknown_objects.names.push(name),
-                (None, None) if source.of_run.spies_under_names_from_outside => {}
-                (None, None) => self.imports.spies_on_unknown_objects.is_any_name = true,
+                (objects, None) => {
+                    let modules = objects.iter().map(|object| object.module());
+                    self.imports.namespaces_spied_on_whole.extend(modules);
+                }
             }
         }
+    }
+
+    fn find_module_objects(
+        &self,
+        names: &[(SymbolId, StandsFor)],
+        object: ExprId,
+    ) -> Vec<StandsFor> {
+        if let Some(found) = self.find_module_object(names, object) {
+            return vec![found];
+        }
+        let (hir, atoms) = (self.hir, &self.context.files.atoms);
+        let object = hir.skip_type_assertions(object);
+        let Some(items) = find_items_handed_to_callback(hir, self.bound, atoms, object) else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for item in hir.ids(items) {
+            let of_item = self.find_module_objects(names, item);
+            if of_item.is_empty() {
+                return Vec::new();
+            }
+            found.extend(of_item);
+        }
+        found
     }
 
     fn collect_module_object_names(&self) -> Vec<(SymbolId, StandsFor)> {

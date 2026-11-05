@@ -1,0 +1,14 @@
+# the twin of arms-of-a-read-part-at-the-jump-of-their-block: behind the jump the value is only handed on, so nothing is won by keeping the ways apart: the read stays one operation that tests for itself, and there is no arm
+# the function is handed to sink: nobody knows its callers. f1 = sort
+# -- source: a-read-whose-result-nobody-looks-at-behind-the-jump-is-one-operation.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Bits { Four = 4, Eight = 8, ThirtyTwo = 32 }
+# class Kind { flags: Bits; objectFlags: Bits; constructor(flags: Bits, objectFlags: Bits) { this.flags = flags; this.objectFlags = objectFlags; } }
+# function sort(kind: Kind, c: boolean) { const f = c ? kind.objectFlags : 0; sink(f); return 2; }
+# sink(sort, new Kind(1, 2));
+# -- end of source
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="objectFlags" {{*}}level=Expected
+# CHECK-NOT: frequency=Rare
+# CHECK: Return

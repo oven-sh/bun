@@ -1408,6 +1408,13 @@ JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject* globalObject, Err
     return createNotInExecutableError(globalObject, code, path, NotInExecutable::HostObject);
 }
 
+static bool isReadAsCode(Zig::GlobalObject* globalObject, const String& path)
+{
+    BunString pathString = Bun::toString(path);
+    BunLoaderType loader = Bun__getDefaultLoader(globalObject, &pathString, nullptr);
+    return loader == BunLoaderTypeJS || loader == BunLoaderTypeJSX || loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX;
+}
+
 JSValue parentSeenBy(Zig::GlobalObject* globalObject, JSString* id, JSValue parent)
 {
     if (!hasCompiledModules()) [[likely]]
@@ -1421,7 +1428,11 @@ JSValue parentSeenBy(Zig::GlobalObject* globalObject, JSString* id, JSValue pare
     RETURN_IF_EXCEPTION(scope, {});
     auto required = id->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!isCompiledModule(path) || isCompiledModule(required))
+    auto compiled = compiledModuleForPath(path);
+    if (!compiled || isCompiledModule(required))
+        return parent;
+    bool isCodeThatExecutableLoadsFromDisk = !compiledModulesRunInPlaceOfFiles() && isReadAsCode(globalObject, required);
+    if (!isCodeThatExecutableLoadsFromDisk && AOT::mayHandOutModuleObject(requirer->globalObject(), *compiled))
         return parent;
     RELEASE_AND_RETURN(scope, JSCommonJSModule::create(globalObject, pathOfRequirer, constructEmptyObject(globalObject), true, jsUndefined()));
 }
@@ -1523,9 +1534,12 @@ extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString* path)
     return Bun::isCompiledModule(file) || (Bun::hasCompiledModules() && JSC::AOT::holdsFormThatAttributeAsksFor(file));
 }
 
-extern "C" bool Bun__AOT__mayHoldPathStartingWith(const BunString* start)
+extern "C" bool Bun__AOT__mayHoldPathStartingWith(BunAOTBytes start)
 {
-    return JSC::AOT::mayHoldPathStartingWith(start->toWTFString(BunString::ZeroCopy));
+    std::span<const Latin1Character> text { byteCast<Latin1Character>(start.ptr), start.len };
+    if (charactersAreAllASCII(text))
+        return JSC::AOT::mayHoldPathStartingWith(StringView(text));
+    return JSC::AOT::mayHoldPathStartingWith(String::fromUTF8(std::span<const uint8_t> { start.ptr, start.len }));
 }
 
 extern "C" bool Bun__AOT__isLeftToCodeOutsideImage(const BunString* specifier, const BunString* directoryOfImporter)
@@ -1685,7 +1699,7 @@ extern "C" void Bun__AOT__willRunEntryPointAgain(JSC::JSGlobalObject*, const Bun
 extern "C" void Bun__AOT__willRunPreloads(JSC::JSGlobalObject*) {}
 extern "C" void Bun__AOT__didRunPreloads(JSC::JSGlobalObject*) {}
 extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString*) { return false; }
-extern "C" bool Bun__AOT__mayHoldPathStartingWith(const BunString*) { return false; }
+extern "C" bool Bun__AOT__mayHoldPathStartingWith(BunAOTBytes) { return false; }
 extern "C" bool Bun__AOT__isLeftToCodeOutsideImage(const BunString*, const BunString*) { return false; }
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes) { return false; }
 extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages, bool)

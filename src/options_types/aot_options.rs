@@ -82,6 +82,8 @@ pub struct AotOptions {
     pub ir_output_path: Option<Box<[u8]>>,
     /// `--aot-testing=NoExecutable`: the build runs as always and writes no executable.
     pub writes_no_executable: bool,
+    /// `--aot-testing=DiscardsFirstVisits`: the first visit of every file is thrown away, as one is that ends with an invalid commit, and the file is visited again. The program is the same.
+    pub discards_first_visits: bool,
     pub runs_in_place: bool,
     pub missing_tsconfig_override: Option<Box<[u8]>>,
     pub checks_only: bool,
@@ -151,6 +153,7 @@ impl Default for AotOptions {
             library_runs_compiled_alone: false,
             ir_output_path: None,
             writes_no_executable: false,
+            discards_first_visits: false,
             runs_in_place: false,
             missing_tsconfig_override: None,
             checks_only: false,
@@ -210,6 +213,7 @@ mod tests {
             library_runs_compiled_alone,
             ir_output_path,
             writes_no_executable,
+            discards_first_visits,
             runs_in_place,
             missing_tsconfig_override,
             checks_only,
@@ -257,6 +261,7 @@ mod tests {
         assert!(!library_runs_compiled_alone);
         assert!(ir_output_path.is_none());
         assert!(!writes_no_executable);
+        assert!(!discards_first_visits);
         assert!(!runs_in_place);
         assert!(missing_tsconfig_override.is_none());
         assert!(!checks_only);

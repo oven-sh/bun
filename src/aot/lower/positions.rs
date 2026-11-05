@@ -11,7 +11,9 @@ use bun_sema::program::Sym;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{CheckerTypeId, FileLowering, types};
-use crate::ir::{DeclaredType, Mapped, PositionFlags, Primitives, Type, TypeId, TypeTable};
+use crate::ir::{
+    DeclaredType, LayoutKey, Mapped, PositionFlags, Primitives, Type, TypeId, TypeTable,
+};
 use crate::modules::ImportBinding;
 
 pub(crate) struct FunctionPositions {
@@ -187,6 +189,29 @@ impl FileLowering<'_, '_, '_, '_> {
             Some(_) => self.create_position(types),
             None => DeclaredType::untyped(),
         }
+    }
+
+    pub(crate) fn create_expected_position(&mut self, types: PositionTypes) -> DeclaredType {
+        let Some(source) = self.choose_source(types) else {
+            return DeclaredType::untyped();
+        };
+        let fragment = &self.fragment;
+        let layouts = &fragment.types.get(source.mapped.ty).layouts;
+        let names_classes_alone = layouts.iter().all(|&layout| {
+            matches!(
+                fragment.layout_key(layout),
+                LayoutKey::Class(_) | LayoutKey::ConstructorFunction(_) | LayoutKey::Library(_)
+            )
+        });
+        if !names_classes_alone {
+            return DeclaredType::untyped();
+        }
+        let source = PositionSource {
+            mapped: Mapped::expected(source.mapped.ty),
+            ..source
+        };
+        let flags = self.find_omitted_nullish(source);
+        self.finish_position(source, flags)
     }
 
     pub(crate) fn create_member_position(&mut self, types: PositionTypes) -> DeclaredType {

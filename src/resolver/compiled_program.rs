@@ -25,20 +25,6 @@ pub struct CompiledEntryPoint {
     pub module_path: &'static [u8],
 }
 
-impl CompiledEntryPoint {
-    /// Whether the compiled module is `name` below `root`. The paths of an executable for Windows are written with either separator.
-    pub fn is_below(&self, root: &[u8], name: &[u8]) -> bool {
-        let has_drive = root.get(1) == Some(&b':');
-        let is_separator = |byte: u8| byte == b'/' || (has_drive && byte == b'\\');
-        let is_same = |(&left, &right): (&u8, &u8)| {
-            left == right || (is_separator(left) && is_separator(right))
-        };
-        let path = self.module_path;
-        path.len() == root.len() + name.len()
-            && path.iter().zip(root.iter().chain(name)).all(is_same)
-    }
-}
-
 /// A name that leads to an entry point and is not the path of its file: the name of a package, a key of its `exports`, a folder whose `package.json` names its main file, or what the program writes where it starts a Worker.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CompiledPackageName {
@@ -117,8 +103,8 @@ pub struct CompiledProgram {
     module_listing: OnceLock<ModuleListing>,
     /// What every path that the executable answers for outside of its own root begins with; found by the graph at the first question.
     pub common_start_of_source_paths: OnceLock<Option<Box<[u8]>>>,
-    /// `StandaloneModuleGraph::find_starts_of_code_above_root`
-    pub starts_of_code_above_root: OnceLock<(Box<[usize]>, Box<[Box<[u8]>]>)>,
+    /// `StandaloneModuleGraph::find_folders_above_root_with_code`
+    pub folders_above_root_with_code: OnceLock<Box<[usize]>>,
 }
 
 /// Answers the public path of the module compiled at that path, in memory that is never freed.
@@ -396,7 +382,7 @@ impl CompiledProgram {
             test_of_names_left_outside: OnceLock::new(),
             module_listing: OnceLock::new(),
             common_start_of_source_paths: OnceLock::new(),
-            starts_of_code_above_root: OnceLock::new(),
+            folders_above_root_with_code: OnceLock::new(),
         }
     }
 
@@ -592,6 +578,10 @@ impl CompiledProgram {
         mut start: Vec<u8>,
         each: &mut dyn FnMut(&[u8]) -> bool,
     ) {
+        let may_hold = self.test_of_path_starts.get();
+        if may_hold.is_some_and(|may_hold| !may_hold(&start)) {
+            return;
+        }
         let Some(listing) = self.module_listing.get() else {
             return;
         };
@@ -608,6 +598,18 @@ impl CompiledProgram {
             }
             each(path)
         });
+    }
+
+    /// Whether the image may hold a module below `folder`, which ends with a `/`. The build has laid a table of the folders with code into the image: one pass over the text and one look. `None` where nobody has set that test.
+    pub fn may_hold_module_below(&self, folder: &[u8]) -> Option<bool> {
+        Some(self.test_of_path_starts.get()?(folder))
+    }
+
+    /// Whether the image may hold a module at `path` or below it. `path` is followed by a `/` that is not part of it. Nothing is listed, and where the folder of `path` holds no code nothing is looked up.
+    pub fn may_hold_module_at_or_below(&self, path_and_slash: &[u8]) -> Option<bool> {
+        let (lookup, may_hold) = (self.module_lookup.get()?, self.test_of_path_starts.get()?);
+        let path = path_and_slash.strip_suffix(b"/")?;
+        Some(may_hold(path) && (may_hold(path_and_slash) || lookup(path).is_some()))
     }
 
     pub fn holds_module_below(&self, directory: &[u8]) -> bool {
@@ -1146,49 +1148,6 @@ mod tests {
     fn source_paths_in(program: &CompiledProgram, directory: &[u8]) -> Vec<&'static [u8]> {
         let entry_points = program.entry_points_in_directory(directory);
         entry_points.map(|entry| entry.source_path).collect()
-    }
-
-    #[test]
-    fn entry_point_is_found_below_root_under_either_separator_of_windows() {
-        let is_below = |module_path: &'static [u8], root: &[u8], name: &[u8]| {
-            let entry_point = CompiledEntryPoint {
-                file_index: 0,
-                module_id: 0,
-                source_path: b"",
-                module_path,
-            };
-            entry_point.is_below(root, name)
-        };
-        let windows = b"B:/~BUN/root/";
-        for path in [
-            &br"B:\~BUN\root\folder\second.js"[..],
-            b"B:/~BUN/root/folder/second.js",
-        ] {
-            assert!(is_below(path, windows, b"folder/second.js"));
-            assert!(is_below(path, windows, br"folder\second.js"));
-            assert!(!is_below(path, windows, b"second.js"));
-            assert!(!is_below(path, windows, b"folder/second.j"));
-            assert!(!is_below(path, windows, b"folder/second.js/"));
-            assert!(!is_below(path, windows, b"folder_second.js"));
-        }
-        assert!(is_below(br"B:\~BUN\root\p0.ts", windows, b"p0.ts"));
-        assert!(!is_below(br"B:\~BUN\other\p0.ts", windows, b"p0.ts"));
-        assert!(!is_below(br"B:\~BUN\root\", windows, b"p0.ts"));
-
-        let posix = b"/$bunfs/root/";
-        assert!(is_below(
-            b"/$bunfs/root/folder/second.js",
-            posix,
-            b"folder/second.js"
-        ));
-        assert!(!is_below(
-            b"/$bunfs/root/folder/second.js",
-            posix,
-            b"second.js"
-        ));
-        // There a backslash is a character of a name.
-        assert!(is_below(br"/$bunfs/root/a\b.js", posix, br"a\b.js"));
-        assert!(!is_below(br"/$bunfs/root/a\b.js", posix, b"a/b.js"));
     }
 
     #[test]

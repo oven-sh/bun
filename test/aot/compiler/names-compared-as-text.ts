@@ -96,7 +96,7 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason: "Load: what a file extension or a module specifier loads is a question about a path",
   },
   {
-    paths: /^src\/aot\/compile\/program_reach\.rs$/,
+    paths: /^src\/aot\/(compile\/program_reach|modules\/spelled_files)\.rs$/,
     lines: /b"(?:\.{0,2}\/|\/index)"|b'@'/,
     reason:
       "a string of the program that begins like a relative path may spell a file that the program loads, and the path of a file tells its package and whether it is the index of its folder",

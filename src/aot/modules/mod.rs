@@ -117,7 +117,7 @@ pub struct BindInput<'a, 's> {
     pub entry_points_run_again: bool,
     pub typescript_drops_absent_exports: bool,
     pub runs_in_several_realms: bool,
-    pub code_from_disk_names_files: bool,
+    pub files_are_named_out_of_sight: bool,
     pub helpers_of_tests_name_files: bool,
     pub(crate) run: &'a crate::test_runs::RunContents,
     pub in_parallel: InParallel<'a>,
@@ -633,7 +633,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let is_any_module_named_by_mock = mocks_any_module || !named_by_mocks.is_empty();
     if is_any_module_named_by_mock
         && (mocks_any_module
-            || input.code_from_disk_names_files
+            || input.files_are_named_out_of_sight
             || modules.compiled_files.iter().any(asks_for_original))
     {
         plan.set_originals_beside_mocks_may_run();

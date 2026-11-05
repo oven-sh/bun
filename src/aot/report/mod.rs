@@ -97,6 +97,9 @@ pub(crate) fn engine_reports_for(explain: ExplainSet) -> ReportSet {
     if explain.contains(ExplainSet::STATISTICS) {
         reports |= ReportSet::ACCESS_COUNTS;
     }
+    if explain.contains(ExplainSet::RUNTIME_USE) {
+        reports |= ReportSet::USES;
+    }
     if explain.contains(ExplainSet::ALLOCATIONS) {
         reports |= ReportSet::ALLOCATIONS;
     }

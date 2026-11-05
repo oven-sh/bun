@@ -1,0 +1,32 @@
+# If a name that is stored through a family went to every member, one store through a union of five hundred would give five hundred layouts a field. It goes to the members whose objects may be known by a family: those that met another member somewhere, were lost or escaped.
+# Five members meet, which is more than a set holds: the store goes through the family. The sixth literal never meets another: no store through the family comes to it, it gets no field, and as before the store counts as one that may add a property to it.
+# -- source: stored-through-a-family.ts
+# type U = { k: "a"; x: number } | { k: "b"; y: number } | { k: "c"; z: number } | { k: "d"; w: number } | { k: "e"; v: number } | { k: "f"; u: number } | { k: "g"; s: number };
+# function tag(u: U) { (u as any).t = 1; }
+# const a: U = { k: "a", x: 1 };
+# const b: U = { k: "b", y: 2 };
+# const c: U = { k: "c", z: 3 };
+# const d: U = { k: "d", w: 4 };
+# const e: U = { k: "e", v: 5 };
+# const f: U = { k: "f", u: 6 };
+# const g: U = { k: "g", s: 7 };
+# const n = Date.now();
+# tag(n > 4 ? a : n > 3 ? b : n > 2 ? e : n > 1 ? f : g);
+# function read(u: { k: "c"; z: number }) { return (u as any).t; }
+# read(c as any);
+# -- end of source
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.2 "t" appended proven=i32 writers-known
+# CHECK: field L1.2 "t" appended proven=i32 writers-known
+# CHECK: field L6.1 "z"
+# CHECK-NOT: field L6.2
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK-NEXT: layout L1 {{*}}changes=[]
+# CHECK: layout L6 {{*}}changes=[GainsProperty]
+# The members that have the name keep it in one place: 24 + 2 x 8 bytes take a cell of 48, and the word that is left over takes the name in both.
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 CompiledObject size=48 shapes
+# PLAN: slot 2 "t" appended {{*}} Inline offset=40
+# PLAN: layout L1 CompiledObject size=48 shapes
+# PLAN: slot 2 "t" appended {{*}} Inline offset=40
+# PLAN: layout L6 CompiledObject size=48 shapes

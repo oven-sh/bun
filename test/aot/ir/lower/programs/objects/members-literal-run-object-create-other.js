@@ -164,14 +164,15 @@ console.log(lines.join("\n"));
 // CHECK-LABEL: function {{*}}name="create"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: [[L_1]], v1: anything, v2: anything):
-// CHECK-NEXT: v3 = PropGet v0 key="answers"
-// CHECK-NEXT: v4 = NewObject layout=[[L_3]]
-// CHECK-NEXT: SetLiteralPrototype v4, v3 [refusesOtherValues]
-// CHECK-NEXT: v6 = FinishObject v4
-// CHECK-NEXT: PropSet v6, v0 key="app"
-// CHECK-NEXT: PropSet v6, v1 key="req"
-// CHECK-NEXT: PropSet v6, v2 key="res"
-// CHECK-NEXT: Return v6
+// CHECK-NEXT: v3 = Builtin builtin=ObjectCreate
+// CHECK-NEXT: v4 = PropGet v0 key="answers"
+// CHECK-NEXT: v5 = NewObject layout=[[L_3]]
+// CHECK-NEXT: SetLiteralPrototype v5, v4 [refusesOtherValues]
+// CHECK-NEXT: v7 = FinishObject v5
+// CHECK-NEXT: PropSet v7, v0 key="app"
+// CHECK-NEXT: PropSet v7, v1 key="req"
+// CHECK-NEXT: PropSet v7, v2 key="res"
+// CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="status"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {

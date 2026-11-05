@@ -468,6 +468,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn number_symbol_call(&mut self, call: ExprId) -> Option<u32> {
+        self.intern_key_of_registered_symbol(call);
         let number = self.find_number_of_symbol_call(call)?;
         let description = match self.hir.ids(call_site(self, call).args).next() {
             Some(written) => match expression::find_constant(self, written) {
@@ -482,6 +483,24 @@ impl FileLowering<'_, '_, '_, '_> {
             self.fragment.property_keys.intern(key);
         }
         Some(number)
+    }
+
+    fn intern_key_of_registered_symbol(&mut self, call: ExprId) {
+        let ExprKind::Call(site) = self.hir[call].kind else {
+            return;
+        };
+        let callee = self.skip_type_syntax(self.hir[site].callee);
+        if self.builtins.builtin_of_expression(callee) != Some(BuiltinId::SymbolFor) {
+            return;
+        }
+        let Some(written) = self.hir.ids(self.hir[site].args).next() else {
+            return;
+        };
+        if let Some(Constant::String(text)) = expression::find_constant(self, written) {
+            let text = self.intern_atom(text);
+            let key = PropertyKey::from_registered_symbol(text);
+            self.fragment.property_keys.intern(key);
+        }
     }
 
     fn find_callee_by_signature(&mut self, call: ExprId, inner: ExprId) -> Option<BuiltinId> {

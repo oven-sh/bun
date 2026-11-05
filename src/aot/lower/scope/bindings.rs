@@ -1,11 +1,12 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingKind, CodeUnit, ScopeId, SymbolId};
-use bun_sema::hir::{ExprId, FnId};
+use bun_sema::hir::{ExprId, FnId, StmtId};
+use smallvec::SmallVec;
 
 use super::lexical_owners::find_container_binding;
-use super::{BindingForm, BindingRef, ScopeSlot, Storage, environments};
-use crate::ir::ValueId;
+use super::{BindingForm, BindingRef, DeadZone, ScopeSlot, Storage, environments};
 use crate::ir::generated::{ECMAMode, RuntimeErrorKind};
+use crate::ir::{LocalVariable, ValueId};
 use crate::lower::captures::Capture;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, convert, function};
@@ -71,6 +72,43 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    pub(in crate::lower) fn read_what_was_stored_under_handlers(&mut self, statement: StmtId) {
+        let bindings = self.file.scopes.stored_under_handlers(statement);
+        let bindings: SmallVec<[BindingRef; 8]> = SmallVec::from_slice(bindings);
+        let mut read: SmallVec<[(LocalVariable, ValueId); 8]> = SmallVec::new();
+        for binding in bindings {
+            let placement = self.file.scopes.placement(binding);
+            let (Some(local), Some(placement)) = (self.scopes.find_local(binding), placement)
+            else {
+                continue;
+            };
+            let (Storage::Field { scope, field }, BindingRef::Symbol(symbol)) =
+                (placement.storage, binding)
+            else {
+                continue;
+            };
+            if local.dead_zone == DeadZone::Uninitialized {
+                continue;
+            }
+            let environment = self.get_environment(scope);
+            let layout = environments::environment_layout(self.file, scope);
+            let value = self
+                .builder
+                .get_environment_field(environment, layout, field);
+            let value = match local.dead_zone {
+                DeadZone::Initialized => {
+                    let name = self.file.bound.symbol(symbol).name;
+                    self.emit_initialization_check(value, symbol, name)
+                }
+                DeadZone::Never | DeadZone::Uninitialized | DeadZone::DecidedAtRunTime => value,
+            };
+            read.push((local.variable, value));
+        }
+        for (variable, value) in read {
+            self.builder.write_variable(variable, value);
+        }
+    }
+
     pub(super) fn set_stored(&mut self, binding: BindingRef, value: ValueId) {
         self.set_stored_as(binding, value, BindingStore::Initialize);
     }
@@ -84,6 +122,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             match (store, &placement.storage) {
                 (BindingStore::Release, Storage::Local) => {
                     self.builder.write_released_variable(local.variable, value);
+                }
+                (_, Storage::Field { .. }) => {
+                    self.builder
+                        .write_variable_kept_in_field(local.variable, value);
                 }
                 _ => self.builder.write_variable(local.variable, value),
             }

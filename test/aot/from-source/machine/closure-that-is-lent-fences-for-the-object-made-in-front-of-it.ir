@@ -1,0 +1,15 @@
+# `boxed` makes an object and an arrow over it, which `twice` only calls: the arrow lies in the frame. The sweep has left the fence of the object to the closure, so the code of the closure fences though it allocates nothing: the arrow lays the object in a list.
+# f1 = twice, f2 = boxed
+# -- source: closure-that-is-lent-fences-for-the-object-made-in-front-of-it.ts
+# declare function sink(...values: unknown[]): void;
+# const kept: object[] = [];
+# function twice(a: number, f: (x: number) => number): number { let t = a; for (let i = 0; i < 2; i++) t = f(t); return t; }
+# function boxed(a: number) { const box = { v: a, w: a + 1 }; const t = twice(a, x => { kept.push(box); return x + box.v; }); return t + 1; }
+# sink(boxed(1), boxed(2), kept);
+# -- end of source
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK: NewObject {{*}}LaterFenceCovers
+# CHECK: NewClosure
+# REQUIRES(EMIT): arm64
+# RUN(EMIT): emit f2 mechanisms=all-Inlining
+# EMIT: Fence

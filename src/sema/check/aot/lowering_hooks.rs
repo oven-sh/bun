@@ -89,10 +89,35 @@ mod tests {
     }
 
     #[test]
+    fn a_task_that_lowers_nothing_and_is_cleared_takes_the_rows_from_the_state_it_found() {
+        let mut answers = KeptAnswers::default();
+        answers.hand_on_of_lowering = Some(|_, carried| Some(Box::new(carried.is_some())));
+        let has_rows = |answers: &KeptAnswers| {
+            let state = answers.of_lowering_in_last_task.as_ref();
+            state
+                .and_then(|state| state.downcast_ref::<bool>())
+                .copied()
+        };
+
+        answers.of_lowering = Some(Box::new(7u32));
+        answers.outlives_task = true;
+        answers.end_task();
+        assert_eq!(has_rows(&answers), Some(true));
+
+        let (mut memo, arena) = answers.take();
+        memo.type_row(TypeId::STRING);
+        answers.put_back(memo, arena);
+        answers.end_task();
+        let (mut memo, _arena) = answers.take();
+        assert_eq!(memo.type_row(TypeId::ANY).number(), 0);
+        assert_eq!(has_rows(&answers), Some(false));
+    }
+
+    #[test]
     fn rows_that_a_second_file_asked_for_go_on_to_the_next_task() {
         let mut answers = KeptAnswers::default();
         answers.hand_on_of_lowering = Some(|_, carried| {
-            let carried = carried.expect("the memo outlives the task");
+            let carried = carried?;
             let new_rows: Vec<Option<u32>> = (0..4).map(|row| carried.new_row(row)).collect();
             Some(Box::new((new_rows, carried.count())))
         });
@@ -130,6 +155,7 @@ mod tests {
         answers.end_task();
         let (mut memo, _arena) = answers.take();
         assert_eq!(memo.type_row(TypeId::ANY).number(), 0);
+        assert!(answers.of_lowering_in_last_task.is_none());
     }
 
     #[test]

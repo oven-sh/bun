@@ -599,13 +599,21 @@ fn one_enum_member_is_a_tag_and_several_take_every_int32() {
 }
 
 #[test]
-fn variable_without_an_annotation_is_untyped() {
+fn variable_without_an_annotation_is_expected_to_hold_what_the_checker_infers_of_a_call() {
     let source = "function g() { return 1; }\nexport let v = g();\n";
-    for path in ["main.ts", "main.js"] {
-        let position = expand_variable(&lower_file(path, source, None), "v");
-        assert!(position.ty.is_anything(), "{path}: {position:?}");
-        assert!(!position.is_expected, "{path}: {position:?}");
-    }
+    let position = expand_variable(&lower_file("main.ts", source, None), "v");
+    assert!(position.is_expected, "{position:?}");
+    let primitives = position.ty.primitives;
+    assert!(primitives.contains(Primitives::NUMBER), "{position:?}");
+    assert!(!primitives.contains(Primitives::STRING), "{position:?}");
+}
+
+#[test]
+fn variable_without_an_annotation_is_untyped_where_the_file_is_not_checked() {
+    let source = "function g() { return 1; }\nexport let v = g();\n";
+    let position = expand_variable(&lower_file("main.js", source, None), "v");
+    assert!(position.ty.is_anything(), "{position:?}");
+    assert!(!position.is_expected, "{position:?}");
 }
 
 #[test]

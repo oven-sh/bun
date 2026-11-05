@@ -1,0 +1,23 @@
+# beside what is expected, these are never held, whatever is written of them: a type without a required member (a bag of options: every object is of it) . the fields of a layout that is filled under computed keys, whose stores ask the type
+# again at each hit . an accessor, whose slot holds its functions. `strict` beside them is the control: it is written, and held.
+# f1 = fill
+# -- source: each-kind-of-field-that-is-never-held.ts
+# declare function sink(...values: unknown[]): void;
+# interface Bag { depth?: number; name?: string; strict?: boolean }
+# class Holder { bag: Bag; strict: boolean; constructor(bag: Bag, strict: boolean) { this.bag = bag; this.strict = strict; } }
+# class Counts { total: string; constructor(total: string) { this.total = total; } }
+# function fill(counts: Counts, word: string, value: string) { (counts as any)[word] = value; }
+# function literal(seed: string) { return { get size(): string { return seed; }, plain: seed }; }
+# fill(new Counts("1"), "total", "2");
+# fill(new Counts("2"), "other", "3");
+# sink(Holder, Counts, fill, literal);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "strict" source=written type=boolean markers spares-test
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: "bag"
+# NEVER-NOT: "total"
+# NEVER-NOT: "size"
+# NEVER-NOT: differs-from-table
+# RUN(LINK): link held layouts mechanisms=all
+# LINK: filled-under-computed-keys

@@ -78,33 +78,25 @@ console.log(run(250));
 // CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
 // CHECK-NEXT: b2():
 // CHECK-NEXT: v8 = PropGet v2 key="push"
-// CHECK-NEXT: v9 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v10 = NewObject layout=[[L_2]]
-// CHECK-NEXT: PropDefine v10, v9 key="id"
-// CHECK-NEXT: v12 = String string="c"
-// CHECK-NEXT: v13 = Integer integer=23
-// CHECK-NEXT: v14 = Mod v5, v13
-// CHECK-NEXT: v15 = Add v12, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v10, v16 key="customer"
-// CHECK-NEXT: v18 = Integer integer=37
-// CHECK-NEXT: v19 = Mul v5, v18
-// CHECK-NEXT: v20 = Integer integer=500
-// CHECK-NEXT: v21 = Mod v19, v20
-// CHECK-NEXT: v22 = Convert v21 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v10, v22 key="amount"
-// CHECK-NEXT: v24 = Integer integer=3
-// CHECK-NEXT: v25 = Mod v5, v24
-// CHECK-NEXT: v26 = Integer
-// CHECK-NEXT: v27 = StrictEq v25, v26
-// CHECK-NEXT: v28 = LogicalNot v27
-// CHECK-NEXT: v29 = Convert v28 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v10, v29 key="open"
-// CHECK-NEXT: v31 = FinishObject v10
-// CHECK-NEXT: v32 = Call v8, v2, v31 calleeKey="push" calleeName="orders.push"
-// CHECK-NEXT: v33 = Increment v5
-// CHECK-NEXT: v34 = Convert v33 declared={type=undefined|number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b1(v34)
+// CHECK-NEXT: v9 = String string="c"
+// CHECK-NEXT: v10 = Integer integer=23
+// CHECK-NEXT: v11 = Mod v5, v10
+// CHECK-NEXT: v12 = Add v9, v11
+// CHECK-NEXT: v13 = Integer integer=37
+// CHECK-NEXT: v14 = Mul v5, v13
+// CHECK-NEXT: v15 = Integer integer=500
+// CHECK-NEXT: v16 = Mod v14, v15
+// CHECK-NEXT: v17 = Integer integer=3
+// CHECK-NEXT: v18 = Mod v5, v17
+// CHECK-NEXT: v19 = Integer
+// CHECK-NEXT: v20 = StrictEq v18, v19
+// CHECK-NEXT: v21 = LogicalNot v20
+// CHECK-NEXT: v22 = NewObject -, v5, v12, v16, v21 layout=[[L_2]] fields=[2, 1, 0, 3]
+// CHECK-NEXT: v23 = FinishObject v22
+// CHECK-NEXT: v24 = Call v8, v2, v23 calleeKey="push" calleeName="orders.push"
+// CHECK-NEXT: v25 = Increment v5
+// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b1(v26)
 // CHECK-NEXT: b3():
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }

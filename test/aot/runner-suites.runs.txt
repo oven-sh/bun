@@ -1,7 +1,6 @@
 # Tests of Bun's own runner suites of which a child run under `--aot` does not run what a plain run runs: `<file>: <test>`. See harness/runner-suites.ts, holdRunsOfSuites().
 # A line goes out with the fix that makes its test pass.
 test/js/bun/test/mock/mock-module.test.ts: a factory can load a partly mocked module while another one is being loaded
-test/js/bun/test/mock/mock-module.test.ts: a factory doesn't wait for an onLoad() callback in an unrelated load > a factory that imports a module another load is fetching gets its own copy
 test/js/bun/test/mock/mock-module.test.ts: a factory doesn't wait for an onLoad() callback in an unrelated load > a module that the factory shares with the importers of the mock stays linked to the mock
 test/js/bun/test/mock/mock-module.test.ts: a factory that another factory's import calls also waits for what that import fetches
 test/js/bun/test/mock/mock-module.test.ts: a factory that asks vi.importActual() for another mocked module, which imports the one it mocks

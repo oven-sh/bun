@@ -23,9 +23,9 @@ pub(in crate::lower) use self::fields::is_called_by_evaluated_text;
 pub(crate) use self::fields::static_field_position;
 pub(in crate::lower) use self::plan::{
     brand_is_of_methods, class_slots, decorators_of, fields_evaluated_in_constructor,
-    find_fields_under_signed_members, has_decorators, has_instance_brand,
-    has_private_static_storage, is_auto_accessor, is_declaration_only, is_decorated_private_name,
-    is_derived_class, is_evaluated_in_constructor, runtime_members,
+    find_constructor_made_by_transpiler, find_fields_under_signed_members, has_decorators,
+    has_instance_brand, has_private_static_storage, is_auto_accessor, is_declaration_only,
+    is_decorated_private_name, is_derived_class, is_evaluated_in_constructor, runtime_members,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -33,6 +33,12 @@ pub(in crate::lower) enum ClassTransform {
     None,
     Standard,
     Legacy,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(in crate::lower) enum MadeConstructor {
+    AtBrace,
+    AtStatement,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

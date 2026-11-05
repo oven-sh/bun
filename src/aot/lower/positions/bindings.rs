@@ -20,7 +20,42 @@ fn is_const_written_as_zero(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -
             if hir.numbers[index as usize].to_bits() == 0)
 }
 
+fn comes_from_elsewhere(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return false;
+    };
+    let mut value = hir[declaration].init;
+    if value.is_none() {
+        return false;
+    }
+    loop {
+        value = match hir[value].kind {
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
+            ExprKind::AsConst(expr) | ExprKind::NonNull(expr) | ExprKind::Await(expr) => expr,
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) => return true,
+            _ => return false,
+        };
+    }
+}
+
 impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn compute_inferred_position(&mut self, symbol: Sym) -> DeclaredType {
+        let files = self.queries.files();
+        let declarations = files.decls_of(symbol);
+        let mut values = declarations
+            .iter()
+            .filter(|&&(_, it)| !declares_type_alone(it));
+        let Some(&(declaring_file, Decl::Var(pattern))) = values.next() else {
+            return DeclaredType::untyped();
+        };
+        if declaring_file != self.file || !comes_from_elsewhere(self.hir, self.bound, pattern) {
+            return DeclaredType::untyped();
+        }
+        let written = self.queries.written_variable_type(symbol);
+        let checked = self.queries.binding_type(pattern);
+        self.create_expected_position(PositionTypes { written, checked })
+    }
+
     pub(super) fn compute_variable_position(&mut self, symbol: Sym) -> DeclaredType {
         if self.is_function_binding(symbol) {
             let ty = match self.find_bound_function(symbol) {

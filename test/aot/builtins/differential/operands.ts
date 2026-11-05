@@ -59,7 +59,6 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^%PrivateGlobals%\.requireCommonJS$/, "only `require` of the library calls it, with a module object that it has just made, and native code takes that on trust"],
   [/^MessagePort\.prototype\.close$/, "node:worker_threads lays a function of its own over it, and this realm has that one"],
   [/declared_results_testing\.?bind\.?ts:?declaredAsString/i, "a helper of Bun's own tests that answers outside the type it declares, on purpose"],
-  [/^%CompilerHelpers%\..*_inRanges$/, "the compiler hands it bounds that it has clamped itself, and takes them on trust"],
   [/^%CompilerHelpers%\.importRejectedByLoader$/, "it is written with the intrinsics that make and settle promises, and only compiled code has those"],
   [/^%PrivateGlobals%\.(makeErrorWithCode|inherits)$/, "a call spells out a number, and by it native code takes the other operands on trust: the table does not say which"],
 ]);

@@ -136,6 +136,11 @@ pub(super) struct LoopStores {
     pub(super) stored: GroupedList<BindingRef>,
 }
 
+pub(super) struct StoresUnderHandlers {
+    pub(super) statements: Vec<StmtId>,
+    pub(super) stored: GroupedList<BindingRef>,
+}
+
 pub(crate) struct ScopeAnalysis {
     pub(super) file: FileId,
     pub(super) max_captures: usize,
@@ -158,6 +163,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) captures: Vec<Capture>,
     pub(super) arguments_objects: ArgumentsObjects,
     pub(super) loops: LoopStores,
+    pub(super) tries: StoresUnderHandlers,
     pub(super) field_initializers: Vec<(MemberId, FunctionKey)>,
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
     pub(super) registries: Vec<BindingRef>,
@@ -302,6 +308,13 @@ impl ScopeAnalysis {
         let index = self.loops.statements.binary_search(&statement);
         let index = index.expect("the scope walk records every live loop");
         self.loops.stored.get(index)
+    }
+
+    pub(in crate::lower) fn stored_under_handlers(&self, statement: StmtId) -> &[BindingRef] {
+        match self.tries.statements.binary_search(&statement) {
+            Ok(index) => self.tries.stored.get(index),
+            Err(_) => &[],
+        }
     }
 
     pub(in crate::lower) fn lexical_owner(&self, scope: ScopeId) -> ScopeId {

@@ -71,7 +71,8 @@
 //   // Grows: the build, linear        the program is a WRITER: it prints a program of the size SIZE that holds PASSES copies of its function under names of their own. Any three
 //                                      rising sizes. Each of the three programs is built with one thread, and its executable must print what plain Bun prints of it. What the
 //                                      build holds at its peak may rise by 200 bytes for each byte that the program grows by (the dearest takes 70), and 32 MB.
-//                                      UNDER --instructions what the build takes must grow as the size does: (t3 - t2) / (t2 - t1) is at most 1.5 times (s3 - s2) / (s2 - s1).
+//                                      WHERE INSTRUCTIONS ARE COUNTED what the build takes must grow as the size does: (t3 - t2) / (t2 - t1) is at most 1.5 times (s3 - s2) / (s2 - s1).
+//                                      That is under --instructions, and without it wherever Linux lets this process open a counter of its own (in CI: Alpine on x64, as for build-scaling).
 //                                      Only a count says that: a build has a long start of its own, and by the clock what lies between two builds drowns in it
 //   // Grows: the build, a square      the same, held against the squares of the sizes: what is so today and ought to be linear. Work that doubles with each step is over both
 // Those lines may also stand at the end, in front of the last comment: a stored output may name lines of the program, and a line more at the top moves them.
@@ -92,6 +93,7 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { measureHere, openInstructionCounter } from "./analysis-scaling/measure-here";
 import { runtimeEnvironment } from "./harness/flags";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
 import { ways } from "./harness/ways";
@@ -192,6 +194,16 @@ const envOfEveryExecutable = Object.fromEntries(
 const runsAreAsUsersRunThem = !Object.keys(envOfEveryExecutable).length;
 const countsInstructions = process.argv.includes("--instructions");
 if (countsInstructions && !Bun.which("perf")) throw new Error("--instructions: there is no `perf` here");
+let opensCounter: boolean | undefined;
+/** Asked by the first program that needs it: where no counter opens, a line on stderr says why. */
+function opensCounterOfItsOwn() {
+  if (opensCounter === undefined) {
+    const close = process.platform === "linux" ? openInstructionCounter(0) : undefined;
+    close?.();
+    opensCounter = !!close;
+  }
+  return opensCounter;
+}
 const isASAN = (() => {
   try {
     return require("bun:internal-for-testing").isASANEnabled() as boolean;
@@ -828,14 +840,22 @@ const nextExecutable = (name: string) =>
   join(folder, `${name}-${executables++}${process.platform === "win32" ? ".exe" : ""}`);
 
 /**
- * As it stands in the comment Output. What is stored names the files of an executable as they are named elsewhere than on Windows.
+ * The files of an executable as they are named elsewhere than on Windows: /$bunfs for B:\~BUN and B:/~BUN, and / for B:/, which lies above it.
+ * What is stored, in the comment Output and in what a build is to print, names them so.
+ */
+const asNamedElsewhere = (text: string) =>
+  isWindows
+    ? text
+        .replace(/B:[\\/]~BUN(?=[\\/])[^\s'":]*/g, path => "/$bunfs" + path.slice(7).replaceAll("\\", "/"))
+        .replace(/(?<!\w)B:\/(?=[^\s'":])/g, "/")
+    : text;
+
+/**
+ * As it stands in the comment Output.
  * What an option of the engine logs goes through the C library, which on Windows ends a line with a carriage return and a line feed.
  */
 const asText = ({ exitCode, stdout, stderr }: ReturnType<typeof compared>) =>
-  (stdout + (exitCode ? `exit code ${exitCode}\n${stderr}\n` : stderr.replaceAll("\r\n", "\n"))).replace(
-    /B:\\~BUN\\root[^\s'":]*/g,
-    path => "/$bunfs/root" + path.slice(12).replaceAll("\\", "/"),
-  );
+  asNamedElsewhere(stdout + (exitCode ? `exit code ${exitCode}\n${stderr}\n` : stderr.replaceAll("\r\n", "\n")));
 
 const countedByBuild = (buildOutput: string) =>
   new Map(Array.from(buildOutput.matchAll(/^(\w+) (\d+)$/gm), ([, name, value]) => [name, Number(value)] as const));
@@ -993,7 +1013,14 @@ async function measureGrowthOfBuild(
         return { message: `its program of the size ${size} does not print as plain Bun does`, output: compiled.output };
       peaks.push(build.peakMB);
       bytes.push(written.output.stdout.length);
-      if (!countsInstructions) continue;
+      if (!countsInstructions) {
+        if (!opensCounterOfItsOwn()) continue;
+        const again = await withSlot(() => measureHere(folder, cmd, timeLimit(cmd, 8) * 1000, environmentOfBuilds));
+        if (again.exitCode !== 0 || again.instructions === undefined)
+          return { message: "nothing was counted", output: build.output };
+        taken.push(again.instructions / 1e6);
+        continue;
+      }
       const text = await Bun.file(counted)
         .text()
         .catch(() => "");
@@ -1012,7 +1039,7 @@ async function measureGrowthOfBuild(
     return {
       message: `what the build holds at its peak grows faster than its program: ${peaks.join(" | ")} MB ${said}, and at most ${Math.round(mayHold)} MB at the last`,
     };
-  if (!countsInstructions) return {};
+  if (taken.length !== sizes.length) return {};
   const asTheSizes = (sizes[2] ** power - sizes[1] ** power) / (sizes[1] ** power - sizes[0] ** power);
   const grows = (taken[2] - taken[1]) / Math.max(taken[1] - taken[0], Number.MIN_VALUE) / asTheSizes;
   const rounded = Math.round(grows * 100) / 100;
@@ -1072,7 +1099,8 @@ async function run(program: Program): Promise<void> {
     if (program.buildErrors !== undefined) {
       // Each distinct error counts once. A Bun built with assertions names the token behind some of the messages of the parser.
       const lines = build.output.stderr.split(/\r?\n/).filter(line => line.startsWith("error: "));
-      const errors = [...new Set(lines.map(line => line.replace(/ \(token: T\w+\)$/, "")))].join("\n") + "\n";
+      const errors =
+        [...new Set(lines.map(line => asNamedElsewhere(line.replace(/ \(token: T\w+\)$/, ""))))].join("\n") + "\n";
       if (errors === program.buildErrors && build.output.exitCode === 1)
         return settle(program, { state: "pass", compileMs: build.ms });
       return fail(
@@ -1093,7 +1121,7 @@ async function run(program: Program): Promise<void> {
       program.way === "compiled" && !moreFlags.length
         ? unmetBounds(countedByBuild(build.output.stderr), program.statistics, "build")
         : [];
-    const printed = build.output.stderr.split(/\r?\n/);
+    const printed = build.output.stderr.split(/\r?\n/).map(asNamedElsewhere);
     for (const { times, line } of moreFlags.length ? [] : program.buildPrints) {
       const found = printed.filter(text => text === line).length;
       if (found !== times) unmet.push(`the build prints ${found} x ${line}, not ${times} x`);

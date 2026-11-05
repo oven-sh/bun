@@ -7,7 +7,7 @@ use bun_core::strings::{last_index_of_char, split};
 use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{ExprId, ExprKind};
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{ExternalKind, join};
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -49,15 +49,30 @@ fn index_by_spelling<'a>(input: &BindInput<'a, '_>) -> FilesBySpelling<'a> {
     files_by_spelling
 }
 
-fn loads_by_unknown_names(files: &Files<'_>) -> bool {
-    files.compiled_files().iter().any(|&file| {
-        parsed_source(files, file).is_none_or(|source| {
-            let names = &source.contents.names;
-            names.loads_by_unknown_name
-                || !names.unknown_names_at.is_empty()
-                || !names.files_missing_at_build_at.is_empty()
-                || source.builtins.loads_unknown_modules()
-        })
+fn loads_by_unknown_name(files: &Files<'_>, file: FileId, counts: impl Fn(u32) -> bool) -> bool {
+    parsed_source(files, file).is_none_or(|source| {
+        let names = &source.contents.names;
+        let mut unknown_names = names.unknown_names_at.iter();
+        names.loads_by_unknown_name
+            || unknown_names.any(|&site| counts(site))
+            || !names.files_missing_at_build_at.is_empty()
+            || source.builtins.loads_unknown_modules()
+    })
+}
+
+fn is_held_by_no_pattern(files: &Files<'_>, file: FileId, site: u32) -> bool {
+    let analysis = files.analysis(file);
+    let specifier = &analysis.import_sites[site as usize].specifier;
+    let mut alternatives = analysis.alternatives_of(specifier).iter();
+    alternatives.any(|it| matches!(it, ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown))
+}
+
+pub(super) fn program_loads_by_name_that_no_pattern_holds(input: &BindInput<'_, '_>) -> bool {
+    let files = input.files;
+    let is_code = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Program;
+    let mut code_files = files.compiled_files().iter().filter(is_code);
+    code_files.any(|&file| {
+        loads_by_unknown_name(files, file, |site| is_held_by_no_pattern(files, file, site))
     })
 }
 
@@ -122,7 +137,7 @@ pub(super) fn is_every_file_found_by_name(input: &BindInput<'_, '_>, modules: &M
     match input.runs_tests {
         true => input.helpers_of_tests_name_files,
         false => {
-            (input.runs_in_place || input.code_from_disk_names_files)
+            (input.runs_in_place || input.files_are_named_out_of_sight)
                 && externals.any(|&(_, kind)| kind == ExternalKind::UncompiledCode)
         }
     }
@@ -133,7 +148,10 @@ pub(super) fn find_texts_that_spell_files(
     modules: &ModuleSet,
 ) -> Option<Vec<TextThatSpellsFile>> {
     let files = input.files;
-    if is_every_file_found_by_name(input, modules) || !loads_by_unknown_names(files) {
+    let mut compiled = files.compiled_files().iter();
+    if is_every_file_found_by_name(input, modules)
+        || !compiled.any(|&file| loads_by_unknown_name(files, file, |_| true))
+    {
         return None;
     }
     let files_by_spelling = index_by_spelling(input);

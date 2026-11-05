@@ -82,9 +82,10 @@ async function partsOf(source: string, isWithoutLibrary: boolean, countsAnswers 
 
 // `testaot print` lists the fields that a layout inherits, and leaves ownFieldCount out where it is 0. Read back, a layout without the word owns all that it lists.
 // Such a layout is written as the wire has it, without the inherited fields: the reader appends them itself.
-function withoutInheritedFieldsAlone(line: string) {
+export function withoutInheritedFieldsAlone(line: string) {
   const start = line.indexOf(" fields=[");
-  if (!line.startsWith("layout ") || !line.includes("IsInherited") || line.includes(" ownFieldCount=") || start < 0) return line;
+  if (!line.startsWith("layout ") || !line.includes("IsInherited") || line.includes(" ownFieldCount=") || start < 0)
+    return line;
   let depth = 0;
   for (let end = start + " fields=".length; ; end++) {
     if (line[end] === "[") depth++;
@@ -96,7 +97,7 @@ const isDirective = (line: string) => /^# (RUN(\([A-Z0-9]+\))?|[A-Z][A-Z0-9]*(-[
 const isLegend = (line: string) => /^# f\d+ = /.test(line);
 
 /** `# f1 = sum, f2 = Box`: where the records give those functions other numbers, the numbers in the RUN and check lines and in the legend follow. */
-function numberedByLegend(head: string[], records: string[]) {
+export function numberedByLegend(head: string[], records: string[]) {
   const numbersOf = new Map<string, string[]>();
   for (const line of records) {
     const [, number, name] = /^function (f\d+) name="((?:[^"\\]|\\.)*)"/.exec(line) ?? [];
@@ -121,7 +122,8 @@ function numberedByLegend(head: string[], records: string[]) {
 export async function testOfStoredProgram(stored: string) {
   const [first, ...rest] = readFileSync(stored, "utf8").trimEnd().split("\n");
   const kind = /^\/\/ answers: (with|without)-library$/.exec(first)?.[1];
-  if (!kind) throw new Error(`${stored}: line 1 is neither "// answers: without-library" nor "// answers: with-library"`);
+  if (!kind)
+    throw new Error(`${stored}: line 1 is neither "// answers: without-library" nor "// answers: with-library"`);
   const lengthOfHead = rest.findIndex(line => !line.startsWith("// #"));
   const head = rest.slice(0, lengthOfHead).map(line => line.slice("// ".length));
   using folder = tempDir("aot-answers-test", { [basename(stored)]: rest.slice(lengthOfHead).join("\n") + "\n" });

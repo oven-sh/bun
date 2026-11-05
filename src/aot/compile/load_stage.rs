@@ -373,6 +373,7 @@ impl<'a> Build<'a> {
             threads: self.threads,
             progress: None,
             left_out_bodies: None,
+            discards_first_visits: options.aot.discards_first_visits,
         };
         let result = std::thread::scope(|scope| {
             let are_asset_reads_finished = Cell::new(false);
@@ -623,6 +624,7 @@ impl<'a> Build<'a> {
             threads: self.threads,
             progress: None,
             left_out_bodies: None,
+            discards_first_visits: self.options.aot.discards_first_visits,
         }
     }
 

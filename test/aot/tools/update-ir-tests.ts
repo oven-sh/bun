@@ -21,6 +21,9 @@
 // little. It writes each file with a source anew in a temporary folder, without the generated listing, and runs it there: do the check lines
 // that somebody wrote hold for what the front end makes today? `--part=1/2` takes every second file.
 //
+// With --print-anew it writes nothing and takes one file, which may have no IR text at all, as those in ../from-source: it prints the file as
+// it would be written anew. ../engine/answers.ts runs what is printed.
+//
 // With --counts it then runs every file, marked or not. Where a check line fails and the nearest line of the output differs from it
 // only in numbers (`instructions: 14, patchpoints: 2`), the check line takes those numbers, and the old and the new line are printed.
 import { tempDir } from "harness";
@@ -28,6 +31,7 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
 import { testaot, toolEnv } from "../shell/tools";
+import { numberedByLegend, withoutInheritedFieldsAlone } from "./answers-test-from-source";
 import { recordsOfSource } from "./ir-test-from-source";
 
 const sourceMark = /^# -- source: (\S+)$/;
@@ -117,7 +121,7 @@ function failuresOf(path: string, lines: string[]) {
   return [`testaot printed: ${printed.join(" ")}${stderr}`];
 }
 
-function update(path: string, checks?: "inputs" | "anew") {
+function update(path: string, checks?: "inputs" | "anew" | "print") {
   const before = readFileSync(path, "utf8");
   let lines = before.replace(/\n$/, "").split("\n");
   const sourceAt = lines.findIndex(line => sourceMark.test(line));
@@ -140,7 +144,18 @@ function update(path: string, checks?: "inputs" | "anew") {
     // The IR text is what is no comment. Comments between its lines are check lines written by hand: they stay in front of it.
     const last = marked() < 0 ? lines.length : marked();
     const comments = lines.slice(0, last).filter(line => line.startsWith("#"));
-    lines = [...comments, "", ...records, ...lines.slice(last)];
+    // `# f1 = sum, f2 = Box`: the directives name the functions by the numbers that they have today.
+    lines = [
+      ...numberedByLegend(comments, records),
+      "",
+      ...records.map(withoutInheritedFieldsAlone),
+      ...lines.slice(last),
+    ];
+  }
+  if (checks === "print") {
+    if (sourceAt < 0) throw new Error("it has no source");
+    process.stdout.write(lines.join("\n") + "\n");
+    return "printed";
   }
   if (checks === "anew") {
     if (sourceAt < 0) return "no source";
@@ -227,7 +242,9 @@ const checks = process.argv.includes("--check-inputs")
   ? "inputs"
   : process.argv.includes("--check-anew")
     ? "anew"
-    : undefined;
+    : process.argv.includes("--print-anew")
+      ? "print"
+      : undefined;
 const [part, parts] = (process.argv.find(argument => argument.startsWith("--part="))?.slice(7) ?? "1/1")
   .split("/")
   .map(Number);
@@ -235,7 +252,7 @@ const paths = process.argv.slice(2).filter(argument => !argument.startsWith("--"
 if (!testaot || paths.length === 0) {
   console.error(
     testaot
-      ? "usage: bun test/aot/tools/update-ir-tests.ts [--counts | --check-inputs | --check-anew] <file or folder> .."
+      ? "usage: bun test/aot/tools/update-ir-tests.ts [--counts | --check-inputs | --check-anew | --print-anew] <file or folder> .."
       : "there is no testaot",
   );
   process.exit(2);
@@ -282,19 +299,22 @@ for (const path of paths.flatMap(filesBelow)) {
   try {
     what = update(path, checks);
   } catch (error) {
-    (checks ? console.log : console.error)(`${path}: ${error instanceof Error ? error.message.split("\n")[0] : error}`);
+    (checks && checks !== "print" ? console.log : console.error)(
+      `${path}: ${error instanceof Error ? error.message.split("\n")[0] : error}`,
+    );
     process.exitCode = 1;
   }
   counts[what] = (counts[what] ?? 0) + 1;
   if (what === "written") console.log(path);
 }
-console.log(
-  Object.entries(counts)
-    .map(([what, count]) => `${count} ${what}`)
-    .join(", "),
-);
+if (checks !== "print")
+  console.log(
+    Object.entries(counts)
+      .map(([what, count]) => `${count} ${what}`)
+      .join(", "),
+  );
 if (takesCounts) {
   let total = 0;
-  for (let rewritten; (rewritten = updateCounts(paths)) > 0;) total += rewritten;
+  for (let rewritten; (rewritten = updateCounts(paths)) > 0; ) total += rewritten;
   console.log(`${total} check lines took other numbers`);
 }

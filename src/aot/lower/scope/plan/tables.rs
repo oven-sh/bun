@@ -8,10 +8,13 @@ use crate::ir::FunctionKey;
 use crate::ir::generated::FunctionFlags;
 use crate::lower::captures::Capture;
 use crate::lower::scope::analysis::{
-    FunctionSummary, GroupedList, LoopStores, ScopeAnalysis, find_by_key, sort_unique,
+    FunctionSummary, GroupedList, LoopStores, ScopeAnalysis, StoresUnderHandlers, find_by_key,
+    sort_unique,
 };
 use crate::lower::scope::walk::ArgumentRead;
-use crate::lower::scope::{ArgumentsObject, BindingForm, BindingRef, ScopeSlot, WalkedFunctionId};
+use crate::lower::scope::{
+    ArgumentsObject, BindingForm, BindingRef, ScopeSlot, Storage, WalkedFunctionId,
+};
 
 pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAnalysis {
     let walk = context.walk;
@@ -42,6 +45,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         functions,
         captures,
         loops: compute_loop_stores(context, &parts.forms, &parts.placements),
+        tries: list_stores_under_handlers(context, &parts),
         field_initializers: find_field_initializers(context),
         forms: parts.forms,
         use_counts: walk.use_counts.clone(),
@@ -86,13 +90,13 @@ fn has_local(forms: &[BindingForm], placements: &Placements, binding: BindingRef
     }
 }
 
-struct ScopeTree {
+pub(super) struct ScopeTree {
     entered: Vec<u32>,
     left: Vec<u32>,
 }
 
 impl ScopeTree {
-    fn new(context: &Context<'_, '_>) -> ScopeTree {
+    pub(super) fn new(context: &Context<'_, '_>) -> ScopeTree {
         let scopes = &context.input.bound.scopes;
         let mut sizes = vec![1; scopes.len()];
         for scope in (0..scopes.len()).rev() {
@@ -119,11 +123,36 @@ impl ScopeTree {
         }
     }
 
-    fn encloses(&self, outer: ScopeId, inner: ScopeId) -> bool {
+    pub(super) fn encloses(&self, outer: ScopeId, inner: ScopeId) -> bool {
         outer.is_some()
             && inner.is_some()
             && (self.entered[outer.idx()]..self.left[outer.idx()])
                 .contains(&self.entered[inner.idx()])
+    }
+}
+
+fn list_stores_under_handlers(context: &Context<'_, '_>, parts: &Parts) -> StoresUnderHandlers {
+    let walked_tries = &context.walk.tries;
+    let mut tries: Vec<usize> = (0..walked_tries.len()).collect();
+    tries.shared_sort_unstable_by_key(|&index| walked_tries[index].statement);
+    let mut stored = Vec::new();
+    for (position, &index) in tries.iter().enumerate() {
+        let bindings = parts.stored_under_handlers[index].iter();
+        let bindings = bindings.filter(|&&binding| {
+            let BindingRef::Symbol(symbol) = binding else {
+                return false;
+            };
+            matches!(
+                parts.placements.symbols[symbol.idx()].storage,
+                Storage::Field { .. }
+            ) && has_local(&parts.forms, &parts.placements, binding)
+        });
+        stored.extend(bindings.map(|&binding| (position, binding)));
+    }
+    let statements = tries.iter().map(|&index| walked_tries[index].statement);
+    StoresUnderHandlers {
+        statements: statements.collect(),
+        stored: GroupedList::new(tries.len(), &stored),
     }
 }
 

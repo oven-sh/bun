@@ -150,10 +150,11 @@ const programs: Record<string, Program> = {
     warnings: [],
     stdout: "up\n",
   },
+  // The build reads the literal that the file exports, so it knows the name as it knows one of a literal beside the call.
   "a name that the object lacks, out of another file": {
     source: attemptToAdd(`Object.assign(Response.prototype, require("./helpers.cjs"))`),
     files: { "helpers.cjs": `module.exports = { upper: () => "up" };\n` },
-    warnings: ["main.mjs:2:10"],
+    warnings: [],
     stdout: "up\n",
   },
   "a name that the object lacks, stored behind the literal": {

@@ -1,0 +1,13 @@
+# `for (..) ({ i, n })` in a method that the host calls: Link has proven that `n` holds int32 alone, so the slot is raw; the captured `n` arrives as anything. A guess tests it in front of the allocation, and its rare arm
+# allocates with a filler in the slot and defines `n` by name behind it. One NewObject of the input has become two operations, and the second does no more than the first: no body is walked again, and the verifier has nothing to say.
+# f1 = fresh, f2 = valueOf
+# -- source: value-that-does-not-fit-a-raw-slot-is-defined-behind-its-allocation-in-a-loop.js
+# const fresh = n => ({ valueOf() { let last; for (let i = 0; i < 20000; i++) last = { i, n, text: "t" + i }; return last.n; } });
+# print(Math.max(fresh(1), fresh(2), fresh(3)), Number(fresh(4)));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewObject
+# CHECK: PropDefine {{*}}key="n" traits=[mayCollect, mayTouchMemory]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3 4

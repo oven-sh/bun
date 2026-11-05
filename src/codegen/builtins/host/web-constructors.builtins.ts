@@ -430,7 +430,6 @@ export default b.declarations(
     types: [b.viewType("Event")],
     // `isTrusted` is an own property of every event, not a member of Event.prototype.
     namesDefinedOnNewInstances: ["isTrusted"],
-    typesOfNamesDefinedOnNewInstances: b.typesByName({ isTrusted: b.bool }),
     static: phasesOfEvent,
     call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
     construct: [

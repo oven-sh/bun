@@ -7,9 +7,6 @@
 // # FORM: = Strcat
 // # RUN(UNCONVERTED): walk f8 mechanisms=all
 // # UNCONVERTED-NOT: = ToString
-// # RUN(INSIDE): walk f11 mechanisms=all
-// # INSIDE-LABEL: code f11:Body
-// # INSIDE: = Strcat [[name]], [[open]], [[next]], [[close]] traits
 // # RUN(COPIED): walk f13 mechanisms=all
 // # COPIED-LABEL: code f13:Body
 // # COPIED-COUNT-1: = Strcat

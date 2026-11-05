@@ -455,11 +455,10 @@ describe.each(Object.entries(makers))("a package from %s", (_, maker) => {
         const { app } = await installed();
         expect(await compileAheadOfTime(app, entry)).toEqual({
           read: inPackage("index.aot.ts", "version.aot.ts"),
-          // What `require` has run stays with the loader, so the build lets all that the module exports go: its functions have callers that the build does not see, and what they are given may have any shape.
           // The free ones count each copy that the build makes of a function, so that number moves with the compiler. The number by name is what the test is for.
           accessesOfPackages:
             entry === "app.cjs"
-              ? expect.stringMatching(/^\d+ free, 0 tested, 4 by name$/)
+              ? expect.stringMatching(/^\d+ free, 0 tested, 0 by name$/)
               : "4 free, 0 tested, 0 by name",
           ran: { stdout: printed, stderr: "", exitCode: 0 },
         });

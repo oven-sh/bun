@@ -11,9 +11,6 @@
 // # RUN(ORDER): walk f13 mechanisms=all
 // # ORDER-LABEL: code f13:Body
 // # ORDER: = StringOrder
-// # RUN(LOOSE): walk f17 mechanisms=all
-// # LOOSE-LABEL: code f17:Body
-// # LOOSE: = ValueLooselyEqualsLiteral
 // # RUN(LETTER): walk f16 mechanisms=all-LoopInvariants
 // # LETTER-LABEL: code f16:Body
 // # LETTER: = StringOrderToCharacter

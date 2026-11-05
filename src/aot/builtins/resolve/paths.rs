@@ -1,4 +1,4 @@
-use super::module_objects::{find_child_module, find_module_object_in};
+use super::module_objects::{find_listed_module, find_module_object_in};
 use super::resolver::{ExprState, HolderKind, ResolvedValue, Resolver};
 use super::{BuiltinPath, SourceDialect};
 use crate::builtins::table::{
@@ -165,8 +165,8 @@ impl Resolver<'_, '_> {
         let Some(holder) = known.or_else(|| self.find_made_require(object)) else {
             return ExprState::Unresolved;
         };
-        if let Some(child) = find_child_module(holder, key) {
-            return ExprState::Held(child);
+        if let Some(listed) = find_listed_module(holder, key) {
+            return ExprState::Held(listed);
         }
         if input.dialect == SourceDialect::Runtime
             && holder.path.id == BuiltinId::GlobalThis

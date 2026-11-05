@@ -223,6 +223,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let decisions = self.file.decisions();
         let in_bun_run = decisions.as_folded_by_bun_run();
         let mut current = expression;
+        let counted = self.counted_expression;
         while let ExprKind::Cond { test, branches } = hir[current].kind {
             if current != expression
                 && (self.file.is_statically_resolved(current)
@@ -234,6 +235,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if decisions.is_dead_expr(yes) {
                 self.lower_test_with_known_answer(test, in_bun_run.is_dead_expr(yes));
                 current = no;
+                self.enter_counted_expression(current);
                 continue;
             }
             if decisions.is_dead_expr(no) {
@@ -248,8 +250,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             lower_arm(self, yes);
             self.continue_in(if_false);
             current = no;
+            self.enter_counted_expression(current);
         }
         lower_arm(self, current);
+        self.leave_counted_expression(counted);
     }
 
     fn lower_arm(

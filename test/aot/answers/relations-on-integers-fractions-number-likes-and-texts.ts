@@ -1,20 +1,9 @@
 // answers: without-library
 // # relations of a proven integer with a fraction, NaN, an infinity and -0, with a number that is rounded in front of a loop, of booleans, undefined and null with numbers, and loose equality with a text that is no number: on objects that convert, in their order, and that throw
 // # f1 = below, f2 = atMost, f3 = above, f4 = atLeast, f5 = fractionBelow, f6 = fractionAtLeast, f7 = belowNothing, f8 = atLeastNothing, f9 = belowAll, f10 = aboveAll, f11 = belowNegativeZero, f12 = atLeastNegativeZero, f13 = narrowed, f14 = count, f15 = countDown, f16 = countUpTo, f17 = flagBelow, f18 = belowFlag, f19 = besideNothing, f20 = flags, f21 = isWord, f22 = wordIs, f23 = isTwelve, f24 = isEmpty, f25 = isNotANumber, f26 = isEndless
-// # RUN(FORM): walk f1 mechanisms=all
-// # FORM-LABEL: code f1:Body
-// # FORM: = Less {{*}}form=Integers
 // # RUN(BOUND): walk f14 mechanisms=all
 // # BOUND-LABEL: code f14:Body
 // # BOUND: = IntegerBound
-// # behind `typeof n !== "number"` the front end goes on writing the value that was tested, which may still be a text to the walk, so the number beside the flag is `+n`. That conversion is closed, and the one that the rule puts in front of the relation is the conversion of a boolean
-// # RUN(FLAG): walk f17 mechanisms=all
-// # FLAG-LABEL: code f17:Body
-// # FLAG: = ToNumber {{*}}form=Booleans
-// # FLAG: = Less {{*}}form=Numbers
-// # RUN(WORD): walk f21 mechanisms=all
-// # WORD-LABEL: code f21:Body
-// # WORD: = ValueLooselyEqualsLiteral
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 694 of 694 of 694

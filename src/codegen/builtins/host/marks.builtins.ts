@@ -96,7 +96,6 @@ export default b.declarations(
     "setInterval",
     "setTimeout",
   ]),
-  marked("IsNotEnumerable", ["console._stdout", "console._stderr"]),
   marked("HoldsPathOfMainModule", ["Bun.main"]),
   // JSEnvironmentVariableMap.cpp puts another object under both when the thread starts a worker with `env: SHARE_ENV`.
   marked("IsReplacedByHostThatSaysSo", ["Bun.env", "process.env"]),

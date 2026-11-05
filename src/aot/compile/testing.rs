@@ -516,7 +516,7 @@ fn with_loaded_bind_input<R>(
             entry_points_run_again: false,
             typescript_drops_absent_exports: false,
             runs_in_several_realms: false,
-            code_from_disk_names_files: false,
+            files_are_named_out_of_sight: false,
             helpers_of_tests_name_files: false,
             run: &contents.run,
             in_parallel: &in_parallel,

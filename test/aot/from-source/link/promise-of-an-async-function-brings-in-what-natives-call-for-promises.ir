@@ -1,0 +1,10 @@
+# What native code calls on behalf of a class hangs on the constructor of the class, and an object of the class counts as a use of it, whoever hands it out: the run time reports the promise of an async function that is rejected without a handler, by a warning that goes through process.nextTick. Nothing here names `Promise`.
+# f1 = load, f7 = onWarning, f8 = processTicksAndRejections
+# -- source: promise-of-an-async-function-brings-in-what-natives-call-for-promises.js
+# async function load(name) { throw "cannot load " + name; }
+# load("settings");
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# REQUIRES(LINK): entries-of-bun
+# LINK-NOT: function f7 unreached
+# LINK-NOT: function f8 unreached

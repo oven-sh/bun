@@ -118,8 +118,8 @@ const publicFlags: Record<string, string[]> = {
   "": ["--aot", "--aot-allow-code-from-disk"],
   run: ["--aot", "--aot-allow-code-from-disk"],
   test: ["--aot"],
-  build: ["--aot", "--aot-allow-code-from-disk", "--aot-huge-heap"],
-  compile: ["--aot", "--no-aot", "--aot-allow-code-from-disk", "--aot-huge-heap"],
+  build: ["--aot", "--aot-allow-code-from-disk", "--aot-harden", "--aot-huge-heap"],
+  compile: ["--aot", "--no-aot", "--aot-allow-code-from-disk", "--aot-harden", "--aot-huge-heap"],
 };
 
 describe.concurrent("bun compile", () => {

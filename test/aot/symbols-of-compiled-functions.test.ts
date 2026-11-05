@@ -96,7 +96,7 @@ describe.skipIf(!isLinux)("--aot-symbols", () => {
     expect(without.symbols.filter(isOfTheTest)).toEqual([]);
 
     const own = withThem.symbols.filter(isOfTheTest);
-    expect(own.map(symbol => symbol.name)).toContain("fibonacciOfTheTest");
+    expect(own.map(symbol => symbol.name)).toContain("fibonacciOfTheTest main.ts:1");
     const { address, size } = withThem.payload;
     for (const symbol of own) {
       expect(symbol).toMatchObject({ isLocal: true, isFunction: true, section: ".bun" });

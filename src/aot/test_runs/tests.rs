@@ -935,6 +935,33 @@ fn a_spy_under_a_made_name_on_a_namespace_in_sight_is_no_spy_on_an_object_from_s
         MANIFEST,
     ];
     with_run(&files, (1, 0), |_, run| assert!(run.spies_under_any_name));
+    let spies_under_any_name = |statement: &str| {
+        let test_file = in_sight
+            .replace("spyOn(sums, made(\"total\"));", statement)
+            .replace("const made", "import * as fs from \"node:fs\";\nconst made");
+        let files = [
+            ("a.test.js", &test_file[..]),
+            ("src/sums.js", sums),
+            MANIFEST,
+        ];
+        with_run(&files, (1, 0), |_, run| run.spies_under_any_name)
+    };
+    for statement in [
+        "spyOn(fs, made(\"readFileSync\"));",
+        "[sums, fs].forEach(object => { spyOn(object, made(\"total\")); });",
+        "[fs].flatMap(object => Object.keys(object).map(name => spyOn(object, name)));",
+    ] {
+        assert!(!spies_under_any_name(statement), "{statement}");
+    }
+    for statement in [
+        "[sums, process].forEach(object => { spyOn(object, made(\"total\")); });",
+        "[sums].forEach((item, object) => { spyOn(object, made(\"total\")); });",
+        "[sums].reduce(object => spyOn(object, made(\"total\")));",
+        "[sums].forEach(function (object) { spyOn(object, made(\"total\")); });",
+        "const listed = [sums]; listed.push(fs); listed.forEach(object => { spyOn(object, made(\"total\")); });",
+    ] {
+        assert!(spies_under_any_name(statement), "{statement}");
+    }
 }
 
 #[test]
@@ -994,6 +1021,11 @@ fn a_callback_takes_its_names_from_what_the_call_in_front_was_handed() {
         "for (const [name, count] of ROWS) spyOn(holders.math, name);",
         "for (const { name } of [{ name: \"half\" }, { name: \"add\" }]) spyOn(holders.math, name);",
         "const lay = (name: string) => spyOn(holders.math, name); for (const [name, count] of ROWS) lay(name);",
+        "test.each([{ name: \"half\", kind: \"kept\" }, { name: \"add\", kind: \"kept\" }])(\"$name\", row => { spyOn(holders.math, row.name); });",
+        "const lay = (names: readonly string[]) => names.map(name => spyOn(holders.math, name)); lay([\"half\", \"add\"]);",
+        "for (const name of \"half add\".split(\" \")) spyOn(holders.math, name);",
+        "const FIRST = [\"half\"] as const; [...FIRST, \"add\"].filter(name => FIRST.indexOf(name) < 1).map(name => spyOn(holders.math, name));",
+        "for (const [object, label, names] of [[holders.math, \"kept\", \"half add\"]] as const) for (const name of names.split(\" \")) spyOn(object, name);",
     ] {
         assert_eq!(names_of(statements), both, "{statements}");
     }
@@ -1008,6 +1040,12 @@ fn a_callback_takes_its_names_from_what_the_call_in_front_was_handed() {
         "test.each(process.argv)(\"%s\", name => { spyOn(holders.math, name); });",
         "for (const [name] of process.argv.map(it => [it])) spyOn(holders.math, name);",
         "for (const end of process.argv) spyOn(holders.math, `ha${end}`);",
+        "for (const name of process.argv[2].split(\" \")) spyOn(holders.math, name);",
+        "test.each(process.argv.map(name => ({ name })))(\"$name\", row => { spyOn(holders.math, row.name); });",
+        "test.each([{ name: \"half\" }])(\"$name\", row => { spyOn(holders.math, row.name); }); for (const name of Object.keys(holders.math)) spyOn(holders.math, name);",
+        "for (const [object, label, names] of [[holders.math, \"half\", Object.keys(holders.math).join(\" \")]]) for (const name of names.split(\" \")) spyOn(object, name);",
+        "const listed = [\"half\"]; listed.push(process.argv[2]); for (const name of listed) spyOn(holders.math, name);",
+        "for (const row of [{ kind: \"ha\", name: \"lf\" }, { kind: \"a\", name: \"dd\" }]) spyOn(holders.math, row.kind + row.name);",
         "test.each([[\"half\"]].map(row => [row[0] + \"\"]))(\"%s\", name => { spyOn(holders.math, name); });",
     ] {
         assert!(names_of(statements).0, "{statements}");

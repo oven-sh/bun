@@ -1,0 +1,30 @@
+# -- source: what-a-built-in-called-by-value-gives-is-asked-where-it-goes-out.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# function spell(codes: number[]) { const text = String.fromCharCode(...codes); print("spelled"); return text; }
+# function gather(lists: number[][]) { const made = new Set(...lists); print("gathered"); return made; }
+# print(spell(id([104, 105])).length);
+# print(gather(id([[1, 2, 2]])).size);
+# print("went on");
+# -- end of source
+# f1 = spell, f2 = gather
+# ONLY A DIRECT CALL OF A UNIT OF THE PROGRAM SHOWS WHAT IT GIVES: its returns are its door (isEnforced(ProofSource::ResultOfCall)). What a row of the table of built-ins says of a call by value, or a rule of a construction as written, has no such door:
+# ProofSource::ResultOfOtherCall is off, Walker::typeShown() takes nothing from it, and whoever needs the type asks the value: here the return, which holds what goes out to the type that the result is held to.
+# RUN(SPELL): walk f1 mechanisms=all
+# SPELL-LABEL: code f1:Body
+# SPELL: [[text]]: string {{*}} = CallList
+# SPELL: CheckProof [[text]] {{*}}source=ResultOfCall
+# SPELL: Return [[text]]
+# RUN(GATHER): walk f2 mechanisms=all
+# GATHER-LABEL: code f2:Body
+# GATHER: [[made]]: Set {{*}} = ConstructList
+# GATHER: CheckProof [[made]] checkedType=Set {{*}}source=ResultOfCall
+# GATHER: Return [[made]]
+# THE GREEN CONTROL: a right program passes the checks.
+# RUN: run-in-shell mechanisms=all-Inlining
+# CHECK: spelled
+# CHECK-NEXT: 2
+# CHECK-NEXT: gathered
+# CHECK-NEXT: 2
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0

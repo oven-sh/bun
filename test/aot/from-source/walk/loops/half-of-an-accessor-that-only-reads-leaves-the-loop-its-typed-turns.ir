@@ -1,0 +1,37 @@
+# `last = o.f` in a loop, off an object that is out of sight, where the getter only reads a field. A look at the loop goes into the copy of the getter and finds nothing there that may not be run again unseen:
+# the turns of the typed copy run no other code, so the look at the cell, the look at the slot and the read of the field stand in front of the loop, and a turn asks the guard of the name alone.
+# f1 = run, f3 = f
+# -- source: half-of-an-accessor-that-only-reads-leaves-the-loop-its-typed-turns.ts
+# declare function print(...values: unknown[]): void;
+# declare function unseen(x: any): any;
+# let calls = 0;
+# class Gauge { c: number; constructor(c: number) { this.c = c; } get f(): number { return this.c; } }
+# class Pair { a: number; constructor(a: number) { this.a = a; } }
+# function run(o: any, n: number, list: Pair[], depth: number): number {
+#   if (depth > 0) return run(o, n, list, depth - 1);
+#   let last = 0;
+#   let sum = 0;
+#   for (let i = 0; i < n; i++) { last = o.f; const b = list[i & 1]; sum = sum + b.a; calls = calls + 1; }
+#   return last + sum;
+# }
+# const first = new Gauge(3);
+# (globalThis as any).keptGauge = first;
+# const pairs = [new Pair(1), new Pair(2)];
+# let total = 0;
+# for (let r = 0; r < 300; r++) total = (total + run(unseen(first), 7, pairs, r % 3)) | 0;
+# print(String(total), String(calls));
+# -- end of source
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame {{*}} callee=f3
+# CHECK: = HasLayoutPrototype
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = AreMembersUnchanged {{*}}key="f"
+# CHECK: = IsSlotFilled {{*}}key="c"
+# CHECK: = GetSlot {{*}}key="c"
+# CHECK-NEXT: = GetArrayStorage
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = PropGet {{*}}key="c"
+# RUN(ANSWERS): run-in-shell globalThis.unseen = x => x;
+# ANSWERS: 3900 2100

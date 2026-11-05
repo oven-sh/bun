@@ -1,10 +1,12 @@
 // run-parallel.ts: `// Sizes: <n> <4n> <16n>`, `// Passes: <n>` and `// Grows: linear`: what one piece of the data of a program costs must not hang on how much data there is.
-// `// Grows: the build, linear`: the program writes programs, and what their builds take must grow as they do: that is counted, under --instructions alone.
+// `// Grows: the build, linear`: the program writes programs, and what their builds take must grow as they do: that is counted, under --instructions or by a counter of the driver's own.
 // The programs of parallel/what-grows-with-its-data and parallel/what-a-build-takes-grows-with-its-program say those lines. Here the driver itself is held:
 // it passes what is linear, it fails what is a square, and it passes over no line that it cannot read.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { basename, join } from "node:path";
+import "./analysis-scaling/measure-check";
+import { without } from "./harness/capabilities";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -106,53 +108,62 @@ const counts =
     Bun.spawnSync({ cmd: ["perf", "stat", "-x,", "-e", "instructions:u", "true"], stderr: "pipe" }).stderr.toString(),
   );
 
+async function expectBuildsAreJudged(...flags: string[]) {
+  const headOfLarger = "// Sizes: 10 20 40\n// Passes: 20\n// Grows: the build, linear\n";
+  const expected = {
+    "a-writer.js": "pass",
+    "says-linear-and-writes-a-square.js": "growth: what the build takes grows faster than its program",
+    "says-a-square-and-writes-one.js": "pass",
+    "linear.js": "pass",
+    "a-square.js": "growth: what it takes grows faster than its data",
+  };
+  using dir = tempDir("what-a-build-takes-grows-with-its-program", {
+    "tsconfig.json": "{}",
+    "a-writer.js": headOfLarger + writer("size * 10"),
+    "says-linear-and-writes-a-square.js": headOfLarger + writer("size * size"),
+    "says-a-square-and-writes-one.js": headOfLarger.replace("linear", "a square") + writer("size * size"),
+    "linear.js": head + linear,
+    "a-square.js": head + square,
+  });
+  const root = String(dir);
+  const files = Object.keys(expected).map(name => join(root, name));
+  const { stdout, exitCode } = await run(
+    [
+      bunExe(),
+      join(import.meta.dir, "run-parallel.ts"),
+      `--root=${root}`,
+      "--jobs=4",
+      "--no-erased",
+      ...flags,
+      ...files,
+    ],
+    root,
+    bunEnv,
+  );
+  const verdicts = Object.fromEntries(
+    stdout
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map(line => JSON.parse(line))
+      .filter(({ state }) => state !== "compiling")
+      .map(({ file, state, stage, message }) => [
+        file.slice(root.length + 1).replaceAll("\\", "/"),
+        state === "pass" ? "pass" : `${stage}: ${message.split(": ")[0]}`,
+      ]),
+  );
+  expect(verdicts).toEqual(expected);
+  expect(exitCode).toBe(1);
+}
+
 test.skipIf(!counts || isASAN)(
   "counted, a build may take more as its program grows, and no faster",
-  async () => {
-    const headOfLarger = "// Sizes: 10 20 40\n// Passes: 20\n// Grows: the build, linear\n";
-    const expected = {
-      "a-writer.js": "pass",
-      "says-linear-and-writes-a-square.js": "growth: what the build takes grows faster than its program",
-      "says-a-square-and-writes-one.js": "pass",
-      "linear.js": "pass",
-      "a-square.js": "growth: what it takes grows faster than its data",
-    };
-    using dir = tempDir("what-a-build-takes-grows-with-its-program", {
-      "tsconfig.json": "{}",
-      "a-writer.js": headOfLarger + writer("size * 10"),
-      "says-linear-and-writes-a-square.js": headOfLarger + writer("size * size"),
-      "says-a-square-and-writes-one.js": headOfLarger.replace("linear", "a square") + writer("size * size"),
-      "linear.js": head + linear,
-      "a-square.js": head + square,
-    });
-    const root = String(dir);
-    const files = Object.keys(expected).map(name => join(root, name));
-    const { stdout, exitCode } = await run(
-      [
-        bunExe(),
-        join(import.meta.dir, "run-parallel.ts"),
-        `--root=${root}`,
-        "--jobs=4",
-        "--no-erased",
-        "--instructions",
-        ...files,
-      ],
-      root,
-      bunEnv,
-    );
-    const verdicts = Object.fromEntries(
-      stdout
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map(line => JSON.parse(line))
-        .filter(({ state }) => state !== "compiling")
-        .map(({ file, state, stage, message }) => [
-          file.slice(root.length + 1).replaceAll("\\", "/"),
-          state === "pass" ? "pass" : `${stage}: ${message.split(": ")[0]}`,
-        ]),
-    );
-    expect(verdicts).toEqual(expected);
-    expect(exitCode).toBe(1);
-  },
+  () => expectBuildsAreJudged("--instructions"),
+  240_000,
+);
+
+// As CI runs the driver: no lane has `perf`. Where Linux lets a process open a counter, the driver opens its own.
+test.skipIf(isASAN || !isLinux || !!without("a counter of instructions"))(
+  "a build is judged by the driver's own counter where nobody asks for perf",
+  () => expectBuildsAreJudged(),
   240_000,
 );

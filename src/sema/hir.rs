@@ -2792,6 +2792,7 @@ pub struct FileIn<S: Storage> {
     pub is_forced_module: bool,
     /// A script for its project that a build runs as a module: what `bun run` drops of it stays global. Set by the loader.
     pub is_script_with_code: bool,
+    pub runs_beside_loader: bool,
     /// The imports that bind the `require` of another file. Set by the loader.
     pub imported_requires: S::Few<ImportedRequire>,
     /// The names of other files that hold a constant, among those that folding the file asked for. Set by the loader.
@@ -3488,6 +3489,7 @@ macro_rules! file_in_storage {
             check_directive: $this.check_directive,
             is_forced_module: $this.is_forced_module,
             is_script_with_code: $this.is_script_with_code,
+            runs_beside_loader: $this.runs_beside_loader,
             imported_requires: $few!($this.imported_requires),
             imported_constants: $few!($this.imported_constants),
             texts_of_data_files: $few!($this.texts_of_data_files),

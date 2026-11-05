@@ -330,7 +330,7 @@ fn reports_follow_explain() {
         (ExplainSet::CHECKS_JSON, ReportSet::FLOW),
         (ExplainSet::FORMS, ReportSet::FLOW),
         (ExplainSet::ALLOCATIONS, ReportSet::ALLOCATIONS),
-        (ExplainSet::RUNTIME_USE, ReportSet::default()),
+        (ExplainSet::RUNTIME_USE, ReportSet::USES),
         (ExplainSet::STATISTICS, ReportSet::ACCESS_COUNTS),
         (
             ExplainSet::TEXT | ExplainSet::ALLOCATIONS,

@@ -16,6 +16,11 @@ pub(super) fn place_bindings(
     captures: &CapturePlan,
 ) -> Placements {
     let bindings = captures.fields.iter().chain(&sharing.fields_for_eval);
+    let mut fields_of_others: Vec<BindingRef> = bindings.clone().copied().collect();
+    sort_unique(&mut fields_of_others);
+    let for_handlers = sharing.fields_for_handlers.iter();
+    let has_variable = |binding: &&BindingRef| find_by_key(&sharing.variables, **binding).is_some();
+    let bindings = bindings.chain(for_handlers.filter(|binding| !has_variable(binding)));
     let fields = bindings.map(|&binding| (context.scope_of(binding), binding));
     let mut fields: Vec<(ScopeId, BindingRef)> = fields.collect();
     sort_unique(&mut fields);
@@ -44,6 +49,7 @@ pub(super) fn place_bindings(
         let is_immutable = is_immutable(context, binding);
         let has_local = match storage {
             Storage::Local => true,
+            Storage::Field { .. } if fields_of_others.binary_search(&binding).is_err() => true,
             Storage::Field { .. } | Storage::Variable(_) => {
                 is_immutable && !starts_as_function && !is_made_ahead
             }

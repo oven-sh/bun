@@ -1,0 +1,27 @@
+# a list that is written as numbers is asked once for storage of doubles or of int32. The look at the typed copy knows that a read out of such storage gives a number or undefined, so the sum comes round as a number and runs no code,
+# the length of the test at the head and the pointer of the read stand in front of the head, and behind `i < list.length` the read looks at no length
+# f1 = sum
+# -- source: list-of-numbers-is-added-up-with-storage-and-length-from-in-front-of-the-loop.ts
+# declare function sink(...values: unknown[]): void;
+# function sum(list: number[] | null | undefined) { let s = 0; for (let i = 0; i < list.length; i++) s += list[i]; return s; }
+# const list = [1, 2, 3, 4.5];
+# sink(sum, list, sum(list));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}}builtinClass=Array
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double {{*}}admitsInt32Storage
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: [[storage]]: {{*}}= GetArrayStorage
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = GetArrayLength
+# CHECK: = GetArrayElement {{*}}[[storage]] arrayStorage=Double level=Proven {{*}}isInBounds
+# RUN(ROUND): walk f1 mechanisms=all
+# ROUND-LABEL: code f1:Body
+# ROUND: : number @Double{{*}}isInLoop=true isLoopHead=true
+# RUN(LENGTH): walk f1 mechanisms=all
+# LENGTH-LABEL: code f1:Body
+# LENGTH: frequency=Rare isLoopHead=true
+# LENGTH: = GetArrayLength
+# LENGTH: = GetArrayLength
+# LENGTH: isInLoop=true isLoopHead=true

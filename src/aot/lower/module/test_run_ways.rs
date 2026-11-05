@@ -71,7 +71,7 @@ impl WayToDeclaration<'_> {
                 behind: 0,
             });
         }
-        let is_found = self.ask_exports(file, name);
+        let is_found = self.ask_exports(file, name, asked_by != AskedBy::Star);
         let end = self.steps.len();
         if is_station {
             self.stations_on_path.pop();
@@ -88,7 +88,7 @@ impl WayToDeclaration<'_> {
         is_found && !(is_station && asked_by == AskedBy::Star)
     }
 
-    fn ask_exports(&mut self, file: FileId, name: Atom) -> bool {
+    fn ask_exports(&mut self, file: FileId, name: Atom, is_named: bool) -> bool {
         let modules = self.modules;
         if let Some((ModuleRef::File(next), name)) = modules.find_what_hands_on_names(file, name) {
             return self.ask(next, name, AskedBy::Name);
@@ -100,12 +100,8 @@ impl WayToDeclaration<'_> {
                 _ => false,
             },
             Some((ExportBinding::Variable(symbol), is_from_star)) if symbol.file != file => {
-                let mut requests = modules.requests(file).iter();
-                if is_from_star && requests.any(|request| request.is_dynamic_star_export) {
-                    return self.ask_stars(file, name) || self.ask_ordinary_stars(file, name);
-                }
-                if is_from_star && self.ask_ordinary_stars(file, name) {
-                    return true;
+                if is_from_star && let Some(is_found) = self.ask_stars_that_bring(file, name) {
+                    return is_found;
                 }
                 let there = modules.exports(symbol.file).iter();
                 let mut there = there.filter(|it| it.binding == ExportBinding::Variable(symbol));
@@ -119,22 +115,22 @@ impl WayToDeclaration<'_> {
                     None => false,
                 }
             }
-            Some((ExportBinding::Synthetic(handed_on), _)) => {
+            Some((ExportBinding::Synthetic(handed_on), is_from_star)) => {
+                if is_from_star && let Some(is_found) = self.ask_stars_that_bring(file, name) {
+                    return is_found;
+                }
                 match *modules.synthetic_export(handed_on) {
                     SyntheticExport {
                         module: ModuleRef::File(next),
                         name,
                         ..
                     } if next != file => self.ask(next, name, AskedBy::Name),
-                    _ => {
-                        self.steps.push(Step::Declaration);
-                        true
-                    }
+                    _ => self.end_at_declaration(),
                 }
             }
-            Some(_) => {
-                self.steps.push(Step::Declaration);
-                true
+            Some(_) => self.end_at_declaration(),
+            None if is_named && modules.kind(file) == ModuleKind::CommonJs => {
+                self.end_at_declaration()
             }
             None => {
                 self.ask_stars(file, name)
@@ -142,6 +138,19 @@ impl WayToDeclaration<'_> {
                         && self.ask_ordinary_stars(file, name))
             }
         }
+    }
+
+    fn end_at_declaration(&mut self) -> bool {
+        self.steps.push(Step::Declaration);
+        true
+    }
+
+    fn ask_stars_that_bring(&mut self, file: FileId, name: Atom) -> Option<bool> {
+        let mut requests = self.modules.requests(file).iter();
+        if requests.any(|request| request.is_dynamic_star_export) {
+            return Some(self.ask_stars(file, name) || self.ask_ordinary_stars(file, name));
+        }
+        self.ask_ordinary_stars(file, name).then_some(true)
     }
 
     fn ask_ordinary_stars(&mut self, file: FileId, name: Atom) -> bool {
@@ -303,6 +312,7 @@ pub(super) fn emit_behind_stations(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: ImportBinding,
     asked: Option<(FileId, Atom)>,
+    handed_on_by: Option<FileId>,
     read_without_mock: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId,
 ) -> ValueId {
     let modules = lowering.file.inputs.modules;
@@ -353,7 +363,7 @@ pub(super) fn emit_behind_stations(
         lowering.jump(next);
         lowering.builder.switch_to(split.not_taken);
         let mocked = (lowering.file.fragment).declare_module(ModuleRef::File(file));
-        let importer = match asked_from {
+        let importer = match asked_from.or(handed_on_by) {
             Some(importer) => (lowering.file.fragment).declare_module(ModuleRef::File(importer)),
             None => lowering.file.module_id(),
         };

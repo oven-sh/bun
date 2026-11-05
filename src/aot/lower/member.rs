@@ -12,7 +12,7 @@ use bun_sema::program::Sym;
 use super::{FunctionLowering, parameters};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::ir::{BlockId, FunctionKey, PropertyKeyId, TypeTable, ValueId, VariableKey};
+use crate::ir::{BlockId, FunctionKey, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 
 pub(in crate::lower) use self::key::find_function_name;
 pub(in crate::lower) use self::reference::{Holder, KeyConversion, Reference};
@@ -37,6 +37,7 @@ pub(crate) struct GivenName {
     pub(crate) name: PropertyName,
     pub(crate) is_under_computed_key: bool,
     pub(crate) written_name: Option<Atom>,
+    pub(crate) name_that_key_spells: Option<StringId>,
 }
 
 impl GivenName {
@@ -73,6 +74,7 @@ impl From<PropertyName> for GivenName {
             name,
             is_under_computed_key: false,
             written_name: None,
+            name_that_key_spells: None,
         }
     }
 }

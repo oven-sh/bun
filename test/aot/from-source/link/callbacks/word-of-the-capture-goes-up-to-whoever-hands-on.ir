@@ -1,0 +1,31 @@
+# `inner` captures `f`. `outer` only hands on to `inner`, and `first` only to `outer`: what is lent to either may come to lie in a closure, so the second word goes up to both.
+# `twoLevels` captures `f` in an arrow that captures it again: the capture of the outer arrow bears both words, that of the inner arrow the first alone.
+# `byName` calls a function that it declares: the capture is handed over at the call and no closure is made, so `f` bears the first word alone.
+# f1 = each, f2 = inner, f3 = outer, f4 = first, f5 = twoLevels, f6 = byName, f7 = maker
+# -- source: word-of-the-capture-goes-up-to-whoever-hands-on.ts
+# declare function sink(...values: unknown[]): void;
+# function each(list: number[], f: (x: number) => number): number { let t = 0; for (let i = 0; i < list.length; i++) t += f(list[i]); return t; }
+# function inner(list: number[], f: (x: number) => number): number { const t = each(list, x => f(x) + 1); return t + 1; }
+# function outer(list: number[], f: (x: number) => number): number { const t = inner(list, f); return t + 1; }
+# function first(list: number[], f: (x: number) => number): number { const t = outer(list, f); return t + 1; }
+# function twoLevels(list: number[], f: (x: number) => number): number { const t = each(list, x => { const s = each(list, y => f(x + y)); return s + 1; }); return t + 1; }
+# function byName(list: number[], f: (x: number) => number): number { function helper(x: number): number { const s = f(x); return s + 1; } const t = helper(list.length) + helper(1); return t; }
+# function maker(list: number[], k: number) { const a = first(list, x => x * k); const b = twoLevels(list, x => x + k); const c = byName(list, x => x - k); return a + b + c; }
+# sink(maker([1, 2], 3), maker([4], 5));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK: parameter 1 {{*}}only-called
+# CHECK-NOT: captured
+# CHECK-LABEL: function f2
+# CHECK: parameter 1 {{*}}only-called captured
+# CHECK-LABEL: function f3
+# CHECK: parameter 1 {{*}}only-called captured
+# CHECK-LABEL: function f4
+# CHECK: parameter 1 {{*}}only-called captured
+# CHECK-LABEL: function f5
+# CHECK: parameter 1 {{*}}only-called captured
+# CHECK-LABEL: function f6
+# CHECK: parameter 1 {{*}}only-called
+# CHECK-NOT: captured
+# CHECK-LABEL: function f7

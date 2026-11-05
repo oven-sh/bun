@@ -1,8 +1,8 @@
 use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, PrivateMembers, ScopeId, SymbolId};
 use bun_sema::fold::{Decision, TreeNode};
 use bun_sema::hir::{
-    BinOp, Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId, PatKind,
-    PropKey, UnOp,
+    BinOp, Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId, PatKind, PropId,
+    PropKey, Span, UnOp,
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxCallee, JsxImport, RequireCallForm,
@@ -83,6 +83,9 @@ impl Walker<'_, '_> {
             }
             _ => {}
         }
+        if let ExprKind::Object(properties) = self.hir[expression].kind {
+            self.note_functions_laid_in_literal(properties);
+        }
         match self.hir[expression].kind {
             ExprKind::Ident(_) => self.visit_identifier(expression, context),
             ExprKind::This => self.use_this(context),
@@ -158,6 +161,27 @@ impl Walker<'_, '_> {
         match self.bound.binding(name) {
             Binding::Symbol(symbol) => Some(symbol),
             _ => None,
+        }
+    }
+
+    fn note_functions_laid_in_literal(&mut self, properties: Span<PropId>) {
+        for property in properties.iter() {
+            let value = self.hir[property].value;
+            if value.is_none() {
+                continue;
+            }
+            let function = match self.hir[value].kind {
+                ExprKind::Fn(function) => Some(function),
+                ExprKind::Ident(_) => match self.bound.binding(value) {
+                    Binding::Symbol(symbol) => match self.bound.initializing_declaration(symbol) {
+                        Some(bun_sema::bind::Decl::Fn(function)) => Some(function),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            };
+            self.walk.functions_laid_in_literals.extend(function);
         }
     }
 

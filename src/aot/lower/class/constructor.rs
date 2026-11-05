@@ -77,6 +77,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let plan = self.class_plan(class);
         let is_derived = is_derived_class(self.hir, class);
         let mut lowering = FunctionLowering::begin(self, function);
+        lowering.count_made_constructor(class);
         let this = match is_derived {
             true => lowering.emit_implicit_super_call(class),
             false => lowering.emit_allocation(class),

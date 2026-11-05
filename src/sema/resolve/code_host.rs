@@ -67,6 +67,10 @@ pub trait CodeHost: Host {
         false
     }
 
+    fn has_loader_at_run_time(&self) -> bool {
+        false
+    }
+
     fn add_module_with_query(
         &self,
         _path: &[u8],

@@ -1416,6 +1416,18 @@ const TARGET: Fold<'static> = Fold {
 
 const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
     (
+        "import { fileURLToPath } from 'node:url'; await import(fileURLToPath(new URL(`./a/${x}.js`, import.meta.url)));",
+        &["./a/*.js"],
+    ),
+    (
+        "import { fileURLToPath } from 'node:url'; const folder = fileURLToPath(new URL('../a', import.meta.url)); require(require('path').join(folder, x + '.js'));",
+        &["./../a/*.js"],
+    ),
+    (
+        "import { fileURLToPath } from 'node:url'; require(require('path').join(fileURLToPath(import.meta.url), '..', 'a', x));",
+        &["./a/*"],
+    ),
+    (
         "const names = { linux: `./a-${process.arch}`, darwin: './b' }; require(names[process.platform]);",
         &["./a-x64"],
     ),
@@ -1772,11 +1784,6 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         &["./a/*.js"],
     ),
     (
-        "import { fileURLToPath } from 'node:url'; await import(fileURLToPath(new URL(`./a/${x}.js`, import.meta.url)));",
-        ResolvedForm::Path,
-        &["./a/*.js"],
-    ),
-    (
         "import(require('url').pathToFileURL(require('path').join(__dirname, 'a', x + '.js')).href);",
         ResolvedForm::Url,
         &["./a/*.js"],
@@ -1827,6 +1834,16 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         &["./lib/*.js"],
     ),
     (
+        "export {}; await import(new URL('./a/', import.meta.url).href + x);",
+        ResolvedForm::Url,
+        &["./a/*"],
+    ),
+    (
+        "export {}; await import(new URL('../a/', import.meta.url) + x);",
+        ResolvedForm::Url,
+        &["../a/*"],
+    ),
+    (
         "require(require.resolve(`./a/${x}.js`).trim());",
         ResolvedForm::Path,
         &["./a/*.js"],
@@ -1852,7 +1869,7 @@ const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "export {}; await import(new URL('./a.js?b', import.meta.url));",
     "export {}; await import(new URL('https://a/' + x, import.meta.url));",
     "export {}; await import(new URL('./a.js', import.meta.url).search);",
-    "export {}; await import(new URL('./a.js', import.meta.url).href + x);",
+    "export {}; await import(import.meta.resolve('./a.js') + x);",
     "export {}; class URL {} await import(new URL('./a.js', import.meta.url));",
     "export {}; function URL() {} await import(new URL('./a.js', import.meta.url));",
     "export {}; async function load(URL) { await import(new URL('./a.js', import.meta.url)); }",

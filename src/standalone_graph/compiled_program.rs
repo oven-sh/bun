@@ -929,46 +929,61 @@ impl StandaloneModuleGraph {
             .map(Box::from)
     }
 
-    /// The paths of the machine that built the program at or below which the compiled files lay that lay above the folder in which it was built: `<one folder up>/commands`. Such a file has a `_.._` in its path for each folder that it lay higher.
-    /// In their order. In front of them how long the folders above that folder are, the nearest first, as far up as code lay.
-    fn find_starts_of_code_above_root(
-        program: &CompiledProgram,
-    ) -> (Box<[usize]>, Box<[Box<[u8]>]>) {
+    /// How long the folders above the folder in which the program was built are, the nearest first, as far up as code lay. A file that lay higher than that folder has a `_.._` in its path for each folder that it lay higher.
+    fn find_folders_above_root_with_code(program: &CompiledProgram) -> Box<[usize]> {
         let Some(root) = program.root_on_build_machine() else {
-            return Default::default();
+            return Box::default();
         };
+        let mut folder = root.strip_suffix(b"/").unwrap_or(root);
+        let mut spelled = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes().to_vec();
+        let mut lengths = Vec::new();
+        while let Some(end) = strings::last_index_of_char(folder, b'/') {
+            spelled.extend_from_slice(b"_.._/");
+            let holds_code = program
+                .may_hold_module_below(&spelled)
+                .unwrap_or_else(|| program.holds_module_below(&spelled[..spelled.len() - 1]));
+            if !holds_code {
+                break;
+            }
+            folder = &folder[..end];
+            lengths.push(end);
+        }
+        lengths.into()
+    }
+
+    /// How many folders above the folder in which the program was built the nearest one lies that `key` is or lies below, and what of `key` stands behind it.
+    fn split_at_known_folder<'k>(
+        root: &[u8],
+        lengths: &[usize],
+        key: &'k [u8],
+    ) -> Option<(usize, &'k [u8])> {
+        let above = lengths.iter().map(|&length| &root[..length]);
+        let folders = core::iter::once(root.strip_suffix(b"/").unwrap_or(root)).chain(above);
+        folders.enumerate().find_map(|(level, folder)| {
+            let below = key.strip_prefix(folder)?;
+            match below.is_empty() {
+                true => Some((level, below)),
+                false => Some((level, below.strip_prefix(b"/")?)),
+            }
+        })
+    }
+
+    /// The path under the root of the executable of what lay at `below`, that many folders above the folder of the build, and a `/` behind it. `None` where it does not fit.
+    fn spell_under_own_root<'b>(
+        level: usize,
+        below: &[u8],
+        buffer: &'b mut [u8],
+    ) -> Option<&'b [u8]> {
         let own_root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
-        let mut lengths: Vec<usize> = Vec::new();
-        let mut starts: Vec<Box<[u8]>> = Vec::new();
-        program.for_each_module_below(&[own_root, b"_.._"].concat(), &mut |path| {
-            let mut rest = path.get(own_root.len()..).unwrap_or_default();
-            let mut level = 0;
-            while let Some(further) = rest.strip_prefix(b"_.._/") {
-                rest = further;
-                level += 1;
-                if lengths.len() < level {
-                    let below = lengths.last().map_or_else(
-                        || root.strip_suffix(b"/").unwrap_or(root),
-                        |&it| &root[..it],
-                    );
-                    lengths.push(strings::last_index_of_char(below, b'/').unwrap_or(0));
-                }
-            }
-            let folder = &root[..lengths[level - 1]];
-            let first = &rest[..strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len())];
-            let is_last = starts.last().is_some_and(|last| {
-                last.strip_prefix(folder)
-                    .and_then(|it| it.strip_prefix(b"/"))
-                    == Some(first)
-            });
-            if !is_last {
-                starts.push([folder, b"/", first].concat().into());
-            }
-            true
-        });
-        starts.sort_unstable();
-        starts.dedup();
-        (lengths.into(), starts.into())
+        let up = own_root.len() + 5 * level;
+        let end = up + below.len();
+        buffer.get_mut(..own_root.len())?.copy_from_slice(own_root);
+        for step in buffer.get_mut(own_root.len()..up)?.as_chunks_mut::<5>().0 {
+            *step = *b"_.._/";
+        }
+        buffer.get_mut(up..end)?.copy_from_slice(below);
+        *buffer.get_mut(end)? = b'/';
+        Some(&buffer[..=end])
     }
 
     /// `key`, as `absolute_key` makes it, under the root of the executable, as the loader reads it.
@@ -979,10 +994,22 @@ impl StandaloneModuleGraph {
             return None;
         }
         let own_root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
-        match is_bun_standalone_file_path(key) {
-            true => join_public_path(own_root, own_root, key),
-            false => program.public_path_of_source(own_root, key),
+        if is_bun_standalone_file_path(key) {
+            return join_public_path(own_root, own_root, key);
         }
+        if cfg!(windows) {
+            return program.public_path_of_source(own_root, key);
+        }
+        // `absolute_key` has left nothing in it to resolve, and above the highest folder with code the executable holds nothing.
+        let lengths = program
+            .folders_above_root_with_code
+            .get_or_init(|| Self::find_folders_above_root_with_code(program));
+        let root = program.root_on_build_machine()?;
+        let (level, below) = Self::split_at_known_folder(root, lengths, key)?;
+        let mut spelled = vec![0; own_root.len() + 5 * level + below.len() + 1];
+        Self::spell_under_own_root(level, below, &mut spelled)?;
+        spelled.truncate(spelled.len() - 1 - usize::from(below.is_empty()));
+        Some(spelled)
     }
 
     /// Whether `key`, as `absolute_key` makes it, can be a file or a directory that the graph answers for outside of its own root: each of those begins as all of them do, or is a directory above them all.
@@ -990,44 +1017,44 @@ impl StandaloneModuleGraph {
         if cfg!(windows) {
             return true;
         }
-        if program
-            .root_on_build_machine()
-            .is_some_and(|root| key.starts_with(root))
-        {
+        let root = program.root_on_build_machine();
+        if let Some(root) = root.filter(|_| !program.preserves_source_paths) {
+            let lengths = program
+                .folders_above_root_with_code
+                .get_or_init(|| Self::find_folders_above_root_with_code(program));
+            let nearest = root.strip_suffix(b"/").unwrap_or(root);
+            let highest = lengths.last().map_or(nearest, |&length| &root[..length]);
+            if !key.starts_with(highest) {
+                // A folder above them all is listed as one.
+                let below = highest.strip_prefix(key);
+                return below.is_some_and(|rest| rest.starts_with(b"/"));
+            }
+            let Some((level, below)) = Self::split_at_known_folder(root, lengths, key) else {
+                return false;
+            };
+            let mut buffer = [0; 512];
+            let spelled = Self::spell_under_own_root(level, below, &mut buffer);
+            let Some(spelled) = spelled.filter(|_| !below.is_empty()) else {
+                return true;
+            };
+            if program.may_hold_module_at_or_below(spelled).unwrap_or(true) {
+                return true;
+            }
+            // The folders above each file that the graph carries are among `dirs`.
+            let path = &spelled[..spelled.len() - 1];
+            let folder = strings::last_index_of_char(path, b'/').unwrap_or(0);
+            return self.dirs.contains(&path[..folder])
+                && (self.files.contains(path) || self.dirs.contains(path));
+        }
+        if root.is_some_and(|root| key.starts_with(root)) {
             return true;
         }
         let common = program
             .common_start_of_source_paths
             .get_or_init(|| self.find_common_start_of_source_paths(program));
-        let begins_as = |start: &[u8]| {
-            let length = start.len().min(key.len());
-            start[..length] == key[..length]
-        };
-        if common.as_deref().is_some_and(begins_as) {
-            return true;
-        }
-        let (lengths, starts) = program
-            .starts_of_code_above_root
-            .get_or_init(|| Self::find_starts_of_code_above_root(program));
-        let root = program.root_on_build_machine().unwrap_or_default();
-        let folders = lengths.iter().map(|&length| &root[..length]);
-        for below in folders.filter_map(|folder| key.strip_prefix(folder)) {
-            if below.is_empty() {
-                return true;
-            }
-            let Some(below) = below.strip_prefix(b"/") else {
-                continue;
-            };
-            let first = strings::index_of_char_usize(below, b'/');
-            let start = &key[..key.len() - below.len() + first.unwrap_or(below.len())];
-            if starts.binary_search_by(|it| it[..].cmp(start)).is_ok() {
-                return true;
-            }
-        }
-        let highest = lengths.last().map(|&length| &root[..length]);
-        highest.is_some_and(|it| {
-            it.strip_prefix(key)
-                .is_some_and(|rest| rest.starts_with(b"/"))
+        common.as_deref().is_some_and(|common| {
+            let length = common.len().min(key.len());
+            common[..length] == key[..length]
         })
     }
 
@@ -1973,6 +2000,24 @@ pub(crate) mod tests {
         let mut graph = with_request(&app, false, read_graph);
         let program = graph.compiled_program.take().unwrap();
         program.set_module_listing(list_modules);
+        // As the image answers: a bit for each folder with code or above code, and a lookup of a whole path.
+        program.set_test_of_path_starts(|start| {
+            let folder = &start[..=strings::last_index_of_char(start, b'/').unwrap()];
+            let mut holds_one = false;
+            list_modules(folder, &mut |_| {
+                holds_one = true;
+                false
+            });
+            holds_one
+        });
+        program.set_module_lookup(|path| {
+            let mut is_held = false;
+            list_modules(path, &mut |held| {
+                is_held = held == path;
+                false
+            });
+            is_held.then_some(&b"held"[..])
+        });
         let root: &'static [u8] = app.0.clone().leak();
         graph.compiled_program = Some(program.with_root_on_build_machine(Some(root)));
         let rows = [
@@ -1982,7 +2027,6 @@ pub(crate) mod tests {
             // Its path begins as the folder above the root does, and not at a separator.
             (folder.join("one/two-more/x.js"), Some(File)),
             (folder.join("one/two/app/main.js"), Some(File)),
-            (folder.join("one/two/commands/none.js"), None),
             // What `path.join(import.meta.dir, "../commands")` makes.
             (b"/$bunfs/commands".to_vec(), Some(Directory)),
             (b"/$bunfs/commands/build.js".to_vec(), Some(File)),
@@ -2000,6 +2044,11 @@ pub(crate) mod tests {
         assert!(!graph.may_answer_for(b"/no-such-root/commands"));
         // Beside the code above the root, and what merely begins as it does.
         for beside in [
+            "one/two/commands/none.js",
+            "one/two/commands/none/a.js",
+            "one/two/app/none.js",
+            "one/two/app/none/a.js",
+            "one/two/app/main.js/none",
             "one/two/none",
             "one/two/commands-of-others/a.js",
             "one/none.js",

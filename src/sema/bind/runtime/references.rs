@@ -1,7 +1,9 @@
 use super::bits::insert_bit;
 use super::declaration_kinds::{DeclarationKind, declaration_kind, for_each_name};
-use super::direct_evals::{DirectEval, DynamicScopes, compute_dynamic_scopes, find_direct_evals};
-use super::lookup::{COMMONJS_VARIABLES, Lookup};
+use super::direct_evals::{
+    DirectEval, DynamicScopes, compute_dynamic_scopes, find_call_of_name, find_direct_evals,
+};
+use super::lookup::{COMMONJS_VARIABLES, Found, Lookup};
 use super::namespace_exports::ExportedBlockBindings;
 use super::queries::IDENTS_IN_RUN;
 use super::storage::RuntimeReferencesIn;
@@ -176,8 +178,28 @@ pub(super) struct ReferencePass<'a, 's> {
 }
 
 impl ReferencePass<'_, '_> {
+    fn find_names_that_the_bundler_takes_out(&self) -> Vec<SymbolId> {
+        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let imports = hir.imports.iter().filter(|import| {
+            import.spec == known::bun_bundle
+                && !import.type_only
+                && bound.parent_of_stmt(import.stmt) == Parent::File
+        });
+        let names = imports.flat_map(|import| import.named.iter());
+        names
+            .filter(|&name| !hir[name].type_only)
+            .filter_map(
+                |name| match self.lookup.find_binding(ScopeId(0), hir[name].local) {
+                    Binding::Symbol(symbol) => Some(symbol),
+                    _ => None,
+                },
+            )
+            .collect()
+    }
+
     fn resolve_idents(&mut self) {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let taken_out_by_bundler = self.find_names_that_the_bundler_takes_out();
         for &(ident, scope) in self.idents {
             let ExprKind::Ident(name) = hir[ident].kind else {
                 continue;
@@ -196,6 +218,16 @@ impl ReferencePass<'_, '_> {
                 && let Some(at_hand) = self.find_name_in_place(scope, in_place, hir[ident].pos)
             {
                 found = at_hand;
+            }
+            if let Binding::Symbol(symbol) = found.binding
+                && taken_out_by_bundler.contains(&symbol)
+                && find_call_of_name(hir, bound, ident).is_none()
+            {
+                found = Found {
+                    binding: Binding::Free,
+                    scope: ScopeId::NONE,
+                    ..found
+                };
             }
             if found.binding != bound.default_binding(ident) {
                 self.references.ident_bindings.push((ident, found.binding));

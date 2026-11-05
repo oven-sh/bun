@@ -53,7 +53,7 @@ unsafe extern "C" {
     safe fn Bun__AOT__willRunEntryPointAgain(global: &JSGlobalObject, path: &bun_core::String);
     safe fn Bun__AOT__willRunPreloads(global: &JSGlobalObject);
     safe fn Bun__AOT__didRunPreloads(global: &JSGlobalObject);
-    safe fn Bun__AOT__mayHoldPathStartingWith(start: &bun_core::String) -> bool;
+    safe fn Bun__AOT__mayHoldPathStartingWith(start: FfiSlice<'_>) -> bool;
     safe fn Bun__AOT__isLeftToCodeOutsideImage(
         specifier: &bun_core::String,
         directory_of_importer: &bun_core::String,
@@ -358,7 +358,7 @@ fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 
 fn may_hold_module_path_starting_with(start: &[u8]) -> bool {
     let start = with_separators_of_image(start);
-    Bun__AOT__mayHoldPathStartingWith(&bun_core::StringView::from_bytes(&start))
+    Bun__AOT__mayHoldPathStartingWith(FfiSlice::new(&start))
 }
 
 fn is_left_to_code_outside_image(specifier: &[u8], directory_of_importer: &[u8]) -> bool {
@@ -1090,7 +1090,6 @@ fn sentence_of(verdict: ImageVerdict) -> Option<&'static str> {
         ImageVerdict::CodeAtFixedAddress => "its code can't be placed at a random address here, and it doesn't run at a fixed one. The system refuses to map the file as executable memory",
         ImageVerdict::OutsideItsSegments => "its header names code or data outside the segments the executable loads them in. Something modified the executable after it was built",
         ImageVerdict::CannotReadExecutable => "the executable's own file can't be opened for reading, and this build of Bun doesn't run without that",
-        ImageVerdict::TopByteOfAddressIgnored => "it needs reads through invalid addresses to fail, and this system ignores the top byte of an address. That happens when an x86-64 executable runs under emulation on an arm64 machine (Rosetta, QEMU). Use the arm64 build instead",
     })
 }
 

@@ -221,6 +221,7 @@ pub struct ResolvedBuiltins {
     hands_mock_on: bool,
     resets_modules: bool,
     stores_loader_functions: bool,
+    tables_of_loaders_written: Box<[ExprId]>,
     unlocked: OnceLock<Arc<[u32]>>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
@@ -392,6 +393,10 @@ impl ResolvedBuiltins {
 
     pub fn spy_calls(&self) -> &[SpyCall] {
         &self.spy_calls
+    }
+
+    pub fn tables_of_loaders_written(&self) -> &[ExprId] {
+        &self.tables_of_loaders_written
     }
 
     pub fn stores_loader_functions(&self) -> bool {

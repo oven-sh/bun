@@ -426,6 +426,20 @@ impl FunctionBuilder {
         if self.must_split_before_store(variable) {
             self.split_current_block();
         }
+        self.define_variable(variable, value);
+    }
+
+    pub fn write_variable_kept_in_field(&mut self, variable: LocalVariable, value: ValueId) {
+        let covering = self.blocks[self.current_block.index()].covering;
+        if !covering.is_some_and(|covering| covering.reads_fields)
+            && self.must_split_before_store(variable)
+        {
+            self.split_current_block();
+        }
+        self.define_variable(variable, value);
+    }
+
+    fn define_variable(&mut self, variable: LocalVariable, value: ValueId) {
         let (block, is_open) = (self.current_block, self.is_open());
         self.ssa.definitions.insert(block, variable, value);
         self.ssa.record_definition_block(variable, block);

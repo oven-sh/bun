@@ -1,0 +1,18 @@
+# `const f = c ? kind.objectFlags : 0; if (f & 32) ..`: the block of the read ends in a jump, and the join behind it looks at its own parameter, for which the typed run brings a raw number and the closed arm anything.
+# The read has arms, each arm leads its own edge, and the join is walked apart: the way of the closed arm masks by the closed form in a rare block, the others meet in a raw parameter
+# the function is handed to sink: nobody knows its callers. f1 = sort
+# -- source: arms-of-a-read-part-at-the-jump-of-their-block.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Bits { Four = 4, Eight = 8, ThirtyTwo = 32 }
+# class Kind { flags: Bits; objectFlags: Bits; constructor(flags: Bits, objectFlags: Bits) { this.flags = flags; this.objectFlags = objectFlags; } }
+# function sort(kind: Kind, c: boolean) { const f = c ? kind.objectFlags : 0; if (f & Bits.ThirtyTwo) return 1; return 2; }
+# sink(sort, new Kind(1, 2));
+# -- end of source
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: int{{*}} @Int32 = GetSlot {{*}}key="objectFlags" {{*}}level=Proven
+# CHECK: [[closed]]: anything{{*}} = PropGet {{*}}key="objectFlags"
+# CHECK: frequency=Rare:
+# CHECK: = BitAnd [[closed]], {{*}}form=Generic
+# CHECK: ([[passing]]: int{{*}} @Int32{{*}}):
+# CHECK: = BitAnd [[passing]], {{*}}form=Integers

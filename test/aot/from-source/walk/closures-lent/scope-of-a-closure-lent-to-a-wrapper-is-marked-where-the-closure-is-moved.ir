@@ -1,0 +1,22 @@
+# The arrow of `counter` holds the scope of `n` and lies in the frame: `later` only calls it. The maker sets no mark on the scope, and hands the cell back where it returns. But `later` captures the arrow in a closure of the heap, so the arrow is moved, and the mover marks the scope that it holds: that cell is not handed back, and each kept arrow goes on counting in the `n` of its own call.
+# `plain` lends to `twice`, which captures nothing: its cell is the next call's.
+# f1 = later, f2 = twice, f3 = counter, f4 = plain
+# -- source: scope-of-a-closure-lent-to-a-wrapper-is-marked-where-the-closure-is-moved.ts
+# declare function print(...values: unknown[]): void;
+# const kept: (() => number)[] = [];
+# function later(f: () => number): number { kept.push(() => f()); return 1; }
+# function twice(f: () => number): number { const t = f() + f(); return t; }
+# function counter(start: number): number { let n = start; const t = later(() => ++n); return t + n; }
+# function plain(start: number): number { let n = start; const t = twice(() => ++n); return t + n; }
+# print(counter(10), counter(20), kept[0](), kept[1](), kept[0](), plain(1), counter(30), plain(2), kept[0](), kept[1](), kept[2]());
+# -- end of source
+# RUN: walk f3 mechanisms=all-Inlining
+# CHECK: ReleaseEnvironment
+# RUN(MARK): emit f3 mechanisms=all-Inlining
+# MARK-NOT: Store8({{*}}collectorState
+# RUN(FRAME): bytes f3 mechanisms=all-Inlining
+# FRAME-NOT: NewSlimClosure.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 11 21 11 21 12 8 31 11 13 22 31
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 11 21 11 21 12 8 31 11 13 22 31

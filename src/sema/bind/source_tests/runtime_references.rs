@@ -392,6 +392,17 @@ fn decorated_declaration_only_member_keys() {
 }
 
 #[test]
+fn name_that_the_bundler_takes_out_is_free_outside_a_call() {
+    let text =
+        r#"import { feature } from "bun:bundle"; typeof feature; if (feature("A")) {} [feature];"#;
+    analyzed("a.ts", text, |s| {
+        assert_eq!(s.binding("feature", 0), Free);
+        assert!(matches!(s.binding("feature", 1), Symbol(_)));
+        assert_eq!(s.binding("feature", 2), Free);
+    });
+}
+
+#[test]
 fn imports_of_unused_names() {
     let cases: &[(&str, &[u32])] = &[
         (r#"import { f } from "m";"#, &[0]),

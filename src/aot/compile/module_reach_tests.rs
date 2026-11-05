@@ -379,6 +379,20 @@ fn no_file_of_an_executable_has_an_object_where_code_reads_the_table_of_loaded_m
 }
 
 #[test]
+fn every_file_has_an_object_where_code_goes_on_from_an_entry_of_the_table_of_loaded_modules() {
+    for code in [
+        "console.log(require.cache[__filename].parent);",
+        "console.log(require.cache['/etc/app/config.json'].parent.exports);",
+        "const entry = require.cache[__filename];\nconsole.log(entry.parent.exports);",
+        "console.log(require.cache[__filename].children.length);",
+        "console.log(require('node:module')._cache[__filename].parent.id);",
+        "console.log(require.cache[__filename]);",
+    ] {
+        assert_eq!(describe_files_beside(code), WITH_OBJECTS, "{code}");
+    }
+}
+
+#[test]
 fn only_the_file_itself_has_an_object_where_it_lays_a_descriptor_under_its_exports() {
     let beside = |a: &str| {
         let files = [
@@ -418,6 +432,44 @@ fn every_file_has_an_object_where_code_stores_a_function_of_the_loader() {
         );
         assert_eq!(describe_files_beside(&code), WITH_OBJECTS, "{member}");
     }
+}
+
+#[test]
+fn every_file_has_an_object_where_code_below_an_es_module_may_write_a_table_of_loaders() {
+    let loader = "function (made) { made.exports = made.parent.exports; }";
+    for store in [
+        "require.extensions['.json'] = LOADER;",
+        "require('node:module')._extensions['.json'] = LOADER;",
+        "for (const ending of ['.json']) require('node:module')._extensions[ending] = LOADER;",
+        "const table = require.extensions;\ntable['.json'] = LOADER;",
+        "const { _extensions } = require('node:module');\n_extensions['.json'] = LOADER;",
+        "Object.assign(require.extensions, { '.json': LOADER });",
+        "function lay() { require.extensions['.json'] = LOADER; }\nlay();",
+    ] {
+        let code = store.replace("LOADER", loader);
+        assert_eq!(
+            describe_files_below_an_es_module(&code),
+            WITH_OBJECTS,
+            "{code}"
+        );
+    }
+}
+
+#[test]
+fn store_into_a_table_of_loaders_in_a_function_that_nothing_calls_costs_nothing() {
+    let code = "function unused() { require.extensions['.json'] = made => made.parent; }";
+    assert_eq!(describe_files_below_an_es_module(code), WITHOUT_OBJECTS);
+}
+
+fn describe_files_below_an_es_module(code: &str) -> Vec<String> {
+    let start = format!("require('./a.cjs');\n{code}");
+    let files = [
+        ("main.mjs", "import './start.cjs';"),
+        ("start.cjs", start.as_str()),
+        ("a.cjs", "require('./b.cjs');\nexports.c = 1;"),
+        ("b.cjs", "exports.d = 2;"),
+    ];
+    describe(&files).split_off(2)
 }
 
 #[test]
@@ -582,6 +634,18 @@ const REQUIRED_LATE: [(&str, &str); 2] = [
         "exports.lazy = function () { return require('./k.cjs').default; };",
     ),
 ];
+
+#[test]
+fn a_name_that_may_find_the_main_file_links_nothing_anew() {
+    let [k, (lazy_name, lazy)] = REQUIRED_LATE;
+    let lazy = format!("{lazy} exports.load = (name) => require(name);");
+    let main =
+        "import d from './k.cjs'; import { lazy } from './lazy.cjs'; console.log(d, lazy());";
+    assert_eq!(
+        describe(&[("main.mjs", main), k, (lazy_name, &lazy)])[1],
+        "k.cjs: names [Object.defineProperty(exports, '__esModule', { value: true });]"
+    );
+}
 
 #[test]
 fn default_of_a_file_that_is_required_late_is_a_variable_where_only_the_first_load_links_the_file()

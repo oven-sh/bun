@@ -60,8 +60,9 @@ fn find_bindings_read_in_held_scopes(
 ) -> Option<Vec<BindingRef>> {
     let mut copies_field = false;
     let mut sibling_functions = Vec::new();
+    let mut copied_beside_scope = Vec::new();
     let lists = input.functions.iter().zip(&plan.captures);
-    for (_, list) in lists.filter(|(function, _)| !function.is_only_called_directly) {
+    for (function, list) in lists.filter(|(function, _)| !function.is_only_called_directly) {
         let number_of_scopes =
             list.partition_point(|capture| matches!(capture, Capture::Environment(_)));
         let (scopes, values) = list.split_at(number_of_scopes);
@@ -80,8 +81,27 @@ fn find_bindings_read_in_held_scopes(
                 copies_field = true;
             } else if captured.initialization == Some(Initialization::WITH_HOISTED_FUNCTIONS) {
                 sibling_functions.push(binding);
+            } else if function.is_laid_in_literal && scopes.len() == 1 {
+                copied_beside_scope.push(binding);
             }
         }
+    }
+    if !copied_beside_scope.is_empty() {
+        copied_beside_scope.sort_unstable();
+        copied_beside_scope.dedup();
+        let mut copied_alone = Vec::new();
+        for list in &plan.captures {
+            for &capture in list.iter() {
+                if let Capture::Value(binding) = capture
+                    && copied_beside_scope.binary_search(&binding).is_ok()
+                    && !list.contains(&Capture::Environment(find_binding(input, binding).scope))
+                {
+                    copied_alone.push(binding);
+                }
+            }
+        }
+        copied_beside_scope.retain(|binding| !copied_alone.contains(binding));
+        sibling_functions.append(&mut copied_beside_scope);
     }
     if !copies_field && sibling_functions.is_empty() {
         return None;

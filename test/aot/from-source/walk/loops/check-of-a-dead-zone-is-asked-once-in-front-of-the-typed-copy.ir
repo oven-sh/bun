@@ -1,0 +1,31 @@
+# -- source: main.ts
+# declare function unseen(x: any): any;
+# function run(n: number): number { let sum = 0; for (let i = 0; i < n; i++) sum = table.handler(sum) | 0; return sum; }
+# function attempt(n: number): number { try { return run(n); } catch (error) { return -1; } }
+# const withNoTurn = attempt(0);
+# const withTurns = attempt(3);
+# const table = { handler: (x: number) => x + 3 };
+# unseen(table);
+# print(withNoTurn, withTurns, attempt(0), attempt(3));
+# -- end of source
+# `table` is a constant of the module, read in a loop by a function that may be entered while it is in its dead zone. No turn writes it, so its read stands in front of the typed copy of the loop.
+# The check throws, so it stayed in the turn, and with it every look at what it hands on: the test of the shape, of the slot, of the callee: 16 instructions a turn in the place of one Add.
+# It is a look like the others: asked once, in front. Where the place is empty the way leads into the other copy, which stands first in the text: that one checks in its turn, and throws where the program does:
+# with no turn nothing throws.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetModuleVariable
+# CHECK-NEXT: = TypeTest {{*}}testedType=absent
+# CHECK-NEXT: Branch
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = CheckInitialized {{*}}name="table"
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = CheckInitialized
+# CHECK-NOT: = ShapeTest
+# CHECK-NOT: = GetSlot
+# CHECK: = Add {{*}}form=Integers
+# CHECK-NOT: = CheckInitialized
+# CHECK: Return
+# RUN(ANSWERS): run-in-shell globalThis.unseen = x => x;
+# ANSWERS: 0 -1 0 9

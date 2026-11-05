@@ -19,8 +19,8 @@ use crate::file_analysis::{AnalyzedAgainFrom, FileAnalysis, FileInputs};
 use crate::fold::StoredByMocks;
 use crate::hir_from_data::{DataValue, HostValue};
 use crate::import_sites::{
-    ImportSiteKind, ImportSpecifier, find_texts_of_exports, write_from_other_folder,
-    write_start_from_other_folder,
+    ImportSiteKind, ImportSpecifier, WHERE_FILE_LIES, find_texts_of_exports,
+    write_from_other_folder, write_start_from_other_folder,
 };
 use crate::resolve::{
     CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload, ParsedFile,
@@ -1435,6 +1435,22 @@ fn find_texts_of_data_files(
         let ImportSpecifier::Constant(specifier) = site.specifier else {
             continue;
         };
+        if let ImportSiteKind::RequireResolve(_) = site.kind {
+            let path = atoms.intern(WHERE_FILE_LIES);
+            let own_folder = folder_of(file.target.key.path);
+            if asked.contains(&(specifier, path))
+                && let Some(answer) = files_of(resolution).next()
+                && let Some(text) = write_from_other_folder(answer.path, b"", own_folder)
+            {
+                let text = atoms.intern(&text);
+                found.push(TextOfDataFile {
+                    specifier,
+                    path,
+                    text,
+                });
+            }
+            continue;
+        }
         if next_target == target || file.targets[target] == NOT_LOADED {
             continue;
         }

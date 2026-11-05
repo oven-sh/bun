@@ -197,6 +197,7 @@ fn with_freeze_input<R>(
         threads: NonZeroUsize::MIN,
         progress: None,
         left_out_bodies: None,
+        discards_first_visits: false,
     };
     let loaded = load_program(&session, host, &request).expect("every entry point is found");
     then(&FreezeInput {

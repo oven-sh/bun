@@ -482,7 +482,7 @@ fn find_all_that_is_reached_from(
 }
 
 /// By how much a thousand bytes of source to build hold a shard up, in microseconds of the recorded times of test files, where as many
-/// test files run at once as there are processors: both the build and the run take all of them. On a large application (10-31, 16
+/// test files run at once as there are processors: both the build and the run take all of them. On a large application (16
 /// processors, 24 workers): the first test comes 0.44 s later for a million bytes, and the run takes 0.0352 s for a second of recorded time.
 /// Too low, a shard with much to build keeps some files too many, and still builds no more than where the files are dealt otherwise.
 const MICROSECONDS_OF_TEST_FILES_FOR_THOUSAND_BYTES_TO_BUILD: u64 = 8300;

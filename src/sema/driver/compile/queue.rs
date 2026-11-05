@@ -57,6 +57,7 @@ fn queue_request<'a>(request: &CompileRequest<'a, '_>) -> Request<'a> {
         plan_options: PlanOptions {
             after_file_only_for_checked_files: true,
             task_size: TaskSize::ByCostAndThreads,
+            discards_first_visits: request.discards_first_visits,
             ..PlanOptions::default()
         },
         stops_like_tsc: false,

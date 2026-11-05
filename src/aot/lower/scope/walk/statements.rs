@@ -1,7 +1,7 @@
 use bun_sema::bind::{CommonJsVariable, Decl, ScopeId, SymbolId};
 use bun_sema::hir::{Flags, Span, StmtId, StmtKind, VarDeclId, VarKind};
 
-use super::{Context, PatternRole, Task, WalkedLoop, Walker};
+use super::{Context, PatternRole, Task, WalkedLoop, WalkedTry, Walker};
 use crate::lower::scope::ScopeSlot;
 
 impl Walker<'_, '_> {
@@ -134,11 +134,32 @@ impl Walker<'_, '_> {
                 finalizer,
             } => {
                 let context = context.conditional();
-                self.push_statements([block], context);
+                let index = self.walk.tries.len() as u32;
+                self.walk.tries.push(WalkedTry {
+                    statement,
+                    boundary: outer_scope,
+                    function: context.function,
+                    parent: context.enclosing_try,
+                    stored: Vec::new(),
+                    size: self.number_walked,
+                });
+                let covered = Context {
+                    enclosing_try: Some(index),
+                    ..context
+                };
+                self.push_statements([block], covered);
+                let around_handler = if finalizer.is_some() {
+                    covered
+                } else {
+                    context
+                };
                 if param.is_some() {
-                    self.visit_pattern(hir[param].pat, PatternRole::LexicalDeclaration, context);
+                    let pattern = hir[param].pat;
+                    self.visit_pattern(pattern, PatternRole::LexicalDeclaration, around_handler);
                 }
-                self.push_statements([handler, finalizer], context);
+                self.push_statements([handler], around_handler);
+                self.push_statements([finalizer], context);
+                self.push_task(Task::EndTry(index), context);
             }
             StmtKind::Empty
             | StmtKind::Debugger

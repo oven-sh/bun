@@ -791,6 +791,14 @@ impl ModuleGraph {
         matches!(module, ModuleRef::External { specifier, type_attribute: None, .. } if names.contains(&specifier))
     }
 
+    pub fn holds_replaceable_variable(&self, file: FileId) -> bool {
+        let replaced = &self.plan.replaced_variables;
+        let first = replaced.partition_point(|variable| variable.file < file);
+        replaced
+            .get(first)
+            .is_some_and(|variable| variable.file == file)
+    }
+
     pub fn is_replaceable(&self, variable: Sym) -> bool {
         let replaced = &self.plan.replaced_variables;
         replaced.binary_search(&variable).is_ok()

@@ -25,6 +25,7 @@ use crate::builtins::{
 use crate::ir::for_each_mut;
 use crate::known_helpers::KnownHelpers;
 use crate::load::runtime_modules::find_module_named;
+use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{BindingKind, Bound, Decl, SymFlags, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
@@ -125,6 +126,7 @@ pub(super) fn bind_imports(
         input,
         files_that_sites_name: OnceLock::new(),
         exported_by_mocked_modules: OnceLock::new(),
+        defaults_spied_on: OnceLock::new(),
     };
     let compiled_files = modules.compiled_files.iter();
     let mut slots: Vec<(FileId, Option<FileImports>)> =
@@ -224,6 +226,53 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) input: &'a BindInput<'a, 's>,
     files_that_sites_name: OnceLock<Vec<bool>>,
     exported_by_mocked_modules: OnceLock<ExportedByMockedModules>,
+    defaults_spied_on: OnceLock<DefaultsSpiedOn>,
+}
+
+#[derive(Default)]
+struct DefaultsSpiedOn {
+    modules: FxHashSet<ModuleRef>,
+    is_every_module: bool,
+}
+
+fn find_defaults_spied_on(context: &BindContext<'_, '_>) -> DefaultsSpiedOn {
+    let mut found = DefaultsSpiedOn::default();
+    if !context.runs_tests {
+        return found;
+    }
+    let run = &context.input.run;
+    let in_texts = run.exports_spied_in_text.iter().map(|spied| spied.1);
+    let mut names: FxHashSet<Atom> = run.names_spied.iter().copied().chain(in_texts).collect();
+    let mut is_any_name = run.spies_under_any_name;
+    for &file in &context.modules.compiled_files {
+        let Some(source) = parsed_source(context.files, file) else {
+            is_any_name = true;
+            continue;
+        };
+        is_any_name |= source.builtins.hands_spy_on();
+        for spy in source.builtins.spy_calls() {
+            is_any_name |= spy.name.is_none();
+            names.extend(spy.name);
+        }
+    }
+    found.is_every_module = is_any_name || names.contains(&known::default);
+    if found.is_every_module || names.is_empty() {
+        return found;
+    }
+    for &file in &context.modules.compiled_files {
+        for &(name, resolved) in context.tables.names(file) {
+            if let Resolution::Synthetic {
+                module,
+                name: handed_on,
+            } = resolved.resolution
+                && handed_on == known::default
+                && names.contains(&name)
+            {
+                found.modules.insert(module);
+            }
+        }
+    }
+    found
 }
 
 #[derive(Default)]
@@ -557,9 +606,12 @@ impl<'a, 's> FileBinder<'a, 's> {
         let interop = context.modules.interop(exporter);
         let names = &context.tables.commonjs;
         let is_half_at_link = names.is_half(exporter) && context.order.half_at_link(exporter);
+        let spied_on = (context.defaults_spied_on).get_or_init(|| find_defaults_spied_on(context));
         interop.kind == ModuleKind::CommonJs
             && !context.mocked.contains(exporter)
             && !context.evicted.contains(exporter)
+            && !spied_on.is_every_module
+            && !spied_on.modules.contains(&exporter)
             && context.order.is_code_of_program(exporter)
             && match (context.marker)(exporter) {
                 Some(false) => true,
@@ -842,6 +894,9 @@ impl<'a, 's> FileBinder<'a, 's> {
                 variable.file != self.file && exported.variables.contains(&variable)
             }
             Resolution::Namespace { module, .. } => exported.namespaces.contains(&module),
+            Resolution::Synthetic { module, name } => {
+                exported.names_of_files.contains(&(module, name))
+            }
             _ => false,
         }
     }
@@ -1118,6 +1173,7 @@ impl<'a, 's> FileBinder<'a, 's> {
 struct ExportedByMockedModules {
     variables: FxHashSet<Sym>,
     namespaces: FxHashSet<ModuleRef>,
+    names_of_files: FxHashSet<(ModuleRef, Atom)>,
 }
 
 fn find_what_mocked_modules_export(context: &BindContext<'_, '_>) -> ExportedByMockedModules {
@@ -1133,6 +1189,9 @@ fn find_what_mocked_modules_export(context: &BindContext<'_, '_>) -> ExportedByM
                 }
                 Resolution::Namespace { module, .. } => {
                     exported.namespaces.insert(module);
+                }
+                Resolution::Synthetic { module, name } => {
+                    exported.names_of_files.insert((module, name));
                 }
                 _ => {}
             }

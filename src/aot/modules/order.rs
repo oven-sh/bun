@@ -7,6 +7,7 @@ use super::module_set::ModuleSet;
 use super::requests::{FileScan, ScannedSite, Scans};
 use super::spelled_files::{
     TextThatSpellsFile, find_texts_that_spell_files, is_every_file_found_by_name,
+    program_loads_by_name_that_no_pattern_holds,
 };
 use super::wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 use super::{BindInput, ModuleRef};
@@ -971,7 +972,7 @@ pub(super) fn compute_order(
     let spelled = texts_that_spell_files.iter().flatten();
     let loaded_by_name = loaded_by_name.map(|entry| entry.file);
     let loaded_by_name = loaded_by_name.chain(spelled.map(|text| text.spelled));
-    let is_every_file_found = !input.runs_tests && is_every_file_found_by_name(input, modules);
+    let is_every_file_found = is_every_file_found_by_name(input, modules);
     let found = modules
         .compiled_files
         .iter()
@@ -991,7 +992,7 @@ pub(super) fn compute_order(
     let is_exposed = find_reached(&edges, late_targets.collect());
     let (is_on_cycle, component_of) = find_modules_on_cycles(&edges);
     let is_half = is_on_cycle.iter().zip(&is_exposed);
-    let is_half: Vec<bool> = is_half
+    let mut is_half: Vec<bool> = is_half
         .map(|(&on_cycle, &exposed)| on_cycle || exposed)
         .collect();
     let waits = needs_loader.contains(&true);
@@ -1004,6 +1005,13 @@ pub(super) fn compute_order(
         .collect();
     for target in linked_late {
         is_half_at_link[target as usize] = true;
+    }
+    let finds_main_by_name =
+        texts_that_spell_files.is_some() && program_loads_by_name_that_no_pattern_holds(input);
+    let main_entry_points = (input.sources.entry_points().iter())
+        .filter(|entry| entry.kind == EntryPointKind::Main && finds_main_by_name);
+    for entry in main_entry_points {
+        is_half[entry.file.idx()] = true;
     }
     let prefix_roots = find_prefix_roots(input, scans, modules, &is_code_of_program, &planned);
     let mut loads = find_loads_seen_by_program(

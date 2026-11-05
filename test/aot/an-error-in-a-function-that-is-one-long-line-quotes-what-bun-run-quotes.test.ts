@@ -10,7 +10,8 @@
 //
 // So here a function of about 20 KB in one line fails at two hundred places, one a call, in many forms, between fillers of
 // many lengths, so that the listed starts fall everywhere among them. It is written once for each way to join its parts, and
-// every message is held against what `bun run` says.
+// every message is held against what `bun run` says. One kind of text is not quoted whole, a function with statements in its body
+// among them (docs/compiler/compatibility.mdx, "Error messages"): a failed read off what holds one names the value, a failed call the member.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -93,6 +94,10 @@ const programs: Record<string, string> = {
   "declarations of the file": `${head}function t(f){try{f()}catch(e){messages.push(e.message)}}var ${units.map(unit => `v${unit.n}=${unit.fails ? `t(()=>(${unit.text}))` : `(${unit.text})`}`).join(",")};${tail}`,
 };
 const fileOf = (name: string) => name.replaceAll(" ", "-");
+const withoutBodies = (message: string) =>
+  message
+    .replace(/\(evaluating 'run\((?:function|\(\))[^]*\)\.z\d+\.w'\)$/, "(evaluating 'undefined.w')")
+    .replace(/^run\(function[^]*\)\.(z\d+)' is undefined\)$/, "$1 is not a function. (In '$1()', '$1' is undefined)");
 
 const dir = tempDir(
   "aot-errors-in-one-long-line",
@@ -123,7 +128,7 @@ describe.concurrent("every message of a function in one long line is what bun ru
         );
         const ran = await spawned([executable], folder, bunEnv, 200_000);
         expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-        expect(JSON.parse(ran.stdout)).toEqual(expected);
+        expect(JSON.parse(ran.stdout)).toEqual(expected.map(withoutBodies));
       },
       480_000,
     );

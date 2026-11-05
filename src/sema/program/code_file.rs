@@ -82,6 +82,7 @@ pub(super) fn load_code_file<'s, 'r>(
     let mut tree = accept_tree(context, arena, key, settings, is_only_imported, text);
     debug_assert!(tree.hir.kind != FileKind::Declaration);
     write_what_other_files_say(&mut tree.hir, inputs, arena);
+    tree.hir.runs_beside_loader = context.host.has_loader_at_run_time();
     let is_script_for_project = match tree.request.options.written_module_detection {
         ModuleDetection::Force => false,
         ModuleDetection::Legacy => true,
@@ -224,6 +225,7 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
         payload,
     } = loaded;
     write_what_other_files_say(&mut parse.hir, inputs, arena);
+    parse.hir.runs_beside_loader = context.host.has_loader_at_run_time();
     let previous = &code.analyzed;
     let file = FileInputs {
         declared_module_type: previous.declared_module_type,

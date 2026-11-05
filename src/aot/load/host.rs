@@ -965,6 +965,10 @@ impl CodeHost for LoadHost<'_> {
         !self.input.options.load.runs_tests
     }
 
+    fn has_loader_at_run_time(&self) -> bool {
+        self.input.options.load.runs_tests
+    }
+
     fn add_module_with_query(
         &self,
         path: &[u8],

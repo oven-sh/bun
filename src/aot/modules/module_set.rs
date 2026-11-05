@@ -396,8 +396,8 @@ fn answer_require_with_what_the_loader_holds(
     forms: &[(FileId, FileId)],
     interops: &mut [Option<Interop>],
 ) -> Vec<(FileId, FileId)> {
-    let mut is_any_imported = input.code_from_disk_names_files;
-    let mut is_any_required = input.code_from_disk_names_files || input.hands_on_any_module;
+    let mut is_any_imported = input.files_are_named_out_of_sight;
+    let mut is_any_required = input.files_are_named_out_of_sight || input.hands_on_any_module;
     let mut is_imported = vec![false; interops.len()];
     let mut is_required = vec![false; interops.len()];
     for &importer in compiled_files {

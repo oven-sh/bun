@@ -589,6 +589,76 @@ fn name_read_off_what_require_gives_is_asked_of_the_file_that_is_required() {
 }
 
 #[test]
+fn barrel_keeps_the_namespace_that_a_member_read_takes_off_it() {
+    let rest = "console.log(require('./barrel.js').all.v);\n";
+    let test_file = write_test_file(&["declares.cjs"], rest);
+    let program = link_test_run(&[
+        (TEST_FILE, test_file.as_str()),
+        ("declares.cjs", "exports.v = 'real';\n"),
+        ("barrel.js", "export * as all from './declares.cjs';\n"),
+    ]);
+    let printed = print_program(&program);
+    let mut records = printed.lines().filter(|line| line.starts_with("module "));
+    let barrel = records.find(|line| line.contains("path=\"/project/barrel.js\""));
+    let barrel = barrel.expect("the barrel has a record");
+    assert!(barrel.contains("name=\"all\""), "{barrel}");
+}
+
+#[test]
+fn name_of_a_commonjs_file_read_off_a_barrel_is_asked_of_the_barrel() {
+    let others = [
+        ("declares.cjs", "exports.v = 'real';\n"),
+        ("mocked.js", "export { v } from './declares.cjs';\n"),
+        ("barrel.js", "export { v } from './mocked.js';\n"),
+    ];
+    for rest in [
+        "import * as all from './barrel.js';\nconsole.log(all.v);\n",
+        "console.log(require('./barrel.js').v);\n",
+    ] {
+        let stations = find_stations(&["mocked.js"], rest, &others);
+        assert_eq!(stations, ["mocked.js seen by barrel.js"], "{rest}");
+    }
+}
+
+#[test]
+fn name_of_a_commonjs_file_that_a_star_brings_is_asked_of_the_stars() {
+    let others = [
+        ("declares.cjs", "exports.v = 'real';\n"),
+        ("mocked.js", "export { v } from './declares.cjs';\n"),
+        ("barrel.js", "export * from './mocked.js';\n"),
+    ];
+    let way = find_way(&["mocked.js"], &others, ("barrel.js", "v"));
+    let expected = [
+        "mocked.js v by a star from barrel.js behind 2",
+        "declaration",
+    ];
+    assert_eq!(way, expected);
+}
+
+#[test]
+fn name_read_off_a_namespace_that_a_barrel_hands_on_is_asked_in_the_name_of_the_barrel() {
+    for (declares, text) in [
+        ("declares.cjs", "exports.v = 'real';\n"),
+        ("declares.js", "export const v = 'real';\n"),
+    ] {
+        let barrel = format!("export * as all from './{declares}';\n");
+        let others = [(declares, text), ("barrel.js", barrel.as_str())];
+        for rest in [
+            "import { all } from './barrel.js';\nconsole.log(all.v);\n",
+            "import * as barrel from './barrel.js';\nconsole.log(barrel.all.v);\n",
+        ] {
+            let stations = find_stations(&[declares], rest, &others);
+            let expected = format!("{declares} seen by barrel.js");
+            assert!(!stations.is_empty(), "{declares}: {rest}");
+            assert!(
+                stations.iter().all(|it| *it == expected),
+                "{declares}: {rest}: {stations:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn name_read_off_an_object_that_another_object_shows_is_asked_of_its_module() {
     let others = [
         ("declares.js", "export const v = 'real';\n"),
@@ -597,7 +667,7 @@ fn name_read_off_an_object_that_another_object_shows_is_asked_of_its_module() {
     ];
     let find = |rest: &str| find_stations(&["mocked.js"], rest, &others);
     let by_name = find("import { inner } from './barrel.js';\nconsole.log(inner.v);\n");
-    assert_eq!(by_name, [format!("mocked.js seen by {TEST_FILE}")]);
+    assert_eq!(by_name, ["mocked.js seen by barrel.js"]);
     for rest in [
         "import * as all from './barrel.js';\nconsole.log(all.inner.v);\n",
         "console.log(require('./barrel.js').inner.v);\n",

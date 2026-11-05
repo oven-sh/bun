@@ -112,6 +112,11 @@ pub(in crate::lower::scope) fn walk_file(
     for walked_loop in &mut walk.loops {
         sort_unique(&mut walked_loop.stored);
     }
+    for function in std::mem::take(&mut walk.functions_laid_in_literals) {
+        if let Some(walked) = walk.function_of_fn[function.idx()] {
+            walk.functions[walked.index()].is_laid_in_literal = true;
+        }
+    }
     merge_redeclared_functions(&mut walk.hoisted_functions);
     find_starts_of_functions_made_late(input, &mut walk);
     walk
@@ -301,6 +306,7 @@ impl<'x, 's> Walker<'x, 's> {
             pending_stores: Vec::new(),
             unconditional_statements: Vec::new(),
             clock: 0,
+            number_walked: 0,
             is_only_called_or_tested: vec![false; hir.exprs.len()],
             walk: ScopeWalk {
                 function_of_fn: vec![None; hir.fns.len()],
@@ -366,8 +372,18 @@ impl<'x, 's> Walker<'x, 's> {
 
     fn run_task(&mut self, task: Task, context: Context) {
         match task {
-            Task::Statement(statement) => self.visit_statement(statement, context),
-            Task::Expression(expression) => self.visit_expression(expression, context),
+            Task::Statement(statement) => {
+                self.number_walked += 1;
+                self.visit_statement(statement, context);
+            }
+            Task::Expression(expression) => {
+                self.number_walked += 1;
+                self.visit_expression(expression, context);
+            }
+            Task::EndTry(index) => {
+                let size = &mut self.walk.tries[index as usize].size;
+                *size = self.number_walked - *size;
+            }
             Task::MarkCreated(function) => {
                 let time = self.tick();
                 self.walk.functions[function.index()].created_at = time;
@@ -421,6 +437,7 @@ impl<'x, 's> Walker<'x, 's> {
             hoisted_to: None,
             is_made_late: false,
             is_only_called_directly: false,
+            is_laid_in_literal: false,
         });
         WalkedFunctionId(self.walk.functions.len() as u32 - 1)
     }
@@ -470,6 +487,7 @@ impl<'x, 's> Walker<'x, 's> {
             function,
             lexical_scope: self.lexical_owners[scope.idx()],
             enclosing_loop: None,
+            enclosing_try: None,
             is_repeated: function != WalkedFunctionId::MODULE_BODY,
             is_conditional: false,
         };
@@ -508,6 +526,9 @@ impl<'x, 's> Walker<'x, 's> {
     }
 
     pub(super) fn record_store(&mut self, context: Context, binding: BindingRef) {
+        if let Some(index) = context.enclosing_try {
+            self.walk.tries[index as usize].stored.push(binding);
+        }
         let Some(index) = context.enclosing_loop else {
             return;
         };

@@ -61,7 +61,7 @@ const countsOfStats = ["dev", "mode", "nlink", "uid", "gid", "rdev", "blksize", 
 
 // Bun__createJSStatsObject() and Bun__createJSBigIntStatsObject() put numbers of one kind under every name. What a constructor puts there is in its row:
 // its operands as they are, and that of BigIntStats converts the four times, which it takes in nanoseconds, and puts numbers under the names that end in `Ms`.
-const stats = (name: string, structure: string, held: b.TableType, unitOfOperands: "Ms" | "Ns") => {
+const stats = (name: string, structure: string, unitOfOperands: "Ms" | "Ns") => {
   const inUnit = (unit: string) => times.map(time => `${time}${unit}`);
   const convertsTimes = unitOfOperands === "Ns";
   const operands = [...countsOfStats, ...inUnit(unitOfOperands)];
@@ -86,7 +86,6 @@ const stats = (name: string, structure: string, held: b.TableType, unitOfOperand
     prototypeCppExpression: `globalObject->${structure}.prototypeInitializedOnMainThread(globalObject)`,
     usesFeature: "FsStats",
     namesDefinedOnNewInstances: names,
-    typesOfNamesDefinedOnNewInstances: b.typesByName(declareEach(names, held)),
     constructorOnlyReadsPrototypeOfNewTarget: true,
     prototypeListsAllMembers: true,
     call: makesInstance,
@@ -111,14 +110,13 @@ const testsKindOfEntry = {
 } satisfies b.FunctionField;
 
 export default b.declarations(
-  stats("Stats", "m_JSStatsClassStructure", b.f64, "Ms"),
-  stats("BigIntStats", "m_JSStatsBigIntClassStructure", b.bigint, "Ns"),
+  stats("Stats", "m_JSStatsClassStructure", "Ms"),
+  stats("BigIntStats", "m_JSStatsBigIntClassStructure", "Ns"),
   b.class("%Dirent%", {
     prototypeCppExpression: "globalObject->m_JSDirentClassStructure.prototypeInitializedOnMainThread(globalObject)",
     usesFeature: "FsStats",
     // Bun__Dirent__toJS() puts strings there. What the constructor puts there is in its row.
     namesDefinedOnNewInstances: ["name", "path", "parentPath"],
-    typesOfNamesDefinedOnNewInstances: b.typesByName({ name: b.string, path: b.string, parentPath: b.string }),
     constructorOnlyReadsPrototypeOfNewTarget: true,
     prototypeListsAllMembers: true,
     call: { returns: b.never, capability: "heap", throws: true, implementation: b.generic },

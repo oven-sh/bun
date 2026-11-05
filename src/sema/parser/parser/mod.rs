@@ -1104,6 +1104,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// `tryParse`: keeps what `parse` built if it returns `Some` and hit no syntax error. Otherwise rolls back.
+    /// Kept out of line because the checkpoint is about 500 bytes, and a caller that recurses would hold one at every level.
+    #[inline(never)]
     pub(crate) fn try_parse<R>(&mut self, parse: impl FnOnce(&mut Self) -> Option<R>) -> Option<R> {
         if self.has_failed() {
             return None;
@@ -1135,7 +1137,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         None
     }
 
-    /// `lookAhead` for a test that parses. Everything it built is discarded.
+    /// `lookAhead` for a test that parses. Everything it built is discarded. Kept out of line like `try_parse`.
+    #[inline(never)]
     pub(crate) fn look_ahead_parsing(&mut self, test: impl FnOnce(&mut Self) -> bool) -> bool {
         if self.has_failed() {
             return false;

@@ -1,0 +1,18 @@
+# -- source: copy-tests-for-no-family-that-link-has-proven.ts
+# declare function sink(...values: unknown[]): void;
+# const xs: any[] = [];
+# for (let i = 0; i < 10; i++) xs.push(i & 1 ? { a: i } : { b: i, a: i });
+# function read(v: any) { return v.a; }
+# function run() { let t = 0; for (let i = 0; i < xs.length; i++) t += read(xs.at(i)); return t; }
+# sink(run());
+# -- end of source
+# Link's proof of a parameter is tested for in front of a copy only where one look at the value settles it: primitives, one layout, or both.
+# A family or a set of closures grows with the program, and so would each question about it and each test of it, at every copy: members times copies.
+# Here the parameter is one of two layouts. The copy asks for them where it reads, as a guess with the read as written beside it.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f1
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: [[element]]: anything{{*}} = Call
+# CHECK-NOT: = TypeTest [[element]]
+# CHECK: = PropGet [[element]] key="a"

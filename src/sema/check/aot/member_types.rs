@@ -97,7 +97,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    pub(super) fn symbol_member_name(&mut self, file: FileId, key: ExprId) -> Option<Atom> {
+    pub fn symbol_member_name(&mut self, file: FileId, key: ExprId) -> Option<Atom> {
         if !matches!(self.c.hir(file)[key].kind, ExprKind::Ident(_)) {
             return None;
         }

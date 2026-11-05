@@ -300,6 +300,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if is_prototype_of_function || matches!(self.file.hir[written].kind, ExprKind::Null) {
             return None;
         }
+        self.lower_expression(site.callee);
         let parent = self.lower_expression(parent);
         self.set_position(self.file.call_position(site));
         self.quote_if_next_fails(call);

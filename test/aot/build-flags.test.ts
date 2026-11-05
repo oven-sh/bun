@@ -90,10 +90,11 @@ function later(mode) { return () => import.meta.env.MODE; }
 function own(config) { return config.mode; }
 function depth(settings) { return DEPTH; }
 function loader(require) { return LOADER_AT_HAND; }
+function put() { const settings = { depth: "local" }; DEPTH = "stored"; return settings.depth; }
 console.log(config.mode, import.meta.env.MODE, pick("parameter"), later("captured")(), own({ mode: "own" }), typeof config.mode);
-console.log(DEPTH, depth({ depth: "parameter" }), loader("parameter"));`,
+console.log(DEPTH, depth({ depth: "parameter" }), loader("parameter"), put());`,
     },
-    prints: "module module parameter captured own string\nglobal parameter parameter\n",
+    prints: "module module parameter captured own string\nglobal parameter parameter stored\n",
   },
   "--define of a name in place of a path, under typeof": {
     flags: ["--define=config.flag=absent", "--define=FLAG=absent", "--define=config.there=present"],

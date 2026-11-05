@@ -254,6 +254,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(crate) fn begin_handler(&mut self, role: BlockRole, subject: Option<ValueId>) -> Handler {
         let handler = self.create_handler(role, subject);
+        self.begin_handler_made(handler)
+    }
+
+    pub(crate) fn begin_handler_that_reads_fields(&mut self, role: BlockRole) -> Handler {
+        let handler = self.create_handler(role, None).reading_fields();
+        self.begin_handler_made(handler)
+    }
+
+    fn begin_handler_made(&mut self, handler: Handler) -> Handler {
         let outer = self.enter_handler(handler);
         let entry = ControlEntry::Handler { handler, outer };
         self.control.entries.push(entry);
@@ -274,6 +283,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(crate) fn begin_cleanup(&mut self, role: BlockRole, subject: Option<ValueId>) {
         let handler = self.create_handler(role, subject);
+        self.begin_cleanup_made(handler);
+    }
+
+    pub(crate) fn begin_cleanup_that_reads_fields(&mut self, role: BlockRole) {
+        let handler = self.create_handler(role, None).reading_fields();
+        self.begin_cleanup_made(handler);
+    }
+
+    fn begin_cleanup_made(&mut self, handler: Handler) {
         let outer = self.enter_handler(handler);
         self.control.entries.push(ControlEntry::Cleanup(Cleanup {
             handler,

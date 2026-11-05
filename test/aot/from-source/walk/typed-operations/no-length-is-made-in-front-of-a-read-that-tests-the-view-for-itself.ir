@@ -1,0 +1,14 @@
+# f1 = scan
+# -- source: no-length-is-made-in-front-of-a-read-that-tests-the-view-for-itself.ts
+# declare function sink(...values: unknown[]): void;
+# declare function note(value: unknown): void;
+# type Board = { words: Int32Array; width: number };
+# function scan(board: Board, last: number) { let found = 0; for (let x = 0; x <= last; x++) { const word = board.words[x]!; if ((word & 3) !== 1) continue; const next = board.words[x + 1]!; note(next); found++; } return found; }
+# const board: Board = { words: new Int32Array(64), width: 8 };
+# sink(scan(board, 60), scan(board, 30));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayElement
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = GetTypedArrayLength

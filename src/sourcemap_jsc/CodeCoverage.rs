@@ -644,7 +644,8 @@ struct CompiledFunction {
 
 impl CompiledCounts {
     /// `ranges` has a line for each counter, in bytes of `text`: `b <start> <end>`; `f <start> <end> <counter of the code that makes the function> <end of head>`;
-    /// `s <start> <end> <counter>` for text that another counter counts as well.
+    /// `s <start> <end> <counter>` for text that another counter counts as well; `e <start> <end> <counter of the code around it> <end of head>` for a function
+    /// that the transpiler makes and calls where it stands; `o <start> <end> <offset>` for text that the transpiler prints a second time where the text at the offset runs: it ran as often as the place that ran most.
     fn parse(ranges: &[u8], counts: &[u64], text: &[u8]) -> Option<CompiledCounts> {
         // By byte offset: how many code units are in front of it.
         let units_before: Option<Vec<u32>> = (!text.is_ascii()).then(|| {
@@ -676,6 +677,8 @@ impl CompiledCounts {
         let mut blocks = Vec::new();
         let mut functions = Vec::new();
         let mut all_functions = Vec::new();
+        let mut called_where_they_stand = Vec::new();
+        let mut printed_twice = Vec::new();
         for (counter, line) in bun_core::strings::split(ranges, b"\n").enumerate() {
             if line.is_empty() {
                 break;
@@ -695,6 +698,11 @@ impl CompiledCounts {
                 b"s" => {
                     range.count = count_of(number()? as usize);
                     blocks.push(range);
+                }
+                b"o" => printed_twice.push((range, in_units(number()?))),
+                b"e" => {
+                    let is_known = count_of(number()? as usize) > 0;
+                    called_where_they_stand.push((range, in_units(number()?), is_known));
                 }
                 b"f" => {
                     let is_known = count_of(number()? as usize) > 0;
@@ -727,7 +735,28 @@ impl CompiledCounts {
                 line_starts.push(in_units(u32::try_from(i + 1).ok()?));
             }
         }
-        blocks.sort_unstable_by_key(|block| block.range);
+        if !called_where_they_stand.is_empty() || !printed_twice.is_empty() {
+            let counts = ExecutionCounts::new(&blocks, &functions);
+            for (mut range, end_of_head, is_known) in called_where_they_stand {
+                range.count = counts.at(range.range.start).unwrap_or(0);
+                if is_known {
+                    functions.push(range);
+                }
+                all_functions.push(CompiledFunction {
+                    range,
+                    end_of_head,
+                    is_known,
+                });
+            }
+            for (mut range, elsewhere) in printed_twice {
+                range.count = counts
+                    .at(range.range.start)
+                    .max(counts.at(elsewhere))
+                    .unwrap_or(0);
+                blocks.push(range);
+            }
+        }
+        blocks.sort_unstable_by_key(|block| (block.range, core::cmp::Reverse(block.count)));
         functions.sort_unstable_by_key(|function| function.range);
         all_functions.sort_unstable_by_key(|function| function.range.range);
         Some(CompiledCounts {

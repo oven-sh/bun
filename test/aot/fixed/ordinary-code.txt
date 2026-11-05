@@ -3373,7 +3373,6 @@ console.log(answer, tell(() => buffer.btoa("a")));
 #### hidden-text-replaces-btoa.mjs prints
 stored mine
 #### json-of-invalid-date.ts
-// CALLS+ writeRow operationAOTJSONAppendDate
 // JSON.stringify writes a typed date in place, and Date.prototype still gets toJSON, valueOf and toISOString where the built-in functions read them: toISOString for a valid date alone.
 type Row = { when: Date };
 export function writeRow(row: Row): string { return JSON.stringify(row); }

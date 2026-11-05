@@ -73,6 +73,29 @@ export function neverCalled() {
   }
   return inside();
 }
+
+export function makers(flag, given = () => {
+  return "given";
+}) {
+  const chosen = flag
+    ? () => {
+      return "yes";
+    }
+    : () => {
+      return "no";
+    };
+  return [chosen, given];
+}
+`,
+  "constants.js": `const STEP = 3;
+
+export function steps(a, b) {
+  return a
+    ? STEP
+    : b
+      ? "second"
+      : "third";
+}
 `,
   "throws.js": `function fails() {
   throw new Error("no");
@@ -152,9 +175,10 @@ function unused() {
 module.exports = { used, unused };
 `,
   "first.test.js": `import { expect, test } from "bun:test";
-import { pick, loops, chain, byKind } from "./branches.js";
+import { pick, loops, chain, byKind, makers } from "./branches.js";
 import { callsWhatThrows, catches, waits, neverResumed } from "./throws.js";
 import common from "./common.cjs";
+import { steps } from "./constants.js";
 
 test("branches", () => {
   expect(pick(20)).toBe("big");
@@ -165,6 +189,9 @@ test("branches", () => {
   expect(byKind("b")).toBe(1);
   expect(byKind("c")).toBe(2);
   expect(common.used()).toBe(1);
+  expect(makers(true).length).toBe(2);
+  expect(steps(1, 0) + steps(1, 0)).toBe(6);
+  expect(steps(0, 1)).toBe("second");
 });
 
 test("throws", async () => {
@@ -185,10 +212,144 @@ test("classes", () => {
   expect(pick(7)).toBe("middle");
 });
 `,
+  "third.test.js": `import { pick } from "./branches.js";
+
+describe(
+  "the names of the runner are globals",
+  () => {
+    it("picks", () => {
+      expect(
+        pick(7),
+      ).toBe("middle");
+    });
+  },
+);
+`,
 };
 
-async function report(flags: string[], bunfig = "") {
-  using dir = tempDir("test-aot-coverage", { ...files, "bunfig.toml": bunfig });
+// What the transpiler makes of a class hangs on the options of the project.
+const classesUnder = (compilerOptions: string) => ({
+  "package.json": `{ "name": "rewritten", "type": "module" }`,
+  "tsconfig.json": `{ "compilerOptions": { ${compilerOptions} } }`,
+  "entities.ts": `function column(target: any, key: string) {}
+function inject(target: any, key: string | undefined, index: number) {}
+
+export class Stored {
+  @column
+  name = "n";
+  @column
+  size?: number;
+  takes(
+    @inject value: number,
+  ) {
+    return value;
+  }
+}
+
+export class NeverStored {
+  @column
+  name = "n";
+  [column.name] = 1;
+}
+
+export class Filled {
+  first = 1;
+}
+
+export class NeverFilled {
+  first = 1;
+}
+
+export class Bare {
+  first?: number;
+}
+`,
+  "entities.test.ts": `import { expect, test } from "bun:test";
+import { Bare, Filled, Stored } from "./entities";
+
+for (const name of ["first", "second", "third", "fourth"]) {
+  test(name, () => {
+    expect(new Stored().name).toBe("n");
+    expect(new Filled().first).toBe(1);
+    expect(new Bare().first).toBe(undefined);
+  });
+}
+`,
+});
+
+const standardDecorators = {
+  "package.json": `{ "name": "marked", "type": "module" }`,
+  "tsconfig.json": `{}`,
+  "marked.ts": `function log(value: Function, context: unknown) {
+  return value;
+}
+
+function plus(value: undefined, context: unknown) {
+  return (initial: number) => initial + 1;
+}
+
+export class Marked {
+  @log
+  called() {
+    return 1;
+  }
+  @log
+  never() {
+    return 2;
+  }
+  @plus
+  counted = 1;
+}
+
+export class NeverMade {
+  @log
+  method() {
+    return 1;
+  }
+}
+
+export class Kept {
+  accessor read = 1;
+  accessor written = 2;
+  accessor left;
+  static accessor shared = 3;
+}
+
+export class Hidden {
+  @log
+  #method() {
+    return 1;
+  }
+  never() {
+    return this.#method();
+  }
+}
+
+export class Sealed {
+  @log
+  #method() {
+    return 1;
+  }
+}
+`,
+  "marked.test.ts": `import { expect, test } from "bun:test";
+import { Kept, Marked } from "./marked";
+
+for (const name of ["first", "second", "third", "fourth"]) {
+  test(name, () => {
+    const marked = new Marked();
+    expect(marked.called() + marked.called()).toBe(2);
+    const kept = new Kept();
+    expect(kept.read).toBe(1);
+    kept.written = 5;
+    kept.written = 6;
+  });
+}
+`,
+};
+
+async function report(flags: string[], bunfig = "", project: Record<string, string> = files) {
+  using dir = tempDir("test-aot-coverage", { ...project, "bunfig.toml": bunfig });
   await using proc = spawn({
     cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...flags],
     cwd: String(dir),
@@ -197,7 +358,7 @@ async function report(flags: string[], bunfig = "") {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain(" 3 pass");
+  expect(stderr).toContain(" 4 pass");
   const lines = (stdout + stderr).split("\n");
   const rules = lines.flatMap((line, index) => (/^-+\|-+\|/.test(line) ? [index] : []));
   return {
@@ -219,6 +380,30 @@ test("a coverage threshold that is not met fails a compiled run too", async () =
   const bunfig = "[test]\ncoverageThreshold = 0.99\n";
   const [plain, compiled] = await Promise.all([report([], bunfig), report(["--aot"], bunfig)]);
   expect(plain.exitCode).toBe(1);
+  expect(compiled).toEqual(plain);
+});
+
+test("the lines of the test files are counted where the report holds them", async () => {
+  const bunfig = "[test]\ncoverageSkipTestFiles = false\n";
+  const [plain, compiled] = await Promise.all([report([], bunfig), report(["--aot"], bunfig)]);
+  expect(plain.table).toContain("third.test.js");
+  expect(compiled).toEqual(plain);
+});
+
+test.each([`"experimentalDecorators": true`, `"experimentalDecorators": true, "useDefineForClassFields": false`])(
+  "classes under %s",
+  async compilerOptions => {
+    const project = classesUnder(compilerOptions);
+    const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
+    expect(plain.table).toContain("entities.ts");
+    expect(compiled).toEqual(plain);
+  },
+);
+
+test("standard decorators and accessor fields", async () => {
+  const project = standardDecorators;
+  const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
+  expect(plain.table).toContain("marked.ts");
   expect(compiled).toEqual(plain);
 });
 

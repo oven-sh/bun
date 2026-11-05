@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "../../aot/harness/commands";
 import { endChildren, longLimit, spawn } from "../children";
@@ -35,7 +35,7 @@ async function built(...command: string[]) {
   return {
     errors: (stdout + stderr).match(/\bTS\d+: .*/g),
     exitCode,
-    hasExecutable: existsSync(join(String(dir), "wrong")),
+    hasExecutable: existsSync(join(String(dir), isWindows ? "wrong.exe" : "wrong")),
   };
 }
 

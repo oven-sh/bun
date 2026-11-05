@@ -180,6 +180,7 @@ pub(super) struct ResolverOutput {
     pub(super) hands_mock_on: bool,
     pub(super) resets_modules: bool,
     pub(super) stores_loader_functions: bool,
+    pub(super) tables_of_loaders_written: Vec<ExprId>,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
     pub(super) hands_module_cache_on: bool,
@@ -726,6 +727,7 @@ impl<'a, 's> Resolver<'a, 's> {
             hands_mock_on: output.hands_mock_on,
             resets_modules: output.resets_modules,
             stores_loader_functions: output.stores_loader_functions,
+            tables_of_loaders_written: output.tables_of_loaders_written.into_boxed_slice(),
             unlocked: OnceLock::new(),
             mentioned,
             #[cfg(test)]

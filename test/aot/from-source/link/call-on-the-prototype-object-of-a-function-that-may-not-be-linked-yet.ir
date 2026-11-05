@@ -1,0 +1,17 @@
+# A call by name on the prototype object of a constructor function, under a name that Object.prototype has too: until the function is linked below the class the call enters the engine's own function. So the result of the member of the class is not all that the call gives. The member is entered all the same.
+# f1 = Sub, f2 = value, f4 = valueOf
+# -- source: call-on-the-prototype-object-of-a-function-that-may-not-be-linked-yet.js
+# class Base { valueOf() { return 41; } }
+# function Sub() { this.a = 1; }
+# function value(p) { return p.valueOf(); }
+# value(Sub.prototype);
+# Object.setPrototypeOf(Sub.prototype, Base.prototype);
+# value(Sub.prototype);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f2
+# LINK-NOT: result=
+# LINK: function f3
+# LINK: function f4
+# LINK-NOT: unreached
+# LINK: function f5

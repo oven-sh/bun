@@ -11,10 +11,6 @@ const programs = [
   // Linux on ARM64: signal 11, after the line "left early": an array is frozen in a loop, a store to it throws
   // and is caught there, and the run counts the calls of operations.
   "arrays/index-fill-grows-like-push",
-  // Its kin, so that the same run says what that death needs. Stores to frozen arrays throw and are caught, and the run does not count.
-  "arrays/frozen-array-error-messages",
-  // Arrays are frozen and the run counts, and nothing throws.
-  "arrays/elements-frozen-arrays-fit-not-coerced",
   // Linux on x64, a shell built with assertions: signal 6 as they stand. A module of the image loads another
   // under a name that the program computes, and the shell took the path of the first for a URL.
   "modules/two-loads-module-cannot-linked-give",

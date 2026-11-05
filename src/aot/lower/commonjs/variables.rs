@@ -2,6 +2,7 @@ use bun_sema::atom::known;
 use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Parent, ScopeKind};
 use bun_sema::fold::{Decisions, FoldedValue};
 use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, StmtId, StmtKind, UnOp};
+use bun_sema::import_sites::WHERE_FILE_LIES;
 use bun_sema::program::FileId;
 use bun_sema::util::FxHashMap;
 use smallvec::SmallVec;
@@ -125,13 +126,17 @@ impl FileLowering<'_, '_, '_, '_> {
     fn compute_state(&self) -> CommonJsState {
         let (hir, bound) = (self.hir, self.bound);
         let has_source_path = self.inputs.sources.has_source_path(self.file);
+        let mut asked = self.compiled.analysis.asked_of_data_files.iter();
+        let asks_where_files_lie =
+            asked.any(|asked| self.queries.atom_bytes(asked.1) == WHERE_FILE_LIES);
         let names_source_path = has_source_path
-            && bound.ident_bindings().iter().any(|&(name, binding)| {
-                matches!(
-                    binding,
-                    Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
-                ) && !self.decisions().is_dead_expr(name)
-            });
+            && (asks_where_files_lie
+                || bound.ident_bindings().iter().any(|&(name, binding)| {
+                    matches!(
+                        binding,
+                        Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
+                    ) && !self.decisions().is_dead_expr(name)
+                }));
         if !self.is_commonjs_module() {
             let mut evals = bound.runtime.eval_scopes().iter();
             let has_direct_eval = evals.any(|&(call, _)| !self.decisions().is_dead_expr(call));

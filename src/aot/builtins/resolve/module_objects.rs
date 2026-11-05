@@ -1,5 +1,6 @@
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
+use super::module_cache::is_module_cache;
 use super::resolver::{ExprState, ResolvedValue, Resolver};
 use super::{
     BuiltinPath, ModuleField, ModuleObjectMention, ModuleObjectOwner, ModuleObjectUse,
@@ -52,9 +53,12 @@ pub(super) fn find_module_object_in(location: ResolvedValue) -> Option<ResolvedV
     }
 }
 
-pub(super) fn find_child_module(holder: ResolvedValue, key: MemberKey) -> Option<ResolvedValue> {
+pub(super) fn find_listed_module(holder: ResolvedValue, key: MemberKey) -> Option<ResolvedValue> {
     let is_list = table::canonical_id(holder.path.id) == BuiltinId::ModuleObjectChildren;
     match key {
+        MemberKey::Computed(_) | MemberKey::Name(_) if is_module_cache(holder.path.id) => {
+            Some(some_module_object())
+        }
         MemberKey::Computed(_) if is_list => Some(some_module_object()),
         MemberKey::Computed(_) | MemberKey::Name(_) | MemberKey::PrivateName(_) => None,
     }

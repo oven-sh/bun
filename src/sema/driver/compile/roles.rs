@@ -135,7 +135,9 @@ fn find_unverified_files(files: &Files<'_>) -> Vec<Demotion> {
     file_ids
         .filter(|&file| files.role(file) == FileRole::Checked)
         .filter(|&file| {
-            files.hir(file).check_directive == Some(false) || files.needs_another_program(file)
+            let is_aot_source = || files.compiled(file).is_some_and(|it| it.is_aot_source);
+            files.hir(file).check_directive == Some(false)
+                || (files.needs_another_program(file) && !is_aot_source())
         })
         .map(|file| Demotion {
             file,

@@ -88,7 +88,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         has_dead_zone(self.file, binding) && placement.is_some_and(|placement| placement.is_shared)
     }
 
-    fn emit_initialization_check(
+    pub(super) fn emit_initialization_check(
         &mut self,
         value: ValueId,
         symbol: SymbolId,

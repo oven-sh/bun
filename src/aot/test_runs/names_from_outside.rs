@@ -1,9 +1,12 @@
-use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, BindingInitializer, Decl, FnOwner, Parent, PatParent, SymbolId};
+use bun_core::strings::split;
+use bun_sema::atom::{Atom, Interner};
+use bun_sema::bind::{
+    Binding, BindingInitializer, Bound, Decl, FnOwner, Parent, PatParent, SymbolId,
+};
 use bun_sema::fold::{Constant, FoldedValue, KnownSets};
 use bun_sema::hir::{
-    BinOp, CallId, ExprId, ExprKind, FnId, IdList, ImportId, MemberKey, NodeData, PatId, PatKind,
-    PropKind, StmtKind,
+    BinOp, CallId, ExprId, ExprKind, File, Flags, FnKind, IdList, ImportId, MemberKey, NodeData,
+    ParamId, PatId, PatKind, PropKey, PropKind, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter};
 use bun_sema::program::{CodeAnswer, FileId, Files};
@@ -15,7 +18,119 @@ use super::out_of_sight::find_outermost_assertion;
 use crate::builtins::{BuiltinId, ResolvedBuiltins, table};
 use crate::load::sources::parsed_source;
 
-pub(super) const OWN_FILE: u32 = u32::MAX;
+fn hands_each_item_to_callback(method: &[u8]) -> bool {
+    matches!(
+        method,
+        b"forEach" | b"map" | b"flatMap" | b"filter" | b"some" | b"every" | b"find"
+    )
+}
+
+fn leaves_its_list_as_it_is(method: &[u8]) -> bool {
+    hands_each_item_to_callback(method)
+        || matches!(
+            method,
+            b"at"
+                | b"concat"
+                | b"entries"
+                | b"findIndex"
+                | b"findLast"
+                | b"includes"
+                | b"indexOf"
+                | b"join"
+                | b"keys"
+                | b"lastIndexOf"
+                | b"reduce"
+                | b"slice"
+                | b"values"
+        )
+}
+
+fn find_call_that_takes_callback(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    parameter: ParamId,
+) -> Option<(CallId, ExprId)> {
+    let FnOwner::Expr(mut callback) = bound.fns[bound.param_fn[parameter.idx()].idx()].owner else {
+        return None;
+    };
+    while let Parent::Expr(parent) = bound.parent_of_expr(callback)
+        && hir.type_assertion_operand(parent) == Some(callback)
+    {
+        callback = parent;
+    }
+    let Parent::Expr(user) = bound.parent_of_expr(callback) else {
+        return None;
+    };
+    match hir[user].kind {
+        ExprKind::Call(call) if hir.ids(hir[call].args).any(|it| it == callback) => {
+            Some((call, callback))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn find_items_handed_to_callback(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    atoms: &Interner<'_>,
+    mention: ExprId,
+) -> Option<IdList<ExprId>> {
+    let Binding::Symbol(name) = bound.binding(mention) else {
+        return None;
+    };
+    let &[Decl::Param(pattern)] = bound.symbol(name).decls else {
+        return None;
+    };
+    let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let function = bound.param_fn[parameter.idx()];
+    let is_first_as_handed = hir[function].params.iter().next() == Some(parameter)
+        && hir[function].kind == FnKind::Arrow
+        && hir[parameter].default.is_none()
+        && !hir[parameter].flags.contains(Flags::REST)
+        && bound.stores_to(name).is_empty()
+        && !bound.is_visible_to_eval(name)
+        && bound.is_evaluated_ident(mention)
+        && bound
+            .dynamic_lookup_scope(NodeData::Expr(mention))
+            .is_none();
+    let (call, callback) = find_call_that_takes_callback(hir, bound, parameter)?;
+    if !is_first_as_handed || hir.ids(hir[call].args).next() != Some(callback) {
+        return None;
+    }
+    let (list, MemberKey::Name(method)) =
+        hir.member_key(hir.skip_type_assertions(hir[call].callee))?
+    else {
+        return None;
+    };
+    match hir[hir.skip_type_assertions(list)].kind {
+        ExprKind::Array(items) if hands_each_item_to_callback(atoms.bytes(method)) => Some(items),
+        _ => None,
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Step {
+    Member(Atom),
+    AnyElement,
+    Row(u32),
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Read {
+    Whole,
+    FromOutside,
+    NotRead,
+}
+
+struct Following<'k, 'a, 's> {
+    known: &'k mut KnownSets<'a, 's>,
+    path: Vec<Step>,
+    on_the_way: Vec<(ExprId, Vec<Step>)>,
+    sums_being_filled: usize,
+    texts: Vec<Atom>,
+}
 
 pub(super) struct NamesFromOutside<'a, 's> {
     request: &'a FinishedFile<'a, 's>,
@@ -85,7 +200,9 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
     }
 
     fn is_namespace_in_sight(&self, object: ExprId) -> bool {
-        let &FinishedFile { hir, bound, .. } = self.request;
+        let &FinishedFile {
+            hir, bound, atoms, ..
+        } = self.request;
         let object = hir.skip_type_assertions(object);
         if !bound.is_evaluated_ident(object)
             || bound.dynamic_lookup_scope(NodeData::Expr(object)).is_some()
@@ -96,9 +213,31 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
             return false;
         };
         match *bound.symbol(symbol).decls {
-            [Decl::ImportNamespace(import)] => self.find_site_of_file(import).is_some(),
+            [Decl::ImportNamespace(import)] => self.is_import_of_one_module(import),
+            [Decl::Param(_)] => {
+                let items = find_items_handed_to_callback(hir, bound, atoms, object);
+                items.is_some_and(|items| {
+                    let mut items = hir.ids(items).peekable();
+                    items.peek().is_some() && items.all(|item| self.is_namespace_in_sight(item))
+                })
+            }
             _ => false,
         }
+    }
+
+    fn is_import_of_one_module(&self, import: ImportId) -> bool {
+        let &FinishedFile {
+            analysis,
+            resolutions,
+            ..
+        } = self.request;
+        let site = analysis.import_site_index(ImportSiteKind::Import(import));
+        matches!(
+            site.and_then(|site| resolutions.get(site)),
+            Some(SiteResolution::Constant(
+                CodeResolution::File(_) | CodeResolution::HostModule(_)
+            ))
+        )
     }
 
     fn look_at_store(&mut self, target: ExprId) {
@@ -279,190 +418,348 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         passed
     }
 
-    fn find_list_written(&self, list: ExprId) -> Option<IdList<ExprId>> {
-        let &FinishedFile { hir, bound, .. } = self.request;
-        let list = hir.skip_type_assertions(list);
-        let written = match (hir[list].kind, bound.binding(list)) {
-            (ExprKind::Ident(_), Binding::Symbol(holder)) if bound.is_stable_binding(holder) => {
-                match bound.binding_initializer(hir, holder) {
-                    BindingInitializer::Expression(value) => hir.skip_type_assertions(value),
-                    _ => return None,
+    fn is_left_as_written(&self, holder: SymbolId, arrived_by: ExprId) -> bool {
+        let &FinishedFile {
+            hir, bound, atoms, ..
+        } = self.request;
+        let text = bound.symbol(holder).name;
+        let mentions = (0..hir.exprs.len() as u32).map(ExprId).filter(|&it| {
+            it != arrived_by
+                && matches!(hir[it].kind, ExprKind::Ident(name) if name == text)
+                && bound.is_evaluated_ident(it)
+                && bound.binding(it) == Binding::Symbol(holder)
+        });
+        mentions.into_iter().all(|mention| {
+            let mention = find_outermost_assertion(self.request, mention);
+            let read = match bound.parent_of_expr(mention) {
+                Parent::Expr(read) => read,
+                Parent::Stmt(walk) => {
+                    return matches!(hir[walk].kind, StmtKind::ForOf { expr, .. } if expr == mention);
+                }
+                _ => return false,
+            };
+            let Some((object, key)) = hir.member_key(read) else {
+                return matches!(hir[read].kind, ExprKind::Spread(_));
+            };
+            if object != mention {
+                return false;
+            }
+            match bound.parent_of_expr(read) {
+                Parent::Expr(user) => match hir[user].kind {
+                    ExprKind::Call(call) if hir[call].callee == read => matches!(
+                        key,
+                        MemberKey::Name(method) if leaves_its_list_as_it_is(atoms.bytes(method))
+                    ),
+                    ExprKind::Assign { target, .. } => target != read,
+                    ExprKind::Unary { op, .. } => !matches!(
+                        op,
+                        UnOp::Delete | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+                    ),
+                    ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::New(_) => false,
+                    _ => true,
+                },
+                _ => true,
+            }
+        })
+    }
+
+    fn follow(&self, state: &mut Following<'_, 'a, 's>, value: ExprId) -> Read {
+        let value = self.request.hir.skip_type_assertions(value);
+        if let Some((_, path)) = state.on_the_way.iter().find(|it| it.0 == value) {
+            let adds_nothing = *path == state.path && state.sums_being_filled == 0;
+            return if adds_nothing {
+                Read::Whole
+            } else {
+                Read::NotRead
+            };
+        }
+        let path = state.path.clone();
+        state.on_the_way.push((value, path.clone()));
+        let read = self.follow_by_kind(state, value);
+        state.on_the_way.pop();
+        state.path = path;
+        read
+    }
+
+    fn follow_each(
+        &self,
+        state: &mut Following<'_, 'a, 's>,
+        values: impl Iterator<Item = ExprId>,
+    ) -> Read {
+        let mut read = Read::Whole;
+        for value in values {
+            read = read.max(self.follow(state, value));
+            if read == Read::NotRead {
+                break;
+            }
+        }
+        read
+    }
+
+    fn follow_by_kind(&self, state: &mut Following<'_, 'a, 's>, value: ExprId) -> Read {
+        let &FinishedFile { hir, atoms, .. } = self.request;
+        if matches!(state.path[..], [] | [Step::Row(0)]) {
+            if let Some(text) = self.find_constant_text(value) {
+                state.texts.push(text);
+                return Read::Whole;
+            }
+            let set = state.known.of(value);
+            if !set.is_empty() {
+                state.texts.extend(set.iter().filter_map(|&it| match it {
+                    Constant::String(text) => Some(text),
+                    _ => None,
+                }));
+                return Read::Whole;
+            }
+        }
+        match hir[value].kind {
+            ExprKind::Ident(_) => self.follow_name(state, value),
+            ExprKind::Array(items) => {
+                let is_written =
+                    |it: ExprId| !matches!(hir[it].kind, ExprKind::Spread(_) | ExprKind::Missing);
+                let place = match state.path.pop() {
+                    Some(Step::AnyElement) => {
+                        let mut read = Read::Whole;
+                        for item in hir.ids(items) {
+                            read = read.max(match hir[item].kind {
+                                ExprKind::Missing => Read::NotRead,
+                                ExprKind::Spread(list) => {
+                                    state.path.push(Step::AnyElement);
+                                    let read = self.follow(state, list);
+                                    state.path.pop();
+                                    read
+                                }
+                                _ => self.follow(state, item),
+                            });
+                        }
+                        return read;
+                    }
+                    Some(Step::Row(place)) => Some(place as usize),
+                    Some(Step::Member(place)) => core::str::from_utf8(atoms.bytes(place))
+                        .ok()
+                        .and_then(|it| it.parse().ok()),
+                    None => None,
+                };
+                match place.and_then(|place| hir.ids(items).nth(place).map(|item| (place, item))) {
+                    Some((place, item)) if hir.ids(items).take(place + 1).all(is_written) => {
+                        self.follow(state, item)
+                    }
+                    _ => Read::NotRead,
                 }
             }
-            _ => list,
-        };
-        match hir[written].kind {
-            ExprKind::Array(items) => Some(items),
-            _ => None,
+            ExprKind::Object(properties) => {
+                if state.path.last() == Some(&Step::Row(0)) {
+                    state.path.pop();
+                }
+                let Some(Step::Member(name)) = state.path.pop() else {
+                    return Read::NotRead;
+                };
+                let mut found = None;
+                for property in properties.iter().map(|it| hir[it]) {
+                    match (property.kind, property.key) {
+                        (PropKind::Init | PropKind::Shorthand, PropKey::Name(key))
+                            if key == name =>
+                        {
+                            found = Some(property.value);
+                        }
+                        (_, PropKey::Name(key))
+                            if key != name && property.kind != PropKind::Spread => {}
+                        _ => return Read::NotRead,
+                    }
+                }
+                found.map_or(Read::NotRead, |value| self.follow(state, value))
+            }
+            ExprKind::Template { .. } | ExprKind::Binary { op: BinOp::Add, .. }
+                if state.path.is_empty() =>
+            {
+                self.follow_sum(state, value)
+            }
+            ExprKind::Call(call) => self.follow_call(state, call),
+            _ => match hir.member_key(value) {
+                Some((object, MemberKey::Name(name))) => {
+                    state.path.push(Step::Member(name));
+                    self.follow(state, object)
+                }
+                Some((object, MemberKey::Computed(_))) => {
+                    state.path.push(Step::AnyElement);
+                    self.follow(state, object)
+                }
+                _ => Read::NotRead,
+            },
         }
     }
 
-    fn find_top_of_pattern(&self, mention: ExprId) -> Option<PatParent> {
-        let bound = self.request.bound;
+    fn follow_name(&self, state: &mut Following<'_, 'a, 's>, mention: ExprId) -> Read {
+        let &FinishedFile {
+            hir, bound, atoms, ..
+        } = self.request;
         let Binding::Symbol(name) = bound.binding(mention) else {
-            return None;
+            return Read::NotRead;
         };
         let &[Decl::Var(mut pattern) | Decl::Param(mut pattern)] = bound.symbol(name).decls else {
-            return None;
+            return Read::NotRead;
         };
-        if !bound.stores_to(name).is_empty() || bound.is_visible_to_eval(name) {
-            return None;
+        if !bound.stores_to(name).is_empty()
+            || bound.is_visible_to_eval(name)
+            || !bound.is_evaluated_ident(mention)
+            || bound
+                .dynamic_lookup_scope(NodeData::Expr(mention))
+                .is_some()
+            || !(state.path.is_empty() || self.is_left_as_written(name, mention))
+        {
+            return Read::NotRead;
         }
-        loop {
+        let is_whole_parameter = matches!(bound.pat_parent[pattern.idx()], PatParent::Param(_));
+        let top = loop {
             match bound.pat_parent[pattern.idx()] {
-                PatParent::Elem(above, _) | PatParent::Prop(above, _) => pattern = above,
-                top => return Some(top),
+                PatParent::Elem(above, element) => {
+                    let PatKind::Array(elements) = hir[above].kind else {
+                        return Read::NotRead;
+                    };
+                    let Some(place) = elements.iter().position(|it| it == element) else {
+                        return Read::NotRead;
+                    };
+                    if hir[element].is_rest || hir[element].default.is_some() {
+                        return Read::NotRead;
+                    }
+                    let place = atoms.intern(place.to_string().as_bytes());
+                    state.path.push(Step::Member(place));
+                    pattern = above;
+                }
+                PatParent::Prop(above, property) => {
+                    let PropKey::Name(key) = hir.runtime_binding_key(property) else {
+                        return Read::NotRead;
+                    };
+                    if hir[property].is_rest || hir[property].default.is_some() {
+                        return Read::NotRead;
+                    }
+                    state.path.push(Step::Member(key));
+                    pattern = above;
+                }
+                top => break top,
             }
+        };
+        match top {
+            PatParent::Var(declaration) => {
+                let statement = bound.var_stmt[declaration.idx()];
+                if let Parent::Stmt(above) = bound.parent_of_stmt(statement) {
+                    match hir[above].kind {
+                        StmtKind::ForOf { left, expr, .. } if left == statement => {
+                            state.path.push(Step::AnyElement);
+                            return self.follow(state, expr);
+                        }
+                        StmtKind::ForIn { left, .. } if left == statement => return Read::NotRead,
+                        _ => {}
+                    }
+                }
+                match hir[declaration].init.some() {
+                    Some(value) => self.follow(state, value),
+                    None => Read::NotRead,
+                }
+            }
+            PatParent::Param(parameter) => {
+                self.follow_parameter(state, mention, parameter, is_whole_parameter)
+            }
+            _ => Read::NotRead,
         }
     }
 
-    fn find_what_pattern_takes_apart(&self, mention: ExprId) -> Option<ExprId> {
-        let &FinishedFile { hir, bound, .. } = self.request;
-        let PatParent::Var(declaration) = self.find_top_of_pattern(mention)? else {
-            return None;
-        };
-        let statement = bound.var_stmt[declaration.idx()];
-        match bound.parent_of_stmt(statement) {
-            Parent::Stmt(above) => match hir[above].kind {
-                StmtKind::ForOf { left, expr, .. } if left == statement => return Some(expr),
-                StmtKind::ForIn { left, .. } if left == statement => return None,
-                _ => {}
-            },
-            _ => {}
-        }
-        hir[declaration].init.some()
-    }
-
-    fn find_function_of_parameter(&self, mention: ExprId) -> Option<FnId> {
-        match self.find_top_of_pattern(mention)? {
-            PatParent::Param(parameter) => Some(self.request.bound.param_fn[parameter.idx()]),
-            _ => None,
-        }
-    }
-
-    fn find_list_walked_by_callback(&self, mention: ExprId) -> Option<IdList<ExprId>> {
-        let &FinishedFile { hir, bound, .. } = self.request;
-        let function = self.find_function_of_parameter(mention)?;
-        let FnOwner::Expr(callback) = bound.fns[function.idx()].owner else {
-            return None;
-        };
-        let callback = find_outermost_assertion(self.request, callback);
-        let Parent::Expr(user) = bound.parent_of_expr(callback) else {
-            return None;
-        };
-        let ExprKind::Call(call) = hir[user].kind else {
-            return None;
-        };
-        if hir.ids(hir[call].args).next() != Some(callback) {
-            return None;
-        }
-        match hir.member_key(hir.skip_type_assertions(hir[call].callee))? {
-            (list, MemberKey::Name(_)) => self.find_list_written(list),
-            _ => None,
-        }
-    }
-
-    fn find_operands_of_call_in_front(&self, mention: ExprId) -> Option<IdList<ExprId>> {
-        let &FinishedFile { hir, bound, .. } = self.request;
-        let function = self.find_function_of_parameter(mention)?;
-        let FnOwner::Expr(callback) = bound.fns[function.idx()].owner else {
-            return None;
-        };
-        let callback = find_outermost_assertion(self.request, callback);
-        let Parent::Expr(user) = bound.parent_of_expr(callback) else {
-            return None;
-        };
-        let ExprKind::Call(call) = hir[user].kind else {
-            return None;
-        };
-        if !hir.ids(hir[call].args).any(|operand| operand == callback) {
-            return None;
-        }
-        match hir[hir.skip_type_assertions(hir[call].callee)].kind {
-            ExprKind::Call(in_front) => Some(hir[in_front].args),
-            _ => None,
-        }
-    }
-
-    fn push_texts_spelled_for(
+    fn follow_parameter(
         &self,
-        known: &mut KnownSets<'a, 's>,
-        value: ExprId,
-        being_filled: &mut Vec<ExprId>,
-        texts: &mut Vec<Atom>,
-    ) -> bool {
+        state: &mut Following<'_, 'a, 's>,
+        mention: ExprId,
+        parameter: ParamId,
+        is_whole_parameter: bool,
+    ) -> Read {
         let &FinishedFile {
             hir,
             bound,
             analysis,
+            atoms,
             ..
         } = self.request;
-        let (mut seen, mut pending) = (Vec::new(), vec![value]);
-        while let Some(value) = pending.pop() {
-            let value = hir.skip_type_assertions(value);
-            if seen.contains(&value) {
-                continue;
-            }
-            seen.push(value);
-            if let Some(text) = self.find_constant_text(value) {
-                texts.push(text);
-                continue;
-            }
-            let set = known.of(value);
-            if !set.is_empty() {
-                texts.extend(set.iter().filter_map(|&it| match it {
-                    Constant::String(text) => Some(text),
-                    _ => None,
-                }));
-                continue;
-            }
-            if let Some(items) = self.find_list_written(value) {
-                pending.extend(hir.ids(items));
-                continue;
-            }
-            match hir[value].kind {
-                ExprKind::Ident(_) => {}
-                ExprKind::Object(properties) => {
-                    let written = properties.iter().map(|property| hir[property]);
-                    let written = written.filter(|property| property.kind == PropKind::Init);
-                    pending.extend(written.map(|property| property.value));
-                    continue;
-                }
-                ExprKind::Template { .. } | ExprKind::Binary { op: BinOp::Add, .. } => {
-                    if being_filled.contains(&value) {
-                        return false;
-                    }
-                    being_filled.push(value);
-                    let is_listed =
-                        self.push_texts_with_holes_filled(known, value, being_filled, texts);
-                    being_filled.pop();
-                    if !is_listed {
-                        return false;
-                    }
-                    continue;
-                }
-                _ => continue,
-            }
-            if let Some(values) = find_values_of_parameter(hir, bound, &analysis.decisions, value) {
-                pending.extend(values);
-            } else if let Some(items) = self.find_list_walked_by_callback(value) {
-                pending.extend(hir.ids(items));
-            } else if let Some(operands) = self.find_operands_of_call_in_front(value) {
-                pending.extend(hir.ids(operands));
-            } else if let Some(taken_apart) = self.find_what_pattern_takes_apart(value) {
-                pending.push(taken_apart);
-            }
+        if is_whole_parameter
+            && let Some(values) = find_values_of_parameter(hir, bound, &analysis.decisions, mention)
+        {
+            return self.follow_each(state, values.into_iter());
         }
-        true
+        let function = bound.param_fn[parameter.idx()];
+        let Some((call, callback)) = find_call_that_takes_callback(hir, bound, parameter) else {
+            return Read::FromOutside;
+        };
+        let place = hir[function].params.iter().position(|it| it == parameter);
+        let is_as_handed =
+            hir[parameter].default.is_none() && !hir[parameter].flags.contains(Flags::REST);
+        let (Some(place), true) = (place, is_as_handed) else {
+            return Read::NotRead;
+        };
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        match (hir.member_key(callee), hir[callee].kind) {
+            (Some((list, MemberKey::Name(method))), _)
+                if place == 0
+                    && hands_each_item_to_callback(atoms.bytes(method))
+                    && hir.ids(hir[call].args).next() == Some(callback) =>
+            {
+                state.path.push(Step::AnyElement);
+                self.follow(state, list)
+            }
+            (None, ExprKind::Call(in_front)) => {
+                let mut operands = hir.ids(hir[in_front].args);
+                let (Some(rows), None) = (operands.next(), operands.next()) else {
+                    return Read::NotRead;
+                };
+                state.path.push(Step::Row(place as u32));
+                state.path.push(Step::AnyElement);
+                self.follow(state, rows)
+            }
+            _ => Read::NotRead,
+        }
     }
 
-    fn push_texts_with_holes_filled(
-        &self,
-        known: &mut KnownSets<'a, 's>,
-        text: ExprId,
-        being_filled: &mut Vec<ExprId>,
-        texts: &mut Vec<Atom>,
-    ) -> bool {
+    fn follow_apart(&self, state: &mut Following<'_, 'a, 's>, value: ExprId) -> (Read, Vec<Atom>) {
+        let (path, texts) = (
+            core::mem::take(&mut state.path),
+            core::mem::take(&mut state.texts),
+        );
+        let read = self.follow(state, value);
+        state.path = path;
+        (read, core::mem::replace(&mut state.texts, texts))
+    }
+
+    fn follow_call(&self, state: &mut Following<'_, 'a, 's>, call: CallId) -> Read {
+        let &FinishedFile { hir, atoms, .. } = self.request;
+        let mut operands = hir.ids(hir[call].args);
+        let (Some(at), None) = (operands.next(), operands.next()) else {
+            return Read::NotRead;
+        };
+        let callee = hir.member_key(hir.skip_type_assertions(hir[call].callee));
+        if let Some((list, MemberKey::Name(method))) = callee
+            && atoms.bytes(method) == b"filter"
+            && state.path.last() == Some(&Step::AnyElement)
+        {
+            return self.follow(state, list);
+        }
+        let (Some((whole, MemberKey::Name(method))), Some(at), [Step::AnyElement]) =
+            (callee, self.find_constant_text(at), &state.path[..])
+        else {
+            return Read::NotRead;
+        };
+        if atoms.bytes(method) != b"split" || atoms.bytes(at).is_empty() {
+            return Read::NotRead;
+        }
+        let (read, wholes) = self.follow_apart(state, whole);
+        if read != Read::Whole {
+            return Read::NotRead;
+        }
+        for whole in wholes {
+            let whole = atoms.bytes(whole).to_vec();
+            let pieces = split(&whole, atoms.bytes(at));
+            state.texts.extend(pieces.map(|piece| atoms.intern(piece)));
+        }
+        Read::Whole
+    }
+
+    fn follow_sum(&self, state: &mut Following<'_, 'a, 's>, text: ExprId) -> Read {
         let &FinishedFile { hir, atoms, .. } = self.request;
         let mut parts: Vec<Result<Atom, ExprId>> = Vec::new();
         match hir[text].kind {
@@ -474,19 +771,25 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
                 }
             }
             ExprKind::Binary { left, right, .. } => parts.extend([Err(left), Err(right)]),
-            _ => return true,
+            _ => return Read::NotRead,
         }
         let mut joined: Vec<Vec<u8>> = vec![Vec::new()];
         for part in parts {
-            let mut fillings = Vec::new();
-            match part {
-                Ok(written) if written.is_none() => return true,
-                Ok(written) => fillings.push(written),
+            let fillings = match part {
+                Ok(written) if written.is_none() => return Read::NotRead,
+                Ok(written) => vec![written],
                 Err(hole) => {
-                    if !self.push_texts_spelled_for(known, hole, being_filled, &mut fillings) {
-                        return false;
+                    state.sums_being_filled += 1;
+                    let (read, fillings) = self.follow_apart(state, hole);
+                    state.sums_being_filled -= 1;
+                    if read != Read::Whole {
+                        return Read::NotRead;
                     }
+                    fillings
                 }
+            };
+            if joined.len() > 1 && fillings.len() > 1 {
+                return Read::NotRead;
             }
             let longer = joined.iter().flat_map(|start| {
                 let fillings = fillings.iter();
@@ -494,8 +797,10 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
             });
             joined = longer.collect();
         }
-        texts.extend(joined.iter().map(|text| atoms.intern(text)));
-        true
+        state
+            .texts
+            .extend(joined.iter().map(|text| atoms.intern(text)));
+        Read::Whole
     }
 
     pub(super) fn finish(mut self, found: &mut FileOfRun) {
@@ -507,24 +812,33 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
             ..
         } = self.request;
         found.texts_passed = self.find_texts_passed();
-        let spies = self.builtins.spy_calls().iter();
-        let nameless = spies.filter(|spy| {
-            spy.name.is_none()
-                && !analysis.decisions.is_dead_expr(spy.call)
-                && !self.is_namespace_in_sight(spy.object)
-        });
         let mut known = KnownSets::new(hir, bound, &analysis.decisions, atoms);
-        let mut spelled = Vec::new();
-        for spy in nameless {
-            found.spies_under_names_from_outside = true;
-            if let ExprKind::Call(call) = hir[spy.call].kind
-                && let Some(name) = hir.ids(hir[call].args).nth(1)
+        for spy in self.builtins.spy_calls() {
+            if spy.name.is_some()
+                || analysis.decisions.is_dead_expr(spy.call)
+                || self.is_namespace_in_sight(spy.object)
             {
-                found.spies_under_names_made_of_themselves |=
-                    !self.push_texts_spelled_for(&mut known, name, &mut Vec::new(), &mut spelled);
+                continue;
+            }
+            let mut state = Following {
+                known: &mut known,
+                path: Vec::new(),
+                on_the_way: Vec::new(),
+                sums_being_filled: 0,
+                texts: Vec::new(),
+            };
+            let name = match hir[spy.call].kind {
+                ExprKind::Call(call) => hir.ids(hir[call].args).nth(1),
+                _ => None,
+            };
+            let read = name.map_or(Read::NotRead, |name| self.follow(&mut state, name));
+            found.spies_under_names_from_outside |= read == Read::FromOutside;
+            found.spies_under_names_that_nobody_reads |= read == Read::NotRead;
+            if read != Read::NotRead {
+                found.spies_read.push(spy.call);
+                found.names_of_spies_read.extend(state.texts);
             }
         }
-        (found.texts_passed).extend(spelled.into_iter().map(|text| (OWN_FILE, text)));
         self.names_stored.shared_sort_unstable_by_key(|name| name.0);
         self.names_stored.dedup();
         found.names_stored_on_unknown_objects = self.names_stored;
@@ -575,10 +889,8 @@ pub(super) fn settle_names_of_helpers(files: &Files<'_>, helpers: &[FileId]) -> 
         };
         let answers = files.compiled(file).map_or(&[][..], |it| it.code_answers);
         for &(site, text) in &source.of_run.texts_passed {
-            let taker = match (site, answers.get(site as usize)) {
-                (OWN_FILE, _) => file,
-                (_, Some(&CodeAnswer::File(taker))) => taker,
-                _ => continue,
+            let Some(&CodeAnswer::File(taker)) = answers.get(site as usize) else {
+                continue;
             };
             let behind = helpers_behind.entry(taker);
             let behind = behind.or_insert_with(|| find_helpers_behind(files, taker, helpers));

@@ -109,13 +109,15 @@ const touchesOf = {
     AllocateInFramesChanges ClosuresInFrames KnownInductionsUsed
     DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain
     ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfContents
-    ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsThatNoTestTells
+    ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsCheckedOfLifetimes ProofsThatNoTestTells
+    FreshCellsLeftAloneAtReturns FieldsAskedWhereMakersEnd MakersWithoutFieldsHeldFilled
     URLsLeftUnbuilt IteratorsSteppedWithoutCall SerializersCreated OwnKeyWalksExpanded AccessesProven AccessesGuarded AccessesUnknown ValuesInDouble
     AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay
-    LibraryFunctionsEnteredBehindRows SortsThatCallNoComparator NewListsInPlaceOfSpecies ClosuresMadeWhereCopiesHandThemOn SlicesMadeOfElementsInSight`),
+    LibraryFunctionsEnteredBehindRows SortsThatCallNoComparator NewListsInPlaceOfSpecies SlicesMadeOfElementsInSight`),
   emit: words(`
     OperationsEmitted MachineOperationsAppended MachineOperationsScanned MachineOperationsAllocated MachineOperationsEncoded ValuesSpilled
     FormsThatDifferFromSchema FormsPickedByPlaceOtherThanLoop
+    CallsHeldToRunNoOtherCode CallsHeldToThrowNothing CallsHeldNotToCollect OperandsHashedRoundCalls
     RangeChecksRemoved
     OffsetsFoundByComparisons OffsetsFoundInFlatTables OffsetsFoundInHashedTables OffsetsFoundInPagedTables
     BytesOfFlatOffsetTables BytesOfHashedOffsetTables BytesOfPagedOffsetTables

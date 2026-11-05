@@ -1,0 +1,45 @@
+# -- source: closure-of-a-declared-function-is-read-where-it-is-taken.js
+# function helper(x) { return x + 1; }
+# function other(x) { return x - 1; }
+# function noise() { return globalThis.quiet; }
+# function calls(x) { return helper(x) + helper(x + 1); }
+# function handsOn(list) { return list.map(helper); }
+# function rarely(x, list) { if (x > 100) list.push(helper); return helper(x); }
+# function twice(a, b) { a.push(helper); noise(); b.push(helper); return a.length + b.length; }
+# function rounds(x) { return Math.floor(x) + Math.ceil(x); }
+# function replaced(x) { return 1; }
+# replaced = other;
+# function callsReplaced(x) { return replaced(x); }
+# sink(calls(sink(1)), handsOn([1, 2]), rarely(sink(1), [1]), twice([], []), rounds(sink(1.5)), callsReplaced(3));
+# -- end of source
+# `helper` is proven to hold the one closure of the function that it is born as: a constant of Code, which costs nothing where nobody takes it. A call that enters the function takes no closure.
+# f1 = helper, f5 = calls, f6 = handsOn, f7 = rarely, f8 = twice, f9 = rounds, f10 = callsReplaced
+# RUN: walk f5 mechanisms=all-Inlining
+# CHECK-NOT: GetModuleVariable
+# RUN(ENTERS): walk f5 mechanisms=all-Inlining
+# ENTERS: = CallDirect {{*}}function=f1
+# ENTERS: = CallDirect {{*}}function=f1
+# Whoever takes the closure reads it there.
+# RUN(VALUE): walk f6 mechanisms=all-Inlining
+# VALUE: = GetModuleVariable
+# VALUE: = Call
+# The way that takes nothing reads nothing.
+# RUN(ARM): walk f7 mechanisms=all-Inlining
+# ARM: Branch
+# ARM: = GetModuleVariable
+# ARM-NEXT: = CallBuiltin
+# The state hands on what was read, whatever has run.
+# RUN(ONCE): walk f8 mechanisms=all-Inlining
+# ONCE: = GetModuleVariable
+# ONCE-NOT: = GetModuleVariable
+# The cell of a built-in that nobody takes is not asked for.
+# RUN(BUILTIN): walk f9 mechanisms=all
+# BUILTIN-NOT: = Builtin
+# A variable that is stored into is read where the read is written.
+# RUN(STORED): walk f10 mechanisms=all
+# STORED: = GetModuleVariable
+# STORED: = Call
+# Withheld: each read is built where it is written.
+# RUN(NONE): walk f5 mechanisms=none
+# NONE: = GetModuleVariable
+# NONE: = GetModuleVariable

@@ -225,6 +225,10 @@ allows src/aot/compile/program_reach.rs a string that begins like a relative pat
     return strings.get(id).starts_with(b"./");
 finds src/aot/compile/program_reach.rs starts_with
     return strings.get(id).starts_with(b"node:");
+allows src/aot/modules/spelled_files.rs a string that begins like a relative path
+    return strings.get(id).starts_with(b"./");
+finds src/aot/modules/spelled_files.rs starts_with
+    return strings.get(id).starts_with(b"node:");
 allows src/aot/lower/module/loads.rs the steps up of a path that the build has made
     let bytes = self.file.queries.atom_bytes(written).to_vec();
     let below = bytes.strip_prefix(b".").unwrap_or(&bytes);

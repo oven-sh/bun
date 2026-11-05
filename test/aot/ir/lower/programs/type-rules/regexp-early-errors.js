@@ -1,8 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// DIAGNOSTIC: InvalidRegExpLiteral 4
 
-// Regular expression literals that JavaScript rejects stop the build of a JavaScript file too, also in a function that is never called.
+// Regular expression literals that JavaScript rejects stop the build of a JavaScript file too, also in a function that is never called: a build asks the engine about each literal
+// while it lowers the file (TS100307): parallel/language/invalid-regexp-stops.js holds that. This driver has no engine to ask, so every literal is built.
 function unused() {
   return [
     /\1/u,

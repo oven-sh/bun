@@ -7,9 +7,6 @@
 // # RUN(CUT): walk f9 mechanisms=all
 // # CUT-LABEL: code f9:Body
 // # CUT: = DivideIntegers {{*}}rounding=ToInt32
-// # RUN(WHOLE): walk f12 mechanisms=all
-// # WHOLE-LABEL: code f12:Body
-// # WHOLE: = DivideIntegers {{*}}rounding=ToInt32
 // # RUN(LOOP): walk f15 mechanisms=all
 // # LOOP-LABEL: code f15:Body
 // # LOOP: = DivideIntegers

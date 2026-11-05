@@ -105,7 +105,8 @@ export async function expectEveryTestPasses(args: string[], cwd?: string) {
     stderr: expect.any(String),
     exitCode: listed ? 1 : 0,
   });
-  return parseInt(lines.at(-1)!);
+  const [, passed, todo] = /^(\d+) passed, \d+ failed, (\d+) todo$/.exec(lines.at(-1)!)!;
+  return Number(passed) + Number(todo);
 }
 
 export const skipOrFail = (why: string) =>

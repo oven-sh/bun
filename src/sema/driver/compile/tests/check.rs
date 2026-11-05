@@ -1,7 +1,7 @@
 use super::support::{
     BringsBunTypes, BuildSummary, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY, IMPORTS_DEPENDENCY,
     LacksBunTypes, PROJECT, TYPE_ERROR, check, check_only, codes, project_disk, with_defines,
-    with_host, with_program, with_runtime_project,
+    with_host, with_look_for_type_errors, with_program, with_runtime_project,
 };
 use crate::compile::BunTypes;
 use crate::{
@@ -35,6 +35,40 @@ fn default_project_checks_cleanly() {
         assert!(build.roles.incomplete.is_empty());
         assert!(build.program.incomplete.is_empty());
         assert!(build.roles.demoted.is_empty());
+    });
+}
+
+#[test]
+fn type_errors_are_looked_for_where_the_program_says_what_the_project_says() {
+    let returns_undefined = "export function first(list: number[]): number {
+  return list.length ? list[0] : undefined;
+}
+";
+    let files = [
+        ("main.ts", "import \"./lib/index\";\n"),
+        ("lib/index.ts", returns_undefined),
+        (
+            "lib/tsconfig.json",
+            r#"{ "extends": "../tsconfig.json", "compilerOptions": { "strictNullChecks": false } }"#,
+        ),
+    ];
+    with_look_for_type_errors(&files, &["./main.ts"], |program| {
+        assert_eq!(check_only(program).codes(), [0; 0]);
+    });
+    let same_program = (
+        "lib/tsconfig.json",
+        r#"{ "extends": "../tsconfig.json", "compilerOptions": { "noUnusedLocals": true } }"#,
+    );
+    let with_same_program = [files[0], files[1], same_program];
+    for files in [&files[..2], &with_same_program[..]] {
+        with_look_for_type_errors(files, &["./main.ts"], |program| {
+            assert_eq!(check_only(program).codes(), [2322]);
+        });
+    }
+    let early_error = ("lib/index.ts", "let x;\nlet x;\nexport {};\n");
+    let with_early_error = [files[0], early_error, files[2]];
+    with_look_for_type_errors(&with_early_error, &["./main.ts"], |program| {
+        assert!(check_only(program).codes().contains(&2451));
     });
 }
 

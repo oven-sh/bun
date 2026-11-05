@@ -1,3 +1,4 @@
+use super::SourceDialect;
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
 use super::resolver::Resolver;
@@ -47,7 +48,7 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn note_use_of_table_of_loaders(&mut self, table: ExprId) {
-        self.output.loses_sight_of_module_cache |= match self.find_member_of(table) {
+        let may_be_written = match self.find_member_of(table) {
             Some(loader) => self.is_deleted(loader) || self.is_stored_to(loader),
             None => match self.classify_use(table) {
                 MentionUse::Inspected
@@ -57,6 +58,10 @@ impl Resolver<'_, '_> {
                 MentionUse::Called(_) | MentionUse::Destructured(_) | MentionUse::Exposed => true,
             },
         };
+        if may_be_written && self.input.dialect == SourceDialect::Program {
+            self.output.tables_of_loaders_written.push(table);
+        }
+        self.output.loses_sight_of_module_cache |= may_be_written;
     }
 
     fn find_key_that_call_deletes(&self, table: ExprId) -> Option<ExprId> {

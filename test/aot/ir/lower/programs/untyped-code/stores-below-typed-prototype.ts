@@ -83,14 +83,15 @@ console.log("and deleted:", attempt(loose[7], 18));
 // CHECK-LABEL: function {{*}}name="heirOf"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: v2 = NewObject layout=[[L_2]]
-// CHECK-NEXT: SetLiteralPrototype v2, v0 [refusesOtherValues]
-// CHECK-NEXT: v4 = FinishObject v2
-// CHECK-NEXT: PropSet v4, v1 key="value"
-// CHECK-NEXT: PropSet v4, v1 key="args"
-// CHECK-NEXT: v7 = String string="own"
-// CHECK-NEXT: PropSet v4, v7 key="op"
-// CHECK-NEXT: Return v4
+// CHECK-NEXT: v2 = Builtin builtin=ObjectCreate
+// CHECK-NEXT: v3 = NewObject layout=[[L_2]]
+// CHECK-NEXT: SetLiteralPrototype v3, v0 [refusesOtherValues]
+// CHECK-NEXT: v5 = FinishObject v3
+// CHECK-NEXT: PropSet v5, v1 key="value"
+// CHECK-NEXT: PropSet v5, v1 key="args"
+// CHECK-NEXT: v8 = String string="own"
+// CHECK-NEXT: PropSet v5, v8 key="op"
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {

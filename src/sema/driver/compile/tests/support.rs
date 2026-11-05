@@ -227,6 +227,21 @@ pub(super) fn with_program<R>(
     })
 }
 
+pub(super) fn with_look_for_type_errors<R>(
+    files: &[(&str, &str)],
+    entry_points: &[&str],
+    then: impl FnOnce(&TestProgram<'_, '_>) -> R,
+) -> R {
+    let code = CodeOptions {
+        looks_for_type_errors: true,
+        ..CodeOptions::bun_run(PROJECT)
+    };
+    let roots = Roots::Written(entry_points);
+    try_load(&project_disk(files, 1), &code, roots, &[], |loaded| {
+        then(loaded.expect("load_program failed"))
+    })
+}
+
 pub(super) fn with_conditions<R>(
     files: &[(&str, &str)],
     entry_points: &[&str],
@@ -364,6 +379,7 @@ fn try_load<R>(
         threads: NonZeroUsize::new(host.threads()).unwrap_or(NonZeroUsize::MIN),
         progress: None,
         left_out_bodies: None,
+        discards_first_visits: false,
     };
     match load_program(&session, host, &request) {
         Ok(loaded) => then(Ok(&TestProgram {

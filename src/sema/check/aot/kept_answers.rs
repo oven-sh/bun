@@ -60,7 +60,8 @@ impl KeptAnswers {
     pub(crate) fn clear(&mut self) {
         self.memo.clear();
         self.arena = None;
-        if let Some(state) = self.of_lowering.take() {
+        let state = self.of_lowering.take();
+        if let Some(state) = state.or_else(|| self.of_lowering_in_last_task.take()) {
             let hand_on = self.hand_on_of_lowering;
             self.of_lowering_in_last_task = hand_on.and_then(|hand_on| hand_on(state, None));
         }

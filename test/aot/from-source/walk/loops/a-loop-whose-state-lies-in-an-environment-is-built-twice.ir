@@ -1,0 +1,45 @@
+# -- source: state-in-an-environment.ts
+# function make() {
+#   let text = "";
+#   let at: number;
+#   let limit: number;
+#   function unitAt(i: number) { return text.charCodeAt(i); }
+#   function skip() { while (at < limit && text.charCodeAt(at) === 32) at++; return at; }
+#   function skipThroughCallee() { while (at < limit && unitAt(at) === 32) at++; return at; }
+#   function set(next: string) { text = next; at = 0; limit = next.length; }
+#   return { skip, skipThroughCallee, set };
+# }
+# const made = make();
+# (globalThis as any).made = made;
+# made.set("   x");
+# const first = made.skip();
+# made.set("  y");
+# console.log(String(first) + " " + String(made.skipThroughCallee()));
+# -- end of source
+# `text`, `at` and `limit` are variables that closures share, and the closures are in unseen hands: nothing is proven of them. Each mention is a read, so nothing of the loop was a value that is the same in every turn or goes round.
+# The loop is built twice all the same. In the typed copy `at` is read once a turn and asked for an int32: Link has seen whole numbers alone arrive there, and a turn that has done nothing begins again in the other copy where the test fails.
+# `limit` and `text`, which no typed turn writes, are read and asked in front, with the length and the flat form of the text. The call of the built-in runs no other code, in the callee's copy either.
+# RUN: walk f3 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f3:Body
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK: [[at]]: {{*}} = GetEnvironmentField {{*}}field=1
+# CHECK: TypeTest [[at]] testedType=i32|absent
+# CHECK-NOT: GetEnvironmentField {{*}}field=1
+# CHECK: FlattenString
+# CHECK-NEXT: Jump
+# CHECK: GetStringCodeUnit
+# CHECK: Increment {{*}}form=Integers
+# CHECK: PutEnvironmentField {{*}}field=1
+# RUN(CALLEE): walk f4 mechanisms=all
+# REQUIRES(CALLEE): entries-of-bun
+# CALLEE-LABEL: code f4:Body
+# CALLEE: isLoopHead=true
+# CALLEE: isLoopHead=true
+# CALLEE: [[at]]: {{*}} = GetEnvironmentField {{*}}field=1
+# CALLEE: TypeTest [[at]] testedType=i32|absent
+# CALLEE-NOT: GetEnvironmentField {{*}}field=1
+# CALLEE-NOT: = Call
+# CALLEE: GetStringCodeUnit
+# CALLEE: Increment {{*}}form=Integers

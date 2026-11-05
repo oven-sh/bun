@@ -34,8 +34,7 @@ use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
 use crate::modules::{
-    Candidates, ImportBinding, ModuleFailureId, ModuleKind, ModuleRef, Site, SiteAnswer,
-    SpelledModule,
+    Candidates, ModuleFailureId, ModuleKind, ModuleRef, Site, SiteAnswer, SpelledModule,
 };
 
 #[derive(Copy, Clone)]
@@ -449,7 +448,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let replaced = self.file.inputs.replaced_builtins;
         let made = require_call.map_or(callee, |found| found.require);
         let is_replaced = |builtin: BuiltinId| replaced.binary_search(&(builtin as u32)).is_ok();
+        let modules = self.file.inputs.modules;
         let is_maker_replaced = is_replaced(BuiltinId::FunctionPrototypeCall)
+            || modules.may_be_mocked(ModuleRef::Runtime(RuntimeModule::NodeModule))
+            || modules.holds_replaceable_variable(self.file.file)
             || is_replaced(BuiltinId::NodeModuleCreateRequire)
                 && !is_made_by_imported_name(hir, bound, made);
         if is_maker_replaced
@@ -466,18 +468,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             own_require,
             Some(OwnRequire::OfOtherFile(_) | OwnRequire::MadeInOtherFile(_))
         );
-        let other_values = match is_of_other_file
-            && resolved_from.is_none_or(|from| self.may_require_of_file_be_replaced(from))
-        {
+        let exporter = match own_require {
+            Some(OwnRequire::OfOtherFile(path) | OwnRequire::MadeInOtherFile(path)) => {
+                let queries = &self.file.queries;
+                queries.files().by_path.get(queries.atom_bytes(path))
+            }
+            _ => None,
+        };
+        let is_way_proof = !modules.runs_tests() && exporter.is_some();
+        let other_values = match is_of_other_file && !is_way_proof {
             true => OtherValues::Any,
             false => find_other_values_of_own_require(hir, bound, decisions, made),
         };
         let is_told_by_identity =
-            matches!(own_require, Some(OwnRequire::OfOtherFile(_))) && resolved_from.is_some();
+            matches!(own_require, Some(OwnRequire::OfOtherFile(_))) && exporter.is_some();
         if is_of_other_file && other_values == OtherValues::Any && !is_told_by_identity {
             return None;
         }
-        let test_of_value = match (other_values, resolved_from) {
+        let test_of_value = match (other_values, exporter) {
             (OtherValues::None, _) => CalleeTest::IsFilled,
             (OtherValues::Any, Some(exporter)) if is_of_other_file => {
                 CalleeTest::IsRequireOf(exporter)
@@ -486,7 +494,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let written = self.file.skip_type_syntax(callee);
         let given = require_call.map_or(arguments, |found| found.args);
-        let modules = self.file.inputs.modules;
         let answer = modules.site_answer(self.file.file, site.kind);
         let operation = find_operation(&site, answer, given.len())?;
         if matches!(
@@ -678,20 +685,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         self.file
             .ensure_variable(VariableKey::RequireMadeForOwnFile(holder))
-    }
-
-    fn may_require_of_file_be_replaced(&self, exporter: FileId) -> bool {
-        let modules = self.file.inputs.modules;
-        let mut imported = modules.import_bindings(self.file.file).iter();
-        modules.may_be_mocked(ModuleRef::File(exporter))
-            || imported.any(|&(_, binding)| match binding {
-                ImportBinding::Variable(variable) => {
-                    variable.file == exporter && modules.is_replaceable(variable)
-                }
-                ImportBinding::Namespace { module, .. }
-                | ImportBinding::NamespaceRead { module, .. } => modules.may_be_mocked(module),
-                _ => false,
-            })
     }
 
     fn emit_test_of_value(&mut self, value: ValueId, test: CalleeTest) -> Option<ValueId> {

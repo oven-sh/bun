@@ -1,6 +1,7 @@
 // In a loop forEach is handed a closure that calls forEach, SIZE deep.
 // It writes a program: SIZE says how large, PASSES how many copies of its function under names of their own.
-// Sizes: 1 3 6
+// One level deep the call and its closure are copied into the loop, which costs the build more than three levels that are called: the sizes begin where all are built alike.
+// Sizes: 2 4 8
 // Passes: 60
 // Grows: the build, linear
 const size = Number(process.env.SIZE ?? 2),

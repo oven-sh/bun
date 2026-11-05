@@ -1,0 +1,27 @@
+# -- source: main.ts
+# declare function id(x: any): any;
+# function run(n: number): number { let sum = 0; for (let i = 0; i < n; i++) { id(i); sum = (sum + step + steps) | 0; steps = steps + 1; } return sum; }
+# function attempt(n: number): number { try { return run(n); } catch (error) { return -1; } }
+# const withNoTurn = attempt(0);
+# const withTurns = attempt(3);
+# const step = id(3) | 0;
+# let steps = id(10) | 0;
+# print(withNoTurn, withTurns, attempt(0), attempt(3), steps);
+# -- end of source
+# Each turn calls what nobody knows, which may run anything. It cannot put a variable back into its dead zone, so both are asked in front of the loop, and no turn of the typed copy checks.
+# `step` is a constant: what was found in front is what every turn finds, and no turn reads it. `steps` is written by the turns, and by whatever they call for all that the walk knows: it is read in each turn, without a check.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=absent
+# CHECK: = TypeTest {{*}}testedType=absent
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: = CheckInitialized {{*}}name="step"
+# CHECK: = CheckInitialized {{*}}name="steps"
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = CheckInitialized
+# CHECK: = GetModuleVariable {{*}}followsItsStore
+# CHECK-NOT: = CheckInitialized
+# CHECK: Return
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 0 -1 0 42 13

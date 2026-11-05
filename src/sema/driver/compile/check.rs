@@ -93,7 +93,10 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     let is_checker_renewed = AtomicBool::new(false);
     let requested = |file: FileId| match is_left_out(file) {
         true => Requested::Types,
-        false => requested_diagnostics(loaded.origin(file), request.code.looks_for_type_errors),
+        false => requested_diagnostics(
+            loaded.origin(file),
+            request.code.looks_for_type_errors && !files.needs_another_program(file),
+        ),
     };
     let slots = slots_by_file(files, roles, files_to_lower);
     let products: Vec<Guarded<Option<T>>> =

@@ -343,7 +343,9 @@ console.log(names.length, names.at(-1));
       exitCode: 0,
       signalCode: null,
     });
-    expect(rowsOfMap(map, "T").filter(fields => fields.at(-1) === "ThrowAtSite.WordsAfterCall").length).toBe(1);
+    const stubs = rowsOfMap(map, "T").map(fields => fields.at(-1)!);
+    expect(stubs.filter(name => name.startsWith("ThrowAtSite.WordInRegister"))).not.toEqual([]);
+    expect(stubs.filter(name => name.startsWith("ThrowAtSite.WordsAfterCall"))).toEqual([]);
   },
   120_000,
 );
@@ -358,12 +360,14 @@ test.skipIf(!isLinux)(
     const executableSize = Number(file.readBigUInt64LE(image + imageHeader.executableSize));
     const dataSize = image + Number(file.readBigUInt64LE(image + imageHeader.size)) - codeOffset - executableSize;
 
-    const constants = rowsOfMap(map, "K").map(([, offset, size]) => ({ offset: Number(offset), size: Number(size) }));
-    expect(constants).toEqual([{ offset: expect.any(Number), size: expect.any(Number) }]);
-    expect(constants[0].size).toBeGreaterThan(0);
-    expect(constants[0].offset).toBeGreaterThanOrEqual(executableSize);
-    expect(constants[0].offset + constants[0].size).toBeLessThanOrEqual(executableSize + dataSize);
-    for (const kind of ["F", "U", "X", "XR"]) {
+    const constants = {
+      offset: file.readUInt32LE(image + imageHeader.constantsOffset),
+      size: file.readUInt32LE(image + imageHeader.constantsSize),
+    };
+    expect(constants.size).toBeGreaterThan(0);
+    expect(constants.offset).toBeGreaterThanOrEqual(executableSize);
+    expect(constants.offset + constants.size).toBeLessThanOrEqual(executableSize + dataSize);
+    for (const kind of ["F", "X", "XR"]) {
       const [offsetField, sizeField] = kind === "F" ? [2, 3] : [1, 2];
       const ends = rowsOfMap(map, kind).map(fields => Number(fields[offsetField]) + Number(fields[sizeField]));
       expect({ kind, isExecutable: ends.every(end => end <= executableSize) }).toEqual({ kind, isExecutable: true });

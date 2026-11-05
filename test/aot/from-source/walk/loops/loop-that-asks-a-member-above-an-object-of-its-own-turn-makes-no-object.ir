@@ -1,0 +1,30 @@
+# -- source: loop-that-asks-a-member-above-an-object-of-its-own-turn-makes-no-object.js
+# function Point(x, y) { this.x = x; this.y = y; }
+# Point.prototype.sum = function () { return this.x + this.y; };
+# function Base(a) { this.a = a; }
+# Base.prototype.first = function () { return this.a; };
+# function Below(a, b) { Base.call(this, a); this.b = b; }
+# Below.prototype = Object.create(Base.prototype);
+# Below.prototype.second = function () { return this.b + this.first(); };
+# function run(count) { let total = 0; for (let i = 0; i < count; i++) { const point = new Point(i & 1023, 2); total += point.sum() + point.x; } return total; }
+# function row(count) { let total = 0; for (let i = 0; i < count; i++) { const item = new Below(i & 1023, 2); total += item.second() + item.a; } return total; }
+# sink(run(10) + row(10));
+# -- end of source
+# `point.sum()` stands behind the guard of the member. In a loop that is built once the other arm of that guess boxes the object, reads by name, calls and comes back, so every turn makes the object: x2.1 to x3.1 on five rows.
+# The guards that the turns ask of objects of their own are a test in front of the loop, so it is built twice: in the typed copy the failing way begins the turn again in the other copy, nobody takes the object, and it is never made.
+# The typed turns make no object, so the guards of the constructor function are begun in front of the test. A store into an object of the turn (`this.b = b` behind `Base.call(this, a)`) does not count as done in the turn.
+# f4 = run, f5 = row
+# RUN: walk f4 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: = BeginMemberGuards layout=L0
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="sum"}]
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = BitAnd
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="sum"}]
+# RUN(ROW): walk f5 mechanisms=all
+# REQUIRES(ROW): entries-of-bun
+# ROW: = BeginMemberGuards layout=L2
+# ROW: isInLoop=true isLoopHead=true
+# ROW: = BitAnd
+# ROW-NEXT: = AreMembersUnchanged conditions=[{layout=L2 key="second"}]
+# ROW: = AreMembersUnchanged conditions=[{layout=L2 key="first"}]

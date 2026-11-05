@@ -1,0 +1,21 @@
+# the same program with calls of built-ins withheld, and with typed operations withheld: the call stays a call, and no builder is begun
+# RUN: walk f1 mechanisms=all-BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=all-BuiltinCalls
+# NEVER-NOT: StringBuilderBegin
+# RUN(UNTYPED): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# UNTYPED-NOT: StringBuilderBegin
+# RUN(NONE): walk f1 mechanisms=none
+# NONE-NOT: StringBuilderBegin
+# -- source: record-is-written-as-json-by-the-serializer-of-its-layout.ts
+# declare function sink(...values: unknown[]): void;
+# type Row = { id: number; name: string; ok: boolean; score: number; tag: string; note: string };
+# function save(row: Row) { return JSON.stringify(row); }
+# function pick(row: Row) { return JSON.stringify(row, ["id"]); }
+# function replace(row: Row, replacer: (key: string, value: unknown) => unknown) { return JSON.stringify(row, replacer); }
+# function pretty(row: Row) { return JSON.stringify(row, null, 2); }
+# const first: Row = { id: 1, name: "a", ok: true, score: 1.5, tag: "t", note: "n" };
+# sink(save, pick, replace, pretty, first, save(first), save(first), JSON.stringify(first));
+# -- end of source
+# f1 = save, f2 = pick, f3 = replace, f4 = pretty

@@ -12,10 +12,12 @@ use super::{ReportEntry, ReportInput};
 use crate::builtins::BuiltinId;
 use crate::builtins::table::{self, BuiltinKind};
 use crate::engine::{
-    BuiltinUseRecord, FeatureUseRecord, Position, SourceLocation, builtin_of, feature_of,
-    position_of,
+    BuiltinUseRecord, FeatureUseRecord, Position, SourceLocation, UnseenCodeRecord, builtin_of,
+    feature_of, position_of,
 };
-use crate::ir::generated::{BuiltinUse, FeatureUseKind, LocaleUseKind};
+use crate::ir::generated::{
+    BuiltinUse, FeatureUseKind, LocaleUseKind, UnseenCodeCause as EngineCause,
+};
 
 const PREFIX: &[u8] = b"trim: ";
 
@@ -64,6 +66,21 @@ fn write_witness(
         write_shown_position(line, Some(&shown));
     }
     Some(position)
+}
+
+fn builtin_shown_for(records: &[UnseenCodeRecord], record: &UnseenCodeRecord) -> u32 {
+    let loads_by_name = matches!(
+        record.cause,
+        EngineCause::LoadsModuleByName | EngineCause::LoadsCodeByName
+    );
+    let place = position_of(record.witness.location);
+    if !loads_by_name || builtin_of(record.builtin).is_some() || place.is_none() {
+        return record.builtin;
+    }
+    let evaluator = records.iter().find(|other| {
+        other.cause == EngineCause::EvaluatesText && position_of(other.witness.location) == place
+    });
+    evaluator.map_or(record.builtin, |other| other.builtin)
 }
 
 type ReachableFeature<'a> = (Feature, &'a FeatureUseRecord);
@@ -134,7 +151,8 @@ fn cause_lines(
         let record = record_at(input.engine.unseen_code(), unseen.witness);
         let position = record.and_then(|record| {
             let location = record.witness.location;
-            write_witness(&mut line, record.builtin, location, positions)
+            let builtin = builtin_shown_for(input.engine.unseen_code(), record);
+            write_witness(&mut line, builtin, location, positions)
         });
         out.push(entry_at(line, position));
     }

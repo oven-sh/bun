@@ -57,7 +57,7 @@ impl AskedNames {
         let everything = || AskedNames::everything(stars.components.len());
         let mut externals = modules.external_kinds.iter();
         let code_out_of_sight_names_files = (input.runs_in_place
-            || input.code_from_disk_names_files)
+            || input.files_are_named_out_of_sight)
             && externals.any(|&(_, kind)| kind == ExternalKind::UncompiledCode);
         if entries.iter().all(|module| module.stars.is_empty())
             || input.runs_tests

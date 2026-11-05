@@ -176,9 +176,6 @@ feature OperationsOfAwait "what compiled code calls for await"
 feature OperationsOnPromises "what compiled code calls for promises"
   entered-from compiled-code
 
-feature OperationsOnKeysOfParts "what compiled code calls for maps and sets whose keys are made of parts"
-  entered-from compiled-code
-
 feature OperationsOnMapsAndSets "what compiled code calls for Map, Set and WeakMap"
   entered-from compiled-code
 

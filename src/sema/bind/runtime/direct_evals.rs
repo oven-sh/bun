@@ -32,7 +32,7 @@ pub(super) fn find_direct_evals(
         {
             continue;
         }
-        if let Some(call) = find_direct_eval_call(hir, bound, ident) {
+        if let Some(call) = find_call_of_name(hir, bound, ident) {
             direct_evals.push(DirectEval {
                 call,
                 scope,
@@ -43,7 +43,11 @@ pub(super) fn find_direct_evals(
     direct_evals
 }
 
-fn find_direct_eval_call(hir: &File<'_>, bound: &BoundBuilder, ident: ExprId) -> Option<ExprId> {
+pub(super) fn find_call_of_name(
+    hir: &File<'_>,
+    bound: &BoundBuilder,
+    ident: ExprId,
+) -> Option<ExprId> {
     let callee = find_outermost_cast(hir, bound, ident);
     let Parent::Expr(parent) = bound.parent_of_expr(callee) else {
         return None;

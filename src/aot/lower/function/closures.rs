@@ -125,7 +125,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             });
             return self.emit_closure(id, home);
         }
-        let id = super::declare_source_function(self.file, function, text_name);
+        let id = match inferred_name.and_then(|given| given.name_that_key_spells) {
+            Some(name) => {
+                super::declare_source_function_with(self.file, function, &mut |_, header| {
+                    header.name = Some(name);
+                    header.flags |= FunctionFlags::IS_NAMED_BY_COMPUTED_KEY;
+                })
+            }
+            None => super::declare_source_function(self.file, function, text_name),
+        };
         let closure = self.emit_closure(id, home);
         if let (Some(given), None) = (inferred_name, text_name)
             && self.file.names_functions_by_keys()

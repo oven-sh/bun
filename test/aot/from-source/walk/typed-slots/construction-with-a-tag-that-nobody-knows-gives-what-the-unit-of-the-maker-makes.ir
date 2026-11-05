@@ -1,0 +1,21 @@
+# -- source: construction-with-a-tag-that-nobody-knows-gives-what-the-unit-of-the-maker-makes.ts
+# interface Base { kind: number; pos: number }
+# interface Num extends Base { kind: 1; value: number }
+# interface Str extends Base { kind: 2; text: string }
+# function NodeMaker(this: Base, kind: number, pos: number) { this.kind = kind; this.pos = pos; }
+# const kept = { kind: 77, other: "kept" };
+# function Returning(this: Base, kind: number, pos: number): any { this.kind = kind; this.pos = pos; if (kind === 9) return kept; }
+# const Node = NodeMaker as unknown as new (kind: number, pos: number) => Base;
+# const Other = Returning as unknown as new (kind: number, pos: number) => Base;
+# function make(kind: number): Base { return new Node(kind, 3); }
+# function makeOther(kind: number): Base { return new Other(kind, 3); }
+# const a = make(1) as Num; a.value = 1; const b = make(2) as Str; b.text = "t";
+# sink(make(sink(1) as number).pos, makeOther(sink(1) as number).pos, a, b);
+# -- end of source
+# Nobody knows the tag, so the construction stays a call of the unit that holds the switch. What that unit makes is known: an object of the maker's layout or of a member's, where the body is proven to return no object.
+# RUN: walk f3 mechanisms=all
+# CHECK: L{{*}}|L{{*}} @JSValue = Construct
+# CHECK-NEXT: fact {{*}}kind=OperandSummaries
+# The body of the other one may return an object of its own.
+# RUN(OTHER): walk f4 mechanisms=all
+# OTHER: anything{{*}} = Construct

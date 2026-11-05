@@ -14,7 +14,8 @@ import { test } from "./supported";
 const root = join(import.meta.dir, "parallel-test-runs");
 const foldersIn = (folder: string) =>
   readdirSync(folder, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
+    // git holds no empty folder: one that is left behind in a working tree is no project.
+    .filter(entry => entry.isDirectory() && readdirSync(join(folder, entry.name)).length > 0)
     .map(entry => entry.name)
     .sort();
 // `bun test` runs the files of a folder as the file system lists them. A project whose second file looks at what the first has left needs them in the order of their names.

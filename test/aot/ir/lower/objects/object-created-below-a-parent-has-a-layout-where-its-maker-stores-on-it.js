@@ -16,16 +16,16 @@
 // CHECK-NOT: = NewObject
 // CHECK: builtin=ObjectCreate
 // CHECK-LABEL: function {{*}}name="maker"
-// CHECK-NOT: builtin=ObjectCreate
+// CHECK: builtin=ObjectCreate
 // CHECK: [[head]] = NewObject layout=
 // CHECK-NEXT: SetLiteralPrototype [[head]], {{*}} [refusesOtherValues]
 // CHECK-NEXT: [[made]] = FinishObject [[head]]
 // CHECK: PropSet [[made]], {{*}}key="name"
 // CHECK-LABEL: function {{*}}name="makerInATry"
-// CHECK-NOT: builtin=ObjectCreate
+// CHECK: builtin=ObjectCreate
 // CHECK: = NewObject layout=
 // CHECK-LABEL: function {{*}}name="makerThroughAStore"
-// CHECK-NOT: builtin=ObjectCreate
+// CHECK: builtin=ObjectCreate
 // CHECK: = NewObject layout=
 // CHECK: = NewObject layout=
 // CHECK-LABEL: function {{*}}name="storedOnByAnotherBody"

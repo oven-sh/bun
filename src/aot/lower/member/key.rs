@@ -59,6 +59,21 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(self.fragment.property_keys.intern(key))
     }
 
+    pub(in crate::lower) fn find_name_that_key_spells(
+        &mut self,
+        member: MemberId,
+    ) -> Option<StringId> {
+        let PropKey::Computed(key) = self.hir.runtime_member_key(member) else {
+            return None;
+        };
+        let symbol = self.queries.symbol_member_name(self.file, key)?;
+        let name = match self.queries.symbol_creation(symbol)?.description {
+            Some(text) => [b"[", self.queries.atom_bytes(text), b"]"].concat(),
+            None => Vec::new(),
+        };
+        Some(self.intern_bytes(&name))
+    }
+
     fn runtime_name_key(&mut self, name: Atom) -> PropertyKeyId {
         let names = self.inputs.builtin_names;
         if let Some(symbol) = find_symbol_key(names, name) {

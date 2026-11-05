@@ -1,0 +1,24 @@
+# `h = (h * 31 + s.charCodeAt(i)) | 0` in a loop in a loop. The looks at the inner loop widen `h` on their way, and all that comes round is an int32: the inner head is left at what the looks began with and what came round,
+# so the blocks behind the inner loop see an int32; that comes round the outer loop, and a range that has come to be all of int32 is not widened at first, so what passes through the inner loop unchanged is an int32 too.
+# It was int up to 2^53 @Int64 at both heads of the closed copy and `number` @Double at both of the typed one: a checked product, a sum of numbers and a conversion of a double in every turn.
+# f1 = digestRows, f2 = digestRowsUnsigned
+# -- source: loop-in-a-loop-keeps-its-int32.ts
+# function digestRows(s: string | null | undefined, rows: number): number { let h = 0; for (let row = 0; row < rows; row++) { for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; } return h; }
+# function digestRowsUnsigned(s: string | null | undefined, rows: number): number { let h = 0; for (let row = 0; row < rows; row++) { for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; } return h; }
+# (globalThis as any).kept = [digestRows, digestRowsUnsigned];
+# console.log(digestRows("abcdefghij", 3), digestRowsUnsigned("abcdefghij", 3));
+# -- end of source
+# RUN: walk f1 f2 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: CheckedIntegers
+# CHECK: ({{*}}: i32 @Int32, {{*}}) frequency=Rare isLoopHead=true
+# CHECK: ({{*}}: i32 @Int32, {{*}}: int[0, 2147483647] @Int32) frequency=Rare isLoopHead=true
+# CHECK: ({{*}}: i32 @Int32, {{*}}) isInLoop=true isLoopHead=true
+# CHECK: ({{*}}: i32 @Int32, {{*}}: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true
+# CHECK: = Mul {{*}}form=Integers
+# CHECK-LABEL: code f2:Body
+# CHECK: ({{*}}: int[0, 4294967295] @Int64, {{*}}) frequency=Rare isLoopHead=true
+# CHECK: ({{*}}: int[0, 4294967295] @Int64, {{*}}: int[0, 2147483647] @Int32) frequency=Rare isLoopHead=true
+# CHECK: ({{*}}: int[0, 4294967295] @Int64, {{*}}) isInLoop=true isLoopHead=true
+# CHECK: ({{*}}: int[0, 4294967295] @Int64, {{*}}: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true

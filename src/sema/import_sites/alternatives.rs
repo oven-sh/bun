@@ -2,7 +2,8 @@ use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
 use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
 use super::parameters::{find_values_passed_for_pattern, is_exported};
 use super::{
-    ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
+    ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, WHERE_FILE_LIES,
+    call_site_arguments, call_site_kind,
 };
 use crate::atom::{Atom, known};
 use crate::bind::{
@@ -99,6 +100,7 @@ impl Text {
 enum Held {
     Text(Text),
     Resolved(Text, ResolvedForm),
+    Url(Text),
     Primitive(Constant),
     List(Vec<Vec<Held>>),
     ListOf(Vec<Held>),
@@ -259,7 +261,7 @@ pub(super) fn find_texts_of_key(
     for value in values {
         let mut text = match value {
             Held::Text(text) if text.is_file_url => return None,
-            Held::Text(text) | Held::Resolved(text, _) => text,
+            Held::Text(text) | Held::Resolved(text, _) | Held::Url(text) => text,
             Held::Primitive(_) => continue,
             _ => return None,
         };
@@ -357,6 +359,7 @@ fn find_alternatives_with(mut follower: Follower<'_, '_, '_>, argument: ExprId) 
             }
             Held::Text(text) => (text, None),
             Held::Resolved(text, form) => (text, Some(form)),
+            Held::Url(text) => (text, Some(ResolvedForm::UrlObject)),
             Held::Primitive(_) | Held::Other => continue,
             _ => return None,
         };
@@ -382,6 +385,9 @@ fn find_alternatives_with(mut follower: Follower<'_, '_, '_>, argument: ExprId) 
             || text.starts_at_own_directory && !is_below_folder
         {
             return None;
+        }
+        if resolved_form.is_some() && text.start.starts_with(b"./../") {
+            text.start.drain(..2);
         }
         if let Some(end) = &mut text.end {
             trim_lead_surrogate_at_end(&mut text.start);
@@ -451,6 +457,7 @@ impl Follower<'_, '_, '_> {
             Held::Text(text) => Some(text.clone()),
             Held::Primitive(constant) => self.text_of(*constant),
             Held::Itself(_) | Held::BelowItself(_) | Held::Data { .. } => None,
+            Held::Url(name) => Some(href_of(name)),
             Held::Resolved(name, form) if name.end.is_none() && name.start.ends_with(b"/") => {
                 let start = match name.start.starts_with(b"./") {
                     true => name.start.clone(),
@@ -464,8 +471,37 @@ impl Follower<'_, '_, '_> {
                     is_file_url: *form != ResolvedForm::Path,
                 })
             }
-            _ => Some(Text::unknown()),
+            _ => {
+                self.ask_where_file_lies(value);
+                Some(Text::unknown())
+            }
         }
+    }
+
+    fn ask_where_file_lies(&self, answer: &Held) {
+        if let Held::Resolved(name, ResolvedForm::Path) = answer
+            && name.end.is_none()
+            && !self.inputs.hir.runs_beside_loader
+        {
+            let atoms = self.inputs.atoms;
+            let asked = (atoms.intern(&name.start), atoms.intern(WHERE_FILE_LIES));
+            self.asked_of_data_files.0.borrow_mut().push(asked);
+        }
+    }
+
+    fn find_where_file_lies(&self, name: &Text, form: ResolvedForm) -> Option<Held> {
+        let &ScanInputs { hir, atoms, .. } = self.inputs;
+        if form != ResolvedForm::Path || name.end.is_some() {
+            return None;
+        }
+        let asked = (atoms.intern(&name.start), atoms.intern(WHERE_FILE_LIES));
+        let mut known = hir.texts_of_data_files.iter();
+        let known = known.find(|it| (it.specifier, it.path) == asked)?;
+        self.asked_of_data_files.0.borrow_mut().push(asked);
+        Some(Held::Text(Text {
+            starts_at_own_directory: true,
+            ..Text::whole(atoms.bytes(known.text))
+        }))
     }
 
     fn values_apart_from_itself(&mut self, e: ExprId) -> Option<Values> {
@@ -740,7 +776,10 @@ impl Follower<'_, '_, '_> {
     fn values_of_binary(&mut self, op: BinOp, left: ExprId, right: ExprId) -> Option<Values> {
         match op {
             BinOp::Add => {
-                let is_text = |values: &Values| values.iter().all(|it| matches!(it, Held::Text(_)));
+                let is_text = |values: &Values| {
+                    let mut values = values.iter();
+                    values.all(|it| matches!(it, Held::Text(_) | Held::Url(_)))
+                };
                 let operands = [left, right].map(|it| self.values_apart_from_itself(it));
                 match operands.into() {
                     (Some(left), Some(right)) => self.add_values(&left, &right),
@@ -1596,6 +1635,11 @@ impl Follower<'_, '_, '_> {
                     [key] => vec![self.read_data_file((*specifier, path, *is_namespace), key)],
                     _ => return None,
                 },
+                Held::Url(name) => match keys? {
+                    [key] if key == b"href" => vec![Held::Text(href_of(name))],
+                    [key] if key == b"pathname" => vec![Held::Text(name.clone())],
+                    _ => return None,
+                },
                 Held::Resolved(name, ResolvedForm::UrlObject) => match keys? {
                     [key] if key == b"href" => {
                         vec![Held::Resolved(name.clone(), ResolvedForm::Url)]
@@ -1854,8 +1898,9 @@ impl Follower<'_, '_, '_> {
         let mut values = Values::new();
         for name in self.values_of(name)? {
             match name {
-                Held::Text(name) | Held::Resolved(name, _) => {
-                    add(&mut values, Held::Resolved(name, form));
+                Held::Text(name) | Held::Resolved(name, _) | Held::Url(name) => {
+                    let known = self.find_where_file_lies(&name, form);
+                    add(&mut values, known.unwrap_or(Held::Resolved(name, form)));
                 }
                 Held::Itself(_) | Held::BelowItself(_) => return None,
                 _ => {}
@@ -1949,22 +1994,29 @@ impl Follower<'_, '_, '_> {
                 Held::Resolved(name, ResolvedForm::Url | ResolvedForm::UrlObject) => {
                     Some(as_object(name))
                 }
+                Held::Url(_) => Some(value.clone()),
+                Held::Text(text) if !hir.runs_beside_loader => path_in_own_url(text).map(Held::Url),
                 _ => None,
             });
             return urls.collect();
         };
         let folders = match self.names_own_url(base) {
-            true => vec![b"./".to_vec()],
+            true => vec![(b"./".to_vec(), !hir.runs_beside_loader)],
             false => self.folders_of_urls(base)?,
         };
         self.pay_for_pairs(folders.len(), written.len())?;
         let urls = folders
             .iter()
             .flat_map(|folder| written.iter().map(move |value| (folder, value)));
-        let urls = urls.map(|(folder, value)| match value {
-            Held::Text(text) => name_from_url_of_folder(folder, text)
-                .as_ref()
-                .map(as_object),
+        let urls = urls.map(|((folder, is_written), value)| match value {
+            Held::Text(text) => {
+                let name = name_from_url_of_folder(folder, text)?;
+                Some(match is_written {
+                    true => Held::Url(from_own_directory(name)),
+                    false => as_object(&name),
+                })
+            }
+            Held::Url(_) => Some(value.clone()),
             Held::Resolved(name, ResolvedForm::Url | ResolvedForm::UrlObject) => {
                 Some(as_object(name))
             }
@@ -1973,15 +2025,19 @@ impl Follower<'_, '_, '_> {
         urls.collect()
     }
 
-    fn folders_of_urls(&mut self, base: ExprId) -> Option<Vec<Vec<u8>>> {
-        let folders = self.values_of(base)?.into_iter().map(|value| match value {
-            Held::Resolved(name, ResolvedForm::Url | ResolvedForm::UrlObject)
-                if name.end.is_none() =>
-            {
-                let end = strings::last_index_of_char(&name.start, b'/')?;
-                Some(name.start[..=end].to_vec())
-            }
-            _ => None,
+    fn folders_of_urls(&mut self, base: ExprId) -> Option<Vec<(Vec<u8>, bool)>> {
+        let runs_beside_loader = self.inputs.hir.runs_beside_loader;
+        let folders = self.values_of(base)?.into_iter().map(|value| {
+            let (name, is_written) = match value {
+                Held::Resolved(name, ResolvedForm::Url | ResolvedForm::UrlObject) => (name, false),
+                Held::Url(name) => (name, true),
+                Held::Text(text) if !runs_beside_loader => (path_in_own_url(&text)?, true),
+                _ => return None,
+            };
+            let end = strings::last_index_of_char(&name.start, b'/')?;
+            name.end
+                .is_none()
+                .then(|| (name.start[..=end].to_vec(), is_written))
         });
         folders.collect()
     }
@@ -2080,6 +2136,7 @@ impl Follower<'_, '_, '_> {
                 .into_iter()
                 .map(|value| match value {
                     Held::Resolved(name, UrlObject) if !is_trim => Some(Held::Resolved(name, Url)),
+                    Held::Url(name) if !is_trim => Some(Held::Text(href_of(&name))),
                     Held::Resolved(_, Path | Url) if is_of_text => Some(value),
                     Held::Text(ref text) if is_of_text && !is_changed_by_trim(text) => Some(value),
                     _ => None,
@@ -2104,12 +2161,14 @@ impl Follower<'_, '_, '_> {
         let convert: fn(Held) -> Option<Held> = match (of_url.is_some(), function) {
             (true, b"fileURLToPath") => |value| match value {
                 Held::Resolved(name, Url | UrlObject) => Some(Held::Resolved(name, Path)),
+                Held::Url(name) => Some(Held::Text(name)),
+                Held::Text(text) => path_in_own_url(&text).map(Held::Text),
                 _ => None,
             },
             (true, b"pathToFileURL") => |value| match value {
                 Held::Resolved(name, Path) => Some(Held::Resolved(name, UrlObject)),
                 Held::Text(name) if name.starts_at_own_directory && !name.is_file_url => {
-                    Some(Held::Resolved(name, UrlObject))
+                    Some(Held::Url(name))
                 }
                 _ => None,
             },
@@ -2117,9 +2176,26 @@ impl Follower<'_, '_, '_> {
                 Held::Resolved(_, Path) => Some(value),
                 _ => None,
             },
+            (false, b"dirname") if !hir.runs_beside_loader => |value| match value {
+                Held::Text(path) => folder_of_path(&path).map(Held::Text),
+                _ => None,
+            },
             _ => return None,
         };
-        self.values_of(argument)?.into_iter().map(convert).collect()
+        let values = self.values_of(argument)?;
+        if function == b"dirname" {
+            values.iter().for_each(|it| self.ask_where_file_lies(it));
+        }
+        let converted = values.into_iter().map(convert);
+        if !hir.runs_beside_loader {
+            return converted.collect();
+        }
+        let as_answers = converted.map(|value| match value? {
+            Held::Url(name) => Some(Held::Resolved(name, UrlObject)),
+            Held::Text(_) => None,
+            answer => Some(answer),
+        });
+        as_answers.collect()
     }
 
     fn values_of_path_below_folder(
@@ -2144,6 +2220,7 @@ impl Follower<'_, '_, '_> {
         let mut paths: Vec<Vec<Text>> = Vec::with_capacity(folders.len());
         for folder in &folders {
             let Held::Text(folder) = folder else {
+                self.ask_where_file_lies(folder);
                 return None;
             };
             if !folder.starts_at_own_directory || folder.is_file_url {
@@ -2197,6 +2274,9 @@ impl Follower<'_, '_, '_> {
                     return None;
                 }
                 path.push(&text.start, is_join || index == 0)?;
+            }
+            if self.inputs.hir.runs_beside_loader && !rest.is_empty() && path.leaves_folder() {
+                return None;
             }
             let mut joined = own_directory.clone();
             joined.start.extend(path.write(is_join, !rest.is_empty()));
@@ -2331,9 +2411,42 @@ fn texts_of_answers(values: &Values) -> Option<Values> {
             Some(Held::Resolved(name.clone(), ResolvedForm::Url))
         }
         Held::Resolved(..) => Some(value.clone()),
+        Held::Url(name) => Some(Held::Text(href_of(name))),
         _ => None,
     });
     texts.collect()
+}
+
+fn folder_of_path(path: &Text) -> Option<Text> {
+    let is_whole_path = path.starts_at_own_directory && !path.is_file_url && path.end.is_none();
+    let slash = strings::last_index_of_char(&path.start, b'/')?;
+    let is_name = !matches!(&path.start[slash + 1..], b"" | b"." | b"..");
+    (is_whole_path && is_name).then(|| Text {
+        starts_at_own_directory: true,
+        ..Text::whole(&path.start[..slash])
+    })
+}
+
+fn href_of(path: &Text) -> Text {
+    Text {
+        is_file_url: true,
+        ..path.clone()
+    }
+}
+
+fn path_in_own_url(url: &Text) -> Option<Text> {
+    (url.is_file_url && url.starts_at_own_directory).then(|| Text {
+        is_file_url: false,
+        ..url.clone()
+    })
+}
+
+fn from_own_directory(mut name: Text) -> Text {
+    if name.start.starts_with(b"../") {
+        name.start.splice(0..0, *b"./");
+    }
+    name.starts_at_own_directory = true;
+    name
 }
 
 fn close_over_itself(symbol: SymbolId, mut values: Values) -> Option<Values> {

@@ -638,6 +638,7 @@ pub(crate) fn apply_developer_word<'a>(
         "out" => options.ir_output_path = Some(Box::from(text)),
         // The other words of --aot-testing are the engine's.
         "testing" if text == b"NoExecutable" => options.writes_no_executable = true,
+        "testing" if text == b"DiscardsFirstVisits" => options.discards_first_visits = true,
         "testing" if text == b"IsolatedCodeFromDisk" => {
             if !options.loads_code_from_disk || options.runs_in_place {
                 return Err(OptionError::DeveloperWord {

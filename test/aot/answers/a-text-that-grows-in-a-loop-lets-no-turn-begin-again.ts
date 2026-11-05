@@ -12,7 +12,7 @@
 declare function report(value: unknown): void;
 function id<T>(value: T): T { (globalThis as any).leaked = value; return (globalThis as any).leaked; }
 type Box = { x: number };
-function grows(o: Box, n: number): string { let text: string | null = "a"; let i = 0; while (text !== null) { if (i >= n) break; if (o.x === i) { text = null; break; } text = text + "b"; i++; } return String(text) + i; }
+function grows(o: Box, n: number): string { let text = "a"; let i = 0; while (true) { if (i >= n) break; if (o.x === i) break; text = text + "b"; i++; } return text + i; }
 id(grows);
 report(grows(id({ x: 3 }), 9));
 report(grows(id({ x: 30 }), 4));

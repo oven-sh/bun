@@ -1,0 +1,6 @@
+# the option is an object with a method of its own that the conversion calls: the bag goes to what nobody sees, as it did
+# -- source: an-option-that-is-an-object-takes-the-bag-along.ts
+# new Intl.NumberFormat("de", { style: { toString() { return "percent"; } } });
+# -- end of source
+# RUN: locales
+# CHECK: locale unknown

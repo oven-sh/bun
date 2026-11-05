@@ -54,7 +54,6 @@ test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the trans
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: []
 test/js/bun/test/mock/mock-hoist.test.ts: not hoisted > a call into another block of a TypeScript namespace keeps its this: a file that hoists
 test/js/bun/test/mock/mock-hoist.test.ts: not hoisted > a call into another block of a TypeScript namespace keeps its this: a file without any test API
-test/js/bun/test/mock/mock-module.test.ts: a factory doesn't wait for an onLoad() callback in an unrelated load > a factory that imports a module another load is fetching gets its own copy
 test/js/bun/test/mock/mock-module.test.ts: a factory doesn't wait for an onLoad() callback in an unrelated load > a module that the factory shares with the importers of the mock stays linked to the mock
 test/js/bun/test/mock/mock-module.test.ts: a factory that another factory's import calls also waits for what that import fetches
 test/js/bun/test/mock/mock-module.test.ts: a factory that asks vi.importActual() for another mocked module, which imports the one it mocks
@@ -63,9 +62,6 @@ test/js/bun/test/mock/mock-module.test.ts: a failing factory that import()s its 
 test/js/bun/test/mock/mock-module.test.ts: a module imported with and without a `type` attribute is mocked, re-mocked and unmocked for both imports
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
-test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > vi.mock() leaves it real for them, as in Vitest ["--isolate"]
-test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > vi.mock() leaves it real for them, as in Vitest ["--isolate=modules"]
-test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > vi.mock() leaves it real for them, as in Vitest []
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > only vi.importActual() of the mocked module itself loads the original
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > vi.importMock, jest.requireMock and jest.createMockFromModule do not mock the module
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing

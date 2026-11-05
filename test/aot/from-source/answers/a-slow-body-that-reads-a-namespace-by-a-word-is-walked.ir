@@ -1,0 +1,20 @@
+# -- source: main.ts
+# import * as space from "./other.ts";
+# declare function id(x: any): any;
+# class Tag { n = 1; m = 2; }
+# function count(o: any): number { let names = 0; for (const name in o) names++; return names; }
+# function tell(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return count(space) + work; }
+# function plain(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return work; }
+# print(tell(new Tag()), tell(id({ n: 1, m: 2 })), plain(new Tag()), plain(id({ n: 1, m: 2 })));
+# -- source: other.ts
+# export const a = 1;
+# export const b = 2;
+# -- end of source
+# Both functions have a guard, and a slow body for what it turns away; neither slow body holds a Builtin operation. That of plain() is written straight, and so is the body of other.ts, which runs once and only stores.
+# That of tell() reads a namespace object, which the walked form takes out of a word of the instance: what lies there is what the importer was bound to. Straight code has only the question to the run time,
+# which answers the namespace of now. So the read has no straight form, and the body is walked.
+# RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
+# REQUIRES(STRAIGHT): faulting-loop-polls
+# STRAIGHT: statistic UnitsWrittenStraight 2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 8 8 6 6

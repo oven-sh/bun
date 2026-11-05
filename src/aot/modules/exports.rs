@@ -769,6 +769,36 @@ fn find_absent_name(
     Some((written.written.fail(importer, kind), imported))
 }
 
+pub(super) struct BegunExports {
+    #[cfg(debug_assertions)]
+    with_every_name: Option<Box<BegunExports>>,
+    entries: Vec<ExportEntries>,
+    commonjs_imports: Vec<WrittenImport>,
+    commonjs_namespace_loads: Vec<FileId>,
+    table_files: Vec<FileId>,
+    star_tables: Vec<Vec<u32>>,
+    names_left_out: FxHashSet<Atom>,
+    nodes: NameNodes,
+}
+
+pub(super) struct ImportsFromCommonJs {
+    #[cfg(debug_assertions)]
+    failure_count_with_every_name: Option<usize>,
+    written: Vec<WrittenImport>,
+    namespace_loads: Vec<FileId>,
+}
+
+pub(super) struct ImportsFoundInCommonJs {
+    #[cfg(debug_assertions)]
+    failure_count_with_every_name: Option<usize>,
+    failures: Vec<PendingFailure>,
+    dropped_names: Vec<CommonJsImport>,
+    absent_names: Vec<(CommonJsImport, FailureOrder)>,
+    imports: Vec<CommonJsImport>,
+    namespace_loads: Vec<FileId>,
+}
+
+#[cfg(test)]
 pub(super) fn resolve_exports(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -777,31 +807,11 @@ pub(super) fn resolve_exports(
     commonjs: &CommonJsTexts,
     mocked: &MockedModules,
 ) -> ExportTables {
-    #[cfg(debug_assertions)]
-    let with_every_name = resolve_every_export(
-        input.files,
-        scans,
-        modules,
-        entries.clone(),
-        commonjs,
-        mocked,
-    );
-    let askers = Some((input, modules));
-    let tables = resolve_exports_for(
-        input.files,
-        scans,
-        modules,
-        entries,
-        commonjs,
-        mocked,
-        askers,
-    );
-    #[cfg(debug_assertions)]
-    tables.assert_lacks_only_what_nobody_asks_for(&with_every_name);
-    tables
+    let begun = begin_exports(input, scans, modules, entries, mocked);
+    finish_begun_exports(input.files, scans, modules, begun, commonjs)
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(test)]
 pub(super) fn resolve_every_export(
     files: &Files<'_>,
     scans: &Scans,
@@ -810,22 +820,61 @@ pub(super) fn resolve_every_export(
     commonjs: &CommonJsTexts,
     mocked: &MockedModules,
 ) -> ExportTables {
-    resolve_exports_for(files, scans, modules, entries, commonjs, mocked, None)
+    let begun = begin_exports_for(scans, modules, entries, mocked, None);
+    finish_begun_exports(files, scans, modules, begun, commonjs)
 }
 
-fn resolve_exports_for(
+#[cfg(any(test, debug_assertions))]
+fn finish_begun_exports(
     files: &Files<'_>,
     scans: &Scans,
     modules: &ModuleSet,
-    entries: CollectedEntries,
+    begun: BegunExports,
     commonjs: &CommonJsTexts,
+) -> ExportTables {
+    let (mut tables, imports) = resolve_begun_exports(files, scans, modules, begun, commonjs);
+    let found = tables.find_imports_from_commonjs_modules(modules, imports);
+    tables.keep_imports_from_commonjs_modules(found);
+    tables
+}
+
+#[cfg(not(debug_assertions))]
+pub(super) fn begin_exports(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    entries: CollectedEntries,
+    mocked: &MockedModules,
+) -> BegunExports {
+    begin_exports_for(scans, modules, entries, mocked, Some((input, modules)))
+}
+
+#[cfg(debug_assertions)]
+pub(super) fn begin_exports(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    entries: CollectedEntries,
+    mocked: &MockedModules,
+) -> BegunExports {
+    let with_every_name = begin_exports_for(scans, modules, entries.clone(), mocked, None);
+    BegunExports {
+        with_every_name: Some(Box::new(with_every_name)),
+        ..begin_exports_for(scans, modules, entries, mocked, Some((input, modules)))
+    }
+}
+
+fn begin_exports_for(
+    scans: &Scans,
+    modules: &ModuleSet,
+    entries: CollectedEntries,
     mocked: &MockedModules,
     askers: Option<(&BindInput<'_, '_>, &ModuleSet)>,
-) -> ExportTables {
+) -> BegunExports {
     let CollectedEntries {
         tables: entries,
         commonjs_imports,
-        mut commonjs_namespace_loads,
+        commonjs_namespace_loads,
     } = entries;
     let table_files: Vec<FileId> = entries.iter().map(|module| module.file).collect();
     let has_table = |file: &&FileId| modules.table_file(ModuleRef::File(**file)).is_some();
@@ -846,6 +895,41 @@ fn resolve_exports_for(
         nodes.add_file(module, star_exports, may_be_mocked, leaves_out_names);
     }
     steps.end("exports: a node for each name");
+    BegunExports {
+        #[cfg(debug_assertions)]
+        with_every_name: None,
+        entries,
+        commonjs_imports,
+        commonjs_namespace_loads,
+        table_files,
+        star_tables,
+        names_left_out: asked.left_out,
+        nodes,
+    }
+}
+
+pub(super) fn resolve_begun_exports(
+    files: &Files<'_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    begun: BegunExports,
+    commonjs: &CommonJsTexts,
+) -> (ExportTables, ImportsFromCommonJs) {
+    #[cfg(debug_assertions)]
+    let with_every_name = begun
+        .with_every_name
+        .map(|begun| finish_begun_exports(files, scans, modules, *begun, commonjs));
+    let BegunExports {
+        entries,
+        commonjs_imports,
+        mut commonjs_namespace_loads,
+        table_files,
+        star_tables,
+        names_left_out,
+        mut nodes,
+        ..
+    } = begun;
+    let mut steps = StepClock::new(Stage::BindModules);
     let mut graph = ResolutionGraph {
         scans,
         modules,
@@ -899,7 +983,7 @@ fn resolve_exports_for(
         results,
         indirect_sites,
         index: nodes.index,
-        names_left_out: asked.left_out,
+        names_left_out,
         failures,
         statements_ahead_of_stars,
         ..ExportTables::default()
@@ -918,40 +1002,17 @@ fn resolve_exports_for(
         }
     }
     steps.end("exports: follow the results");
-    let mut absent_names = Vec::new();
-    for written in &commonjs_imports {
-        if let Some((pending, imported)) = find_absent_name(&tables, modules, written) {
-            if written.is_dropped_if_absent {
-                tables.dropped_commonjs_names.push(imported);
-                continue;
-            }
-            tables.failures.push(pending);
-            let order = (written.asked_by.is_none(), written.written.order);
-            absent_names.push((imported, order));
-        }
+    #[cfg(debug_assertions)]
+    if let Some(with_every_name) = &with_every_name {
+        tables.assert_lacks_only_what_nobody_asks_for(with_every_name);
     }
-    let failures = &mut tables.failures;
-    failures.shared_sort_by_key(|pending| (pending.failure.importer, pending.order));
-    absent_names.shared_sort_by_key(|&(imported, order)| (imported.importer, order));
-    let absent_names = absent_names.into_iter();
-    tables.absent_commonjs_names = absent_names
-        .map(|(imported, (_, order))| (imported, order))
-        .collect();
-    let imported = commonjs_imports.iter().map(|written| written.imported);
-    let imported = imported.filter_map(|imported| {
-        let named = ModuleRef::File(imported.exporter);
-        let exporter = tables.find_commonjs_exporter(modules, named, imported.name)?;
-        Some(CommonJsImport {
-            exporter,
-            ..imported
-        })
-    });
-    tables.commonjs_imports = imported.collect();
-    commonjs_namespace_loads.sort_unstable();
-    commonjs_namespace_loads.dedup();
-    tables.commonjs_namespace_loads = commonjs_namespace_loads;
-    steps.end("exports: imports from CommonJS modules");
-    tables
+    let imports = ImportsFromCommonJs {
+        #[cfg(debug_assertions)]
+        failure_count_with_every_name: with_every_name.map(|tables| tables.failures.len()),
+        written: commonjs_imports,
+        namespace_loads: commonjs_namespace_loads,
+    };
+    (tables, imports)
 }
 
 #[derive(Default)]
@@ -974,6 +1035,68 @@ pub(super) struct ExportTables {
 }
 
 impl ExportTables {
+    pub(super) fn find_imports_from_commonjs_modules(
+        &self,
+        modules: &ModuleSet,
+        asked: ImportsFromCommonJs,
+    ) -> ImportsFoundInCommonJs {
+        let mut steps = StepClock::new(Stage::BindModules);
+        let (mut failures, mut dropped_names) = (Vec::new(), Vec::new());
+        let mut absent_names = Vec::new();
+        for written in &asked.written {
+            if let Some((pending, imported)) = find_absent_name(self, modules, written) {
+                if written.is_dropped_if_absent {
+                    dropped_names.push(imported);
+                    continue;
+                }
+                failures.push(pending);
+                let order = (written.asked_by.is_none(), written.written.order);
+                absent_names.push((imported, order));
+            }
+        }
+        absent_names.shared_sort_by_key(|&(imported, order)| (imported.importer, order));
+        let absent_names = absent_names.into_iter();
+        let imported = asked.written.iter().map(|written| written.imported);
+        let imported = imported.filter_map(|imported| {
+            let named = ModuleRef::File(imported.exporter);
+            let exporter = self.find_commonjs_exporter(modules, named, imported.name)?;
+            Some(CommonJsImport {
+                exporter,
+                ..imported
+            })
+        });
+        let imports = imported.collect();
+        let mut namespace_loads = asked.namespace_loads;
+        namespace_loads.sort_unstable();
+        namespace_loads.dedup();
+        steps.end("exports: imports from CommonJS modules");
+        ImportsFoundInCommonJs {
+            #[cfg(debug_assertions)]
+            failure_count_with_every_name: asked.failure_count_with_every_name,
+            failures,
+            dropped_names,
+            absent_names: absent_names
+                .map(|(imported, (_, order))| (imported, order))
+                .collect(),
+            imports,
+            namespace_loads,
+        }
+    }
+
+    pub(super) fn keep_imports_from_commonjs_modules(&mut self, found: ImportsFoundInCommonJs) {
+        self.failures.extend(found.failures);
+        let failures = &mut self.failures;
+        failures.shared_sort_by_key(|pending| (pending.failure.importer, pending.order));
+        #[cfg(debug_assertions)]
+        if let Some(expected) = found.failure_count_with_every_name {
+            assert!(self.failures.len() == expected);
+        }
+        self.dropped_commonjs_names = found.dropped_names;
+        self.absent_commonjs_names = found.absent_names;
+        self.commonjs_imports = found.imports;
+        self.commonjs_namespace_loads = found.namespace_loads;
+    }
+
     #[inline]
     fn find_table(&self, module: ModuleRef) -> Option<usize> {
         let ModuleRef::File(file) = module else {
@@ -1116,7 +1239,6 @@ impl ExportTables {
         for (table, expected) in self.tables.iter().zip(&with_every_name.tables) {
             assert!(table.follows_every_star == expected.follows_every_star);
         }
-        assert!(self.failures.len() == with_every_name.failures.len());
     }
 
     pub(super) fn names(&self, module: FileId) -> &[(Atom, ResolvedName)] {

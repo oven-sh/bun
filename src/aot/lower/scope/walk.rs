@@ -137,6 +137,7 @@ pub(super) struct ScopeWalk {
     pub(super) eval_variable_scopes: Vec<ScopeId>,
     pub(super) parameter_eval_variable_scopes: Vec<ScopeId>,
     pub(super) has_wrapper_parameters: bool,
+    pub(super) has_values_of_each_run: bool,
 }
 
 #[derive(Copy, Clone)]

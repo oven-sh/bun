@@ -60,6 +60,7 @@ impl<'s> FoldInputs<'s> {
             features_are_unknown: options.features_are_unknown,
             preserves_unused_imports: options.preserves_unused_imports,
             minifies_syntax: options.minifies_syntax,
+            runs_in_place: false,
             is_read_left_out_where_unused: options.is_read_left_out_where_unused,
             has_names_for_brackets: options.minifies_syntax,
             max_string_bytes: options.max_string_bytes,
@@ -70,6 +71,7 @@ impl<'s> FoldInputs<'s> {
 
     pub fn for_program_that_runs_in_place(self) -> FoldInputs<'s> {
         FoldInputs {
+            runs_in_place: true,
             has_names_for_brackets: true,
             names_in_place: self.names_in_place_for_bun_run,
             ..self

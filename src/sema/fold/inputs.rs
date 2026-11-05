@@ -86,6 +86,7 @@ pub struct FoldInputs<'s> {
     pub(super) features_are_unknown: bool,
     pub(super) preserves_unused_imports: bool,
     pub(super) minifies_syntax: bool,
+    pub(super) runs_in_place: bool,
     pub(super) is_read_left_out_where_unused: Option<fn(&[&[u8]]) -> bool>,
     pub(super) has_names_for_brackets: bool,
     pub(super) max_string_bytes: usize,

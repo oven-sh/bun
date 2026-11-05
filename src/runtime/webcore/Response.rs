@@ -876,6 +876,38 @@ impl Response {
         Ok(Response::to_js(RefPtr::new(response), global_this))
     }
 
+    /// `construct_json` on a value and the members of a literal. The value is serialized before the members are taken.
+    fn json_from_parts(
+        global_this: &JSGlobalObject,
+        json_value: JSValue,
+        parts: &InitParts,
+    ) -> JsResult<JSValue> {
+        let response = scopeguard::guard(
+            Response {
+                body: JsCell::new(Body::new(BodyValue::Empty)),
+                ..Default::default()
+            },
+            |r| r.body.get().reset(),
+        );
+        let str = Self::json_text_of(global_this, json_value)?;
+        if !str.is_empty() {
+            debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
+            let value = &response.body.get().value;
+            value.set(BodyValue::WTFStringImpl(str.leak_wtf_impl()));
+            value.with_mut(|v| v.to_blob_if_possible());
+        }
+        response.init.set(Init::from_parts(global_this, parts)?);
+        let headers_ref = response.get_or_create_headers(global_this)?;
+        headers_ref.put_default(
+            HTTPHeaderName::ContentType,
+            &StringView::ascii(bun_http_types::MimeType::JSON.value.as_ref()),
+            global_this,
+        )?;
+        let response = scopeguard::ScopeGuard::into_inner(response);
+        Ok(Response::to_js(RefPtr::new(response), global_this))
+    }
+
+    #[inline(always)]
     fn json_text_of(global_this: &JSGlobalObject, json_value: JSValue) -> JsResult<BunString> {
         // Validate top-level values that are not JSON serializable (Node.js compatibility)
         if json_value.is_undefined()
@@ -1165,6 +1197,26 @@ fn Response__createFromParts(
     };
     bun_jsc::to_js_host_call(global_this, || {
         Response::from_parts(global_this, body, &parts)
+    })
+}
+
+/// `Response.json(value, { status, statusText, headers })` (`literalPartsForm` of the table of built-ins).
+#[unsafe(no_mangle)]
+#[bun_jsc::host_call]
+fn Response__jsonFromParts(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    status: JSValue,
+    status_text: JSValue,
+    headers: JSValue,
+) -> JSValue {
+    let parts = InitParts {
+        status,
+        status_text,
+        headers,
+    };
+    bun_jsc::to_js_host_call(global_this, || {
+        Response::json_from_parts(global_this, value, &parts)
     })
 }
 

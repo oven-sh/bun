@@ -58,7 +58,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     ..self.create_untyped_variable(known::default)
                 }
             }
-            VariableKey::RequiredAnswer(_) | VariableKey::RequireMadeForOwnFile(_) => {
+            VariableKey::RequiredAnswer(_)
+            | VariableKey::RequiresMadeForOwnFile(_)
+            | VariableKey::RequiresMadeForOtherFolders(_) => {
                 let mut declared = DeclaredType::untyped();
                 declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
                 Variable {

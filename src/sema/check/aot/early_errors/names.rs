@@ -12,13 +12,14 @@ impl Checker<'_, '_> {
             let code = match hir.text(node) {
                 known::r#await if is_runtime_module => 1262,
                 known::r#await if is_parameter_of_async_arrow_function(hir, node) => 1359,
+                known::r#await if is_in_arrow_parameters_in(hir, node, is_await_context) => 1359,
                 known::r#yield if hir.yield_context(node) => {
                     match self.operator_as_name_error_class(file, node, Flags::GENERATOR) {
                         DiagnosticClass::EarlyError => 1359,
                         _ => continue,
                     }
                 }
-                known::r#yield if is_in_arrow_parameters_in_generator(hir, node) => 1359,
+                known::r#yield if is_in_arrow_parameters_in(hir, node, File::yield_context) => 1359,
                 _ => continue,
             };
             let name = self.declaration_name_at(file, hir.start(node));
@@ -49,14 +50,22 @@ fn is_parameter_of_async_arrow_function(hir: &File<'_>, name: Node) -> bool {
         && hir.is_parameter_without_parentheses(function, parameter)
 }
 
-fn is_in_arrow_parameters_in_generator(hir: &File<'_>, node: Node) -> bool {
+fn is_await_context(hir: &File<'_>, node: Node) -> bool {
+    hir.await_context(node) == Ok(true)
+}
+
+fn is_in_arrow_parameters_in<'s>(
+    hir: &File<'s>,
+    node: Node,
+    is_context: fn(&File<'s>, Node) -> bool,
+) -> bool {
     let (mut below, mut above) = (node, hir.parent(node));
     while above.is_some() && !hir.kind(above).is_function_like() {
         (below, above) = (above, hir.parent(above));
     }
     hir.kind(above) == Kind::ArrowFunction
         && matches!(hir.data(below), NodeData::Param(_))
-        && (hir.yield_context(above) || is_in_arrow_parameters_in_generator(hir, above))
+        && (is_context(hir, above) || is_in_arrow_parameters_in(hir, above, is_context))
 }
 
 fn is_class_or_import_name(hir: &File<'_>, name: Node) -> bool {

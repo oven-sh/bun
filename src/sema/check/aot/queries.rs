@@ -1,9 +1,9 @@
 use super::answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
-    ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove, ObjectMember,
-    ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics, SignatureShape,
-    WrittenParameter, WrittenType,
+    ListedMember, MemberForm, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove,
+    ObjectMember, ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics,
+    SignatureShape, WrittenParameter, WrittenType,
 };
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
@@ -696,9 +696,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let plain = self
             .c
             .contextual_type(file, expression, ContextFlags::empty());
-        let apparent =
-            self.c
-                .apparent_type_of_contextual_type(file, expression, ContextFlags::empty());
+        let apparent = plain.and_then(|plain| {
+            if is_pushed {
+                self.c
+                    .push_contextual_type(file, expression, Some(plain), true);
+            }
+            let apparent =
+                self.c
+                    .apparent_type_of_contextual_type(file, expression, ContextFlags::empty());
+            if is_pushed {
+                self.c.pop_contextual_type();
+            }
+            apparent
+        });
         if is_pushed {
             self.c.pop_contextual_type();
         }
@@ -1206,6 +1216,33 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .names_stored_in_prototype
             .contains(&name)
             .then_some(false)
+    }
+
+    pub fn find_form_given_above(
+        &mut self,
+        shape: &ClassShape<'_>,
+        name: MemberName,
+    ) -> Option<MemberForm> {
+        let mut current = self.declared_parent(shape.declaration)?;
+        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
+        seen.insert(shape.declaration);
+        let mut found = None;
+        while seen.insert(current) {
+            let Some(above) = self.shape_of(current) else {
+                break;
+            };
+            let is_that_field = |entry: &&ClassMember| {
+                !entry.is_static && entry.kind == ObjectMemberKind::Field && entry.name == name
+            };
+            if let Some(entry) = above.members.iter().find(is_that_field) {
+                found = Some(entry.form);
+            }
+            let Some(next) = self.declared_parent(current) else {
+                break;
+            };
+            current = next;
+        }
+        found
     }
 
     pub fn inherits_accessor(&mut self, shape: &ClassShape<'_>, name: MemberName) -> bool {

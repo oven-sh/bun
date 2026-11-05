@@ -67,7 +67,6 @@ const EXPLAIN_NAMES: &[(&[u8], ExplainSet)] = &[
     (b"statistics", ExplainSet::STATISTICS),
     (b"unknown-code", ExplainSet::ONLY_UNKNOWN_CODE),
     (b"unproven-type", ExplainSet::ONLY_UNPROVEN_TYPE),
-    (b"mutation", ExplainSet::ONLY_MUTATION),
 ];
 
 #[derive(Copy, Clone)]

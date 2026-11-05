@@ -146,16 +146,6 @@ macro_rules! file_lists {
                 file.$field.truncate(lens.$field as usize);
             })*
         }
-
-        /// Returns an empty file that reuses the list allocations of `old`, which loses them.
-        fn recycled_file(old: &mut FileBuilder) -> FileBuilder {
-            let mut file = FileBuilder::default();
-            $(
-                old.$field.clear();
-                std::mem::swap(&mut file.$field, &mut old.$field);
-            )*
-            file
-        }
     };
 }
 
@@ -326,8 +316,9 @@ fn is_an_external_module_indicator(f: &FileBuilder, id: StmtId) -> bool {
     flags.contains(Flags::EXPORT)
 }
 
-/// What a finished parser hands back, besides the file.
+/// What a finished parser hands back.
 struct Harvest<'a> {
+    file: Box<FileBuilder>,
     lx: Lexer<'a>,
     stacks: Stacks,
     declared: Declared,
@@ -357,8 +348,8 @@ pub(crate) fn run<'a>(
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
-    let mut f = scratch.recycled.take().unwrap_or_default();
-    let mut file = recycled_file(&mut f);
+    let mut file = *scratch.recycled.take().unwrap_or_default();
+    file.clear();
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
     let mut declared = std::mem::take(&mut scratch.declared);
@@ -392,6 +383,7 @@ pub(crate) fn run<'a>(
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
 
     let Harvest {
+        file: mut f,
         lx,
         stacks,
         declared,
@@ -401,12 +393,14 @@ pub(crate) fn run<'a>(
         names_await_at_top_level,
     } = match (is_general, options.attach_comments) {
         (true, _) => {
-            Parser::<true, true>::new(lx, file, stacks, declared, options, jsdoc).parse_into(&mut f)
+            Parser::<true, true>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
         }
-        (false, true) => Parser::<false, true>::new(lx, file, stacks, declared, options, jsdoc)
-            .parse_into(&mut f),
-        (false, false) => Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc)
-            .parse_into(&mut f),
+        (false, true) => {
+            Parser::<false, true>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
+        }
+        (false, false) => {
+            Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
+        }
     };
     let (rejection, rejected_at) = (lx.rejection, lx.rejected_at);
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
@@ -546,8 +540,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// Parses the source and stores the result in `file`.
-    fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
+    /// Parses the source.
+    fn parse_source(mut self) -> Harvest<'a> {
         self.source_file();
         self.resolve_top_level_comments();
         self.report_scanner_flagged_errors();
@@ -561,8 +555,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.f.rare_syntax |= rare::LEGACY_OCTAL;
         }
         self.note_odd_exports();
-        *file = self.f;
         Harvest {
+            file: Box::new(self.f),
             lx: self.lx,
             stacks: self.s,
             declared: self.declared,

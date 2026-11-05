@@ -1,6 +1,6 @@
 import * as b from "bun-builtins-table";
 import { methodsOfSubtleCrypto } from "./methods-of-subtle-crypto.ts";
-import { answering, promiseOf } from "./native-code.ts";
+import { answering, constructing, promiseOf } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const objectOrUndefined = b.union(b.object, b.undefined);
@@ -144,7 +144,11 @@ export default b.declarations(
       },
     ],
   }),
-  ["CryptoKey", "URLPattern"].flatMap(path => constructorOnly(path)),
+  constructorOnly("CryptoKey"),
+  // JSURLPattern.cpp: the constructor converts a string or the members of a dictionary, and makes the wrapper of a new URLPattern.
+  constructorOnly("URLPattern", { construct: constructing(b.instance("URLPattern").fresh, b.hostCall) }),
+  // JSURLPatternPrototype: an object below Object.prototype that bears the tag of the class. Of its members the table says nothing.
+  b.static("URLPattern.prototype", b.property(b.instance("URLPattern"))),
   ["Bun.Cookie", "Bun.CookieMap"].flatMap(path => [...constructorOnly(path), ...b.inherits(path, "Object.prototype")]),
 
   // JSCookie.cpp: they make strings of their operands, and `from` reads the members of its options.

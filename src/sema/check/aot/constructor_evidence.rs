@@ -98,6 +98,7 @@ fn find_standing(
     }
 }
 
+#[inline]
 fn is_seen_to_be_constructor(hir: &hir::File<'_>, bound: &Bound<'_>, mut value: ExprId) -> bool {
     loop {
         let Parent::Expr(parent) = bound.parent_of_expr(value) else {
@@ -310,6 +311,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let functions = (0..hir.fns.len() as u32).map(FnId);
         let mut unused = FxHashSet::default();
+        let mut was_unused = vec![false; bound.symbols.len()];
         let mut declaring_this = FxHashSet::default();
         let mut used = Vec::new();
         for function in functions {
@@ -333,6 +335,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 true => used.push(symbol),
                 false => {
                     unused.insert(symbol);
+                    if let Some(was_unused) = was_unused.get_mut(symbol.idx()) {
+                        *was_unused = true;
+                    }
                 }
             }
         }
@@ -347,6 +352,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let expressions = self.c.exprs_by_kind(file);
             for &reference in expressions.of(ExprTag::Ident) {
                 if let Binding::Symbol(symbol) = bound.binding(reference)
+                    && was_unused.get(symbol.idx()).is_none_or(|&it| it)
                     && unused.contains(&symbol)
                     && !bound.is_in_type_query(reference)
                     && self.stands_where_a_constructor_stands(

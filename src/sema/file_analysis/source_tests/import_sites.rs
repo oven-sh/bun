@@ -1885,6 +1885,21 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         &["../a/*"],
     ),
     (
+        "export {}; await import(import.meta.resolve('./a/') + x);",
+        ResolvedForm::Url,
+        &["./a/*"],
+    ),
+    (
+        "export {}; await import(import.meta.resolve('../a/') + x);",
+        ResolvedForm::Url,
+        &["../a/*"],
+    ),
+    (
+        "export {}; await import(import.meta.resolve('./a.js') + x);",
+        ResolvedForm::Url,
+        &["./a.js*"],
+    ),
+    (
         "require(require.resolve(`./a/${x}.js`).trim());",
         ResolvedForm::Path,
         &["./a/*.js"],
@@ -1910,7 +1925,7 @@ const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "export {}; await import(new URL('./a.js?b', import.meta.url));",
     "export {}; await import(new URL('https://a/' + x, import.meta.url));",
     "export {}; await import(new URL('./a.js', import.meta.url).search);",
-    "export {}; await import(import.meta.resolve('./a.js') + x);",
+    "export {}; await import(import.meta.resolve('a') + x);",
     "export {}; class URL {} await import(new URL('./a.js', import.meta.url));",
     "export {}; function URL() {} await import(new URL('./a.js', import.meta.url));",
     "export {}; async function load(URL) { await import(new URL('./a.js', import.meta.url)); }",

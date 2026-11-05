@@ -50,6 +50,7 @@ pub struct ModuleGraph {
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
     pub(super) other_modules: Vec<ModuleRef>,
     pub(super) external_kinds: Vec<((FileId, Atom), ExternalKind)>,
+    pub(super) runs_code_out_of_sight: bool,
     pub(super) synthetic_exports: Vec<SyntheticExport>,
     pub(super) errors: Vec<ModuleFailure>,
     pub(super) failures: Vec<ModuleFailure>,
@@ -191,6 +192,10 @@ impl ModuleGraph {
 
     pub fn importer_of_external(&self, importer: FileId, _specifier: Atom) -> FileId {
         importer
+    }
+
+    pub fn runs_code_out_of_sight(&self) -> bool {
+        self.runs_code_out_of_sight
     }
 
     pub fn importers_of_uncompiled_code(&self) -> Vec<FileId> {

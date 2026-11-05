@@ -383,6 +383,55 @@ fn every_program_holds_the_code_behind_the_language() {
 }
 
 #[test]
+fn class_of_the_language_whose_methods_are_native_needs_nothing() {
+    for id in [
+        BuiltinId::RangeError,
+        BuiltinId::Date,
+        BuiltinId::WeakMap,
+        BuiltinId::Symbol,
+        BuiltinId::FunctionPrototypeBind,
+    ] {
+        let found = uses_of(&[id], &[]);
+        assert_eq!(found, RuntimeUses::default(), "{}", table::text_of(id));
+    }
+    let next = table::entry(BuiltinId::ArrayIteratorPrototypeNext).implemented_by();
+    let walked = uses_of(&[BuiltinId::ArrayPrototypeValues], &[]);
+    assert!(!next.is_empty());
+    assert!(next.iter().all(|it| walked.functions.contains(it)));
+}
+
+#[test]
+fn class_that_hands_a_list_to_a_function_of_the_program_needs_what_steps_a_list() {
+    let next = table::entry(BuiltinId::ArrayIteratorPrototypeNext).implemented_by();
+    let found = uses_of(&[BuiltinId::Error], &[]);
+    let stored = uses_of(&[BuiltinId::ErrorPrepareStackTrace], &[]);
+    assert!(!next.is_empty());
+    assert_eq!(&found.functions[..], next);
+    assert!(includes(&found, &stored));
+    assert!(found.modules.is_empty() && found.exports_read.is_empty());
+}
+
+#[test]
+fn compiler_helper_that_makes_no_promise_needs_nothing_that_the_host_calls_for_one() {
+    let called_for_promise = table::entry(BuiltinId::Promise).calls();
+    assert!(!called_for_promise.is_empty());
+    let needs_it = |helper: BuiltinId| {
+        let found = uses_of(&[helper], &[]);
+        let mut called = called_for_promise.iter();
+        called.any(|function| found.functions.contains(function))
+    };
+    for helper in [
+        BuiltinId::CompilerHelpersOpenIterator,
+        BuiltinId::CompilerHelpersStepIterator,
+        BuiltinId::CompilerHelpersCloseIterator,
+        BuiltinId::CompilerHelpersDecorateClass,
+    ] {
+        assert!(!needs_it(helper), "{}", table::text_of(helper));
+    }
+    assert!(needs_it(BuiltinId::CompilerHelpersImportRejectedByLoader));
+}
+
+#[test]
 fn file_that_comes_by_a_symbol_of_the_host_asks_for_no_module() {
     for id in [
         BuiltinId::SymbolFor,

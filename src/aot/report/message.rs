@@ -22,8 +22,7 @@ pub(super) fn has_line_label(kind: ExplainSet) -> bool {
             | ExplainSet::ALLOCATIONS
             | ExplainSet::FORMS
             | ExplainSet::ONLY_UNKNOWN_CODE
-            | ExplainSet::ONLY_UNPROVEN_TYPE
-            | ExplainSet::ONLY_MUTATION,
+            | ExplainSet::ONLY_UNPROVEN_TYPE,
     )
 }
 

@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { canTrim } from "../../bundler/compile-trim-features";
 import { built, slot, spawned } from "../harness/commands";
 import "../harness/real-executables";
 import { describe, test } from "../supported";
@@ -366,6 +367,7 @@ if (process.argv[2] === "first") {
       });
       const folder = String(dir);
       const seen: Record<string, unknown> = {};
+      const asBun: Record<string, string[]> = {};
       for (const [name, more] of [
         ["whole", {}],
         ["alone", { BUN_AOT_WRITES_PROGRAM_ALONE: "1" }],
@@ -378,9 +380,14 @@ if (process.argv[2] === "first") {
         built(build);
         expect(build.stdout + build.stderr).toMatch(/^ +build id  [0-9a-f]{32}$/m);
         const ran = await spawned([join(folder, name), "first", "absent"], folder, { ...env, ANOTHER_BUN: bunExe() });
-        seen[name] = { stdout: ran.stdout.split("\n").sort(), stderr: ran.stderr, exitCode: ran.exitCode };
+        const isAsBun = (line: string) => line.startsWith("as Bun:");
+        asBun[name] = ran.stdout.split("\n").filter(isAsBun);
+        const lines = ran.stdout.split("\n").filter(line => !isAsBun(line));
+        seen[name] = { stdout: lines.sort(), stderr: ran.stderr, exitCode: ran.exitCode };
       }
       expect(seen.alone).toEqual(seen.whole);
+      // A whole Bun starts the program that is written alone, and BUN_BE_BUN=1 makes a Bun of it. A Bun that trims leaves the command line out of an executable.
+      expect(asBun).toEqual({ whole: [canTrim ? "as Bun: " : "as Bun: 2"], alone: ["as Bun: 2"] });
       expect(seen.whole).toMatchObject({ stderr: "", exitCode: 0 });
       const size = (name: string) => readFileSync(join(folder, name)).length;
       expect(size("alone") * 10).toBeLessThan(size("whole"));

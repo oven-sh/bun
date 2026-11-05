@@ -1,11 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// STATISTIC: SourceFilesChecked = 4
+// STATISTIC: SourceFilesChecked = 6
 // STATISTIC: SourceFilesData = 5
 
 // FILE: main.ts
 // The import of an embedded file is read where it is written at the constructor, however it is spelled: a.ts, b.ts and c.ts are compiled.
-// What comes there another way is not followed: d.ts and e.ts stay plain copies.
+// What comes there another way is not followed. The build can't read those two starts, so it compiles every embedded file of code: d.ts and e.ts too.
 import * as whole from "./a.ts" with { type: "file" };
 import { default as named } from "./b.ts" with { type: "file" };
 import path from "./c.ts" with { type: "file" };

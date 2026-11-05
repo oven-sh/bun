@@ -568,6 +568,7 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
+    #[inline(never)]
     fn has_operand_folded_by_build_alone_slow(&self, e: ExprId) -> bool {
         let hir = self.hir;
         let by_build_alone = |operand: ExprId| !self.is_folded_by_bun_run(operand);

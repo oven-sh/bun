@@ -2197,7 +2197,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         let lookup = &mut |_: SymbolTable, table_entry: Option<Sym>, meaning: SymFlags| {
             table_entry.filter(|&sym| self.means(sym, meaning))
         };
-        self.resolve_with(file, scope, name, meaning, reports_errors, lookup)
+        self.resolve_in_tables(file, scope, name, meaning, reports_errors, false, lookup)
     }
 
     /// `module`, or the target of its `export =`.
@@ -2600,16 +2600,18 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             symbols.get_symbol(table_entry, meaning)
         };
         if qualifiers.is_empty() {
-            let found = self.resolve_with(file, scope, last, meaning, reports_errors, lookup);
+            let found =
+                self.resolve_in_tables(file, scope, last, meaning, reports_errors, false, lookup);
             return found.unwrap_or(None);
         }
         let namespace = SymFlags::NAMESPACE;
-        let first = self.resolve_with(
+        let first = self.resolve_in_tables(
             file,
             scope,
             qualifiers[0],
             namespace,
             reports_errors,
+            false,
             lookup,
         );
         let first = match first.unwrap_or(None) {
@@ -3218,6 +3220,21 @@ impl<'s> Resolve<'s> for Linked<'_, 's> {
             Some(&links) => links,
             None => AliasSymbolLinks::default(),
         }
+    }
+
+    fn resolve_alias_as(&self, mut sym: Sym, meaning: SymFlags) -> Option<Sym> {
+        for _ in 0..32 {
+            let flags = self.flags(sym);
+            if flags.intersects(meaning) || !flags.contains(SymFlags::ALIAS) {
+                return Some(sym);
+            }
+            let next = self.alias_links(sym).alias_target?;
+            if next == sym {
+                return None;
+            }
+            sym = next;
+        }
+        None
     }
 
     fn symbol_flags_of_alias(&self, sym: Sym) -> SymFlags {
@@ -5463,10 +5480,13 @@ fn rename_private_names_with(
     find_class: impl Fn(ExprId, ClassId) -> Option<ClassId>,
 ) {
     let file = crate::util::spread_hash(path);
-    let renamed = |class: u32, name: Atom| {
-        let mut spelled = [&b"\xFE"[..], atoms.bytes(name)].concat();
-        let _ = write!(spelled, "@{file:x}.{class}");
-        atoms.intern(&spelled)
+    let mut renamed_names: FxHashMap<(u32, Atom), Atom> = FxHashMap::default();
+    let mut renamed = |class: u32, name: Atom| {
+        *renamed_names.entry((class, name)).or_insert_with(|| {
+            let mut spelled = [&b"\xFE"[..], atoms.bytes(name)].concat();
+            let _ = write!(spelled, "@{file:x}.{class}");
+            atoms.intern(&spelled)
+        })
     };
     for class in 0..hir.classes.len() {
         for member in hir.classes[class].members.iter() {
@@ -8152,6 +8172,7 @@ impl<'s> Files<'s> {
     }
 
     /// `fileIndexMap`: the index of `file` among the files of the program, which `compareNodes` uses.
+    #[inline]
     pub fn rank_of_file(&self, file: FileId) -> u32 {
         self.ranks[file.idx()]
     }
@@ -9257,6 +9278,16 @@ impl<'s> Files<'s> {
         self.canonical(Sym { file, id })
     }
 
+    #[inline]
+    fn sym_in(&self, bound: &Bound<'s>, file: FileId, id: SymbolId) -> Sym {
+        let sym = Sym { file, id };
+        if bound.symbol(id).flags.contains(SymFlags::MERGED) {
+            cold_path();
+            return self.whole_of(sym);
+        }
+        sym
+    }
+
     /// `getMergedSymbol`, applied repeatedly until it reaches a fixed point. A clone can be cloned
     /// again, and tsgo reaches the last one by calling it at each layer (`resolveEntityName`,
     /// `getSymbolOfDeclaration`, `getTypeFromClassOrInterfaceReference`).
@@ -9332,11 +9363,6 @@ impl<'s> Files<'s> {
 
     /// `symbol.Exports[name]`, as stored in the table.
     pub fn export_in_table(&self, sym: Sym, name: Atom) -> Option<Sym> {
-        self.find_export_in_table(sym, name)
-    }
-
-    #[inline]
-    fn find_export_in_table(&self, sym: Sym, name: Atom) -> Option<Sym> {
         let bound = self.bound(sym.file);
         let symbol = bound.symbol(sym.id);
         if symbol.flags.contains(SymFlags::MERGED) {
@@ -9355,7 +9381,16 @@ impl<'s> Files<'s> {
     }
 
     pub fn export(&self, sym: Sym, name: Atom) -> Option<Sym> {
-        let found = self.find_export_in_table(sym, name)?;
+        let bound = self.bound(sym.file);
+        let symbol = bound.symbol(sym.id);
+        if !symbol.flags.contains(SymFlags::MERGED) {
+            let (file, id) = (sym.file, bound.lookup(symbol.exports, name)?);
+            return Some(match self.is_merged {
+                true => self.sym_in(bound, file, id),
+                false => Sym { file, id },
+            });
+        }
+        let found = self.export_in_table(sym, name)?;
         // `getExportsOfModule` returns the symbols as stored in the table, and `mergeSymbol` clones
         // one that isn't transient.
         Some(if self.is_merged {
@@ -9564,6 +9599,7 @@ impl<'s> Files<'s> {
     }
 
     /// The type parameter list of a symbol with exactly one declaration.
+    #[inline]
     pub(crate) fn only_type_param_list(&self, sym: Sym) -> Option<(FileId, Span<TypeParamId>)> {
         let module = self.module(sym.file);
         let symbol = module.bound.symbol(sym.id);
@@ -9590,18 +9626,14 @@ impl<'s> Files<'s> {
         let is_interface = flags.contains(SymFlags::INTERFACE);
         let is_alias = flags.contains(SymFlags::TYPE_ALIAS);
         let mut lists = SmallVec::new();
-        for &part in self.parts(sym).iter() {
-            let module = self.module(part.file);
-            let hir = &module.hir;
-            for &decl in module.bound.symbol(part.id).decls {
-                let type_params = match decl {
-                    Decl::Class(c) if is_class => hir[c].type_params,
-                    Decl::Interface(i) if is_interface => hir[i].type_params,
-                    Decl::Alias(a) if is_alias => hir[a].type_params,
-                    _ => continue,
-                };
-                lists.push((part.file, type_params));
-            }
+        for &(file, decl) in self.decls_of(sym).iter() {
+            let type_params = match decl {
+                Decl::Class(c) if is_class => self.hir(file)[c].type_params,
+                Decl::Interface(i) if is_interface => self.hir(file)[i].type_params,
+                Decl::Alias(a) if is_alias => self.hir(file)[a].type_params,
+                _ => continue,
+            };
+            lists.push((file, type_params));
         }
         lists
     }
@@ -9754,41 +9786,76 @@ impl<'s> Files<'s> {
     pub fn resolve_with(
         &self,
         file: FileId,
-        mut scope: ScopeId,
+        scope: ScopeId,
         name: Atom,
         meaning: SymFlags,
         reports_errors: bool,
         lookup: &mut dyn FnMut(SymbolTable, Option<Sym>, SymFlags) -> Option<Sym>,
     ) -> Result<Option<Sym>, (u32, MemberId)> {
+        self.resolve_in_tables(file, scope, name, meaning, reports_errors, true, lookup)
+    }
+
+    fn resolve_in_tables(
+        &self,
+        file: FileId,
+        mut scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+        reports_errors: bool,
+        looks_up_missing_names: bool,
+        lookup: &mut dyn FnMut(SymbolTable, Option<Sym>, SymFlags) -> Option<Sym>,
+    ) -> Result<Option<Sym>, (u32, MemberId)> {
         let bound = self.bound(file);
+        let sym_of = |id: SymbolId| self.sym_in(bound, file, id);
+        let is_looked_up =
+            |table_entry: Option<Sym>| table_entry.is_some() || looks_up_missing_names;
         // `lastLocation`: the kind of the scope the search has just left.
         let mut from = ScopeKind::Block;
         while scope.is_some() {
+            let s = &bound.scopes[scope.idx()];
             if meaning.contains(SymFlags::TYPE_PARAMETER)
+                && matches!(
+                    s.kind,
+                    ScopeKind::StaticMember | ScopeKind::ComputedName | ScopeKind::BaseExpression
+                )
                 && let Some((code, container)) = bound.type_parameter_out_of_reach(scope)
             {
                 let locals = bound.scopes[container.idx()].locals;
-                let table_entry = bound.lookup(locals, name).map(|id| self.sym(file, id));
+                let table_entry = bound.lookup(locals, name).map(sym_of);
                 let table = SymbolTable::Locals(file, container);
-                if lookup(table, table_entry, SymFlags::TYPE_PARAMETER).is_some() {
+                if is_looked_up(table_entry)
+                    && lookup(table, table_entry, SymFlags::TYPE_PARAMETER).is_some()
+                {
                     return Err((code, MemberId::NONE));
                 }
             }
-            let s = &bound.scopes[scope.idx()];
             if reports_errors
+                && matches!(
+                    s.kind,
+                    ScopeKind::PropertyDeclaration(..) | ScopeKind::PropertyType(..)
+                )
                 && let Some(invalid) = bound.property_with_invalid_initializer(scope, name, meaning)
             {
                 // Nil, regardless of what is found. The most recently recorded property, the
                 // outermost, is the one the error refers to.
-                return Err(self
-                    .resolve_with(file, s.parent, name, meaning, true, lookup)
-                    .err()
-                    .unwrap_or(invalid));
+                let outer = self.resolve_in_tables(
+                    file,
+                    s.parent,
+                    name,
+                    meaning,
+                    true,
+                    looks_up_missing_names,
+                    lookup,
+                );
+                return Err(outer.err().unwrap_or(invalid));
             }
             // The `infer`s of a conditional type are visible from its true branch, not from the
             // `extends` clause that declares them.
-            if !matches!(from, ScopeKind::Extends) {
-                let table_entry = bound.lookup(s.locals, name).map(|id| self.sym(file, id));
+            let table_entry = match from {
+                ScopeKind::Extends => None,
+                _ => bound.lookup(s.locals, name).map(sym_of),
+            };
+            if !matches!(from, ScopeKind::Extends) && is_looked_up(table_entry) {
                 let is_export_value_only =
                     table_entry.is_some_and(|sym| self.rejected_exports.contains(&sym));
                 // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface shares
@@ -9816,17 +9883,32 @@ impl<'s> Files<'s> {
                     ScopeKind::Enum(_) => meaning & SymFlags::ENUM_MEMBER,
                     _ => meaning & SymFlags::MODULE_MEMBER,
                 };
-                let container = self.sym(file, s.symbol);
+                let of_scope = bound.symbol(s.symbol);
+                let is_whole = !of_scope.flags.contains(SymFlags::MERGED);
+                let container = match is_whole {
+                    true => Sym { file, id: s.symbol },
+                    false => self.whole_of(Sym { file, id: s.symbol }),
+                };
+                let export = |name: Atom| {
+                    if !is_whole {
+                        return self.export(container, name);
+                    }
+                    let id = bound.lookup(of_scope.exports, name)?;
+                    Some(match self.is_merged {
+                        true => sym_of(id),
+                        false => Sym { file, id },
+                    })
+                };
                 let is_external_module = || bound.is_external_module(self.hir(file), scope);
                 // "First see if the module has an export default and if the local name of that export default matches."
-                if let Some(default) = self.export(container, known::default)
+                if let Some(default) = export(known::default)
                     && self.flags(default).intersects(meaning)
                     && self.name_of_local_symbol_for_export_default(default) == Some(name)
                     && is_external_module()
                 {
                     return Ok(Some(default));
                 }
-                let table_entry = self.export(container, name);
+                let table_entry = export(name);
                 // There, an entry that only an export specifier created isn't in scope. That is
                 // decided before the alias is resolved, because its target may be the very name
                 // being resolved.
@@ -9834,8 +9916,10 @@ impl<'s> Files<'s> {
                     .is_some_and(|sym| self.flags(sym).contains(SymFlags::EXPORT_ONLY))
                     && is_external_module();
                 // A symbol found in the exports of a CommonJS module is only in scope if it is a type.
-                let is_commonjs = s.kind == ScopeKind::File && bound.commonjs_indicator.is_some();
+                let is_commonjs =
+                    matches!(s.kind, ScopeKind::File) && bound.commonjs_indicator.is_some();
                 if !is_purely_an_export_specifier
+                    && is_looked_up(table_entry)
                     && let Some(sym) = lookup(SymbolTable::Exports(container), table_entry, visible)
                     && !(is_commonjs && !self.flags(sym).intersects(SymFlags::TYPE))
                 {
@@ -9847,8 +9931,10 @@ impl<'s> Files<'s> {
             if let ScopeKind::FunctionName(f) = s.kind {
                 let function = bound.fns[f.idx()].scope;
                 let locals = bound.scopes[function.idx()].locals;
-                let table_entry = bound.lookup(locals, name).map(|id| self.sym(file, id));
-                if let Some(sym) = lookup(SymbolTable::Locals(file, function), table_entry, meaning)
+                let table_entry = bound.lookup(locals, name).map(sym_of);
+                if is_looked_up(table_entry)
+                    && let Some(sym) =
+                        lookup(SymbolTable::Locals(file, function), table_entry, meaning)
                 {
                     let flags = self.flags(sym);
                     let is_function_scoped = (meaning & flags).intersects(SymFlags::VARIABLE)
@@ -9862,6 +9948,9 @@ impl<'s> Files<'s> {
             scope = s.parent;
         }
         let table_entry = self.globals.get(name).copied();
+        if !is_looked_up(table_entry) {
+            return Ok(None);
+        }
         Ok(lookup(SymbolTable::Globals, table_entry, meaning))
     }
 
@@ -10758,6 +10847,7 @@ impl<'s> Files<'s> {
     }
 
     /// `resolveEntityName`, `dontResolveAlias`. `reports_errors`: `!ignoreErrors`.
+    #[inline]
     pub fn resolve_entity_with(
         &self,
         file: FileId,

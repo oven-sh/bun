@@ -168,6 +168,7 @@ pub(super) struct Plan {
     runs_again: Vec<bool>,
     has_es_module_that_runs_again: Vec<bool>,
     replaced_variables: Vec<Sym>,
+    makers_of_imported_requires: Vec<FileId>,
     erased_statements: Vec<(FileId, StmtId)>,
     pub named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
     pub variables: FxHashMap<(ModuleRef, Atom), SyntheticExportId>,
@@ -218,6 +219,7 @@ impl Plan {
             runs_again: vec![false; order.numbers.len()],
             has_es_module_that_runs_again: vec![false; order.numbers.len()],
             replaced_variables: Vec::new(),
+            makers_of_imported_requires: Vec::new(),
             order,
             erased_statements,
             named_members: FxHashMap::default(),
@@ -347,6 +349,12 @@ impl Plan {
         variables.sort_unstable();
         variables.dedup();
         self.replaced_variables = variables;
+    }
+
+    pub(super) fn set_makers_of_imported_requires(&mut self, mut makers: Vec<FileId>) {
+        makers.sort_unstable();
+        makers.dedup();
+        self.makers_of_imported_requires = makers;
     }
 
     pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
@@ -805,6 +813,11 @@ impl ModuleGraph {
     pub fn is_made_by_mocks_alone(&self, module: ModuleRef) -> bool {
         let names = &self.plan.names_without_code_that_mocks_give;
         matches!(module, ModuleRef::External { specifier, type_attribute: None, .. } if names.contains(&specifier))
+    }
+
+    pub fn is_require_made_by_file_imported(&self, file: FileId) -> bool {
+        let makers = &self.plan.makers_of_imported_requires;
+        makers.binary_search(&file).is_ok()
     }
 
     pub fn holds_replaceable_variable(&self, file: FileId) -> bool {

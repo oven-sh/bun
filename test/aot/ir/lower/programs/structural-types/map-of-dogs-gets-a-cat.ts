@@ -166,14 +166,15 @@ attempt("a map of arrays of dogs", () => {
 // CHECK-NEXT: b3():
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v13 = PropGet v11 key="legs"
-// CHECK-NEXT: v14 = Add v7, v13
-// CHECK-NEXT: v15 = Convert v14 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v15)
+// CHECK-NEXT: v13 = Convert v11 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
+// CHECK-NEXT: v14 = PropGet v13 key="legs"
+// CHECK-NEXT: v15 = Add v7, v14
+// CHECK-NEXT: v16 = Convert v15 declared={type=number}
+// CHECK-NEXT: Jump -> next b1(v16)
 // CHECK-NEXT: b5() role=IterationCleanup subject=v6:
-// CHECK-NEXT: v16 = CatchException
+// CHECK-NEXT: v17 = CatchException
 // CHECK-NEXT: IteratorClose v6 completion=Throw
-// CHECK-NEXT: Rethrow v16
+// CHECK-NEXT: Rethrow v17
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="totalByForEach"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, undefined|null|[[L_1]]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {

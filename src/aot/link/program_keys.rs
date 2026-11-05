@@ -370,11 +370,12 @@ impl OrderedKey for ProgramVariableKey {
             VariableKey::ModulePath { file, variable } => (6, file.0, variable as u32),
             VariableKey::PrivateState { state, .. } => (7, state.file.0, state.id.0),
             VariableKey::RequiredAnswer(it) => (8, it.file.0, it.id.0),
-            VariableKey::RequireMadeForOwnFile(it) => (9, it.file.0, it.id.0),
             VariableKey::MockOf(file) => (10, file.0, 0),
             VariableKey::InstantiationState(file) => (11, file.0, 0),
             VariableKey::EnvironmentMadeAhead(file) => (12, file.0, 0),
             VariableKey::MockOfRuntimeModule(_) => (13, 0, 0),
+            VariableKey::RequiresMadeForOwnFile(file) => (14, file.0, 0),
+            VariableKey::RequiresMadeForOtherFolders(file) => (15, file.0, 0),
         };
         join_rank(declared.project, variant, [first, second, 0])
     }

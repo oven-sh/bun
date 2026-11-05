@@ -81,7 +81,7 @@ const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
     throws: true,
     runsOnlyOperandCode: true,
     runsUnseenCode: false,
-    uses: { value: uses },
+    uses: { value: [...uses, b.runs("PrototypeChain")] },
     implementation: b.compiled("DisposableStackPrototype", name),
   }) satisfies b.FunctionField;
 
@@ -169,21 +169,6 @@ export default b.declarations(
           { value: "Realm", cppType: "JSC::JSGlobalObject*" },
           { value: "Value", cppType: "JSC::EncodedJSValue" },
         ],
-      },
-    },
-    // The list that Object.entries(object) makes, out of what ownEntriesFlat(object) has listed, where something asks for the list itself after all.
-    pairsOfFlatEntries: {
-      args: { entries: b.instance("Array") },
-      returns: b.instance("Array").holding({ element: b.layoutOf("EntriesPair") }).fresh.dense,
-      capability: "heap",
-      uses: { entries: [b.readsContents(), b.contentsStoredIn(b.nativeMemory)] },
-      implementation: b.hostCall,
-      directEntry: {
-        symbol: "AOT__pairsOfFlatEntries",
-        declaration:
-          'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__pairsOfFlatEntries(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
-        headers: [],
-        parameters: [realm, value],
       },
     },
     // Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood: an error comes from where it came from.

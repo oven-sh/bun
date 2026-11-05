@@ -35,3 +35,99 @@ packed | project.vi.mock.spy.hoisted | import() | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.spy.hoisted | import() | table.n: SILENT | 2 | at 3 4
 packed | project.vi.mock.spy.hoisted | require() | counter: SILENT | 1 | at 3 4
 packed | project.vi.mock.spy.hoisted | require() | table.n: SILENT | 2 | at 3 4
+project.vi.doMock.factory.test.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
+project.vi.doMock.factory.test.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
+project.vi.mock.factory.hoisted.isolate | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.factory.hoisted.isolate | after namespace | table.n: SILENT | 2 | at 3 4
+project.vi.mock.factory.hoisted.isolate | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.factory.hoisted.isolate | after | table.n: SILENT | 2 | at 3 4
+project.vi.mock.factory.hoisted.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
+project.vi.mock.factory.hoisted.isolate | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.factory.hoisted.isolate | import() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.factory.hoisted.isolate | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.factory.hoisted.isolate | require() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.factory.hoisted.one-realm | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.factory.hoisted.one-realm | after namespace | table.n: SILENT | 2 | at 3 4
+project.vi.mock.factory.hoisted.one-realm | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.factory.hoisted.one-realm | after | table.n: SILENT | 2 | at 3 4
+project.vi.mock.factory.hoisted.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
+project.vi.mock.factory.hoisted.one-realm | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.factory.hoisted.one-realm | import() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.factory.hoisted.one-realm | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.factory.hoisted.one-realm | require() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.none.hoisted.isolate | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.none.hoisted.isolate | after namespace | table.n: SILENT | 2 | at 3 4
+project.vi.mock.none.hoisted.isolate | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.none.hoisted.isolate | after | table.n: SILENT | 2 | at 3 4
+project.vi.mock.none.hoisted.isolate | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.none.hoisted.isolate | import() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.none.hoisted.isolate | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.none.hoisted.isolate | require() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.none.hoisted.one-realm | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.none.hoisted.one-realm | after namespace | table.n: SILENT | 2 | at 3 4
+project.vi.mock.none.hoisted.one-realm | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.none.hoisted.one-realm | after | table.n: SILENT | 2 | at 3 4
+project.vi.mock.none.hoisted.one-realm | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.none.hoisted.one-realm | import() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.none.hoisted.one-realm | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.none.hoisted.one-realm | require() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.original.hoisted.isolate | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.original.hoisted.isolate | after namespace | table.n: SILENT | 2 | at 3 4
+project.vi.mock.original.hoisted.isolate | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.original.hoisted.isolate | after | table.n: SILENT | 2 | at 3 4
+project.vi.mock.original.hoisted.isolate | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.original.hoisted.isolate | import() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.original.hoisted.isolate | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.original.hoisted.isolate | require() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.original.hoisted.one-realm | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.original.hoisted.one-realm | after namespace | table.n: SILENT | 2 | at 3 4
+project.vi.mock.original.hoisted.one-realm | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.original.hoisted.one-realm | after | table.n: SILENT | 2 | at 3 4
+project.vi.mock.original.hoisted.one-realm | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.original.hoisted.one-realm | import() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.original.hoisted.one-realm | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.original.hoisted.one-realm | require() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.spread.hoisted.isolate | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.spread.hoisted.isolate | after namespace | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.isolate | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.spread.hoisted.isolate | after | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.isolate | captured | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.isolate | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.spread.hoisted.isolate | import() | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.isolate | namespace | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.isolate | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.spread.hoisted.isolate | require() | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.one-realm | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.spread.hoisted.one-realm | after namespace | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.one-realm | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.spread.hoisted.one-realm | after | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.one-realm | captured | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.one-realm | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.spread.hoisted.one-realm | import() | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.one-realm | namespace | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spread.hoisted.one-realm | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.spread.hoisted.one-realm | require() | table.n: SILENT | 2 | at 2 3 4
+project.vi.mock.spy.hoisted.isolate | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.spy.hoisted.isolate | after namespace | table.n: SILENT | 2 | at 3 4
+project.vi.mock.spy.hoisted.isolate | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.spy.hoisted.isolate | after | table.n: SILENT | 2 | at 3 4
+project.vi.mock.spy.hoisted.isolate | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.spy.hoisted.isolate | import() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.spy.hoisted.isolate | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.spy.hoisted.isolate | require() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.spy.hoisted.one-realm | after namespace | counter: SILENT | 1 | at 3 4
+project.vi.mock.spy.hoisted.one-realm | after namespace | table.n: SILENT | 2 | at 3 4
+project.vi.mock.spy.hoisted.one-realm | after | counter: SILENT | 1 | at 3 4
+project.vi.mock.spy.hoisted.one-realm | after | table.n: SILENT | 2 | at 3 4
+project.vi.mock.spy.hoisted.one-realm | import() | counter: SILENT | 1 | at 3 4
+project.vi.mock.spy.hoisted.one-realm | import() | table.n: SILENT | 2 | at 3 4
+project.vi.mock.spy.hoisted.one-realm | require() | counter: SILENT | 1 | at 3 4
+project.vi.mock.spy.hoisted.one-realm | require() | table.n: SILENT | 2 | at 3 4
+typed-package.vi.doMock.factory.test.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
+typed-package.vi.doMock.factory.test.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
+typed-package.vi.mock.factory.hoisted.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
+typed-package.vi.mock.factory.hoisted.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
+untyped-package.vi.doMock.factory.test.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
+untyped-package.vi.doMock.factory.test.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
+untyped-package.vi.mock.factory.hoisted.isolate | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
+untyped-package.vi.mock.factory.hoisted.one-realm | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4

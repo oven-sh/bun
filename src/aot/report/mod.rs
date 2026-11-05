@@ -51,9 +51,8 @@ pub struct ReportInput<'a> {
     pub decision: Option<&'a Decision>,
 }
 
-pub const CAUSE_FAMILIES: ExplainSet = ExplainSet::ONLY_UNKNOWN_CODE
-    .union(ExplainSet::ONLY_UNPROVEN_TYPE)
-    .union(ExplainSet::ONLY_MUTATION);
+pub const CAUSE_FAMILIES: ExplainSet =
+    ExplainSet::ONLY_UNKNOWN_CODE.union(ExplainSet::ONLY_UNPROVEN_TYPE);
 
 #[optimize(size)]
 pub fn collect_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<ReportEntry> {
@@ -126,11 +125,11 @@ mod tests {
         value: ABSENT_WORD,
         location: PLACE,
     };
-    const READ_OF_DELETED_FIELD: &[AccessRecord] = &[AccessRecord {
+    const READ_OUT_OF_UNTYPED_COLLECTION: &[AccessRecord] = &[AccessRecord {
         location: PLACE,
         kind: AccessKind::Read,
         level: KnowledgeLevel::Unknown,
-        cause: UnprovenCause::FieldDeleted,
+        cause: UnprovenCause::UnprovenContents,
         layout: ABSENT_WORD,
         copies: 1,
         witness: WITNESS,
@@ -144,7 +143,7 @@ mod tests {
         function: ABSENT_WORD,
         failure: TypeTestFailure::Leaves,
         copies: 1,
-        cause: UnprovenCause::FieldDeleted,
+        cause: UnprovenCause::UnprovenContents,
         ill_typed_cause: IllTypedCause::None,
         layout: ABSENT_WORD,
         witness: WITNESS,
@@ -152,7 +151,7 @@ mod tests {
 
     fn collected_kinds(kinds: ExplainSet) -> Vec<ExplainSet> {
         let fixture = ReportFixture::new(ResultRecords {
-            accesses: READ_OF_DELETED_FIELD,
+            accesses: READ_OUT_OF_UNTYPED_COLLECTION,
             type_tests: GUARD,
             ..ResultRecords::default()
         });
@@ -182,14 +181,17 @@ mod tests {
     #[test]
     fn families_alone_list_their_causes() {
         assert_eq!(
-            collected_kinds(ExplainSet::ONLY_MUTATION),
-            [ExplainSet::ONLY_MUTATION]
+            collected_kinds(ExplainSet::ONLY_UNPROVEN_TYPE),
+            [ExplainSet::ONLY_UNPROVEN_TYPE]
         );
-        assert_eq!(collected_kinds(CAUSE_FAMILIES), [ExplainSet::ONLY_MUTATION]);
+        assert_eq!(
+            collected_kinds(CAUSE_FAMILIES),
+            [ExplainSet::ONLY_UNPROVEN_TYPE]
+        );
         assert!(collected_kinds(ExplainSet::ONLY_UNKNOWN_CODE).is_empty());
         assert_eq!(
-            collected_kinds(ExplainSet::ONLY_MUTATION | ExplainSet::FORMS),
-            [ExplainSet::ONLY_MUTATION, ExplainSet::FORMS]
+            collected_kinds(ExplainSet::ONLY_UNPROVEN_TYPE | ExplainSet::FORMS),
+            [ExplainSet::ONLY_UNPROVEN_TYPE, ExplainSet::FORMS]
         );
     }
 
@@ -197,7 +199,7 @@ mod tests {
     fn families_beside_text_or_json_only_filter_it() {
         for report in [ExplainSet::TEXT, ExplainSet::JSON] {
             assert_eq!(
-                collected_kinds(report | ExplainSet::ONLY_MUTATION),
+                collected_kinds(report | ExplainSet::ONLY_UNPROVEN_TYPE),
                 [report]
             );
         }

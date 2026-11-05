@@ -275,7 +275,8 @@ pub(in crate::lower) fn lower_member(
     if let Some(value) = lowering.lower_static_member(access) {
         return value;
     }
-    let (base, name) = lower_member_operands(lowering, access, exit);
+    let base = lowering.lower_member_base(access, object, exit);
+    let name = lowering.lower_member_key(member);
     emit_member_read(lowering, access, base, name)
 }
 

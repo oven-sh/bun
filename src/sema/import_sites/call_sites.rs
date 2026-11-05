@@ -690,10 +690,11 @@ struct UnreadPath;
 fn read_path_given_to_create_require(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
-    path: ExprId,
+    given: ExprId,
+    paths_read: &mut Vec<(ExprId, Atom)>,
 ) -> Result<Option<ResolvedFrom>, UnreadPath> {
     let asked = AskedOfDataFiles::default();
-    let found = find_alternatives(inputs, written_names, &asked, path, Folder::OfFile, None)
+    let found = find_alternatives(inputs, written_names, &asked, given, Folder::OfFile, None)
         .ok_or(UnreadPath)?;
     let ([ImportSpecifier::Constant(path)], true, false) = (
         &found.alternatives[..],
@@ -704,10 +705,15 @@ fn read_path_given_to_create_require(
     };
     let text = inputs.atoms.bytes(*path);
     let Some(below) = text.strip_prefix(b"./") else {
+        paths_read.push((given, *path));
         return Ok(Some(ResolvedFrom::PathFromOwnFolder(*path)));
     };
-    match below.rsplit(|&byte| byte == b'/').next() {
-        Some(b"." | b"..") => Err(UnreadPath),
+    let last = below.rsplit(|&byte| byte == b'/').next();
+    if matches!(last, Some(b"." | b"..")) {
+        return Err(UnreadPath);
+    }
+    paths_read.push((given, *path));
+    match last {
         Some(name) if name.len() == below.len() => Ok(None),
         _ => Ok(Some(ResolvedFrom::PathFromOwnFolder(*path))),
     }
@@ -718,6 +724,7 @@ fn find_path_to_resolve_from(
     written_names: &WrittenNames,
     call: ExprId,
     starts_at_own_directory: bool,
+    paths_read: &mut Vec<(ExprId, Atom)>,
 ) -> Result<Option<ResolvedFrom>, UnreadPath> {
     let &ScanInputs {
         hir,
@@ -739,7 +746,7 @@ fn find_path_to_resolve_from(
                 return Ok(Some(ResolvedFrom::File(path)));
             }
             Some(OwnRequire::MadeForPath(path)) if !starts_at_own_directory => {
-                return read_path_given_to_create_require(inputs, written_names, path);
+                return read_path_given_to_create_require(inputs, written_names, path, paths_read);
             }
             _ => {}
         }
@@ -760,6 +767,7 @@ pub(super) struct ScannedCalls {
     pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, ResolvedFrom)>,
+    pub(super) paths_given_to_create_require: Vec<(ExprId, Atom)>,
 }
 
 pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite>) -> ScannedCalls {
@@ -772,6 +780,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut alternatives = FoundAlternatives::default();
     let mut module_require_objects = Vec::new();
     let mut requires_of_other_files = Vec::new();
+    let mut paths_given_to_create_require = Vec::new();
     let mut names_of_workers = Vec::new();
     let mut paths_of_changed_files = Vec::new();
     let mut exported_file_changers: Vec<ExportedFileChanger> = Vec::new();
@@ -848,7 +857,9 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             let starts_at_own_directory = decisions.is_path_from_own_directory(argument)
                 || alternatives.paths_from_own_directory.last() == Some(&argument);
             let written_names = &alternatives.written_names;
-            match find_path_to_resolve_from(inputs, written_names, call, starts_at_own_directory) {
+            let paths_read = &mut paths_given_to_create_require;
+            let is_from_own = starts_at_own_directory;
+            match find_path_to_resolve_from(inputs, written_names, call, is_from_own, paths_read) {
                 Ok(Some(path)) => requires_of_other_files.push((sites.len() as u32, path)),
                 Ok(None) => {}
                 Err(UnreadPath) => continue,
@@ -857,6 +868,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         }
     }
     module_require_objects.shared_sort_unstable();
+    paths_given_to_create_require.shared_sort_unstable_by_key(|it: &(ExprId, Atom)| it.0);
+    paths_given_to_create_require.dedup();
     alternatives.paths_from_own_directory.shared_sort_unstable();
     alternatives.answers_of_resolvers.shared_sort_unstable();
     names_of_workers.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
@@ -877,6 +890,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         keys_stored_in_caches,
         module_require_objects,
         requires_of_other_files,
+        paths_given_to_create_require,
     }
 }
 

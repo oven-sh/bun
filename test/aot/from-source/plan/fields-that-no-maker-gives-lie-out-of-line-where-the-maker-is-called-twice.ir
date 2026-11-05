@@ -1,0 +1,16 @@
+# -- source: records.ts
+# interface Message { text: string; id: number; isMeta?: boolean; note?: string; never?: string }
+# function make(text: string, id: number): Message { return { text, id }; }
+# function mark(message: Message) { message.isMeta = true; message.note = "noted"; (message as any).later = 1; }
+# function show(m: Message) { return Object.keys(m).join() + (m.never === undefined ? " none " : " some ") + (m.isMeta ? "meta" : "plain"); }
+# { const made = make("first", 1); console.log(show(made)); mark(made); console.log(show(made)); }
+# { const made = make("first", 1); console.log(show(made)); mark(made); console.log(show(made)); }
+# export {};
+# -- end of source
+# The program of ..-is-called-once.ir and its last block once more. The check lines are the same.
+# RUN: plan layouts mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: layout L0 CompiledObject
+# CHECK: "isMeta" JSValue OutOfLine
+# CHECK: "never" JSValue OutOfLine
+# CHECK: "note" JSValue OutOfLine

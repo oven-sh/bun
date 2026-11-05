@@ -10,7 +10,7 @@ use bun_core::current_work::{self, set_step_of_build};
 use bun_threading::Guarded;
 
 pub use self::limit_values::{HOST_ARCHITECTURE, LimitValues, limit_of_queries};
-pub use crate::ir::generated::{Architecture, LimitId, Stage, StatisticId};
+pub use crate::ir::generated::{Architecture, LimitId, Stage, StatisticId, StatisticStage};
 
 #[derive(Clone, Debug)]
 pub struct Statistics {

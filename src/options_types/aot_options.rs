@@ -27,7 +27,6 @@ bitflags::bitflags! {
         const STATISTICS = 1 << 7;
         const ONLY_UNKNOWN_CODE = 1 << 8;
         const ONLY_UNPROVEN_TYPE = 1 << 9;
-        const ONLY_MUTATION = 1 << 10;
     }
 }
 
@@ -77,8 +76,6 @@ pub struct AotOptions {
     pub isolates_code_from_disk: bool,
     /// `bun test --aot` without `--aot-allow-code-from-disk`: `loads_code_from_disk` holds for the files of the tests. A file that an executable would hold too finds what it finds there.
     pub only_tests_load_code_from_disk: bool,
-    /// The program holds every module of Bun's own code that the run can load, so none of them runs from its text.
-    pub library_runs_compiled_alone: bool,
     pub ir_output_path: Option<Box<[u8]>>,
     /// `--aot-testing=NoExecutable`: the build runs as always and writes no executable.
     pub writes_no_executable: bool,
@@ -150,7 +147,6 @@ impl Default for AotOptions {
             loads_code_from_disk: false,
             isolates_code_from_disk: false,
             only_tests_load_code_from_disk: false,
-            library_runs_compiled_alone: false,
             ir_output_path: None,
             writes_no_executable: false,
             discards_first_visits: false,
@@ -179,7 +175,7 @@ impl Default for AotOptions {
 mod tests {
     use super::*;
 
-    const MEMBERS: [ExplainSet; 11] = [
+    const MEMBERS: [ExplainSet; 10] = [
         ExplainSet::TEXT,
         ExplainSet::JSON,
         ExplainSet::CHECKS,
@@ -190,7 +186,6 @@ mod tests {
         ExplainSet::STATISTICS,
         ExplainSet::ONLY_UNKNOWN_CODE,
         ExplainSet::ONLY_UNPROVEN_TYPE,
-        ExplainSet::ONLY_MUTATION,
     ];
 
     #[test]
@@ -210,7 +205,6 @@ mod tests {
             loads_code_from_disk,
             isolates_code_from_disk,
             only_tests_load_code_from_disk,
-            library_runs_compiled_alone,
             ir_output_path,
             writes_no_executable,
             discards_first_visits,
@@ -258,7 +252,6 @@ mod tests {
         assert!(!loads_code_from_disk);
         assert!(!isolates_code_from_disk);
         assert!(!only_tests_load_code_from_disk);
-        assert!(!library_runs_compiled_alone);
         assert!(ir_output_path.is_none());
         assert!(!writes_no_executable);
         assert!(!discards_first_visits);
@@ -291,6 +284,6 @@ mod tests {
             seen.insert(member);
         }
         assert_eq!(seen, ExplainSet::all());
-        assert_eq!(seen.bits(), 0b111_1111_1111);
+        assert_eq!(seen.bits(), 0b11_1111_1111);
     }
 }

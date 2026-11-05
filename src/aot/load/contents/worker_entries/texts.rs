@@ -286,7 +286,11 @@ impl ContentsScan<'_, '_> {
         text
     }
 
-    fn find_source_path(&self, name: ExprId, variable: CommonJsVariable) -> Option<Vec<u8>> {
+    pub(super) fn find_source_path(
+        &self,
+        name: ExprId,
+        variable: CommonJsVariable,
+    ) -> Option<Vec<u8>> {
         let &FinishedFile {
             path,
             bound,

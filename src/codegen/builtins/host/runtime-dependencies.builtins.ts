@@ -1,4 +1,5 @@
 import * as b from "bun-builtins-table";
+import lightStreams from "../../../js/internal/streams/load_all.ts";
 import { pathOfNativeFunction } from "../paths.ts";
 import {
   asyncContextCell,
@@ -258,9 +259,20 @@ const outputStreams = [
 const needsWholeInputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeInputStream");
 const needsWholeOutputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeOutputStream");
 // One function makes both outputs, so an executable has it for both or for neither.
+// The traps of a light stream call the function whatever they are asked, and go by the same lists: so it is called only where a stream is asked for more than they name.
 const madeWholeBy = [
-  { path: needsWholeInputStream, functions: [wholeInputStream] },
-  { path: needsWholeOutputStream, functions: [wholeOutputStream(1), wholeOutputStream(2)] },
+  {
+    path: needsWholeInputStream,
+    functions: [wholeInputStream],
+    whenAskedForMore: [b.whenAskedForOtherNames("process.stdin", lightStreams.servedByLightInput)],
+  },
+  {
+    path: needsWholeOutputStream,
+    functions: [wholeOutputStream(1), wholeOutputStream(2)],
+    whenAskedForMore: ["process.stdout", "process.stderr", "console._stdout", "console._stderr"].map(stream =>
+      b.whenAskedForOtherNames(stream, lightStreams.servedByLightOutputs),
+    ),
+  },
 ];
 
 // Native code makes the value of the property by a call without operands, or with `process`.
@@ -790,10 +802,10 @@ export default b.declarations(
   callsOfInspect,
   Object.entries(loadedModulesByPath).flatMap(([path, loads]) => b.extend(path, { loads })),
   Object.entries(calledFunctionsByPath).flatMap(([path, callsFunctions]) => b.extend(path, { callsFunctions })),
-  madeWholeBy.flatMap(({ path, functions }) =>
+  madeWholeBy.flatMap(({ path, functions, whenAskedForMore }) =>
     b.extend(path, {
-      loads: standardStreamModules.map(load => ({ ...load, when: b.whenCallRunsOtherCode })),
-      callsFunctions: functions.map(called => ({ ...called, when: b.whenCallRunsOtherCode })),
+      loads: whenAskedForMore.flatMap(when => standardStreamModules.map(load => ({ ...load, when }))),
+      callsFunctions: whenAskedForMore.flatMap(when => functions.map(called => ({ ...called, when }))),
     }),
   ),
   // getWindowSize of the functions that node:tty has from ProcessBindingTTYWrap.cpp: what native-bindings.builtins.ts says of it.

@@ -127,42 +127,6 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "The array, Map or Set this value is read from may contain values of other types.",
             "only add to the collection from typed code, or narrow the element after reading it.",
         ),
-        UnprovenCause::FieldDeleted => (
-            "A property that the type requires is deleted here.",
-            "declare the property optional, or assign undefined.",
-        ),
-        UnprovenCause::UnknownKeyDelete => (
-            "A property is deleted here with a computed key.",
-            "use a Map, or delete a constant key.",
-        ),
-        UnprovenCause::PropertyRedefined => (
-            "A property of an object of this type is redefined here, for example as a getter or a setter.",
-            "declare it as a field, a getter or a setter in the class or the object literal.",
-        ),
-        UnprovenCause::PropertyAdded => (
-            "A property that the type does not declare is added to an object of this type here.",
-            "declare the property in the class or the object type.",
-        ),
-        UnprovenCause::UnknownKeyStore => (
-            "A property is assigned here with a computed key.",
-            "use a Map or a Record type for data with computed keys.",
-        ),
-        UnprovenCause::StoreOfOtherType => (
-            "A value of a different type is stored in this field here.",
-            "store a value of the declared type, or widen the type of the field.",
-        ),
-        UnprovenCause::IntegrityChanged => (
-            "An object of this type is passed to Object.freeze, Object.seal or Object.preventExtensions here.",
-            "freeze the object where it is created, or freeze a copy.",
-        ),
-        UnprovenCause::PrototypeChanged => (
-            "The prototype of an object of this type is changed here.",
-            "create the object with the prototype it needs.",
-        ),
-        UnprovenCause::OwnPropertyHidesMember => (
-            "A property added to an instance can shadow a method of its class.",
-            "declare the property in the class.",
-        ),
         UnprovenCause::OtherNewTarget => (
             "This class is constructed with a different new.target (Reflect.construct, or a subclass from untyped code).",
             "construct it with new.",
@@ -231,15 +195,6 @@ pub(super) fn guard_class(cause: UnprovenCause) -> GuardClass {
         | UnprovenCause::ReachesNativeCode
         | UnprovenCause::ReachesUnknownJavaScript
         | UnprovenCause::UnknownWriter
-        | UnprovenCause::FieldDeleted
-        | UnprovenCause::UnknownKeyDelete
-        | UnprovenCause::PropertyRedefined
-        | UnprovenCause::PropertyAdded
-        | UnprovenCause::UnknownKeyStore
-        | UnprovenCause::StoreOfOtherType
-        | UnprovenCause::IntegrityChanged
-        | UnprovenCause::PrototypeChanged
-        | UnprovenCause::OwnPropertyHidesMember
         | UnprovenCause::OtherNewTarget
         | UnprovenCause::UndescribedNativeResult
         | UnprovenCause::UnseenCode
@@ -332,30 +287,10 @@ pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWo
             "A primitive, function, array, built-in object or proxy is used as this object type.",
             "pass an object literal or a class instance.",
         ),
-        IllTypedCause::StoreOutsideFieldType => (
-            "wrong-type-stored",
-            "A value of a different type is stored in this field somewhere in the program.",
-            "store a value of the declared type, or widen the field's type.",
-        ),
-        IllTypedCause::ComputedKeyStore => (
-            "computed-key-store",
-            "A store with a computed key may write this field.",
-            "use a Map or a Record type for data with computed keys.",
-        ),
-        IllTypedCause::UnprovenReceiverStore => (
-            "store-through-unknown-object",
-            "A store through an object of unknown type may write this field.",
-            "give that object a type.",
-        ),
         IllTypedCause::NativeWritesOperand => (
             "passed-to-builtin",
             "The object is passed to a built-in function that may write to it.",
             "pass a copy, or only the fields the function needs.",
-        ),
-        IllTypedCause::StateChanged => (
-            "object-changed",
-            "A delete, Object.defineProperty, Object.setPrototypeOf or Object.freeze changes an object of this type.",
-            "declare the property optional, or create the object in its final form.",
         ),
         IllTypedCause::UnseenWriter => (
             "written-by-runtime-code",
@@ -401,11 +336,6 @@ pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWo
             "read-before-init",
             "The field or variable can be read before it's initialized.",
             "initialize it in the declaration or first in the constructor.",
-        ),
-        IllTypedCause::LookupMayChange => (
-            "lookup-may-change",
-            "The method can be replaced, shadowed or overridden at run time, so the call isn't resolved at build time.",
-            "don't assign to methods or prototypes after the class is defined.",
         ),
     };
     Some(IllTypedWording { code, message, fix })
@@ -539,15 +469,6 @@ pub(super) fn cause_code(cause: UnprovenCause) -> &'static str {
         UnprovenCause::UnknownWriter => "written-by-untyped-code",
         UnprovenCause::UnknownCallee => "unknown-callee",
         UnprovenCause::UnprovenContents => "untyped-collection",
-        UnprovenCause::FieldDeleted => "field-deleted",
-        UnprovenCause::UnknownKeyDelete => "computed-key-delete",
-        UnprovenCause::PropertyRedefined => "property-redefined",
-        UnprovenCause::PropertyAdded => "property-added",
-        UnprovenCause::UnknownKeyStore => "computed-key-store",
-        UnprovenCause::StoreOfOtherType => "wrong-type-stored",
-        UnprovenCause::IntegrityChanged => "frozen",
-        UnprovenCause::PrototypeChanged => "prototype-changed",
-        UnprovenCause::OwnPropertyHidesMember => "method-shadowed",
         UnprovenCause::OtherNewTarget => "other-new-target",
         UnprovenCause::UndescribedNativeResult => "builtin-result",
         UnprovenCause::UnseenCode => "runtime-code",

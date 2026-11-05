@@ -97,6 +97,11 @@ impl FileLowering<'_, '_, '_, '_> {
         if super::imports::holds_mock_in_variable(self.inputs.modules, self.file) {
             self.ensure_variable(VariableKey::MockOf(self.file));
         }
+        let modules = self.inputs.modules;
+        if modules.is_require_made_by_file_imported(self.file) {
+            self.ensure_variable(VariableKey::RequiresMadeForOwnFile(self.file));
+            self.ensure_variable(VariableKey::RequiresMadeForOtherFolders(self.file));
+        }
         match self.inputs.modules.kind(self.file) {
             ModuleKind::SourceText | ModuleKind::Data => self.lower_es_module_body(function),
             ModuleKind::CommonJs => self.lower_commonjs_body(function),

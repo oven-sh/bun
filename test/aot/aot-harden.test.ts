@@ -1,7 +1,8 @@
 // `bun build --compile --aot` takes --aot-harden=<names>, and Bun.build takes the same names as compile.aotHarden. None is on unless it is asked for.
 // proof-checks: what the compiler has proven of a value is tested where the value arrives, and no cell lies in a frame or is handed back.
 // ignore-told-ranges: every access by position tests the position where it stands, against the length that it reads there.
-// Each is tried against a lie that a word of --aot-testing plants in the compiler: with the name the process stops at the lie and says so, without it nothing does.
+// Each is tried against a lie that a word of --aot-testing plants in the compiler: with the name the process stops at the lie and says so. Without it nothing does,
+// but for what every build asks: no build believes unasked what comes out of code that the compiler does not see.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -30,7 +31,8 @@ for (let turn = 0; turn < 6; turn++) sum += total();
 console.log(kindOf(unseen()), sum);
 `;
 const printed = "number 18\n";
-const stopAtProof = /^AOT: f\d+ at \d+: .+ is not of the type that the compiler has proven of it\. It is: number\./m;
+const stopAtProof =
+  /^AOT: f\d+ at \d+:\d+: .+ is not of the type that the compiler has proven of it\. It is: number\./m;
 
 // The compiler takes every index for one that lies inside its list. The store lands behind the last element, inside the room that the list has, and the length stays.
 const falseBound = "--aot-testing=PositionsAreTakenToLieInside";
@@ -42,7 +44,7 @@ function put(at: number, value: number) {
 put(Number(process.argv.length > 99 ? 0 : 4), 9.5);
 console.log(list.length);
 `;
-const stopAtBound = /^AOT: f\d+ at \d+: .+ is not of the type that the compiler has proven of it\./m;
+const stopAtBound = /^AOT: f\d+ at \d+:\d+: .+ is not of the type that the compiler has proven of it\./m;
 
 const countedLoops = `function sum(values: Float64Array): number {
   let total = 0;
@@ -144,13 +146,13 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: printed, stderr: "", exitCode: 0 });
   }, 120_000);
 
-  test("is not on without being asked for", async () => {
+  test("what unseen code answers is asked in every build, so that lie is met without it too", async () => {
     using folder = tempDir("aot-harden", { "program.ts": program });
     await build(String(folder), [falseProof]);
-    // What becomes of the program is anybody's guess. Nothing holds the value against the proof.
-    const { stdout, stderr } = await runBuilt(String(folder));
-    expect(stderr).not.toMatch(stopAtProof);
-    expect(stdout).not.toBe(printed);
+    const { stdout, stderr, exitCode } = await runBuilt(String(folder));
+    expect(stderr).toMatch(stopAtProof);
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
   }, 120_000);
 
   test("leaves every cell to the collector", async () => {

@@ -50,6 +50,30 @@ function eachPart(
   });
 }
 
+// Bun's own tests build without the library for speed. What is written in JavaScript then runs from its text, in the interpreter, so --trim may cut neither.
+describe.concurrent("a built-in function that is written in JavaScript, in a build that leaves the library out", () => {
+  const source = "the source code of built-in functions (interpreter)";
+  const interpreter = "eval, new Function and the JavaScript interpreter (interpreter)";
+  const said = async (text: string, ...flags: string[]) =>
+    (await report(text, {}, [...build, ...flags])).lines
+      .filter(line => line.includes(source) || line.includes(interpreter))
+      .map(line => line.replace(/: used .*/, ": used"))
+      .sort();
+  const maps = `console.log([1, 2, 3].map(x => x * 2).join());`;
+
+  test("keeps its text and the interpreter", async () => {
+    const both = [`kept ${interpreter}: used`, `kept ${source}: used`];
+    expect(await said(maps, "--no-builtin-modules")).toEqual(both);
+    expect(await said(`Blob.prototype.image.call({});`, "--no-builtin-modules")).toEqual(both);
+  });
+
+  test("keeps neither where the build holds the library, nor does a program that calls none", async () => {
+    const neither = [`removed ${interpreter}: unused`, `removed ${source}: unused`];
+    expect(await said(maps)).toEqual(neither);
+    expect(await said(`console.log("hello");`, "--no-builtin-modules")).toEqual(neither);
+  });
+});
+
 describe.concurrent("a way for unseen code to run has its place in the program", () => {
   const isListed: Parameters<typeof eachPart>[1] = ({ whyOpen }, why, place) => {
     expect(whyOpen).toContain(`${why} at ${place}`);

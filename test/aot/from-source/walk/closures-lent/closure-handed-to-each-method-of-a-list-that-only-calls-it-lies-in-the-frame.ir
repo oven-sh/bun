@@ -9,6 +9,7 @@
 # function allOver(list: number[], k: number): number { const all = list.every(x => x > k); return all ? 1 : 0; }
 # function bound(list: number[], k: number): number { const made = list.map(function (this: () => number, x: number) { return x + this(); }, () => k); return made[0]; }
 # print(scaled([1, 2, 3], 2), over([1, 2, 3], 1), firstOver([1, 2, 3], 1), firstOver([1], 1), allOver([1, 2, 3], 0), allOver([1, 2, 3], 1), bound([1, 2, 3], 4));
+# print(scaled([1], 1), over([1], 0), bound([1], 1));
 # -- end of source
 # RUN: bytes f1 f2 f3 f4 mechanisms=all
 # CHECK-NOT: NewSlimClosure.
@@ -21,3 +22,4 @@
 # SECOND: NewSlimClosure.Plain count 1
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 5 2 2 -1 1 0 5
+# ANSWERS-NEXT: 2 1 2

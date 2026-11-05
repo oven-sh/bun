@@ -58,6 +58,7 @@ pub struct FileAnalysis<'s> {
     pub asks_for_main_module: bool,
     pub imported_names: &'s [ImportedName],
     requires_of_other_files: &'s [(u32, ResolvedFrom)],
+    paths_given_to_create_require: &'s [(ExprId, Atom)],
     sites_by_kind: &'s [u32],
     first_call_site: u32,
 }
@@ -121,6 +122,12 @@ impl FileAnalysis<'_> {
         let others = self.requires_of_other_files;
         let found = others.binary_search_by_key(&(site as u32), |it| it.0);
         Some(others[found.ok()?].1)
+    }
+
+    pub fn find_path_given_to_create_require(&self, given: ExprId) -> Option<Atom> {
+        let paths = self.paths_given_to_create_require;
+        let found = paths.binary_search_by_key(&given, |it| it.0);
+        Some(paths[found.ok()?].1)
     }
 
     pub fn import_site_of_call(&self, call: ExprId) -> Option<usize> {

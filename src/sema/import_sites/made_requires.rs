@@ -579,6 +579,71 @@ fn may_name_own_file(
     })
 }
 
+pub fn is_call_of_create_require(hir: &File<'_>, bound: &Bound<'_>, call: ExprId) -> bool {
+    find_arguments_of_create_require(Text::of(hir, bound, None), call, StepsLeft::ALL).is_some()
+}
+
+pub fn is_create_require_called_through_call(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    call: ExprId,
+) -> bool {
+    let Some(ExprKind::Call(written)) = expr_kind(hir, hir.skip_type_assertions(call)) else {
+        return false;
+    };
+    find_arguments_of_create_require(Text::of(hir, bound, None), call, StepsLeft::ALL)
+        .is_some_and(|given| given.len != hir[written].args.len)
+}
+
+pub fn find_base_that_a_call_made_of_own_file(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    call: ExprId,
+) -> Option<usize> {
+    let text = Text::of(hir, bound, None);
+    let ExprKind::Call(written) = expr_kind(hir, call)? else {
+        return None;
+    };
+    let given = find_arguments_of_create_require(text, call, StepsLeft::ALL)?;
+    let base = hir.ids(given).next()?;
+    let names_own_file =
+        |conversions_left| names_own_file_behind(text, base, conversions_left, StepsLeft::ALL);
+    (names_own_file(LONGEST_CHAIN_OF_BINDINGS) && !names_own_file(0))
+        .then(|| (given.start - hir[written].args.start) as usize)
+}
+
+pub fn may_call_have_made_base_of_require(hir: &File<'_>, bound: &Bound<'_>, made: ExprId) -> bool {
+    let chain = settled_chain(hir, bound, made).take(LONGEST_CHAIN_OF_BINDINGS);
+    chain.last().is_none_or(|call| {
+        !is_call_of_create_require(hir, bound, call)
+            || find_base_that_a_call_made_of_own_file(hir, bound, call).is_some()
+    })
+}
+
+pub fn may_call_have_made_path(hir: &File<'_>, bound: &Bound<'_>, path: ExprId) -> bool {
+    !is_written_out_of_texts(Text::of(hir, bound, None), path, LONGEST_CHAIN_OF_BINDINGS)
+}
+
+fn is_written_out_of_texts(text: Text<'_, '_, '_, '_>, e: ExprId, parts_left: usize) -> bool {
+    let Text { hir, bound, .. } = text;
+    let Some(parts_left) = parts_left.checked_sub(1) else {
+        return false;
+    };
+    let is_text = |part: ExprId| is_written_out_of_texts(text, part, parts_left);
+    let e = follow_settled_bindings(hir, bound, e);
+    match expr_kind(hir, e) {
+        Some(ExprKind::String(_)) => true,
+        Some(ExprKind::Binary {
+            op: BinOp::Add,
+            left,
+            right,
+        }) => is_text(left) && is_text(right),
+        Some(ExprKind::Template { exprs }) => hir.ids(exprs).all(is_text),
+        Some(ExprKind::Call(_)) => false,
+        _ => names_own_folder(text, e, StepsLeft::ALL),
+    }
+}
+
 pub fn find_holder_of_require_made_for_choice(
     hir: &File<'_>,
     bound: &Bound<'_>,

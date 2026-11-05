@@ -32,6 +32,8 @@ const notRead =
   "read: not of the form `// Sizes: <n> <4n> <16n>`, `// Passes: <n>`, `// Grows: linear`, each once" +
   ", or three rising sizes and `// Grows: the build, linear` or `the build, a square`";
 const headOfWriter = "// Sizes: 2 4 8\n// Passes: 3\n// Grows: the build, linear\n";
+// Where a counter opens, a writer that is read to its end is judged by what its builds take: its programs have to differ by more than two builds of one program do.
+const headOfLarger = "// Sizes: 10 20 40\n// Passes: 20\n// Grows: the build, linear\n";
 /** It prints a program with PASSES functions of so many statements each. */
 const writer = (
   statements: string,
@@ -70,7 +72,7 @@ test("what a program takes may grow as its data grows, and no faster", async () 
     "no-passes.js": head.replace("// Passes: 40\n", "") + linear,
     "a-word-that-is-not-linear.js": head.replace("linear", "somehow") + linear,
     "the-sizes-twice.js": "// Sizes: 250 1000 4000\n" + head + linear,
-    "a-writer.js": headOfWriter + writer("size"),
+    "a-writer.js": headOfLarger + writer("size * 10"),
     "a-writer-that-stops-at-the-last-size.js":
       headOfWriter + 'if (process.env.SIZE === "8") process.exit(1);\n' + writer("size"),
     "a-word-on-the-build-that-is-not-read.js": headOfWriter.replace("linear", "somehow") + writer("size"),
@@ -89,10 +91,14 @@ test("what a program takes may grow as its data grows, and no faster", async () 
     .map(line => JSON.parse(line))
     .filter(({ state }) => state !== "compiling");
   const verdicts = Object.fromEntries(
-    lines.map(({ file, state, stage, message }) => [
+    lines.map(({ file, state, stage, message, growth, measured }) => [
       file.slice(root.length + 1).replaceAll("\\", "/"),
-      // What stands behind the colon are the numbers of this run.
-      state === "pass" ? "pass" : `${stage}: ${stage === "growth" ? message.split(": ")[0] : message}`,
+      // What stands behind the colon are the numbers of this run. A program that passes and should not says them: they alone tell why.
+      state !== "pass"
+        ? `${stage}: ${stage === "growth" ? message.split(": ")[0] : message}`
+        : expected[basename(file) as keyof typeof expected] === "pass"
+          ? "pass"
+          : `pass: ${growth}: ${measured}`,
     ]),
   );
   expect(verdicts).toEqual(expected);
@@ -109,7 +115,6 @@ const counts =
   );
 
 async function expectBuildsAreJudged(...flags: string[]) {
-  const headOfLarger = "// Sizes: 10 20 40\n// Passes: 20\n// Grows: the build, linear\n";
   const expected = {
     "a-writer.js": "pass",
     "says-linear-and-writes-a-square.js": "growth: what the build takes grows faster than its program",

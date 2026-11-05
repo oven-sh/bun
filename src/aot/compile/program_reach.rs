@@ -2528,7 +2528,7 @@ impl<'a, 's> Walk<'a, 's> {
         let is_read_by_evaluated_text = files
             .filter_map(|&file| parsed_source(input.files, file))
             .any(|source| source.builtins.mentions_evaluator());
-        if is_read_by_evaluated_text {
+        if is_read_by_evaluated_text || input.graph.runs_code_out_of_sight() {
             reacher.hand_on_data_objects();
         }
         let is_read_by_code_from_disk = !input.files_started_by_runner.is_empty();

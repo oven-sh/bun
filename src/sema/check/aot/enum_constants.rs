@@ -259,8 +259,15 @@ fn find_member_of_own_enum_followed_by_transpiler(
     access: ExprId,
 ) -> Option<EnumMemberId> {
     let end = follow_member_path(files, file, access, |first| {
-        let symbol = files.bound(file).symbol_of_expr(first);
+        let bound = files.bound(file);
+        let symbol = bound.symbol_of_expr(first);
         if !symbol.is_some() {
+            return None;
+        }
+        let Binding::Symbol(binding) = bound.binding(first) else {
+            return None;
+        };
+        if bound.symbol(binding).flags.intersects(SymFlags::ALIAS) {
             return None;
         }
         let named = files.resolve_alias_as(files.sym(file, symbol), SymFlags::VALUE)?;

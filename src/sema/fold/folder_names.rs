@@ -233,7 +233,7 @@ impl<'s> Folder<'_, 's> {
         let is_read_behind = kind != BindingKind::Var || self.is_read_behind(ident, init);
         let holds_initializer = is_read_behind
             && (!self.is_stored_by_mocks(symbol)
-                || self.is_inlined_by_bun_run(ident, symbol, init));
+                || self.is_inlined_by_plain_bun(ident, symbol, init));
         holds_initializer.then_some(init)
     }
 
@@ -295,6 +295,15 @@ impl<'s> Folder<'_, 's> {
             && self.is_folded_by_bun_run(init)
             && self.is_in_constant_prefix(init)
             && !self.is_in_enum_beside(ident, init)
+    }
+
+    fn is_inlined_by_plain_bun(&self, ident: ExprId, symbol: SymbolId, init: ExprId) -> bool {
+        match self.inputs.runs_in_place {
+            true => self.holds_under_minify_syntax(|folder| {
+                folder.is_inlined_by_bun_run(ident, symbol, init)
+            }),
+            false => self.is_inlined_by_bun_run(ident, symbol, init),
+        }
     }
 
     fn is_read_behind(&self, ident: ExprId, init: ExprId) -> bool {

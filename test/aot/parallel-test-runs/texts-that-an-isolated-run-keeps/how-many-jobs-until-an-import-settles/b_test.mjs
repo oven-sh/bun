@@ -1,12 +1,14 @@
 import { test } from "bun:test";
 let job = 0;
 const at = {};
-import("./helper.mjs").then(() => { at.module = job; });
-import("./helper.cjs").then(() => { at.file = job; });
-import("./above.mjs").then(() => { at.above = job; });
+const all = [
+  import("./helper.mjs").then(() => { at.module = job; }),
+  import("./helper.cjs").then(() => { at.file = job; }),
+  import("./above.mjs").then(() => { at.above = job; }),
+];
 for (; job < 60; job++) await Promise.resolve();
 console.log("b: jobs until each has come:", JSON.stringify(at));
-await new Promise(resolve => setTimeout(resolve, 20));
+await Promise.all(all);
 job = 0;
 const again = {};
 import("./helper.mjs").then(() => { again.module = job; });

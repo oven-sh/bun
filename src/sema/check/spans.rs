@@ -43,18 +43,23 @@ pub(super) fn line_break_len(text: &[u8], at: usize) -> usize {
 }
 
 #[inline]
-fn index_of_line_break_byte(text: &[u8], mut at: usize) -> Option<usize> {
+fn line_break_candidates(word: u64) -> u64 {
     const ONES: u64 = 0x0101_0101_0101_0101;
     const HIGH_BITS: u64 = 0x80 * ONES;
+    let low = word & !HIGH_BITS;
+    let from_line_feed = low + (0x80 - 0x0A) * ONES;
+    let past_carriage_return = low + (0x80 - 0x0E) * ONES;
+    ((from_line_feed & !past_carriage_return) | word) & HIGH_BITS
+}
+
+#[inline]
+fn index_of_line_break_byte(text: &[u8], mut at: usize) -> Option<usize> {
     while let Some(bytes) = text.get(at..at + 8) {
         let Ok(bytes) = <[u8; 8]>::try_from(bytes) else {
             break;
         };
         let word = u64::from_le_bytes(bytes);
-        let low = word & !HIGH_BITS;
-        let from_line_feed = low + (0x80 - 0x0A) * ONES;
-        let past_carriage_return = low + (0x80 - 0x0E) * ONES;
-        let mut candidates = ((from_line_feed & !past_carriage_return) | word) & HIGH_BITS;
+        let mut candidates = line_break_candidates(word);
         while candidates != 0 {
             let shift = candidates.trailing_zeros() & !7;
             if matches!((word >> shift) as u8, b'\n' | b'\r' | 0xE2) {
@@ -74,25 +79,31 @@ fn index_of_line_break_byte(text: &[u8], mut at: usize) -> Option<usize> {
 /// `ComputeECMALineStarts`: the start of each line of `text`.
 pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
     let mut starts = vec![0u32];
-    let mut i = 0;
-    // 0xE2 starts U+2028 and U+2029, which end a line too.
-    while let Some(found) = index_of_line_break_byte(text, i) {
-        i = found;
-        match text[i] {
-            b'\r' if text.get(i + 1) == Some(&b'\n') => i += 1,
-            0xE2 => {
-                if text.get(i + 1) != Some(&0x80) || !matches!(text.get(i + 2), Some(0xA8 | 0xA9)) {
-                    i += 1;
-                    continue;
-                }
-                i += 2;
-            }
-            _ => {}
+    let (words, rest) = text.as_chunks::<8>();
+    for (index, &bytes) in words.iter().enumerate() {
+        let mut candidates = line_break_candidates(u64::from_le_bytes(bytes));
+        while candidates != 0 {
+            let at = index * 8 + candidates.trailing_zeros() as usize / 8;
+            push_start_behind_line_break(text, at, &mut starts);
+            candidates &= candidates - 1;
         }
-        i += 1;
-        starts.push(i as u32);
+    }
+    for at in text.len() - rest.len()..text.len() {
+        push_start_behind_line_break(text, at, &mut starts);
     }
     starts
+}
+
+#[inline]
+fn push_start_behind_line_break(text: &[u8], at: usize, starts: &mut Vec<u32>) {
+    let len = match text[at] {
+        b'\n' => 1,
+        b'\r' if text.get(at + 1) != Some(&b'\n') => 1,
+        // 0xE2 starts U+2028 and U+2029, which end a line too.
+        0xE2 if line_break_len(text, at) == 3 => 3,
+        _ => return,
+    };
+    starts.push((at + len) as u32);
 }
 
 /// End of the line that contains `at`, before its line break.

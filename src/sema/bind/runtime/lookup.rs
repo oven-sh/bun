@@ -5,7 +5,9 @@ use super::namespace_exports::is_block_binding;
 use super::queries::{find_symbol, is_among_parameters};
 use super::{Binding, CodeUnit, CommonJsVariable, RuntimeScopes};
 use crate::atom::{Atom, known};
-use crate::bind::{BoundBuilder, Scope, ScopeId, ScopeKind, SymFlags, SymbolId};
+use crate::bind::{
+    BoundBuilder, Scope, ScopeId, ScopeKind, SymFlags, SymbolId, bit_of_nested_name,
+};
 use crate::hir::*;
 use crate::module_format::{ModuleFormat, find_marked_format};
 
@@ -34,7 +36,7 @@ pub(super) struct Found {
 
 pub(super) struct RecentLookups {
     is_position_ignored: bool,
-    entries: [Option<(ScopeId, Atom, Found)>; 64],
+    entries: [Option<(ScopeId, Atom, Found)>; 256],
 }
 
 impl RecentLookups {
@@ -43,7 +45,7 @@ impl RecentLookups {
         RecentLookups {
             is_position_ignored: dynamic.scopes.is_empty()
                 && dynamic.parameter_eval_scopes.is_empty(),
-            entries: [None; 64],
+            entries: [None; 256],
         }
     }
 
@@ -59,7 +61,7 @@ impl RecentLookups {
             return lookup.find(start, name, pos);
         }
         let key = u64::from(start.0) << 32 | u64::from(name.0);
-        let entry = &mut self.entries[(key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 58) as usize];
+        let entry = &mut self.entries[(key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 56) as usize];
         match *entry {
             Some((scope, found_name, found)) if scope == start && found_name == name => found,
             _ => {
@@ -79,12 +81,37 @@ impl Lookup<'_, '_> {
     pub(super) fn find(&self, start: ScopeId, name: Atom, pos: u32) -> Found {
         let (mut at, mut from, mut dynamic_scope) = (start, ScopeKind::Block, ScopeId::NONE);
         let mut inner = ScopeId::NONE;
+        let dynamic = &self.dynamic;
+        let has_eval_scopes =
+            !dynamic.scopes.is_empty() || !dynamic.parameter_eval_scopes.is_empty();
+        let may_be_appended = may_hold_name(&self.scopes.appended_names, name);
+        if !has_eval_scopes
+            && !may_be_appended
+            && name != known::arguments
+            && !may_hold_name(&self.bound.nested_names, name)
+        {
+            while at.is_some() {
+                let scope = &self.bound.scopes[at.idx()];
+                if scope.symbol.is_some() || scope.parent.is_none() {
+                    break;
+                }
+                if matches!(scope.kind, ScopeKind::With(_)) && dynamic_scope.is_none() {
+                    dynamic_scope = at;
+                }
+                from = scope.kind;
+                inner = at;
+                at = match scope.kind {
+                    ScopeKind::ClassDecorators(_) => self.bound.runtime_parent_scope(self.hir, at),
+                    _ => scope.parent,
+                };
+            }
+        }
         while at.is_some() {
             let scope = &self.bound.scopes[at.idx()];
             if matches!(scope.kind, ScopeKind::With(_)) && dynamic_scope.is_none() {
                 dynamic_scope = at;
             }
-            if let Some(binding) = self.find_in_scope(at, scope, from, name) {
+            if let Some(binding) = self.find_in_scope(at, scope, from, name, may_be_appended) {
                 return Found {
                     binding,
                     scope: at,
@@ -92,7 +119,10 @@ impl Lookup<'_, '_> {
                     dynamic_scope,
                 };
             }
-            if dynamic_scope.is_none() && self.has_visible_eval_variables(at, from, pos) {
+            if has_eval_scopes
+                && dynamic_scope.is_none()
+                && self.has_visible_eval_variables(at, from, pos)
+            {
                 dynamic_scope = match from {
                     ScopeKind::Param(_) => inner,
                     _ => at,
@@ -159,6 +189,7 @@ impl Lookup<'_, '_> {
         scope: &Scope,
         from: ScopeKind,
         name: Atom,
+        may_be_appended: bool,
     ) -> Option<Binding> {
         let bound = self.bound;
         if let Some(local) = bound.find_in_table(scope.locals, name)
@@ -166,7 +197,8 @@ impl Lookup<'_, '_> {
         {
             return Some(binding);
         }
-        if is_appended_visible(from)
+        if may_be_appended
+            && is_appended_visible(from)
             && let Some(&(appended, _)) = self.scopes.appended_bindings.get(&(at, name))
         {
             return Some(Binding::Symbol(appended));
@@ -174,10 +206,10 @@ impl Lookup<'_, '_> {
         if let Some(member) = self.find_exported_member(at, scope, name) {
             return Some(Binding::Symbol(member));
         }
-        let parameters = &bound.runtime.declarations.container_parameters;
         if let ScopeKind::Enum(it) = scope.kind
             && self.hir[it].name == name
-            && let Some(parameter) = find_symbol(parameters, at)
+            && let Some(parameter) =
+                find_symbol(&bound.runtime.declarations.container_parameters, at)
         {
             return Some(Binding::Symbol(parameter));
         }
@@ -284,4 +316,13 @@ impl Lookup<'_, '_> {
 
 pub(super) fn is_appended_visible(from: ScopeKind) -> bool {
     !matches!(from, ScopeKind::Param(_))
+}
+
+#[inline]
+fn may_hold_name(names: &[u64], name: Atom) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    let (word, bit) = bit_of_nested_name(names.len(), name);
+    names[word] & bit != 0
 }

@@ -399,8 +399,8 @@ fn rank_prefers_the_program() {
 fn ties_are_broken_by_position_then_cause() {
     type Rank = (Option<Position>, UnprovenCause, IllTypedCause);
     let mut records = [
-        by_name(PROGRAM, 0, UnprovenCause::FieldDeleted, 10),
-        by_name(PROGRAM, 0, UnprovenCause::PropertyAdded, 10),
+        by_name(PROGRAM, 0, UnprovenCause::UnprovenContents, 10),
+        by_name(PROGRAM, 0, UnprovenCause::OtherNewTarget, 10),
         unknown_object(PROGRAM, 0, 10),
         unknown_object(PROGRAM, 0, 5),
         AccessRecord {
@@ -456,11 +456,10 @@ fn families_filter() {
             ExplainSet::ONLY_UNPROVEN_TYPE,
         ),
         (UnprovenCause::UnknownObject, ExplainSet::ONLY_UNKNOWN_CODE),
-        (UnprovenCause::FieldDeleted, ExplainSet::ONLY_MUTATION),
     ];
     let kinds = families.map(|(kind, _)| kind);
     assert_eq!(kinds.map(UnprovenCause::family), UnprovenCauseFamily::ALL);
-    let records = [0, 1, 2].map(|index| by_name(PROGRAM, 0, kinds[index], index as u32));
+    let records = [0, 1].map(|index| by_name(PROGRAM, 0, kinds[index], index as u32));
     let collected = |families| -> Vec<UnprovenCause> {
         let causes = collect_causes(&records, &origin_of, families);
         causes.iter().map(|cause| cause.cause).collect()
@@ -470,8 +469,8 @@ fn families_filter() {
     for (kind, only) in families {
         assert_eq!(collected(only), [kind], "{kind:?}");
     }
-    let two_families = ExplainSet::ONLY_UNKNOWN_CODE | ExplainSet::ONLY_MUTATION;
-    assert_eq!(collected(two_families), kinds[1..]);
+    let both_families = ExplainSet::ONLY_UNPROVEN_TYPE | ExplainSet::ONLY_UNKNOWN_CODE;
+    assert_eq!(collected(both_families), kinds);
 }
 
 #[test]
@@ -642,7 +641,7 @@ fn no_cause_sentences() {
         "The compiler recorded no cause for the untyped property accesses."
     );
     for costs in [typed, untyped] {
-        let only = ExplainSet::ONLY_MUTATION;
+        let only = ExplainSet::ONLY_UNPROVEN_TYPE;
         assert_eq!(sentence(costs, only), "No causes of this kind.");
     }
 }
@@ -669,17 +668,24 @@ fn list_is_labeled_by_family_and_ends_with_the_cause_without_position() {
     let records = [
         with_witness_location(unknown_object(PROGRAM, 0, 0), NO_LOCATION),
         passed_to_untyped_code(PROGRAM, 4),
-        by_name(PROGRAM, 8, UnprovenCause::FieldDeleted, LINE_1_COLUMN_5),
+        by_name(PROGRAM, 8, UnprovenCause::UnprovenContents, LINE_1_COLUMN_5),
     ];
-    let (mutation, unknown_code) = (ExplainSet::ONLY_MUTATION, ExplainSet::ONLY_UNKNOWN_CODE);
-    let list = entries_of(collect_list, accesses(&records), mutation | unknown_code);
+    let (unproven_type, unknown_code) = (
+        ExplainSet::ONLY_UNPROVEN_TYPE,
+        ExplainSet::ONLY_UNKNOWN_CODE,
+    );
+    let list = entries_of(
+        collect_list,
+        accesses(&records),
+        unproven_type | unknown_code,
+    );
     let kinds: Vec<ExplainSet> = list.iter().map(|entry| entry.kind).collect();
     let lines: Vec<BString> = list.iter().map(text_of).collect();
-    assert_eq!(kinds, [mutation, unknown_code, unknown_code]);
+    assert_eq!(kinds, [unproven_type, unknown_code, unknown_code]);
     assert_eq!(
         lines,
         [
-            "mutation: field-deleted at src/a.ts:1:5, 1 access",
+            "unproven-type: untyped-collection at src/a.ts:1:5, 1 access",
             "unknown-code: passed-to-untyped-code at src/a.ts:2:14, 1 access",
             "unknown-code: unknown-object at (no location), 1 access",
         ]

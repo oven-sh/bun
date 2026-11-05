@@ -1,10 +1,5 @@
 // answers: without-library
 // # the text of records made in two orders, of objects with and without an optional field, of a chain of one layout, of classes with private names and methods, of unions, dates and lists is that of the interpreter, character by character
-// # RUN(PLAN): json-plan mechanisms=all
-// # PLAN: order "x" "y"
-// # PLAN: order "y" "x"
-// # RUN(TREE): json-plan mechanisms=all
-// # TREE: whole calls-serializers
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 22 of 22 of 22

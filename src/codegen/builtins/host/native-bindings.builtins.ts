@@ -137,4 +137,12 @@ export default b.declarations(
 
   // Whether the process was started with --experimental-stream-iter.
   answers("native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag", b.bool),
+  // binding() in src/runtime/node/node_fs_binding.rs makes an object for each module that asks. It is no function, and each of its methods has a row of its own: node_fs_binding.bind.ts.
+  b.static("native:Bindgen:node_fs_binding.bind.ts:binding", {
+    runsUnseenCode: false,
+    getter: b.instance("NodeJSFS").fresh,
+    capability: "heap",
+    implementation: b.generic,
+    call: { returns: b.never, capability: "heap", throws: true, implementation: b.generic },
+  }),
 );

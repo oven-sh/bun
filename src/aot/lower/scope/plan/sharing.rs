@@ -47,7 +47,8 @@ pub(super) fn compute_sharing(
             continue;
         };
         let is_exported = binding.is_listed_in(&exported);
-        let is_seen_by_eval = seen_by_eval.binary_search(&binding).is_ok();
+        let is_seen_by_eval =
+            !seen_by_eval.is_empty() && seen_by_eval.binary_search(&binding).is_ok();
         let mut readers = Users::new();
         if !is_exported && !is_seen_by_eval && context.is_holder_without_value(binding) {
             readers.extend_from_slice(run);
@@ -63,7 +64,8 @@ pub(super) fn compute_sharing(
             sharing.shared.push(binding);
         }
         let body_of = |function: WalkedFunctionId| context.module_bodies[function.index()];
-        let is_used_by_other_body = run.iter().any(|&(_, user)| body_of(user) != body_of(owner));
+        let body_of_owner = body_of(owner);
+        let is_used_by_other_body = run.iter().any(|&(_, user)| body_of(user) != body_of_owner);
         let key = match binding {
             BindingRef::Symbol(symbol) if is_exported => Some(symbol_key(context, symbol)),
             BindingRef::Symbol(_) | BindingRef::Slot(..) if is_used_by_other_body => {

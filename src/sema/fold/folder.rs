@@ -12,7 +12,7 @@ use super::{
     Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, MadeByCall,
     NodeBits, literal_constant, slice_in,
 };
-use crate::atom::Interner;
+use crate::atom::{Atom, Interner};
 use crate::bind::{Bound, Parent, SymbolId};
 use crate::check::aot::ConstLocalPrefixes;
 use crate::file_analysis::FileInputs;
@@ -110,6 +110,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) specifiers: Vec<(ExprId, ImportSpecifier)>,
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) paths_made_by_calls: Vec<ExprId>,
+    pub(super) paths_written_from_own_directory: Vec<(ExprId, Atom)>,
     pub(super) names_made_by_calls: Vec<(ExprId, MadeByCall)>,
     pub(super) has_followed_path_call: Cell<bool>,
     pub(super) excluded_operands: Vec<ExcludedOperand>,
@@ -169,6 +170,7 @@ pub(super) fn run<'s>(
         specifiers: Vec::new(),
         paths_from_own_directory: Vec::new(),
         paths_made_by_calls: Vec::new(),
+        paths_written_from_own_directory: Vec::new(),
         names_made_by_calls: Vec::new(),
         has_followed_path_call: Cell::new(false),
         excluded_operands: Vec::new(),
@@ -221,10 +223,13 @@ impl<'s> Folder<'_, 's> {
         if self.evaluator.over_limit_count() != over_limit_before {
             self.strings_over_limit.push(e);
         }
+        let has_operand_folded_by_build_alone = self.has_operand_folded_by_build_alone(e);
+        if !has_operand_folded_by_build_alone && matches!(folded.value, Value::Unknown) {
+            return;
+        }
         let is_nan = folded.value.is_nan();
         let is_left_to_run_time = is_nan && self.converts_an_operand_to_a_number(e);
-        let is_folded_by_build_alone =
-            self.has_operand_folded_by_build_alone(e) || is_left_to_run_time;
+        let is_folded_by_build_alone = has_operand_folded_by_build_alone || is_left_to_run_time;
         if is_folded_by_build_alone {
             let is_marked_by_its_own_rule = self.folded_by_build_alone.contains(index);
             self.folded_by_build_alone.insert(index);
@@ -435,6 +440,10 @@ impl<'s> Folder<'_, 's> {
             specifiers: slice_in(&self.specifiers, arena),
             paths_from_own_directory: slice_in(&self.paths_from_own_directory, arena),
             paths_made_by_calls: slice_in(&self.paths_made_by_calls, arena),
+            paths_written_from_own_directory: slice_in(
+                &self.paths_written_from_own_directory,
+                arena,
+            ),
             names_made_by_calls: slice_in(&self.names_made_by_calls, arena),
             data_literals: NodeBits::freeze(&self.data_literals, arena),
             dead_exprs,

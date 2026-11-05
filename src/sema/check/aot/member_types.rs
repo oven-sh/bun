@@ -3,7 +3,7 @@ use super::answers::{
     ObjectMember, ObjectMemberKind, PositionTypes, SymbolCreation, WrittenType,
 };
 use super::queries::Queries;
-use crate::atom::Atom;
+use crate::atom::{Atom, SymbolNameKind};
 use crate::bind::{Decl, MemberOwner, PatParent};
 use crate::hir::{ExprId, ExprKind, MemberKind, TypeNodeId};
 use crate::program::{FileId, Sym};
@@ -89,13 +89,10 @@ fn index_key(key: TypeId) -> IndexKey {
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     #[inline]
     pub(super) fn member_name(&self, name: Atom) -> MemberName {
-        let atoms = self.c.atoms();
-        if atoms.is_symbol_name(name) {
-            MemberName::Symbol(name)
-        } else if atoms.is_private_symbol_name(name) {
-            MemberName::Private(name)
-        } else {
-            MemberName::String(name)
+        match self.c.atoms().symbol_name_kind(name) {
+            Some(SymbolNameKind::Symbol) => MemberName::Symbol(name),
+            Some(SymbolNameKind::Private) => MemberName::Private(name),
+            None => MemberName::String(name),
         }
     }
 

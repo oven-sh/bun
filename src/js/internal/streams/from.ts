@@ -180,7 +180,7 @@ function from<T extends $Node.Readable>(
   async function nextAsync() {
     for (;;) {
       try {
-        const { value, done } = await iterator.next();
+        const { value, done } = await (iterator as AsyncIterator<unknown>).next();
 
         if (done) {
           readable.push(null);

@@ -226,6 +226,22 @@ export const shapes: Shape[] = [
       ),
   },
   { name: "CommonJS modules that require one another in a row", counted: "modules", size: 400, entry: "main.js", write: commonJSModulesInARow },
+  // Each file was found in a round of its own, and behind every round each entry point was held against all that had been found: 2,000 of them took 119 G instructions, 3 G with constants.
+  {
+    name: "CommonJS modules that each require the next by a name with a written default",
+    counted: "modules",
+    size: 400,
+    entry: "main.cjs",
+    write: size => ({
+      ...Object.fromEntries(
+        upTo(size + 1, index => [
+          `p${index}.cjs`,
+          `exports.name = ${index};\n${index < size ? `exports.next = require(process.env.MADE_UP_${index + 1} || "./p${index + 1}.cjs");\n` : ""}`,
+        ]),
+      ),
+      "main.cjs": `let sum = 0;\nfor (let link = require(process.env.MADE_UP_0 || "./p0.cjs"); link; link = link.next) sum += link.name;\nconsole.log(sum);\n`,
+    }),
+  },
   // A step that walked all wrappers for each wrapper, for each round: 2,000 of them took two minutes.
   { name: "CommonJS modules that a bundler has wrapped into one file", counted: "wrappers", size: 400, entry: "main.js", isBundledFirst: true, write: commonJSModulesInARow },
   {
@@ -1018,6 +1034,22 @@ export const shapes: Shape[] = [
         `function drive(list: Item[]): number {\n  let sum = 0;\n  let base = 1;\n  if (list.length > 2) base = list.length | 0;\n` +
         lines(size, index => `  const i${index} = list[${index}]; if (i${index}.skip) return -1; sum = (sum + i${index}.weight) | 0;`) +
         `  return (sum + base) | 0;\n}\nlet last = 0;\nfor (let round = 0; round < 300; round++) last = drive(items);\nconsole.log(last);\n`,
+    }),
+  },
+  {
+    // The class is handed out of sight, so `this` is a guess in its initializer, and behind each call the order of its keys is guessed anew. Each guess went through all the values in front of it,
+    // looked each key up among the keys found so far, and each of their fields in the beginning of the order: the cube of the number of fields.
+    name: "fields of a class out of sight that are each given what a call answers",
+    counted: "fields",
+    size: 200,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `const unseen = x => [x][JSON.parse("0")];\nlet heard = 0;\nconst each = unseen(i => { heard += i; });\nclass Bank {\n` +
+        lines(size, index => `  v${index} = new Int32Array(8).fill(${index + 1});`) +
+        `}\nfunction tally(bank, turns) {\n  let sum = 0;\n  for (let i = 0; i < turns; i++) {\n    each(i);\n` +
+        lines(size, index => `    sum = (sum + bank.v${index}[i] * 3) | 0;`) +
+        `  }\n  return sum;\n}\nglobalThis.kit = { Bank, tally };\nconst kit = globalThis.kit;\nconsole.log(kit.tally(new kit.Bank(), 8), heard);\n`,
     }),
   },
   {

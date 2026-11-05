@@ -444,12 +444,18 @@ impl std::ops::Deref for GrowingDecls {
 /// Read access to a file's symbols in either storage. See [`Storage::Symbols`].
 pub trait SymbolList {
     fn get(&self, index: usize) -> Option<Symbol<'_>>;
+    fn flags(&self, index: usize) -> Option<SymFlags>;
 }
 
 impl SymbolList for Vec<GrowingSymbol> {
     #[inline]
     fn get(&self, index: usize) -> Option<Symbol<'_>> {
         self[..].get(index).map(GrowingSymbol::get)
+    }
+
+    #[inline]
+    fn flags(&self, index: usize) -> Option<SymFlags> {
+        self[..].get(index).map(|symbol| symbol.flags)
     }
 }
 
@@ -515,6 +521,11 @@ impl SymbolList for Symbols<'_> {
     #[inline]
     fn get(&self, index: usize) -> Option<Symbol<'_>> {
         self.get(index)
+    }
+
+    #[inline]
+    fn flags(&self, index: usize) -> Option<SymFlags> {
+        self.list.get(index).map(|symbol| symbol.flags)
     }
 }
 
@@ -626,22 +637,28 @@ impl<'s> Symbols<'s> {
                 StoredDecls::Many(self.many.len() as u32 - 1)
             }
         };
+        let is_plain =
+            symbol.exports.is_none() && symbol.members.is_none() && symbol.export_symbol.is_none();
+        let rest = match symbol.value_declaration {
+            0 if is_plain => FIRST_IS_VALUE,
+            u32::MAX if is_plain => NO_VALUE,
+            value_declaration => {
+                self.rest.push(RestOfSymbol {
+                    value_declaration,
+                    exports: symbol.exports,
+                    members: symbol.members,
+                    export_symbol: symbol.export_symbol,
+                });
+                self.rest.len() as u32 - 1
+            }
+        };
         self.list.push(StoredSymbol {
             name: symbol.name,
             flags: symbol.flags,
             decls,
             parent: symbol.parent,
-            rest: NO_VALUE,
+            rest,
         });
-        self.set_rest(
-            self.list.len() - 1,
-            RestOfSymbol {
-                value_declaration: symbol.value_declaration,
-                exports: symbol.exports,
-                members: symbol.members,
-                export_symbol: symbol.export_symbol,
-            },
-        );
     }
 
     #[inline]
@@ -859,11 +876,16 @@ macro_rules! packed {
             impl From<$name> for $packed {
                 #[inline]
                 fn from(it: $name) -> $packed {
-                    match it {
-                        $name::$none => $packed(Tag::$none as u32),
-                        $($name::$unit => $packed(Tag::$unit as u32),)*
-                        $($name::$variant(id) => $packed(id.0 << TAG_BITS | Tag::$variant as u32),)*
-                    }
+                    let tag = match it {
+                        $name::$none => Tag::$none,
+                        $($name::$unit => Tag::$unit,)*
+                        $($name::$variant(_) => Tag::$variant,)*
+                    };
+                    let id = match it {
+                        $name::$none $(| $name::$unit)* => 0,
+                        $($name::$variant($id(id)))|* => id,
+                    };
+                    $packed(id << TAG_BITS | tag as u32)
                 }
             }
 
@@ -1204,8 +1226,9 @@ fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, u32, b
                 longest_before = longest_before.max(below[before.idx()]);
             }
         }
-        below[i] = 1 + longest_before;
-        longest = longest.max(below[i]);
+        let length = 1 + longest_before;
+        below[i] = length;
+        longest = longest.max(length);
         match *node {
             Flow::Loop { .. } => loops.push(Loop {
                 label: i as u32,
@@ -1858,6 +1881,12 @@ impl<S: Storage> BoundIn<S> {
         symbol.expect("the symbol belongs to this file")
     }
 
+    #[inline]
+    pub fn symbol_flags(&self, id: SymbolId) -> SymFlags {
+        let flags = self.symbols.flags(id.idx());
+        flags.expect("the symbol belongs to this file")
+    }
+
     /// Returns the parent of `e`, or `Parent::None` if `e` isn't an expression of this file.
     #[inline]
     pub fn parent_of_expr(&self, e: ExprId) -> Parent {
@@ -1950,6 +1979,7 @@ impl<S: Storage> BoundIn<S> {
 
     /// `GetAssignmentTarget` and `accessKind` walk up the parents the same way, except that the
     /// latter looks through neither `!` nor `...`.
+    #[inline]
     fn assignment_target(
         &self,
         hir: &File,
@@ -2076,26 +2106,29 @@ impl<S: Storage> BoundIn<S> {
     /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
     #[inline]
     pub fn export_symbol_of_value_symbol_if_exported(&self, symbol: SymbolId) -> SymbolId {
-        let local = self.symbol(symbol);
-        if local.flags.contains(SymFlags::EXPORT_VALUE) && local.export_symbol.is_some() {
-            local.export_symbol
-        } else {
-            symbol
+        if !self.symbol_flags(symbol).contains(SymFlags::EXPORT_VALUE) {
+            return symbol;
         }
+        self.symbol(symbol).export_symbol.some().unwrap_or(symbol)
     }
 
     /// The table's entries, in symbol creation order.
     pub fn table(&self, table: TableId) -> &[(Atom, SymbolId)] {
-        self.entries_of_table(table)
-    }
-
-    #[inline]
-    fn entries_of_table(&self, table: TableId) -> &[(Atom, SymbolId)] {
         if table.is_none() {
             return &[];
         }
         let (start, len) = self.tables[table.idx()];
         &self.entries[start as usize..(start + len) as usize]
+    }
+
+    #[inline]
+    fn entries_to_scan(&self, table: TableId) -> Option<&[(Atom, SymbolId)]> {
+        if table.is_none() {
+            return Some(&[]);
+        }
+        let (start, len) = self.tables[table.idx()];
+        (len as usize <= Self::SCANNED)
+            .then(|| &self.entries[start as usize..(start + len) as usize])
     }
 
     /// `NameResolver.Resolve`: `IsSourceFile(location) || IsModuleDeclaration(location) &&
@@ -2567,11 +2600,10 @@ impl Bound<'_> {
     }
 
     pub fn lookup(&self, table: TableId, name: Atom) -> Option<SymbolId> {
-        let entries = self.entries_of_table(table);
-        if entries.len() <= Self::SCANNED {
-            return entries.iter().find(|e| e.0 == name).map(|e| e.1);
+        match self.entries_to_scan(table) {
+            Some(entries) => entries.iter().find(|e| e.0 == name).map(|e| e.1),
+            None => self.lookup_in_large_table(table, name),
         }
-        self.lookup_in_large_table(table, name)
     }
 
     #[inline(never)]
@@ -3251,17 +3283,81 @@ impl<'s> Bound<'s> {
 
     /// The side tables of a file without nodes.
     pub fn empty_in(arena: &'s Arena) -> Bound<'s> {
-        BoundBuilder::default().move_to_arena(arena)
+        macro_rules! empty {
+            ($($list:ident),*) => {
+                return Bound {
+                    $($list: Fixed::default(),)*
+                    block: ListBlock::default(),
+                    ran_out_of_stack: false,
+                    is_unbound: false,
+                    is_bound_in_part: false,
+                    symbols: Symbols::of(&[], arena),
+                    large_tables: FixedMap::Arena(ArenaHashMap::with_capacity_and_hasher_in(
+                        0, FxBuild, arena,
+                    )),
+                    file_symbol: Default::default(),
+                    export_stars: Default::default(),
+                    ambient_modules: Default::default(),
+                    pattern_ambient_modules: Default::default(),
+                    global_augmentations: Default::default(),
+                    redeclarations: Default::default(),
+                    umd_globals: Default::default(),
+                    module_augmentations: Default::default(),
+                    ambient_specifiers: Default::default(),
+                    commonjs_indicator: None,
+                    module_exports_property: Default::default(),
+                    expr_symbol: Default::default(),
+                    expr_flow: Default::default(),
+                    stmt_scope: Default::default(),
+                    this_in_type_literal: ArenaFewMap::from_iter_in(std::iter::empty(), arena),
+                    property_symbol: ArenaFewMap::from_iter_in(std::iter::empty(), arena),
+                    enum_scope: Default::default(),
+                    module_scope: Default::default(),
+                    enum_symbol: Default::default(),
+                    enum_member_symbol: Default::default(),
+                    enum_member_owner: Default::default(),
+                    module_symbol: Default::default(),
+                    module_instance_state: Default::default(),
+                    type_query_operands: Default::default(),
+                    assignment_patterns: Default::default(),
+                    lists_assignment_patterns: false,
+                    unchecked_exprs: Default::default(),
+                    unchecked_types: Default::default(),
+                    infer_positions: Default::default(),
+                    expando_declarations: Default::default(),
+                    computed_symbols: Default::default(),
+                    stmt_flow: Default::default(),
+                    hoisted_vars: Default::default(),
+                    rejected_decorators: Default::default(),
+                    unused_labels: Default::default(),
+                    import_equals_scope: Default::default(),
+                    expr_scope: ArenaFewMap::from_iter_in(std::iter::empty(), arena),
+                    private_class: ArenaFewMap::from_iter_in(std::iter::empty(), arena),
+                    private_names_outside_class_bodies: Default::default(),
+                    classes_of_private_names: Default::default(),
+                    arguments_objects: Default::default(),
+                    identifiers_in_parameters: Default::default(),
+                    jsdoc_param_errors: Default::default(),
+                    names_resolved_for_arguments: Default::default(),
+                    flow_depth: 0,
+                    flow_depth_added_by_loops: 0,
+                    has_loop_types_that_depend_on_order: false,
+                    runtime: Default::default(),
+                }
+            };
+        }
+        long_lists!(empty);
     }
 
     /// In place of the side tables of a module that is bound once a file that is read refers to it.
-    pub fn unbound_in(arena: &'s Arena, specifiers: Vec<Atom>) -> Bound<'s> {
-        let mut unbound = BoundBuilder {
+    pub fn unbound_in(arena: &'s Arena, mut specifiers: Vec<Atom>) -> Bound<'s> {
+        let mut block = ListBlock::new_in(arena, ListBlock::room_for(&specifiers));
+        Bound {
             is_unbound: true,
-            specifiers,
-            ..Default::default()
-        };
-        unbound.move_to_arena(arena)
+            specifiers: block.take(&mut specifiers, arena),
+            block,
+            ..Bound::empty_in(arena)
+        }
     }
 }
 

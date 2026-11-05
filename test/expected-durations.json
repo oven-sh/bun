@@ -104,6 +104,10 @@
     "default": 27200,
     "asan": 108800
   },
+  "aot/a-file-that-may-start-a-worker.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-file-that-workers-alone-load-has-no-names-of-the-test-runner.test.ts": {
     "default": 8100,
     "asan": 32400
@@ -364,6 +368,10 @@
     "default": 13700,
     "asan": 54800
   },
+  "aot/a-write-above-a-built-in-class-kills-no-test-that-gathers-its-own-list.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-written-path-that-is-missing-at-the-build-is-looked-up-when-the-program-runs.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -472,6 +480,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/builtins/rows-of-the-host-are-held-by-calls-written-by-hand.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/builtins/ways.test.ts": {
     "default": 22300,
     "asan": 89200
@@ -523,10 +535,6 @@
   "aot/compiler/budgets.test.ts": {
     "default": 2600,
     "asan": 10400
-  },
-  "aot/compiler/counters-have-stages.test.ts": {
-    "default": 1700,
-    "asan": 6800
   },
   "aot/compiler/determinism.test.ts": {
     "default": 1700,
@@ -844,6 +852,10 @@
     "default": 11700,
     "asan": 46800
   },
+  "aot/many-computed-loads-in-one-file-build-time.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/many-small-files-beside-one-long-file.test.ts": {
     "default": 7300,
     "asan": 29200
@@ -1112,6 +1124,10 @@
     "default": 4400,
     "asan": 17600
   },
+  "aot/react-compiler-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/react-compiler-hooks-called-early.test.ts": {
     "default": 3600,
     "asan": 14400
@@ -1159,6 +1175,10 @@
   "aot/reset-modules.test.ts": {
     "default": 3800,
     "asan": 15200
+  },
+  "aot/right-programs-run-under-the-word-that-holds-objects-to-staying-as-made.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/run-parallel-full-disk-message.test.ts": {
     "default": 1400,
@@ -1412,9 +1432,37 @@
     "default": 1300,
     "asan": 5200
   },
-  "aot/test-runs-in-folders.test.ts": {
-    "default": 686900,
-    "asan": 2747600
+  "aot/test-runs-in-folders-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/test-runs-in-folders-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/test-runs-in-folders-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/test-runs-in-folders-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/test-runs-in-folders-5.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/test-runs-in-folders-6.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/test-runs-in-folders-7.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/test-runs-in-folders-8.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/test-setup-import.test.ts": {
     "default": 600,
@@ -1444,6 +1492,10 @@
     "default": 600,
     "asan": 2400
   },
+  "aot/the-cells-that-never-die-are-kept-over-many-pages.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-default-of-a-mocked-built-in-module-is-the-mocks.test.ts": {
     "default": 1300,
     "asan": 5200
@@ -1467,6 +1519,10 @@
   "aot/the-global-object-that-goes-somewhere-opens-no-test-run.test.ts": {
     "default": 1600,
     "asan": 6400
+  },
+  "aot/the-length-of-a-view-that-is-as-its-class-made-it-is-read-by-its-type.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/the-library-is-written-in-forms-that-the-schema-names.test.ts": {
     "default": 60000,
@@ -1599,6 +1655,10 @@
   "aot/where-nothing-speaks-for-the-product-a-file-is-the-tests.test.ts": {
     "default": 2600,
     "asan": 10400
+  },
+  "aot/whether-a-module-has-run-costs-the-same-beside-a-larger-cycle-that-awaits.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/whether-a-module-waits-for-its-cycle-costs-the-same-in-a-larger-program.test.ts": {
     "default": 60000,

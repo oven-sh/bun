@@ -203,6 +203,16 @@ const responseFromJSON = [
   },
 ] satisfies b.FunctionField[];
 
+// Every operand is passed.
+const responseFromJSONAndParts = {
+  ...operandCodeOnly,
+  args: { value: b.any, ...argsOfResponseInitParts },
+  returns: newResponse,
+  uses: { value: serialized, ...usesOfResponseInitParts },
+  reads: externalState,
+  directEntry: entryTakingResponseInitParts("Response__jsonFromParts"),
+} satisfies b.FunctionField;
+
 // A call without a URL redirects to the empty string, and a call with undefined to "undefined".
 const redirection = [
   { ...nativeOnly, args: { url: b.string.loose.optional, init: primitiveOrAbsent }, returns: newResponse },
@@ -524,6 +534,15 @@ export default b.declarations(
     literalPartsForm: { argument: 1, names: responseInitParts, path: "%CompilerHelpers%.newResponseFromParts" },
   }),
   b.static("%Response%.json", responseFromJSON),
+  b.static("%CompilerHelpers%.newResponseOfJSONFromParts", responseFromJSONAndParts),
+  b.extend("%CompilerHelpers%.newResponseOfJSONFromParts", { runsUnseenCode: false }),
+  b.extend("%Response%.json", {
+    literalPartsForm: {
+      argument: 1,
+      names: responseInitParts,
+      path: "%CompilerHelpers%.newResponseOfJSONFromParts",
+    },
+  }),
   b.static("%Response%.redirect", redirection),
   b.static("%Response%.error", { returns: newResponse, capability: "heap", implementation: b.hostCall }),
   declareMethods("Response", membersOfMessage("Response")),

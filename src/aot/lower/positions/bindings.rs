@@ -58,7 +58,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(super) fn compute_variable_position(&mut self, symbol: Sym) -> DeclaredType {
         let class = self.queries.class_of_binding(symbol);
-        if class.is_some() || self.is_function_binding(symbol) {
+        let files = self.queries.files();
+        let declarations = files.decls_of(symbol);
+        if class.is_some() || self.is_function_binding(symbol, &declarations) {
             let ty = match self.find_bound_function(symbol, class) {
                 Some(key) => {
                     let function = self.reference_function(key);
@@ -74,8 +76,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 false => position,
             };
         }
-        let files = self.queries.files();
-        let declarations = files.decls_of(symbol);
         let mut values = declarations
             .iter()
             .filter(|&&(_, it)| !declares_type_alone(it));
@@ -169,10 +169,10 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    fn is_function_binding(&self, symbol: Sym) -> bool {
+    fn is_function_binding(&self, symbol: Sym, declarations: &[(FileId, Decl)]) -> bool {
         let files = self.queries.files();
         let mut has_body = false;
-        for &(declaring_file, declaration) in files.decls_of(symbol).iter() {
+        for &(declaring_file, declaration) in declarations {
             let function = match declaration {
                 Decl::Fn(function) => function,
                 _ if declares_type_alone(declaration) => continue,

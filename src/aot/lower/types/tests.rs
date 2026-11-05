@@ -205,6 +205,26 @@ fn find_function<'f>(lowered: &'f Lowered, name: &str) -> &'f Function {
     function.expect("the fragment defines the function")
 }
 
+fn positions_stated_of_stepped_values(lowered: &Lowered, name: &str) -> Vec<PositionTree> {
+    let blocks = find_function(lowered, name).body.blocks();
+    let values: Vec<_> = blocks.flat_map(|block| block.values()).collect();
+    let find = |word: u32, opcode: Opcode| {
+        let mut defined = values.iter();
+        defined.find(|value| value.id.to_word() == word && value.opcode == opcode)
+    };
+    let conversions = values
+        .iter()
+        .filter(|value| value.opcode == Opcode::Convert);
+    let of_steps = conversions.filter(|conversion| {
+        let read = find(conversion.fields[0], Opcode::ResultAt);
+        read.is_some_and(|read| find(read.fields[0], Opcode::IteratorResume).is_some())
+    });
+    of_steps
+        .filter_map(|conversion| DeclaredType::from_words(&conversion.fields[1..]))
+        .map(|stated| expand_position(&lowered.tables, stated))
+        .collect()
+}
+
 fn collect_array_literal_contents(source: &str) -> Vec<TypeId> {
     let fragment = lower(source, None).fragment;
     let functions = fragment.functions.iter().map(|(_, function)| function);
@@ -737,6 +757,142 @@ fn inferred_type_of_a_parameter_is_checked_in_a_checked_file_and_expected_in_any
             primitives.contains(Primitives::NUMBER),
             "{path}: {position:?}"
         );
+    }
+}
+
+#[test]
+fn declared_head_of_for_of_is_expected_to_hold_the_type_of_its_binding() {
+    for declaration in ["const", "let", "var"] {
+        let source = format!(
+            "interface Row {{ id: number }}
+export function probe(rows: Row[]) {{
+  let sum = 0;
+  for ({declaration} row of rows) sum += row.id;
+  return sum;
+}}
+"
+        );
+        let stated = positions_stated_of_stepped_values(&lower(&source, None), "probe");
+        let [row] = &stated[..] else {
+            panic!("{declaration}: {stated:?}");
+        };
+        assert!(row.is_expected, "{declaration}: {row:?}");
+        assert_eq!(row.ty.layout_count, 1, "{declaration}: {row:?}");
+    }
+}
+
+#[test]
+fn declared_head_of_for_await_is_expected_to_hold_the_type_of_its_binding() {
+    let source = "interface Row { id: number }
+async function* pages(): AsyncGenerator<Row[]> { yield [{ id: 1 }]; }
+export async function probe() {
+  let sum = 0;
+  for await (const page of pages()) for (const row of page) sum += row.id;
+  return sum;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower(source, None), "probe");
+    let [page, row] = &stated[..] else {
+        panic!("{stated:?}");
+    };
+    assert!(page.is_expected && row.is_expected, "{stated:?}");
+    let rows = contents_of(&page.ty, BuiltinClass::Array);
+    assert_eq!(rows[0].layout_count, 1, "{page:?}");
+    assert_eq!(row.ty.layout_count, 1, "{row:?}");
+}
+
+#[test]
+fn object_pattern_in_the_head_of_for_of_is_expected_to_take_apart_the_type_of_the_pattern() {
+    let source = "interface Row { id: number }
+export function probe(rows: Row[]) {
+  let sum = 0;
+  for (const { id } of rows) sum += id;
+  return sum;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower(source, None), "probe");
+    let [row] = &stated[..] else {
+        panic!("{stated:?}");
+    };
+    assert!(row.is_expected, "{row:?}");
+    assert_eq!(row.ty.layout_count, 1, "{row:?}");
+}
+
+#[test]
+fn nothing_is_expected_of_what_an_array_pattern_in_the_head_of_for_of_takes_apart() {
+    let source = "class Key { id = 1; }
+class Held { id = \"one\"; }
+export function probe(table: Map<string, number>, pairs: [Key, Held][]) {
+  let text = \"\";
+  for (const [key, value] of table) text += key + value;
+  for (const [key, held] of pairs) text += key.id + held.id;
+  return text;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower(source, None), "probe");
+    assert!(stated.is_empty(), "{stated:?}");
+}
+
+#[test]
+fn declared_head_of_for_of_is_expected_to_hold_what_is_inferred_where_the_file_is_not_checked() {
+    let source = "class Row { id = 1; }
+export function probe() {
+  let sum = 0;
+  for (const row of [new Row(), new Row()]) sum += row.id;
+  return sum;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower_file("main.js", source, None), "probe");
+    let [row] = &stated[..] else {
+        panic!("{stated:?}");
+    };
+    assert!(row.is_expected, "{row:?}");
+    assert_eq!(row.ty.layout_count, 1, "{row:?}");
+}
+
+#[test]
+fn nothing_is_expected_of_a_head_of_for_of_that_is_an_expression() {
+    let source = "interface Row { id: number }
+export function probe(rows: Row[], holder: { row: Row }) {
+  let row: Row | undefined;
+  for (holder.row of rows);
+  for (row of rows);
+  return row;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower(source, None), "probe");
+    assert!(
+        stated.iter().all(|target| !target.is_expected),
+        "{stated:?}"
+    );
+}
+
+#[test]
+fn nothing_is_expected_of_a_head_of_for_of_whose_binding_has_no_type() {
+    let files = [
+        (
+            "main.ts",
+            "export function probe(list: any[], none: never[]) {
+  let last;
+  for (const each of list) last = each;
+  for (const each of none) last = each;
+  return last;
+}
+",
+        ),
+        (
+            "main.js",
+            "export function probe(list) {
+  let last;
+  for (const each of list) last = each;
+  return last;
+}
+",
+        ),
+    ];
+    for (path, source) in files {
+        let stated = positions_stated_of_stepped_values(&lower_file(path, source, None), "probe");
+        assert!(stated.is_empty(), "{path}: {stated:?}");
     }
 }
 

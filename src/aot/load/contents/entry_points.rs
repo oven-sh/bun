@@ -15,25 +15,35 @@ use bun_threading::Guarded;
 
 use super::load_names::find_files_followed_further_than_bundler;
 use super::worker_entries::{
-    WorkerNameForm, WorkerStart, find_file_named_as_in_executable, source_path_of,
+    PlaceOfName, WorkerNameForm, WorkerStart, find_file_named_as_in_executable, source_path_of,
 };
 use crate::compile::EntryPointPaths;
 use crate::load::externals::contains;
 use crate::load::host::LoadHost;
-use crate::load::is_host_path;
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::module_paths::compute_relative_path;
 use crate::load::sources::{SourceKind, parsed_source_in};
+use crate::load::{is_host_path, is_in_node_modules};
 use crate::module_keys::is_name_of_text;
 use crate::options::{EntryText, Options, PathOptions};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) enum FoundBecause {
     StartsWorker,
+    MayStartWorker,
     NamedByData,
     PassedForParameter,
     FollowedFurtherThanBundler,
     WrittenInArm,
+}
+
+impl FoundBecause {
+    fn is_for_worker(self) -> bool {
+        matches!(
+            self,
+            FoundBecause::StartsWorker | FoundBecause::MayStartWorker
+        )
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -199,6 +209,10 @@ fn find_embedded_file(code: &dyn CodeView<'_>, importer: FileId, site: u32) -> O
     let &CodeAnswer::File(copy) = code.answers(importer)?.0.get(site as usize)? else {
         return None;
     };
+    describe_embedded_file(code, copy)
+}
+
+fn describe_embedded_file(code: &dyn CodeView<'_>, copy: FileId) -> Option<Named> {
     let source = parsed_source_in(code, copy)?;
     let is_copy = source.kind == SourceKind::Data
         && source.loader == Loader::File
@@ -222,6 +236,14 @@ fn find_embedded_file(code: &dyn CodeView<'_>, importer: FileId, site: u32) -> O
     })
 }
 
+fn count_as_sure(entry_points: &mut [(Vec<u8>, FoundEntryPoint)], key: &[u8]) {
+    for (_, entry_point) in entry_points.iter_mut().filter(|it| it.0 == key) {
+        if entry_point.because == FoundBecause::MayStartWorker {
+            entry_point.because = FoundBecause::StartsWorker;
+        }
+    }
+}
+
 impl Mention {
     fn of_start(code: &dyn CodeView<'_>, file: FileId, start: &WorkerStart) -> Option<Mention> {
         let ask = |read_as: ReadAs| {
@@ -237,6 +259,10 @@ impl Mention {
         let named = match start.form {
             WorkerNameForm::AsWritten => ask(ReadAs::EntryPoint),
             WorkerNameForm::FromOwnFolder => ask(ReadAs::PathFromOwnFolder),
+            WorkerNameForm::OwnFile => Some(Named::File {
+                path: code.file_name(file).to_vec(),
+                path_of_copy: None,
+            }),
             WorkerNameForm::Resolved(ResolvedForm::Path) => ask(ReadAs::Require),
             WorkerNameForm::Resolved(ResolvedForm::Url | ResolvedForm::UrlObject) => {
                 ask(ReadAs::Url)
@@ -245,7 +271,10 @@ impl Mention {
         };
         Some(Mention {
             named: named?,
-            because: FoundBecause::StartsWorker,
+            because: match start.place {
+                PlaceOfName::Constructor | PlaceOfName::Preload => FoundBecause::StartsWorker,
+                PlaceOfName::Elsewhere => FoundBecause::MayStartWorker,
+            },
             started_at: Some((code.file_name(file).to_vec(), start.at.0)),
             named_by: None,
         })
@@ -284,6 +313,8 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
     fn collect_mentions(&self, code: &dyn CodeView<'_>, found: &FoundSoFar) -> Vec<Mention> {
         let mut mentions = Vec::new();
         let mut names_worker_constructor = false;
+        let mut starts_out_of_sight = false;
+        let mut embedded: Vec<FileId> = Vec::new();
         let mut starts: Vec<(FileId, &WorkerStart)> = Vec::new();
         let mut urls: Vec<Atom> = Vec::new();
         let mut texts: Vec<(Atom, Option<Atom>)> = Vec::new();
@@ -316,6 +347,11 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             if let Some(source) = parsed_source_in(code, file) {
                 let contents = &source.contents;
                 names_worker_constructor |= contents.names_worker_constructor;
+                starts_out_of_sight |=
+                    contents.starts_worker_out_of_sight || contents.hands_worker_constructor_on;
+                if source.loader == Loader::File && !is_in_node_modules(code.file_name(file)) {
+                    embedded.push(file);
+                }
                 starts.extend(contents.worker_starts.iter().map(|start| (file, start)));
                 urls.extend_from_slice(&contents.urls_with_code);
                 texts.extend_from_slice(&contents.texts_behind_object_urls);
@@ -394,9 +430,23 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             }));
         }
         if names_worker_constructor {
-            let starts = starts.into_iter();
-            let started = starts.filter_map(|(file, start)| Mention::of_start(code, file, start));
-            mentions.extend(started);
+            let is_elsewhere = |it: &(FileId, &WorkerStart)| it.1.place == PlaceOfName::Elsewhere;
+            let (elsewhere, sure): (Vec<_>, Vec<_>) = starts.into_iter().partition(is_elsewhere);
+            let sure = sure.into_iter();
+            mentions.extend(sure.filter_map(|(file, start)| Mention::of_start(code, file, start)));
+            if starts_out_of_sight {
+                let elsewhere = elsewhere.into_iter();
+                let written = elsewhere.filter_map(|it| Mention::of_start(code, it.0, it.1));
+                mentions.extend(written);
+                let embedded = embedded.into_iter();
+                let embedded = embedded.filter_map(|copy| describe_embedded_file(code, copy));
+                mentions.extend(embedded.map(|named| Mention {
+                    named,
+                    because: FoundBecause::MayStartWorker,
+                    started_at: None,
+                    named_by: None,
+                }));
+            }
             let urls = urls.into_iter().map(|url| code.atoms().bytes(url));
             let unread = urls.filter(|&url| !found.urls_read.contains(url));
             let spellings = unread.flat_map(|url| {
@@ -745,6 +795,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             starts: Vec::new(),
                         };
                         loads.push((path.clone(), named_by));
+                        found.named_otherwise.insert(self.key_of(&path));
                         further.push((self.key_of(&path), path, entry_point));
                     }
                     continue;
@@ -760,6 +811,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             starts: Vec::new(),
                         };
                         loads.push((path.clone(), named_by));
+                        found.named_otherwise.insert(self.key_of(&path));
                         further.push((self.key_of(&path), path, entry_point));
                     }
                     continue;
@@ -768,6 +820,9 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             for path in paths {
                 keys_of_answer.push(self.key_of(&path));
                 if known.contains(&self.key_of(&path)) {
+                    if because == FoundBecause::StartsWorker {
+                        count_as_sure(&mut found.entry_points, &self.key_of(&path));
+                    }
                     loads.push((path, named_by));
                     continue;
                 }
@@ -792,7 +847,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     further.push((key, path, entry_point));
                 }
             }
-            if because != FoundBecause::StartsWorker {
+            if !because.is_for_worker() || started_at.is_none() {
                 found.named_otherwise.extend(keys_of_answer.iter().cloned());
             }
             if let Some(question) = question {
@@ -859,7 +914,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         self.list_starts(files, &found, &keys, &mut entry_points);
         if crate::statistics::logs_stages() {
             let of_workers = entry_points.iter();
-            let of_workers = of_workers.filter(|it| it.because == FoundBecause::StartsWorker);
+            let of_workers = of_workers.filter(|it| it.because.is_for_worker());
             crate::test_run_report::say_load_goes_on(of_workers.count());
         }
         entry_points
@@ -873,11 +928,21 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         entry_points: &mut [FoundEntryPoint],
     ) {
         let places: FxHashMap<&[u8], usize> = (keys.iter().map(|key| &key[..]).zip(0..)).collect();
+        let mut compiled = files.compiled_files().iter();
+        let starts_out_of_sight = compiled.any(|&file| {
+            parsed_source_in(files, file).is_some_and(|source| {
+                let contents = &source.contents;
+                contents.starts_worker_out_of_sight || contents.hands_worker_constructor_on
+            })
+        });
         for &file in files.compiled_files() {
             let Some(source) = parsed_source_in(files, file) else {
                 return entry_points.iter_mut().for_each(|it| it.starts.clear());
             };
-            for start in &source.contents.worker_starts {
+            let starts = source.contents.worker_starts.iter();
+            let is_asked =
+                |start: &&WorkerStart| starts_out_of_sight || start.place != PlaceOfName::Elsewhere;
+            for start in starts.filter(is_asked) {
                 let own_key;
                 let named = Mention::of_start(files, file, start).map(|mention| mention.named);
                 let answer: &[Vec<u8>] = match &named {
@@ -900,9 +965,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             }
         }
         for (key, entry_point) in keys.iter().zip(entry_points) {
-            if entry_point.because != FoundBecause::StartsWorker
-                || found.named_otherwise.contains(key)
-            {
+            if !entry_point.because.is_for_worker() || found.named_otherwise.contains(key) {
                 entry_point.starts.clear();
             }
         }

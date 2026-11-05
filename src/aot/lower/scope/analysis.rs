@@ -189,6 +189,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) use_counts: Vec<u8>,
     pub(super) calls_by_name: Vec<(ExprId, FnId)>,
     pub(super) made_at_first_read: Vec<(SymbolId, FnId)>,
+    pub(super) is_made_at_first_read: Vec<bool>,
     pub(super) created_at_each_read: Vec<SymbolId>,
     pub(super) functions_created_before_loops: Vec<(StmtId, SymbolId)>,
     pub(super) names_called: Vec<SymbolId>,
@@ -259,10 +260,10 @@ impl ScopeAnalysis {
 
     #[inline]
     pub(in crate::lower) fn function_made_at_first_read(&self, symbol: SymbolId) -> Option<FnId> {
-        if self.made_at_first_read.is_empty() {
-            return None;
+        match self.is_made_at_first_read.get(symbol.idx()) {
+            Some(&true) => find_by_key(&self.made_at_first_read, symbol),
+            Some(&false) | None => None,
         }
-        find_by_key(&self.made_at_first_read, symbol)
     }
 
     pub(in crate::lower) fn functions_created_before_loop(

@@ -49,7 +49,7 @@ interface Cause extends Place, Wording {
   inLoops: number;
   function: string;
   types: string[];
-  family: "unproven-type" | "unknown-code" | "mutation";
+  family: "unproven-type" | "unknown-code";
   why: Wording | null;
 }
 

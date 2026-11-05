@@ -833,10 +833,15 @@ fn find_taken_objects(
     taken.names_way_to_module_objects |=
         text.bind.runs_tests && text.builtins.reaches_module_cache();
     let mut holders = Vec::new();
+    let mut distinct_candidates: Option<Vec<ModuleRef>> = None;
     for (site, answer) in text.analysis.import_sites.iter().zip(&scan.sites) {
         let modules = match answer {
             ScannedSite::Module(module) => core::slice::from_ref(module),
-            ScannedSite::Candidates(_) => &scan.candidates[..],
+            ScannedSite::Candidates(_) => &distinct_candidates.get_or_insert_with(|| {
+                let mut seen = FxHashSet::default();
+                let candidates = scan.candidates.iter().copied();
+                candidates.filter(|module| seen.insert(*module)).collect()
+            })[..],
             ScannedSite::AllModules | ScannedSite::Unresolved | ScannedSite::Erased => continue,
         };
         for &module in modules {

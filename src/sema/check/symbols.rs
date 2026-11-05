@@ -1309,11 +1309,22 @@ impl<'p, 's> Checker<'p, 's> {
         ignore_errors: bool,
     ) -> Option<Sym> {
         let files = self.files();
-        let mut texts: SmallVec<[Atom; 4]> = SmallVec::new();
-        for text in self.hir(file).texts(names) {
-            texts.push(text);
-        }
-        let found = files.resolve_entity_with(file, scope, &texts, meaning, !ignore_errors, self);
+        let written = self.hir(file).texts(names);
+        let mut few = [Atom::NONE; 4];
+        let many;
+        let texts: &[Atom] = match few.get_mut(..names.len()) {
+            Some(texts) => {
+                for (text, name) in texts.iter_mut().zip(written) {
+                    *text = name;
+                }
+                &*texts
+            }
+            None => {
+                many = written.collect::<Vec<Atom>>();
+                &many[..]
+            }
+        };
+        let found = files.resolve_entity_with(file, scope, texts, meaning, !ignore_errors, self);
         if found.is_none() && !ignore_errors {
             self.report_unresolved_entity_name(file, scope, names, meaning);
         }

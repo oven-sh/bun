@@ -1,4 +1,4 @@
-use bun_sema::hir::{ExprId, StmtId, StmtKind, VarKind};
+use bun_sema::hir::{ExprId, PatKind, StmtId, StmtKind, VarKind};
 use smallvec::SmallVec;
 
 use super::FunctionLowering;
@@ -164,7 +164,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.push_break_target(statement, BreakTargetKind::Loop, after);
         self.begin_cleanup(BlockRole::IterationCleanup, Some(iterator));
         self.push_continue_target(statement, header);
-        self.lower_iteration_body(statement, left, step.value, body);
+        let stepped = self.expect_type_of_declared_head(left, step.value);
+        self.lower_iteration_body(statement, left, stepped, body);
         self.jump(header);
         self.pop_jump_target();
 
@@ -180,6 +181,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.seal(header);
         self.pop_jump_target();
         self.continue_in(after);
+    }
+
+    fn expect_type_of_declared_head(&mut self, left: StmtId, stepped: ValueId) -> ValueId {
+        let hir = self.file.hir;
+        let StmtKind::Var(declarations) = hir[left].kind else {
+            return stepped;
+        };
+        let Some(declaration) = declarations.iter().next() else {
+            return stepped;
+        };
+        let pattern = hir[declaration].pat;
+        if matches!(hir[pattern].kind, PatKind::Array(_)) {
+            return stepped;
+        }
+        let Ok(checked) = self.file.queries.binding_type(pattern) else {
+            return stepped;
+        };
+        let expected = self.file.map_type_at(checked).ty;
+        self.expect_type(stepped, expected)
     }
 
     fn lower_loop_subject(&mut self, statement: StmtId, subject: ExprId) -> ValueId {

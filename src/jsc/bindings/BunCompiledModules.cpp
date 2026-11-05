@@ -163,7 +163,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
 extern "C" bool Bun__compiledProgramRunsInPlace();
-extern "C" bool Bun__AOT__onResolveAnswersFor(JSC::JSGlobalObject*, const BunString* name, const BunString* importer);
+extern "C" JSC::AOT::AnswerForName Bun__AOT__onResolveAnswersFor(JSC::JSGlobalObject*, const BunString* name, const BunString* importer, BunString* foundWithoutPlugins);
 extern "C" bool Bun__compiledProgramHoldsFileAsItIs(const BunString*);
 extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* path);
@@ -353,6 +353,21 @@ extern "C" void Bun__AOT__setPluginsSilent(bool areSilent)
     answersOfPluginsOnThisThread().pluginsAreSilent = areSilent;
 }
 
+bool holdsAnswersForLoader()
+{
+    return !answersOfPluginsOnThisThread().keptForLoader.isEmpty();
+}
+
+void forgetAnswersKeptForLoader(JSGlobalObject* globalObject)
+{
+    answersOfPluginsOnThisThread().keptForLoader.removeIf([&](auto& kept) {
+        kept.value.removeAllMatching([&](const AnswerOfPlugins& answer) {
+            return answer.realm == globalObject;
+        });
+        return kept.value.isEmpty();
+    });
+}
+
 static void askingAboutNames(JSGlobalObject*, const ScopedLambda<bool(const String& importer)>* leavesWhereAskingEnds)
 {
     AnswersOfPlugins& answers = answersOfPluginsOnThisThread();
@@ -371,23 +386,26 @@ static void askingAboutNames(JSGlobalObject*, const ScopedLambda<bool(const Stri
     }
 }
 
-static bool answersForName(JSGlobalObject* globalObject, const String& name, const String& importer)
+static AOT::AnswerForName answersForName(JSGlobalObject* globalObject, const String& name, const String& importer, String& foundWithoutPlugins)
 {
     auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    bool answers = isGivenByPlugin(global, name);
-    if (!answers && !global->onResolvePlugins.isEmpty()) {
+    AOT::AnswerForName answer = isGivenByPlugin(global, name) ? AOT::AnswerForName::Answered : AOT::AnswerForName::Declined;
+    if (answer == AOT::AnswerForName::Declined && !global->onResolvePlugins.isEmpty()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
         BunString nameArgument = Bun::toString(name);
         BunString importerArgument = Bun::toString(importer);
+        BunString found = { BunStringTag::Dead };
         {
             SetForScope engineAsks(answersOfPluginsOnThisThread().engineAsks, true);
-            answers = Bun__AOT__onResolveAnswersFor(globalObject, &nameArgument, &importerArgument);
+            answer = Bun__AOT__onResolveAnswersFor(globalObject, &nameArgument, &importerArgument, &found);
         }
         (void)scope.tryClearException();
+        if (!found.isDead())
+            foundWithoutPlugins = found.transferToWTFString();
     }
-    if (answers)
+    if (answer != AOT::AnswerForName::Declined)
         recordFileRunFromSource(globalObject, importer, "a plugin answers for a name that it imports"_s);
-    return answers;
+    return answer;
 }
 
 // Code that an executable loads from disk names globals, built-in modules, files on disk and what it is handed. The helpers of a test run import the files under test.
@@ -1749,6 +1767,11 @@ JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return 
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 bool compiledModulesRunInPlaceOfFiles() { return false; }
 bool compiledProgramRunsInSeveralRealmsAtOnce() { return false; }
+std::optional<EncodedJSValue> takeAnswerKeptForLoader(JSGlobalObject*, const BunString*, const BunString*, const BunString*, bool&) { return std::nullopt; }
+void keepAnswerForLoader(JSGlobalObject*, const BunString*, const BunString*, const BunString*, JSValue, bool) {}
+bool holdsAnswersForLoader() { return false; }
+void forgetAnswersKeptForLoader(JSGlobalObject*) {}
+String fileOfCallerThatWasNotCompiled(VM&, CallFrame*) { return {}; }
 String firstCompiledModuleMatching(JSGlobalObject*, RegExp*) { return {}; }
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable)
 {

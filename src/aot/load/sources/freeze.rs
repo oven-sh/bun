@@ -252,6 +252,7 @@ fn find_entry_points_found_by_computed_names(input: &FreezeInput<'_, '_>) -> Vec
         matches!(
             found.because,
             FoundBecause::NamedByData
+                | FoundBecause::MayStartWorker
                 | FoundBecause::PassedForParameter
                 | FoundBecause::WrittenInArm
         )

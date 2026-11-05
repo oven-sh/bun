@@ -154,7 +154,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 continue;
             }
             let value = match (slot, first_exports) {
-                (ScopeSlot::This, Some(first_exports)) => first_exports,
+                (
+                    ScopeSlot::This | ScopeSlot::CommonJs(CommonJsVariable::Exports),
+                    Some(first_exports),
+                ) => first_exports,
+                (
+                    ScopeSlot::CommonJs(
+                        variable @ (CommonJsVariable::Module | CommonJsVariable::Require),
+                    ),
+                    _,
+                ) => self.emit_passed_value(variable),
                 _ => self.builder.undefined(),
             };
             entry_values.push((binding, value));

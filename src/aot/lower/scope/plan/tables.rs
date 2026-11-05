@@ -45,6 +45,13 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
     let holders = holders.map(|&(function, symbol)| (walk.functions[function.index()].key, symbol));
     let mut initialized_holders: Vec<(FunctionKey, SymbolId)> = holders.collect();
     initialized_holders.shared_sort_unstable();
+    let mut is_made_at_first_read = match walk.made_at_first_read.is_empty() {
+        true => Vec::new(),
+        false => vec![false; parts.forms.len()],
+    };
+    for &(symbol, _) in &walk.made_at_first_read {
+        is_made_at_first_read[symbol.idx()] = true;
+    }
     ScopeAnalysis {
         file: context.input.file,
         max_captures: context.input.max_captures,
@@ -62,6 +69,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         use_counts: walk.use_counts.clone(),
         calls_by_name: walk.calls_by_name.clone(),
         made_at_first_read: walk.made_at_first_read.clone(),
+        is_made_at_first_read,
         created_at_each_read: walk.created_at_each_read.clone(),
         functions_created_before_loops: walk.functions_created_before_loops.clone(),
         names_called: walk.names_called.clone(),

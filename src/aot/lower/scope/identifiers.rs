@@ -33,7 +33,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         identifier: ExprId,
     ) -> (ValueId, Option<ValueId>) {
-        let object = match self.resolve_dynamic_identifier(identifier) {
+        let object = match self.find_dynamic_identifier(identifier) {
             Some(DynamicIdentifier::Name(found)) => {
                 let function = self.get_dynamic_value(identifier, found.holder, BindingRead::Value);
                 return (function, Some(found.with_base));
@@ -186,8 +186,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    #[inline]
+    fn find_dynamic_identifier(&mut self, identifier: ExprId) -> Option<DynamicIdentifier> {
+        let bound = self.file.bound;
+        bound.dynamic_lookup_scope(NodeData::Expr(identifier))?;
+        self.resolve_dynamic_identifier(identifier)
+    }
+
     fn read_identifier(&mut self, identifier: ExprId, read: BindingRead) -> ValueId {
-        match self.resolve_dynamic_identifier(identifier) {
+        match self.find_dynamic_identifier(identifier) {
             Some(DynamicIdentifier::Name(found)) => {
                 return self.get_dynamic_value(identifier, found.holder, read);
             }
@@ -224,7 +231,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn resolve_identifier_target(&mut self, identifier: ExprId) -> IdentifierTarget {
         let name = self.file.identifier_name(identifier);
         let binding = self.file.bound.binding(identifier);
-        match self.resolve_dynamic_identifier(identifier) {
+        match self.find_dynamic_identifier(identifier) {
             Some(DynamicIdentifier::Name(found)) => {
                 return IdentifierTarget::Dynamic {
                     binding,

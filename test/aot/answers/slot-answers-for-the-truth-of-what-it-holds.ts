@@ -1,7 +1,7 @@
 // answers: with-library
 // # `if (knot.part)`, `knot.label ? a : b`: a read that tests its receiver for itself, at the end of its block, outside of loops, and nothing but the truth of what it reads is asked.
 // # The slot is held to a type, and whoever stores goes by it: so on the way on which the receiver passes, the word in the slot and that type say the answer, and the way leads to the targets of the branch at once.
-// # Nothing is boxed there, no type is tested and no stub is asked. Only what is read by name is a value, and it goes by the tests that stand behind the read.
+// # Nothing is boxed there, no type is tested and no stub is asked (from-source/machine/slot-answers-for-the-truth-of-what-a-read-finds-in-it.ir). Only what is read by name is a value, and it goes by the tests that stand behind the read.
 // # The objects are those of a constructor function, their fields are stored behind the making, and each reader calls itself once more so that its own code runs.
 // # Whatever is stored from out of sight, a value of another type takes the field out of its slot, and the answer is that of the language: texts, numbers, big integers and objects where a part, a text and a boolean are written,
 // # undefined and null, a field that is deleted, defined anew, made an accessor, found below or behind a proxy, and a field that lies on the prototype where the slot is empty.
@@ -13,13 +13,11 @@
 // # RUN(WALK): walk f8 mechanisms=all
 // # WALK-LABEL: code f8:Body
 // # WALK: [[read]]: {{*}} = GetSlotOrUndefined {{*}} key="part" {{*}} level=Expected
-// # WALK-NEXT: = TypeTest [[read]] testedType=object
-// # RUN(PART): emit f8:Body mechanisms=all
-// # PART: = BitAnd(@4, {{*}}origin = [[read]])
-// # PART-NOT: = Phi(origin = [[read]])
-// # RUN(OPEN): emit f10:Body mechanisms=all
-// # OPEN: = BitAnd(@4, {{*}}origin = [[read]])
-// # OPEN-NOT: = Phi(origin = [[read]])
+// # WALK: = TypeTest [[read]] testedType=object
+// # Where the proofs of fields are checked at run time the read goes the whole way, and what it finds in the slot is asked for the type that the slot is held to.
+// # RUN(ASKED): emit f8:Body mechanisms=all testing=CheckProofsAtRunTime
+// # ASKED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])
+// # ASKED: = Load({{*}}AOTObject_shapeNumber, ReadsImmutableHeap, origin = [[read]])
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 268 of 268 of 268

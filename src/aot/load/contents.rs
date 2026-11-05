@@ -19,9 +19,9 @@ pub(crate) use self::entry_points::{EntryPointFinder, FinderInput, FoundBecause,
 pub(crate) use self::load_names::NamedLoads;
 use self::load_names::resolve_loads_through_imported_loaders;
 pub(crate) use self::scan::{ScanInput, scan_file};
-#[cfg(test)]
-pub(crate) use self::worker_entries::WorkerNameForm;
 pub(crate) use self::worker_entries::WorkerStart;
+#[cfg(test)]
+pub(crate) use self::worker_entries::{PlaceOfName, WorkerNameForm};
 use crate::builtins::table::{self, BuiltinFlags, BuiltinId, BuiltinKind, Mutability, Scope};
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::loaders::{HostLoaderKind, host_loader_kind};

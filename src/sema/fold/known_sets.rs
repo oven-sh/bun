@@ -228,9 +228,10 @@ impl ListHolders {
             let mut handed_on = PositionSet::new(bound.symbols.len());
             for (mention, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
                 if matches!(node.kind, ExprKind::Ident(_))
+                    && let Binding::Symbol(variable) = bound.binding(mention)
+                    && !handed_on.contains(variable.idx())
                     && bound.is_evaluated_ident(mention)
                     && !is_dead(mention)
-                    && let Binding::Symbol(variable) = bound.binding(mention)
                     && !leaves_list_as_written(hir, bound, join, mention)
                 {
                     handed_on.insert(variable.idx());

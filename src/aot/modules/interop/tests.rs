@@ -1,7 +1,7 @@
 use super::*;
 use crate::builtins::RuntimeModule;
 use crate::load::EntryPointKind;
-use crate::modules::testing::{file_named, with_graph, with_runtime_graph};
+use crate::modules::testing::{bind_whole_program, file_named, with_graph, with_runtime_graph};
 use crate::modules::{BindInput, ExportBinding, ImportBinding, ModuleGraph, ModuleRef, SiteAnswer};
 use bun_sema::bind::Decl;
 use bun_sema::hir::ImportId;
@@ -250,6 +250,27 @@ fn json_file_whose_namespace_can_be_reached_exports_every_key() {
     ] {
         assert_eq!(json_export_names(main), every_key, "{main}");
     }
+}
+
+#[test]
+fn json_file_exports_every_key_where_a_package_is_left_out() {
+    let files = [
+        ("main.js", "import data from './data.json'; data.a;"),
+        ("data.json", r#"{ "x": 1, "a": 2, "b-c": 3 }"#),
+    ];
+    with_graph(&files, |graph, input| {
+        assert_eq!(export_names(graph, input, "data.json"), [b"default"]);
+        let packages = [b"left-out".to_vec()];
+        let input = &BindInput {
+            external_packages: &packages,
+            ..*input
+        };
+        let graph = &bind_whole_program(input);
+        let every_key = [&b"a"[..], b"b-c", b"default", b"x"];
+        assert_eq!(export_names(graph, input, "data.json"), every_key);
+        let data = graph.interop(ModuleRef::File(file_named(input, "data.json")));
+        assert_eq!(data.require_result, RequireResult::NamespaceIfImported);
+    });
 }
 
 #[test]

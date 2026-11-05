@@ -10,7 +10,7 @@ use super::{
 use crate::atom::Atom;
 use crate::bind::{
     Bound, BoundBuilder, BoundIn, ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId,
-    ScopeKind, SymbolId, TableId,
+    ScopeKind, SymFlags, SymbolId, TableId,
 };
 use crate::hir::*;
 
@@ -41,12 +41,11 @@ pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos:
 
 impl BoundBuilder {
     pub(super) fn find_in_table(&self, table: TableId, name: Atom) -> Option<SymbolId> {
-        let entries = self.entries_of_table(table);
-        if entries.len() <= Self::SCANNED {
-            let entry = entries.iter().find(|entry| entry.0 == name);
-            return entry.map(|entry| entry.1);
-        }
-        self.find_in_large_table(table, name)
+        let Some(entries) = self.entries_to_scan(table) else {
+            return self.find_in_large_table(table, name);
+        };
+        let entry = entries.iter().find(|entry| entry.0 == name);
+        entry.map(|entry| entry.1)
     }
 
     #[inline(never)]
@@ -212,20 +211,33 @@ impl<S: Storage> BoundIn<S> {
     }
 
     #[inline]
+    pub(super) fn is_default_binding(&self, ident: ExprId, binding: Binding) -> bool {
+        let symbol = self.symbol_of_expr(ident);
+        match binding {
+            Binding::Symbol(found) => found == symbol && symbol.is_some(),
+            Binding::Free => symbol.is_none(),
+            Binding::Arguments(_) | Binding::CommonJs(_) => false,
+        }
+    }
+
+    #[inline]
     pub(super) fn declared_pattern_symbol(&self, pattern: PatId) -> SymbolId {
         let declared = &self.runtime.declarations.declared_symbols;
         find_symbol(declared, Decl::Var(pattern))
             .unwrap_or_else(|| self.file_binding(self.pat_symbol[pattern.idx()]))
     }
 
+    #[inline]
     pub fn file_binding(&self, declared: SymbolId) -> SymbolId {
-        if declared.is_none() {
+        if declared.is_none() || !self.symbol_flags(declared).contains(SymFlags::EXPORT_VALUE) {
             return declared;
         }
+        self.file_binding_of_exported_value(declared)
+    }
+
+    #[inline(never)]
+    fn file_binding_of_exported_value(&self, declared: SymbolId) -> SymbolId {
         let exported = self.export_symbol_of_value_symbol_if_exported(declared);
-        if exported == declared {
-            return declared;
-        }
         match self.symbol(exported).parent == self.file_symbol {
             true => exported,
             false => declared,
@@ -536,6 +548,11 @@ impl Bound<'_> {
 
     pub fn import_meta_may_be_modified(&self) -> bool {
         self.runtime.import_meta_may_be_modified
+    }
+
+    #[inline]
+    pub fn may_name_own_path(&self) -> bool {
+        self.runtime.may_name_own_path
     }
 
     #[inline]

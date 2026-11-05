@@ -7,7 +7,8 @@ import { run } from "./harness/run";
 import { testOneByOne as test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)`, and the `new Worker(entry)` that gets it stands somewhere else: behind a constructor or
-// a method, in a field or in an options object, behind `require()`, or in a package. The build follows `entry` back to the URL and compiles the file.
+// a method, in a field or in an options object, behind `require()`, or in a package. The build doesn't follow `entry`: where it can't read what some Worker starts
+// from, it compiles every file of code whose URL the program writes out.
 // In a test run a file that nobody compiled runs from its text, in the interpreter, with the right answer, so nobody notices.
 // An executable tells: the sources are moved away before it runs, and a Worker without its file never answers.
 const url = (n: number) => `new URL("./src/worker/w${n}.ts", import.meta.url)`;
@@ -116,25 +117,22 @@ export class Configured {
   constructor(options) { this.options = { threads: 1, ...options }; }
   ask() { return ask(new Worker(this.options.filename)); }
 }
-// What the package names itself is its own business in one program: most programs never start it. A layer of a test run compiles it.
+// The file that the package starts its own Worker from is compiled with the package, whether or not the program calls the function.
 export const startOwn = () => ask(new Worker(new URL("./own-worker.js", import.meta.url)));
 `,
   "node_modules/starts-workers/own-worker.js": `self.onmessage = event => { self.postMessage("own " + event.data); };\n`,
   "node_modules/starts-workers-of-old/package.json": `{ "name": "starts-workers-of-old", "version": "1.0.0", "main": "index.js" }`,
   "node_modules/starts-workers-of-old/index.js": `${ask}exports.start = entry => ask(new Worker(entry));\n`,
-  // Most URLs of code files that tests write are there to read a source. No Worker starts from them, so no build takes them in.
+  // The test only reads src/only-read.ts. Its URL goes to functions and objects of the project like the others, so the build compiles that file too.
   "src/read.ts": `import { readFileSync } from "node:fs";
 export const read = (file: URL) => readFileSync(file, "utf8").length;
 export class Reader {
   constructor(public source: URL) {}
   read() { return read(this.source); }
 }
-// ./pool starts a Worker from what it reads under \`filename\`, whichever object has it, and this file gets to ./pool. That this object is meant is a guess.
-// That whoever stores under \`source\` has a Worker in mind would be a guess upon that one: two names on, most of a large program stores under one of them.
 export { makeIdle as makeIdleToo } from "./pool";
 export const describe = (reader: { source: URL }) => ({ filename: reader.source });
 `,
-  // This file gets to no file that starts a Worker, so its object is its own business.
   "src/listing.ts": `export const listed = { filename: new URL("./only-read.ts", import.meta.url) };\n`,
   "src/only-read.ts": `export const never = "run";\n`,
 };
@@ -213,7 +211,7 @@ test("each Worker answers as under plain bun test, and runs compiled", async () 
   expect(await see(["--aot"], {})).toEqual(plain);
   expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" })).toEqual({
     ...plain,
-    taken: [count],
+    taken: [count + 2],
   });
 }, 240_000);
 

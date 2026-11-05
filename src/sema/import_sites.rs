@@ -11,6 +11,7 @@ mod scan;
 mod statements;
 #[cfg(all(test, not(miri)))]
 mod tests;
+mod written_arms;
 
 pub use call_sites::{
     RequireCall, RequireCallForm, does_import_meta_resolve_ask_resolver,
@@ -33,10 +34,13 @@ pub use jsx::{
 };
 pub use macro_calls::{macro_callee, macro_import_symbols};
 pub use made_requires::{
-    ExportedRequire, OwnRequire, find_exported_requires, find_holder_of_require_made_for_choice,
-    find_other_values_of_own_require, find_own_require, find_result_expression,
-    holds_import_meta_require, is_create_require_behind_get_builtin_module, is_made_require,
-    is_require_made_for_own_file, may_be_modified, may_require_get_members, may_still_be_undefined,
+    ExportedRequire, OwnRequire, find_base_that_a_call_made_of_own_file, find_exported_requires,
+    find_holder_of_require_made_for_choice, find_other_values_of_own_require, find_own_require,
+    find_result_expression, holds_import_meta_require, is_call_of_create_require,
+    is_create_require_behind_get_builtin_module, is_create_require_called_through_call,
+    is_made_require, is_require_made_for_own_file, may_be_modified,
+    may_call_have_made_base_of_require, may_call_have_made_path, may_require_get_members,
+    may_still_be_undefined,
 };
 pub(crate) use made_requires::{find_imported_export, names_own_file, settled_symbol};
 pub use parameters::{
@@ -45,6 +49,7 @@ pub use parameters::{
 };
 pub(crate) use scan::collect_import_sites;
 pub(crate) use statements::is_runtime_import;
+pub use written_arms::find_written_arms;
 
 use crate::atom::{Atom, Interner};
 use crate::bind::{Bound, SymbolId};
@@ -184,6 +189,7 @@ pub(crate) struct ImportScan<'s> {
     pub imports_used_without_a_read: &'s [SymbolId],
     pub module_require_objects: &'s [ExprId],
     pub requires_of_other_files: &'s [(u32, ResolvedFrom)],
+    pub paths_given_to_create_require: &'s [(ExprId, Atom)],
     pub pending_macro_calls: &'s [ExprId],
     pub first_runtime_import: Option<ImportId>,
     pub has_import_equals_require: bool,

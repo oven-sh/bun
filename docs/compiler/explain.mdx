@@ -193,58 +193,6 @@ The same as [called-by-unknown-code](#called-by-unknown-code), on a `why` line.
 
 A built-in calls your function, the way `sort` calls its callback, so the arguments aren't proven. There's nothing to fix if the guard passes. It costs a few instructions.
 
-## Objects that change after they're created
-
-Changing one object slows down every access to its type, because any object of the type could be the one that changed.
-
-### property-added
-
-You add a property that the type doesn't declare, as in `(counter as any).label = "visits"`. Declare it in the class or the object type: `label?: string`.
-
-### field-deleted
-
-You delete a required property. Assign `undefined`, or declare the property optional. Deleting an optional property costs nothing.
-
-### computed-key-delete
-
-`delete object[key]` could delete any field. Keep data with computed keys in a `Map`, or delete a constant key.
-
-### computed-key-store
-
-`object[key] = value` could write any field. Use a `Map` or a `Record` type for data with computed keys.
-
-### store-through-unknown-object
-
-A store through an untyped object, such as `target.count = 0` where `target` is `any`, could write this field. Give `target` its type.
-
-### wrong-type-stored
-
-A field gets a value of another type, as in `(counter as any).count = "none"`. Store a value of the declared type, or widen the field to `number | string`.
-
-### property-redefined
-
-`Object.defineProperty` turns a property into something else, such as a getter. Declare the field, getter or setter in the class or the object literal.
-
-### frozen
-
-You call `Object.freeze`, `Object.seal` or `Object.preventExtensions` on an object that already exists. Freeze it where you create it, as in `Object.freeze({ host, port })`, or freeze a copy.
-
-### prototype-changed
-
-`Object.setPrototypeOf` changes the object's prototype. Create the object with the prototype it needs.
-
-### method-shadowed
-
-Assigning `counter.reset = ...` on an instance hides the method of the class. Declare `reset` as a field in the class.
-
-### lookup-may-change
-
-A method is replaced after the class is defined, as in `Counter.prototype.reset = ...`, so calls to it can't be resolved at build time. Put the final version in the class.
-
-### object-changed
-
-A `delete`, `Object.defineProperty`, `Object.setPrototypeOf` or `Object.freeze` changes an object of this type. The first line of the entry says which one.
-
 ## Classes
 
 ### builtin-base

@@ -16,7 +16,7 @@
 // By hand, in a folder that `bun bench/compiler/generate.ts <folder> <features> <dress>` has written (each test prints that command on stderr):
 //   bun build --compile --aot --aot-threads=16 main.ts --outfile program
 //   bun build --compile --aot --aot-threads=16 --aot-out=program.aot main.ts --outfile writes-program
-//   testaot facts $PWD/program.aot references=narrow exclude=CodeOutsideImage threads=16
+//   testaot facts $PWD/program.aot references=narrow exclude=CodeOutsideImage,LibraryText threads=16
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync } from "fs";
 import { bunEnv, bunExe, isWindows } from "harness";

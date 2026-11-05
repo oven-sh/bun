@@ -227,15 +227,16 @@ attempt("every other index", () => {
 // CHECK-NEXT: b3():
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v14 = Builtin builtin=Number
-// CHECK-NEXT: v15 = Call v14, -, v12 calleeName="Number"
-// CHECK-NEXT: v16 = Convert v15 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v17 = ElemGet v0, v16
-// CHECK-NEXT: v18 = Add v8, v17
-// CHECK-NEXT: v19 = Convert v18 declared={type=number}
-// CHECK-NEXT: Jump -> next b1(v19)
+// CHECK-NEXT: v14 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v15 = Builtin builtin=Number
+// CHECK-NEXT: v16 = Call v15, -, v14 calleeName="Number"
+// CHECK-NEXT: v17 = Convert v16 declared={type=number} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v18 = ElemGet v0, v17
+// CHECK-NEXT: v19 = Add v8, v18
+// CHECK-NEXT: v20 = Convert v19 declared={type=number}
+// CHECK-NEXT: Jump -> next b1(v20)
 // CHECK-NEXT: b5() role=IterationCleanup subject=v7:
-// CHECK-NEXT: v20 = CatchException
+// CHECK-NEXT: v21 = CatchException
 // CHECK-NEXT: IteratorClose v7 completion=Throw
-// CHECK-NEXT: Rethrow v20
+// CHECK-NEXT: Rethrow v21
 // CHECK-NEXT: }

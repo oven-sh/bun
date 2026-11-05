@@ -76,6 +76,17 @@ impl<'s> Folder<'_, 's> {
             .starts_at_own_directory
     }
 
+    pub(super) fn note_path_written_from_own_directory(&mut self, e: ExprId, end: Atom) {
+        if !ends_in_name_with_extension(self.atoms.bytes(end)) {
+            return;
+        }
+        let path = self.collect_prefix(e, Nesting::Outermost);
+        if path.is_whole_value && path.starts_at_own_directory {
+            let path = self.atoms.intern(&path.text);
+            self.paths_written_from_own_directory.push((e, path));
+        }
+    }
+
     pub(super) fn starts_with_whole_path_made_by_call(&self, argument: ExprId) -> bool {
         let hir = self.hir;
         let mut start = argument;
@@ -584,6 +595,11 @@ impl<'s> Folder<'_, 's> {
             Value::Unknown => None,
         })
     }
+}
+
+pub fn ends_in_name_with_extension(text: &[u8]) -> bool {
+    let name = text.rsplit(|&byte| byte == b'/').next().unwrap_or(text);
+    matches!(strings::last_index_of_char(name, b'.'), Some(dot) if dot != 0 && dot + 1 != name.len())
 }
 
 #[derive(Default)]

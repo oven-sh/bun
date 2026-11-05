@@ -1877,7 +1877,40 @@ pub struct TypeRecord<'s> {
 
 const _: () = assert!(size_of::<TypeRecord<'static>>() <= 64);
 
-type MapperRecord<'s> = (Mapping<'s>, ObjectFlags);
+enum MapperRecord<'s> {
+    Inline(u8, ObjectFlags, [(TypeId, TypeId); 3]),
+    Spilled(ObjectFlags, List<'s, (TypeId, TypeId)>),
+}
+
+const _: () = assert!(size_of::<MapperRecord<'static>>() == 32);
+
+impl<'s> MapperRecord<'s> {
+    #[inline]
+    fn new(pairs: Mapping<'s>, flags: ObjectFlags) -> Self {
+        match pairs {
+            ShortList::Inline(len, pairs) => MapperRecord::Inline(len, flags, pairs),
+            ShortList::Spilled(pairs) => MapperRecord::Spilled(flags, pairs),
+        }
+    }
+
+    #[inline]
+    fn pairs(&self) -> &[(TypeId, TypeId)] {
+        match self {
+            MapperRecord::Inline(len, _, pairs) => &pairs[..usize::from(*len)],
+            MapperRecord::Spilled(_, pairs) => {
+                cold_path();
+                pairs
+            }
+        }
+    }
+
+    #[inline]
+    fn flags(&self) -> ObjectFlags {
+        match self {
+            MapperRecord::Inline(_, flags, _) | MapperRecord::Spilled(flags, _) => *flags,
+        }
+    }
+}
 
 const _: () = assert!(LOCAL == OWN);
 
@@ -2034,6 +2067,35 @@ impl Summary {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct SummaryOfType<'p>(&'p Summary);
+
+impl SummaryOfType<'_> {
+    #[inline]
+    pub fn flags(self) -> u32 {
+        self.0.flags.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn object_flags(self) -> ObjectFlags {
+        ObjectFlags::from_bits_retain(self.0.object_flags.load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub fn is_plain_object(self) -> bool {
+        self.0.member_flags.load(Ordering::Relaxed) & IS_PLAIN_OBJECT != 0
+    }
+
+    /// Returns `ObjectFlagsCouldContainTypeVariables`, or `None` if
+    /// `ObjectFlagsCouldContainTypeVariablesComputed` isn't set.
+    #[inline]
+    pub fn could_contain_type_variables(self) -> Option<bool> {
+        let facts = self.0.facts.load(Ordering::Relaxed);
+        (facts & fact::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED != 0)
+            .then_some(facts & fact::COULD_CONTAIN_TYPE_VARIABLES != 0)
+    }
+}
+
 /// How `instantiateTypeWithAlias` handles a type.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -2143,11 +2205,11 @@ impl Record for List<'_, IndexComponent> {
 
 impl Record for MapperRecord<'_> {
     fn is_same(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.pairs() == other.pairs()
     }
     #[inline]
     fn hole() -> Self {
-        (Mapping::empty(), ObjectFlags::empty())
+        MapperRecord::new(Mapping::empty(), ObjectFlags::empty())
     }
 }
 
@@ -3143,7 +3205,7 @@ impl<'s> TypeStore<'s> {
             spare_ids: Guarded::default(),
         };
         // The identity mapper comes first, because a type's flags include its mapper's.
-        let no_pairs = (Mapping::empty(), ObjectFlags::empty());
+        let no_pairs = MapperRecord::new(Mapping::empty(), ObjectFlags::empty());
         assert_eq!(
             store.mappers.add(survey(&[]).spread, no_pairs),
             MapperId::IDENTITY.0
@@ -3385,6 +3447,11 @@ impl<'p, 's> Types<'p, 's> {
     }
 
     #[inline]
+    pub fn summary(&self, id: TypeId) -> SummaryOfType<'p> {
+        SummaryOfType(self.own.summaries.get_layered(id.0))
+    }
+
+    #[inline]
     pub fn flags(&self, id: TypeId) -> u32 {
         (self.own.summaries.get_layered(id.0).flags).load(Ordering::Relaxed)
     }
@@ -3468,15 +3535,6 @@ impl<'p, 's> Types<'p, 's> {
     #[inline]
     pub fn is_module_object(&self, id: TypeId) -> bool {
         self.facts(id) & fact::IS_MODULE_OBJECT != 0
-    }
-
-    /// Returns `ObjectFlagsCouldContainTypeVariables`, or `None` if
-    /// `ObjectFlagsCouldContainTypeVariablesComputed` isn't set.
-    #[inline]
-    pub fn could_contain_type_variables(&self, id: TypeId) -> Option<bool> {
-        let facts = self.facts(id);
-        (facts & fact::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED != 0)
-            .then_some(facts & fact::COULD_CONTAIN_TYPE_VARIABLES != 0)
     }
 
     /// See `add_facts`.
@@ -3686,7 +3744,7 @@ impl<'p, 's> Types<'p, 's> {
             // the parameter, not to the contents of its mapper.
             TypeData::TypeParam(_, _, enclosing_mapper) => {
                 ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
-                    | (self.mapper_record(*enclosing_mapper).1 & ObjectFlags::HAS_UNRESOLVED)
+                    | (self.mapper_flags(*enclosing_mapper) & ObjectFlags::HAS_UNRESOLVED)
             }
             TypeData::ThisParam(_)
             | TypeData::Marker(
@@ -3715,21 +3773,22 @@ impl<'p, 's> Types<'p, 's> {
                 TypeArguments::Given(actual) => all(actual),
                 // `couldContainTypeVariables`: `t.AsTypeReference().node != nil`. `createDeferredTypeReference` doesn't
                 // set any propagating flags.
-                TypeArguments::Deferred(deferred) => (self.mapper_record(deferred.mapper).1)
-                    .difference(ObjectFlags::PROPAGATING_FLAGS),
+                TypeArguments::Deferred(deferred) => {
+                    (self.mapper_flags(deferred.mapper)).difference(ObjectFlags::PROPAGATING_FLAGS)
+                }
             },
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(.., object_flags, _),
                 mapper,
             } => {
                 let stored = ObjectFlags::CONTAINS_WIDENING_TYPE | ObjectFlags::NON_INFERRABLE_TYPE;
-                (self.mapper_record(*mapper).1).difference(ObjectFlags::PROPAGATING_FLAGS)
+                (self.mapper_flags(*mapper)).difference(ObjectFlags::PROPAGATING_FLAGS)
                     | ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL
                     | (*object_flags & stored)
             }
             // The mapper is omitted at creation unless the origin has enclosing type parameters.
             TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => {
-                let type_arguments = self.mapper_record(*mapper).1;
+                let type_arguments = self.mapper_flags(*mapper);
                 let mut flags = type_arguments.difference(ObjectFlags::PROPAGATING_FLAGS);
                 let non_inferrable =
                     ObjectFlags::NON_INFERRABLE_TYPE | ObjectFlags::NON_INFERRABLE_BY_ALIAS;
@@ -3746,7 +3805,7 @@ impl<'p, 's> Types<'p, 's> {
                 flags
             }
             TypeData::Cond { mapper, .. } => {
-                (self.mapper_record(*mapper).1).difference(ObjectFlags::PROPAGATING_FLAGS)
+                (self.mapper_flags(*mapper)).difference(ObjectFlags::PROPAGATING_FLAGS)
             }
             TypeData::Synth(shape) => {
                 let is_plain = matches!(
@@ -3775,7 +3834,7 @@ impl<'p, 's> Types<'p, 's> {
                         }
                         property_flags |= type_flags;
                     }
-                    flags |= self.mapper_record(p.mapper).1;
+                    flags |= self.mapper_flags(p.mapper);
                     if let Some(key) = self.separate_key(p) {
                         flags |= self.object_flags(key);
                     }
@@ -3788,7 +3847,7 @@ impl<'p, 's> Types<'p, 's> {
                     flags |= self.sig_flags(s);
                 }
                 flags |=
-                    (self.mapper_record(shape.mapper).1).difference(ObjectFlags::PROPAGATING_FLAGS);
+                    (self.mapper_flags(shape.mapper)).difference(ObjectFlags::PROPAGATING_FLAGS);
                 let non_inferrable =
                     ObjectFlags::NON_INFERRABLE_TYPE | ObjectFlags::NON_INFERRABLE_BY_ALIAS;
                 flags.remove(non_inferrable);
@@ -3845,7 +3904,7 @@ impl<'p, 's> Types<'p, 's> {
         match self.sig(sig) {
             SigData::Decl { mapper, .. }
             | SigData::DefaultConstruct { mapper, .. }
-            | SigData::Construct { mapper, .. } => self.mapper_record(*mapper).1,
+            | SigData::Construct { mapper, .. } => self.mapper_flags(*mapper),
             SigData::Synth {
                 params,
                 ret,
@@ -4488,26 +4547,26 @@ impl<'p, 's> Types<'p, 's> {
             // Only a task-local type can be bound.
             |pairs| found.mentions_own && pairs.is_bound(self.own),
             |_| found.mentions_own,
-            |record, pairs| are_same_items(&record.0[..], pairs),
+            |record, pairs| are_same_items(record.pairs(), pairs),
             |pairs, _, is_bound| {
                 let flags =
                     (pairs.iter()).fold(ObjectFlags::empty(), |f, p| f | self.object_flags(p.1));
                 let pairs = Mapping::copy_from_slice_in(pairs, self.own.arena);
                 let home = self.destination_of(Kind::Mapper, 0, &pairs, is_bound);
-                ((pairs, flags), home)
+                (MapperRecord::new(pairs, flags), home)
             },
         ))
     }
 
     #[inline]
     pub fn mapping(&self, id: MapperId) -> &'p [(TypeId, TypeId)] {
-        &self.mapper_record(id).0
+        self.mapper_record(id).pairs()
     }
 
     /// Returns the flags of the types that `id` maps to.
     #[inline]
     pub fn mapper_flags(&self, id: MapperId) -> ObjectFlags {
-        self.mapper_record(id).1
+        self.mapper_record(id).flags()
     }
 
     #[inline]

@@ -70,9 +70,64 @@ impl MemoEntry {
     }
 }
 
+const ROWS_IN_BLOCK: usize = 1 << 10;
+
+#[derive(Default)]
+struct Rows {
+    blocks: Vec<Vec<MemoEntry>>,
+    len: usize,
+}
+
+impl Rows {
+    #[inline]
+    fn get(&self, row: usize) -> Option<&MemoEntry> {
+        self.blocks
+            .get(row / ROWS_IN_BLOCK)?
+            .get(row % ROWS_IN_BLOCK)
+    }
+
+    #[inline]
+    fn get_mut(&mut self, row: usize) -> Option<&mut MemoEntry> {
+        self.blocks
+            .get_mut(row / ROWS_IN_BLOCK)?
+            .get_mut(row % ROWS_IN_BLOCK)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &MemoEntry> {
+        self.blocks.iter().flatten()
+    }
+
+    fn iter_mut(&mut self) -> impl Iterator<Item = &mut MemoEntry> {
+        self.blocks.iter_mut().flatten()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn add_empty_rows_up_to(&mut self, row: usize) {
+        while self.len <= row {
+            let block = self.len / ROWS_IN_BLOCK;
+            if block == self.blocks.len() {
+                self.blocks.push(Vec::with_capacity(ROWS_IN_BLOCK));
+            }
+            self.blocks[block].push(MemoEntry::EMPTY);
+            self.len += 1;
+        }
+    }
+
+    fn truncate(&mut self, len: usize) {
+        debug_assert!(len <= self.len);
+        self.blocks.truncate(self.len.div_ceil(ROWS_IN_BLOCK));
+        let (last, rest) = (len / ROWS_IN_BLOCK, len % ROWS_IN_BLOCK);
+        for (index, block) in self.blocks.iter_mut().enumerate().skip(last) {
+            block.truncate(if index == last { rest } else { 0 });
+        }
+        self.len = len;
+    }
+}
+
 #[derive(Default)]
 pub(in crate::lower) struct TypeMemo {
-    rows: Vec<MemoEntry>,
+    rows: Rows,
     is_plain: Vec<bool>,
     function_types: Vec<FunctionId>,
 }
@@ -80,13 +135,10 @@ pub(in crate::lower) struct TypeMemo {
 impl TypeMemo {
     #[inline]
     fn entry_at(&mut self, row: usize) -> &mut MemoEntry {
-        if self.rows.len() <= row {
-            self.rows.reserve(row + 1 - self.rows.len());
-            while self.rows.len() <= row {
-                self.rows.push(MemoEntry::EMPTY);
-            }
+        if self.rows.len <= row {
+            self.rows.add_empty_rows_up_to(row);
         }
-        &mut self.rows[row]
+        &mut self.rows.blocks[row / ROWS_IN_BLOCK][row % ROWS_IN_BLOCK]
     }
 
     fn is_alike_in_every_file(&self, row: usize) -> bool {
@@ -119,17 +171,21 @@ impl TypeMemo {
             function_types,
         } = self;
         let mut next = TypeMemo {
-            rows: Vec::with_capacity(carried.map_or(0, RowsCarriedOver::count)),
+            rows,
             is_plain,
             function_types: Vec::new(),
         };
         let Some(carried) = carried else {
+            next.rows.truncate(0);
             return next;
         };
-        for (old_row, entry) in (0u32..).zip(&rows) {
-            let Some(new_row) = carried.new_row(old_row) else {
+        let mut carried_count = 0;
+        for old_row in 0..next.rows.len {
+            let Some(new_row) = carried.new_row(old_row as u32) else {
                 continue;
             };
+            debug_assert_eq!(new_row as usize, carried_count);
+            let entry = *next.entry_at(old_row);
             let first = entry.first_function_type as usize;
             let first_function_type = next.function_types.len() as u32;
             if entry.function_type_count != 0 {
@@ -139,16 +195,18 @@ impl TypeMemo {
             }
             *next.entry_at(new_row as usize) = MemoEntry {
                 first_function_type,
-                ..*entry
+                ..entry
             };
+            carried_count = new_row as usize + 1;
         }
+        next.rows.truncate(carried_count);
         next
     }
 
     pub(in crate::lower) fn forget_types_from(&mut self, first: u32) {
         let stamps = self.rows.iter().map(MemoEntry::last_stamp);
         let last_visit = stamps.max().unwrap_or(0);
-        for entry in &mut self.rows {
+        for entry in self.rows.iter_mut() {
             if entry.names_type_from(first) || entry.is_stamped_by(last_visit) {
                 *entry = MemoEntry::EMPTY;
             }
@@ -265,7 +323,7 @@ impl FileLowering<'_, '_, '_, '_> {
             let function_type = self.task.memo.function_types[index];
             self.declare_function_type_again(function_type);
         }
-        self.task.memo.rows[row].seen_in = self.task.visit;
+        self.task.memo.entry_at(row).seen_in = self.task.visit;
         true
     }
 

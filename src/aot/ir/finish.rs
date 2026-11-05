@@ -39,6 +39,12 @@ struct BodySize {
     word_count: usize,
 }
 
+#[derive(Copy, Clone)]
+struct PendingLists<'a> {
+    values: &'a [ValueId],
+    words: &'a [u32],
+}
+
 impl FunctionBuilder {
     pub fn finish(self) -> (Function, BuilderScratch) {
         let FunctionBuilder {
@@ -46,6 +52,8 @@ impl FunctionBuilder {
             words: pending_words,
             values,
             mut blocks,
+            mut targets,
+            listed_values,
             ssa,
             finish_scratch: mut scratch,
             ..
@@ -67,15 +75,20 @@ impl FunctionBuilder {
             pending.value_count -= 1;
             pending.value_word_count -= removed.word_count;
         }
+        let lists = PendingLists {
+            values: &listed_values,
+            words: &pending_words,
+        };
         let BodySize {
             value_count,
             word_count,
-        } = scratch.order_blocks(&mut blocks, &values, &pending_words);
+        } = scratch.order_blocks(&mut blocks, &mut targets, &values, lists);
         scratch.numbers.resize(values.len(), NO_VALUE);
         let mut encoder = Encoder {
-            pending_words: &pending_words,
+            lists,
             values: &values,
             blocks: &blocks,
+            targets: &targets,
             block_numbers: &scratch.block_numbers,
             goes_on_in_target: &scratch.goes_on_in_target,
             numbers: &mut scratch.numbers,
@@ -99,6 +112,8 @@ impl FunctionBuilder {
             words: recycle_vector(pending_words, MAX_SPARE_FIELD_WORDS),
             values: recycle_vector(values, MAX_SPARE_VALUES),
             blocks: recycle_vector(blocks, MAX_SPARE_BLOCKS),
+            targets: recycle_vector(targets, MAX_SPARE_BLOCKS),
+            listed_values: recycle_vector(listed_values, MAX_SPARE_VALUES),
             ssa: ssa.recycle(),
             finish: scratch.recycle(),
         };
@@ -113,9 +128,14 @@ fn terminator_of(block: &PendingBlock) -> &PendingTerminator {
 }
 
 #[inline]
-fn first_target_of(block: &PendingBlock) -> &PendingTarget {
-    let targets: &[PendingTarget] = &terminator_of(block).targets;
-    &targets[0]
+fn targets_of<'a>(block: &PendingBlock, targets: &'a [PendingTarget]) -> &'a [PendingTarget] {
+    let own = &terminator_of(block).targets;
+    &targets[own.start as usize..own.end as usize]
+}
+
+#[inline]
+fn first_target_of<'a>(block: &PendingBlock, targets: &'a [PendingTarget]) -> &'a PendingTarget {
+    &targets_of(block, targets)[0]
 }
 
 #[inline]
@@ -124,15 +144,19 @@ fn successor_count(block: &PendingBlock) -> usize {
 }
 
 #[inline]
-fn successor(block: &PendingBlock, index: usize) -> BlockId {
+fn successor(block: &PendingBlock, targets: &[PendingTarget], index: usize) -> BlockId {
     let handler = block.handler.as_ref();
-    let target = terminator_of(block).targets.get(index).or(handler);
+    let target = targets_of(block, targets).get(index).or(handler);
     target.expect("an index below the successor count").block
 }
 
 #[inline]
-fn for_each_successor(block: &PendingBlock, mut visit: impl FnMut(BlockId)) {
-    for target in terminator_of(block).targets.iter() {
+fn for_each_successor(
+    block: &PendingBlock,
+    targets: &[PendingTarget],
+    mut visit: impl FnMut(BlockId),
+) {
+    for target in targets_of(block, targets) {
         visit(target.block);
     }
     if let Some(handler) = &block.handler {
@@ -150,16 +174,16 @@ fn declared_type_of(parameter: &PendingValue) -> Option<TypeId> {
 }
 
 #[inline]
-fn parameter_lists(block: &PendingBlock) -> [&[ValueId]; 3] {
+fn parameter_lists<'a>(block: &PendingBlock, listed_values: &'a [ValueId]) -> [&'a [ValueId]; 3] {
     [
-        &block.parameters,
-        &block.variable_parameters,
-        &block.edge_results,
+        block.parameters.items(listed_values),
+        block.variable_parameters.items(listed_values),
+        block.edge_results.items(listed_values),
     ]
 }
 
-fn parameters_of(block: &PendingBlock) -> impl Iterator<Item = ValueId> {
-    let [parameters, variable_parameters, edge_results] = parameter_lists(block);
+fn parameters_of(block: &PendingBlock, listed: &[ValueId]) -> impl Iterator<Item = ValueId> {
+    let [parameters, variable_parameters, edge_results] = parameter_lists(block, listed);
     let parameters = parameters.iter().chain(variable_parameters);
     parameters.chain(edge_results).copied()
 }
@@ -170,8 +194,12 @@ fn parameter_count(block: &PendingBlock) -> usize {
 }
 
 #[inline]
-fn has_declared_parameter(block: &PendingBlock, values: &[PendingValue]) -> bool {
-    for list in parameter_lists(block) {
+fn has_declared_parameter(
+    block: &PendingBlock,
+    listed_values: &[ValueId],
+    values: &[PendingValue],
+) -> bool {
+    for list in parameter_lists(block, listed_values) {
         for parameter in list {
             if declared_type_of(&values[parameter.index()]).is_some() {
                 return true;
@@ -192,10 +220,11 @@ fn pending_ids_in(pending_words: &[u32], range: &Range<u32>) -> impl Iterator<It
     words.map(|&word| ValueId::from_word(word))
 }
 
-fn arguments_of(target: &PendingTarget, pending_words: &[u32]) -> impl Iterator<Item = ValueId> {
-    let arguments = pending_ids_in(pending_words, &target.arguments);
-    let arguments = arguments.chain(target.variable_arguments.iter().copied());
-    arguments.chain(pending_ids_in(pending_words, &target.trailing_arguments))
+fn arguments_of(target: &PendingTarget, lists: PendingLists<'_>) -> impl Iterator<Item = ValueId> {
+    let arguments = pending_ids_in(lists.words, &target.arguments);
+    let variable_arguments = target.variable_arguments.items(lists.values);
+    let arguments = arguments.chain(variable_arguments.iter().copied());
+    arguments.chain(pending_ids_in(lists.words, &target.trailing_arguments))
 }
 
 #[inline]
@@ -204,10 +233,10 @@ fn argument_count(target: &PendingTarget) -> usize {
 }
 
 #[inline]
-fn has_same_handler(first: &PendingBlock, second: &PendingBlock, pending_words: &[u32]) -> bool {
+fn has_same_handler(first: &PendingBlock, second: &PendingBlock, lists: PendingLists<'_>) -> bool {
     match (&first.handler, &second.handler) {
         (None, None) => true,
-        (Some(first), Some(second)) => is_same_handler_edge(first, second, pending_words),
+        (Some(first), Some(second)) => is_same_handler_edge(first, second, lists),
         (None, Some(_)) | (Some(_), None) => false,
     }
 }
@@ -215,28 +244,18 @@ fn has_same_handler(first: &PendingBlock, second: &PendingBlock, pending_words: 
 fn is_same_handler_edge(
     first: &PendingTarget,
     second: &PendingTarget,
-    pending_words: &[u32],
+    lists: PendingLists<'_>,
 ) -> bool {
     first.block == second.block
         && first.proofs.is_empty()
         && second.proofs.is_empty()
-        && arguments_of(first, pending_words).eq(arguments_of(second, pending_words))
+        && arguments_of(first, lists).eq(arguments_of(second, lists))
 }
 
-fn hands_on_parameter(block: &PendingBlock, edge: &PendingTarget, pending_words: &[u32]) -> bool {
-    let lists = parameter_lists(block);
-    let mut arguments = arguments_of(edge, pending_words);
-    arguments.any(|argument| lists.iter().any(|list| list.contains(&argument)))
-}
-
-fn copy_of(target: &PendingTarget) -> PendingTarget {
-    PendingTarget {
-        block: target.block,
-        arguments: target.arguments.clone(),
-        variable_arguments: target.variable_arguments.clone(),
-        trailing_arguments: target.trailing_arguments.clone(),
-        proofs: target.proofs.clone(),
-    }
+fn hands_on_parameter(block: &PendingBlock, edge: &PendingTarget, lists: PendingLists<'_>) -> bool {
+    let parameters = parameter_lists(block, lists.values);
+    let mut arguments = arguments_of(edge, lists);
+    arguments.any(|argument| parameters.iter().any(|list| list.contains(&argument)))
 }
 
 #[inline]
@@ -245,10 +264,10 @@ fn target_length(target: &PendingTarget) -> usize {
 }
 
 #[inline]
-fn block_length(block: &PendingBlock) -> usize {
+fn block_length(block: &PendingBlock, targets: &[PendingTarget]) -> usize {
     let terminator = terminator_of(block);
     let mut targets_length = block.handler.as_ref().map_or(0, target_length);
-    for target in terminator.targets.iter() {
+    for target in targets_of(block, targets) {
         targets_length += target_length(target);
     }
     BlockHead::WORDS
@@ -271,10 +290,10 @@ fn number_of(numbers: &[u32], value_count: u32, pending: ValueId) -> u32 {
 }
 
 #[inline]
-fn add_block(block: &mut PendingBlock) -> u32 {
+fn add_block(block: &mut PendingBlock, targets: &[PendingTarget]) -> u32 {
     let terminator = &mut block.terminator;
-    let terminator = terminator.get_or_insert_with(PendingTerminator::unreachable);
-    let mut targets = terminator.targets.iter().chain(&block.handler);
+    terminator.get_or_insert_with(PendingTerminator::unreachable);
+    let mut targets = targets_of(block, targets).iter().chain(&block.handler);
     debug_assert!(
         targets.all(|target| target.block != ENTRY_BLOCK),
         "no edge targets block 0"
@@ -286,6 +305,7 @@ fn add_block(block: &mut PendingBlock) -> u32 {
 fn find_last_passed_by(
     is_passed_by: &[bool],
     blocks: &[PendingBlock],
+    targets: &[PendingTarget],
     block: BlockId,
 ) -> Option<BlockId> {
     if !is_passed_by[block.index()] {
@@ -293,7 +313,7 @@ fn find_last_passed_by(
     }
     let mut last = block;
     loop {
-        let target = first_target_of(&blocks[last.index()]).block;
+        let target = first_target_of(&blocks[last.index()], targets).block;
         if !is_passed_by[target.index()] {
             return Some(last);
         }
@@ -305,14 +325,15 @@ impl FinishScratch {
     fn order_blocks(
         &mut self,
         blocks: &mut [PendingBlock],
+        targets: &mut [PendingTarget],
         values: &[PendingValue],
-        pending_words: &[u32],
+        lists: PendingLists<'_>,
     ) -> BodySize {
-        self.reach_blocks(blocks);
-        if self.pass_by_blocks(blocks, pending_words) {
-            self.reach_blocks(blocks);
+        self.reach_blocks(blocks, targets);
+        if self.pass_by_blocks(blocks, targets, lists) {
+            self.reach_blocks(blocks, targets);
         }
-        let size = self.join_blocks(blocks, values, pending_words);
+        let size = self.join_blocks(blocks, targets, values, lists);
 
         self.block_numbers.resize(blocks.len(), None);
         for (number, block) in self.order.iter().enumerate() {
@@ -321,12 +342,12 @@ impl FinishScratch {
         size
     }
 
-    fn reach_blocks(&mut self, blocks: &mut [PendingBlock]) {
+    fn reach_blocks(&mut self, blocks: &mut [PendingBlock], targets: &[PendingTarget]) {
         self.order.clear();
         self.is_reached.clear();
         self.is_reached.resize(blocks.len(), false);
         self.is_reached[ENTRY_BLOCK.index()] = true;
-        let entry_successor_count = add_block(&mut blocks[ENTRY_BLOCK.index()]);
+        let entry_successor_count = add_block(&mut blocks[ENTRY_BLOCK.index()], targets);
         self.stack.push((ENTRY_BLOCK, entry_successor_count));
         while let Some((block, unvisited_successor_count)) = self.stack.last_mut() {
             let Some(next) = unvisited_successor_count.checked_sub(1) else {
@@ -335,9 +356,9 @@ impl FinishScratch {
                 continue;
             };
             *unvisited_successor_count = next;
-            let target = successor(&blocks[block.index()], next as usize);
+            let target = successor(&blocks[block.index()], targets, next as usize);
             if !core::mem::replace(&mut self.is_reached[target.index()], true) {
-                match add_block(&mut blocks[target.index()]) {
+                match add_block(&mut blocks[target.index()], targets) {
                     0 => self.order.push(target),
                     unvisited => self.stack.push((target, unvisited)),
                 }
@@ -346,7 +367,12 @@ impl FinishScratch {
         self.order.reverse();
     }
 
-    fn pass_by_blocks(&mut self, blocks: &mut [PendingBlock], pending_words: &[u32]) -> bool {
+    fn pass_by_blocks(
+        &mut self,
+        blocks: &[PendingBlock],
+        targets: &mut [PendingTarget],
+        lists: PendingLists<'_>,
+    ) -> bool {
         let FinishScratch {
             order,
             incoming,
@@ -366,7 +392,7 @@ impl FinishScratch {
         incoming.resize(blocks.len(), 0);
         for id in order.iter() {
             let place = places[id.index()];
-            for_each_successor(&blocks[id.index()], |target| {
+            for_each_successor(&blocks[id.index()], targets, |target| {
                 let edges = &mut incoming[target.index()];
                 match place < places[target.index()] {
                     true => *edges += 1,
@@ -382,20 +408,23 @@ impl FinishScratch {
                 continue;
             }
             let block = &blocks[id.index()];
-            let terminator = terminator_of(block);
-            let (TerminatorKind::Jump, [target]) = (terminator.kind, &*terminator.targets) else {
+            let kind = terminator_of(block).kind;
+            let (TerminatorKind::Jump, [target]) = (kind, targets_of(block, targets)) else {
                 continue;
             };
             if block.value_count != 0
                 || block.role != BlockRole::Ordinary
                 || block.subject.is_some()
                 || places[target.block.index()] <= places[id.index()]
-                || !has_same_handler(block, &blocks[target.block.index()], pending_words)
+                || !has_same_handler(block, &blocks[target.block.index()], lists)
             {
                 continue;
             }
-            let last = find_last_passed_by(is_passed_by, blocks, target.block);
-            let target = last.map_or(target, |last| first_target_of(&blocks[last.index()]));
+            let last = find_last_passed_by(is_passed_by, blocks, targets, target.block);
+            let target = match last {
+                Some(last) => first_target_of(&blocks[last.index()], targets),
+                None => target,
+            };
             let edges_down_to_target = incoming[target.block.index()];
             if edges_down_to_target & IS_LOOP_HEAD != 0 {
                 continue;
@@ -403,7 +432,7 @@ impl FinishScratch {
             if parameter_count(block) != 0
                 && (block.handler.is_some()
                     || edges_down_to_target < 2
-                    || hands_on_parameter(block, target, pending_words))
+                    || hands_on_parameter(block, target, lists))
             {
                 continue;
             }
@@ -417,25 +446,25 @@ impl FinishScratch {
 
         let mut is_any_moved = false;
         for id in order.iter() {
-            let target_count = terminator_of(&blocks[id.index()]).targets.len();
-            for index in 0..target_count {
-                let targets: &[PendingTarget] = &terminator_of(&blocks[id.index()]).targets;
-                let passed = targets[index].block;
-                let Some(last) = find_last_passed_by(is_passed_by, blocks, passed) else {
+            let own = terminator_of(&blocks[id.index()]).targets.clone();
+            for place in own.clone() {
+                let passed = targets[place as usize].block;
+                let Some(last) = find_last_passed_by(is_passed_by, blocks, targets, passed) else {
                     continue;
                 };
-                let moved = copy_of(first_target_of(&blocks[last.index()]));
-                let mut others = (0..target_count).filter(|&other| other != index);
+                let moved = first_target_of(&blocks[last.index()], targets).clone();
+                let mut others = own.clone().filter(|&other| other != place);
                 let leads_there_too = others.any(|other| {
-                    let last = find_last_passed_by(is_passed_by, blocks, targets[other].block);
-                    let end = last.map(|last| first_target_of(&blocks[last.index()]).block);
-                    end.unwrap_or(targets[other].block) == moved.block
+                    let other = targets[other as usize].block;
+                    let last = find_last_passed_by(is_passed_by, blocks, targets, other);
+                    let last = last.map(|last| &blocks[last.index()]);
+                    let end = last.map(|last| first_target_of(last, targets).block);
+                    end.unwrap_or(other) == moved.block
                 });
                 if leads_there_too {
                     continue;
                 }
-                let terminator = blocks[id.index()].terminator.as_mut();
-                terminator.expect("a reached block is terminated").targets[index] = moved;
+                targets[place as usize] = moved;
                 is_any_moved = true;
             }
         }
@@ -445,8 +474,9 @@ impl FinishScratch {
     fn join_blocks(
         &mut self,
         blocks: &[PendingBlock],
+        targets: &[PendingTarget],
         values: &[PendingValue],
-        pending_words: &[u32],
+        lists: PendingLists<'_>,
     ) -> BodySize {
         let FinishScratch {
             order,
@@ -460,22 +490,23 @@ impl FinishScratch {
         for id in order.iter() {
             let block = &blocks[id.index()];
             size.value_count += parameter_count(block) as u32 + block.value_count;
-            size.word_count += block_length(block);
-            for_each_successor(block, |target| incoming[target.index()] += 1);
+            size.word_count += block_length(block, targets);
+            for_each_successor(block, targets, |target| incoming[target.index()] += 1);
         }
         let mut is_any_joined = false;
         for id in order.iter() {
             let block = &blocks[id.index()];
             let terminator = terminator_of(block);
-            let (TerminatorKind::Jump, [target]) = (terminator.kind, &*terminator.targets) else {
+            let (TerminatorKind::Jump, [target]) = (terminator.kind, targets_of(block, targets))
+            else {
                 continue;
             };
             let next = &blocks[target.block.index()];
             if incoming[target.block.index()] != 1
                 || next.role != BlockRole::Ordinary
                 || next.subject.is_some()
-                || !has_same_handler(block, next, pending_words)
-                || has_declared_parameter(next, values)
+                || !has_same_handler(block, next, lists)
+                || has_declared_parameter(next, lists.values, values)
             {
                 continue;
             }
@@ -512,9 +543,10 @@ impl FinishScratch {
 }
 
 struct Encoder<'a> {
-    pending_words: &'a [u32],
+    lists: PendingLists<'a>,
     values: &'a [PendingValue],
     blocks: &'a [PendingBlock],
+    targets: &'a [PendingTarget],
     block_numbers: &'a [Option<BlockId>],
     goes_on_in_target: &'a [bool],
     numbers: &'a mut [u32],
@@ -529,7 +561,7 @@ impl Encoder<'_> {
         if !self.goes_on_in_target[block.index()] {
             return None;
         }
-        let target = terminator_of(&self.blocks[block.index()]).targets.first()?;
+        let target = targets_of(&self.blocks[block.index()], self.targets).first()?;
         Some(target.block)
     }
 
@@ -553,7 +585,7 @@ impl Encoder<'_> {
             has_handler: block.handler.is_some(),
         };
         head.append_to(&mut PushedWords(&mut self.words));
-        for list in parameter_lists(block) {
+        for list in parameter_lists(block, self.lists.values) {
             for &parameter in list {
                 self.number_value(parameter);
                 let ty = declared_type_of(&self.values[parameter.index()]);
@@ -566,25 +598,22 @@ impl Encoder<'_> {
         let mut part = block;
         let mut joined = first_joined;
         loop {
-            let mut next = part.first_value;
-            while next != NO_VALUE {
-                next = self.encode_value(ValueId::from_word(next));
-            }
+            self.encode_values(part.first_value);
             let Some(following) = joined else {
                 break;
             };
-            let target = first_target_of(part);
+            let target = first_target_of(part, self.targets);
             part = &self.blocks[following.index()];
             if parameter_count(part) != 0 {
-                let arguments = arguments_of(target, self.pending_words);
-                for (parameter, argument) in parameters_of(part).zip(arguments) {
+                let parameters = parameters_of(part, self.lists.values);
+                for (parameter, argument) in parameters.zip(arguments_of(target, self.lists)) {
                     let number = number_of(self.numbers, self.value_count, argument);
                     self.numbers[parameter.index()] = number;
                 }
             }
             joined = self.find_joined_block(following);
         }
-        self.encode_terminator(terminator_of(part));
+        self.encode_terminator(part);
     }
 
     #[inline]
@@ -596,14 +625,40 @@ impl Encoder<'_> {
     }
 
     #[inline]
-    fn encode_value(&mut self, id: ValueId) -> u32 {
-        let value = self.values[id.index()];
+    fn encode_values(&mut self, first_value: u32) {
+        let mut next = first_value;
+        while next != NO_VALUE {
+            let first_word = self.values[next as usize].at;
+            let (mut end, mut behind) = (first_word, next);
+            while behind != NO_VALUE {
+                let value = self.values[behind as usize];
+                if value.at != end {
+                    break;
+                }
+                end += value.word_count;
+                behind = value.next;
+            }
+            let start = self.words.len();
+            let run = words_in(self.lists.words, &(first_word..end));
+            self.words.extend_from_slice(run);
+            while next != behind {
+                let value = self.values[next as usize];
+                let at = start + (value.at - first_word) as usize;
+                let written = at..at + value.word_count as usize;
+                self.encode_value(ValueId::from_word(next), written);
+                next = value.next;
+            }
+        }
+    }
+
+    #[inline]
+    fn encode_value(&mut self, id: ValueId, written: Range<usize>) {
         debug_assert!(
-            value.next != IS_PARAMETER,
+            self.values[id.index()].next != IS_PARAMETER,
             "a block lists no parameter as a value"
         );
         self.number_value(id);
-        let head = self.pending_words[value.at as usize];
+        let head = self.words[written.start];
         debug_assert_eq!(
             head & MARKS & !STANDS_IN_TAIL_POSITION,
             0,
@@ -611,15 +666,14 @@ impl Encoder<'_> {
         );
         let opcode = Opcode::ALL.get((head & !MARKS) as usize).copied();
         let opcode = opcode.expect("an operation begins with its opcode");
-        let head_and_fields = value.at..value.at + value.word_count;
-        self.encode_fields(&head_and_fields, |words, visit| {
+        self.number_operands(written, |words, visit| {
             visit_value_fields(opcode, words, ValueHead::WORDS, visit)
         });
-        value.next
     }
 
     #[inline]
-    fn encode_terminator(&mut self, terminator: &PendingTerminator) {
+    fn encode_terminator(&mut self, block: &PendingBlock) {
+        let terminator = terminator_of(block);
         let kind = terminator.kind;
         let head = TerminatorHead {
             kind: kind.to_wire(),
@@ -628,11 +682,14 @@ impl Encoder<'_> {
         };
         head.append_to(&mut PushedWords(&mut self.words));
         if !terminator.fields.is_empty() {
-            self.encode_fields(&terminator.fields, |words, visit| {
+            let start = self.words.len();
+            let fields = words_in(self.lists.words, &terminator.fields);
+            push_words(&mut self.words, fields);
+            self.number_operands(start..self.words.len(), |words, visit| {
                 visit_terminator_fields(kind, words, 0, visit)
             });
         }
-        for target in terminator.targets.iter() {
+        for target in targets_of(block, self.targets) {
             self.encode_target(target);
         }
     }
@@ -650,16 +707,16 @@ impl Encoder<'_> {
             proof_count: target.proofs.len() as u32,
         };
         head.append_to(&mut PushedWords(&mut self.words));
-        for argument in pending_ids_in(self.pending_words, &target.arguments) {
+        for argument in pending_ids_in(self.lists.words, &target.arguments) {
             self.push_number_of(argument);
         }
-        for &argument in target.variable_arguments.iter() {
+        for &argument in target.variable_arguments.items(self.lists.values) {
             self.push_number_of(argument);
         }
-        for argument in pending_ids_in(self.pending_words, &target.trailing_arguments) {
+        for argument in pending_ids_in(self.lists.words, &target.trailing_arguments) {
             self.push_number_of(argument);
         }
-        let proofs = words_in(self.pending_words, &target.proofs);
+        let proofs = words_in(self.lists.words, &target.proofs);
         push_words(&mut self.words, proofs);
     }
 
@@ -670,21 +727,13 @@ impl Encoder<'_> {
     }
 
     #[inline]
-    fn append_pending_words(&mut self, range: &Range<u32>) -> (&[u32], &[Cell<u32>]) {
-        let start = self.words.len();
-        push_words(&mut self.words, words_in(self.pending_words, range));
-        let cells = Cell::from_mut(&mut self.words[start..]).as_slice_of_cells();
-        (&*self.numbers, cells)
-    }
-
-    #[inline]
-    fn encode_fields(
+    fn number_operands(
         &mut self,
-        range: &Range<u32>,
+        written: Range<usize>,
         visit_fields: impl FnOnce(&[Cell<u32>], &mut dyn FnMut(FieldWord, usize)) -> Option<usize>,
     ) {
-        let value_count = self.value_count;
-        let (numbers, cells) = self.append_pending_words(range);
+        let (numbers, value_count) = (&*self.numbers, self.value_count);
+        let cells = Cell::from_mut(&mut self.words[written]).as_slice_of_cells();
         let end = visit_fields(cells, &mut |field: FieldWord, at: usize| match field {
             FieldWord::Operand => {
                 let cell = &cells[at];

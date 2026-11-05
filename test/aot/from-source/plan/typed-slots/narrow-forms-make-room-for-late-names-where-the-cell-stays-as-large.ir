@@ -1,0 +1,38 @@
+# two references written as the class or null, and three names that the class does not list: an interface that it implements writes them, optional, as the class or null, and a function stores them through that interface.
+# with boxed slots the two and the first late name fill a cell of 48, and the other two late names lie out of line, where a read goes through a stub. Narrow forms leave the cell at 48 bytes, so it does not get smaller:
+# but a layout with a name out of line that could move in gains from them all the same: the three narrow slots end at 36, and the twelve bytes that are left take the other two late names, four bytes each. Nothing lies out of line any more.
+# -- source: narrow-forms-make-room-for-late-names-where-the-cell-stays-as-large.ts
+# declare function sink(...values: unknown[]): void;
+# interface Tied { owner?: Knot | null; partner?: Knot | null; rival?: Knot | null; }
+# class Knot implements Tied {
+#     a: Knot | null = null;
+#     b: Knot | null = null;
+# }
+# function tie(tied: Tied, other: Knot) { tied.owner = other; tied.partner = other; tied.rival = other; }
+# function countTies(tied: Tied) { return (tied.owner ? 1 : 0) + (tied.partner ? 2 : 0) + (tied.rival ? 4 : 0); }
+# function count(knot: Knot) { return (knot.a ? 8 : 0) + (knot.b ? 16 : 0); }
+# let sum = 0;
+# let last = new Knot();
+# for (let i = 0; i < 4; i++) {
+#     const knot = new Knot();
+#     knot.a = last;
+#     knot.b = i > 1 ? last : null;
+#     tie(knot, last);
+#     sum += count(knot) + countTies(knot) + countTies(last);
+#     last = knot;
+# }
+# sink(sum);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: CompiledObject size=48
+# CHECK-NEXT: slot 0 "a" OptionalCell32 Inline offset=24
+# CHECK-NEXT: slot 1 "b" OptionalCell32 Inline offset=28
+# CHECK-NEXT: slot 2 "owner" appended OptionalCell32 Inline offset=32
+# CHECK-NEXT: slot 3 "partner" appended OptionalCell32 Inline offset=36
+# CHECK-NEXT: slot 4 "rival" appended OptionalCell32 Inline offset=40
+# CHECK-NEXT: extra-properties Cell32 Inline offset=16
+# RUN(WITHHELD): plan layouts mechanisms=-TypedSlots
+# WITHHELD: CompiledObject size=48
+# WITHHELD: slot 2 "owner" appended JSValue Inline offset=40
+# WITHHELD-NEXT: slot 3 "partner" appended JSValue OutOfLine
+# WITHHELD-NEXT: slot 4 "rival" appended JSValue OutOfLine

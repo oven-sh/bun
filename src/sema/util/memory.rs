@@ -646,6 +646,7 @@ impl<'a> Placeholders<'a> {
     }
 
     /// Returns the index of the first remaining placeholder.
+    #[inline]
     pub(crate) fn first(&self) -> Option<u32> {
         (!self.is_empty()).then_some(self.next)
     }

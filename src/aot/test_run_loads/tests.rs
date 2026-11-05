@@ -278,6 +278,31 @@ fn file_leaves_by_its_key() {
 }
 
 #[test]
+fn file_leaves_by_its_key_in_the_cache_of_an_imported_require() {
+    let makers = [
+        "import { createRequire } from \"node:module\";\nexport const load = createRequire(import.meta.url);\n",
+        "export const load = require;\n",
+    ];
+    let test_file = "import { test } from \"bun:test\";\nimport \"./uses.mjs\";\nimport \"./a.cjs\";\ntest(\"t\", () => {});\n";
+    let uses =
+        "import { load } from \"./maker.mjs\";\ndelete load.cache[load.resolve(\"./a.cjs\")];\n";
+    for maker in makers {
+        let files = [
+            ("a.test.js", test_file),
+            ("uses.mjs", uses),
+            ("maker.mjs", maker),
+            ("a.cjs", "exports.a = 1;\n"),
+        ];
+        load(&test_run(&files, 1), |_, loaded| {
+            let loads = &loaded.contents.run.loads;
+            assert!(!loads.is_every_file, "{maker}");
+            let found = names_of(files_of(loaded), &loads.files_taken_out);
+            assert_eq!(found, ["a.cjs"], "{maker}");
+        });
+    }
+}
+
+#[test]
 fn place_that_lets_every_file_load_again_is_named() {
     let doors: [(&str, WhyEveryFile, u32, &str); 5] = [
         (

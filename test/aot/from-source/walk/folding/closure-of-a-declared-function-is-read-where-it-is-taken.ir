@@ -30,8 +30,7 @@
 # ARM-NEXT: = CallBuiltin
 # The state hands on what was read, whatever has run.
 # RUN(ONCE): walk f8 mechanisms=all-Inlining
-# ONCE: = GetModuleVariable
-# ONCE-NOT: = GetModuleVariable
+# ONCE: = GetModuleVariable {{*}}# uses=2
 # The cell of a built-in that nobody takes is not asked for.
 # RUN(BUILTIN): walk f9 mechanisms=all
 # BUILTIN-NOT: = Builtin

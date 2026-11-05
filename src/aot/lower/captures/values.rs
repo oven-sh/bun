@@ -99,7 +99,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> SmallVec<[ValueId; 4]> {
         let captures: CaptureList = SmallVec::from_slice(self.file.scopes.captures(key));
         let mut values = SmallVec::with_capacity(captures.len());
-        for capture in captures {
+        for &capture in captures.iter() {
             values.push(match capture {
                 Capture::Environment(scope) => self.get_environment(scope),
                 Capture::Value(binding) if self.file.is_entry_capture(key, binding) => {
@@ -118,6 +118,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(in crate::lower) fn find_captured_value(&self, capture: Capture) -> Option<ValueId> {
         let captures = self.file.scopes.captures(self.key);
+        if captures.is_empty() {
+            return None;
+        }
         let index = captures.binary_search(&capture).ok()?;
         Some(self.get_capture(index))
     }

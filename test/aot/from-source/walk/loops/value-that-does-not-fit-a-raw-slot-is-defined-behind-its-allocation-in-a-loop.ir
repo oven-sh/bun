@@ -1,5 +1,5 @@
-# `for (..) ({ i, n })` in a method that the host calls: Link has proven that `n` holds int32 alone, so the slot is raw; the captured `n` arrives as anything. A guess tests it in front of the allocation, and its rare arm
-# allocates with a filler in the slot and defines `n` by name behind it. One NewObject of the input has become two operations, and the second does no more than the first: no body is walked again, and the verifier has nothing to say.
+# `for (..) ({ i, n })` in a method that the host calls: Link has proven that `n` holds int32 alone, so the slot is raw. The captured `n` comes out of the closure, not from the caller, and every closure of the method
+# was made through the door of captures: it arrives as int32, though the callers of the method are not known. So the allocation lists it as it is: no guess in front, no rare arm with a filler, no definition by name behind it.
 # f1 = fresh, f2 = valueOf
 # -- source: value-that-does-not-fit-a-raw-slot-is-defined-behind-its-allocation-in-a-loop.js
 # const fresh = n => ({ valueOf() { let last; for (let i = 0; i < 20000; i++) last = { i, n, text: "t" + i }; return last.n; } });
@@ -7,7 +7,9 @@
 # -- end of source
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
+# CHECK: b0({{*}}: i32 @JSValue
+# CHECK-NOT: TypeTest
 # CHECK: = NewObject
-# CHECK: PropDefine {{*}}key="n" traits=[mayCollect, mayTouchMemory]
+# CHECK-NOT: PropDefine
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 3 4

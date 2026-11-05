@@ -12,7 +12,7 @@ use super::{
 use crate::atom::{Atom, known};
 use crate::bind::{
     BoundBuilder, Decl, GrowingDecls, GrowingSymbol, ScopeId, ScopeKind, SymFlags, SymbolId,
-    TableId,
+    TableId, bit_of_nested_name,
 };
 use crate::hir::*;
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
@@ -25,6 +25,18 @@ impl RuntimeScopes {
             && !has_bit(&self.hidden_symbols, symbol.idx())
             && !flags.contains(SymFlags::MODULE_EXPORTS)
             && flags.intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
+    }
+
+    fn list_appended_names(&mut self) {
+        if self.appended_bindings.is_empty() {
+            return;
+        }
+        let words = (self.appended_bindings.len() / 8 + 1).next_power_of_two();
+        self.appended_names.resize(words, 0);
+        for &(_, name) in self.appended_bindings.keys() {
+            let (word, bit) = bit_of_nested_name(words, name);
+            self.appended_names[word] |= bit;
+        }
     }
 }
 
@@ -433,6 +445,7 @@ impl Declarations<'_, '_> {
         declarations.early_redeclarations = self.redeclarations;
         self.bound.runtime.sort();
         record_declared_binding_kinds(self.hir, self.bound);
+        self.scopes.list_appended_names();
         self.scopes
     }
 }

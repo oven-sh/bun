@@ -744,7 +744,7 @@ export default b.declarations(
   // A function of the library's JavaScript: under `new` it queues the callback and a new object is the answer.
   b.constructionOfFunction(
     "process.nextTick",
-    queuesTick.map(overload => ("returns" in overload ? overload : { ...overload, returns: b.object })),
+    queuesTick.map(overload => ("returns" in overload ? overload : { ...overload, returns: b.instance("Object") })),
   ),
   b.inherits("process", "%EventEmitter%.prototype"),
   b.inherits("process.report", "Object.prototype"),

@@ -97,6 +97,14 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     };
     let mut named = references.ident_bindings.iter();
     bound.runtime.may_name_own_require = has_import_meta || named.any(names_require_or_own_path);
+    let names_own_path = |&(_, binding): &(ExprId, Binding)| {
+        matches!(
+            binding,
+            Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
+        )
+    };
+    let mut named = references.ident_bindings.iter();
+    bound.runtime.may_name_own_path = has_import_meta || named.any(names_own_path);
     bound.runtime.references = references;
     exported_block_bindings.record(&mut bound.runtime.declarations);
     bound.runtime.depends_on_sloppy_mode |= has_sloppy_eval;
@@ -130,14 +138,17 @@ fn find_arguments_variables(
     bound: &BoundBuilder,
     scopes: &RuntimeScopes,
 ) -> Vec<(PatId, Binding)> {
+    let name = known::arguments;
+    let mut variables = Vec::new();
+    if !bound.entries.iter().any(|entry| entry.0 == name) {
+        return variables;
+    }
     let lookup = Lookup {
         hir,
         bound,
         scopes,
         dynamic: DynamicScopes::default(),
     };
-    let name = known::arguments;
-    let mut variables = Vec::new();
     for scope in bound.scopes.iter() {
         let Some(local) = bound.find_in_table(scope.locals, name) else {
             continue;
@@ -230,7 +241,7 @@ impl ReferencePass<'_, '_> {
                     ..found
                 };
             }
-            if found.binding != bound.default_binding(ident) {
+            if !bound.is_default_binding(ident, found.binding) {
                 self.references.ident_bindings.push((ident, found.binding));
             }
             if let Binding::Arguments(unit) = found.binding {
@@ -284,7 +295,8 @@ impl ReferencePass<'_, '_> {
 
     fn is_unresolved_jsx_name(&self, ident: ExprId, name: Atom) -> bool {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
-        if let Parent::Expr(parent) = bound.parent_of_expr(ident)
+        if !hir.jsx.is_empty()
+            && let Parent::Expr(parent) = bound.parent_of_expr(ident)
             && parent.is_some()
             && let ExprKind::Jsx(j) = hir[parent].kind
         {

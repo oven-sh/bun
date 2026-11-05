@@ -177,8 +177,11 @@ impl DescribedNames {
             fields,
             ..
         } = self;
-        let mut neighbors = names.iter().zip(names.iter().skip(1));
-        if !neighbors.any(|(first, second)| first.is_described_like(second, text)) {
+        let mut has_repeated_name = false;
+        for index in 1..names.len() {
+            has_repeated_name |= names[index - 1].is_described_like(&names[index], text);
+        }
+        if !has_repeated_name {
             return;
         }
         let mut kept: Vec<DescribedName> = Vec::with_capacity(names.len());
@@ -1011,10 +1014,18 @@ impl FileLowering<'_, '_, '_, '_> {
                     .then_with(|| self.queries.atom_bytes(text).cmp(rest)),
                 None => Ordering::Greater,
             },
-            FieldName::Key(key) => match self.describe_key(key) {
-                Some(described) => described.as_slice().cmp(description),
-                None => Ordering::Less,
-            },
+            FieldName::Key(key) => {
+                let written = self.fragment.property_keys.get(key);
+                match (written.kind, written.text, description.split_first()) {
+                    (PropertyKeyKind::Text, Some(text), Some((kind, rest))) => KIND_OF_TEXT
+                        .cmp(kind)
+                        .then_with(|| self.fragment.strings.get(text).cmp(rest)),
+                    _ => match self.describe_key(key) {
+                        Some(described) => described.as_slice().cmp(description),
+                        None => Ordering::Less,
+                    },
+                }
+            }
         }
     }
 

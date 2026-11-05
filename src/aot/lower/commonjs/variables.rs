@@ -173,7 +173,6 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut replaces_exports = self.inputs.modules.keeps_module_object(own_module)
             || self.inputs.modules.may_be_mocked(own_module)
             || self.inputs.modules.may_be_evicted(own_module)
-            || self.inputs.modules.runs_again(self.file)
             || hir.ids(hir.body).any(assigns_exports)
             || bound.export_assignments_in_namespaces(hir).next().is_some();
         let mut names_exports = false;
@@ -203,7 +202,9 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         CommonJsState {
             form: BodyForm::Plain,
-            keeps_first_exports: replaces_exports && names_exports,
+            keeps_first_exports: replaces_exports
+                && names_exports
+                && !self.inputs.modules.runs_again(self.file),
             has_source_path,
             names_source_path,
             ..CommonJsState::default()
@@ -214,11 +215,18 @@ impl FileLowering<'_, '_, '_, '_> {
         self.modules.commonjs.form
     }
 
+    fn has_values_of_each_run(&self) -> bool {
+        self.body_form() == BodyForm::Plain && self.inputs.modules.runs_again(self.file)
+    }
+
     fn find_plain_source(&self, variable: CommonJsVariable) -> VariableSource {
         let modules = self.inputs.modules;
         match variable {
             CommonJsVariable::Exports => match modules.shape(ModuleRef::File(self.file)) {
                 Shape::Names | Shape::EsModule => VariableSource::NoObject,
+                Shape::Value | Shape::AsToday if self.has_values_of_each_run() => {
+                    VariableSource::WrapperParameter
+                }
                 Shape::Value | Shape::AsToday if self.modules.commonjs.keeps_first_exports => {
                     VariableSource::FirstExports
                 }
@@ -475,27 +483,24 @@ impl FileLowering<'_, '_, '_, '_> {
                 Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
             )
     }
+}
 
-    fn find_wrapper_path(
-        &self,
-        builtin: BuiltinId,
-    ) -> Option<(CommonJsVariable, SmallVec<[BuiltinId; 4]>)> {
-        if !self.is_commonjs_module() {
-            return None;
+pub(in crate::lower) fn find_wrapper_path(
+    builtins: &ResolvedBuiltins,
+    builtin: BuiltinId,
+) -> Option<(CommonJsVariable, SmallVec<[BuiltinId; 4]>)> {
+    let mut properties = SmallVec::new();
+    let mut entry = builtin;
+    loop {
+        let variable = WRAPPER_PARAMETERS.into_iter().find(|&variable| {
+            let path = builtins.commonjs_variable(variable);
+            path.is_some_and(|path| path.id == entry)
+        });
+        if let Some(variable) = variable {
+            return Some((variable, properties));
         }
-        let mut properties = SmallVec::new();
-        let mut entry = builtin;
-        loop {
-            let variable = WRAPPER_PARAMETERS.into_iter().find(|&variable| {
-                let path = self.builtins.commonjs_variable(variable);
-                path.is_some_and(|path| path.id == entry)
-            });
-            if let Some(variable) = variable {
-                return Some((variable, properties));
-            }
-            properties.push(entry);
-            entry = table::entry(entry).holder?;
-        }
+        properties.push(entry);
+        entry = table::entry(entry).holder?;
     }
 }
 
@@ -734,8 +739,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.get_variable(variable, true)
     }
 
+    pub(super) fn is_function_of_file_that_runs_again(&self) -> bool {
+        self.key != FunctionKey::ModuleBody(self.file.file) && self.file.has_values_of_each_run()
+    }
+
+    fn find_source(&self, variable: CommonJsVariable) -> VariableSource {
+        match variable {
+            CommonJsVariable::Module | CommonJsVariable::Require
+                if self.is_function_of_file_that_runs_again() =>
+            {
+                VariableSource::WrapperParameter
+            }
+            _ => self.file.find_source(variable),
+        }
+    }
+
     fn get_variable(&mut self, variable: CommonJsVariable, is_for_type_of: bool) -> ValueId {
-        let value = match self.file.find_source(variable) {
+        let value = match self.find_source(variable) {
             VariableSource::WrapperParameter => {
                 let scope = module::file_scope(self.file);
                 self.get_slot(scope, ScopeSlot::CommonJs(variable))
@@ -771,7 +791,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn set_commonjs_variable(&mut self, variable: CommonJsVariable, value: ValueId) {
-        match self.file.find_source(variable) {
+        match self.find_source(variable) {
             VariableSource::WrapperParameter => {
                 let scope = module::file_scope(self.file);
                 self.set_slot(scope, ScopeSlot::CommonJs(variable), value);
@@ -861,7 +881,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Scope::Module,
             "a built-in of the realm is a Builtin value"
         );
-        let Some((variable, properties)) = self.file.find_wrapper_path(builtin) else {
+        let path = match self.file.is_commonjs_module() {
+            true => find_wrapper_path(self.file.builtins, builtin),
+            false => None,
+        };
+        let Some((variable, properties)) = path else {
             return self.emit_value_of_module(self.file.file, builtin);
         };
         let mut value = self.get_commonjs_variable(variable);

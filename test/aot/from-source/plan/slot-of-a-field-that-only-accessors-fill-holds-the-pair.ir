@@ -4,7 +4,7 @@
 # function make(x: number): View { return { get a() { return x; }, get b() { return x + 1; }, c: 1 }; }
 # function use(o: View) { return o.a + o.b + o.c; }
 # function either(flag: boolean, x: number): Either { return flag ? { get m() { return x; }, z: 1 } : { m: x, z: 2 }; }
-# console.log(use(make(1)), either(true, 1).m + either(false, 2).m);
+# console.log(use(make(1)) + use(make(2)), either(true, 1).m + either(false, 2).m);
 # -- end of source
 # `{ get a() { .. } }`: a literal lays an accessor in the place of a field. As a plain field it would leave its slot with each object that is made: 2,220 instructions a getter, an object for the extra properties, a Structure.
 # Where code in sight lays nothing but accessors whose functions it names, and nothing in sight gives the field a value, the slot holds the pair of functions: the record of the layout says so, and laying them fills the slot.

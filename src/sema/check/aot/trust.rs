@@ -69,21 +69,22 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     pub fn compiled_class(&self, symbol: Sym) -> Option<ClassRef> {
         let declarations = self.files().decls_of(symbol);
-        let mut classes = declarations.iter().filter_map(|&(file, decl)| {
+        let mut only_class = None;
+        for &(file, decl) in declarations.iter() {
             if let Decl::Class(class) = decl {
-                Some(ClassRef { file, class })
-            } else {
-                None
+                if only_class.is_some() {
+                    return None;
+                }
+                only_class = Some(ClassRef { file, class });
             }
-        });
-        let class = classes.next()?;
-        let is_single = classes.next().is_none();
+        }
+        let class = only_class?;
         let is_ambient = self.c.hir(class.file)[class.class]
             .flags
             .contains(Flags::AMBIENT);
         let has_code = self.c.is_compiled_file(class.file)
             || self.files().module(class.file).holds_code_that_never_runs;
-        (is_single && has_code && !is_ambient).then_some(class)
+        (has_code && !is_ambient).then_some(class)
     }
 
     pub(super) fn member_trust(&mut self, declarations: &List<'p, (FileId, Decl)>) -> Trust {

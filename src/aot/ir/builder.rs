@@ -1,7 +1,5 @@
 use core::ops::Range;
 
-use smallvec::SmallVec;
-
 use super::entry_parameters::EntryPosition;
 use super::finish::FinishScratch;
 use super::generated::{
@@ -87,6 +85,8 @@ pub struct BuilderScratch {
     pub(super) words: Vec<u32>,
     pub(super) values: Vec<PendingValue>,
     pub(super) blocks: Vec<PendingBlock>,
+    pub(super) targets: Vec<PendingTarget>,
+    pub(super) listed_values: Vec<ValueId>,
     pub(super) ssa: SsaState,
     pub(super) finish: FinishScratch,
 }
@@ -127,10 +127,65 @@ pub(super) struct PendingValue {
 
 const _: () = assert!(size_of::<PendingValue>() == 12);
 
+#[derive(Copy, Clone, Default)]
+pub(super) struct ListInArena {
+    start: u32,
+    length: u32,
+    capacity: u32,
+}
+
+impl ListInArena {
+    #[inline]
+    pub(super) fn len(self) -> usize {
+        self.length as usize
+    }
+
+    #[inline]
+    pub(super) fn is_empty(self) -> bool {
+        self.length == 0
+    }
+
+    #[inline]
+    pub(super) fn items<T>(self, arena: &[T]) -> &[T] {
+        &arena[self.start as usize..][..self.length as usize]
+    }
+
+    #[inline]
+    pub(super) fn push<T: Copy>(&mut self, arena: &mut Vec<T>, item: T) {
+        if self.length == self.capacity {
+            self.move_to_end(arena, item);
+        }
+        arena[(self.start + self.length) as usize] = item;
+        self.length += 1;
+    }
+
+    fn move_to_end<T: Copy>(&mut self, arena: &mut Vec<T>, filler: T) {
+        let start = arena.len();
+        for index in 0..self.len() {
+            let item = arena[self.start as usize + index];
+            arena.push(item);
+        }
+        let capacity = (2 * self.capacity).max(2);
+        for _ in self.length..capacity {
+            arena.push(filler);
+        }
+        self.start = start as u32;
+        self.capacity = capacity;
+    }
+
+    #[inline]
+    pub(super) fn pop<T: Copy>(&mut self, arena: &[T]) -> Option<T> {
+        let last = self.items(arena).last().copied()?;
+        self.length -= 1;
+        Some(last)
+    }
+}
+
+#[derive(Clone)]
 pub(super) struct PendingTarget {
     pub(super) block: BlockId,
     pub(super) arguments: Range<u32>,
-    pub(super) variable_arguments: SmallVec<[ValueId; 4]>,
+    pub(super) variable_arguments: ListInArena,
     pub(super) trailing_arguments: Range<u32>,
     pub(super) proofs: Range<u32>,
 }
@@ -140,7 +195,7 @@ impl PendingTarget {
         PendingTarget {
             block,
             arguments: 0..0,
-            variable_arguments: SmallVec::new(),
+            variable_arguments: ListInArena::default(),
             trailing_arguments: 0..0,
             proofs: 0..0,
         }
@@ -151,7 +206,7 @@ pub(super) struct PendingTerminator {
     pub(super) kind: TerminatorKind,
     pub(super) position: Option<u32>,
     pub(super) fields: Range<u32>,
-    pub(super) targets: SmallVec<[PendingTarget; 2]>,
+    pub(super) targets: Range<u32>,
 }
 
 impl PendingTerminator {
@@ -160,15 +215,15 @@ impl PendingTerminator {
             kind: TerminatorKind::Unreachable,
             position: None,
             fields: 0..0,
-            targets: SmallVec::new(),
+            targets: 0..0,
         }
     }
 }
 
 pub(super) struct PendingBlock {
-    pub(super) parameters: SmallVec<[ValueId; 4]>,
-    pub(super) variable_parameters: SmallVec<[ValueId; 4]>,
-    pub(super) edge_results: SmallVec<[ValueId; 4]>,
+    pub(super) parameters: ListInArena,
+    pub(super) variable_parameters: ListInArena,
+    pub(super) edge_results: ListInArena,
     pub(super) first_value: u32,
     pub(super) last_value: u32,
     pub(super) value_count: u32,
@@ -184,9 +239,9 @@ pub(super) struct PendingBlock {
 impl Default for PendingBlock {
     fn default() -> PendingBlock {
         PendingBlock {
-            parameters: SmallVec::new(),
-            variable_parameters: SmallVec::new(),
-            edge_results: SmallVec::new(),
+            parameters: ListInArena::default(),
+            variable_parameters: ListInArena::default(),
+            edge_results: ListInArena::default(),
             first_value: NO_VALUE,
             last_value: NO_VALUE,
             value_count: 0,
@@ -206,6 +261,8 @@ pub struct FunctionBuilder {
     pub(super) words: Vec<u32>,
     pub(super) values: Vec<PendingValue>,
     pub(super) blocks: Vec<PendingBlock>,
+    pub(super) targets: Vec<PendingTarget>,
+    pub(super) listed_values: Vec<ValueId>,
     pub(super) current_block: BlockId,
     pub(super) position: Option<u32>,
     stands_in_tail_position: bool,
@@ -221,6 +278,8 @@ impl FunctionBuilder {
             words: scratch.words,
             values: scratch.values,
             blocks: scratch.blocks,
+            targets: scratch.targets,
+            listed_values: scratch.listed_values,
             current_block: ENTRY_BLOCK,
             position: None,
             stands_in_tail_position: false,
@@ -245,8 +304,8 @@ impl FunctionBuilder {
 
     pub fn entry_value(&self, position: EntryPosition) -> Option<ValueId> {
         let index = self.function.entry_parameter_index(position)?;
-        let parameters: &[ValueId] = &self.blocks[ENTRY_BLOCK.index()].parameters;
-        Some(parameters[index])
+        let parameters = self.blocks[ENTRY_BLOCK.index()].parameters;
+        Some(parameters.items(&self.listed_values)[index])
     }
 
     pub fn capture(&self, index: u32) -> ValueId {
@@ -328,14 +387,16 @@ impl FunctionBuilder {
             "parameters that every edge fills with an argument precede edge results"
         );
         let parameter = self.add_parameter_value(declared);
-        self.blocks[block.index()].parameters.push(parameter);
+        let parameters = &mut self.blocks[block.index()].parameters;
+        parameters.push(&mut self.listed_values, parameter);
         parameter
     }
 
     pub fn add_edge_result(&mut self, block: BlockId) -> ValueId {
         self.assert_takes_parameters(block);
         let parameter = self.add_parameter_value(None);
-        self.blocks[block.index()].edge_results.push(parameter);
+        let edge_results = &mut self.blocks[block.index()].edge_results;
+        edge_results.push(&mut self.listed_values, parameter);
         parameter
     }
 
@@ -511,10 +572,10 @@ impl FunctionBuilder {
         at_front: bool,
     ) -> ValueId {
         let value = self.next_value_id();
-        let at = self.end_of_words();
         head.append_to(&mut PushedWords(&mut self.words));
         push_words(&mut self.words, fields);
-        let word_count = self.end_of_words() - at;
+        let word_count = (ValueHead::WORDS + fields.len()) as u32;
+        let at = self.end_of_words() - word_count;
 
         let id = value.to_word();
         let mut next = NO_VALUE;
@@ -565,9 +626,10 @@ impl FunctionBuilder {
             self.blocks[block.index()].terminator = Some(PendingTerminator::unreachable());
             return;
         }
-        let mut targets: SmallVec<[PendingTarget; 2]> = SmallVec::new();
+        let first_target = self.targets.len() as u32;
         for edge in edges {
-            targets.push(self.create_target(edge));
+            let target = self.create_target(edge);
+            self.targets.push(target);
         }
         for edge in edges {
             self.ssa.add_predecessor(edge.block, block);
@@ -577,7 +639,7 @@ impl FunctionBuilder {
             kind,
             position: self.position,
             fields,
-            targets,
+            targets: first_target..self.targets.len() as u32,
         });
     }
 
@@ -608,7 +670,7 @@ impl FunctionBuilder {
         PendingTarget {
             block: edge.block,
             arguments: self.append_pending_ids(arguments),
-            variable_arguments: SmallVec::new(),
+            variable_arguments: ListInArena::default(),
             trailing_arguments: self.append_pending_ids(trailing_arguments),
             proofs: self.append_words(edge.proofs),
         }
@@ -616,6 +678,9 @@ impl FunctionBuilder {
 
     #[inline]
     fn append_pending_ids(&mut self, values: &[ValueId]) -> Range<u32> {
+        if values.is_empty() {
+            return 0..0;
+        }
         let start = self.end_of_words();
         for value in values {
             self.words.push(value.to_word());
@@ -625,6 +690,9 @@ impl FunctionBuilder {
 
     #[inline]
     fn append_words(&mut self, words: &[u32]) -> Range<u32> {
+        if words.is_empty() {
+            return 0..0;
+        }
         let start = self.end_of_words();
         push_words(&mut self.words, words);
         start..self.end_of_words()

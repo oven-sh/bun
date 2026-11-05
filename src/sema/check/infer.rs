@@ -260,7 +260,7 @@ impl Inference {
 
     /// `clearCachedInferences`
     pub(super) fn clear_cached_inferences(&self) {
-        for c in &self.candidates {
+        for c in self.candidates.iter() {
             c.inferred.set(None);
         }
     }
@@ -627,7 +627,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.infer_to_template_literal_type(n, source, texts, types)
             }
             _ => {
-                if self.is_plain_object_type(source) && !self.may_be_reduced(source) {
+                if self.is_plain_object_that_cannot_be_reduced(source) {
                     self.invoke_once(n, source, target, Self::infer_from_object_types);
                     return;
                 }
@@ -688,10 +688,12 @@ impl<'p, 's> Checker<'p, 's> {
         candidate: TypeId,
         target: TypeId,
     ) {
-        if n.candidates[index].fixed.is_none() {
-            let (priority, contra, depth) = (n.priority, n.contra && !n.bivariant, n.depth);
+        let original_target = n.original_target;
+        let (priority, contra, depth) = (n.priority, n.contra && !n.bivariant, n.depth);
+        let candidates: &mut [Candidate] = &mut n.candidates;
+        let c = &mut candidates[index];
+        if c.fixed.is_none() {
             let mut has_changed = false;
-            let c = &mut n.candidates[index];
             if priority < c.priority {
                 c.covariant.clear();
                 c.depths.clear();
@@ -708,7 +710,8 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 } else {
                     let found = c.covariant.iter().position(|&t| t == candidate);
-                    if found.is_none_or(|i| c.depths[i] < depth) {
+                    let depths: &[u32] = &c.depths;
+                    if found.is_none_or(|i| depths[i] < depth) {
                         if let Some(i) = found {
                             c.covariant.remove(i);
                             c.depths.remove(i);
@@ -729,10 +732,10 @@ impl<'p, 's> Checker<'p, 's> {
                     self.data(target),
                     TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_)
                 )
-                && n.candidates[index].top_level
-                && !self.is_type_parameter_at_top_level(n.original_target, target, 0)
+                && c.top_level
+                && !self.is_type_parameter_at_top_level(original_target, target, 0)
             {
-                n.candidates[index].top_level = false;
+                c.top_level = false;
                 has_changed = true;
             }
             if has_changed {
@@ -1928,10 +1931,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     #[inline]
+    fn is_plain_object_that_cannot_be_reduced(&self, ty: TypeId) -> bool {
+        let summary = self.types().summary(ty);
+        let flags = summary.object_flags();
+        summary.is_plain_object() && !flags.contains(ObjectFlags::MAY_BE_REDUCED)
+    }
+
+    #[inline]
     fn is_own_reduced_apparent_type(&self, ty: TypeId) -> bool {
-        self.is_plain_object_type(ty)
-            && !self.may_be_reduced(ty)
-            && self.never_in_progress.is_empty()
+        self.is_plain_object_that_cannot_be_reduced(ty) && self.never_in_progress.is_empty()
     }
 
     /// `isTypeOrBaseIdenticalTo`
@@ -3337,8 +3345,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     fn could_contain_type_variables_inlined(&self, ty: TypeId) -> bool {
-        let flags = self.flags(ty);
-        if self.has_type_variables(ty) || flags & tf::INSTANTIABLE != 0 {
+        let summary = self.types().summary(ty);
+        let (flags, object_flags) = (summary.flags(), summary.object_flags());
+        let has_type_variables = object_flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES);
+        if has_type_variables || flags & tf::INSTANTIABLE != 0 {
             return true;
         }
         if flags & (tf::OBJECT | tf::UNION_OR_INTERSECTION) == 0 {
@@ -3348,7 +3358,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `ObjectFlagsCouldContainTypeVariablesComputed`. Types share their parts. Without this
         // cache a part is visited once for each path to it, 2^n times in `type P1 = Pair<P0, P0>`
         // .. `type Pn = Pair<Pn-1, Pn-1>`.
-        if let Some(known) = self.types().could_contain_type_variables(ty) {
+        if let Some(known) = summary.could_contain_type_variables() {
             return known;
         }
         self.compute_could_contain_type_variables(ty)

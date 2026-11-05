@@ -302,9 +302,15 @@ impl FileLowering<'_, '_, '_, '_> {
         {
             return Some(self.intern_binding_name(self.bound.binding(inner), name));
         }
-        let mut path = Vec::new();
-        if self.append_written_path(inner, &mut path) {
-            return Some(self.intern_bytes(&path));
+        let mut path = std::mem::take(&mut self.written_path);
+        path.clear();
+        let written = match self.append_written_path(inner, &mut path) {
+            true => Some(self.intern_bytes(&path)),
+            false => None,
+        };
+        self.written_path = path;
+        if written.is_some() {
+            return written;
         }
         match hir.member_key(inner) {
             Some((_, MemberKey::Name(name))) => Some(self.intern_atom(name)),

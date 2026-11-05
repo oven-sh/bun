@@ -1,7 +1,7 @@
 use bun_ast::Target;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, Decl, SymbolId};
+use bun_sema::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, Decl};
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, Branches, CallId, Chain, ExprId, ExprKind, IdList, ImportEqualsId, OtherValues,
@@ -9,12 +9,14 @@ use bun_sema::hir::{
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxImport, OwnRequire, RequireCallForm,
     ResolvedForm, ResolvedFrom, does_import_meta_resolve_ask_resolver,
-    find_holder_of_require_made_for_choice, find_module_printed_as_require,
-    find_other_values_of_own_require, find_own_require, find_require_call,
-    holds_import_meta_require, is_create_require_behind_get_builtin_module, is_made_require,
-    is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
+    find_base_that_a_call_made_of_own_file, find_holder_of_require_made_for_choice,
+    find_module_printed_as_require, find_other_values_of_own_require, find_own_require,
+    find_require_call, holds_import_meta_require, is_call_of_create_require,
+    is_create_require_behind_get_builtin_module, is_create_require_called_through_call,
+    is_made_require, is_require_made_for_own_file, may_call_have_made_base_of_require,
+    may_call_have_made_path, may_require_get_members, may_still_be_undefined,
 };
-use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::FxHashMap;
 use smallvec::{SmallVec, smallvec};
@@ -23,7 +25,7 @@ use crate::builtins::id::{BuiltinId, RuntimeModule};
 use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::{BlockRole, ModuleRequestKind};
-use crate::ir::{BlockId, Edge, ModuleId, StringId, TypeTable, ValueId, VariableId, VariableKey};
+use crate::ir::{BlockId, Edge, ModuleId, StringId, TypeTable, ValueId, VariableKey};
 use crate::load::contents::load_names::{
     PathAlone, modules_named_in, resolve_loads_through_imported_loaders,
 };
@@ -99,6 +101,7 @@ struct AnsweredSite<'g> {
     resolved_from: Option<FileId>,
     looks_in_cache: bool,
     is_read_by_transpiler: bool,
+    maker_of_asked_require: Option<FileId>,
 }
 
 impl AnsweredSite<'_> {
@@ -409,6 +412,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.import_module(module, options, referrer)
     }
 
+    #[inline]
+    fn find_whether_file_names_library_modules(&mut self) -> bool {
+        if let Some(known) = self.does_file_name_library_modules {
+            return known;
+        }
+        let (files, file) = (self.file.queries.files(), self.file.file);
+        resolve_loads_through_imported_loaders(files, file);
+        let source = parsed_source(files, file);
+        let names_some = source.is_some_and(|source| !source.named_modules().is_empty());
+        self.does_file_name_library_modules = Some(names_some);
+        names_some
+    }
+
     pub(crate) fn try_lower_module_call(
         &mut self,
         call: ExprId,
@@ -425,7 +441,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 return Some(evaluated);
             }
             let is_module_named = hir.ids(arguments).next().is_some_and(|argument| {
-                names_library_module(self.file.queries.files(), self.file.file, argument)
+                self.find_whether_file_names_library_modules()
+                    && names_library_module(self.file.queries.files(), self.file.file, argument)
             });
             let has_spread = has_spread_argument(hir, arguments);
             if is_module_named
@@ -434,14 +451,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             {
                 return Some(loaded);
             }
-            if !has_spread {
-                if let Some(made) = self.try_lower_create_require_behind_test(call, id, chain_exit)
-                {
-                    return Some(made);
-                }
-                if let Some(made) = self.try_lower_create_require_for_choice(call, id, chain_exit) {
-                    return Some(made);
-                }
+            if !has_spread
+                && is_call_of_create_require(hir, self.file.bound, call)
+                && let Some(made) = self.try_lower_create_require(call, id, chain_exit)
+            {
+                return Some(made);
             }
             if !is_module_named {
                 return None;
@@ -498,21 +512,49 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             true => OtherValues::Any,
             false => find_other_values_of_own_require(hir, bound, decisions, made),
         };
-        let is_told_by_identity =
-            matches!(own_require, Some(OwnRequire::OfOtherFile(_))) && exporter.is_some();
-        if is_of_other_file && other_values == OtherValues::Any && !is_told_by_identity {
+        if is_of_other_file && other_values == OtherValues::Any && exporter.is_none() {
             return None;
         }
-        let test_of_value = match (other_values, exporter) {
-            (OtherValues::None, _) => CalleeTest::IsFilled,
-            (OtherValues::Any, Some(exporter)) if is_of_other_file => {
+        let test_of_value = match (other_values, exporter, own_require) {
+            (OtherValues::None, ..) => CalleeTest::IsFilled,
+            (OtherValues::Any, Some(exporter), Some(OwnRequire::OfOtherFile(_))) => {
                 CalleeTest::IsRequireOf(exporter)
             }
-            (OtherValues::Falsy | OtherValues::Any, _) => CalleeTest::IsTruthy,
+            (OtherValues::Any, Some(exporter), Some(OwnRequire::MadeInOtherFile(_))) => {
+                if !modules.is_code_of_program(ModuleRef::File(exporter)) {
+                    return None;
+                }
+                CalleeTest::IsMadeIn(exporter)
+            }
+            (OtherValues::Falsy | OtherValues::Any, ..) => CalleeTest::IsTruthy,
         };
         let written = self.file.skip_type_syntax(callee);
         let given = require_call.map_or(arguments, |found| found.args);
         let answer = modules.site_answer(self.file.file, site.kind);
+        let maker_of_asked_require = match (own_require, answer) {
+            (_, SiteAnswer::Module(module))
+                if matches!(
+                    modules.interop(module).kind,
+                    ModuleKind::Runtime | ModuleKind::RuntimeSource
+                ) || modules.external_kind(module) == Some(ExternalKind::HostValue) =>
+            {
+                None
+            }
+            (Some(OwnRequire::Made), _) if may_call_have_made_base_of_require(hir, bound, made) => {
+                Some(self.file.file)
+            }
+            (Some(OwnRequire::MadeForPath(path)), _)
+                if may_call_have_made_path(hir, bound, path) =>
+            {
+                Some(self.file.file)
+            }
+            (Some(OwnRequire::MadeInOtherFile(_)), _) => exporter,
+            _ => None,
+        };
+        let test_of_value = match (maker_of_asked_require, test_of_value) {
+            (Some(_), CalleeTest::IsFilled) => CalleeTest::IsTruthy,
+            _ => test_of_value,
+        };
         let operation = find_operation(&site, answer, given.len())?;
         if matches!(
             path_to_resolve_from,
@@ -533,7 +575,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             specifier: site.specifier,
             specifier_node: site.specifier_node,
             answer,
-            plan: create_plan(modules.site(self.file.file, call), || {
+            plan: create_plan(modules.stored_site(self.file.file, call), || {
                 modules.is_site_read_as_value(self.file.file, call)
             }),
             resolved_from,
@@ -541,6 +583,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_read_by_transpiler: matches!(site.kind, ImportSiteKind::Require(_))
                 && require_call.is_none_or(|found| matches!(found.form, RequireCallForm::Direct))
                 && self.file.is_read_by_transpiler(callee, site.specifier_node),
+            maker_of_asked_require,
         };
         if matches!(operation, ModuleOperation::RequireResolve) && given.len() > 1 {
             return None;
@@ -551,6 +594,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             RequireCallForm::Apply => Some((found, BuiltinId::FunctionPrototypeApply)),
         });
         let test = if let Some((found, expected)) = method {
+            if matches!(test_of_value, CalleeTest::IsMadeIn(_)) {
+                return None;
+            }
             CalleeTest::Method {
                 expected,
                 form: found.form,
@@ -571,7 +617,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         } else {
             match self.file.classify_callee(callee) {
                 CalleeKnowledge::Unresolved if is_require_made_for_own_file(hir, bound, callee) => {
-                    if other_values != OtherValues::None {
+                    if other_values != OtherValues::None || maker_of_asked_require.is_some() {
                         return Some(lower_tested_call(
                             self,
                             call,
@@ -594,7 +640,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         | OwnRequire::MadeInOtherFile(_)
                         | OwnRequire::Made
                         | OwnRequire::MadeForPath(_) => test_of_value,
-                        OwnRequire::MadeForChoice(holder) => CalleeTest::IsMadeForOwnFile(holder),
+                        OwnRequire::MadeForChoice(_) => CalleeTest::IsMadeIn(self.file.file),
                     }
                 }
                 CalleeKnowledge::Bound => {
@@ -610,15 +656,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(loaded)
     }
 
-    fn try_lower_create_require_behind_test(
+    fn try_lower_create_require(
         &mut self,
         call: ExprId,
         id: CallId,
         chain_exit: Option<BlockId>,
     ) -> Option<ValueId> {
         let hir = self.file.hir;
+        let (bound, decisions) = (self.file.bound, self.file.decisions());
         let (written, arguments) = (hir[id].callee, hir[id].args);
-        if !is_create_require_behind_get_builtin_module(hir, self.file.bound, written) {
+        let own_require = find_own_require(hir, bound, Some(decisions), call);
+        let is_behind_test = is_create_require_behind_get_builtin_module(hir, bound, written);
+        let modules = self.file.inputs.modules;
+        let is_imported = own_require == Some(OwnRequire::Made)
+            && modules.is_require_made_by_file_imported(self.file.file);
+        let choice = find_holder_of_require_made_for_choice(hir, bound, call);
+        let question = self.find_question_on_base(call, arguments, own_require);
+        if !is_behind_test && !is_imported && choice.is_none() && question.is_none() {
             return None;
         }
         let mut callee = self.lower_callee(written, chain_exit, None);
@@ -626,9 +680,85 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let exit = chain_exit.expect("an optional call has the exit of its chain");
             callee.function = self.branch_if_expression_nullish(written, callee.function, exit);
         }
-        let arguments = self.lower_arguments(arguments);
+        let Arguments::Values(values) = self.lower_arguments(arguments) else {
+            unreachable!("no argument is a spread");
+        };
+        let maker = match callee.this {
+            Some(receiver) if is_create_require_called_through_call(hir, bound, call) => {
+                self.emit_receiver_of_real_call(callee.function, receiver)
+            }
+            _ => callee.function,
+        };
+        if is_behind_test {
+            self.refuse_other_create_require(maker);
+        }
+        let given = Arguments::Values(values.clone());
+        let made = self.emit_call_expression(call, callee, given, Tail::No);
+        if is_imported {
+            self.keep_require_made_for_own_file(maker, made);
+        }
+        if let Some((_, place)) = choice {
+            self.keep_require_if_base_is_own_file(maker, values[place], made);
+        }
+        match question {
+            Some(QuestionOnBase::IsInOwnFolder { place }) => {
+                self.note_require_made_for_other_folder(values[place], made);
+            }
+            Some(QuestionOnBase::IsPath { place, path }) => {
+                let test = self.branch_on_written_path(path, true, values[place]);
+                self.continue_in(test.other);
+                self.note_require(made);
+                self.jump(test.as_written);
+                self.continue_in(test.as_written);
+            }
+            None => {}
+        }
+        Some(made)
+    }
+
+    fn emit_receiver_of_real_call(&mut self, function: ValueId, receiver: ValueId) -> ValueId {
+        let called = self.builder.create_variable(None);
+        self.builder.write_variable(called, function);
+        let real = self.emit_builtin_itself(BuiltinId::FunctionPrototypeCall);
+        let is_real = self.builder.strict_eq(function, real);
+        let by_real = self.create_block();
+        let done = self.create_block();
+        self.builder
+            .branch(is_real, Edge::to(by_real), Edge::to(done));
+
+        self.continue_in(by_real);
+        self.builder.write_variable(called, receiver);
+        self.jump(done);
+
+        self.continue_in(done);
+        self.builder.read_variable(called)
+    }
+
+    fn find_question_on_base(
+        &self,
+        call: ExprId,
+        arguments: IdList<ExprId>,
+        own_require: Option<OwnRequire>,
+    ) -> Option<QuestionOnBase> {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        match own_require? {
+            OwnRequire::Made => {
+                let place = find_base_that_a_call_made_of_own_file(hir, bound, call)?;
+                Some(QuestionOnBase::IsInOwnFolder { place })
+            }
+            OwnRequire::MadeForPath(given) if may_call_have_made_path(hir, bound, given) => {
+                let analysis = &self.file.compiled.analysis;
+                let path = analysis.find_path_given_to_create_require(given)?;
+                let place = hir.ids(arguments).position(|argument| argument == given)?;
+                Some(QuestionOnBase::IsPath { place, path })
+            }
+            _ => None,
+        }
+    }
+
+    fn refuse_other_create_require(&mut self, function: ValueId) {
         let expected = self.emit_builtin_itself(BuiltinId::NodeModuleCreateRequire);
-        let is_expected = self.builder.strict_eq(callee.function, expected);
+        let is_expected = self.builder.strict_eq(function, expected);
         let matched = self.create_block();
         let other = self.create_block();
         self.builder
@@ -643,29 +773,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.throw(error);
 
         self.continue_in(matched);
-        Some(self.emit_call_expression(call, callee, arguments, Tail::No))
     }
 
-    fn try_lower_create_require_for_choice(
-        &mut self,
-        call: ExprId,
-        id: CallId,
-        chain_exit: Option<BlockId>,
-    ) -> Option<ValueId> {
-        let hir = self.file.hir;
-        let (written, arguments) = (hir[id].callee, hir[id].args);
-        let (holder, place) = find_holder_of_require_made_for_choice(hir, self.file.bound, call)?;
-        let mut callee = self.lower_callee(written, chain_exit, None);
-        if hir[id].chain == Chain::Start {
-            let exit = chain_exit.expect("an optional call has the exit of its chain");
-            callee.function = self.branch_if_expression_nullish(written, callee.function, exit);
-        }
-        let Arguments::Values(values) = self.lower_arguments(arguments) else {
-            unreachable!("no argument is a spread");
-        };
-        let base = values[place];
-        let made = self.emit_call_expression(call, callee, Arguments::Values(values), Tail::No);
+    fn keep_require_made_for_own_file(&mut self, maker: ValueId, made: ValueId) {
+        let real = self.emit_builtin_itself(BuiltinId::NodeModuleCreateRequire);
+        let is_real = self.builder.strict_eq(maker, real);
+        let by_real = self.create_block();
+        let done = self.create_block();
+        self.builder
+            .branch(is_real, Edge::to(by_real), Edge::to(done));
 
+        self.continue_in(by_real);
+        let kept = VariableKey::RequiresMadeForOwnFile(self.file.file);
+        self.add_to_set_of_requires(kept, made);
+        self.jump(done);
+
+        self.continue_in(done);
+    }
+
+    fn keep_require_if_base_is_own_file(&mut self, maker: ValueId, base: ValueId, made: ValueId) {
         let for_own_file = self.create_block();
         let not_by_path = self.create_block();
         let done = self.create_block();
@@ -685,21 +811,151 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .branch(is_url, Edge::to(for_own_file), Edge::to(done));
 
         self.continue_in(for_own_file);
-        let variable = self.variable_of_require_made_for_own_file(holder);
-        self.builder.put_module_variable(variable, made);
+        self.keep_require_made_for_own_file(maker, made);
         self.jump(done);
 
         self.continue_in(done);
-        Some(made)
     }
 
-    fn variable_of_require_made_for_own_file(&mut self, holder: SymbolId) -> VariableId {
-        let holder = Sym {
-            file: self.file.file,
-            id: holder,
-        };
-        self.file
-            .ensure_variable(VariableKey::RequireMadeForOwnFile(holder))
+    fn note_require_made_for_other_folder(&mut self, base: ValueId, made: ValueId) {
+        let starts_with = self.emit_builtin_itself(BuiltinId::StringPrototypeStartsWith);
+        let scheme = self.emit_text(b"file:");
+        let is_url = call::emit_call(self, starts_with, Some(base), &[scheme]);
+        let is_url = self.builder.to_boolean(is_url);
+        let path = self.builder.create_variable(None);
+        self.builder.write_variable(path, base);
+        let of_url = self.create_block();
+        let held = self.create_block();
+        let in_other_folder = self.create_block();
+        self.builder
+            .branch(is_url, Edge::to(of_url), Edge::to(held));
+
+        self.continue_in(of_url);
+        let to_lower_case = self.emit_builtin_itself(BuiltinId::StringPrototypeToLowerCase);
+        let letters = call::emit_call(self, to_lower_case, Some(base), &[]);
+        let without_host = self.emit_text(b"file:///");
+        let has_no_host = call::emit_call(self, starts_with, Some(letters), &[without_host]);
+        let has_no_host = self.builder.to_boolean(has_no_host);
+        let mut is_converted = self.create_block();
+        self.builder.branch(
+            has_no_host,
+            Edge::to(is_converted),
+            Edge::to(in_other_folder),
+        );
+        for encoded_separator in [&b"%2f"[..], b"%5c"] {
+            self.continue_in(is_converted);
+            let includes = self.emit_builtin_itself(BuiltinId::StringPrototypeIncludes);
+            let encoded_separator = self.emit_text(encoded_separator);
+            let has_one = call::emit_call(self, includes, Some(letters), &[encoded_separator]);
+            let has_one = self.builder.to_boolean(has_one);
+            is_converted = self.create_block();
+            self.builder
+                .branch(has_one, Edge::to(in_other_folder), Edge::to(is_converted));
+        }
+
+        self.continue_in(is_converted);
+        let convert = self.emit_builtin_itself(BuiltinId::BunFileURLToPath);
+        let converted = call::emit_call(self, convert, None, &[base]);
+        self.builder.write_variable(path, converted);
+        self.jump(held);
+
+        self.continue_in(held);
+        let path = self.builder.read_variable(path);
+        let from_own_folder = self.emit_path_from_own_directory(path);
+        let below_own_folder = self.create_block();
+        let done = self.create_block();
+        let own_folder = self.emit_text(b"./");
+        let is_below = call::emit_call(self, starts_with, Some(from_own_folder), &[own_folder]);
+        let is_below = self.builder.to_boolean(is_below);
+        self.builder.branch(
+            is_below,
+            Edge::to(below_own_folder),
+            Edge::to(in_other_folder),
+        );
+
+        self.continue_in(below_own_folder);
+        let last_index_of = self.emit_builtin_itself(BuiltinId::StringPrototypeLastIndexOf);
+        let separator = self.emit_text(b"/");
+        let last = call::emit_call(self, last_index_of, Some(from_own_folder), &[separator]);
+        let end_of_own_folder = self.builder.integer(1);
+        let is_in_own_folder = self.builder.strict_eq(last, end_of_own_folder);
+        self.builder
+            .branch(is_in_own_folder, Edge::to(done), Edge::to(in_other_folder));
+
+        self.continue_in(in_other_folder);
+        self.note_require(made);
+        self.jump(done);
+
+        self.continue_in(done);
+    }
+
+    fn note_require(&mut self, made: ValueId) {
+        let is_no_function = self.create_block();
+        let can_be_noted = self.create_block();
+        let done = self.create_block();
+        let is_function = self.builder.type_test(made, TypeTable::FUNCTION);
+        self.builder.branch(
+            is_function,
+            Edge::to(can_be_noted),
+            Edge::to(is_no_function),
+        );
+
+        self.continue_in(is_no_function);
+        let is_object = self.builder.type_test(made, TypeTable::OBJECT);
+        self.builder
+            .branch(is_object, Edge::to(can_be_noted), Edge::to(done));
+
+        self.continue_in(can_be_noted);
+        let noted = VariableKey::RequiresMadeForOtherFolders(self.file.file);
+        self.add_to_set_of_requires(noted, made);
+        self.jump(done);
+
+        self.continue_in(done);
+    }
+
+    fn add_to_set_of_requires(&mut self, set: VariableKey, made: ValueId) {
+        let variable = self.file.ensure_variable(set);
+        let held = self.builder.get_module_variable(variable);
+        let requires = self.builder.create_variable(None);
+        self.builder.write_variable(requires, held);
+        let adding = self.create_block();
+        let split = self.split_on_type(held, TypeTable::ABSENT);
+        self.builder.switch_to(split.not_taken);
+        self.jump(adding);
+
+        self.builder.switch_to(split.taken);
+        let constructor = self.emit_builtin_itself(BuiltinId::WeakSet);
+        let first = self.emit_construct(constructor, Arguments::Values(smallvec![]), None);
+        self.builder.put_module_variable(variable, first);
+        self.builder.write_variable(requires, first);
+        self.jump(adding);
+
+        self.continue_in(adding);
+        let requires = self.builder.read_variable(requires);
+        let add = self.emit_builtin_itself(BuiltinId::WeakSetPrototypeAdd);
+        call::emit_call(self, add, Some(requires), &[made]);
+    }
+
+    fn emit_test_of_set_of_requires(&mut self, set: VariableKey, made: ValueId) -> ValueId {
+        let variable = self.file.ensure_variable(set);
+        let is_held = self.builder.create_variable(None);
+        let decided = self.create_block();
+        let held = self.builder.get_module_variable(variable);
+        let split = self.split_on_type(held, TypeTable::ABSENT);
+        self.builder.switch_to(split.taken);
+        let no = self.builder.boolean(false);
+        self.builder.write_variable(is_held, no);
+        self.jump(decided);
+
+        self.builder.switch_to(split.not_taken);
+        let has = self.emit_builtin_itself(BuiltinId::WeakSetPrototypeHas);
+        let has_require = call::emit_call(self, has, Some(held), &[made]);
+        let has_require = self.builder.to_boolean(has_require);
+        self.builder.write_variable(is_held, has_require);
+        self.jump(decided);
+
+        self.continue_in(decided);
+        self.builder.read_variable(is_held)
     }
 
     fn may_tests_replace_what_was_made(&self) -> bool {
@@ -743,26 +999,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             _ => None,
         }
     }
-    fn emit_test_of_made_require(&mut self, made: ValueId, holder: SymbolId) -> ValueId {
-        let variable = self.variable_of_require_made_for_own_file(holder);
-        let kept = self.builder.get_module_variable(variable);
-        let is_followed = self.builder.create_variable(None);
-        let decided = self.create_block();
-        let split = self.split_on_type(kept, TypeTable::ABSENT);
-        self.builder.switch_to(split.taken);
-        let no = self.builder.boolean(false);
-        self.builder.write_variable(is_followed, no);
-        self.jump(decided);
-
-        self.builder.switch_to(split.not_taken);
-        let is_kept = self.builder.strict_eq(made, kept);
-        self.builder.write_variable(is_followed, is_kept);
-        self.jump(decided);
-
-        self.continue_in(decided);
-        self.builder.read_variable(is_followed)
-    }
-
     fn try_lower_library_module_named_to_made_require(
         &mut self,
         call: ExprId,
@@ -802,6 +1038,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             resolved_from: None,
             looks_in_cache: true,
             is_read_by_transpiler: false,
+            maker_of_asked_require: None,
         };
         let operation = ModuleOperation::Require;
         if !is_made_require || may_still_be_undefined(hir, self.file.bound, hir[id].callee) {
@@ -847,6 +1084,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             resolved_from: None,
             looks_in_cache: false,
             is_read_by_transpiler: false,
+            maker_of_asked_require: None,
         };
         let test = match self.file.classify_callee(hir[id].callee) {
             CalleeKnowledge::Expected(expected) => CalleeTest::Expected(expected),
@@ -886,6 +1124,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             resolved_from: None,
             looks_in_cache: true,
             is_read_by_transpiler: true,
+            maker_of_asked_require: None,
         };
         let written = match (site.answer, site.specifier) {
             (SiteAnswer::Computed(_), ImportSpecifier::Constant(written)) => {
@@ -941,7 +1180,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     None => self.builder.boolean(true),
                 }
             }
-            OwnRequire::MadeForChoice(holder) => self.emit_test_of_made_require(receiver, holder),
+            OwnRequire::MadeForChoice(_) => {
+                let kept = VariableKey::RequiresMadeForOwnFile(self.file.file);
+                self.emit_test_of_set_of_requires(kept, receiver)
+            }
         };
         self.builder.write_variable(is_followed, is_require);
         self.jump(decided);
@@ -1051,7 +1293,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn try_lower_inner_module_call(&mut self, call: ExprId) -> Option<ValueId> {
         let (modules, file) = (self.file.inputs.modules, self.file.file);
-        let plan = create_plan(modules.site(file, call), || {
+        let plan = create_plan(modules.stored_site(file, call), || {
             modules.is_site_read_as_value(file, call)
         })?;
         self.set_position(self.file.hir[call].pos);
@@ -1508,28 +1750,50 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !self.file.decisions().is_path_made_by_call(node) {
             return None;
         }
+        let is_from_own_directory = self.file.is_path_from_own_directory(node);
+        Some(self.branch_on_written_path(written, is_from_own_directory, text))
+    }
+
+    fn branch_on_written_path(
+        &mut self,
+        written: Atom,
+        is_from_own_directory: bool,
+        text: ValueId,
+    ) -> PathTest {
         let platform = self.file.inputs.options.platform;
         let is_windows = platform.contains(Platforms::WINDOWS);
         let separator: &[u8] = if is_windows { b"\\" } else { b"/" };
         let bytes = self.file.queries.atom_bytes(written).to_vec();
-        if !self.file.is_path_from_own_directory(node) {
+        if !is_from_own_directory {
             let expected = self.emit_text(&bytes);
             let is_as_written = self.builder.strict_eq(text, expected);
             let (as_written, other) = (self.create_block(), self.create_block());
             self.builder
                 .branch(is_as_written, Edge::to(as_written), Edge::to(other));
-            return Some(PathTest {
+            return PathTest {
                 as_written,
                 other,
                 written: self.file.intern_atom(written),
-            });
+            };
         }
         let directories = self.emit_own_directories();
         let mut targets = None;
-        let count = directories.len();
-        for (index, mut directory) in directories.into_iter().enumerate() {
-            let mut below = bytes.strip_prefix(b".").unwrap_or(&bytes);
-            while let Some(rest) = below.strip_prefix(b"/..")
+        let written_below = bytes.strip_prefix(b".").unwrap_or(&bytes);
+        let leaves_own_folder = (written_below.strip_prefix(b"/.."))
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(b"/"));
+        let spellings: Vec<(ValueId, bool)> = (directories.into_iter())
+            .flat_map(|directory| {
+                let as_joined = Some((directory, true));
+                as_joined
+                    .into_iter()
+                    .chain(leaves_own_folder.then_some((directory, false)))
+            })
+            .collect();
+        let count = spellings.len();
+        for (index, (mut directory, is_joined)) in spellings.into_iter().enumerate() {
+            let mut below = written_below;
+            while is_joined
+                && let Some(rest) = below.strip_prefix(b"/..")
                 && (rest.is_empty() || rest.starts_with(b"/"))
             {
                 below = rest;
@@ -1584,11 +1848,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let (as_written, other) = targets.expect("a file has a folder");
         let written = self.file.intern_atom(written);
-        Some(PathTest {
+        PathTest {
             as_written,
             other,
             written,
-        })
+        }
     }
 
     pub(in crate::lower) fn emit_text(&mut self, text: &[u8]) -> ValueId {
@@ -2247,7 +2511,7 @@ enum CalleeTest {
         is_truthy: bool,
         exporter: Option<FileId>,
     },
-    IsMadeForOwnFile(SymbolId),
+    IsMadeIn(FileId),
 }
 
 fn lower_tested_call(
@@ -2303,8 +2567,9 @@ fn lower_tested_call(
             };
             lowering.emit_test_of_method(callee, expected, require, of_receiver)
         }
-        CalleeTest::IsMadeForOwnFile(holder) => {
-            lowering.emit_test_of_made_require(callee.function, holder)
+        CalleeTest::IsMadeIn(file) => {
+            let kept = VariableKey::RequiresMadeForOwnFile(file);
+            lowering.emit_test_of_set_of_requires(kept, callee.function)
         }
     };
     let result = lowering.builder.create_variable(None);
@@ -2321,13 +2586,25 @@ fn lower_tested_call(
         CalleeTest::IsTruthy
         | CalleeTest::IsRequireOf(_)
         | CalleeTest::Method { .. }
-        | CalleeTest::IsMadeForOwnFile(_) => (Edge::to(matched), Edge::to(other)),
+        | CalleeTest::IsMadeIn(_) => (Edge::to(matched), Edge::to(other)),
     };
     lowering.builder.branch(condition, if_true, if_false);
 
     lowering.continue_in(matched);
+    if let Some(maker) = site.maker_of_asked_require {
+        let is_method = matches!(test, CalleeTest::Method { .. })
+            || matches!(operation, ModuleOperation::RequireResolve);
+        let require = callee.this.filter(|_| is_method).unwrap_or(callee.function);
+        let noted = VariableKey::RequiresMadeForOtherFolders(maker);
+        let is_noted = lowering.emit_test_of_set_of_requires(noted, require);
+        let made_for_own_folder = lowering.create_block();
+        lowering
+            .builder
+            .branch(is_noted, Edge::to(other), Edge::to(made_for_own_folder));
+        lowering.continue_in(made_for_own_folder);
+    }
     let (is_other_arm_read, specifier) = match test {
-        CalleeTest::Expected(_) | CalleeTest::IsRequireOf(_) | CalleeTest::IsMadeForOwnFile(_) => {
+        CalleeTest::Expected(_) | CalleeTest::IsRequireOf(_) | CalleeTest::IsMadeIn(_) => {
             (true, values.first().copied())
         }
         CalleeTest::IsFilled | CalleeTest::IsTruthy => (false, values.first().copied()),
@@ -2349,7 +2626,7 @@ fn lower_tested_call(
             },
         ),
     };
-    let site = site.in_one_arm(is_other_arm_read);
+    let site = site.in_one_arm(is_other_arm_read || site.maker_of_asked_require.is_some());
     let loaded = lowering.emit_operation(operation, &site, specifier);
     lowering.builder.write_variable(result, loaded);
     lowering.jump(done);
@@ -2362,6 +2639,11 @@ fn lower_tested_call(
 
     lowering.continue_in(done);
     lowering.builder.read_variable(result)
+}
+
+enum QuestionOnBase {
+    IsInOwnFolder { place: usize },
+    IsPath { place: usize, path: Atom },
 }
 
 struct PathTest {

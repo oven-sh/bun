@@ -124,7 +124,7 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if options.runs_tests {
         record.admitted_code |= AdmittedCode::REPLACED_BUILTINS;
     }
-    if options.library_runs_compiled_alone {
+    if !options.omits_builtin_modules {
         record.excluded_code |= ExcludedCode::LIBRARY_TEXT;
     }
     match options.code_generation_from_strings {

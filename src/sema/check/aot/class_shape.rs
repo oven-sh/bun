@@ -16,7 +16,7 @@ use crate::hir::{
 };
 use crate::program::{FileId, Sym};
 use crate::types::TypeId;
-use crate::util::{FxHashSet, SharedSort};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum StorePlace {
@@ -35,6 +35,7 @@ struct StoreCandidate {
     is_in_every_construction: bool,
     defined: MemberForm,
     is_stored_by_callee: bool,
+    birth: u32,
 }
 
 impl StoreCandidate {
@@ -360,6 +361,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let in_every_construction = stores.iter().filter(|store| store.is_in_every_construction);
         let in_every_construction: FxHashSet<Atom> =
             in_every_construction.map(|store| store.name).collect();
+        let forms = forms_of_instance_fields(&stores);
         let hir = self.c.hir(file);
         for candidate in &stores {
             let name = self.member_name(candidate.name);
@@ -410,7 +412,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 types: PositionTypes::unwritten(checked),
                 is_static,
                 is_optional: !is_always_stored,
-                form: candidate.defined,
+                form: match candidate.place {
+                    StorePlace::Instance => forms.get(&candidate.name).copied().unwrap_or_default(),
+                    StorePlace::Prototype | StorePlace::Class => candidate.defined,
+                },
             });
         }
     }
@@ -516,6 +521,7 @@ fn store_candidates(
             is_in_every_construction: store.is_in_every_construction,
             defined: store.defined,
             is_stored_by_callee: store.is_stored_by_callee,
+            birth: store.birth,
         }));
     }
     let inner = inner.filter(|&inner| outer != Some(inner));
@@ -535,7 +541,13 @@ fn store_candidates(
     if is_binding_stable {
         stores.extend(binding_stores.map(binding_candidate));
     }
-    stores.shared_sort_unstable_by_key(|candidate| (hir[candidate.store].pos, candidate.store));
+    stores.shared_sort_unstable_by_key(|candidate| {
+        (
+            candidate.is_stored_by_callee,
+            hir[candidate.store].pos,
+            candidate.store,
+        )
+    });
     StoreCandidates {
         stores,
         prototype_accessor_names,
@@ -557,7 +569,35 @@ fn binding_candidate(store: &BindingStore) -> StoreCandidate {
         is_in_every_construction: false,
         defined: MemberForm::default(),
         is_stored_by_callee: false,
+        birth: u32::MAX,
     }
+}
+
+fn forms_of_instance_fields(stores: &[StoreCandidate]) -> FxHashMap<Atom, MemberForm> {
+    let mut forms = FxHashMap::default();
+    if stores
+        .iter()
+        .all(|store| store.defined == MemberForm::default())
+    {
+        return forms;
+    }
+    let mut births: FxHashMap<Atom, u32> = FxHashMap::default();
+    for store in stores
+        .iter()
+        .filter(|store| store.place == StorePlace::Instance)
+    {
+        let earliest = births.entry(store.name).or_insert(u32::MAX);
+        if store.birth < *earliest {
+            *earliest = store.birth;
+            forms.insert(store.name, store.defined);
+        } else if *earliest == u32::MAX {
+            let form = forms.entry(store.name).or_insert(store.defined);
+            if *form != store.defined {
+                *form = MemberForm::default();
+            }
+        }
+    }
+    forms
 }
 
 fn find_stored_value(stores: &[StoreCandidate], candidate: &StoreCandidate) -> Option<ExprId> {

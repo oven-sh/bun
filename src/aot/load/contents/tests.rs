@@ -18,7 +18,8 @@ use super::load_names::{
 };
 use super::worker_entries::source_path_of;
 use super::{
-    FileContents, FoundBecause, FoundEntryPoint, ProgramContents, WorkerNameForm, WorkerStart,
+    FileContents, FoundBecause, FoundEntryPoint, PlaceOfName, ProgramContents, WorkerNameForm,
+    WorkerStart,
 };
 use crate::builtins::RuntimeModule::{self, BunWrap, NodeDgram, NodeOs, NodeV8, NodeVm, NodeZlib};
 use crate::builtins::{BuiltinId, Mutability, Resolved};
@@ -271,7 +272,7 @@ fn describe_starts(files: &Files<'_>, name: &str, are_given_to_constructor: bool
     let file = file_named(files, name);
     let starts = contents_of(files, name).worker_starts.iter();
     starts
-        .filter(|start| start.is_argument_of_constructor == are_given_to_constructor)
+        .filter(|start| (start.place == PlaceOfName::Constructor) == are_given_to_constructor)
         .map(|start| describe_start(files, file, start))
         .collect()
 }
@@ -349,7 +350,7 @@ fn describe_file_contents(files: &Files<'_>, file: FileId, contents: &FileConten
     let starts = contents.worker_starts.iter();
     let starts: Vec<String> = starts
         .map(|it| {
-            let places = (it.at.0, it.name_node.0, it.is_argument_of_constructor);
+            let places = (it.at.0, it.name_node.0, it.place);
             format!("{places:?} {}", describe_start(files, file, it))
         })
         .collect();
@@ -565,7 +566,7 @@ fn file_whose_copy_a_worker_starts_from_is_compiled() {
         let site = files.analysis(main).import_sites[site as usize];
         assert!(matches!(site.kind, ImportSiteKind::Import(_)));
         assert_eq!(describe_name(files, main, &site.specifier), "./w.ts");
-        assert!(start.is_argument_of_constructor);
+        assert_eq!(start.place, PlaceOfName::Constructor);
         let [found] = &loaded.contents.found_entry_points[..] else {
             panic!("one file is found");
         };
@@ -788,7 +789,8 @@ fn worker_constructor_is_recognized_by_binding() {
             let files = files_of(loaded);
             let contents = contents_of(files, "main.ts");
             assert_eq!(contents.names_worker_constructor, is_worker, "{text}");
-            assert_eq!(!contents.worker_starts.is_empty(), is_worker, "{text}");
+            let starts = describe_starts(files, "main.ts", true);
+            assert_eq!(!starts.is_empty(), is_worker, "{text}");
             assert!(!contents.hands_worker_constructor_on, "{text}");
             let program = loaded.contents;
             assert_eq!(program.names_worker_constructor, is_worker, "{text}");
@@ -829,7 +831,7 @@ fn construction_under_the_name_of_the_constructor_is_a_start_where_the_file_hand
         ),
         (
             r#"const startWith = given => new given.Pool(require.resolve("./w.ts")); exports.start = () => startWith(threads);"#,
-            &[],
+            &["lib/w.ts MayStartWorker"],
         ),
         (
             r#"exports.start = given => new given.Worker(require.resolve("./w.ts")); exports.isMain = threads.isMainThread;"#,
@@ -929,7 +931,7 @@ fn worker_start_with_an_unknown_name_is_recorded() {
         let [start] = contents_of(files_of(loaded), "main.ts").worker_starts[..] else {
             panic!("the file has one start");
         };
-        assert!(start.is_argument_of_constructor);
+        assert_eq!(start.place, PlaceOfName::Constructor);
         assert_eq!(start.name, ImportSpecifier::Unknown);
         assert!(loaded.contents.found_entry_points.is_empty());
     });
@@ -1050,7 +1052,7 @@ fn own_path_in_text() {
             None,
         ),
         (
-            r#"let file = import.meta.dir + "/beside.ts";
+            r#"let file = import.meta.dir + "/beside";
             file = process.argv[2];
             new Worker("data:text/javascript," + encodeURIComponent('import("' + file + '")'));"#,
             None,
@@ -1310,7 +1312,7 @@ fn url_counts_whichever_file_names_the_constructor() {
             assert_eq!(starts, ["FromOwnFolder ./w.ts"], "{main}");
             assert!(!contents_of(files, "url.ts").names_worker_constructor);
             let found: &[&str] = match is_found {
-                true => &["w.ts StartsWorker"],
+                true => &["w.ts MayStartWorker"],
                 false => &[],
             };
             let program = loaded.contents;
@@ -1340,7 +1342,7 @@ fn url_in_a_file_parsed_ahead_of_the_file_that_names_the_constructor_counts() {
         let found = &loaded.contents.found_entry_points;
         assert_eq!(
             describe_found(found),
-            ["plugin.ts NamedByData", "w.ts StartsWorker"]
+            ["plugin.ts NamedByData", "w.ts MayStartWorker"]
         );
         let [start] = contents_of(files, "main.ts").worker_starts[..] else {
             panic!("the file has one start");
@@ -1365,8 +1367,8 @@ fn url_that_names_no_file_of_code_is_no_entry_point() {
         (r#"new URL("./w.ts", "file:///elsewhere/")"#, false),
         ("new URL(process.argv[2], import.meta.url)", false),
         (
-            r#"new (class URL { constructor(path: string, base: string) {} })("./w.ts", import.meta.url)"#,
-            false,
+            r#"new (class URL { constructor(path: string, base: string) {} })("w.ts", import.meta.url)"#,
+            true,
         ),
         (r#"new URL("./logo.png", import.meta.url)"#, true),
         (r#"new URL("./types.d.ts", import.meta.url)"#, true),
@@ -1387,6 +1389,152 @@ fn url_that_names_no_file_of_code_is_no_entry_point() {
             assert!(may_name_file || starts.is_empty(), "{url}: {starts:?}");
             let found = describe_found(&loaded.contents.found_entry_points);
             assert!(found.is_empty(), "{url}: {found:?}");
+        });
+    }
+}
+
+#[test]
+fn file_whose_path_is_written_elsewhere_counts_where_a_start_is_out_of_sight() {
+    let paths = [
+        (
+            r#"join(import.meta.dir, "lib", "w.ts")"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"resolve(import.meta.dir, "lib/w.ts")"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"import.meta.dir + "/lib/w.ts""#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        ("`${import.meta.dir}/lib/w.ts`", "FromOwnFolder ./lib/w.ts"),
+        (r#"__dirname + "/lib/w.ts""#, "FromOwnFolder ./lib/w.ts"),
+        (
+            r#"join(__dirname, "lib", "w.ts")"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"require.resolve("./lib/w.ts")"#,
+            "Resolved(Path) ./lib/w.ts",
+        ),
+        (
+            r#"import.meta.resolve("./lib/w.ts")"#,
+            "Resolved(Url) ./lib/w.ts",
+        ),
+        (r#""./lib/w.ts""#, "AsWritten ./lib/w.ts"),
+    ];
+    let pools = [
+        ("new Worker(entry)", "lib/w.ts MayStartWorker"),
+        (r#"new Worker("./other.ts")"#, "other.ts StartsWorker"),
+    ];
+    for (path, described) in paths {
+        for (start, found) in pools {
+            let main = format!(
+                "import {{ join, resolve }} from \"node:path\";\nimport {{ start }} from \"./pool.ts\";\nstart({path});\n"
+            );
+            let pool = format!("export const start = (entry: string) => {start};\n");
+            let project = executable(&[
+                ("main.ts", &main),
+                ("pool.ts", &pool),
+                ("lib/w.ts", WORKER),
+                ("other.ts", WORKER),
+            ]);
+            load(&project, |loaded| {
+                let starts = describe_starts(files_of(loaded), "main.ts", false);
+                assert_eq!(starts, [described], "{path}");
+                let found_by_load = describe_found(&loaded.contents.found_entry_points);
+                assert_eq!(found_by_load, [found], "{path}");
+            });
+        }
+    }
+}
+
+#[test]
+fn embedded_file_of_code_counts_where_a_start_is_out_of_sight() {
+    let starts = [
+        ("new Worker(table[process.argv[2]])", "/project/w.ts", true),
+        (r#"new Worker("./other.ts")"#, "/project/other.ts", false),
+    ];
+    for (start, source_path, may_start) in starts {
+        let main = format!(
+            "import path from \"./w.ts\" with {{ type: \"file\" }};\nconst table: Record<string, string> = {{ job: path }};\n{start};\n"
+        );
+        let project = executable(&[("main.ts", &main), ("w.ts", WORKER), ("other.ts", WORKER)]);
+        load(&project, |loaded| {
+            let [found] = &loaded.contents.found_entry_points[..] else {
+                panic!("one file is found: {start}");
+            };
+            let source_path = source_path_of(source_path.as_bytes());
+            assert_eq!(BStr::new(&found.source_path), BStr::new(&source_path));
+            let because = match may_start {
+                true => FoundBecause::MayStartWorker,
+                false => FoundBecause::StartsWorker,
+            };
+            assert_eq!(found.because, because, "{start}");
+        });
+    }
+}
+
+#[test]
+fn own_file_counts_where_something_else_than_a_built_in_function_gets_it() {
+    let rows = [
+        ("start(import.meta.url);", true),
+        ("start(new URL(import.meta.url));", true),
+        ("start(__filename);", true),
+        ("start(import.meta?.url);", true),
+        ("start(import.meta[\"url\"]);", true),
+        ("const { url } = import.meta;\nstart(url);", true),
+        ("start(import.meta);", true),
+        ("start(pathToFileURL(import.meta.filename).href);", true),
+        ("Promise.resolve(import.meta.url).then(start);", true),
+        (
+            "start(import.meta.dir, import.meta.main, import.meta.env);",
+            false,
+        ),
+        (
+            "console.log(import.meta);\nstart(typeof import.meta);",
+            false,
+        ),
+        (
+            "const own = fileURLToPath(import.meta.url);\nstart(own);",
+            true,
+        ),
+        (
+            "const own = fileURLToPath(import.meta.url);\nstart({ file: own });",
+            true,
+        ),
+        (
+            "const own = fileURLToPath(import.meta.url);\nstart(dirname(own));",
+            false,
+        ),
+        (
+            "const own = import.meta.path;\nstart(own + \".map\", own.length, `${own}#made`);",
+            false,
+        ),
+        (
+            "start(dirname(import.meta.path), import.meta.url.length);",
+            false,
+        ),
+    ];
+    for (code, is_taken) in rows {
+        let job = format!(
+            "import {{ dirname }} from \"node:path\";\nimport {{ fileURLToPath, pathToFileURL }} from \"node:url\";\nimport {{ start }} from \"./pool.ts\";\n{code}\n"
+        );
+        let pool =
+            "export const start = (...given: unknown[]) => new Worker(given[0] as string);\n";
+        let project = executable(&[
+            ("main.ts", "import \"./job.ts\";\n"),
+            ("job.ts", &job),
+            ("pool.ts", pool),
+        ]);
+        load(&project, |loaded| {
+            let found = describe_found(&loaded.contents.found_entry_points);
+            let expected: &[&str] = match is_taken {
+                true => &["job.ts MayStartWorker"],
+                false => &[],
+            };
+            assert_eq!(found, expected, "{code}");
         });
     }
 }

@@ -148,6 +148,7 @@ fn create_analysis<'s>(
         asks_for_main_module: folded.asks_for_main_module,
         imported_names: folded.imported_names,
         requires_of_other_files: scan.requires_of_other_files,
+        paths_given_to_create_require: scan.paths_given_to_create_require,
         sites_by_kind: scan.sites_by_kind,
         first_call_site: scan.first_call_site,
     }

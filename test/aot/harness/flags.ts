@@ -15,8 +15,8 @@ export const withThreads = (count: number) => `--aot-threads=${count}`;
 export const withProgramOutput = (path: string) => `--aot-out=${path}`;
 export const withCarrier = (path: string) => ["--compile-executable-path", path];
 
-// testaot starts from the engine's defaults. A build without further flags changes these two: fill_record() in src/aot/engine.rs.
-export const wordsOfAPlainBuild = ["references=narrow", "exclude=CodeOutsideImage"] as const;
+// testaot starts from the engine's defaults. A build without further flags changes these: fill_record() in src/aot/engine.rs.
+export const wordsOfAPlainBuild = ["references=narrow", "exclude=CodeOutsideImage,LibraryText"] as const;
 
 export const buildEnvironment = {
   mapFilePath: "BUN_JSC_aotMapFilePath",

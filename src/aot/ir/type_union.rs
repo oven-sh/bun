@@ -5,7 +5,7 @@ use bun_sema::util::SharedSort;
 
 use super::generated::MAX_TRACKED_INTEGER;
 use super::ids::{Id, TypeId};
-use super::types::{ClassPart, Primitives, Type, TypeFlags, TypeTable, hash_of};
+use super::types::{ClassPart, Primitives, Type, TypeFlags, TypeTable, hash_of_type};
 
 #[inline]
 pub(super) fn normalize_type(table: &mut TypeTable, ty: &mut Type) {
@@ -45,6 +45,11 @@ pub(super) fn normalize_without_table(ty: &mut Type) -> bool {
 
 impl TypeTable {
     pub fn union(&mut self, left: TypeId, right: TypeId) -> TypeId {
+        let is_nullish = right == Self::UNDEFINED || right == Self::NULL || right == Self::NULLISH;
+        if is_nullish && left != Self::NEVER && !self.get(left).is_internal() {
+            let added = self.get(right).primitives;
+            return self.add_primitives(left, added);
+        }
         self.union_all([left, right])
     }
 
@@ -65,7 +70,7 @@ impl TypeTable {
             return Some(known);
         }
         let is_normalized = normalize_without_table(&mut union);
-        let hash = is_normalized.then(|| hash_of(&union))?;
+        let hash = is_normalized.then(|| hash_of_type(&union))?;
         self.find_hashed(hash, &union)
     }
 

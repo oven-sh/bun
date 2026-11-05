@@ -95,7 +95,7 @@ mod tests {
     use super::*;
     use crate::ir::ids::{Id, ModuleId};
 
-    const KINDS: [(ExplainSet, bool, bool, bool); 11] = [
+    const KINDS: [(ExplainSet, bool, bool, bool); 10] = [
         (ExplainSet::TEXT, false, true, false),
         (ExplainSet::JSON, true, false, false),
         (ExplainSet::CHECKS, false, true, false),
@@ -106,7 +106,6 @@ mod tests {
         (ExplainSet::STATISTICS, false, false, false),
         (ExplainSet::ONLY_UNKNOWN_CODE, false, false, true),
         (ExplainSet::ONLY_UNPROVEN_TYPE, false, false, true),
-        (ExplainSet::ONLY_MUTATION, false, false, true),
     ];
 
     fn texts() -> SourceTexts {
@@ -157,9 +156,15 @@ mod tests {
             (ExplainSet::TEXT, "heading"),
             (ExplainSet::JSON, r#"{"rank":1}"#),
             (ExplainSet::CHECKS_JSON, r#"{"aot":"type-check"}"#),
-            (ExplainSet::ONLY_MUTATION, "mutation: field-deleted"),
+            (
+                ExplainSet::ONLY_UNPROVEN_TYPE,
+                "unproven-type: untyped-collection",
+            ),
         ];
-        assert_eq!(lines(&entries, false), "aot: mutation: field-deleted\n");
+        assert_eq!(
+            lines(&entries, false),
+            "aot: unproven-type: untyped-collection\n"
+        );
         assert_eq!(
             lines(&entries, true),
             "{\"rank\":1}\n{\"aot\":\"type-check\"}\n"

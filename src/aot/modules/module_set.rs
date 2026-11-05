@@ -2,6 +2,7 @@ use super::interop::{Interop, ModuleKind, RequireResult, file_interop};
 use super::requests::{ScannedSite, Scans};
 use super::wrapped::WrappedModules;
 use super::{BindInput, ModuleRef, compare_modules};
+use crate::ir::parallel::map_each;
 use crate::load::loaders::{HostLoaderKind, host_loader_kind};
 use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind};
@@ -13,7 +14,7 @@ use bun_sema::hir::FnId;
 use bun_sema::import_sites::{ImportSiteKind, is_linked_by_bundler};
 use bun_sema::program::{CodeAnswer, FileId, FileRole};
 use bun_sema::resolve::ExternalKind;
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ImportTypeKind {
@@ -39,6 +40,45 @@ pub(super) struct ModuleSet {
 }
 
 impl ModuleSet {
+    pub(super) fn with_kinds_alone(input: &BindInput<'_, '_>, scans: &Scans) -> ModuleSet {
+        let mut compiled_files = input.files.compiled_files().to_vec();
+        compiled_files.shared_sort_unstable();
+        let mut interops: Vec<Option<Interop>> = vec![None; input.files.modules.len()];
+        for &file in &compiled_files {
+            interops[file.idx()] = Some(scans.of(file).interop);
+        }
+        for &importer in &compiled_files {
+            let scan = scans.of(importer);
+            let site_modules = scan.sites.iter().filter_map(|site| match site {
+                ScannedSite::Module(module) => Some(*module),
+                _ => None,
+            });
+            for module in site_modules.chain(scan.candidates.iter().copied()) {
+                if let ModuleRef::File(file) = module {
+                    ensure_record(input, &mut interops, file);
+                }
+            }
+        }
+        for entry_point in input.sources.entry_points() {
+            ensure_record(input, &mut interops, entry_point.file);
+        }
+        ModuleSet {
+            compiled_files,
+            record_files: Vec::new(),
+            other_modules: Vec::new(),
+            external_kinds: Vec::new(),
+            left_to_loader: Vec::new(),
+            wrapped: WrappedModules::default(),
+            inner_modules: Vec::new(),
+            runs_again: Vec::new(),
+            runs_code_out_of_sight: false,
+            interops,
+            forms: Vec::new(),
+            forms_require_checks_first: Vec::new(),
+            sibling_forms: Vec::new(),
+        }
+    }
+
     pub(super) fn interop(&self, module: ModuleRef) -> Interop {
         match module {
             ModuleRef::File(file) => {
@@ -240,6 +280,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         &compiled_files,
         &forms,
         &mut interops,
+        runs_code_out_of_sight,
     );
     for &file in &compiled_files {
         if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
@@ -249,6 +290,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         }
     }
     let mut other_modules = Vec::new();
+    let mut other_modules_seen = FxHashSet::default();
     let mut external_kinds = Vec::new();
     let mut left_to_loader: Vec<((FileId, Atom, Option<Loader>), FileId)> = Vec::new();
     for &importer in &compiled_files {
@@ -276,7 +318,11 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         for module in site_modules.chain(scan.candidates.iter().copied()) {
             match module {
                 ModuleRef::File(file) => ensure_record(input, &mut interops, file),
-                ModuleRef::Runtime(_) | ModuleRef::External { .. } => other_modules.push(module),
+                ModuleRef::Runtime(_) | ModuleRef::External { .. } => {
+                    if other_modules_seen.insert(module) {
+                        other_modules.push(module);
+                    }
+                }
                 ModuleRef::Inner { .. } | ModuleRef::Face(_) | ModuleRef::Check(_) => {
                     unreachable!("no specifier names such a module")
                 }
@@ -404,9 +450,10 @@ fn answer_require_with_what_the_loader_holds(
     compiled_files: &[FileId],
     forms: &[(FileId, FileId)],
     interops: &mut [Option<Interop>],
+    runs_code_out_of_sight: bool,
 ) -> Vec<(FileId, FileId)> {
-    let mut is_any_imported = input.files_are_named_out_of_sight;
-    let mut is_any_required = input.files_are_named_out_of_sight || input.hands_on_any_module;
+    let mut is_any_imported = input.files_are_named_out_of_sight || runs_code_out_of_sight;
+    let mut is_any_required = is_any_imported || input.hands_on_any_module;
     let mut is_imported = vec![false; interops.len()];
     let mut is_required = vec![false; interops.len()];
     for &importer in compiled_files {
@@ -539,37 +586,46 @@ fn find_files_required_from_loader(
     scans: &Scans,
     compiled_files: &[FileId],
 ) -> Vec<FileId> {
+    let found = map_each(compiled_files.to_vec(), input.in_parallel, &|importer| {
+        find_files_that_file_requires_from_loader(input, scans, importer)
+    });
+    found.into_iter().flatten().collect()
+}
+
+fn find_files_that_file_requires_from_loader(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    importer: FileId,
+) -> Vec<FileId> {
     let mut found = Vec::new();
-    for &importer in compiled_files {
-        let scan = scans.of(importer);
-        let (hir, bound) = (input.files.hir(importer), input.files.bound(importer));
-        let sites = input.files.analysis(importer).import_sites.iter();
-        for (site, scanned) in sites.zip(&scan.sites) {
-            let requires = matches!(
-                site.kind,
-                ImportSiteKind::Require(_)
-                    | ImportSiteKind::ImportMetaRequire(_)
-                    | ImportSiteKind::ImportEquals(_)
-            );
-            let mut add = |module: ModuleRef| {
-                if let ModuleRef::File(file) = module {
-                    found.push(file);
-                }
-            };
-            match scanned {
-                _ if !requires => {}
-                &ScannedSite::Module(module) => {
-                    if !is_linked_by_bundler(hir, bound, site.kind)
-                        || is_named_with_query(input, module)
-                    {
-                        add(module);
-                    }
-                }
-                ScannedSite::Candidates(range) => {
-                    scan.modules_spelled_in(range).for_each(&mut add);
-                }
-                ScannedSite::AllModules | ScannedSite::Unresolved | ScannedSite::Erased => {}
+    let scan = scans.of(importer);
+    let (hir, bound) = (input.files.hir(importer), input.files.bound(importer));
+    let sites = input.files.analysis(importer).import_sites.iter();
+    for (site, scanned) in sites.zip(&scan.sites) {
+        let requires = matches!(
+            site.kind,
+            ImportSiteKind::Require(_)
+                | ImportSiteKind::ImportMetaRequire(_)
+                | ImportSiteKind::ImportEquals(_)
+        );
+        let mut add = |module: ModuleRef| {
+            if let ModuleRef::File(file) = module {
+                found.push(file);
             }
+        };
+        match scanned {
+            _ if !requires => {}
+            &ScannedSite::Module(module) => {
+                if !is_linked_by_bundler(hir, bound, site.kind)
+                    || is_named_with_query(input, module)
+                {
+                    add(module);
+                }
+            }
+            ScannedSite::Candidates(range) => {
+                scan.modules_spelled_in(range).for_each(&mut add);
+            }
+            ScannedSite::AllModules | ScannedSite::Unresolved | ScannedSite::Erased => {}
         }
     }
     found

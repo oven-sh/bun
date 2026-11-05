@@ -2,8 +2,8 @@ use super::code_barrels::ImportRequests;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
 use crate::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, is_linked_by_bundler,
-    is_name_read_by_transpiler, is_name_written_out,
+    ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_written_arms,
+    is_linked_by_bundler, is_name_read_by_transpiler, is_name_written_out,
 };
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
@@ -48,6 +48,11 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             false => NamesKnown::ToLoader,
         };
         let resolution = resolve_site(context, key, hir, site, alternatives, names);
+        let arms = match site.specifier {
+            ImportSpecifier::Unknown => find_written_arms(hir, bound, decisions, site),
+            _ => SmallVec::new(),
+        };
+        let resolution = add_written_arms(context, key, site, &arms, resolution);
         resolutions.push(resolution);
         let origin = TargetOrigin {
             kind: loader_kind(site),
@@ -156,6 +161,42 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
             }
         }
     }
+}
+
+fn add_written_arms<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    key: LoadKey<'r>,
+    site: &ImportSite,
+    arms: &[Atom],
+    resolution: SiteResolution<'r>,
+) -> SiteResolution<'r> {
+    let SiteResolution::Computed(ComputedResolution::All {
+        cause,
+        host_modules,
+    }) = resolution
+    else {
+        return resolution;
+    };
+    let kind = (
+        CodeImportKind::from_site(site.kind),
+        CodeImportForm::from_site(site.kind),
+    );
+    let mut candidates = host_modules.to_vec();
+    for &arm in arms {
+        let named = resolve_specifier(context, key, context.atoms.bytes(arm), kind);
+        if let CodeResolution::File(file) = named
+            && !candidates.contains(&ComputedCandidate::File(file))
+        {
+            candidates.push(ComputedCandidate::File(file));
+        }
+    }
+    if candidates.len() == host_modules.len() {
+        return resolution;
+    }
+    SiteResolution::Computed(ComputedResolution::All {
+        cause,
+        host_modules: context.session.arena().alloc_slice_copy(&candidates),
+    })
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

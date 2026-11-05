@@ -4,7 +4,7 @@ use bun_ast::Target;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, FnOwner, Parent, SymbolId};
+use bun_sema::bind::{Binding, Bound, Decl, FnOwner, Parent, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, FoldedValue, MadeByCall};
 use bun_sema::hir::{
@@ -12,7 +12,7 @@ use bun_sema::hir::{
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, ends_in_call_that_reads_frame_of_caller,
-    find_names_exported_for, find_parameter_named, find_values_of_parameter,
+    find_names_exported_for, find_parameter_named, find_values_of_parameter, find_written_arms,
     is_name_read_by_transpiler, is_name_written_out,
 };
 use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
@@ -488,7 +488,7 @@ fn is_left_operand_of_sum(request: &FinishedFile<'_, '_>, expression: ExprId) ->
     matches!(kind, ExprKind::Binary { op: BinOp::Add, left, .. } if left == expression)
 }
 
-fn is_part_of_longer_text(request: &FinishedFile<'_, '_>, expression: ExprId) -> bool {
+pub(super) fn is_part_of_longer_text(request: &FinishedFile<'_, '_>, expression: ExprId) -> bool {
     let Parent::Expr(above) = request.bound.parent_of_expr(expression) else {
         return false;
     };
@@ -498,7 +498,7 @@ fn is_part_of_longer_text(request: &FinishedFile<'_, '_>, expression: ExprId) ->
     )
 }
 
-fn is_made_of_texts(request: &FinishedFile<'_, '_>, expression: ExprId) -> bool {
+pub(super) fn is_made_of_texts(request: &FinishedFile<'_, '_>, expression: ExprId) -> bool {
     match request.hir[expression].kind {
         ExprKind::String(_) | ExprKind::Template { .. } => true,
         ExprKind::Binary { op: BinOp::Add, .. } => constant_text(request, expression).is_some(),
@@ -555,7 +555,7 @@ fn is_fully_known_load_argument(
         && (analysis.alternatives_of(&site.specifier).iter()).all(is_constant)
 }
 
-fn is_written_as_value(request: &FinishedFile<'_, '_>, mut expression: ExprId) -> bool {
+pub(super) fn is_written_as_value(request: &FinishedFile<'_, '_>, mut expression: ExprId) -> bool {
     let (hir, bound) = (request.hir, request.bound);
     loop {
         let above = match bound.parent_of_expr(expression) {
@@ -767,55 +767,6 @@ fn add_names_in(
     has_unknown_name
 }
 
-fn find_written_arms(
-    request: &FinishedFile<'_, '_>,
-    site: &ImportSite,
-) -> SmallVec<[(Atom, bool); 2]> {
-    let (hir, bound, decisions) = (request.hir, request.bound, &request.analysis.decisions);
-    let requires = match site.kind {
-        ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => true,
-        ImportSiteKind::ImportCall(_) => false,
-        _ => return SmallVec::new(),
-    };
-    let mut arms = SmallVec::new();
-    let mut followed: SmallVec<[SymbolId; 2]> = SmallVec::new();
-    let mut pending: SmallVec<[ExprId; 4]> = smallvec![site.specifier_node];
-    while let Some(expression) = pending.pop() {
-        let expression = hir.skip_type_assertions(expression);
-        if decisions.is_dead_expr(expression) {
-            continue;
-        }
-        if let Some(text) = constant_text(request, expression) {
-            arms.push((text, requires));
-            continue;
-        }
-        match hir[expression].kind {
-            ExprKind::Cond { branches, .. } => {
-                let Branches { yes, no } = hir.branches(branches);
-                pending.extend([yes, no]);
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => pending.extend([left, right]),
-            ExprKind::Ident(_) => {
-                if let Binding::Symbol(constant) = bound.binding(expression)
-                    && bound.is_stable_binding(constant)
-                    && !followed.contains(&constant)
-                    && let BindingInitializer::Expression(value) =
-                        bound.binding_initializer(hir, constant)
-                {
-                    followed.push(constant);
-                    pending.push(value);
-                }
-            }
-            _ => {}
-        }
-    }
-    arms
-}
-
 fn find_name_sought_from_unknown_folder(
     request: &FinishedFile<'_, '_>,
     site: &ImportSite,
@@ -895,7 +846,9 @@ impl ContentsScan<'_, '_> {
         names.loads_by_path_alone |= is_path_alone;
         names.loads_by_unknown_path |= argument_kind == LoadArgument::ModuleOrPath;
         (names.under_parameters).extend(find_loads_under_parameter(request, site));
-        (names.written_arms_of_unknown_names).extend(find_written_arms(request, site));
+        let requires = !matches!(site.kind, ImportSiteKind::ImportCall(_));
+        let arms = find_written_arms(request.hir, request.bound, &analysis.decisions, site);
+        (names.written_arms_of_unknown_names).extend(arms.iter().map(|&arm| (arm, requires)));
     }
 
     fn look_at_texts_passed(&mut self, call: CallId) {
@@ -968,6 +921,7 @@ impl ContentsScan<'_, '_> {
             }
             return;
         }
+        self.look_at_relative_path(expression, text);
         let Some(module) = find_module(self.input, request.atoms, text) else {
             return;
         };

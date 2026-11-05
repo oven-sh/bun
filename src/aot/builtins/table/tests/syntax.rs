@@ -23,7 +23,7 @@ fn split_binding_text(text: &str) -> Option<(BuiltinName, BuiltinName)> {
     Some((find_name(file)?, find_name(symbol)?))
 }
 
-const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 18] = [
+const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 19] = [
     BuiltinId::NativeNewCppFunctionBunProcessCppBun__Process__disconnect,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunction_emitWarning,
@@ -36,6 +36,7 @@ const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 18] = [
     BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionWriteToStandardSink,
     BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning,
     BuiltinId::NativeNewCppFunctionErrorCodeCppNodeError_proto_toString,
+    BuiltinId::NativeNewCppFunctionFormatStackTraceForJSCppJsFunctionDefaultErrorPrepareStackTrace,
     BuiltinId::NativeNewCppFunctionJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush,
     BuiltinId::NativeNewCppFunctionJSEnvironmentVariableMapCppJsEditWindowsEnvVar,
     BuiltinId::NativeNewCppFunctionJSEnvironmentVariableMapCppJsProcessEnvCoerceForWrite,

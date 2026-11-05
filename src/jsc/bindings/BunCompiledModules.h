@@ -101,6 +101,8 @@ inline void willRequire(JSC::JSGlobalObject* globalObject, JSC::JSValue specifie
 JSC::JSValue errorIfUnseenCodeIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);
 std::optional<JSC::EncodedJSValue> takeAnswerKeptForLoader(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, bool& engineAsks);
 void keepAnswerForLoader(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, JSC::JSValue answerOrWhatWasThrown, bool isThrown);
+bool holdsAnswersForLoader();
+void forgetAnswersKeptForLoader(JSC::JSGlobalObject*);
 // False in an executable whose program was compiled ahead of time without --compile-inspector: a debugger reaches what the compiler took for unreachable.
 bool isDebuggerAdmitted();
 JSC::JSValue errorIfDebuggerIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin);

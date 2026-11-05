@@ -289,7 +289,8 @@ fn create_source_header(
     header
         .parameters
         .extend(std::iter::repeat_n(DeclaredType::untyped(), undeclared));
-    header.results = vec![declared.result];
+    header.results.clear();
+    header.results.push(declared.result);
     if hir.runtime_function_kind(function) == FnKind::Constructor {
         let class = file.bound.function_class(function);
         let class = class.expect("a constructor has a class");

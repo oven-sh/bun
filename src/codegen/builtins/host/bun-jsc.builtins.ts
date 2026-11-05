@@ -69,7 +69,13 @@ const heapsReadByClone = [
 const heapsWrittenByClone = ["TypedArrayStorage", "ExternalState"];
 const cloned = [
   b.readsContents(),
-  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", b.named("name", "message", "stack", "cause")),
+  b.runsTransitively(
+    "OwnKeys",
+    "OwnValues",
+    "PrototypeChain",
+    "ToPrimitive",
+    b.named("name", "message", "stack", "cause"),
+  ),
 ];
 
 const functions = {

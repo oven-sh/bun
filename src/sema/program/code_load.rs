@@ -52,6 +52,7 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     written_entry_points: Vec<CodeTarget<'r>>,
     keys_of_entry_points: FxHashSet<(Cow<'r, [u8]>, HostLoader)>,
     found_entry_points: Guarded<Vec<CodeTarget<'r>>>,
+    keys_of_found_entry_points: Guarded<FxHashSet<(Cow<'r, [u8]>, HostLoader)>>,
     loads_that_name_entry_points: Guarded<LoadsThatNameEntryPoints>,
     entry_points_that_run_first: FxHashSet<Vec<u8>>,
     pub(super) is_case_sensitive: bool,
@@ -96,6 +97,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             written_entry_points: entry_points,
             keys_of_entry_points,
             found_entry_points: Guarded::new(Vec::new()),
+            keys_of_found_entry_points: Guarded::new(FxHashSet::default()),
             loads_that_name_entry_points: Guarded::new(FxHashMap::default()),
             entry_points_that_run_first,
             is_case_sensitive,
@@ -124,15 +126,9 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
     }
 
     pub(super) fn is_entry_point(&self, key: LoadKey<'_>) -> bool {
-        let path = to_path(key.path, self.is_case_sensitive);
-        let is_same = |found: &CodeTarget<'r>| {
-            found.key.loader == key.loader
-                && *to_path(found.key.path, self.is_case_sensitive) == *path
-        };
-        if self.found_entry_points.lock().iter().any(is_same) {
-            return true;
-        }
-        self.keys_of_entry_points.contains(&(path, key.loader))
+        let key = (to_path(key.path, self.is_case_sensitive), key.loader);
+        self.keys_of_entry_points.contains(&key)
+            || self.keys_of_found_entry_points.lock().contains(&key)
     }
 
     pub(super) fn add_entry_point(&self, path: &[u8]) -> Option<CodeTarget<'r>> {
@@ -142,6 +138,8 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         if self.is_entry_point(target.key) {
             return None;
         }
+        let path = to_path(target.key.path, self.is_case_sensitive);
+        (self.keys_of_found_entry_points.lock()).insert((path, target.key.loader));
         self.found_entry_points.lock().push(target);
         Some(target)
     }

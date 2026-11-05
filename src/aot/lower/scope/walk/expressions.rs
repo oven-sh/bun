@@ -11,7 +11,7 @@ use bun_sema::import_sites::{
 use smallvec::SmallVec;
 
 use super::walker::bindings_of;
-use super::{ArgumentRead, Context, DeclarationRead, PatternRole, Task, Walker};
+use super::{ArgumentRead, Context, DeclarationRead, PatternRole, Task, WalkedFunctionId, Walker};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, Scope};
 use crate::builtins::{Intrinsic, Mutability, Resolved};
@@ -22,7 +22,7 @@ use crate::lower::scope::{
     BindingRef, CalledByName, ScopeSlot, find_declaration_called_by_name,
     find_declaration_made_at_first_read,
 };
-use crate::lower::{class, parameters};
+use crate::lower::{class, commonjs, parameters};
 use crate::modules::{Member, ModuleRef, Site, SiteAnswer};
 
 fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_count: usize) -> bool {
@@ -214,6 +214,9 @@ impl Walker<'_, '_> {
             self.pending_stores.push(symbol);
         }
         self.record_binding_use(context, binding, is_store);
+        if let Some(variable) = self.find_value_of_run_behind(identifier, binding) {
+            self.record_binding_use(context, Binding::CommonJs(variable), false);
+        }
         if let Some(start) = bound.dynamic_lookup_scope(NodeData::Expr(identifier)) {
             let looked_for = find_binding_looked_for(bound, start, binding);
             let declaring_scope = self.declaring_scope(looked_for);
@@ -226,6 +229,33 @@ impl Walker<'_, '_> {
             };
             self.record_scope_objects(function, search);
         }
+    }
+
+    fn find_value_of_run_behind(
+        &self,
+        identifier: ExprId,
+        binding: Binding,
+    ) -> Option<CommonJsVariable> {
+        let builtins = self.input.builtins;
+        if !self.walk.has_values_of_each_run || !matches!(binding, Binding::Symbol(_)) {
+            return None;
+        }
+        let Some(Resolved::Builtin(path)) = builtins.of_pure_expr(identifier) else {
+            return None;
+        };
+        let (variable, _) = commonjs::find_wrapper_path(builtins, path.locked_builtin()?)?;
+        Some(variable)
+    }
+
+    fn is_value_of_run(&self, variable: CommonJsVariable, context: Context) -> bool {
+        self.walk.has_values_of_each_run
+            && match variable {
+                CommonJsVariable::Exports => true,
+                CommonJsVariable::Module | CommonJsVariable::Require => {
+                    context.function != WalkedFunctionId::MODULE_BODY
+                }
+                CommonJsVariable::Filename | CommonJsVariable::Dirname => false,
+            }
     }
 
     pub(super) fn note_binding_is_looked_at(&mut self, binding: Binding) {
@@ -279,7 +309,9 @@ impl Walker<'_, '_> {
                 }
             }
             Binding::Arguments(owner) => self.use_arguments_binding(owner, is_store, context),
-            Binding::CommonJs(variable) if self.walk.has_wrapper_parameters => {
+            Binding::CommonJs(variable)
+                if self.walk.has_wrapper_parameters || self.is_value_of_run(variable, context) =>
+            {
                 let slot = ScopeSlot::CommonJs(variable);
                 self.record_slot_use(context.function, self.file_scope, slot);
                 if is_store {
@@ -311,10 +343,10 @@ impl Walker<'_, '_> {
             return;
         } else {
             self.record_private_name(access, context);
-            self.push_expressions([object], context);
+            self.push_task(Task::Expression(object), context);
         }
         if index.is_some() {
-            self.push_expressions([index], context);
+            self.push_task(Task::Expression(index), context);
         } else {
             self.number_walked += 1;
         }
@@ -393,7 +425,7 @@ impl Walker<'_, '_> {
             }
             self.record_argument_read(&call, context);
             let loads_module = self.evaluates_inner_module(expression, &call)
-                || (self.walk.has_wrapper_parameters
+                || ((self.walk.has_wrapper_parameters || self.walk.has_values_of_each_run)
                     && self.is_bound_module_call(expression, &call));
             if !loads_module {
                 let called = find_declaration_called_by_name(self.hir, self.bound, expression);
@@ -411,7 +443,7 @@ impl Walker<'_, '_> {
                         if matches!(self.hir[expression].kind, ExprKind::Call(_)) {
                             self.note_name_that_nobody_looks_at(call.callee);
                         }
-                        self.push_expressions([call.callee], context)
+                        self.push_task(Task::Expression(call.callee), context)
                     }
                 }
             }
@@ -454,7 +486,7 @@ impl Walker<'_, '_> {
         if !call.args.is_empty() || self.input.modules.inner_modules(self.input.file).is_empty() {
             return false;
         }
-        match self.input.modules.site(self.input.file, expression) {
+        match self.input.modules.stored_site(self.input.file, expression) {
             Some(Site::Evaluate { target, .. }) => matches!(target, ModuleRef::Inner { .. }),
             Some(Site::AsToday) | None => false,
         }

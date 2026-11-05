@@ -776,6 +776,22 @@ fn root_key(root: Root) -> u32 {
     }
 }
 
+fn refilled<T: Copy>(list: &mut Vec<T>, len: usize, value: T) -> Vec<T> {
+    let mut list = emptied(list);
+    if list.capacity() < len {
+        drop(list);
+        list = Vec::with_capacity(len);
+    }
+    list.resize(len, value);
+    list
+}
+
+fn emptied<T>(list: &mut Vec<T>) -> Vec<T> {
+    let mut list = std::mem::take(list);
+    list.clear();
+    list
+}
+
 /// The references a test can narrow.
 #[derive(Copy, Clone, Default)]
 struct TestSubjects {
@@ -5763,23 +5779,27 @@ impl<'p, 's> Checker<'p, 's> {
     fn index_narrowing_subjects(&mut self, file: FileId) {
         let trees = self.trees(file);
         let (hir, bound) = (trees.hir, trees.bound);
-        let mut tests = std::mem::take(&mut self.flow_memo.tests);
-        tests.clear();
-        tests.resize(bound.flow.len(), TestSubjects::default());
-        let words = bound.symbols.len() / 64 + 1;
-        let mut first_nodes = vec![u32::MAX; bound.symbols.len()];
-        let mut first_nodes_of_properties = vec![u32::MAX; bound.symbols.len()];
-        let mut last_call_statement = vec![u32::MAX; bound.symbols.len()];
-        let mut declaration_node = vec![u32::MAX; bound.symbols.len()];
-        let mut mentioned_in_calls = vec![0u64; words];
-        let mut call_statements_by_symbol = Vec::new();
-        let mut lengths = vec![0u32; bound.flow.len()];
-        let mut highest = vec![0u32; bound.flow.len()];
-        let mut lowest = vec![0u32; bound.flow.len()];
-        let mut computed_key_nodes = Vec::new();
-        let mut finally_blocks = Vec::new();
-        let mut finally_block_ends = Vec::new();
-        let mut union_nodes = Vec::new();
+        let (symbols, nodes) = (bound.symbols.len(), bound.flow.len());
+        let memo = &mut self.flow_memo;
+        memo.narrowing_index_file = None;
+        memo.tests_of = None;
+        let mut tests = refilled(&mut memo.tests, nodes, TestSubjects::default());
+        let words = symbols / 64 + 1;
+        let mut first_nodes = refilled(&mut memo.first_narrowing_node, symbols, u32::MAX);
+        let of_properties = &mut memo.first_narrowing_node_of_property;
+        let mut first_nodes_of_properties = refilled(of_properties, symbols, u32::MAX);
+        let idle_in_front = &mut memo.idle_call_statements_in_front;
+        let mut last_call_statement = refilled(idle_in_front, symbols, u32::MAX);
+        let mut declaration_node = refilled(&mut memo.declaration_node, symbols, u32::MAX);
+        let mut mentioned_in_calls = refilled(&mut memo.in_call_statements, words, 0u64);
+        let mut call_statements_by_symbol = emptied(&mut memo.call_statements_by_symbol);
+        let mut lengths = refilled(&mut memo.unsettled_call_before, nodes, 0u32);
+        let mut highest = refilled(&mut memo.max_antecedent, nodes, 0u32);
+        let mut lowest = refilled(&mut memo.min_antecedent, nodes, 0u32);
+        let mut computed_key_nodes = emptied(&mut memo.computed_key_nodes);
+        let mut finally_blocks = emptied(&mut memo.finally_blocks);
+        let mut finally_block_ends = emptied(&mut memo.finally_block_ends);
+        let mut union_nodes = emptied(&mut memo.union_nodes);
         let mut noted_switches: FxHashMap<StmtId, (ResolvesKey, bool)> = FxHashMap::default();
         let mut longest = 0;
         for (i, &node) in bound.flow.iter().enumerate() {
@@ -5930,24 +5950,28 @@ impl<'p, 's> Checker<'p, 's> {
                 union_nodes.push(i as u32);
             }
         }
-        if longest >= MAX_FLOW_DEPTH {
-            for length in &mut lengths {
-                *length = length.saturating_add(bound.flow_depth_added_by_loops);
-            }
-        } else {
-            lengths.clear();
-        }
         for &(symbol, _) in &call_statements_by_symbol {
             mentioned_in_calls[symbol.idx() / 64] |= 1 << (symbol.idx() % 64);
         }
         call_statements_by_symbol.sort_by_u32(|&(symbol, _)| symbol.0);
         let memo = &mut self.flow_memo;
+        if longest >= MAX_FLOW_DEPTH {
+            for length in &mut lengths {
+                *length = length.saturating_add(bound.flow_depth_added_by_loops);
+            }
+            memo.deepest_walk_from = lengths;
+        } else {
+            memo.deepest_walk_from = Vec::new();
+            memo.unsettled_call_before = lengths;
+        }
         memo.narrowing_index_file = Some(file);
         (memo.tests, memo.tests_of) = (tests, Some(file));
         memo.first_narrowing_node_of_property = first_nodes_of_properties;
-        memo.idle_call_statements_in_front.clear();
-        memo.idle_call_statements_in_front
-            .resize(call_statements_by_symbol.len() + 1, 0);
+        memo.idle_call_statements_in_front = refilled(
+            &mut last_call_statement,
+            call_statements_by_symbol.len() + 1,
+            0,
+        );
         (
             memo.first_narrowing_node,
             memo.in_call_statements,
@@ -5955,7 +5979,6 @@ impl<'p, 's> Checker<'p, 's> {
         ) = (first_nodes, mentioned_in_calls, call_statements_by_symbol);
         (memo.max_antecedent, memo.declaration_node) = (highest, declaration_node);
         (memo.min_antecedent, memo.computed_key_nodes) = (lowest, computed_key_nodes);
-        memo.deepest_walk_from = lengths;
         memo.union_nodes = union_nodes;
         memo.finally_blocks = finally_blocks;
         finally_block_ends.sort_unstable();

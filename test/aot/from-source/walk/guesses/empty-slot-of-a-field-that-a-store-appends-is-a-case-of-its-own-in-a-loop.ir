@@ -1,0 +1,60 @@
+# -- source: empty-slot-of-a-field-that-a-store-appends-is-a-case-of-its-own-in-a-loop.ts
+# declare function print(line: unknown): void;
+# const enum Level { Low = 1, High = 2 }
+# interface Part { id: number }
+# class Kind { flags: number; constructor(flags: number) { this.flags = flags; } }
+# interface Whole extends Kind { part: Part }
+# interface Ranked { flags: number; level: Level }
+# const Ranked = function (this: Ranked, flags: number) { this.flags = flags; } as unknown as { new (flags: number): Ranked };
+# function use(kind: Kind): string { if ((kind as Whole).part) return "has " + (kind as Whole).part.id; return "none"; }
+# function flagsOf(kind: Kind): string { if (kind.flags) return "flags " + (kind.flags + 1); return "none"; }
+# function levelOf(ranked: Ranked): string { const level = ranked.level; if (level === undefined) return "none"; return "has " + (level & 3); }
+# function useEach(kinds: Kind[]): string { let said = ""; for (let at = 0; at < kinds.length; at++) said = use(kinds[at]); return said; }
+# function flagsOfEach(kinds: Kind[]): string { let said = ""; for (let at = 0; at < kinds.length; at++) said = flagsOf(kinds[at]); return said; }
+# function levelOfEach(all: Ranked[]): string { let said = ""; for (let at = 0; at < all.length; at++) said = levelOf(all[at]); return said; }
+# (globalThis as any).handed = [useEach, flagsOfEach, levelOfEach, use];
+# const asked: (kinds: Kind[]) => string = (globalThis as any).handed[0];
+# const askedLevel: (all: Ranked[]) => string = (globalThis as any).handed[2];
+# const bare = new Kind(4);
+# const full = new Kind(4);
+# (full as Whole).part = { id: 3 };
+# print(asked([bare])); print(asked([full]));
+# Object.defineProperty(Kind.prototype, "part", { get() { return { id: 5 }; }, configurable: true });
+# print(asked([bare])); print(asked([full]));
+# const unranked = new Ranked(4);
+# const high = new Ranked(4);
+# high.level = Level.High;
+# const nulled = new Ranked(4);
+# (nulled as any).level = null;
+# print(askedLevel([unranked])); print(askedLevel([high])); print(askedLevel([nulled]));
+# -- end of source
+# `if ((type as TypeReference).node)` in a loop: a store by name appends the field, most objects are without it. The look at the slot parts three ways:
+# filled: the typed run . EMPTY, and the object's own byte and the guard of the class say that nothing stands above and nothing lies outside the slots: the read is undefined and goes on in the typed way . else the closed arm.
+# f1 = use, f2 = flagsOf, f3 = levelOf, f4 = useEach, f5 = flagsOfEach, f6 = levelOfEach.
+# Outside of loops (f1) the side is not built: it is code for time. A field of the birth (`flags`) gets no such side: its slot is never empty.
+# `level: Level` lies in four bytes with marks for absent, undefined and null, and its look asks for a number: it fails on all three, so its failing side is no empty slot: null there is read as null.
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: [[filled]]: boolean @Boolean = IsSlotFilled {{*}}key="part"
+# CHECK-NEXT: Branch [[filled]] -> taken {{*}}, notTaken [[empty]]()
+# CHECK: [[empty]]() isInLoop=true:
+# CHECK-NEXT: = HasLayoutPrototype {{*}}hasNoFieldOutsideSlot
+# CHECK: = AreMembersUnchanged {{*}}key="part"
+# RUN(OUTSIDE): walk f1 mechanisms=all
+# OUTSIDE-LABEL: code f1:Body
+# OUTSIDE: = IsSlotFilled {{*}}key="part"
+# OUTSIDE-NOT: = AreMembersUnchanged
+# RUN(BIRTH): walk f5 mechanisms=all
+# BIRTH-LABEL: code f5:Body
+# BIRTH-NOT: = AreMembersUnchanged
+# RUN(RAW): walk f6 mechanisms=all
+# RAW-LABEL: code f6:Body
+# RAW-NOT: = AreMembersUnchanged
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: none
+# ANSWERS: has 3
+# ANSWERS: has 5
+# ANSWERS: has 3
+# ANSWERS: none
+# ANSWERS: has 2
+# ANSWERS: has 0

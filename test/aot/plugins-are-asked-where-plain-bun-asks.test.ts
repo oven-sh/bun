@@ -477,6 +477,248 @@ import { kind as right } from "./right.js";
 export const told = () => left + " " + right;`,
     "src/user.js": `export { kind } from "./part.js";`,
   },
+  "a callback for a deeper name clears the plugins": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("a deeper name's callback clears the plugins", async () => {
+  const asked = [];
+  plugin({ name: "answers, then clears", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(part|last)\\.js$/ }, args => {
+      asked.push(args.path + "<" + args.importer.split("/").pop());
+      if (args.path === "./part.js") return { path: import.meta.dir + "/src/fake.js" };
+      plugin.clearAll();
+    });
+  } });
+  console.log("SAID IS", (await import("./src/root.js")).told());
+  console.log("SAID ASKED", [...new Set(asked)].sort().join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/closer.js": `import "./last.js";`,
+    "src/fake.js": `export const kind = "fake";`,
+    "src/last.js": `export {};`,
+    "src/mid.js": `import "./closer.js";`,
+    "src/part.js": `export const kind = "real";`,
+    "src/root.js": `import { kind } from "./user.js";
+import "./mid.js";
+export const told = () => kind;`,
+    "src/user.js": `export { kind } from "./part.js";`,
+  },
+  "four ways to ask where a name leads": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("four ways to ask where a name leads, beside a plugin", async () => {
+  let calls = 0;
+  plugin({ name: "answers", setup(build) {
+    build.onResolve({ filter: /^(\\.\\/dep\\.cjs|pkg)$/ }, () => (calls++, { path: import.meta.dir + "/src/fake.cjs" }));
+  } });
+  const user = await import("./src/user.ts");
+  console.log("SAID WHERE", user.where());
+  console.log("SAID WHERE", user.whereOfPackage());
+  console.log("SAID CALLS", calls);
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "node_modules/pkg/index.cjs": `exports.kind = "real";`,
+    "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "main": "index.cjs" }`,
+    "src/dep.cjs": `exports.kind = "real";`,
+    "src/fake.cjs": `exports.kind = "fake";`,
+    "src/user.ts": `const last = (found: string) => found.split("/").pop();
+export const where = () =>
+  [
+    last(require.resolve("./dep.cjs")),
+    last(import.meta.resolve("./dep.cjs")),
+    last(import.meta.resolveSync("./dep.cjs")),
+    last(Bun.resolveSync("./dep.cjs", import.meta.dir)),
+  ].join(" ");
+export const whereOfPackage = () =>
+  [
+    last(require.resolve("pkg")),
+    last(import.meta.resolve("pkg")),
+    last(import.meta.resolveSync("pkg")),
+    last(Bun.resolveSync("pkg", import.meta.dir)),
+  ].join(" ");`,
+  },
+  "a callback that the loader itself calls registers a plugin in the middle of a load": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("a callback that the loader itself calls registers a plugin in the middle of a load", () => {
+  const calls = new Map();
+  plugin({ name: "first", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(first|later|once)\\.js$/ }, args => {
+      const key = args.path + "<" + args.importer.split("/").pop();
+      calls.set(key, (calls.get(key) ?? 0) + 1);
+      if (args.path === "./first.js") return { path: import.meta.dir + "/src/fake-first.js" };
+      if (args.path === "./later.js") plugin({ name: "second", setup(later) { later.onResolve({ filter: /^\\.\\/nobody\\.js$/ }, () => {}); } });
+      if (args.path === "./once.js" && calls.get(key) === 1) return { path: import.meta.dir + "/src/fake-once.js" };
+    });
+  } });
+  console.log("SAID IS", require("./src/root.js").told());
+  console.log("SAID CALLS", [...calls].map(([key, count]) => key + "=" + count).sort().join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/fake-first.js": `export const one = "fake";`,
+    "src/fake-once.js": `export const kind = "fake";`,
+    "src/first.js": `export const one = "real";`,
+    "src/g.js": `export { kind } from "./once.js";`,
+    "src/later.js": `export {};`,
+    "src/once.js": `export const kind = "real";`,
+    "src/root.js": `import { one } from "./x.js";
+import { kind } from "./g.js";
+export const told = () => one + " " + kind;`,
+    "src/x.js": `export { one } from "./first.js";
+import "./later.js";`,
+  },
+  "two names stand behind an answered name and below a file that leaves, and a deeper name registers a plugin": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("a deep name registers a plugin; two shallower names stand behind an answered name and below a file that leaves", () => {
+  const asked = [];
+  const said = args => asked.push(args.path + "<" + args.importer.split("/").pop());
+  plugin({ name: "first", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(swapped|trigger)\\.js$/ }, args => {
+      said(args);
+      if (args.path === "./swapped.js") return { path: import.meta.dir + "/src/other.js" };
+      plugin({ name: "second", setup(later) {
+        later.onResolve({ filter: /^\\.\\/part\\.js$/ }, asks => (said(asks), { path: import.meta.dir + "/src/fake.js" }));
+      } });
+    });
+  } });
+  console.log("SAID IS", require("./src/root.js").told());
+  console.log("SAID ASKED", [...new Set(asked)].sort().join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/fa.js": `import "./swapped.js";
+export { kind } from "./part.js";`,
+    "src/fake.js": `export const kind = "fake";`,
+    "src/fb.js": `export { kind } from "./x.js";
+import "./swapped.js";`,
+    "src/g.js": `import "./g2.js";`,
+    "src/g2.js": `import "./g3.js";`,
+    "src/g3.js": `import "./trigger.js";`,
+    "src/other.js": `export {};`,
+    "src/part.js": `export const kind = "real";`,
+    "src/root.js": `import { kind as behind } from "./fa.js";
+import { kind as below } from "./fb.js";
+import "./g.js";
+export const told = () => [behind, below].join(" ");`,
+    "src/swapped.js": `export { kind } from "./part.js";`,
+    "src/trigger.js": `export {};`,
+    "src/x.js": `export { kind } from "./part.js";`,
+  },
+  "a file that stays compiled is fetched behind another compiled file": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("a file that stays compiled is asked about once", () => {
+  const calls = new Map();
+  plugin({ name: "counts", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(swapped|two)\\.js$/ }, args => {
+      const key = args.path + "<" + args.importer.split("/").pop();
+      calls.set(key, (calls.get(key) ?? 0) + 1);
+      if (args.path === "./swapped.js") return { path: import.meta.dir + "/src/other.js" };
+      if (calls.get(key) > 1) return { path: import.meta.dir + "/src/second.js" };
+    });
+  } });
+  console.log("SAID IS", require("./src/root.js").told());
+  console.log("SAID CALLS", [...calls].map(([key, count]) => key + "=" + count).sort().join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/h.js": `export { kind } from "./two.js";`,
+    "src/leaf.js": `export {};`,
+    "src/m.js": `export { kind } from "./m2.js";`,
+    "src/m2.js": `import "./u.js";
+export { kind } from "./h.js";`,
+    "src/other.js": `export {};`,
+    "src/root.js": `import "./u.js";
+import { kind } from "./m.js";
+export const told = () => kind;`,
+    "src/second.js": `export const kind = "second";`,
+    "src/swapped.js": `export {};`,
+    "src/two.js": `export const kind = "two";`,
+    "src/u.js": `import "./x.js";
+import "./swapped.js";`,
+    "src/x.js": `import "./leaf.js";`,
+  },
+  "one name under two types": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("one name under two types", () => {
+  let calls = 0;
+  plugin({ name: "counts", setup(build) {
+    build.onResolve({ filter: /^\\.\\/data\\.json$/ }, () => { calls++; });
+  } });
+  console.log("SAID IS", require("./src/user.js").told());
+  console.log("SAID CALLS", calls);
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/data.json": `{ "n": 1 }`,
+    "src/user.js": `import typed from "./data.json" with { type: "json" };
+import untyped from "./data.json";
+export const told = () => typed.n + untyped.n;`,
+  },
+  "a load is given up at its first name": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("a load that is given up at its first name", () => {
+  const calls = [];
+  plugin({ name: "first", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(boom|part-a)\\.js$/ }, args => {
+      calls.push(args.path + "<" + args.importer.split("/").pop());
+      if (args.path === "./boom.js") throw new RangeError("no");
+      return { path: import.meta.dir + "/src/fake.js" };
+    });
+  } });
+  try { require("./src/root.js"); console.log("SAID LOADED"); } catch (error) { console.log("SAID FAILED"); }
+  console.log("SAID CALLS", calls.join(" "));
+  plugin.clearAll();
+  plugin({ name: "second", setup(build) {
+    build.onResolve({ filter: /^\\.\\/part-b\\.js$/ }, () => ({ path: import.meta.dir + "/src/fake.js" }));
+  } });
+  console.log("SAID IS", require("./src/user-a.js").kind, require("./src/user-b.js").kind);
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/boom.js": `export {};`,
+    "src/fake.js": `export const kind = "fake";`,
+    "src/part-a.js": `export const kind = "real";`,
+    "src/part-b.js": `export const kind = "real";`,
+    "src/root.js": `import "./boom.js";
+import "./user-a.js";
+import "./user-b.js";`,
+    "src/user-a.js": `export { kind } from "./part-a.js";`,
+    "src/user-b.js": `export { kind } from "./part-b.js";`,
+  },
+  "a root above a file that left earlier": {
+    "a.test.js": `import { plugin } from "bun";
+import { test } from "bun:test";
+test("a root above a file that left earlier", () => {
+  const asked = [];
+  const said = args => asked.push(args.path + "<" + args.importer.split("/").pop());
+  plugin({ name: "first", setup(build) {
+    build.onResolve({ filter: /^\\.\\/(swapped|trigger)\\.js$/ }, args => {
+      said(args);
+      if (args.path === "./swapped.js") return { path: import.meta.dir + "/src/other.js" };
+      plugin({ name: "second", setup(later) {
+        later.onResolve({ filter: /^\\.\\/part\\.js$/ }, asks => (said(asks), { path: import.meta.dir + "/src/fake.js" }));
+      } });
+    });
+  } });
+  require("./src/u.js");
+  console.log("SAID IS", require("./src/root.js").told());
+  console.log("SAID ASKED", [...new Set(asked)].sort().join(" "));
+});`,
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "src/a.js": `import "./a2.js";`,
+    "src/a2.js": `import "./trigger.js";`,
+    "src/c.js": `export { kind } from "./part.js";`,
+    "src/fake.js": `export const kind = "fake";`,
+    "src/other.js": `export {};`,
+    "src/part.js": `export const kind = "real";`,
+    "src/root.js": `import "./a.js";
+import { kind } from "./c.js";
+import "./u.js";
+export const told = () => kind;`,
+    "src/swapped.js": `export {};`,
+    "src/trigger.js": `export {};`,
+    "src/u.js": `import "./swapped.js";`,
+  },
 };
 
 const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_crashOnDisallowedVMEntry: "1" };

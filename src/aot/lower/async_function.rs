@@ -28,6 +28,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             "only an async function or a module body with top-level await awaits"
         );
         let held = self.get_held_values();
-        self.builder.await_value(value, &held, false)
+        self.builder.await_value(value, &held)
     }
 }

@@ -166,13 +166,15 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             field.flags |= flags;
             if known.is_none() {
+                let given_above = match is_declared {
+                    true => None,
+                    false => self.queries.find_form_given_above(shape, entry.name),
+                };
+                let form = given_above.unwrap_or(entry.form);
                 let forms = [
-                    (entry.form.is_read_only, FieldForm::IS_READ_ONLY),
-                    (entry.form.is_not_enumerable, FieldForm::IS_NOT_ENUMERABLE),
-                    (
-                        entry.form.is_not_configurable,
-                        FieldForm::IS_NOT_CONFIGURABLE,
-                    ),
+                    (form.is_read_only, FieldForm::IS_READ_ONLY),
+                    (form.is_not_enumerable, FieldForm::IS_NOT_ENUMERABLE),
+                    (form.is_not_configurable, FieldForm::IS_NOT_CONFIGURABLE),
                 ];
                 for (_, form) in forms.into_iter().filter(|&(is_so, _)| is_so) {
                     field.form |= form;

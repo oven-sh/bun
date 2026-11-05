@@ -23,10 +23,75 @@ struct Label {
 struct Table {
     few: SmallVec<[(Atom, SymbolId); Table::FEW]>,
     /// Replaces `few` once there are more than `Table::FEW` names.
-    many: Option<Names>,
+    many: Option<Box<Names>>,
 }
 
-type Names = FxHashMap<Atom, SymbolId>;
+#[derive(Default)]
+struct Names {
+    entries: Vec<(Atom, SymbolId)>,
+    slots: Vec<u32>,
+}
+
+impl Names {
+    const FEWEST_SLOTS: usize = 32;
+    const NO_ENTRY: u32 = u32::MAX;
+
+    #[inline]
+    fn first_slot(&self, name: Atom) -> usize {
+        let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
+        hash as usize & self.slots.len().wrapping_sub(1)
+    }
+
+    #[inline]
+    fn get(&self, name: Atom) -> Option<&SymbolId> {
+        let mut at = self.first_slot(name);
+        loop {
+            let entry = self.entries.get(*self.slots.get(at)? as usize)?;
+            if entry.0 == name {
+                return Some(&entry.1);
+            }
+            at = (at + 1) & (self.slots.len() - 1);
+        }
+    }
+
+    fn insert(&mut self, name: Atom, symbol: SymbolId) -> Option<SymbolId> {
+        if (self.entries.len() + 1) * 2 > self.slots.len() {
+            self.grow();
+        }
+        let mut at = self.first_slot(name);
+        loop {
+            let Some(entry) = self.entries.get_mut(self.slots[at] as usize) else {
+                self.slots[at] = self.entries.len() as u32;
+                self.entries.push((name, symbol));
+                return None;
+            };
+            if entry.0 == name {
+                return Some(std::mem::replace(&mut entry.1, symbol));
+            }
+            at = (at + 1) & (self.slots.len() - 1);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self) {
+        let slot_count = (self.slots.len() * 2).max(Names::FEWEST_SLOTS);
+        self.slots.clear();
+        self.slots.resize(slot_count, Names::NO_ENTRY);
+        for index in 0..self.entries.len() {
+            let mut at = self.first_slot(self.entries[index].0);
+            while self.slots[at] != Names::NO_ENTRY {
+                at = (at + 1) & (slot_count - 1);
+            }
+            self.slots[at] = index as u32;
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.slots.clear();
+    }
+}
 
 impl Table {
     const FEW: usize = 8;
@@ -35,7 +100,7 @@ impl Table {
     fn get(&self, name: Atom) -> Option<&SymbolId> {
         match &self.many {
             None => (self.few.iter().find(|entry| entry.0 == name)).map(|entry| &entry.1),
-            Some(many) => many.get(&name),
+            Some(many) => many.get(name),
         }
     }
 
@@ -57,8 +122,10 @@ impl Table {
             self.few.push((name, symbol));
             return None;
         }
-        let mut many = spare.pop().unwrap_or_default();
-        many.extend(self.few.drain(..));
+        let mut many = Box::new(spare.pop().unwrap_or_default());
+        for entry in self.few.drain(..) {
+            many.insert(entry.0, entry.1);
+        }
         many.insert(name, symbol);
         self.many = Some(many);
         None
@@ -85,13 +152,20 @@ impl Table {
 
     #[inline]
     fn len(&self) -> usize {
-        self.many.as_ref().map_or(self.few.len(), |many| many.len())
+        self.entries().len()
+    }
+
+    #[inline]
+    fn entries(&self) -> &[(Atom, SymbolId)] {
+        match &self.many {
+            None => &self.few,
+            Some(many) => &many.entries,
+        }
     }
 
     /// In no particular order.
     fn iter(&self) -> impl Iterator<Item = (&Atom, &SymbolId)> {
-        let few = self.few.iter().map(|entry| (&entry.0, &entry.1));
-        few.chain(self.many.iter().flat_map(|many| many.iter()))
+        self.entries().iter().map(|entry| (&entry.0, &entry.1))
     }
 }
 
@@ -439,7 +513,7 @@ impl<'f, 's> Binder<'f, 's> {
         for table in &mut this.tables {
             if let Some(mut names) = table.many.take() {
                 names.clear();
-                this.spare_names.push(names);
+                this.spare_names.push(*names);
             }
         }
         this.tables.clear();
@@ -1944,15 +2018,10 @@ impl<'f, 's> Binder<'f, 's> {
         }
         let words = (count / 8 + 1).next_power_of_two();
         fill(&mut self.b.nested_names, words, 0);
-        let mut list = |name: Atom| {
-            let (word, bit) = bit_of_nested_name(words, name);
-            self.b.nested_names[word] |= bit;
-        };
         for s in self.b.scopes.iter().filter(is_nested) {
-            let table = &self.tables[s.locals.idx()];
-            match &table.many {
-                None => table.few.iter().for_each(|entry| list(entry.0)),
-                Some(many) => many.keys().for_each(|&name| list(name)),
+            for entry in self.tables[s.locals.idx()].entries() {
+                let (word, bit) = bit_of_nested_name(words, entry.0);
+                self.b.nested_names[word] |= bit;
             }
         }
     }
@@ -2246,6 +2315,7 @@ impl<'f, 's> Binder<'f, 's> {
         // Resolves names, now that everything is declared.
         let idents = std::mem::take(&mut self.idents);
         let has_jsx = !self.f.jsx.is_empty();
+        let mut recently_resolved = [(ScopeId::NONE, Atom::NONE, None); 256];
         for &(expr, scope) in &idents {
             let ExprKind::Ident(name) = self.f[expr].kind else {
                 continue;
@@ -2255,7 +2325,13 @@ impl<'f, 's> Binder<'f, 's> {
             if name == known::empty {
                 continue;
             }
-            let Some(symbol) = self.resolve(scope, name) else {
+            let key = u64::from(scope.0) << 32 | u64::from(name.0);
+            let slot = (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 56) as usize;
+            let recent = &mut recently_resolved[slot];
+            if (recent.0, recent.1) != (scope, name) {
+                *recent = (scope, name, self.resolve(scope, name));
+            }
+            let Some(symbol) = recent.2 else {
                 self.b.arguments_objects.push(expr);
                 continue;
             };
@@ -2330,20 +2406,11 @@ impl<'f, 's> Binder<'f, 's> {
         for table in &self.tables {
             let start = self.b.entries.len();
             let mut is_sorted = true;
-            match &table.many {
-                None => {
-                    let mut previous = SymbolId(0);
-                    for &entry in table.few.iter() {
-                        is_sorted &= previous <= entry.1;
-                        previous = entry.1;
-                        self.b.entries.push(entry);
-                    }
-                }
-                Some(many) => {
-                    is_sorted = false;
-                    let entries = many.iter().map(|(&name, &symbol)| (name, symbol));
-                    self.b.entries.extend(entries);
-                }
+            let mut previous = SymbolId(0);
+            for &entry in table.entries() {
+                is_sorted &= previous <= entry.1;
+                previous = entry.1;
+                self.b.entries.push(entry);
             }
             // A symbol is only ever inserted under its own name, so the keys are distinct, and the result doesn't depend
             // on the order in which a hash map yields its entries.
@@ -4472,7 +4539,30 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
-    fn ty(&mut self, mut id: TypeNodeId) {
+    #[inline(never)]
+    fn ty(&mut self, id: TypeNodeId) {
+        let has_no_parts = match self.f[id].kind {
+            TypeNodeKind::Keyword(Keyword::This) => false,
+            TypeNodeKind::Error
+            | TypeNodeKind::Keyword(_)
+            | TypeNodeKind::StringLit(_)
+            | TypeNodeKind::NumberLit(_)
+            | TypeNodeKind::BigIntLit { .. }
+            | TypeNodeKind::BoolLit(_)
+            | TypeNodeKind::UniqueSymbol => true,
+            TypeNodeKind::Ref { args, .. } => args.is_empty(),
+            _ => false,
+        };
+        if has_no_parts && !self.is_unchecked {
+            self.b.type_scope[id.idx()] = self.scope;
+            self.b.type_by_alias[id.idx()] = self.by_alias;
+            return;
+        }
+        self.ty_with_parts(id)
+    }
+
+    #[inline(never)]
+    fn ty_with_parts(&mut self, mut id: TypeNodeId) {
         if self.is_out_of_stack() {
             return;
         }
@@ -4734,8 +4824,9 @@ impl<'f, 's> Binder<'f, 's> {
     // ───────────────────────────── expressions ─────────────────────────────
 
     fn exprs(&mut self, list: IdList<ExprId>, parent: Parent) {
+        let parent = PackedParent::from(parent);
         for e in self.f.ids(list) {
-            self.expr(e, parent);
+            self.expr_under(e, parent);
         }
     }
 
@@ -4759,6 +4850,7 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `bind` for `a.b` and `a[b]`: only a narrowable reference gets a flow node. Any other has its
     /// declared type.
+    #[inline]
     fn access_flow(&mut self, id: ExprId) {
         if self.is_narrowable_reference(id) {
             self.b.expr_flow[id.idx()] = self.flow;
@@ -4806,91 +4898,90 @@ impl<'f, 's> Binder<'f, 's> {
     /// The first part of `expr`, which doesn't depend on flow or on the enclosing expression.
     #[inline(always)]
     fn enter_expr(&mut self, id: ExprId, parent: Parent) {
-        self.enter_expr_of_kind(id, parent, self.f.checked_kind(id));
+        self.enter_expr_of_kind(id, parent.into(), self.f.checked_kind(id));
     }
 
     #[inline(always)]
-    fn enter_expr_of_kind(&mut self, id: ExprId, parent: Parent, kind: ExprKind) {
-        self.b.expr_parent[id.idx()] = parent.into();
+    fn enter_expr_of_kind(&mut self, id: ExprId, parent: PackedParent, kind: ExprKind) {
+        self.b.expr_parent[id.idx()] = parent;
         if self.is_unchecked {
             cold_path();
             self.b.unchecked_exprs.push(id);
         }
-        self.note_private_reference(id);
         match kind {
-            // A declaration file's source text isn't available, so the names declared by the
-            // enclosing classes decide instead.
-            ExprKind::Dot { name, .. }
-                if self
-                    .f
-                    .text
-                    .get(self.f.name_pos(id) as usize)
-                    .is_none_or(|&c| c == b'#') =>
-            {
-                self.private_name(id, name)
+            ExprKind::Dot { name, .. } => {
+                self.note_private_reference(id);
+                // A declaration file's source text isn't available, so the names declared by the
+                // enclosing classes decide instead.
+                let first = self.f.text.get(self.f.name_pos(id) as usize);
+                if first.is_none_or(|&c| c == b'#') {
+                    self.private_name(id, name)
+                }
             }
             // `getSymbolForPrivateIdentifierExpression`
-            ExprKind::PrivateIdentifier(name) => self.private_name(id, name),
+            ExprKind::PrivateIdentifier(name) => {
+                self.note_private_reference(id);
+                self.private_name(id, name)
+            }
             _ => {}
         }
     }
 
-    #[inline(never)]
+    #[inline]
     fn expr(&mut self, id: ExprId, parent: Parent) {
+        self.expr_under(id, parent.into());
+    }
+
+    #[inline(never)]
+    fn expr_under(&mut self, id: ExprId, parent: PackedParent) {
+        let kind = self.f.checked_kind(id);
+        if self.is_unchecked {
+            return self.expr_of_kind(id, parent, kind);
+        }
+        match kind {
+            ExprKind::Missing
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex { .. }
+            | ExprKind::JsxText(_)
+            | ExprKind::NewTarget(_) => self.b.expr_parent[id.idx()] = parent,
+            ExprKind::Ident(_) => {
+                self.b.expr_parent[id.idx()] = parent;
+                self.ident(id)
+            }
+            ExprKind::This | ExprKind::Super => {
+                self.b.expr_parent[id.idx()] = parent;
+                self.this_or_super(id, kind)
+            }
+            _ => self.expr_of_kind(id, parent, kind),
+        }
+    }
+
+    #[inline(never)]
+    fn ident(&mut self, id: ExprId) {
+        self.b.expr_flow[id.idx()] = self.flow;
+        let name = self.associated_declaration;
+        if name.is_some() {
+            self.b.identifiers_in_parameters.push((id, name));
+        }
+        self.idents.push((id, self.scope));
+    }
+
+    #[inline]
+    fn this_or_super(&mut self, id: ExprId, kind: ExprKind) {
+        self.seen_this |= matches!(kind, ExprKind::This);
+        self.b.expr_flow[id.idx()] = self.flow;
+    }
+
+    #[inline(never)]
+    fn expr_of_kind(&mut self, id: ExprId, parent: PackedParent, kind: ExprKind) {
         if self.is_out_of_stack() {
             return;
         }
-        let kind = self.f.checked_kind(id);
-        let has_children = !matches!(
-            kind,
-            ExprKind::Missing
-                | ExprKind::Ident(_)
-                | ExprKind::PrivateIdentifier(_)
-                | ExprKind::This
-                | ExprKind::Super
-                | ExprKind::Null
-                | ExprKind::True
-                | ExprKind::False
-                | ExprKind::Number(_)
-                | ExprKind::String(_)
-                | ExprKind::BigInt(_)
-                | ExprKind::Regex { .. }
-                | ExprKind::JsxText(_)
-                | ExprKind::NewTarget(_)
-                | ExprKind::ImportMeta
-        );
-        if has_children {
-            return self.expr_with_children(id, parent, kind);
-        }
-        self.enter_expr_of_kind(id, parent, kind);
-        match kind {
-            ExprKind::ImportMeta => {
-                let is_root = |it: &PathInPlace<'_>| it.path.root == DefineRoot::ImportMeta;
-                if self.names_in_place.iter().any(is_root) {
-                    self.b.expr_scope.insert(id, self.scope);
-                }
-            }
-            ExprKind::Ident(_) => {
-                self.idents.push((id, self.scope));
-                let name = self.associated_declaration;
-                self.b.expr_flow[id.idx()] = self.flow;
-                if name.is_some() {
-                    self.b.identifiers_in_parameters.push((id, name));
-                }
-            }
-            ExprKind::This => {
-                self.seen_this = true;
-                self.b.expr_flow[id.idx()] = self.flow;
-            }
-            ExprKind::Super => {
-                self.b.expr_flow[id.idx()] = self.flow;
-            }
-            _ => {}
-        }
-    }
-
-    #[inline(never)]
-    fn expr_with_children(&mut self, id: ExprId, parent: Parent, kind: ExprKind) {
         self.enter_expr_of_kind(id, parent, kind);
         let outer_is_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         let me = Parent::Expr(id);
@@ -4948,10 +5039,7 @@ impl<'f, 's> Binder<'f, 's> {
         }
         match kind {
             ExprKind::Missing
-            | ExprKind::Ident(_)
             | ExprKind::PrivateIdentifier(_)
-            | ExprKind::This
-            | ExprKind::Super
             | ExprKind::Null
             | ExprKind::True
             | ExprKind::False
@@ -4960,8 +5048,15 @@ impl<'f, 's> Binder<'f, 's> {
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
             | ExprKind::JsxText(_)
-            | ExprKind::NewTarget(_)
-            | ExprKind::ImportMeta => {}
+            | ExprKind::NewTarget(_) => {}
+            ExprKind::ImportMeta => {
+                let is_root = |it: &PathInPlace<'_>| it.path.root == DefineRoot::ImportMeta;
+                if self.names_in_place.iter().any(is_root) {
+                    self.b.expr_scope.insert(id, self.scope);
+                }
+            }
+            ExprKind::Ident(_) => self.ident(id),
+            ExprKind::This | ExprKind::Super => self.this_or_super(id, kind),
             ExprKind::Template { exprs, .. } => self.exprs(exprs, me),
             ExprKind::TaggedTemplate(c) => {
                 let call = self.f[c];
@@ -4982,10 +5077,10 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::Class(class) => self.class(class, ClassOwner::Expr(id)),
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } if chain != Chain::No => {
                 self.access_flow(id);
-                self.optional_chain_flow(id, parent, targets);
+                self.optional_chain_flow(id, targets);
             }
             ExprKind::Call(c) if self.f[c].chain != Chain::No => {
-                self.optional_chain_flow(id, parent, targets);
+                self.optional_chain_flow(id, targets);
                 if let ExprKind::Dot { obj, name, .. } = self.f.checked_kind(self.f[c].callee)
                     && (name == known::push || name == known::unshift)
                     && self.is_narrowable_operand(obj)
@@ -5188,7 +5283,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
             // `bindNonNullExpressionFlow`
             ExprKind::NonNull(_) if self.chain_of(id).is_some() => {
-                self.optional_chain_flow(id, parent, targets);
+                self.optional_chain_flow(id, targets);
             }
             ExprKind::Spread(e)
             | ExprKind::Await(e)
@@ -5412,13 +5507,13 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// `bindOptionalChainFlow`
-    fn optional_chain_flow(&mut self, id: ExprId, parent: Parent, targets: (FlowId, FlowId)) {
+    fn optional_chain_flow(&mut self, id: ExprId, targets: (FlowId, FlowId)) {
         if !self.is_top_level_logical_expression(id) {
-            return self.optional_chain(id, parent, targets.0, targets.1);
+            return self.optional_chain(id, targets.0, targets.1);
         }
         let post = self.branch_label();
         let saved_flow = self.flow;
-        self.optional_chain(id, parent, post, post);
+        self.optional_chain(id, post, post);
         // Whether it short-circuited makes no difference afterwards, unless an assignment occurred
         // inside it or earlier, as far back as the start of the enclosing conditional or logical
         // expression. The flag isn't reset here.
@@ -5430,7 +5525,7 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// `bindOptionalChain`: `a?.b.c` is bound like `a && a.b.c`, `a?.b?.c` like `a && a.b && a.b.c`.
-    fn optional_chain(&mut self, id: ExprId, parent: Parent, on_true: FlowId, on_false: FlowId) {
+    fn optional_chain(&mut self, id: ExprId, on_true: FlowId, on_false: FlowId) {
         let me = Parent::Expr(id);
         let Some((inner, is_root)) = self.chain_of(id) else {
             return;
@@ -5465,7 +5560,7 @@ impl<'f, 's> Binder<'f, 's> {
         }
         (self.true_target, self.false_target) = saved;
         // `IsOutermostOptionalChain`
-        let is_outermost = match parent {
+        let is_outermost = match self.b.parent_of_expr(id) {
             Parent::Expr(p) => self
                 .chain_of(p)
                 .is_none_or(|(before, parent_is_root)| parent_is_root || before != id),

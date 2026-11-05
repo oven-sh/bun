@@ -1,0 +1,16 @@
+# -- source: records.ts
+# interface Message { text: string; id: number; isMeta?: boolean; note?: string; never?: string }
+# function make(text: string, id: number): Message { return { text, id }; }
+# function mark(message: Message) { message.isMeta = true; message.note = "noted"; (message as any).later = 1; }
+# function show(m: Message) { return Object.keys(m).join() + (m.never === undefined ? " none " : " some ") + (m.isMeta ? "meta" : "plain"); }
+# { const made = make("first", 1); console.log(show(made)); mark(made); console.log(show(made)); }
+# export {};
+# -- end of source
+# Where the fields of a record lie does not hang on how many calls of its maker the program holds: every reader and writer of the layout would be other code by one call more.
+# Only what the body of a module makes is taken to be made once. The twin, ..-is-called-twice.ir, is this program and its last block once more: the check lines are the same.
+# RUN: plan layouts mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: layout L0 CompiledObject
+# CHECK: "isMeta" JSValue OutOfLine
+# CHECK: "never" JSValue OutOfLine
+# CHECK: "note" JSValue OutOfLine

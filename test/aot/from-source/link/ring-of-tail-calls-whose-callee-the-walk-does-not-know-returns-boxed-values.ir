@@ -1,9 +1,10 @@
 # `return registry.get("next").run(n - 1)`: Link knows what the Map holds and lists the call with its one callee; the walk knows nothing of contents and calls the value. With a raw Int32 out of `run` that call came back to unbox: new Stage().run(1000000) threw a RangeError, where plain Bun answers 1.
-# `even` and `odd` have guards on `t`: entered with an object of another class the ring goes round in their slow versions, which are written straight: every call there is a call of a value: 24 in plain Bun, a RangeError compiled.
+# `even` and `odd` have guards on `t`, of which nothing is proven (what unseen code hands over arrives there; two classes in sight would be a set, and no guard would stand): entered with an object of another class the ring goes round in their slow versions, which are written straight: every call there is a call of a value: 24 in plain Bun, a RangeError compiled.
 # both rings return boxed values, in the body and in the slow version, and the call in `run` leaves by a jump.
 # f1 = even, f2 = odd, f6 = run
 # -- source: ring-of-tail-calls-whose-callee-the-walk-does-not-know-returns-boxed-values.ts
 # declare function sink(...values: unknown[]): void;
+# declare function other(): unknown;
 # class A { v = 1; w = 2; }
 # class B { z = 0; w = 5; v = 7; }
 # function even(n: number, t: A): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + t.v + t.w) | 0; if (n === 0) return work; return odd(n - 1, t); }
@@ -11,7 +12,7 @@
 # class Stage { run(n: number): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n === 0) return work; return registry.get("next")!.run(n - 1); } }
 # const registry = new Map<string, Stage>();
 # registry.set("next", new Stage());
-# sink(new Stage().run(10), even(10, new A()), even(10, new B() as unknown as A));
+# sink(new Stage().run(10), even(10, new A()), even(10, other() as A), new B());
 # -- end of source
 # RUN: link functions mechanisms=all
 # CHECK: function f1 {{*}}ring-by-value

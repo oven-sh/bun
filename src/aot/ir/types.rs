@@ -18,6 +18,84 @@ fn copy_of_list<T: Clone>(list: &[T]) -> Vec<T> {
     }
 }
 
+fn copy_of_type(ty: &Type) -> Type {
+    let Type {
+        primitives,
+        flags,
+        opaque,
+        environment,
+        minimum,
+        maximum,
+        ref strings,
+        ref layouts,
+        ref classes,
+        ref builtins,
+        ref functions,
+    } = *ty;
+    Type {
+        primitives,
+        flags,
+        opaque,
+        environment,
+        minimum,
+        maximum,
+        strings: copy_of_list(strings),
+        layouts: copy_of_list(layouts),
+        classes: copy_of_list(classes),
+        builtins: copy_of_list(builtins),
+        functions: copy_of_list(functions),
+    }
+}
+
+type PartsBesidePrimitives<'a> = (
+    TypeFlags,
+    Option<OpaqueKind>,
+    Option<LayoutId>,
+    (i64, i64),
+    &'a [StringId],
+    &'a [LayoutId],
+    &'a [ClassPart],
+    &'a [BuiltinId],
+    &'a [FunctionId],
+);
+
+#[inline]
+fn parts_beside_primitives(ty: &Type) -> PartsBesidePrimitives<'_> {
+    let Type {
+        primitives: _,
+        flags,
+        opaque,
+        environment,
+        minimum,
+        maximum,
+        strings,
+        layouts,
+        classes,
+        builtins,
+        functions,
+    } = ty;
+    (
+        *flags,
+        *opaque,
+        *environment,
+        (*minimum, *maximum),
+        strings,
+        layouts,
+        classes,
+        builtins,
+        functions,
+    )
+}
+
+#[inline]
+fn spread_primitives(primitives: Primitives) -> u64 {
+    u64::from(primitives.0).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
+pub(super) fn hash_of_type(ty: &Type) -> u64 {
+    hash_of(&parts_beside_primitives(ty)).wrapping_add(spread_primitives(ty.primitives))
+}
+
 impl Type {
     #[inline]
     pub fn never() -> Type {
@@ -270,7 +348,7 @@ impl TypeTable {
         );
         let tasks: Vec<&[Type]> = types.chunks(TYPES_IN_A_TASK).collect();
         let hashes = map_each(tasks, in_parallel, &|types: &[Type]| {
-            types.iter().map(hash_of).collect::<Vec<u64>>()
+            types.iter().map(hash_of_type).collect::<Vec<u64>>()
         });
         let hashes: Vec<u64> = hashes.into_iter().flatten().collect();
         let capacity = types.len() + types.len() / 8;
@@ -297,7 +375,7 @@ impl TypeTable {
 
     pub fn intern(&mut self, mut ty: Type) -> TypeId {
         normalize_type(self, &mut ty);
-        let hash = hash_of(&ty);
+        let hash = hash_of_type(&ty);
         if let Some(id) = self.find_hashed(hash, &ty) {
             return id;
         }
@@ -313,37 +391,34 @@ impl TypeTable {
             let union = core::mem::take(&mut self.spare_union);
             return self.intern(union);
         }
-        let hash = hash_of(&self.spare_union);
+        let hash = hash_of_type(&self.spare_union);
         if let Some(id) = self.find_hashed(hash, &self.spare_union) {
             return id;
         }
-        let Type {
-            primitives,
-            flags,
-            opaque,
-            environment,
-            minimum,
-            maximum,
-            ref strings,
-            ref layouts,
-            ref classes,
-            ref builtins,
-            ref functions,
-        } = self.spare_union;
-        let union = Type {
-            primitives,
-            flags,
-            opaque,
-            environment,
-            minimum,
-            maximum,
-            strings: copy_of_list(strings),
-            layouts: copy_of_list(layouts),
-            classes: copy_of_list(classes),
-            builtins: copy_of_list(builtins),
-            functions: copy_of_list(functions),
-        };
+        let union = copy_of_type(&self.spare_union);
         self.add_hashed(hash, union)
+    }
+
+    pub(super) fn add_primitives(&mut self, ty: TypeId, added: Primitives) -> TypeId {
+        let current = &self.types[ty.index()];
+        let primitives = Primitives(current.primitives.0 | added.0);
+        if primitives == current.primitives {
+            return ty;
+        }
+        let hash = self.hashes[ty.index()];
+        let hash = hash.wrapping_sub(spread_primitives(current.primitives));
+        let hash = hash.wrapping_add(spread_primitives(primitives));
+        let parts = parts_beside_primitives(current);
+        let is_widened = |&id: &TypeId| {
+            let other = &self.types[id.index()];
+            other.primitives == primitives && parts_beside_primitives(other) == parts
+        };
+        if let Some(&id) = self.type_ids.find(hash, is_widened) {
+            return id;
+        }
+        let mut widened = copy_of_type(current);
+        widened.primitives = primitives;
+        self.add_hashed(hash, widened)
     }
 
     pub(super) fn clear_spare_union(&mut self) {
@@ -387,9 +462,14 @@ impl TypeTable {
         if self.types.len() <= length {
             return;
         }
+        for (index, &hash) in self.hashes.iter().enumerate().skip(length) {
+            let id = TypeId::new(index);
+            if let Ok(entry) = self.type_ids.find_entry(hash, |&other| other == id) {
+                let _ = entry.remove();
+            }
+        }
         self.types.truncate(length);
         self.hashes.truncate(length);
-        self.type_ids.retain(|id| id.index() < length);
     }
 
     pub fn with_nullish(&mut self, ty: TypeId) -> TypeId {

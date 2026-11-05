@@ -159,7 +159,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         read: BindingRead,
     ) -> ValueId {
         let name = self.file.identifier_name(identifier);
-        let dynamic = self.emit_object_path_get(name, holder);
+        let dynamic = self.emit_object_path_get(name, holder, read);
         let value = self.read_binding(self.file.bound.binding(identifier), name, read);
         let value = match self.file.builtins.of_expr(identifier) {
             Some(Resolved::DynamicGlobal(path))
@@ -179,7 +179,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         name: Atom,
         holder: ValueId,
     ) -> ValueId {
-        let dynamic = self.emit_object_path_get(name, holder);
+        let dynamic = self.emit_object_path_get(name, holder, BindingRead::Value);
         let value = self.read_binding(binding, name, BindingRead::Value);
         self.finish_binding_path(dynamic, value)
     }
@@ -195,13 +195,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let key = self.scope_object_key(name);
         let still_has_name = self.builder.prop_has(object, key);
         if self.mode() == ECMAMode::Strict {
-            let kept = self.create_block();
-            let lost = self.create_block();
-            self.builder
-                .branch(still_has_name, Edge::to(kept), Edge::to(lost));
-            self.continue_in(lost);
-            self.emit_binding_error(RuntimeErrorKind::UnresolvableReference, Binding::Free, name);
-            self.continue_in(kept);
+            self.throw_where_name_is_lost(still_has_name, name);
         }
         self.emit_set(object, PropertyName::Constant(key), value);
         self.finish_object_path(dynamic, value);
@@ -243,9 +237,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (split.taken_value, dynamic)
     }
 
-    fn emit_object_path_get(&mut self, name: Atom, holder: ValueId) -> DynamicUse {
+    fn throw_where_name_is_lost(&mut self, still_has_name: ValueId, name: Atom) {
+        let kept = self.create_block();
+        let lost = self.create_block();
+        self.builder
+            .branch(still_has_name, Edge::to(kept), Edge::to(lost));
+        self.continue_in(lost);
+        self.emit_binding_error(RuntimeErrorKind::UnresolvableReference, Binding::Free, name);
+        self.continue_in(kept);
+    }
+
+    fn emit_object_path_get(
+        &mut self,
+        name: Atom,
+        holder: ValueId,
+        read: BindingRead,
+    ) -> DynamicUse {
         let (object, dynamic) = self.begin_dynamic_use(holder);
         let key = self.scope_object_key(name);
+        if self.mode() == ECMAMode::Strict && read == BindingRead::Value {
+            let still_has_name = self.builder.prop_has(object, key);
+            self.throw_where_name_is_lost(still_has_name, name);
+        }
         let found = self.emit_get(object, PropertyName::Constant(key));
         self.finish_object_path(dynamic, found);
         dynamic

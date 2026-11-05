@@ -45,25 +45,26 @@ console.log(one(1))
 // CHECK-NEXT: b3():
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v12 = PropGet v11 key="indexOf"
-// CHECK-NEXT: v13 = String string="="
-// CHECK-NEXT: v14 = Call v12, v11, v13 calleeKey="indexOf" calleeName="pair.indexOf"
-// CHECK-NEXT: v15 = Convert v14 declared={type=number} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v16 = PropGet v11 key="slice"
-// CHECK-NEXT: v17 = Integer
-// CHECK-NEXT: v18 = Call v16, v11, v17, v15 calleeKey="slice" calleeName="pair.slice"
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v20 = PropGet v11 key="slice"
-// CHECK-NEXT: v21 = Integer integer=1
-// CHECK-NEXT: v22 = Add v15, v21
-// CHECK-NEXT: v23 = Call v20, v11, v22 calleeKey="slice" calleeName="pair.slice"
-// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: ElemSet v2, v19, v24
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v13 = PropGet v12 key="indexOf"
+// CHECK-NEXT: v14 = String string="="
+// CHECK-NEXT: v15 = Call v13, v12, v14 calleeKey="indexOf" calleeName="pair.indexOf"
+// CHECK-NEXT: v16 = Convert v15 declared={type=number} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v17 = PropGet v12 key="slice"
+// CHECK-NEXT: v18 = Integer
+// CHECK-NEXT: v19 = Call v17, v12, v18, v16 calleeKey="slice" calleeName="pair.slice"
+// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v21 = PropGet v12 key="slice"
+// CHECK-NEXT: v22 = Integer integer=1
+// CHECK-NEXT: v23 = Add v16, v22
+// CHECK-NEXT: v24 = Call v21, v12, v23 calleeKey="slice" calleeName="pair.slice"
+// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: ElemSet v2, v20, v25
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b5() role=IterationCleanup subject=v7:
-// CHECK-NEXT: v26 = CatchException
+// CHECK-NEXT: v27 = CatchException
 // CHECK-NEXT: IteratorClose v7 completion=Throw
-// CHECK-NEXT: Rethrow v26
+// CHECK-NEXT: Rethrow v27
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {

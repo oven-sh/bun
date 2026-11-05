@@ -166,13 +166,18 @@ impl StringTable {
         if self.len() <= length {
             return;
         }
+        for (index, &hash) in self.hashes.iter().enumerate().skip(length) {
+            let id = StringId::new(index);
+            if let Ok(entry) = self.ids.find_entry(hash, |&other| other == id) {
+                let _ = entry.remove();
+            }
+        }
         let byte_len = length.checked_sub(1).map_or(0, |last| self.ends[last]);
         self.bytes.truncate(byte_len);
         self.ends.truncate(length);
         self.hashes.truncate(length);
         self.name_classes.truncate(length);
         self.builtin_names.truncate(length);
-        self.ids.retain(|id| id.index() < length);
     }
 
     #[cfg(test)]

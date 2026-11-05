@@ -31,12 +31,12 @@ pub use inputs::{
 };
 pub use known_sets::KnownSets;
 pub use removed_by_bun_run::is_removed_where_never_run;
-pub use string_affixes::find_export_of_path_module;
 pub(crate) use string_affixes::{
     MembersBehindNames, PathBelowFolder, find_export_of_module, find_export_of_module_with,
     find_members_below_module, trim_lead_surrogate_at_end, trim_to_last_segment,
     trim_trail_surrogate_at_start,
 };
+pub use string_affixes::{ends_in_name_with_extension, find_export_of_path_module};
 
 use crate::atom::{Atom, Interner};
 use crate::bind::Bound;
@@ -182,6 +182,7 @@ pub struct Decisions<'s> {
     specifiers: &'s [(ExprId, ImportSpecifier)],
     paths_from_own_directory: &'s [ExprId],
     paths_made_by_calls: &'s [ExprId],
+    paths_written_from_own_directory: &'s [(ExprId, Atom)],
     names_made_by_calls: &'s [(ExprId, MadeByCall)],
     data_literals: NodeBits<'s>,
     dead_exprs: NodeBits<'s>,
@@ -282,6 +283,10 @@ impl<'s> Decisions<'s> {
         self.paths_from_own_directory
             .binary_search(&argument)
             .is_ok()
+    }
+
+    pub fn paths_written_from_own_directory(&self) -> &'s [(ExprId, Atom)] {
+        self.paths_written_from_own_directory
     }
 
     pub fn is_path_made_by_call(&self, argument: ExprId) -> bool {

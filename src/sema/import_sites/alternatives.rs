@@ -1940,7 +1940,24 @@ impl Follower<'_, '_, '_> {
         form: ResolvedForm,
     ) -> Option<Values> {
         let mut values = Values::new();
+        let joins_urls = form == ResolvedForm::Url && !self.inputs.hir.runs_beside_loader;
         for name in self.values_of(name)? {
+            let joined = match &name {
+                Held::Text(name)
+                    if joins_urls
+                        && (name.start.starts_with(b"./") || name.start.starts_with(b"../")) =>
+                {
+                    name_from_url_of_folder(b"./", name)
+                }
+                _ => None,
+            };
+            if let Some(joined) = joined {
+                add(
+                    &mut values,
+                    Held::Text(href_of(&from_own_directory(joined))),
+                );
+                continue;
+            }
             match name {
                 Held::Text(name) | Held::Resolved(name, _) | Held::Url(name) => {
                     let known = self.find_where_file_lies(call, &name, form);

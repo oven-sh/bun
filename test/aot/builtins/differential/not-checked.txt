@@ -1,5 +1,8 @@
 # The declared overloads that test/aot/builtins/differential.test.ts does not call or that do not pass: `<overload>: <why>`.
 # Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts
+AsyncFromSyncIteratorPrototypeNext/0: it is not called: no program can hold it or the object that it works on: the engine alone calls it, behind `for await` and `yield*` over an iterator that is not async, and native code takes `this` on trust
+AsyncFromSyncIteratorPrototypeReturn/0: it is not called: no program can hold it or the object that it works on: the engine alone calls it, behind `for await` and `yield*` over an iterator that is not async, and native code takes `this` on trust
+AsyncFromSyncIteratorPrototypeThrow/0: it is not called: no program can hold it or the object that it works on: the engine alone calls it, behind `for await` and `yield*` over an iterator that is not async, and native code takes `this` on trust
 AtomicsWait/0: it is not called: it blocks the thread
 AtomicsWait/1: it is not called: it blocks the thread
 BunBuild/0: it is not called: it blocks, starts a process or opens a socket
@@ -101,7 +104,6 @@ CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not ha
 CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it
 CompilerHelpersImportRejectedByLoader/0: it is not called: it is written with the intrinsics that make and settle promises, and only compiled code has those
 CompilerHelpersOwnEntriesFlat/0: it is not called: it works on the instance of a compiled program, and this process has none
-CompilerHelpersPairsOfFlatEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryValues/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
@@ -156,6 +158,7 @@ NativeBindgenUdp_socketBindTsDgramListenFd/0: it is not called: it closes, cuts 
 NativeBindgenUdp_socketBindTsDgramListenFd/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeCppNodeURLCppBunCreateNodeICUBinding/0: it is not called: this realm does not have it
 NativeCppNodeURLCppBunCreateNodeURLBinding/0: it is not called: this realm does not have it
+NativeCppNodeURLCppBunCreateNodeURLBinding/1: it is not called: this realm does not have it
 NativeCppNodeV8CppBunCreateNodeV8Binding/0: it is not called: this realm does not have it
 NativeCppProcessBindingTTYWrapCppCreateBunTTYFunctions/0: it is not called: this realm does not have it
 NativeCppWorkerCppCreateNodeWorkerThreadsBinding/0: it is not called: this realm does not have it
@@ -187,6 +190,7 @@ NativeFunctionsDns_internalsBindTsSeedCacheForTesting/0: it is not called: it ch
 NativeFunctionsErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have its holder
 NativeFunctionsFfiBindTsCc/0: it is not called: it compiles or loads machine code
 NativeFunctionsFfiBindTsPrintSource/1: no set of operands selects it
+NativeFunctionsFormatStackTraceForJSCppJsFunctionDefaultErrorPrepareStackTrace/0: it is not called: this realm does not have its holder
 NativeFunctionsFrameworkRouterBindTsParseRoutePattern/0: it is not called: only the code of Bun and of the engine calls it, and it takes the kinds of its operands on trust
 NativeFunctionsIni_jscBindTsLoadNpmrc/0: it is not called: it works on files that its operands name outside the folder of the test
 NativeFunctionsIpc_hostBindTsEmitHandleIPCMessage/0: it is not called: it opens a connection or writes to the channel of a parent process
@@ -261,6 +265,8 @@ NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning/0: it is not calle
 NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning/1: it is not called: this realm does not have it
 NativeNewCppFunctionErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have it
 NativeNewCppFunctionErrorCodeCppNodeError_proto_toString/1: it is not called: this realm does not have it
+NativeNewCppFunctionFormatStackTraceForJSCppJsFunctionDefaultErrorPrepareStackTrace/0: it is not called: this realm does not have it
+NativeNewCppFunctionFormatStackTraceForJSCppJsFunctionDefaultErrorPrepareStackTrace/1: it is not called: this realm does not have it
 NativeNewCppFunctionJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/0: it is not called: this realm does not have it
 NativeNewCppFunctionJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/1: it is not called: this realm does not have it
 NativeNewCppFunctionJSEnvironmentVariableMapCppJsEditWindowsEnvVar/0: it is not called: this realm does not have it

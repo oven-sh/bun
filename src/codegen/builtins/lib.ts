@@ -175,6 +175,7 @@ export const {
   union,
   viewType,
   wellKnownSymbol,
+  whenAskedForOtherNames,
   whenBuildAdmitsRuntimeCode,
   whenCallRunsOtherCode,
   whenObjectNobodyKnowsIsWritten,

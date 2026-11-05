@@ -4,6 +4,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, ScopeId, ScopeKind, SymbolId};
 use bun_sema::hir::File;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use super::{FileLowering, LoweringOptions, SourceKind};
 use crate::ir::StringId;
@@ -12,6 +13,7 @@ use crate::ir::StringId;
 pub(super) struct ShownNames {
     shortens_bindings: bool,
     scopes_around_evals: Vec<ScopeId>,
+    short_binding_names: Vec<Option<StringId>>,
     short_function_names: Option<FxHashMap<SymbolId, StringId>>,
 }
 
@@ -39,6 +41,7 @@ impl ShownNames {
         ShownNames {
             shortens_bindings: true,
             scopes_around_evals,
+            short_binding_names: vec![None; FIRST_CHARACTERS.len()],
             short_function_names: options.minifies_identifiers.then(FxHashMap::default),
         }
     }
@@ -48,7 +51,7 @@ const FIRST_CHARACTERS: &[u8; 54] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP
 const LATER_CHARACTERS: &[u8; 64] =
     b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$0123456789";
 
-fn append_number(mut number: usize, text: &mut Vec<u8>) {
+fn append_number(mut number: usize, text: &mut SmallVec<[u8; 24]>) {
     text.push(FIRST_CHARACTERS[number % FIRST_CHARACTERS.len()]);
     number /= FIRST_CHARACTERS.len();
     while number > 0 {
@@ -81,15 +84,19 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(crate) fn short_binding_name(&mut self, binding: Binding) -> Option<StringId> {
         let symbol = self.find_shortened_symbol(binding)?;
-        let mut text = Vec::new();
-        append_number(symbol.idx() % FIRST_CHARACTERS.len(), &mut text);
-        Some(self.intern_bytes(&text))
+        let number = symbol.idx() % FIRST_CHARACTERS.len();
+        if let Some(name) = self.shown_names.short_binding_names[number] {
+            return Some(name);
+        }
+        let name = self.intern_bytes(&[FIRST_CHARACTERS[number]]);
+        self.shown_names.short_binding_names[number] = Some(name);
+        Some(name)
     }
 
     pub(crate) fn append_short_binding_name(&self, binding: Binding, text: &mut Vec<u8>) -> bool {
         let symbol = self.find_shortened_symbol(binding);
         if let Some(symbol) = symbol {
-            append_number(symbol.idx() % FIRST_CHARACTERS.len(), text);
+            text.push(FIRST_CHARACTERS[symbol.idx() % FIRST_CHARACTERS.len()]);
         }
         symbol.is_some()
     }
@@ -118,7 +125,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if let Some(&name) = names.get(&symbol) {
             return Some(name);
         }
-        let mut text = Vec::new();
+        let mut text = SmallVec::new();
         append_number(
             symbol.idx() * self.inputs.files.len() + self.file.idx(),
             &mut text,

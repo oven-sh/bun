@@ -17,6 +17,7 @@
 //! `crate::check::task` the task. Their memory is on the regular heap, and the thread that runs the task frees it when
 //! the task ends.
 
+use crate::table::Prepared;
 use crate::util::{LocalVec, Placement, free_slot, is_too_full, slot_value, slots_for};
 use std::cell::{Cell, RefCell};
 use std::hint::cold_path;
@@ -322,6 +323,16 @@ impl<K: Eq, V> Hashed<K, V> {
     }
 
     #[inline]
+    pub fn vacancy_for(&self, spread: u64, key: &K) -> Option<Vacancy> {
+        self.index_or_vacancy(spread, key).err()
+    }
+
+    #[inline]
+    pub fn insert_absent(&mut self, vacancy: Vacancy, spread: u64, key: K, value: V) {
+        self.add(vacancy, spread, key, value);
+    }
+
+    #[inline]
     fn index_or_vacancy(&self, spread: u64, key: &K) -> Result<u32, Vacancy> {
         (self.found).find_or_vacancy(spread, |entry_index| {
             self.entries[entry_index as usize].0 == *key
@@ -412,6 +423,8 @@ struct Pages {
 }
 
 impl Pages {
+    const MOST_KEPT: usize = (4 << 20) / size_of::<[u32; PAGE]>();
+
     #[inline]
     fn get(&self, directory: &[u32], at: usize) -> u32 {
         let list = directory.get(at / PAGE / PAGE).copied().unwrap_or(0);
@@ -429,6 +442,7 @@ impl Pages {
     #[inline(never)]
     fn add(&mut self) -> u32 {
         if self.pool.is_empty() {
+            self.pool.reserve_exact(Self::MOST_KEPT);
             self.pool.push([0; PAGE]);
         }
         self.pool.push([0; PAGE]);
@@ -493,7 +507,7 @@ impl Pages {
     }
 
     fn clear(&mut self) {
-        if self.pool.capacity() > (4 << 20) / size_of::<[u32; PAGE]>() {
+        if self.pool.capacity() > Self::MOST_KEPT {
             self.pool = Vec::new();
         } else {
             self.pool.clear();
@@ -818,6 +832,7 @@ pub(crate) struct Buffer<'s> {
     is_imported: bool,
     /// `Some` if the task commits while it runs.
     log: Option<Log>,
+    spare_prepared: Vec<Prepared>,
     /// Indexed by file: 1 for the first file the task visited, 2 for the second, and so on. 0 or out of range means the
     /// task hasn't visited the file.
     ordinals: Vec<u32>,
@@ -834,6 +849,7 @@ impl<'s> Buffer<'s> {
             ordinal: 0,
             is_imported: false,
             log: None,
+            spare_prepared: Vec::new(),
             ordinals: Vec::new(),
             files: 0,
             pages: Pages::default(),
@@ -884,6 +900,15 @@ impl<'s> Buffer<'s> {
         }
     }
 
+    pub(crate) fn take_spare_prepared(&mut self) -> Vec<Prepared> {
+        std::mem::take(&mut self.spare_prepared)
+    }
+
+    pub(crate) fn recycle_prepared(&mut self, mut prepared: Vec<Prepared>) {
+        clear_cells(&mut prepared);
+        self.spare_prepared = prepared;
+    }
+
     /// Logs that an entry was stored under a published id or at an index of a `Hashed`.
     #[inline]
     pub(crate) fn log_record(&mut self, slot: u32, key: u32) {
@@ -925,6 +950,7 @@ impl<'s> Buffer<'s> {
             ordinal,
             is_imported,
             log,
+            spare_prepared: _,
             ordinals,
             files,
             pages,
@@ -950,6 +976,7 @@ impl<'s> Buffer<'s> {
             ordinal,
             is_imported,
             log,
+            spare_prepared: _,
             ordinals,
             files,
             pages,

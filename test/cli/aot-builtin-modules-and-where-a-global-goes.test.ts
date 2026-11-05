@@ -18,10 +18,6 @@ console.log(root.Array && root["Object"] && "Map" in root && root.globalThis.Set
 console.log(module.exports.name === "library" ? "run" : "");`,
   "a-native-function-bound-to-the-global-object.cjs": `const later = typeof queueMicrotask === "function" ? queueMicrotask.bind(typeof window !== "undefined" ? window : global) : callback => Promise.resolve().then(callback);
 later(() => console.log("run"));`,
-  "function-return-this.cjs": `var freeGlobal = typeof global == "object" && global && global.Object === Object && global;
-var freeSelf = typeof self == "object" && self && self.Object === Object && self;
-var root = freeGlobal || freeSelf || Function("return this")();
-console.log(root.Symbol ? "run" : "");`,
   "process-through-the-global-object.mjs": `const root = globalThis;
 const variables = root.process && root.process.env;
 console.log(variables ? "run" : "");`,
@@ -80,6 +76,11 @@ console.log(Array.isArray(global[queue]) && globalThis[Symbol.for("a-small-progr
 const name = `const name = ["node:querystring"][0];\n`;
 const loaded = (how: string) => `console.log(typeof ${how}.escape === "function" ? "run" : "");`;
 const withADoor = importingByName("node:querystring", {
+  // The text is never evaluated, but the compiler doesn't know: it folds a test on `globalThis`, not on `global` or `self`, nor that a built-in is itself, nor a test on a variable that holds one.
+  "function-return-this.cjs": `var freeGlobal = typeof global == "object" && global && global.Object === Object && global;
+var freeSelf = typeof self == "object" && self && self.Object === Object && self;
+var root = freeGlobal || freeSelf || Function("return this")();
+console.log(typeof root.process.getBuiltinModule(["node:querystring"][0]).escape === "function" ? "run" : "");`,
   "the-parameter-is-returned.mjs": `const check = it => it && it.Math === Math && it;
 const root = check(typeof globalThis == "object" && globalThis);
 console.log(typeof root.process.getBuiltinModule(["node:querystring"][0]).escape === "function" ? "run" : "");`,

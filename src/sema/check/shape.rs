@@ -2010,6 +2010,19 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getPropertyNameFromType`: the property a value of type `ty` names when used as a key.
     pub fn property_name_of_type(&mut self, ty: TypeId) -> Option<Atom> {
+        fn push_decimal(text: &mut Vec<u8>, number: u32) {
+            let mut digits = [0; 10];
+            let (mut at, mut rest) = (digits.len(), number);
+            loop {
+                at -= 1;
+                digits[at] = b'0' + (rest % 10) as u8;
+                rest /= 10;
+                if rest == 0 {
+                    break;
+                }
+            }
+            text.extend_from_slice(&digits[at..]);
+        }
         match *self.data(ty) {
             TypeData::StringLit { value, .. }
             | TypeData::EnumLit {
@@ -2022,14 +2035,21 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } => Some(self.number_name(f64::from_bits(bits))),
             TypeData::UniqueSymbol { symbol, name } => {
-                let mut text = self.atoms().bytes(name).to_vec();
+                let written = self.atoms().bytes(name);
+                let mut text = Vec::with_capacity(written.len() + "@.m".len() + 2 * 10);
+                text.extend_from_slice(written);
                 match symbol {
                     UniqueSymbolDeclaration::Variable(variable) => {
-                        let id = format!("@{}.{}", variable.file.0, variable.id.0);
-                        text.extend_from_slice(id.as_bytes());
+                        text.push(b'@');
+                        push_decimal(&mut text, variable.file.0);
+                        text.push(b'.');
+                        push_decimal(&mut text, variable.id.0);
                     }
                     UniqueSymbolDeclaration::Member(file, member) => {
-                        text.extend_from_slice(format!("@{}.m{}", file.0, member.0).as_bytes());
+                        text.push(b'@');
+                        push_decimal(&mut text, file.0);
+                        text.extend_from_slice(b".m");
+                        push_decimal(&mut text, member.0);
                     }
                     UniqueSymbolDeclaration::SymbolConstructor => {}
                 }
@@ -2648,6 +2668,12 @@ impl<'p, 's> Checker<'p, 's> {
                     .for_each(|part| scan_declarations(c, &part.source, in_class, is_private)),
                 _ => {}
             }
+        }
+        if matches!(prop.source, PropSource::Symbol(_))
+            && !(prop.flags).intersects(PropFlags::METHOD | PropFlags::ACCESSOR)
+            && !matches!(self.atoms().bytes(prop.name), [b'#' | 0xFE, ..])
+        {
+            return true;
         }
         let (mut in_class, mut is_private) = (false, false);
         scan_declarations(self, &prop.source, &mut in_class, &mut is_private);
@@ -8417,8 +8443,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `reduced` for an intersection or a union with one among its members.
     fn reduced_members(&mut self, ty: TypeId) -> TypeId {
+        match self.p.never_intersections.get(&self.task, &ty) {
+            Some(true) => return TypeId::NEVER,
+            Some(false) => return ty,
+            None => {}
+        }
         match self.data(ty) {
-            TypeData::Intersection(_) if self.is_empty_intersection(ty) => TypeId::NEVER,
+            TypeData::Intersection(_) if self.examine_intersection(ty) => TypeId::NEVER,
             TypeData::Union(members) => self.reduced_union(ty, members),
             _ => ty,
         }
@@ -8607,7 +8638,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_own_apparent_type = self.is_plain_object_type(ty);
         let apparent = match is_own_apparent_type {
             true => ty,
-            false => self.reduced_apparent_type(ty),
+            false => self.reduced_apparent_type_of_other(ty),
         };
         let recent = self.recent_members_of(apparent);
         let recent = recent.or_else(|| self.stored_members(apparent));
@@ -8822,7 +8853,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_plain_object_type(ty) {
             return self.structured_members(ty);
         }
-        let ty = self.reduced_apparent_type(ty);
+        let ty = self.reduced_apparent_type_of_other(ty);
         if !matches!(self.data(ty), TypeData::Union(_)) {
             return self.structured_members(ty);
         }
@@ -9087,7 +9118,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_own_apparent_type = self.is_plain_object_type(ty);
         let ty = match is_own_apparent_type {
             true => ty,
-            false => self.reduced_apparent_type(ty),
+            false => self.reduced_apparent_type_of_other(ty),
         };
         // `resolveUnionTypeMembers`: cached per union. Combining the signatures of many members is
         // quadratic in them.

@@ -262,7 +262,10 @@ impl<'s> Commits<'s> {
             let table = tables.get(slot as usize)?;
             table.prepare_logged(task, slot, key)
         };
-        let mut entries = Vec::with_capacity(log.len());
+        let mut entries = task.buffer().take_spare_prepared();
+        if entries.capacity() < log.len() {
+            entries = Vec::with_capacity(log.len());
+        }
         for &[slot, key] in &log.record_keys {
             if let Some(entry) = prepare(slot, u64::from(key)) {
                 entries.push(entry);
@@ -373,6 +376,7 @@ impl View<'_> {
         }
     }
 
+    #[cold]
     #[inline(never)]
     fn touch(&self, file: FileId) -> u32 {
         let stored = self.numbers.stored.load(Ordering::Acquire);
@@ -390,6 +394,9 @@ impl View<'_> {
             .set(self.numbers.stored.load(Ordering::Acquire));
         let pinned = self.pinned.get();
         let mut touched = self.touched.borrow_mut();
+        if touched[..] == [pinned] {
+            return;
+        }
         let mut is_pinned_touched = false;
         for &file in touched.iter() {
             if file == pinned {
@@ -1092,6 +1099,7 @@ impl<'s> Checker<'_, 's> {
         }
         task.resume_writing_immediately();
         task.buffer().recycle_log(log);
+        task.buffer().recycle_prepared(prepared.entries);
         true
     }
 

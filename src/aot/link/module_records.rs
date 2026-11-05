@@ -936,12 +936,15 @@ impl RecordBuilder<'_, '_, '_> {
                     | ImportSiteKind::ExportFrom(_)
                     | ImportSiteKind::ExportStar(_),
                     ImportSpecifier::Constant(name),
-                ) => Some(name),
+                ) => Some((name, graph.find_site_answer(file, site.kind))),
                 _ => None,
             });
             let mut names = FxHashSet::default();
-            let written = written.filter(|&name| names.insert(name));
-            record.names_of_statements = written.map(|name| self.intern_atom(name)).collect();
+            let written = written.filter(|&(name, linked)| match linked {
+                Some(modules::SiteAnswer::Module(module)) => names.insert((name, Some(module))),
+                _ => names.insert((name, None)),
+            });
+            record.names_of_statements = written.map(|(name, _)| self.intern_atom(name)).collect();
         }
         let is_settled = |export: &&modules::ModuleExport| {
             let mut path = Vec::new();

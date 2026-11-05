@@ -2,6 +2,7 @@ import * as b from "bun-builtins-table";
 import {
   argumentsCell,
   environmentCell,
+  formatsStackCell,
   framesOfModuleGraphsCell,
   functionOfTimersPromisesCell,
   moduleGraphsCell,
@@ -287,7 +288,7 @@ const heapsWrittenByClone = ["TypedArrayStorage", "ExternalState"];
 const membersReadByClone = ["name", "message", "stack", "cause"];
 const cloned = [
   b.readsContents(),
-  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", b.named(...membersReadByClone)),
+  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named(...membersReadByClone)),
 ];
 const transferList = [b.runsTransitively(b.named("transfer"), "Iterate"), b.writesContents()];
 const optionsWithClonedDetail = (...names: readonly string[]) => [
@@ -467,7 +468,11 @@ const concatArrayBuffers = [
     ...joinedBytes,
     ...operandCodeOnly,
     args: { buffers: b.instance("Array").nullable, maxLength: b.any.optional, asUint8Array: b.any.optional },
-    uses: { buffers: [b.readsContents(), b.runs("OwnValues")], maxLength: b.inspected, asUint8Array: b.inspected },
+    uses: {
+      buffers: [b.readsContents(), b.runs("OwnValues", "PrototypeChain")],
+      maxLength: b.inspected,
+      asUint8Array: b.inspected,
+    },
   },
 ] satisfies b.FunctionField[];
 
@@ -1037,7 +1042,8 @@ const subprocessOptionsKept: readonly b.MemberPath[] = [
   ["cgroup"],
 ];
 
-const subprocessOptionsAt = (operand: b.OperandName) => [
+const runningSubprocess = b.instance("Subprocess");
+const subprocessOptionsAt = (operand: b.OperandName, callsHandlers: boolean) => [
   b.runsTransitively(b.named(...subprocessOptionNames, ...subprocessHandlerNames)),
   // What it keeps of them, and what it calls, is listed below.
   b.membersOnlyInspected,
@@ -1046,15 +1052,28 @@ const subprocessOptionsAt = (operand: b.OperandName) => [
   ...convertedToString(operand, "env", b.everyOwnValue),
   ...convertedToString(operand, "cmd", b.everyOwnValue),
   ...subprocessOptionsKept.map(path => b.memberStoredIn(path, b.nativeMemory)),
-  // subprocess.rs: (the Subprocess or undefined, the exit code or null, the signal or null, an error of the system or undefined), (the message, the Subprocess, a handle), (true).
+  ...(callsHandlers ? subprocessHandlersCalled : []),
+];
+// subprocess.rs: (the Subprocess or undefined, the exit code or null, the signal or null, an error of the system or undefined), (the message, the Subprocess, a handle), (true). Each is called on the Subprocess.
+const subprocessHandlersCalled = [
   b.memberCalled(["onExit"], {
     times: "PerEvent",
-    this: b.any,
-    args: [b.any, b.f64.nullable, b.union(b.string, b.f64, b.strictNull), b.any],
+    this: b.union(runningSubprocess, b.undefined),
+    args: [
+      b.union(runningSubprocess, b.undefined),
+      b.union(b.f64, b.strictNull),
+      b.union(b.string, b.f64, b.strictNull),
+      b.union(b.instance("Error"), b.undefined),
+    ],
     result: "Ignored",
   }),
-  b.memberCalled(["ipc"], { times: "PerEvent", this: b.any, args: [b.any, b.any, b.any], result: "Ignored" }),
-  b.memberCalled(["onDisconnect"], { times: "PerEvent", this: b.any, args: [b.bool], result: "Ignored" }),
+  b.memberCalled(["ipc"], {
+    times: "PerEvent",
+    this: runningSubprocess,
+    args: [b.any, runningSubprocess, b.any],
+    result: "Ignored",
+  }),
+  b.memberCalled(["onDisconnect"], { times: "PerEvent", this: runningSubprocess, args: [b.bool], result: "Ignored" }),
   ...["data", "exit", "drain"].map(handler =>
     b.memberCalled(["terminal", handler], {
       times: "PerEvent",
@@ -1065,21 +1084,22 @@ const subprocessOptionsAt = (operand: b.OperandName) => [
   ),
 ];
 // The options are the first operand where that is no list, and the second where it is.
-const startsSubprocess = (returns: b.TableType): b.FunctionField[] => [
+// js_bun_spawn_bindings.rs: spawnSync makes no Subprocess for a script: it asks that onExit and onDisconnect are functions, keeps neither and calls neither, does not read `ipc` and refuses `terminal`.
+const startsSubprocess = (returns: b.TableType, callsHandlers: boolean): b.FunctionField[] => [
   {
     ...startedByOptions,
     args: { commandOrOptions: b.instance("Array"), options: b.any.optional },
     returns,
     uses: {
       commandOrOptions: [b.readsContents(), b.runsTransitively("OwnValues", "ToPrimitive")],
-      options: subprocessOptionsAt("options"),
+      options: subprocessOptionsAt("options", callsHandlers),
     },
   },
   {
     ...startedByOptions,
     args: { commandOrOptions: b.object },
     returns,
-    uses: { commandOrOptions: subprocessOptionsAt("commandOrOptions") },
+    uses: { commandOrOptions: subprocessOptionsAt("commandOrOptions", callsHandlers) },
   },
 ];
 
@@ -1395,8 +1415,8 @@ export default b.declarations(
         returns: servers.fresh,
         uses: { options: serverOptions(b.result) },
       },
-      spawn: startsSubprocess(b.instance("Subprocess")),
-      spawnSync: startsSubprocess(b.ordinaryObjectOf("SpawnSyncResult").fresh),
+      spawn: startsSubprocess(b.instance("Subprocess"), true),
+      spawnSync: startsSubprocess(b.ordinaryObjectOf("SpawnSyncResult").fresh, false),
       sleep: {
         args: { duration: b.union(b.f64, b.instance("Date")) },
         // Nothing rejects it: a duration of another kind is refused at the call.
@@ -1701,9 +1721,19 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // FormatStackTraceForJS.cpp: it answers the text of the stack, or throws where its first operand is no error.
+  b.hostFunction(
+    formatsStackCell,
+    "FormatStackTraceForJS.cpp",
+    "jsFunctionDefaultErrorPrepareStackTrace",
+    answering(b.string, b.hostCall),
+  ),
+  // ZigGlobalObject.cpp errorConstructorPrepareStackTraceGetter: what the program has stored, and until then that function.
+  // FormatStackTraceForJS.cpp: the function is handed the object whose stack is asked for and a new list of call sites, objects of a class that the table does not have.
   b.static(
     "Error.prepareStackTrace",
-    b.property(b.any, {
+    b.property(b.builtin("%NativeFunctions%.FormatStackTraceForJSCppJsFunctionDefaultErrorPrepareStackTrace"), {
+      resultIsDeclaredOnly: true,
       setter: {
         value: b.any,
         capability: "js",
@@ -1715,7 +1745,7 @@ export default b.declarations(
               afterwards: "TouchesOnlyWhatRowNames",
               times: "Later",
               this: b.builtin("Error"),
-              args: [b.any, b.any],
+              args: [b.nativeMemory, b.instance("Array").holding({ element: b.instance("Object").unaliased }).fresh],
               result: "Escapes",
             }),
           ],

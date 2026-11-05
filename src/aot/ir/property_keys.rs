@@ -155,8 +155,13 @@ impl PropertyKeyTable {
         if self.list.len() <= length {
             return;
         }
+        for (index, key) in self.list.iter().enumerate().skip(length) {
+            let id = PropertyKeyId::new(index);
+            if let Ok(entry) = self.ids.find_entry(hash_of(key), |&other| other == id) {
+                let _ = entry.remove();
+            }
+        }
         self.list.truncate(length);
-        self.ids.retain(|id| id.index() < length);
     }
 
     #[cfg(test)]

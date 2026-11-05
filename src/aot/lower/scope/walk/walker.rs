@@ -19,7 +19,7 @@ use crate::ir::FunctionKey;
 use crate::lower::commonjs;
 use crate::lower::scope::analysis::{find_by_key, shared_sort_unique, sort_unique};
 use crate::lower::scope::lexical_owners::{ScopeObjectSearch, for_each_scope_object};
-use crate::lower::scope::{BindingRef, ScopeInput, ScopeSlot, order_by_number};
+use crate::lower::scope::{BindingRef, ScopeInput, ScopeSlot};
 use crate::modules::ModuleKind;
 
 pub(in crate::lower::scope) fn walk_file(
@@ -30,7 +30,6 @@ pub(in crate::lower::scope) fn walk_file(
     walker.walk_module();
     let mut walk = walker.walk;
     sort_unique_uses(&mut walk.uses, walk.use_counts.len(), walk.functions.len());
-    sort_unique(&mut walk.function_references);
     sort_unique(&mut walk.calls_by_name);
     sort_unique(&mut walk.declarations_read_by_every_run);
     let always_read = std::mem::take(&mut walk.declarations_read_by_every_run);
@@ -94,13 +93,18 @@ pub(in crate::lower::scope) fn walk_file(
     sort_unique(&mut walk.made_at_first_read);
     sort_unique(&mut walk.created_at_each_read);
     let without_place = std::mem::take(&mut walk.created_at_each_read);
-    walk.uses.retain(|&(_, binding)| match binding {
-        BindingRef::Symbol(symbol) => without_place.binary_search(&symbol).is_err(),
-        BindingRef::Slot(..) => true,
-    });
+    if !without_place.is_empty() {
+        walk.uses.retain(|&(_, binding)| match binding {
+            BindingRef::Symbol(symbol) => without_place.binary_search(&symbol).is_err(),
+            BindingRef::Slot(..) => true,
+        });
+    }
     walk.created_at_each_read = without_place;
     sort_unique(&mut walk.functions_created_before_loops);
-    sort_unique(&mut walk.function_references);
+    let references = &walk.function_references;
+    let by_callee = order_by(references, walk.function_of_fn.len(), |it| it.1.idx());
+    walk.function_references = order_by(&by_callee, walk.functions.len(), |it| it.0.0 as usize);
+    walk.function_references.dedup();
     sort_unique(&mut walk.names_called);
     shared_sort_unique(&mut walk.eval_uses);
     shared_sort_unique(&mut walk.stored_slots);
@@ -127,16 +131,37 @@ fn sort_unique_uses(
     symbol_count: usize,
     function_count: usize,
 ) {
-    let listed = uses.iter().copied();
-    let mut by_binding = order_by_number(listed, symbol_count + 1, |(_, binding)| match binding {
+    let mut by_binding = order_by(uses, symbol_count + 1, |entry| match entry.1 {
         BindingRef::Symbol(symbol) => symbol.idx(),
         BindingRef::Slot(..) => symbol_count,
     });
     let first_slot = by_binding.partition_point(|entry| matches!(entry.1, BindingRef::Symbol(_)));
     by_binding[first_slot..].sort_unstable();
-    let by_binding = by_binding.iter().copied();
-    *uses = order_by_number(by_binding, function_count, |(function, _)| function.index());
+    *uses = order_by(&by_binding, function_count, |entry| entry.0.0 as usize);
     uses.dedup();
+}
+
+fn order_by<T: Copy>(list: &[T], number_count: usize, number_of: impl Fn(&T) -> usize) -> Vec<T> {
+    let Some(&first) = list.first() else {
+        return Vec::new();
+    };
+    let mut places = vec![0u32; number_count];
+    for entry in list {
+        places[number_of(entry)] += 1;
+    }
+    let mut total = 0;
+    for place in &mut places {
+        let count = *place;
+        *place = total;
+        total += count;
+    }
+    let mut ordered = vec![first; list.len()];
+    for entry in list {
+        let place = &mut places[number_of(entry)];
+        ordered[*place as usize] = *entry;
+        *place += 1;
+    }
+    ordered
 }
 
 fn spread_looks_to_what_is_handed_on(input: &ScopeInput<'_, '_>, walk: &mut ScopeWalk) {
@@ -172,7 +197,7 @@ fn spread_looks_to_what_is_handed_on(input: &ScopeInput<'_, '_>, walk: &mut Scop
             None => is_looked_at[name.idx()] = true,
         }
     }
-    sort_unique(&mut taken_by);
+    let taken_by = order_by(&taken_by, is_looked_at.len(), |entry| entry.0.idx());
     let mut looked_at: Vec<SymbolId> = taken_by.iter().map(|entry| entry.0).collect();
     looked_at.dedup();
     looked_at.retain(|parameter| is_looked_at[parameter.idx()]);
@@ -238,14 +263,14 @@ fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut Sco
             let Some(function) = function_of_fn[function.idx()] else {
                 continue;
             };
-            let started = functions[function.index()];
+            let started = functions[function.0 as usize];
             if !started.is_made_late {
                 continue;
             }
             let mut start = time;
             let mut below_owner = user;
             while Some(below_owner) != started.creator {
-                let around = functions[below_owner.index()];
+                let around = functions[below_owner.0 as usize];
                 let is_made_with_hoisted_functions =
                     around.hoisted_to.is_some() && !around.is_made_late;
                 start = if is_made_with_hoisted_functions {
@@ -300,6 +325,8 @@ impl<'x, 's> Walker<'x, 's> {
         let (hir, bound) = (input.hir, input.bound);
         let decisions = &input.compiled.analysis.decisions;
         let is_commonjs = input.modules.kind(input.file) == ModuleKind::CommonJs;
+        let keeps_wrapper =
+            is_commonjs && commonjs::keeps_wrapper(bound, decisions, input.builtins);
         let (jsx_uses, metadata_uses) = collect_implicit_uses(bound);
         let (eval_variable_scopes, parameter_eval_variable_scopes) =
             collect_eval_variable_scopes(hir, bound, decisions);
@@ -336,8 +363,10 @@ impl<'x, 's> Walker<'x, 's> {
                 is_repeated_scope: vec![false; bound.scopes.len()],
                 eval_variable_scopes,
                 parameter_eval_variable_scopes,
-                has_wrapper_parameters: is_commonjs
-                    && commonjs::keeps_wrapper(bound, decisions, input.builtins),
+                has_wrapper_parameters: keeps_wrapper,
+                has_values_of_each_run: is_commonjs
+                    && !keeps_wrapper
+                    && input.modules.runs_again(input.file),
                 ..ScopeWalk::default()
             },
             stack: Vec::new(),
@@ -386,7 +415,9 @@ impl<'x, 's> Walker<'x, 's> {
             let mut high = self.stack.len();
             while low + 1 < high {
                 high -= 1;
-                self.stack.swap(low, high);
+                let (first, last) = (self.stack[low], self.stack[high]);
+                self.stack[low] = last;
+                self.stack[high] = first;
                 low += 1;
             }
         }

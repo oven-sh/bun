@@ -38,7 +38,7 @@ pub(in crate::lower) struct PositionState {
     constant_zeros: FxHashSet<Sym>,
     functions: FxHashMap<FnId, Rc<FunctionPositions>>,
     listed_nullish: FxHashMap<CheckerTypeId, Primitives>,
-    built: FxHashMap<(Option<CheckerTypeId>, Option<CheckerTypeId>), DeclaredType>,
+    built: FxHashMap<(u64, u8), DeclaredType>,
     shapes_being_mapped: u32,
     has_int32_promise: bool,
 }
@@ -209,7 +209,18 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.types.positions.shapes_being_mapped != 0 {
             return self.build_position_anew(types);
         }
-        let key = (types.written.written(), types.checked.ok());
+        let (written, is_written) = match types.written {
+            WrittenType::Written(ty) => (ty.0, 1),
+            WrittenType::Unwritten | WrittenType::GaveUp(_) => (0, 0),
+        };
+        let (checked, is_checked) = match types.checked {
+            Ok(ty) => (ty.0, 2),
+            Err(_) => (0, 0),
+        };
+        let key = (
+            u64::from(written) << 32 | u64::from(checked),
+            is_written | is_checked,
+        );
         if let Some(&position) = self.types.positions.built.get(&key) {
             return position;
         }
@@ -264,7 +275,15 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn add_undefined(&mut self, position: DeclaredType) -> DeclaredType {
-        let ty = self.fragment.types.union(position.ty, TypeTable::UNDEFINED);
+        let types = &mut self.fragment.types;
+        let ty = match types
+            .get(position.ty)
+            .primitives
+            .contains(Primitives::UNDEFINED)
+        {
+            true => position.ty,
+            false => types.union(position.ty, TypeTable::UNDEFINED),
+        };
         let flags = position.flags.without(PositionFlags::OMITS_UNDEFINED);
         DeclaredType {
             ty,

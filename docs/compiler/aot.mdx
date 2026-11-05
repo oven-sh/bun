@@ -103,18 +103,18 @@ During development, [`bun run --aot`](/compiler/debugging#run-under-the-compiler
 
 ### Harden the compiled code
 
-The compiler leaves out every test that it can prove is not needed. If such a proof were wrong, which would be a bug in Bun, the program could read or write memory that it shouldn't. `--aot-harden` puts tests back, for programs that handle input from people you don't trust and can spare some speed.
+The compiler leaves out every test that it can prove is not needed. If such a proof were wrong, which would be a bug in Bun, the program could read or write memory that it shouldn't. Every build keeps one guard against that. Where a value enters a place whose type the compiler has proven, it tests the type, unless the code there has already seen it: at a parameter, the result of a call, a store to a field, a variable or a captured variable, and a read of an element. `--aot-harden` puts more tests back, for programs that handle input from people you don't trust and can spare some speed.
 
 ```bash terminal icon="terminal"
 bun compile ./server.ts --outfile server --aot-harden=proof-checks,ignore-told-ranges
 ```
 
-| Name                 | What it does                                                                                                                                                                                                                                                                    |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `proof-checks`       | Tests what the compiler has proven about the type of a value where the value arrives: at parameters, results of calls, fields, variables, captured variables and elements. Objects and closures that would have lived on the stack, or been reused once dead, stay on the heap. |
-| `ignore-told-ranges` | Tests every index where it is used, against the length that the array, typed array or string has at that moment, whatever an earlier test or the head of a loop has shown.                                                                                                      |
+| Name                 | What it does                                                                                                                                                                                                                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `proof-checks`       | Tests those types again where the value is read. Also tests what a branch has narrowed, what the compiler remembers of a field or an element across other code, and that nothing is used after the compiler has ended its life. Objects and closures that would have lived on the stack, or been reused once dead, stay on the heap. |
+| `ignore-told-ranges` | Tests every index where it is used, against the length that the array, typed array or string has at that moment, whatever an earlier test or the head of a loop has shown.                                                                                                                                                           |
 
-A test that fails prints a line that starts with `AOT:` and stops the process. Neither name is on by default, and neither changes what a correct program does. In `Bun.build`, pass `compile: { aot: true, aotHarden: ["proof-checks", "ignore-told-ranges"] }`. A name that Bun doesn't know is an error.
+A test that fails, in any build, prints a line that starts with `AOT:` and ends with `This is a bug in Bun.`, and aborts the process. The program can't catch it. Neither name is on by default, and neither changes what a correct program does. In `Bun.build`, pass `compile: { aot: true, aotHarden: ["proof-checks", "ignore-told-ranges"] }`. A name that Bun doesn't know is an error.
 
 ## Read next
 

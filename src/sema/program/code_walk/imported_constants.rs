@@ -99,6 +99,19 @@ impl Stars {
     }
 }
 
+#[derive(Default)]
+struct FirstTargets {
+    start_of_file: FxHashMap<u32, u32>,
+    of_sites: Vec<u32>,
+}
+
+#[derive(Default)]
+struct SpareTables {
+    resolved: FxHashMap<(u32, Atom), Option<Export>>,
+    first_targets_of_sites: FirstTargets,
+    files_read: Vec<u32>,
+}
+
 struct Exports<'w, 's, 'r> {
     files: &'w [WalkedFile<'s, 'r>],
     replacements: &'w FxHashMap<u32, u32>,
@@ -109,7 +122,7 @@ struct Exports<'w, 's, 'r> {
     resolved: FxHashMap<(u32, Atom), Option<Export>>,
     stars: &'w [OnceLock<Arc<Stars>>],
     files_with_stars_in_progress: Vec<u32>,
-    first_targets_of_sites: RefCell<FxHashMap<u32, Vec<u32>>>,
+    first_targets_of_sites: RefCell<FirstTargets>,
     files_read: Vec<u32>,
 }
 
@@ -133,6 +146,26 @@ impl<'w, 's, 'r> Exports<'w, 's, 'r> {
             files_read: Vec::new(),
         }
     }
+
+    fn reusing(mut self, spare: SpareTables) -> Self {
+        self.resolved = spare.resolved;
+        self.first_targets_of_sites = RefCell::new(spare.first_targets_of_sites);
+        self.files_read = spare.files_read;
+        self
+    }
+
+    fn into_spare_tables(self) -> SpareTables {
+        let mut spare = SpareTables {
+            resolved: self.resolved,
+            first_targets_of_sites: self.first_targets_of_sites.into_inner(),
+            files_read: self.files_read,
+        };
+        spare.resolved.clear();
+        spare.first_targets_of_sites.start_of_file.clear();
+        spare.first_targets_of_sites.of_sites.clear();
+        spare.files_read.clear();
+        spare
+    }
 }
 
 impl<'s> Exports<'_, 's, '_> {
@@ -150,15 +183,21 @@ impl<'s> Exports<'_, 's, '_> {
             return Err(Export::Unknown);
         };
         let mut first_targets = self.first_targets_of_sites.borrow_mut();
-        let first_targets = first_targets.entry(file).or_insert_with(|| {
+        let FirstTargets {
+            start_of_file,
+            of_sites,
+        } = &mut *first_targets;
+        let start = *start_of_file.entry(file).or_insert_with(|| {
+            let start = of_sites.len() as u32;
             let counts = code
                 .resolutions
                 .iter()
                 .map(|&it| files_of(it).count() as u32);
             let sum = |next: &mut u32, count: u32| Some(std::mem::replace(next, *next + count));
-            counts.scan(0, sum).collect()
+            of_sites.extend(counts.scan(0, sum));
+            start
         });
-        let target = walked.targets[first_targets[site] as usize];
+        let target = walked.targets[of_sites[start as usize + site] as usize];
         self.loaded_target(target).ok_or(Export::NotLoaded)
     }
 
@@ -200,10 +239,8 @@ impl<'s> Exports<'_, 's, '_> {
         }
         let is_constant =
             bound.binding_kind(symbol) == BindingKind::Const && bound.is_stable_binding(symbol);
-        let value = match bound.binding_initializer(hir, symbol) {
-            BindingInitializer::Expression(initializer) if is_constant => {
-                value_of(parsed, initializer)
-            }
+        let value = match is_constant.then(|| bound.binding_initializer(hir, symbol)) {
+            Some(BindingInitializer::Expression(initializer)) => value_of(parsed, initializer),
             _ => None,
         };
         Export::Variable {
@@ -690,8 +727,10 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
     };
     asked.sort_by_u32(|&file| file);
     asked.dedup();
+    let spare_tables: Guarded<Vec<SpareTables>> = Guarded::new(Vec::new());
     let look_up = |share: &[u32]| {
-        let mut exports = Exports::new(&state.files, &looked_up, &stars);
+        let spare = spare_tables.lock().pop().unwrap_or_default();
+        let mut exports = Exports::new(&state.files, &looked_up, &stars).reusing(spare);
         let mut importers: Vec<(u32, Vec<ImportedConstant>)> = Vec::new();
         let mut reads: Vec<(u32, u32)> = Vec::new();
         for &index in share {
@@ -708,6 +747,7 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
                 importers.push((index, found));
             }
         }
+        spare_tables.lock().push(exports.into_spare_tables());
         (importers, reads)
     };
     let shares: Vec<&[u32]> = asked.chunks(FILES_OF_ONE_SHARE).collect();
@@ -715,6 +755,7 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
     context.host.parallel(shares.len(), &|share| {
         *answers[share].lock() = Some(look_up(shares[share]));
     });
+    drop(spare_tables);
     let mut importers: Vec<(u32, Vec<ImportedConstant>)> = Vec::new();
     for mut answer in answers {
         let answer = answer.get_mut().take();

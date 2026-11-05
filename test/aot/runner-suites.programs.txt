@@ -397,6 +397,9 @@ test/bundler/compile-argv.test.ts: bundler > compile/EvalFlagsInUserArgsDoNotMea
 test/bundler/compile-argv.test.ts: bundler > compile/EvalFlagsInUserArgsDoNotMeanOneShotStartupWithExecArgv
 test/bundler/compile-asset-bunfs.test.ts: compile --asset and /$bunfs/ directory semantics > --asset errors on colliding embedded paths
 test/bundler/compile-asset-bunfs.test.ts: compile --asset and /$bunfs/ directory semantics > Bun.build({compile: {assets}}) rejects colliding paths
+# A trimmed executable whose program cannot be read has no command line to go on with, and says that it is damaged: a-truncated-executable-says-so.test.ts holds that.
+trims test/bundler/compile-corrupted-embed.test.ts: a truncated standalone executable says so unless part of the payload's last page is left
+trims test/bundler/compile-corrupted-embed.test.ts: doesn't crash at startup when the graph length or address points outside mapped memory
 ~ test/bundler/compile-asset-streams.test.ts: files embedded with --asset --aot > are served in ranges
 test/bundler/compile-node-compile-cache.test.ts: NODE_COMPILE_CACHE is ignored by compiled executables and honored by bun
 test/bundler/compile-sourcemap-internal.test.ts: compile --sourcemap remaps stack frames to original line:col

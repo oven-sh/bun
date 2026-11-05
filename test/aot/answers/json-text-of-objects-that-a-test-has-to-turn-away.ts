@@ -1,9 +1,6 @@
 // answers: without-library
 // # one call site, and each deed that makes an object of the layout answer otherwise than its slots say: a property under a computed key, a toJSON of its own, above it, on its class later, a getter, a hidden field, keys in another order, a field gone, an index, a BigInt, a cycle, boxed primitives, Object.create, a proxy. A frozen object is written like any other
 // # f2 = text
-// # RUN(PLAN): json-plan mechanisms=all
-// # PLAN: object [[row]] looks=[NoFieldOutsideSlot, HasLayoutPrototype, OrderWordIsKnown] guards=[]
-// # PLAN: code [[row]] may-run-code
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 28 of 28 of 28

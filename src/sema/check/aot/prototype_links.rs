@@ -270,6 +270,11 @@ impl EndFinder<'_, '_, '_> {
         matches!(self.hir[argument].kind, ExprKind::Spread(_))
     }
 
+    fn has_argument_in_front_of_spread(&self, call: ExprId) -> bool {
+        let first = self.arguments(call).next();
+        first.is_some_and(|first| !self.is_spread(first))
+    }
+
     fn find_argument(&self, call: ExprId, index: u32) -> Option<ExprId> {
         let mut arguments = self.arguments(call).take(index as usize + 1);
         if arguments.clone().any(|argument| self.is_spread(argument)) {
@@ -494,9 +499,6 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
 
     fn visit_function_call(&mut self, call: FunctionCall) {
         let ends = self.ends;
-        if ends.find_argument(call.call, 0).is_none() {
-            return;
-        }
         self.calls.push(call);
         let first_of_call = self.calls_passing_parameters.len();
         let arguments = ends.arguments(call.call);
@@ -537,6 +539,9 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
     }
 
     fn visit_call(&mut self, call: ExprId) {
+        if !self.ends.has_argument_in_front_of_spread(call) {
+            return;
+        }
         match self.ends.find_callee(call) {
             Some(NamedValue::PrototypeOperation(operation)) => {
                 self.visit_operation(call, operation);

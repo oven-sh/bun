@@ -1,3 +1,4 @@
+use bun_sema::bind::SymbolId;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, File};
 use bun_sema::hir_from_data::DataValue;
@@ -24,6 +25,7 @@ pub(super) struct ContentsScan<'a, 's> {
     pub(super) builtins: &'a ResolvedBuiltins,
     pub(super) input: &'a ScanInput<'a>,
     pub(super) found: FileContents,
+    pub(super) holders_of_own_file: Vec<SymbolId>,
 }
 
 #[derive(Copy, Clone)]
@@ -177,9 +179,11 @@ pub(crate) fn scan_file(
         builtins,
         input,
         found: FileContents::default(),
+        holders_of_own_file: Vec::new(),
     };
     for index in 0..analysis.import_sites.len() {
         scan.look_at_site(index);
+        scan.look_at_name_asked_of_resolver(index);
     }
     let constructors = WorkerConstructors::find();
     for (expression, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
@@ -187,10 +191,13 @@ pub(crate) fn scan_file(
             scan.look_at_expression(expression, node.kind, constructors);
         }
     }
+    scan.look_at_names_of_own_file();
+    scan.look_at_paths_written_from_own_folder();
     scan.look_at_loads_of_worker_threads();
     scan.look_at_constructions_behind_module_handed_on();
     scan.finish_names();
     let starts = &mut scan.found.worker_starts;
     starts.shared_sort_unstable_by_key(|start| (hir[start.at].pos, start.at, start.name_node));
+    starts.dedup();
     scan.found
 }

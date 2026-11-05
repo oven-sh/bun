@@ -6,6 +6,7 @@ use super::declaration_kinds::{
 use super::declarations::{Declarations, append_symbol, is_var_scope};
 use super::lookup::COMMONJS_VARIABLES;
 use super::{AnnexBFunction, BindingKind};
+use crate::atom::known;
 use crate::bind::{
     BoundBuilder, ClassOwner, Decl, FnOwner, ScopeId, ScopeKind, SymFlags, SymbolId,
 };
@@ -122,6 +123,18 @@ impl Declarations<'_, '_> {
             })
     }
 
+    fn holds_arguments_object(&self, scope: ScopeId, declared: Option<SymbolId>) -> bool {
+        let (hir, bound) = (self.hir, &*self.bound);
+        let has_arguments = match bound.scopes[scope.idx()].kind {
+            ScopeKind::File => true,
+            ScopeKind::Fn(function) => bound.has_arguments(hir, function),
+            _ => false,
+        };
+        let is_var = |&decl: &Decl| declaration_kind(hir, bound, decl) == DeclarationKind::Var;
+        has_arguments
+            && declared.is_none_or(|symbol| bound.symbols[symbol.idx()].decls.iter().all(is_var))
+    }
+
     fn find_annex_b_var(&mut self, f: FnId, start: ScopeId) -> Option<SymbolId> {
         let name = self.hir[f].name;
         let mut scope = start;
@@ -136,7 +149,12 @@ impl Declarations<'_, '_> {
         let mut parameters = COMMONJS_VARIABLES.into_iter();
         let is_wrapper_parameter = self.bound.scopes[scope.idx()].kind == ScopeKind::File
             && parameters.any(|parameter| parameter.name() == name);
-        if let Some((symbol, _)) = self.visible_binding(scope, name) {
+        let declared = self.visible_binding(scope, name);
+        let symbol = declared.map(|(symbol, _)| symbol);
+        if name == known::arguments && self.holds_arguments_object(scope, symbol) {
+            return None;
+        }
+        if let Some(symbol) = symbol {
             return (!is_wrapper_parameter && !self.blocks_annex_b_var(symbol))
                 .then(|| self.bound.export_symbol_of_value_symbol_if_exported(symbol));
         }

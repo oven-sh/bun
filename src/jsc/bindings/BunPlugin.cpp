@@ -4359,8 +4359,10 @@ __attribute__((minsize)) static void giveBackPreloadModules(Zig::GlobalObject* g
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObject* globalObject)
 {
 #if ENABLE(AOT)
-    if (globalObject->vm().hasCompiledCode())
+    if (globalObject->vm().hasCompiledCode()) {
+        Bun::forgetAnswersKeptForLoader(globalObject);
         JSC::AOT::didBeginTestFile(globalObject);
+    }
 #else
     UNUSED_PARAM(globalObject);
 #endif
@@ -4371,8 +4373,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     auto& plugins = globalObject->onLoadPlugins;
     plugins.testFile++;
 #if ENABLE(AOT)
-    if (globalObject->vm().hasCompiledCode())
+    if (globalObject->vm().hasCompiledCode()) {
+        Bun::forgetAnswersKeptForLoader(globalObject);
         JSC::AOT::didBeginTestFile(globalObject);
+    }
 #endif
     plugins.loadedByImportActual.clear();
     ModulesToEvict evict;
@@ -5121,6 +5125,10 @@ extern "C" bool Bun__hasPlugins(Zig::GlobalObject* globalObject)
 
 extern "C" uint8_t Bun__onResolveNamespaces(Zig::GlobalObject* globalObject)
 {
+#if ENABLE(AOT)
+    if (Bun::holdsAnswersForLoader()) [[unlikely]]
+        return 3;
+#endif
     auto& plugins = globalObject->onResolvePlugins;
     return (plugins.fileNamespace.filters.isEmpty() ? 0 : 1) | (plugins.groups.isEmpty() ? 0 : 2);
 }

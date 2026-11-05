@@ -67,8 +67,11 @@ pub(in crate::lower) struct CallOptions<'t> {
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_arguments(&mut self, arguments: IdList<ExprId>) -> Arguments {
         let hir = self.file.hir;
-        let is_spread = |argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
-        if hir.ids(arguments).any(is_spread) {
+        let mut has_spread = false;
+        for argument in hir.ids(arguments) {
+            has_spread |= matches!(hir[argument].kind, ExprKind::Spread(_));
+        }
+        if has_spread {
             let arguments: SmallVec<[ExprId; 4]> = hir.ids(arguments).collect();
             return self.lower_argument_slice(&arguments);
         }
@@ -552,6 +555,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
+#[inline]
 fn call_site(file: &FileLowering<'_, '_, '_, '_>, call: ExprId) -> Call {
     let hir = file.hir;
     let (ExprKind::Call(site) | ExprKind::New(site) | ExprKind::TaggedTemplate(site)) =

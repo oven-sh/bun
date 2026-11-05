@@ -145,37 +145,38 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: b3():
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4() handler=b12():
-// CHECK-NEXT: v18 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v19 = PropGet v18 key="eval" [isFreeName]
-// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: v21 = Builtin builtin=Eval [isNotReadFromHolder]
-// CHECK-NEXT: v22 = StrictEq v20, v21
-// CHECK-NEXT: Branch v22 -> taken b5(), notTaken b6(| 0)
+// CHECK-NEXT: v18 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v19 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v20 = PropGet v19 key="eval" [isFreeName]
+// CHECK-NEXT: v21 = Convert v20 declared={type=builtin(Eval) flags=[IsExpected]}
+// CHECK-NEXT: v22 = Builtin builtin=Eval [isNotReadFromHolder]
+// CHECK-NEXT: v23 = StrictEq v21, v22
+// CHECK-NEXT: Branch v23 -> taken b5(), notTaken b6(| 0)
 // CHECK-NEXT: b5() handler=b12():
-// CHECK-NEXT: v23 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v24 = DirectEval v16, v1, v3, v16, v9, v0, v8, v23 evalScope=e0
-// CHECK-NEXT: Jump -> next b7(v24)
-// CHECK-NEXT: b6(v25) handler=b12():
-// CHECK-NEXT: v26 = Call v25, -, v16 calleeName="eval"
-// CHECK-NEXT: Jump -> next b7(v26)
-// CHECK-NEXT: b7(v27) handler=b12():
-// CHECK-NEXT: v28 = Yield v27, v9, v1, v8
-// CHECK-NEXT: v29 = ResultAt v28
-// CHECK-NEXT: v30 = ResultAt v28 index=1
-// CHECK-NEXT: Switch v30 cases=[1, 2] -> case b8(), case b9(), otherwise b11()
+// CHECK-NEXT: v24 = GetModuleVariable variable=[[g_7]]
+// CHECK-NEXT: v25 = DirectEval v18, v1, v3, v18, v9, v0, v8, v24 evalScope=e0
+// CHECK-NEXT: Jump -> next b7(v25)
+// CHECK-NEXT: b6(v26) handler=b12():
+// CHECK-NEXT: v27 = Call v26, -, v18 calleeName="eval"
+// CHECK-NEXT: Jump -> next b7(v27)
+// CHECK-NEXT: b7(v28) handler=b12():
+// CHECK-NEXT: v29 = Yield v28, v9, v1, v8
+// CHECK-NEXT: v30 = ResultAt v29
+// CHECK-NEXT: v31 = ResultAt v29 index=1
+// CHECK-NEXT: Switch v31 cases=[1, 2] -> case b8(), case b9(), otherwise b11()
 // CHECK-NEXT: b8() handler=b12():
-// CHECK-NEXT: Throw v29
+// CHECK-NEXT: Throw v30
 // CHECK-NEXT: b9() handler=b12():
-// CHECK-NEXT: Jump -> next b10(v29)
-// CHECK-NEXT: b10(v31):
+// CHECK-NEXT: Jump -> next b10(v30)
+// CHECK-NEXT: b10(v32):
 // CHECK-NEXT: IteratorClose v12
-// CHECK-NEXT: Return v31
+// CHECK-NEXT: Return v32
 // CHECK-NEXT: b11() handler=b12():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b12() role=IterationCleanup subject=v12:
-// CHECK-NEXT: v33 = CatchException
+// CHECK-NEXT: v34 = CatchException
 // CHECK-NEXT: IteratorClose v12 completion=Throw
-// CHECK-NEXT: Rethrow v33
+// CHECK-NEXT: Rethrow v34
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="total"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {

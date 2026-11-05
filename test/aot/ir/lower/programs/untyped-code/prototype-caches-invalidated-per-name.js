@@ -76,32 +76,33 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: b3():
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4() handler=b8():
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v11 = Call v10, -, v9 calleeName="readAll"
-// CHECK-NEXT: v12 = Integer
-// CHECK-NEXT: v13 = Convert v12 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b5(v5, v13)
-// CHECK-NEXT: b5(v14, v15) handler=b8():
+// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
+// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v12 = Call v11, -, v10 calleeName="readAll"
+// CHECK-NEXT: v13 = Integer
+// CHECK-NEXT: v14 = Convert v13 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b5(v5, v14)
+// CHECK-NEXT: b5(v15, v16) handler=b8():
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: v17 = PropGet v11 key="length"
-// CHECK-NEXT: v18 = Less v15, v17
-// CHECK-NEXT: Branch v18 -> taken b6(), notTaken b7()
+// CHECK-NEXT: v18 = PropGet v12 key="length"
+// CHECK-NEXT: v19 = Less v16, v18
+// CHECK-NEXT: Branch v19 -> taken b6(), notTaken b7()
 // CHECK-NEXT: b6() handler=b8():
-// CHECK-NEXT: v19 = Integer integer=31
-// CHECK-NEXT: v20 = Mul v14, v19
-// CHECK-NEXT: v21 = PropGet v11 key="charCodeAt"
-// CHECK-NEXT: v22 = Call v21, v11, v15 calleeKey="charCodeAt" calleeName="text.charCodeAt"
-// CHECK-NEXT: v23 = Add v20, v22
-// CHECK-NEXT: v24 = Integer
-// CHECK-NEXT: v25 = BitOr v23, v24
-// CHECK-NEXT: v26 = Convert v25 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v27 = Increment v15
-// CHECK-NEXT: v28 = Convert v27 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b5(v26, v28)
+// CHECK-NEXT: v20 = Integer integer=31
+// CHECK-NEXT: v21 = Mul v15, v20
+// CHECK-NEXT: v22 = PropGet v12 key="charCodeAt"
+// CHECK-NEXT: v23 = Call v22, v12, v16 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+// CHECK-NEXT: v24 = Add v21, v23
+// CHECK-NEXT: v25 = Integer
+// CHECK-NEXT: v26 = BitOr v24, v25
+// CHECK-NEXT: v27 = Convert v26 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v28 = Increment v16
+// CHECK-NEXT: v29 = Convert v28 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b5(v27, v29)
 // CHECK-NEXT: b7() handler=b8():
-// CHECK-NEXT: Jump -> next b1(v14)
+// CHECK-NEXT: Jump -> next b1(v15)
 // CHECK-NEXT: b8() role=IterationCleanup subject=v4:
-// CHECK-NEXT: v29 = CatchException
+// CHECK-NEXT: v30 = CatchException
 // CHECK-NEXT: IteratorClose v4 completion=Throw
-// CHECK-NEXT: Rethrow v29
+// CHECK-NEXT: Rethrow v30
 // CHECK-NEXT: }

@@ -107,7 +107,6 @@ fn family_bit(family: UnprovenCauseFamily) -> ExplainSet {
     match family {
         UnprovenCauseFamily::UnknownCode => ExplainSet::ONLY_UNKNOWN_CODE,
         UnprovenCauseFamily::UnprovenType => ExplainSet::ONLY_UNPROVEN_TYPE,
-        UnprovenCauseFamily::Mutation => ExplainSet::ONLY_MUTATION,
     }
 }
 

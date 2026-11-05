@@ -231,7 +231,8 @@ const keepsData = (className: string, cell: string, getterImplementation: b.Impl
   });
 
 const anyMessage = [b.readsContents(), b.runs("ToPrimitive")];
-const textMessage = characters;
+// ServerWebSocket.rs payload_from_js(): a String object passes for a string, and is converted.
+const textMessage = convertedToCharacters;
 const binaryMessage = readsState;
 
 // A socket that is closed inside a call has its close handler called before the call returns, and the error handler with what that one throws. close and terminate close this socket.
@@ -405,11 +406,15 @@ export default b.declarations(
     sort: { ...stateChanged, capability: "heap", implementation: b.hostCall },
     toString: serialized,
     // The object has an own @@toStringTag, which plain data has not.
-    toJSON: { ...stateRead, returns: b.object.fresh, capability: "heap", implementation: b.hostCall },
+    toJSON: { ...stateRead, returns: b.instance("Object").unaliased, capability: "heap", implementation: b.hostCall },
     size: pairCount,
     length: pairCount,
   }),
   b.same("URLSearchParams.prototype.@@iterator", "URLSearchParams.prototype.entries"),
+  // WebStreamsInspectCustom.cpp installInspectCustom(): a data property that holds a native function, and that a program may store to.
+  ["URL", "URLSearchParams"].flatMap(name =>
+    b.method(`${name}.prototype.@@@nodejs.util.inspect.custom`, b.property(b.callable, { resultIsDeclaredOnly: true })),
+  ),
   pairIteratorClass(
     "URLSearchParams",
     b.cppClass("URLSearchParamsIteratorBase", "JSURLSearchParams.h"),

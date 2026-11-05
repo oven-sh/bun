@@ -8,7 +8,8 @@ use crate::program::FileId;
 impl Checker<'_, '_> {
     pub(in crate::check) fn is_strict_mode_code(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
-        if hir.is_strict || hir.get_containing_class(node).is_some() {
+        let class = hir.get_containing_class_excluding_class_decorators(node);
+        if hir.is_strict || class.is_some() {
             return true;
         }
         let function = hir.function_of(hir.get_containing_function(node));

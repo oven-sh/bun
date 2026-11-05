@@ -4,7 +4,7 @@
 # const kept: Options[] = [];
 # function one(k: number): Options { let n = k; const o: Options = { name: "a", isExpected: e => { n++; return n > 1; } }; kept.push(o); return o; }
 # function two(): Options { const o: Options = { name: "b" }; kept.push(o); return o; }
-# one(0); two();
+# one(0); two(); one(1);
 # const a = kept[0], b = kept[1];
 # const readOffB = b.isExpected, isInB = "isExpected" in b;
 # const readOffA = a.isExpected, isInA = "isExpected" in a;

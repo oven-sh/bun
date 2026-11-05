@@ -1,4 +1,5 @@
 use core::sync::atomic::{AtomicBool, Ordering};
+use std::collections::BTreeSet;
 use std::sync::{Arc, OnceLock};
 
 use bstr::BStr;
@@ -27,6 +28,7 @@ static FILES_OF_CHECK: OnceLock<Vec<Box<[u8]>>> = OnceLock::new();
 static CLEARS_TERMINAL: AtomicBool = AtomicBool::new(false);
 static RUNNING_TEST_FILE: Guarded<Vec<u8>> = Guarded::new(Vec::new());
 static REFUSED_CHANGES: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+static FILES_RUN_FROM_SOURCE: Guarded<BTreeSet<Vec<u8>>> = Guarded::new(BTreeSet::new());
 /// The newest line of `REFUSED_CHANGES` that the running test file has made, without its end. It is kept also where the list is full or has the line.
 static NEWEST_REFUSAL_OF_RUNNING_TEST_FILE: Guarded<Vec<u8>> = Guarded::new(Vec::new());
 const MAX_LISTED_REFUSED_CHANGES: usize = 100;
@@ -1306,7 +1308,9 @@ pub(crate) fn will_run_test_file(title: &[u8]) {
 }
 
 pub(crate) fn refused_changes() -> Vec<Vec<u8>> {
-    core::mem::take(&mut *REFUSED_CHANGES.lock())
+    let mut refused = REFUSED_CHANGES.lock();
+    FILES_RUN_FROM_SOURCE.lock().clear();
+    core::mem::take(&mut *refused)
 }
 
 /// BunCompiledModules.cpp. The runner has a test file whose load has settled and whose `describe` callbacks it has yet to call. It turns the
@@ -1489,13 +1493,13 @@ pub(crate) fn add_refused_change(line: Vec<u8>) {
     let mut refused = REFUSED_CHANGES.lock();
     // Each file once, with the test file under which it first ran so.
     if let Some(file) = file_run_from_source(&line) {
-        if !(refused.iter()).any(|listed| file_run_from_source(listed) == Some(file)) {
+        if FILES_RUN_FROM_SOURCE.lock().insert(file.to_vec()) {
             refused.push(line);
         }
         return;
     }
-    let listed = (refused.iter()).filter(|it| file_run_from_source(it).is_none());
-    if listed.count() < MAX_LISTED_REFUSED_CHANGES && !refused.contains(&line) {
+    let listed = refused.len() - FILES_RUN_FROM_SOURCE.lock().len();
+    if listed < MAX_LISTED_REFUSED_CHANGES && !refused.contains(&line) {
         refused.push(line);
     }
 }

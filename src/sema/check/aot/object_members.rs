@@ -310,8 +310,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             );
             return PositionTypes::unwritten(Err(GaveUp::Unresolved));
         };
-        self.member_of_prop(prop, members.mapper, members.mapper)
-            .types
+        self.types_of_prop(prop, members.mapper, members.mapper)
     }
 
     pub(super) fn compute_index_signatures(

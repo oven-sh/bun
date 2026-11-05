@@ -541,15 +541,16 @@ export function reach(name) { return store[name]; }
 // CHECK-NEXT: b3():
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4() handler=b5():
-// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v18 = String string="inherited"
-// CHECK-NEXT: v19 = Call v17, -, v18, v12, v4 calleeName="wrapper"
-// CHECK-NEXT: ElemSet v7, v12, v19
+// CHECK-NEXT: v17 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_1]]
+// CHECK-NEXT: v19 = String string="inherited"
+// CHECK-NEXT: v20 = Call v18, -, v19, v17, v4 calleeName="wrapper"
+// CHECK-NEXT: ElemSet v7, v17, v20
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b5() role=IterationCleanup subject=v8:
-// CHECK-NEXT: v21 = CatchException
+// CHECK-NEXT: v22 = CatchException
 // CHECK-NEXT: IteratorClose v8 completion=Throw
-// CHECK-NEXT: Rethrow v21
+// CHECK-NEXT: Rethrow v22
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="told"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {

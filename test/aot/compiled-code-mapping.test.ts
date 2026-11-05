@@ -33,7 +33,7 @@ const [thisArchitecture, mmap, mprotect, pkeyMprotect, mremap] = process.arch ==
 const instructions = [
   [load, 0, 0, architecture], [jumpIfEqual, 1, 0, thisArchitecture], [answer, 0, 0, allow],
   [load, 0, 0, systemCall],
-  ...(process.argv[3] === "refuse-mremap" ? [[jumpIfEqual, 0, 1, mremap], [answer, 0, 0, permissionDenied]] : []),
+  ...(process.argv[3]?.endsWith("mremap") ? [[jumpIfEqual, 0, 1, mremap], [answer, 0, 0, permissionDenied]] : []),
   [jumpIfEqual, 0, 5, mmap],
   [load, 0, 0, protection], [jumpIfAnyBitSet, 0, 8, executable],
   [load, 0, 0, flags], [jumpIfAnyBitSet, 6, 0, denyWrite], [answer, 0, 0, permissionDenied],

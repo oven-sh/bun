@@ -4,8 +4,7 @@ import { run } from "./harness/run";
 import { beforeAll, test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)` and hands it to a function of the project, which says `new Worker(entry)`.
-// Where the run is built in layers, the project's build doesn't see the test file and the test file's build doesn't read the project. The project's build
-// says which parameters of its exports start Workers, and the build above takes a call of such an export for a start.
+// The build doesn't follow `entry`. Where it can't read what some Worker starts from, it compiles every file of code whose URL or path the program writes out.
 // A file that nobody compiled runs from its text, in the interpreter, with the right answer, so nobody notices.
 const ways: Record<string, string> = {
   "a named import": `start(new URL("./src/worker/w1.ts", import.meta.url))`,
@@ -39,7 +38,7 @@ export const startOfNode = (entry: URL) => askOfNode(new Worker(entry));
   "src/wrap.ts": `import { start } from "./spawn";\nexport const begin = (entry: URL) => start(entry);\n`,
   "src/barrel/index.ts": `export * from "../spawn";\n`,
   "src/renamed.ts": `export { start as launch } from "./barrel";\n`,
-  // Most URLs of code files that tests write are there to read a source. No Worker starts from them, so no build takes them in.
+  // The test only reads src/only-read.ts. Its URL goes to a function of the project like the others, so the build compiles that file too.
   "src/read.ts": `import { readFileSync } from "node:fs";\nexport const read = (file: URL) => readFileSync(file, "utf8").length;\n`,
   "src/only-read.ts": `export const never = "run";\n`,
   "workers.test.ts":
@@ -119,6 +118,6 @@ for (const words of ["TestRunLayers:0"]) {
     expect({ ...(await overWrittenFiles()), taken: plain.taken }).toEqual(plain);
   });
   test(`each Worker runs compiled (${words})`, async () => {
-    expect(await overWrittenFiles()).toEqual({ ...plain, taken: [count] });
+    expect(await overWrittenFiles()).toEqual({ ...plain, taken: [count + 1] });
   });
 }

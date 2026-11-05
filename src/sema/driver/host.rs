@@ -255,6 +255,7 @@ pub struct Disk {
     io_pool: Option<bun_threading::io_thread_pool::Ref>,
     /// Readers that aren't in use, least recently used first.
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
+    idle_buffers: bun_threading::Guarded<Vec<Vec<u8>>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
     /// See `AlreadyRead`. Keyed by `tspath.Path`, so such a file is found however its name is spelled, like a file on
@@ -355,7 +356,6 @@ struct Reader {
     directory: Vec<u8>,
     /// Opened when a second file is read from `directory`.
     handle: Option<bun_sys::Dir>,
-    buffer: Vec<u8>,
 }
 
 /// The maximum number of idle readers, and so of open directories, that are retained.
@@ -545,6 +545,7 @@ impl Disk {
             io_pool: (threads > 3 && bun_threading::io_thread_pool::uses_io_pool())
                 .then(|| bun_threading::io_thread_pool::acquire().into()),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
+            idle_buffers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
             bundled_libs: None,
             script_kinds: Vec::new(),
@@ -588,6 +589,13 @@ impl Disk {
             idle.remove(0);
         }
         idle.push(reader);
+    }
+
+    fn return_buffer(&self, buffer: Vec<u8>) {
+        let mut idle = self.idle_buffers.lock();
+        if idle.len() < MAX_IDLE_READERS {
+            idle.push(buffer);
+        }
     }
 
     /// True if the entries of `path` are queried from the system every time. That's the case for the roots, which
@@ -1434,6 +1442,7 @@ impl Host for Disk {
         }
         let _turn = self.reader_limit.as_ref().map(ReadSlot::wait_for);
         let mut reader = self.take_reader(parent);
+        let mut buffer = self.idle_buffers.lock().pop().unwrap_or_default();
         // The second and later files read from a directory are opened relative to the directory. An absolute path makes
         // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a
         // single file, opening the directory costs that walk and more. On macOS it always does: opens wait for one lock.
@@ -1448,16 +1457,15 @@ impl Host for Disk {
                     .ok()
                     .map(bun_sys::Dir::from_fd);
             }
-            let Reader { handle, buffer, .. } = &mut reader;
-            handle
-                .as_ref()
-                .map(|directory| read_file(directory.fd(), name, buffer))
+            let handle = reader.handle.as_ref();
+            handle.map(|directory| read_file(directory.fd(), name, &mut buffer))
         };
         let read = read.unwrap_or_else(|| {
             let path = to_native(without_trailing_slash(path));
-            read_file(Fd::cwd(), path, &mut reader.buffer)
+            read_file(Fd::cwd(), path, &mut buffer)
         });
         self.return_reader(reader);
+        self.return_buffer(buffer);
         read.map(|bytes| {
             crate::did_read_source(bytes.len());
             decoded(bytes, keeps_mark)

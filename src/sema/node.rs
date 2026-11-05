@@ -359,7 +359,7 @@ macro_rules! node_vectors {
             /// where `v` collects the parts that have children.
             fn children_of_all_rows<V: FnMut(Node) -> bool>(
                 &self,
-                v: &mut Children<'_, '_, V>,
+                v: &mut Children<'_, '_, true, V>,
                 current_node: &Cell<Node>,
                 open: &OpenParts,
             ) {
@@ -457,6 +457,10 @@ pub trait ToNode: Copy {
     fn to_child(self, file: &File) -> Node {
         self.to_node(file)
     }
+    #[inline]
+    fn to_node_inline(self, file: &File) -> Node {
+        self.to_node(file)
+    }
 }
 
 macro_rules! rows_are_nodes {
@@ -507,8 +511,13 @@ impl ToNode for Node {
 
 impl ToNode for ExprId {
     fn to_node(self, file: &File) -> Node {
+        self.to_node_inline(file)
+    }
+
+    #[inline]
+    fn to_node_inline(self, file: &File) -> Node {
         match file.exprs.get(self.idx()).map(|e| e.kind) {
-            Some(ExprKind::Fn(f)) => f.to_node(file),
+            Some(ExprKind::Fn(f)) => node_of_function(file, f),
             Some(_) => self.row(file),
             None => Node::NONE,
         }
@@ -530,6 +539,11 @@ impl ToNode for FnId {
         let function = file.owners().fns.get(self.idx());
         function.copied().unwrap_or(Node::NONE)
     }
+}
+
+#[inline(never)]
+fn node_of_function(file: &File, f: FnId) -> Node {
+    f.to_node(file)
 }
 
 impl ToNode for ClassId {
@@ -619,37 +633,67 @@ impl ToNode for Parent {
     }
 }
 
-/// `Visitor`, and the file that the ids passed to it belong to.
-struct Children<'a, 's, V: FnMut(Node) -> bool + ?Sized> {
+/// `Visitor`, and the file that the ids passed to it belong to. `FOR_PARENTS`: false if a parenthesized expression is
+/// visited as its `ParenthesizedExpression`, which requires a search, and a name without child rows is visited too.
+struct Children<'a, 's, const FOR_PARENTS: bool, V: FnMut(Node) -> bool + ?Sized> {
     file: &'a File<'s>,
     visit: &'a mut V,
-    /// True if a parenthesized expression is visited as its `ParenthesizedExpression`, which requires a search.
-    with_parentheses: bool,
 }
 
-#[derive(Default)]
 struct OpenParts {
-    parts: RefCell<Vec<Node>>,
-    count: Cell<usize>,
+    top: Cell<Node>,
+    below: RefCell<Vec<Node>>,
+    count_below: Cell<usize>,
+}
+
+impl Default for OpenParts {
+    fn default() -> Self {
+        OpenParts {
+            top: Cell::new(Node::NONE),
+            below: RefCell::default(),
+            count_below: Cell::new(0),
+        }
+    }
 }
 
 impl OpenParts {
+    #[inline]
     fn push(&self, part: Node) {
-        self.parts.borrow_mut().push(part);
-        self.count.set(self.count.get() + 1);
+        let covered = self.top.replace(part);
+        if covered.is_some() {
+            self.push_below(covered);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn push_below(&self, part: Node) {
+        self.below.borrow_mut().push(part);
+        self.count_below.set(self.count_below.get() + 1);
     }
 
     #[inline]
     fn pop(&self) -> Option<Node> {
-        if self.count.get() == 0 {
+        let top = self.top.get();
+        if top.is_none() {
             return None;
         }
-        self.count.set(self.count.get() - 1);
-        self.parts.borrow_mut().pop()
+        self.top.set(match self.count_below.get() {
+            0 => Node::NONE,
+            _ => self.pop_below(),
+        });
+        Some(top)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn pop_below(&self) -> Node {
+        self.count_below.set(self.count_below.get() - 1);
+        self.below.borrow_mut().pop().unwrap_or(Node::NONE)
     }
 }
 
-impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
+impl<const FOR_PARENTS: bool, V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, FOR_PARENTS, V> {
     /// `node.ForEachChild`. `data` is what `node` refers to. A caller that knows it statically gets specialized to that
     /// one match arm.
     #[inline(always)]
@@ -692,8 +736,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             }
             NodeData::Member(m) => {
                 let member = &file[m];
+                let visits_name = !FOR_PARENTS || matches!(member.key, PropKey::Computed(_));
                 self.span(member.modifiers)
-                    || self.one(file.name_of_member(m, node))
+                    || visits_name && self.one(file.name_of_member(m, node))
                     || member.func.is_some() && self.function(member.func, node)
                     // For an accessor and an index signature it duplicates the function's return type.
                     || member.func.is_none() && self.one(member.ty)
@@ -702,8 +747,11 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             NodeData::Prop(p) => {
                 let (property, method) = (&file[p], file.method_of(p));
                 let value = file.exprs.get(property.value.idx()).map(|e| e.kind);
+                let visits_name = !FOR_PARENTS
+                    || property.kind == PropKind::Shorthand
+                    || matches!(property.key, PropKey::Computed(_));
                 !file.modifiers_of_props.is_empty() && self.span(file.prop_modifiers(p))
-                    || self.one(file.name_of_prop(p, node))
+                    || visits_name && self.one(file.name_of_prop(p, node))
                     || self.one(file.jsdoc_type(JsDocTypeOwner::Prop(p)))
                     || match (property.kind, value) {
                         _ if method.is_some() => self.function(method, node),
@@ -748,10 +796,10 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
 
     /// `visit`
     fn one(&mut self, id: impl ToNode) -> bool {
-        let node = if self.with_parentheses {
-            id.to_child(self.file)
+        let node = if FOR_PARENTS {
+            id.to_node_inline(self.file)
         } else {
-            id.to_node(self.file)
+            id.to_child(self.file)
         };
         node.is_some() && (self.visit)(node)
     }
@@ -854,7 +902,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
         let class = &self.file[c];
         let extends = class.extends.is_some() || !class.other_extends.is_empty();
         let implements = !class.implements.is_empty() || !class.other_implements.is_empty();
-        self.one(self.file.name(node))
+        !FOR_PARENTS && self.one(self.file.name(node))
             || self.span(class.type_params)
             || self.part(node, Part::Extends, extends)
             || self.part(node, Part::Implements, implements)
@@ -901,10 +949,11 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             }
             ExprKind::Array(elements) => self.list(elements),
             ExprKind::Object(properties) => self.span(properties),
-            ExprKind::Fn(f) => self.one(file.name(node)) || self.function(f, node),
+            ExprKind::Fn(f) => !FOR_PARENTS && self.one(file.name(node)) || self.function(f, node),
             ExprKind::Class(c) => self.span(file[c].modifiers) || self.class(c, node),
             ExprKind::Dot { obj, .. } => {
-                !file.is_import_keyword(obj) && self.one(obj) || self.one(node.with(Part::Name))
+                !file.is_import_keyword(obj) && self.one(obj)
+                    || !FOR_PARENTS && self.one(node.with(Part::Name))
             }
             ExprKind::Index { obj, index, .. } => self.one(obj) || self.one(index),
             ExprKind::Call(c) | ExprKind::New(c) => self.call(c),
@@ -976,18 +1025,18 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
                 self.one(file.jsdoc_type(JsDocTypeOwner::Export(s))) || self.one(e)
             }
             StmtKind::Var(_) => self.one(node.with(Part::DeclarationList)),
-            StmtKind::Fn(f) => self.one(file.name(node)) || self.function(f, node),
+            StmtKind::Fn(f) => !FOR_PARENTS && self.one(file.name(node)) || self.function(f, node),
             StmtKind::Class(c) => self.class(c, node),
             StmtKind::Interface(i) => {
                 let interface = &file[i];
                 let extends = !interface.extends.is_empty() || !interface.other_heritage.is_empty();
-                self.one(node.with(Part::Name))
+                !FOR_PARENTS && self.one(node.with(Part::Name))
                     || self.span(interface.type_params)
                     || self.part(node, Part::Extends, extends)
                     || self.span(interface.members)
             }
             StmtKind::TypeAlias(a) => {
-                self.one(node.with(Part::Name))
+                !FOR_PARENTS && self.one(node.with(Part::Name))
                     || self.span(file[a].type_params)
                     || self.one(file[a].ty)
             }
@@ -1506,7 +1555,6 @@ impl<'s> File<'s> {
         let mut v = Children {
             file: self,
             visit: &mut visit,
-            with_parentheses: false,
         };
         self.children_of_all_rows(&mut v, &current_node, &open);
         // The parentheses are inserted afterwards, because their list is short, whereas a lookup in it for every
@@ -1863,11 +1911,7 @@ impl<'s> File<'s> {
 
     /// `node.ForEachChild`: the children in source order, until `visit` returns true.
     pub fn for_each_child(&self, node: Node, visit: &mut dyn FnMut(Node) -> bool) -> bool {
-        let mut v = Children {
-            file: self,
-            visit,
-            with_parentheses: true,
-        };
+        let mut v = Children::<false, _> { file: self, visit };
         v.children(self.data(node), node)
     }
 
@@ -2790,25 +2834,30 @@ impl File<'_> {
                 let function = self.fns.get(self.function_of(node).idx());
                 function.map_or(Flags::empty(), |function| function.flags)
             }
-            NodeData::Stmt(s) => match self[s].kind {
-                StmtKind::Var(declarations) => declarations
-                    .iter()
-                    .next()
-                    .map_or(Flags::empty(), |d| self[d].flags),
-                StmtKind::Fn(f) => self[f].flags,
-                StmtKind::Class(c) => self[c].flags,
-                StmtKind::Interface(i) => self[i].flags,
-                StmtKind::TypeAlias(a) => self[a].flags,
-                StmtKind::Enum(e) => self[e].flags,
-                StmtKind::Module(m) => self[m].flags,
-                StmtKind::ImportEquals(i) => self[i].flags,
-                _ => self.modifiers_to_flags(self.stmt_modifiers(s)),
-            },
+            NodeData::Stmt(s) => self.flags_of_statement(s),
             NodeData::VarDecl(d) => self[d].flags,
             NodeData::Param(p) => self[p].flags,
             NodeData::TypeParam(p) => self[p].flags,
             NodeData::Member(m) => self[m].flags,
             _ => Flags::empty(),
+        }
+    }
+
+    #[inline]
+    fn flags_of_statement(&self, s: StmtId) -> Flags {
+        match self[s].kind {
+            StmtKind::Var(declarations) => declarations
+                .iter()
+                .next()
+                .map_or(Flags::empty(), |d| self[d].flags),
+            StmtKind::Fn(f) => self[f].flags,
+            StmtKind::Class(c) => self[c].flags,
+            StmtKind::Interface(i) => self[i].flags,
+            StmtKind::TypeAlias(a) => self[a].flags,
+            StmtKind::Enum(e) => self[e].flags,
+            StmtKind::Module(m) => self[m].flags,
+            StmtKind::ImportEquals(i) => self[i].flags,
+            _ => self.modifiers_to_flags(self.stmt_modifiers(s)),
         }
     }
 }
@@ -3578,16 +3627,25 @@ impl File<'_> {
         self.lazy.cells.ambient_or_type_ranges.get_or_init(|| {
             let has_ambient_nodes = self.has_ambient_nodes();
             let is_ambient = |s: usize| {
-                let flags = self.flags(self.node(StmtId(s as u32)));
+                let flags = self.flags_of_statement(StmtId(s as u32));
                 flags.contains(Flags::AMBIENT)
             };
-            let statements = self.stmts.iter().enumerate().filter(|&(s, statement)| {
+            let has_type_statements = !self.interfaces.is_empty() || !self.aliases.is_empty();
+            let statements: &[Stmt] = match has_ambient_nodes || has_type_statements {
+                true => &self.stmts,
+                false => &[],
+            };
+            let statements = statements.iter().enumerate().filter(|&(s, statement)| {
                 matches!(
                     statement.kind,
                     StmtKind::Interface(_) | StmtKind::TypeAlias(_)
                 ) || has_ambient_nodes && is_ambient(s)
             });
-            let members = self.members.iter();
+            let members: &[Member] = match has_ambient_nodes {
+                true => &self.members,
+                false => &[],
+            };
+            let members = members.iter();
             let members = members.filter(|member| member.flags.contains(Flags::AMBIENT));
             let literals = self.types.iter();
             let literals = literals.filter(|node| matches!(node.kind, TypeNodeKind::Object(_)));
@@ -3631,7 +3689,8 @@ impl File<'_> {
         if self.kind == FileKind::Declaration {
             return true;
         }
-        if !self.ambient_or_type_ranges().contain(self.start(node)) {
+        let ranges = self.ambient_or_type_ranges();
+        if ranges.is_empty() || !ranges.contain(self.start(node)) {
             return false;
         }
         let mut is_modifier = false;

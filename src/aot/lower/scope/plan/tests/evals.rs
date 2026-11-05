@@ -104,11 +104,8 @@ fn slot_stored_by_eval_has_a_field() {
     assert!(is_field(exports_in(
         "function f(text) { eval(text); } f(''); exports.a = 1;"
     )));
-    let source = "var text = ''; (0, eval)(text); exports.a = 1;";
-    analyze_source_that_runs_again("main.cjs", source, |probe| {
-        let slot = ScopeSlot::CommonJs(CommonJsVariable::Exports);
-        assert_eq!(probe.analysis.placement(probe.file_slot(slot)), None);
-    });
+    let indirect = "var text = ''; (0, eval)(text); exports.a = 1;";
+    assert_eq!(exports_in(indirect), Storage::Local);
 
     let arguments_in = |source: &str| {
         analyze_source_that_runs_again("main.cjs", source, |probe| {

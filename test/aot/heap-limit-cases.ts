@@ -2134,6 +2134,7 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
     );
 
     inPart(test.skipIf(!isLinux || isASAN))(
+      // The loops stop at 64 KB: what is smaller stays for the engine's own pages and tables, which come from a malloc that may not fail, in plain Bun too.
       "a program that catches every failed allocation goes on",
       async () => {
         using folder = tempDir("aot-heap-limit", {
@@ -2141,7 +2142,7 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
 for (let size = 64 * 1024 * 1024; size >= 64 * 1024; size /= 2) {
   try { for (;;) taken.push(new ArrayBuffer(size)); } catch {}
 }
-for (let size = 16 * 1024 * 1024; size >= 512; size /= 2) {
+for (let size = 16 * 1024 * 1024; size >= 64 * 1024; size /= 2) {
   for (const eighths of [14, 12, 10, 8]) {
     try { for (;;) taken.push("x".repeat((size / 8) * eighths)); } catch {}
   }

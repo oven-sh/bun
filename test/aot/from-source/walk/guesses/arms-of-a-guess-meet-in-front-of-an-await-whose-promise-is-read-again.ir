@@ -11,8 +11,9 @@
 # -- end of source
 # RUN: walk f1:CoroutineBody mechanisms=all-ParameterGuards
 # CHECK-LABEL: code f1:CoroutineBody
-# CHECK: = CallDirect
 # CHECK: = AwaitBySavingFrame
 # CHECK-NOT: = AwaitBySavingFrame
+# RUN(DIRECT): walk f1:CoroutineBody mechanisms=all-ParameterGuards
+# DIRECT: = CallDirect {{*}}role=CoroutineBody
 # RUN(NEVER): walk f1:CoroutineBody mechanisms=all-ParameterGuards
 # NEVER-NOT: = AwaitCallBySavingFrame

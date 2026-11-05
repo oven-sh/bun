@@ -203,6 +203,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) enums_that_stay_as_born: Option<EnumsThatStayAsBorn>,
     pub(in crate::lower) counted_places: Option<CountedPlaces>,
     pub(in crate::lower) quoted_texts: QuotedTexts,
+    pub(in crate::lower) written_path: Vec<u8>,
     pub(in crate::lower) known_helpers_lowered: KnownHelpersLowered,
     scratch: BuilderScratch,
 }
@@ -306,6 +307,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             enums_that_stay_as_born: None,
             counted_places,
             quoted_texts: QuotedTexts::default(),
+            written_path: Vec::new(),
             known_helpers_lowered: KnownHelpersLowered::default(),
             scratch: BuilderScratch::default(),
         }
@@ -444,6 +446,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         }
         let id = self.fragment.strings.intern(self.queries.atom_bytes(atom));
         self.task.atoms.insert(atom, id);
+        self.fragment.note_atom_first_met(atom);
         id
     }
 
@@ -475,6 +478,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let text = self.intern_atom(atom);
         let key = self.text_key(text);
         self.task.atom_keys.insert(atom, key);
+        self.fragment.note_atom_first_met(atom);
         key
     }
 

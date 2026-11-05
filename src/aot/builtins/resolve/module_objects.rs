@@ -14,7 +14,7 @@ use bun_sema::hir::{
     self, BinOp, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, PropKind, StmtId,
     StmtKind, UnOp,
 };
-use bun_sema::import_sites::is_made_require;
+use bun_sema::import_sites::{OwnRequire, find_own_require, is_made_require};
 use smallvec::{SmallVec, smallvec};
 
 const HOLDER_HANDED_ON: (ModuleObjectOwner, ModuleObjectUse) = (
@@ -78,10 +78,16 @@ fn is_test_or_dropped(hir: &hir::File<'_>, node: ExprId, statement: StmtId) -> b
 impl Resolver<'_, '_> {
     pub(super) fn find_made_require(&self, object: ExprId) -> Option<ResolvedValue> {
         let input = self.input;
-        let is_made = self.loads_node_module
+        let is_imported = || {
+            matches!(
+                find_own_require(input.hir, input.bound, Some(input.decisions), object),
+                Some(OwnRequire::OfOtherFile(_) | OwnRequire::MadeInOtherFile(_))
+            )
+        };
+        let is_made = self.may_hold_made_require
             && input.dialect == SourceDialect::Program
             && table::exists_on(BuiltinId::ModuleRequire, input.platform)
-            && is_made_require(input.hir, input.bound, object);
+            && (is_made_require(input.hir, input.bound, object) || is_imported());
         is_made.then(|| {
             ResolvedValue::object(BuiltinPath {
                 id: BuiltinId::ModuleRequire,
@@ -634,14 +640,14 @@ impl Resolver<'_, '_> {
         let mut found_or_this = &self.found_or_this[..];
         let is_read_off =
             |&found: &ExprId| self.find_owner(found).is_some() || self.holds_main_module(found);
-        if self.loads_node_module || found_or_this.iter().any(is_read_off) {
+        if self.may_hold_made_require || found_or_this.iter().any(is_read_off) {
             for expr in self.evaluated_exprs() {
                 while let [listed, rest @ ..] = found_or_this
                     && *listed < expr
                 {
                     found_or_this = rest;
                 }
-                if self.loads_node_module
+                if self.may_hold_made_require
                     || found_or_this.first() == Some(&expr)
                     || matches!(hir[expr].kind, ExprKind::Index { .. })
                     || hir.type_assertion_operand(expr).is_some()

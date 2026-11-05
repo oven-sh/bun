@@ -4,7 +4,7 @@
 // # RUN(APART): why-closed f3:Body mechanisms=all
 // # APART: Call by value of a method{{*}}PROVEN, A BUILT-IN'S METHOD{{*}}in a loop{{*}}push
 // # RUN(NAMED): why-closed f4:Body mechanisms=all
-// # NAMED: Call by name{{*}}A BUILT-IN'S METHOD{{*}}one call opens no guess outside of loops{{*}}push
+// # NAMED: Call by name{{*}}closed arm of a guess{{*}}push
 // # RUN(VALUE): why-closed f6:Body mechanisms=all
 // # VALUE: Call by value{{*}}an entry parameter
 // # At the end the shell runs the same text itself: every answer is the same.

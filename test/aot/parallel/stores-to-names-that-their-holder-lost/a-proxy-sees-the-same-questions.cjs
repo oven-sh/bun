@@ -1,3 +1,5 @@
+// In front of a strict read the language asks `has` once more, and throws where the answer is no. `bun <file>` asks only in front of the store, so in the last case it goes on to `get`:
+// `has count, get Symbol(Symbol.unscopables), get count, has count`. What is expected stands below.
 function watch(target, log, answers) {
   return new Proxy(target, {
     has(target, key) {
@@ -45,3 +47,9 @@ attempt("sloppy, the second answer is no", [true, false], shelf => {
 attempt("strict, read and store", [true, false], shelf => {
   with (shelf) return class { static run() { count += 2; } }.run;
 });
+/* Output:
+strict, the name stays: stored, 2: has count, get Symbol(Symbol.unscopables), has count, set count, describe count, define count
+strict, the second answer is no: ReferenceError, 1: has count, get Symbol(Symbol.unscopables), has count
+sloppy, the second answer is no: stored, 2: has count, get Symbol(Symbol.unscopables), has count, set count, describe count, define count
+strict, read and store: ReferenceError, 1: has count, get Symbol(Symbol.unscopables), has count
+*/

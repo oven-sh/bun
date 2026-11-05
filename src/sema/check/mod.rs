@@ -860,6 +860,7 @@ impl<'s> Program<'s> {
             left_frame: None,
             files: self.files,
             modules: &self.files.modules,
+            visited_module: std::cell::Cell::new((FileId(u32::MAX), None)),
             variance_type_parameter: Atom::NONE,
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
@@ -1074,7 +1075,7 @@ impl<'s> Program<'s> {
             this_containers_around: Default::default(),
             spread_indices_of_many: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
-            exprs_by_kind: None,
+            exprs_by_kind: [None, None],
             provisional_shapes: Default::default(),
             provisional: Default::default(),
             taint_events: Vec::new(),
@@ -1672,12 +1673,60 @@ struct FlowTypeSkip {
     flips_variance: bool,
 }
 
+const RECENT_THISLESS_MEMBERS: usize = 128;
+
+const NO_MEMBER: Sym = Sym {
+    file: FileId(u32::MAX),
+    id: crate::bind::SymbolId::NONE,
+};
+
+struct ThislessMembers {
+    known: FxHashMap<Sym, bool>,
+    recent: [(Sym, bool); RECENT_THISLESS_MEMBERS],
+}
+
+impl Default for ThislessMembers {
+    fn default() -> Self {
+        ThislessMembers {
+            known: FxHashMap::default(),
+            recent: [(NO_MEMBER, false); RECENT_THISLESS_MEMBERS],
+        }
+    }
+}
+
+impl ThislessMembers {
+    #[inline]
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    fn get(&mut self, member: &Sym) -> Option<&bool> {
+        let recent = &mut self.recent[member.id.idx() % RECENT_THISLESS_MEMBERS];
+        if recent.0 != *member {
+            *recent = (*member, *self.known.get(member)?);
+        }
+        Some(&recent.1)
+    }
+
+    fn insert(&mut self, member: Sym, is_thisless: bool) {
+        self.recent[member.id.idx() % RECENT_THISLESS_MEMBERS] = (member, is_thisless);
+        self.known.insert(member, is_thisless);
+    }
+
+    fn retain(&mut self, is_kept: impl FnMut(&Sym, &mut bool) -> bool) {
+        self.recent = [(NO_MEMBER, false); RECENT_THISLESS_MEMBERS];
+        self.known.retain(is_kept);
+    }
+
+    fn len(&self) -> usize {
+        self.known.len()
+    }
+}
+
 // The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
 // one-byte offset.
 #[repr(C)]
 pub struct Checker<'p, 's> {
     files: &'p Files<'s>,
-    modules: &'p [ModuleCell<'s>],
+    modules: &'s [ModuleCell<'s>],
+    visited_module: std::cell::Cell<(FileId, Option<&'s crate::program::Module<'s>>)>,
     pub p: &'p Program<'s>,
     /// The arena of the thread that runs the task. It's for the records the task creates, which may
     /// be published. Everything else that a task allocates is on the regular heap.
@@ -1730,7 +1779,7 @@ pub struct Checker<'p, 's> {
     /// `has_this_type` of an interface.
     this_types: FxHashMap<Sym, bool>,
     /// See `is_thisless_for_this_mapper`.
-    thisless_members: FxHashMap<Sym, bool>,
+    thisless_members: ThislessMembers,
     /// See `skip_ancestors_without_flow_constraint`.
     flow_type_skips: FxHashMap<(FileId, Node), FlowTypeSkip>,
     /// `links.resolvedType` of instantiated symbols, by target and mapper. Only contains the ones that differ from what
@@ -1889,8 +1938,7 @@ pub struct Checker<'p, 's> {
     checked_type_references: (Option<FileId>, Vec<u64>),
     /// A file, and which of its expressions `prepare_ancestors` has processed.
     prepared_exprs: (FileId, Vec<bool>),
-    /// For the most recently queried file.
-    exprs_by_kind: Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>,
+    exprs_by_kind: [Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>; 2],
     /// See `provisional_shape`, which returns a reference to one and pushes the next.
     provisional_shapes: crate::util::memory::LocalVec<shape::Resolved<'s>>,
     /// The innermost resolution that was in progress at the rejection. The frame at `unwind_to`
@@ -2511,13 +2559,30 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── access ─────────────────────────────
 
     #[inline]
+    fn module(&self, file: FileId) -> &'s crate::program::Module<'s> {
+        match self.visited_module.get() {
+            (visited, Some(module)) if visited == file => module,
+            _ => self.look_up_module(file),
+        }
+    }
+
+    #[inline(never)]
+    fn look_up_module(&self, file: FileId) -> &'s crate::program::Module<'s> {
+        let module: &'s crate::program::Module<'s> = &self.modules[file.idx()];
+        if self.task.file == Some(file) {
+            self.visited_module.set((file, Some(module)));
+        }
+        module
+    }
+
+    #[inline]
     pub fn hir(&self, file: FileId) -> &'p hir::File<'s> {
-        &self.modules[file.idx()].hir
+        &self.module(file).hir
     }
 
     #[inline]
     pub fn bound(&self, file: FileId) -> &'p Bound<'s> {
-        &self.modules[file.idx()].bound
+        &self.module(file).bound
     }
 
     #[inline]
@@ -4426,14 +4491,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// otherwise iterate over all expressions. It's built once per file. The handle doesn't borrow
     /// `self`, so this works: `let index = self.exprs_by_kind(file); for &e in index.of(ExprTag::Call)`.
     pub(crate) fn exprs_by_kind(&mut self, file: FileId) -> std::rc::Rc<hir::ExprsByKind> {
-        match &self.exprs_by_kind {
-            Some((of, index)) if *of == file => std::rc::Rc::clone(index),
-            _ => {
-                let index = std::rc::Rc::new(hir::ExprsByKind::new(self.hir(file)));
-                self.exprs_by_kind = Some((file, std::rc::Rc::clone(&index)));
-                index
+        for (of, index) in self.exprs_by_kind.iter().flatten() {
+            if *of == file {
+                return std::rc::Rc::clone(index);
             }
         }
+        let index = std::rc::Rc::new(hir::ExprsByKind::new(self.hir(file)));
+        let is_visited = self.task.file == Some(file);
+        self.exprs_by_kind[usize::from(is_visited)] = Some((file, std::rc::Rc::clone(&index)));
+        index
     }
 
     /// Changes whenever an event makes the computation in progress invalid for the next caller: a

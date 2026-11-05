@@ -135,8 +135,12 @@ pub extern "C" fn Bun__AOT__onResolveAnswersFor(
     global: &JSGlobalObject,
     name: &bun_core::String,
     importer: &bun_core::String,
-) -> bool {
+    found: &mut bun_core::String,
+) -> u8 {
     use crate::virtual_machine::{ResolveMode, VirtualMachine};
+    const DECLINED: u8 = 0;
+    const ANSWERED: u8 = 1;
+    const THROWN: u8 = 2;
     let mut query_of_answer = bun_core::String::EMPTY;
     let answer = VirtualMachine::resolve_with_on_resolve::<true>(
         global,
@@ -147,9 +151,9 @@ pub extern "C" fn Bun__AOT__onResolveAnswersFor(
         false,
     );
     let answer = match answer {
-        Ok(None) => return false,
+        Ok(None) => return DECLINED,
         Ok(Some(Ok(answer))) => answer,
-        _ => return true,
+        _ => return THROWN,
     };
     unsafe extern "C" {
         safe fn Bun__AOT__setPluginsSilent(are_silent: bool);
@@ -172,7 +176,14 @@ pub extern "C" fn Bun__AOT__onResolveAnswersFor(
     Bun__AOT__setPluginsSilent(false);
     // SAFETY: as above.
     unsafe { (*global.bun_vm_ptr()).transpiler.resolver.opts.global_cache = installs };
-    !matches!(found_without_plugins, Ok(Ok(found)) if found.eql(&answer) && query_of_found.eql(&query_of_answer))
+    let Ok(Ok(found_without_plugins)) = found_without_plugins else {
+        return ANSWERED;
+    };
+    *found = bun_core::String::clone_utf8(found_without_plugins.to_utf8().slice());
+    if found_without_plugins.eql(&answer) && query_of_found.eql(&query_of_answer) {
+        return DECLINED;
+    }
+    ANSWERED
 }
 
 /// BunCompiledModules.cpp. `Dead`: the image is not asked.

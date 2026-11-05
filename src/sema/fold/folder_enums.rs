@@ -117,8 +117,21 @@ impl<'s> Folder<'_, 's> {
         true
     }
 
+    fn find_enum_behind_parameter_of_block(&self, symbol: SymbolId) -> SymbolId {
+        let bound = self.bound;
+        match *bound.symbol(symbol).decls {
+            [made_by @ Decl::Enum(_)]
+                if bound.container_parameter(bound.symbol_scope(symbol)) == symbol =>
+            {
+                bound.declared_symbol(made_by)
+            }
+            _ => symbol,
+        }
+    }
+
     fn is_enum_or_holds_one(&self, symbol: SymbolId) -> bool {
         let bound = self.bound;
+        let symbol = self.find_enum_behind_parameter_of_block(symbol);
         let symbol = bound.export_symbol_of_value_symbol_if_exported(symbol);
         let flags = bound.symbol(symbol).flags;
         flags.intersects(SymFlags::NAMESPACE | SymFlags::ENUM_MEMBER)
@@ -185,6 +198,7 @@ impl<'s> Folder<'_, 's> {
         names: &[Atom],
     ) -> Option<EnumMemberId> {
         let (hir, bound) = (self.hir, self.bound);
+        let symbol = self.find_enum_behind_parameter_of_block(symbol);
         let root = bound.export_symbol_of_value_symbol_if_exported(symbol);
         if !self.is_enum_or_holds_one(root) || !self.has_static_lookup(first) {
             return None;

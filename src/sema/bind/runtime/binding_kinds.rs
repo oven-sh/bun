@@ -49,18 +49,17 @@ fn declared_binding_kind_of(
     if has_bit(&bound.runtime.declarations.valueless_symbols, binding.idx()) {
         return BindingKind::NoBinding;
     }
-    let decls = bound.symbols[listing.idx()].decls.iter();
-    let kinds = decls.map(|&decl| {
+    let mut highest = BindingKind::NoBinding;
+    for &decl in bound.symbols[listing.idx()].decls.iter() {
         let kind = declaration_binding_kind(hir, bound, decl);
-        if kind != BindingKind::NoBinding && runtime_symbol(bound, decl) == binding {
-            kind
-        } else {
-            BindingKind::NoBinding
+        if kind > highest && runtime_symbol(bound, decl) == binding {
+            highest = kind;
         }
-    });
-    kinds.max().unwrap_or(BindingKind::NoBinding)
+    }
+    highest
 }
 
+#[inline]
 fn declaration_binding_kind(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) -> BindingKind {
     match declaration_kind(hir, bound, decl) {
         DeclarationKind::Var => BindingKind::Var,

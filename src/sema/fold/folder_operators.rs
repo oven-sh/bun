@@ -26,11 +26,25 @@ impl<'s> Folder<'_, 's> {
                 }
                 folded
             }
-            ExprKind::Binary { op, left, right } => self.fold_binary(e, op, left, right),
+            ExprKind::Binary { op, left, right } => {
+                if self.bound.may_name_own_path()
+                    && let (BinOp::Add, ExprKind::String(end)) = (op, hir[right].kind)
+                {
+                    self.note_path_written_from_own_directory(e, end);
+                }
+                self.fold_binary(e, op, left, right)
+            }
             ExprKind::Cond { test, branches } => {
                 self.fold_conditional(e, test, hir.branches(branches))
             }
-            ExprKind::Template { exprs } => self.fold_template(e, exprs),
+            ExprKind::Template { exprs } => {
+                if self.bound.may_name_own_path()
+                    && let Some(end) = hir.ids(hir.template_texts(exprs)).next_back()
+                {
+                    self.note_path_written_from_own_directory(e, end);
+                }
+                self.fold_template(e, exprs)
+            }
             ExprKind::As { expr, .. }
             | ExprKind::Satisfies { expr, .. }
             | ExprKind::AsConst(expr)
@@ -49,7 +63,15 @@ impl<'s> Folder<'_, 's> {
             }
             ExprKind::ImportMeta => self.fold_import_meta(e),
             ExprKind::This => self.fold_this(e),
-            ExprKind::Call(call) => self.fold_call(e, hir[call]),
+            ExprKind::Call(call) => {
+                if self.bound.may_name_own_path()
+                    && let Some(last) = hir.ids(hir[call].args).next_back()
+                    && let ExprKind::String(end) = hir[last].kind
+                {
+                    self.note_path_written_from_own_directory(e, end);
+                }
+                self.fold_call(e, hir[call])
+            }
             ExprKind::ImportCall { args } => self.fold_import_call(args),
             ExprKind::New(call) => self.fold_construction(e, hir[call]),
             ExprKind::Array(items) => {

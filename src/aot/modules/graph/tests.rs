@@ -111,6 +111,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         left_out_inner_modules: Vec::new(),
         other_modules: Vec::new(),
         external_kinds: Vec::new(),
+        runs_code_out_of_sight: false,
         synthetic_exports: Vec::new(),
         errors: Vec::new(),
         failures: Vec::new(),

@@ -18,7 +18,14 @@ const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require
 // As the streams defined it: the program may have stored another before this file was loaded.
 const duplexResume = streamInternals.readableMethods!.resume;
 const duplexRemoveListener = streamInternals.readableMethods!.removeListener;
-const { queueTick1, queueTick2, ticksAreUnseen, ring, asyncContext } = require("internal/process/next_tick_queue");
+const {
+  enqueueTick1,
+  queueTick1,
+  queueTick2,
+  ticksAreUnseen,
+  ring,
+  asyncContext,
+} = require("internal/process/next_tick_queue");
 let statusMessageLastChecked = "";
 const kFlowing = 1 << 24;
 const kHasPaused = 1 << 25;
@@ -4424,7 +4431,12 @@ ServerResponse.prototype[kRejectNonStandardBodyWrites] = undefined;
 
 Object.defineProperty(ServerResponse.prototype, "headersSent", {
   get(this: $Node.ServerResponse) {
-    return headerStateOf(this) === NodeHTTPHeaderState.sent || headerStateOf(this) === NodeHTTPHeaderState.assigned;
+    const exchange = this.$exchange;
+    if (exchange !== undefined && exchange.response === this) {
+      const state = exchange.headerState;
+      return state === NodeHTTPHeaderState.sent || state === NodeHTTPHeaderState.assigned;
+    }
+    return this[headerStateSymbol] === NodeHTTPHeaderState.sent || headerStateOf(this) === NodeHTTPHeaderState.assigned;
   },
   set(this: $Node.ServerResponse, value: boolean) {
     storeHeaderState(this, this.$exchange, value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none);
@@ -4583,13 +4595,20 @@ function queueExchangeTick(exchange: Exchange, flags: number): void {
   queueTick1(finishExchange, exchange);
 }
 
+// For a caller that has asked ticksAreUnseen().
+function queueExchangeTickUnseen(exchange: Exchange, flags: number): void {
+  exchange.flags = flags | EXCHANGE_TICK_QUEUED;
+  exchange.queuedTick = ring.write!;
+  enqueueTick1(finishExchange, exchange);
+}
+
 // A first chunk that write() has not sent, with the head as write() rendered it. Its socket holds it.
 class HeldChunk {
-  exchange: Exchange;
-  chunk: string;
-  headers: unknown[];
-  autoHeaders: number;
-  keepAliveSecs: number;
+  declare exchange: Exchange;
+  declare chunk: string;
+  declare headers: unknown[];
+  declare autoHeaders: number;
+  declare keepAliveSecs: number;
 
   constructor(exchange: Exchange, chunk: string, headers: unknown[], autoHeaders: number, keepAliveSecs: number) {
     this.exchange = exchange;
@@ -5397,7 +5416,7 @@ ServerResponse.prototype.end = function (
       exchange.endCallback = callback!;
       flags |= EXCHANGE_HAS_END_CALLBACK;
     }
-    if ((flags & EXCHANGE_TICK_QUEUED) === 0) queueExchangeTick(exchange, flags | EXCHANGE_ENDED_CLEAN);
+    if ((flags & EXCHANGE_TICK_QUEUED) === 0) queueExchangeTickUnseen(exchange, flags | EXCHANGE_ENDED_CLEAN);
     // write() queued the tick, and a tick runs in the async context that it was queued in. `finish`, `close` and the callback are end()'s.
     else if (
       exchange.queuedTick!.next === ring.write &&
@@ -5405,7 +5424,7 @@ ServerResponse.prototype.end = function (
     )
       exchange.flags = flags | EXCHANGE_ENDED_CLEAN | EXCHANGE_ENDED_BEFORE_ITS_TICK;
     else
-      queueExchangeTick(
+      queueExchangeTickUnseen(
         exchange,
         flags | EXCHANGE_ENDED_CLEAN | EXCHANGE_ENDED_BEFORE_ITS_TICK | EXCHANGE_SKIPS_A_TICK,
       );

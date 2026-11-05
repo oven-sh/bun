@@ -188,7 +188,9 @@ impl Places {
     #[inline(never)]
     fn add_entries_up_to(&mut self, index: usize) {
         let length = (index + 1).max(2 * self.entries.len());
-        self.entries.resize(length, 0);
+        let mut entries = vec![0; length];
+        entries[..self.entries.len()].copy_from_slice(&self.entries);
+        self.entries = entries;
     }
 
     #[inline]
@@ -261,8 +263,8 @@ impl TaskState {
             tables: self.tables,
             finders: self.finders,
             marks: self.marks,
-            layout_places: Places::default(),
-            function_places: Places::default(),
+            layout_places: self.layout_places,
+            function_places: self.function_places,
             memo: self.memo.hand_on(carried),
             orders: KnownOrders::default(),
             is_of_program: carried.and(self.is_of_program),

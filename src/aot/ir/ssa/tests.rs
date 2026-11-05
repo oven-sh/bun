@@ -54,18 +54,22 @@ fn write_in_successive_blocks(
 }
 
 fn variable_parameters(builder: &FunctionBuilder, block: BlockId) -> &[ValueId] {
-    &builder.blocks[block.index()].variable_parameters
+    let parameters = builder.blocks[block.index()].variable_parameters;
+    parameters.items(&builder.listed_values)
 }
 
 fn variable_arguments(builder: &FunctionBuilder, block: BlockId, target: usize) -> &[ValueId] {
     let terminator = builder.blocks[block.index()].terminator.as_ref();
     let terminator = terminator.expect("the block is terminated");
-    &terminator.targets[target].variable_arguments
+    let own = terminator.targets.start as usize..terminator.targets.end as usize;
+    let arguments = builder.targets[own][target].variable_arguments;
+    arguments.items(&builder.listed_values)
 }
 
 fn handler_arguments(builder: &FunctionBuilder, block: BlockId) -> &[ValueId] {
     let handler = builder.blocks[block.index()].handler.as_ref();
-    &handler.expect("the block is covered").variable_arguments
+    let arguments = handler.expect("the block is covered").variable_arguments;
+    arguments.items(&builder.listed_values)
 }
 
 fn values_of(builder: &FunctionBuilder, block: BlockId) -> Vec<ValueId> {
@@ -814,7 +818,7 @@ fn definition_blocks_are_recorded_up_to_one_past_shortcut_limit() {
     let mut builder = create_builder(&[]);
     let variable = builder.create_variable(None);
     write_in_successive_blocks(&mut builder, variable, MAX_SHORTCUT_DEFINITION_BLOCKS + 4);
-    let definition_blocks = &builder.ssa.variables[variable.0 as usize].definition_blocks;
+    let definition_blocks = builder.ssa.variables[variable.0 as usize].definition_blocks;
     assert_eq!(definition_blocks.len(), MAX_SHORTCUT_DEFINITION_BLOCKS + 1);
 
     let rewritten = builder.create_variable(None);
@@ -822,8 +826,11 @@ fn definition_blocks_are_recorded_up_to_one_past_shortcut_limit() {
         let value = builder.integer(constant);
         builder.write_variable(rewritten, value);
     }
-    let definition_blocks = &builder.ssa.variables[rewritten.0 as usize].definition_blocks;
-    assert_eq!(definition_blocks[..], [builder.current_block()]);
+    let definition_blocks = builder.ssa.variables[rewritten.0 as usize].definition_blocks;
+    assert_eq!(
+        definition_blocks.items(&builder.ssa.listed_blocks),
+        [builder.current_block()]
+    );
 }
 
 #[test]
@@ -883,17 +890,17 @@ fn split_continues_in_sealed_block_under_same_handler() {
     assert!(builder.is_open());
     assert!(builder.ssa.is_sealed(next));
     assert_eq!(builder.handler_of(next), Some(handler));
-    assert_eq!(builder.ssa.states[next.index()].predecessors[..], [covered]);
-    let landing = &builder.ssa.states[handler.block().index()];
-    assert_eq!(landing.predecessors[..], [covered, next]);
+    assert_eq!(builder.ssa.predecessors_of(next), [covered]);
+    assert_eq!(
+        builder.ssa.predecessors_of(handler.block()),
+        [covered, next]
+    );
     let terminator = builder.blocks[covered.index()].terminator.as_ref();
     let terminator = terminator.expect("the split closes the block");
     assert_eq!(terminator.kind, TerminatorKind::Jump);
-    let targets: Vec<BlockId> = terminator
-        .targets
-        .iter()
-        .map(|target| target.block)
-        .collect();
+    let own = terminator.targets.start as usize..terminator.targets.end as usize;
+    let targets = builder.targets[own].iter().map(|target| target.block);
+    let targets: Vec<BlockId> = targets.collect();
     assert_eq!(targets, [next]);
 }
 

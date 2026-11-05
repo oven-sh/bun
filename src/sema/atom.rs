@@ -7,6 +7,7 @@ use crate::session::Session;
 use crate::types::{OwnStore, Sharing};
 use crate::util::memory::Cells;
 use crate::util::{AppendVec, GrowingSlots, SHARDS, spread_hash};
+use smallvec::SmallVec;
 use std::alloc::Global;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -525,6 +526,13 @@ pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 /// `InternalSymbolNamePrefix` and `#`. The string key `"#x"` is a different name.
 pub const PRIVATE_NAME_PREFIX: &[u8] = b"\xFE#";
 
+fn with_symbol_name_prefix(name: &[u8]) -> SmallVec<[u8; 64]> {
+    let mut text = SmallVec::new();
+    text.extend_from_slice(SYMBOL_NAME_PREFIX);
+    text.extend_from_slice(name);
+    text
+}
+
 /// `isReservedMemberName`: a name that the binder makes up, other than that of a symbol-keyed or a private property.
 pub fn is_reserved_member_name(name: &[u8]) -> bool {
     matches!(name, [0xFE, next, ..] if !matches!(next, b'@' | b'#'))
@@ -533,7 +541,7 @@ pub fn is_reserved_member_name(name: &[u8]) -> bool {
 /// `SymbolName`: returns the `#x` of a private name, which is stored as `\xFE#x@<class>`. Returns
 /// any other name unchanged.
 pub fn written_name(name: &[u8]) -> &[u8] {
-    if !name.starts_with(PRIVATE_NAME_PREFIX) {
+    if !matches!(name, [0xFE, b'#', ..]) {
         return name;
     }
     let private_name = &name[1..];
@@ -924,7 +932,7 @@ impl<'s> Interner<'s> {
     /// `name@id`, returns the name of the property keyed by a `unique symbol`
     /// (`getESSymbolLikeTypeForNode`).
     pub fn symbol_name(&self, name: &[u8]) -> Atom {
-        self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
+        self.intern(&with_symbol_name_prefix(name))
     }
 }
 
@@ -934,6 +942,12 @@ fn as_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
         [0xFE, rest @ ..] => std::borrow::Cow::Owned(format!("__{}", bstr::BStr::new(rest))),
         bytes => std::borrow::Cow::Owned(crate::messages::text(bytes)),
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SymbolNameKind {
+    Symbol,
+    Private,
 }
 
 /// The published atoms and the task-local ones, which is everything a task can see.
@@ -999,16 +1013,34 @@ impl<'p, 's> Atoms<'p, 's> {
 
     /// See `Interner::symbol_name`.
     pub fn symbol_name(&self, name: &[u8]) -> Atom {
-        self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
+        self.intern(&with_symbol_name_prefix(name))
     }
 
     /// Returns `class_of` for `atom`'s text.
     #[inline]
     fn class(&self, atom: Atom) -> u32 {
         if atom.is_own() {
-            return class_of(self.bytes(atom));
+            return self.own_class(atom);
         }
         self.published.class(atom)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn own_class(&self, atom: Atom) -> u32 {
+        class_of(self.own_bytes(atom))
+    }
+
+    #[inline]
+    pub fn symbol_name_kind(&self, atom: Atom) -> Option<SymbolNameKind> {
+        let class = self.class(atom);
+        if atom.is_some() && class & class::IS_SYMBOL_NAME != 0 {
+            Some(SymbolNameKind::Symbol)
+        } else if class & class::IS_PRIVATE_SYMBOL_NAME != 0 {
+            Some(SymbolNameKind::Private)
+        } else {
+            None
+        }
     }
 
     /// `isLateBoundName`

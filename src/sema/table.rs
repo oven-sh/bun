@@ -1381,24 +1381,33 @@ where
         task: &Task<'s>,
         (spread, key, value): (u64, &K, V),
         stored: Stored,
-    ) -> Result<V, bool> {
+    ) -> Result<V, (bool, Option<crate::local::Vacancy>)> {
         if !task.writes_immediately() || key.is_bound(&task.own) || value.is_bound(&task.own) {
-            return Err(true);
+            return Err((true, None));
+        }
+        if !task.may_write_immediately(self.slot.number(), stored) {
+            task.hold_back();
+            return Err((true, None));
         }
         // If the task already has a deferred entry under the key, it keeps using that one.
-        let own = || task.buffer().typed(&self.slot)?.get(spread, key).copied();
-        if !task.may_write_immediately(self.slot.number(), stored) || own().is_some() {
-            task.hold_back();
-            return Err(true);
-        }
+        let vacancy = match task.buffer().typed(&self.slot) {
+            Some(own) => match own.vacancy_for(spread, key) {
+                Some(vacancy) => Some(vacancy),
+                None => {
+                    task.hold_back();
+                    return Err((true, None));
+                }
+            },
+            None => None,
+        };
         if stays_in_task(task, key) {
-            return Err(false);
+            return Err((false, vacancy));
         }
         let is_first = self.published.add_if_absent(spread, key, value);
         if is_first {
             return Ok(value);
         }
-        (self.published.get_acquire(spread, key).copied()).ok_or(true)
+        (self.published.get_acquire(spread, key).copied()).ok_or((true, vacancy))
     }
 
     /// `spread` is `key`'s hash.
@@ -1423,19 +1432,24 @@ where
         stored: Stored,
         replaces: bool,
     ) -> V {
-        let is_committed = match self.put_immediately(task, (spread, &key, value), stored) {
-            Ok(shared_value) => return shared_value,
-            Err(is_committed) => is_committed,
-        };
+        let (is_committed, vacancy) =
+            match self.put_immediately(task, (spread, &key, value), stored) {
+                Ok(shared_value) => return shared_value,
+                Err(left_to_task) => left_to_task,
+            };
         let is_shared = is_committed && !key.is_local();
         let own = task.buffer().typed_or_new(&self.slot);
         let new_index = own.len();
-        let current = match replaces {
-            true => {
+        let current = match (vacancy, replaces) {
+            (Some(vacancy), _) => {
+                own.insert_absent(vacancy, spread, key, value);
+                value
+            }
+            (None, true) => {
                 own.replace(spread, key, value);
                 value
             }
-            false => *own.insert(spread, key, value),
+            (None, false) => *own.insert(spread, key, value),
         };
         // An existing entry is already logged, and a commit stores whatever value it has at that point.
         if is_shared && own.len() != new_index {

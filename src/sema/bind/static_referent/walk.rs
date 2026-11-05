@@ -925,14 +925,14 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         let hir = context.hir(file);
         let mut value = None;
         for property in properties.iter() {
-            let holds_value = match hir[property].kind {
+            let holds_value = || match hir[property].kind {
                 PropKind::Init | PropKind::Shorthand | PropKind::Method => true,
                 PropKind::Getter | PropKind::Setter | PropKind::Spread => false,
             };
             match hir.runtime_property_key(property) {
                 PropKey::Name(key) if key != name => {}
                 PropKey::Private(_) => {}
-                PropKey::Name(_) if holds_value => value = Some(hir[property].value),
+                PropKey::Name(_) if holds_value() => value = Some(hir[property].value),
                 PropKey::Name(_) | PropKey::None | PropKey::Computed(_) => value = None,
             }
         }

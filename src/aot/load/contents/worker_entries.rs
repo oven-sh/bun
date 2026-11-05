@@ -1,13 +1,14 @@
 mod texts;
 
+use std::mem::take;
 use std::sync::OnceLock;
 
 use bun_ast::Loader;
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, Decl, Parent, SymbolId};
-use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, Decl, Parent, SymbolId};
+use bun_sema::fold::{Constant, FoldedValue, ends_in_name_with_extension};
 use bun_sema::hir::{
     BinOp, CallId, ExportSpecId, ExprId, ExprKind, File, MemberKey, NodeData, PatId, PatKind,
     PropKey, PropKind, StmtId, StmtKind, UnOp,
@@ -20,11 +21,15 @@ use bun_sema::resolve::{
     CodeResolution, ComputedCandidate, ComputedResolution, ExternalKind, FinishedFile,
     SiteResolution,
 };
+use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
 
+use super::entry_points::is_relative_path;
+use super::load_names::{is_made_of_texts, is_part_of_longer_text, is_written_as_value};
 use super::scan::ContentsScan;
-use crate::builtins::table::{self, BuiltinFlags};
+use crate::builtins::table::{self, BuiltinFlags, Origin};
 use crate::builtins::{BuiltinId, BuiltinName, Intrinsic, Resolved, RuntimeModule};
+use crate::load::is_in_node_modules;
 use crate::load::module_paths::with_separators_of_host;
 use crate::module_keys::is_name_of_text;
 use crate::options::PathOptions;
@@ -33,6 +38,7 @@ use crate::options::PathOptions;
 pub(crate) enum WorkerNameForm {
     AsWritten,
     FromOwnFolder,
+    OwnFile,
     Resolved(ResolvedForm),
     EmbeddedFile(u32),
 }
@@ -43,7 +49,14 @@ pub(crate) struct WorkerStart {
     pub name_node: ExprId,
     pub name: ImportSpecifier,
     pub form: WorkerNameForm,
-    pub is_argument_of_constructor: bool,
+    pub place: PlaceOfName,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum PlaceOfName {
+    Constructor,
+    Preload,
+    Elsewhere,
 }
 
 struct WorkerBuiltins {
@@ -141,6 +154,31 @@ fn is_condition_or_unused(hir: &File<'_>, node: ExprId, statement: StmtId) -> bo
     }
 }
 
+fn loads_runtime_module(resolution: SiteResolution<'_>) -> bool {
+    match resolution {
+        SiteResolution::Constant(CodeResolution::File(file)) => file.host_module.is_some(),
+        SiteResolution::Constant(resolution) => matches!(
+            resolution,
+            CodeResolution::HostModule(_)
+                | CodeResolution::External {
+                    kind: ExternalKind::HostValue,
+                    ..
+                }
+        ),
+        SiteResolution::Computed(_) => false,
+    }
+}
+
+fn makes_another_value(kind: ExprKind) -> bool {
+    matches!(
+        kind,
+        ExprKind::Binary { op: BinOp::Add, .. }
+            | ExprKind::Template { .. }
+            | ExprKind::Dot { .. }
+            | ExprKind::Index { .. }
+    )
+}
+
 fn begins_with_scheme(text: &[u8]) -> bool {
     let Some(end) = strings::index_of_char_usize(text, b':') else {
         return false;
@@ -192,17 +230,298 @@ impl ContentsScan<'_, '_> {
             Some(Constructor::Worker) => self.add_start_of_worker(expression, call),
             Some(Constructor::Url) if !self.is_worker_argument(expression) => {
                 if let Some((name_node, name)) = self.find_file_named_by_own_url(call) {
-                    self.found.worker_starts.push(WorkerStart {
-                        at: expression,
-                        name_node,
-                        name: ImportSpecifier::Constant(name),
-                        form: WorkerNameForm::FromOwnFolder,
-                        is_argument_of_constructor: false,
-                    });
+                    let name = ImportSpecifier::Constant(name);
+                    let form = WorkerNameForm::FromOwnFolder;
+                    self.add_name_written_elsewhere(expression, name_node, name, form);
                 }
             }
             Some(Constructor::Url) | None => {}
         }
+    }
+
+    fn add_name_written_elsewhere(
+        &mut self,
+        at: ExprId,
+        name_node: ExprId,
+        name: ImportSpecifier,
+        form: WorkerNameForm,
+    ) {
+        let request = self.request;
+        if is_in_node_modules(request.path)
+            || request.analysis.decisions.is_dead_expr(at)
+            || !is_written_as_value(request, at)
+            || self.is_worker_argument(at)
+            || self.find_value_handed_on(at).is_none()
+        {
+            return;
+        }
+        self.found.worker_starts.push(WorkerStart {
+            at,
+            name_node,
+            name,
+            form,
+            place: PlaceOfName::Elsewhere,
+        });
+    }
+
+    pub(super) fn look_at_paths_written_from_own_folder(&mut self) {
+        let request = self.request;
+        let decisions = &request.analysis.decisions;
+        for &(path, name) in decisions.paths_written_from_own_directory() {
+            if !is_part_of_longer_text(request, path) {
+                let name = ImportSpecifier::Constant(name);
+                self.add_name_written_elsewhere(path, path, name, WorkerNameForm::FromOwnFolder);
+            }
+        }
+    }
+
+    pub(super) fn look_at_name_asked_of_resolver(&mut self, index: usize) {
+        let &FinishedFile {
+            hir,
+            analysis,
+            atoms,
+            ..
+        } = self.request;
+        let site = &analysis.import_sites[index];
+        let (call, form) = match site.kind {
+            ImportSiteKind::RequireResolve(call) => (call, ResolvedForm::Path),
+            ImportSiteKind::ImportMetaResolve(call) => (call, ResolvedForm::Url),
+            _ => return,
+        };
+        let (ExprKind::Call(written), ImportSpecifier::Constant(name)) =
+            (hir[call].kind, site.specifier)
+        else {
+            return;
+        };
+        if hir[written].args.len() == 1 && is_relative_path(atoms.bytes(name)) {
+            let form = WorkerNameForm::Resolved(form);
+            self.add_name_written_elsewhere(call, site.specifier_node, site.specifier, form);
+        }
+    }
+
+    pub(super) fn look_at_relative_path(&mut self, expression: ExprId, text: Atom) {
+        let request = self.request;
+        let bytes = request.atoms.bytes(text);
+        if is_relative_path(bytes)
+            && ends_in_name_with_extension(bytes)
+            && is_made_of_texts(request, expression)
+            && !is_part_of_longer_text(request, expression)
+        {
+            let (name, form) = (ImportSpecifier::Constant(text), WorkerNameForm::AsWritten);
+            self.add_name_written_elsewhere(expression, expression, name, form);
+        }
+    }
+
+    pub(super) fn look_at_names_of_own_file(&mut self) {
+        let &FinishedFile {
+            hir,
+            bound,
+            analysis,
+            ..
+        } = self.request;
+        if !bound.may_name_own_path() {
+            return;
+        }
+        for (mention, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
+            if !analysis.decisions.is_dead_expr(mention) {
+                self.look_at_name_of_own_file(mention, node.kind);
+            }
+        }
+        self.look_at_holders_of_own_file();
+    }
+
+    fn look_at_name_of_own_file(&mut self, mention: ExprId, kind: ExprKind) {
+        let bound = self.request.bound;
+        let filename = CommonJsVariable::Filename;
+        match kind {
+            ExprKind::Ident(known::filename)
+                if bound.binding(mention) == Binding::CommonJs(filename)
+                    && self.find_source_path(mention, filename).is_some() =>
+            {
+                self.look_at_own_file_held(mention, true);
+            }
+            ExprKind::ImportMeta => self.look_at_import_meta(mention),
+            _ => {}
+        }
+    }
+
+    fn look_at_import_meta(&mut self, written: ExprId) {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let mut meta = written;
+        while let Parent::Expr(above) = bound.parent_of_expr(meta) {
+            if hir.type_assertion_operand(above).is_none() {
+                break;
+            }
+            meta = above;
+        }
+        let member = match bound.parent_of_expr(meta) {
+            Parent::Expr(above) => hir
+                .member_key(above)
+                .map(|(object, key)| (above, object, key)),
+            _ => None,
+        };
+        match member {
+            Some((
+                read,
+                object,
+                MemberKey::Name(known::url | known::meta_filename | known::path)
+                | MemberKey::Computed(_),
+            )) if object == meta => self.look_at_own_file_held(read, true),
+            Some((_, object, _)) if object == meta => {}
+            _ => self.look_at_own_file_held(meta, false),
+        }
+    }
+
+    fn look_at_own_file_held(&mut self, held: ExprId, follows_holder: bool) {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let Some(value) = self.find_value_handed_on(held) else {
+            return;
+        };
+        let holder = match bound.parent_of_expr(value) {
+            Parent::VarInit(declaration) if follows_holder => Some(hir[declaration].pat),
+            Parent::Expr(above) if makes_another_value(hir[above].kind) => return,
+            _ => None,
+        };
+        let holder = holder.filter(|&name| self.is_stable_unexported_name(name));
+        match holder.map(|name| bound.initialized_binding(name)) {
+            Some(Binding::Symbol(symbol)) => self.holders_of_own_file.push(symbol),
+            _ => {
+                let (name, form) = (ImportSpecifier::Unknown, WorkerNameForm::OwnFile);
+                self.add_name_written_elsewhere(value, held, name, form);
+            }
+        }
+    }
+
+    fn look_at_holders_of_own_file(&mut self) {
+        let mut holders = take(&mut self.holders_of_own_file);
+        if holders.is_empty() {
+            return;
+        }
+        holders.shared_sort_unstable();
+        let hir = self.request.hir;
+        for read in (0..hir.exprs.len() as u32).map(ExprId) {
+            let symbol = match hir[read].kind {
+                ExprKind::Ident(_) => self.find_symbol_read(read),
+                _ => None,
+            };
+            if symbol.is_some_and(|symbol| holders.binary_search(&symbol).is_ok()) {
+                self.look_at_own_file_held(read, false);
+            }
+        }
+    }
+
+    fn find_value_handed_on(&self, written: ExprId) -> Option<ExprId> {
+        let mut value = written;
+        while let Some((made, call)) = self.find_call_given(value) {
+            if self.spells_same_file(call) {
+                value = self.find_text_of_url(made).unwrap_or(made);
+            } else if self.calls_builtin(call) {
+                return None;
+            } else {
+                break;
+            }
+        }
+        Some(value)
+    }
+
+    fn find_text_of_url(&self, url: ExprId) -> Option<ExprId> {
+        let &FinishedFile {
+            hir, bound, atoms, ..
+        } = self.request;
+        let Parent::Expr(above) = bound.parent_of_expr(url) else {
+            return None;
+        };
+        match hir.member_key(above) {
+            Some((object, MemberKey::Name(name))) if object == url => {
+                matches!(atoms.bytes(name), b"href" | b"pathname").then_some(above)
+            }
+            _ => None,
+        }
+    }
+
+    fn find_call_given(&self, value: ExprId) -> Option<(ExprId, CallId)> {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let mut node = value;
+        loop {
+            let Parent::Expr(parent) = bound.parent_of_expr(node) else {
+                return None;
+            };
+            if hir.type_assertion_operand(parent).is_some() {
+                node = parent;
+                continue;
+            }
+            let (ExprKind::Call(call) | ExprKind::New(call)) = hir[parent].kind else {
+                return None;
+            };
+            let is_argument = hir.ids(hir[call].args).any(|argument| argument == node);
+            return is_argument.then_some((parent, call));
+        }
+    }
+
+    fn calls_builtin(&self, call: CallId) -> bool {
+        let hir = self.request.hir;
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let builtin = self.find_builtin_that_may_be_named(callee);
+        builtin.is_some_and(|builtin| table::entry(builtin).origin == Origin::Host)
+            || self.is_export_of_runtime_module(callee)
+    }
+
+    fn is_export_of_runtime_module(&self, callee: ExprId) -> bool {
+        let hir = self.request.hir;
+        let holder = match hir.member_key(callee) {
+            Some((object, _)) => hir.skip_type_assertions(object),
+            None => callee,
+        };
+        let load = match hir[holder].kind {
+            ExprKind::Ident(_) => {
+                let symbol = self.find_symbol_read(holder);
+                symbol.and_then(|symbol| self.find_load_that_fills(symbol))
+            }
+            _ => self.find_load_at(holder),
+        };
+        load.is_some_and(|load| loads_runtime_module(self.request.resolutions[load]))
+    }
+
+    fn find_load_that_fills(&self, symbol: SymbolId) -> Option<usize> {
+        let &FinishedFile {
+            hir,
+            bound,
+            analysis,
+            ..
+        } = self.request;
+        let import = match *bound.symbol(symbol).decls {
+            [Decl::ImportNamespace(import) | Decl::ImportDefault(import)] => Some(import),
+            [Decl::ImportSpec(specifier)] => Some(hir[specifier].import),
+            _ => None,
+        };
+        if let Some(import) = import {
+            return analysis.import_site_index(ImportSiteKind::Import(import));
+        }
+        match bound.binding_initializer(hir, symbol) {
+            BindingInitializer::Expression(source)
+            | BindingInitializer::PatternProperty { source, .. } => {
+                self.find_load_at(hir.skip_type_assertions(source))
+            }
+            _ => None,
+        }
+    }
+
+    fn find_load_at(&self, call: ExprId) -> Option<usize> {
+        let &FinishedFile { hir, analysis, .. } = self.request;
+        match hir[call].kind {
+            ExprKind::Call(_) => analysis.import_site_of_call(call),
+            _ => None,
+        }
+    }
+
+    fn spells_same_file(&self, call: CallId) -> bool {
+        let hir = self.request.hir;
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let urls = worker_builtins().urls;
+        let export = urls.and_then(|urls| self.find_export_named(callee, urls));
+        hir[call].args.len() == 1
+            && (matches!(export, Some(known::fileURLToPath | known::pathToFileURL))
+                || self.find_constructor_called(call) == Some(Constructor::Url))
     }
 
     pub(super) fn look_at_name_of_worker_constructor(&mut self, expression: ExprId) {
@@ -398,7 +717,7 @@ impl ContentsScan<'_, '_> {
             name_node: argument,
             name,
             form,
-            is_argument_of_constructor: true,
+            place: PlaceOfName::Constructor,
         });
     }
 
@@ -444,7 +763,7 @@ impl ContentsScan<'_, '_> {
                     name_node,
                     name: ImportSpecifier::Constant(text),
                     form: WorkerNameForm::AsWritten,
-                    is_argument_of_constructor: false,
+                    place: PlaceOfName::Preload,
                 });
             }
         }

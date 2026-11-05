@@ -378,6 +378,37 @@ fn annex_b_blocked() {
 }
 
 #[test]
+fn annex_b_leaves_the_arguments_object() {
+    for text in [
+        "function g() { { function arguments() {} } return arguments; }",
+        "function g(x) { { function arguments() {} } return arguments; }",
+        "function g(...x) { { function arguments() {} } return arguments; }",
+        "function g() { var arguments; { function arguments() {} } return arguments; }",
+        "function g() { if (g) function arguments() {} return arguments; }",
+        "const o = { g() { { function arguments() {} } return arguments; } };",
+    ] {
+        analyzed("a.cjs", text, |s| {
+            let owner = CodeUnit::Function(s.function("g"));
+            assert_eq!(s.bound.runtime.annex_b_functions(), [], "{text}");
+            assert_eq!(s.binding("arguments", 0), Arguments(owner), "{text}");
+        });
+    }
+    analyzed("a.cjs", "{ function arguments() {} } arguments;", |s| {
+        assert_eq!(s.bound.runtime.annex_b_functions(), []);
+        assert_eq!(s.binding("arguments", 0), Arguments(CodeUnit::File));
+    });
+    for text in [
+        "const g = () => { { function arguments() {} } return arguments; };",
+        "function g() { function arguments() {} { function arguments() {} } return arguments; }",
+    ] {
+        analyzed_hoist(text, |s, hoist| {
+            let hoisted = Symbol(hoist.var_symbol);
+            assert_eq!(s.binding("arguments", 0), hoisted, "{text}");
+        });
+    }
+}
+
+#[test]
 fn parameter_scopes() {
     analyzed("a.cjs", "function f(a = () => b) { var b; }", |s| {
         assert_eq!(s.binding("b", 0), Free);

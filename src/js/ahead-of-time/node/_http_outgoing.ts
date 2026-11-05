@@ -984,43 +984,43 @@ interface ResponseEvents {
 }
 
 class Exchange {
-  flags: number;
-  headerState: number;
-  headerBits: number;
-  shape: HeaderShape;
-  value0: number | string;
-  value1: number | string;
-  value2: number | string;
-  value3: number | string;
-  value4: number | string;
-  value5: number | string;
-  statusCode: number;
-  statusMessage: string;
-  bytesBuffered: number;
-  isFrozenChunked: boolean;
-  isImplicitFromEnd: boolean;
+  declare flags: number;
+  declare headerState: number;
+  declare headerBits: number;
+  declare shape: HeaderShape;
+  declare value0: number | string;
+  declare value1: number | string;
+  declare value2: number | string;
+  declare value3: number | string;
+  declare value4: number | string;
+  declare value5: number | string;
+  declare statusCode: number;
+  declare statusMessage: string;
+  declare bytesBuffered: number;
+  declare isFrozenChunked: boolean;
+  declare isImplicitFromEnd: boolean;
   /** The socket the dispatcher already detached a synchronously-finished response from. */
-  detachedFrom: $Node.HttpServerSocket | null;
-  isReplaying: boolean;
-  isFlushScheduled: boolean;
-  mustClose: boolean;
-  response: $Node.ServerResponse;
-  connection: $Node.HttpServerSocket | null;
-  endCallback: $Node.HttpWriteCallback | null;
-  queuedTick: import("internal/process/tick_ring").Tick | null;
-  events: ResponseEvents;
-  pendingFinish: $Node.HttpWriteCallback | null | undefined;
-  holdsNumber: boolean;
-  onWritable: (() => void) | null;
-  awaitsClose: boolean;
-  dispatchPromise: Promise<void> | null;
-  idleTimeout: number;
-  requestKind: number;
-  moreValues: (number | string)[] | null;
-  oddValues: unknown[] | null;
-  oddMask: number;
-  wasEmptied: boolean;
-  requestState: $Node.ReadableState | null;
+  declare detachedFrom: $Node.HttpServerSocket | null;
+  declare isReplaying: boolean;
+  declare isFlushScheduled: boolean;
+  declare mustClose: boolean;
+  declare response: $Node.ServerResponse;
+  declare connection: $Node.HttpServerSocket | null;
+  declare endCallback: $Node.HttpWriteCallback | null;
+  declare queuedTick: import("internal/process/tick_ring").Tick | null;
+  declare events: ResponseEvents;
+  declare pendingFinish: $Node.HttpWriteCallback | null | undefined;
+  declare holdsNumber: boolean;
+  declare onWritable: (() => void) | null;
+  declare awaitsClose: boolean;
+  declare dispatchPromise: Promise<void> | null;
+  declare idleTimeout: number;
+  declare requestKind: number;
+  declare moreValues: (number | string)[] | null;
+  declare oddValues: unknown[] | null;
+  declare oddMask: number;
+  declare wasEmptied: boolean;
+  declare requestState: $Node.ReadableState | null;
 
   constructor(
     response: $Node.ServerResponse,
@@ -1537,6 +1537,18 @@ function indexOfShapedHeader(shape: HeaderShape, name: string): number {
   return findUnexpectedHeader(shape, name);
 }
 
+function shapedHeaderOf(exchange: Exchange, name: string): $Node.HttpHeaderValue | undefined {
+  const shape = exchange.shape;
+  if (shape.count === 0) return;
+  const index = indexOfShapedHeader(shape, name);
+  return index >= 0 ? shapedValue(exchange, index) : undefined;
+}
+
+function hasShapedHeader(exchange: Exchange, name: string): boolean {
+  const shape = exchange.shape;
+  return shape.count !== 0 && indexOfShapedHeader(shape, name) >= 0;
+}
+
 function pushRenderedHeader(
   flat: unknown[],
   message: $Node.OutgoingMessage,
@@ -1561,8 +1573,68 @@ function pushRenderedHeader(
   }
 }
 
+function textOf(value: number | string): string {
+  return typeof value === "string" ? value : "" + value;
+}
+
+// flatHeadersOf() where a value may be a number.
+function flatHeadersWithNumbers(exchange: Exchange, shape: HeaderShape): unknown[] {
+  switch (shape.count) {
+    case 0:
+      return noHeaders;
+    case 1:
+      return [shape.name, textOf(exchange.value0)];
+    case 2:
+      return [shape.parent.name, textOf(exchange.value0), shape.name, textOf(exchange.value1)];
+    case 3: {
+      const second = shape.parent;
+      return [
+        second.parent.name,
+        textOf(exchange.value0),
+        second.name,
+        textOf(exchange.value1),
+        shape.name,
+        textOf(exchange.value2),
+      ];
+    }
+    case 4: {
+      const third = shape.parent;
+      const second = third.parent;
+      return [
+        second.parent.name,
+        textOf(exchange.value0),
+        second.name,
+        textOf(exchange.value1),
+        third.name,
+        textOf(exchange.value2),
+        shape.name,
+        textOf(exchange.value3),
+      ];
+    }
+  }
+  const fifth = shape.count === 6 ? shape.parent : shape;
+  const fourth = fifth.parent;
+  const third = fourth.parent;
+  const second = third.parent;
+  const flat: unknown[] = [
+    second.parent.name,
+    textOf(exchange.value0),
+    second.name,
+    textOf(exchange.value1),
+    third.name,
+    textOf(exchange.value2),
+    fourth.name,
+    textOf(exchange.value3),
+    fifth.name,
+    textOf(exchange.value4),
+  ];
+  if (shape.count === 6) flat.push(shape.name, textOf(exchange.value5));
+  return flat;
+}
+
 function flatHeadersWithCare(exchange: Exchange): unknown[] | null {
   const shape = exchange.shape;
+  if (exchange.oddMask === 0 && shape.count <= kInlineHeaderValues) return flatHeadersWithNumbers(exchange, shape);
   const names = namesOf(shape);
   const keys = shape.keys!;
   const flat: unknown[] = [];
@@ -1765,11 +1837,7 @@ OutgoingMessage.prototype.getHeader = function getHeader(this: $Node.OutgoingMes
   const headers = this[kOutHeaders];
   if (headers === null) {
     const exchange = this.$exchange;
-    if (exchange === undefined) return;
-    const shape = exchange.shape;
-    if (shape.count === 0) return;
-    const index = indexOfShapedHeader(shape, name);
-    return index >= 0 ? shapedValue(exchange, index) : undefined;
+    return exchange === undefined ? undefined : shapedHeaderOf(exchange, name);
   }
 
   const entry = headers[lowercaseHeaderName(name)];
@@ -1837,9 +1905,7 @@ OutgoingMessage.prototype.hasHeader = function hasHeader(this: $Node.OutgoingMes
   if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   if (this[kOutHeaders] === null) {
     const exchange = this.$exchange;
-    if (exchange === undefined) return false;
-    const shape = exchange.shape;
-    return shape.count !== 0 && indexOfShapedHeader(shape, name) >= 0;
+    return exchange !== undefined && hasShapedHeader(exchange, name);
   }
   return !!this[kOutHeaders][lowercaseHeaderName(name)];
 };

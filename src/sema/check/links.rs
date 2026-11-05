@@ -121,6 +121,9 @@ impl ByType {
         if at >= self.pages.len() {
             self.pages.resize(at + 1, 0);
         }
+        if self.published.len() == self.published.capacity() {
+            self.published.reserve_exact(3 * self.published.len() + 4);
+        }
         self.published.push([0; PAGE]);
         let page = self.published.len() as u32;
         self.pages[at] = page;
@@ -261,7 +264,7 @@ impl TypeLinks {
     /// Returns `t.alias.symbol`, or `None` if it hasn't been requested yet.
     #[inline]
     pub(super) fn alias_symbol(&self, ty: TypeId) -> Option<Option<Sym>> {
-        let aliases = self.aliases.take()?;
+        let aliases = self.aliases.replace(None)?;
         let symbol = match aliases.of.get(ty) {
             0 => None,
             1 => Some(None),

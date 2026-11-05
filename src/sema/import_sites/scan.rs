@@ -61,6 +61,7 @@ pub(crate) fn collect_import_sites<'s>(
         imports_used_without_a_read: slice_in(&imports_used_without_a_read, arena),
         module_require_objects: slice_in(&calls.module_require_objects, arena),
         requires_of_other_files: slice_in(&calls.requires_of_other_files, arena),
+        paths_given_to_create_require: slice_in(&calls.paths_given_to_create_require, arena),
         pending_macro_calls: slice_in(&pending_macro_calls, arena),
         first_runtime_import: statements.first_runtime_import,
         has_import_equals_require: statements.has_import_equals_require,

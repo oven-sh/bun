@@ -809,7 +809,9 @@ class Comparison {
   checkResult(result: unknown): void {
     const { overload } = this;
     const mismatch = findMismatch(this.types, overload.result.type, result);
-    if (mismatch !== undefined) this.report("result.type", `the result is ${mismatch}`);
+    // A type that is declared only says what native code lays there. What an operand brought along is held by the uses of that operand, below.
+    const cameWithOperand = overload.resultIsDeclaredOnly === true && isObject(result) && this.originOf(result) !== undefined;
+    if (mismatch !== undefined && !cameWithOperand) this.report("result.type", `the result is ${mismatch}`);
     this.checkSubstring(result);
     this.checkRepeated(result);
     if (!isObject(result)) return;

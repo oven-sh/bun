@@ -9,7 +9,7 @@ function write(into: Map<string, number>, key: string, value: number): void { tr
 const say = (): void => { console.log(seen.join(" ")); seen.length = 0; };
 `;
 
-buildBothWays({
+buildBothWays("compile/aot/a method of a receiver whose class is proven asks whether it is as made", {
   "the prototype is another object, the class's again, none": {
     alone: true,
     files: {

@@ -184,7 +184,7 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn classify_mentions(&mut self) {
-        if self.loads_node_module {
+        if self.may_hold_made_require {
             for expr in self.evaluated_exprs() {
                 self.classify_mention(expr);
             }

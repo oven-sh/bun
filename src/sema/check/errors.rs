@@ -1140,11 +1140,10 @@ impl Checker<'_, '_> {
         {
             return true;
         }
-        if !is_automatic
-            && (bound.is_in_type_query(e) || hir.is_in_ambient_or_type_node(hir.node(e)))
-        {
-            return true;
-        }
+        let is_in_type_query_or_ambient = || {
+            !is_automatic
+                && (bound.is_in_type_query(e) || hir.is_in_ambient_or_type_node(hir.node(e)))
+        };
         // `isSameScopedBindingElement`. FOR SPEED: nodes in the pattern are numbered before the initializer.
         if decl.pat != pat && e.0 < decl.init.0 {
             let binding_element = hir.find_ancestor_kind(hir.node(e), Kind::BindingElement);
@@ -1158,11 +1157,11 @@ impl Checker<'_, '_> {
         if self.get_control_flow_container(file, parent)
             == self.get_control_flow_container(file, declared_in)
         {
-            return false;
+            return is_in_type_query_or_ambient();
         }
         // It's an outer variable, so what's been assigned by the time this code runs is unknown, unless it's never
         // assigned.
-        !self.is_never_initialized(file, e)
+        !self.is_never_initialized(file, e) || is_in_type_query_or_ambient()
     }
 
     /// `isNeverInitialized` of `checkIdentifier`, for the identifier `e`.

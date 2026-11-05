@@ -353,11 +353,26 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ArenaFew<'_, T> {
 /// found by binary search. It's one word, where a hash map is five.
 pub struct ArenaFewMap<'s, K, V>(ArenaFew<'s, (K, V)>);
 
+impl<K, V> Default for ArenaFewMap<'_, K, V> {
+    #[inline]
+    fn default() -> Self {
+        ArenaFewMap(ArenaFew::default())
+    }
+}
+
 impl<'s, K: Ord, V> ArenaFewMap<'s, K, V> {
+    #[inline]
     pub fn from_iter_in(entries: impl Iterator<Item = (K, V)>, arena: &'s Arena) -> Self {
+        match entries.size_hint().1 {
+            Some(0) => ArenaFewMap::default(),
+            _ => ArenaFewMap::sorted_in(entries, arena),
+        }
+    }
+
+    fn sorted_in(entries: impl Iterator<Item = (K, V)>, arena: &'s Arena) -> Self {
         let mut entries: Vec<(K, V)> = entries.collect();
         if entries.is_empty() {
-            return ArenaFewMap(ArenaFew::default());
+            return ArenaFewMap::default();
         }
         entries.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
         ArenaFewMap(ArenaFew::from_iter_in(entries.into_iter(), arena))
@@ -1933,6 +1948,34 @@ pub enum StmtKind {
     },
 }
 
+impl StmtKind {
+    #[inline]
+    pub fn may_have_modifiers(&self) -> bool {
+        !matches!(
+            self,
+            StmtKind::Empty
+                | StmtKind::Debugger
+                | StmtKind::Expr(_)
+                | StmtKind::Return(_)
+                | StmtKind::If { .. }
+                | StmtKind::For { .. }
+                | StmtKind::ForIn { .. }
+                | StmtKind::ForOf { .. }
+                | StmtKind::While { .. }
+                | StmtKind::DoWhile { .. }
+                | StmtKind::Block(_)
+                | StmtKind::Switch { .. }
+                | StmtKind::Try { .. }
+                | StmtKind::Throw(_)
+                | StmtKind::Break(_)
+                | StmtKind::Continue(_)
+                | StmtKind::Labeled { .. }
+                | StmtKind::With { .. }
+                | StmtKind::Directive { .. }
+        )
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct Case {
     /// `NONE` for `default`.
@@ -3130,7 +3173,14 @@ impl<S: Storage> FileIn<S> {
             .unwrap_or(Span::EMPTY)
     }
     /// Returns `node.Modifiers()` of the statement `s`.
+    #[inline]
     pub fn stmt_modifiers(&self, s: StmtId) -> Span<ModifierId> {
+        match self.stmts.get(s.idx()) {
+            Some(statement) if statement.kind.may_have_modifiers() => self.find_stmt_modifiers(s),
+            _ => Span::EMPTY,
+        }
+    }
+    fn find_stmt_modifiers(&self, s: StmtId) -> Span<ModifierId> {
         stmt_modifiers_in(&self.modifiers_of_stmts, s)
     }
     /// `node.Modifiers()` of the member `p` of an object literal.
@@ -3680,20 +3730,240 @@ impl FileBuilder {
         self.diagnostics.push(diagnostic);
     }
 
-    /// Returns the file with every list at its final size in `arena`, which belongs to `session`. Also returns the long
-    /// lists, emptied, so the next file the thread parses reuses their capacity.
-    pub fn into_arena<'s>(self, arena: &'s Arena, session: &'s Session) -> (File<'s>, FileBuilder) {
-        self.into_arena_with(arena, session, session.keep(LazyCells::default()))
+    pub fn clear(&mut self) {
+        let FileBuilder {
+            exprs,
+            stmts,
+            types,
+            fns,
+            members,
+            kind,
+            is_js,
+            is_flow,
+            check_directive,
+            is_forced_module,
+            is_script_with_code,
+            runs_beside_loader,
+            imported_requires,
+            imported_constants,
+            texts_of_data_files,
+            imported_file_changers,
+            texts_of_other_files,
+            has_module_syntax,
+            has_errors,
+            ran_out_of_stack,
+            decorators,
+            legacy_decorators,
+            may_bind_a_parameter_twice,
+            rare_syntax,
+            diagnostics,
+            has_parse_diagnostics,
+            syntax_errors,
+            error_pos,
+            source_len,
+            text,
+            body,
+            references,
+            comment_directives,
+            comments,
+            mentioned,
+            with_bodies,
+            detached_semicolons,
+            body_starts,
+            after_skipped,
+            modifiers_of_params,
+            modifiers_of_stmts,
+            modifiers_of_props,
+            unclosed_literals,
+            stray_decorators,
+            specifier_uses,
+            deferred_import_calls,
+            import_call_type_args,
+            import_attributes,
+            specifier_expressions,
+            exports_from_expressions,
+            parens,
+            non_null_ends,
+            far_names,
+            tagged_templates,
+            jsx_expressions,
+            jsx_pragmas,
+            jsdoc_comments,
+            jsdoc_asterisks,
+            jsdoc_hosts,
+            jsdoc_types,
+            jsdoc_modifiers,
+            jsdoc_member_comments,
+            jsdoc_param_errors,
+            functions_with_param_tags,
+            unmatched_augments_tags,
+            ids,
+            numbers,
+            pats,
+            pat_props,
+            pat_elems,
+            params,
+            type_params,
+            classes,
+            interfaces,
+            aliases,
+            enums,
+            enum_members,
+            modules,
+            props,
+            var_decls,
+            calls,
+            cases,
+            jsx,
+            imports,
+            import_specs,
+            import_equals,
+            exports,
+            export_specs,
+            tuple_elems,
+            mapped,
+            modifiers,
+            names,
+            bases,
+            lazy,
+            keyword_identifier_positions,
+            expr_flags,
+            template_parts,
+            template_part_starts,
+            jsx_attribute_texts,
+            export_star_attributes,
+            bigint_names,
+            is_strict,
+            is_strict_by_syntax,
+        } = self;
+        exprs.clear();
+        stmts.clear();
+        types.clear();
+        fns.clear();
+        members.clear();
+        *kind = Default::default();
+        *is_js = Default::default();
+        *is_flow = Default::default();
+        *check_directive = Default::default();
+        *is_forced_module = Default::default();
+        *is_script_with_code = Default::default();
+        *runs_beside_loader = Default::default();
+        imported_requires.clear();
+        imported_constants.clear();
+        texts_of_data_files.clear();
+        imported_file_changers.clear();
+        texts_of_other_files.clear();
+        *has_module_syntax = Default::default();
+        *has_errors = Default::default();
+        *ran_out_of_stack = Default::default();
+        decorators.clear();
+        *legacy_decorators = Default::default();
+        *may_bind_a_parameter_twice = Default::default();
+        *rare_syntax = Default::default();
+        diagnostics.clear();
+        *has_parse_diagnostics = Default::default();
+        *syntax_errors = Default::default();
+        *error_pos = Default::default();
+        *source_len = Default::default();
+        *text = Default::default();
+        *body = Default::default();
+        references.clear();
+        comment_directives.clear();
+        comments.clear();
+        mentioned.clear();
+        with_bodies.clear();
+        detached_semicolons.clear();
+        body_starts.clear();
+        after_skipped.clear();
+        modifiers_of_params.clear();
+        modifiers_of_stmts.clear();
+        modifiers_of_props.clear();
+        unclosed_literals.clear();
+        stray_decorators.clear();
+        specifier_uses.clear();
+        deferred_import_calls.clear();
+        import_call_type_args.clear();
+        import_attributes.clear();
+        specifier_expressions.clear();
+        exports_from_expressions.clear();
+        parens.clear();
+        non_null_ends.clear();
+        far_names.clear();
+        tagged_templates.clear();
+        jsx_expressions.clear();
+        *jsx_pragmas = Default::default();
+        jsdoc_comments.clear();
+        jsdoc_asterisks.clear();
+        jsdoc_hosts.clear();
+        jsdoc_types.clear();
+        jsdoc_modifiers.clear();
+        jsdoc_member_comments.clear();
+        jsdoc_param_errors.clear();
+        functions_with_param_tags.clear();
+        unmatched_augments_tags.clear();
+        ids.clear();
+        numbers.clear();
+        pats.clear();
+        pat_props.clear();
+        pat_elems.clear();
+        params.clear();
+        type_params.clear();
+        classes.clear();
+        interfaces.clear();
+        aliases.clear();
+        enums.clear();
+        enum_members.clear();
+        modules.clear();
+        props.clear();
+        var_decls.clear();
+        calls.clear();
+        cases.clear();
+        jsx.clear();
+        imports.clear();
+        import_specs.clear();
+        import_equals.clear();
+        exports.clear();
+        export_specs.clear();
+        tuple_elems.clear();
+        mapped.clear();
+        modifiers.clear();
+        names.clear();
+        *bases = Default::default();
+        *lazy = Default::default();
+        keyword_identifier_positions.clear();
+        expr_flags.clear();
+        template_parts.clear();
+        template_part_starts.clear();
+        jsx_attribute_texts.clear();
+        export_star_attributes.clear();
+        bigint_names.clear();
+        *is_strict = Default::default();
+        *is_strict_by_syntax = Default::default();
     }
 
-    fn into_arena_with<'s>(
+    /// Returns the file with every list at its final size in `arena`, which belongs to `session`. Also returns the long
+    /// lists, emptied, so the next file the thread parses reuses their capacity.
+    pub fn into_arena<'s>(
         mut self,
         arena: &'s Arena,
         session: &'s Session,
-        cells: &'s LazyCells,
     ) -> (File<'s>, FileBuilder) {
+        let file = self.move_to_arena(arena, session);
+        (file, self)
+    }
+
+    pub fn move_to_arena<'s>(&mut self, arena: &'s Arena, session: &'s Session) -> File<'s> {
+        self.move_to_arena_with(arena, session, session.keep(LazyCells::default()))
+    }
+
+    fn move_to_arena_with<'s>(
+        &mut self,
+        arena: &'s Arena,
+        session: &'s Session,
+        cells: &'s LazyCells,
+    ) -> File<'s> {
         // Most callers drop the comments at once, so they get a block of their own.
-        let comments = std::mem::take(&mut self.comments);
+        let mut comments = std::mem::take(&mut self.comments);
         let mut room = 0;
         macro_rules! measure {
             ($($f:ident),*) => { $(room += ListBlock::room_for(&self.$f);)* };
@@ -3719,12 +3989,9 @@ impl FileBuilder {
         );
         file.lazy.block = block;
         file.comments = Fixed::copied_in(arena, &comments);
-        let mut emptied = FileBuilder::default();
-        macro_rules! each {
-            ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
-        }
-        long_lists!(each);
-        (file, emptied)
+        comments.clear();
+        self.comments = comments;
+        file
     }
 
     /// Returns a file that's valid as long as `self` isn't touched. The long lists stay where they are. Everything else
@@ -3815,10 +4082,8 @@ impl<'s> File<'s> {
     /// Returns a file without nodes. It allocates nothing, so any thread can create one for another thread's arena
     /// (`Files::free_tree`). Only the thread that owns an arena can allocate in it.
     pub fn empty_in(arena: &'s Arena, session: &'s Session) -> File<'s> {
-        let no_nodes = FileBuilder::default();
-        no_nodes
-            .into_arena_with(arena, session, &EMPTY_FILE_CELLS)
-            .0
+        let mut no_nodes = FileBuilder::default();
+        no_nodes.move_to_arena_with(arena, session, &EMPTY_FILE_CELLS)
     }
 
     /// The arena that holds the lists.
@@ -3882,6 +4147,13 @@ pub fn non_null_ends_in<S: Storage>(hir: &FileIn<S>, e: ExprId) -> &[(ExprId, u3
 /// The parentheses around `e`, innermost first.
 #[inline]
 pub fn parentheses_around<S: Storage>(hir: &FileIn<S>, e: ExprId) -> &[(ExprId, u32, u32)] {
+    match hir.expr_flags(e).contains(ExprFlags::PARENTHESIZED) {
+        true => find_parentheses_around(hir, e),
+        false => &[],
+    }
+}
+
+fn find_parentheses_around<S: Storage>(hir: &FileIn<S>, e: ExprId) -> &[(ExprId, u32, u32)] {
     let first = hir.parens.partition_point(|p| p.0.0 < e.0);
     let count = hir.parens[first..].partition_point(|p| p.0 == e);
     &hir.parens[first..first + count]

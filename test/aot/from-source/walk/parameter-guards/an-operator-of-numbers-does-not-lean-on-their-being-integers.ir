@@ -15,5 +15,5 @@
 # CHECK-NOT: unit f1:ParameterGuard
 # RUN(BODY): walk f1 mechanisms=all
 # BODY-LABEL: code f1:Body
-# BODY: b0([[x]]: int[0, 30]|fractional[0, 30] @Double
+# BODY: b0([[x]]: number @Double
 # BODY: = Mul [[x]], {{*}} form=Numbers

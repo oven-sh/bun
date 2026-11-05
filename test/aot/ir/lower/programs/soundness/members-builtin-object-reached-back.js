@@ -64,34 +64,35 @@ for (const type of ["values", "entries", "spread", "assign"]) target.dispatchEve
 // CHECK-NEXT: b3():
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4() handler=b10():
-// CHECK-NEXT: v18 = TypeTest v7 testedType=function
-// CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b5(v19) handler=b10():
-// CHECK-NEXT: v20 = NarrowByTest v7, v19
+// CHECK-NEXT: v18 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK-NEXT: v19 = TypeTest v18 testedType=function
+// CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b9(| 0)
+// CHECK-NEXT: b5(v20) handler=b10():
+// CHECK-NEXT: v21 = NarrowByTest v18, v20
 // CHECK-NEXT: Jump -> next b6()
 // CHECK-NEXT: b6() handler=b7():
-// CHECK-NEXT: v21 = PropGet v2 key="push"
-// CHECK-NEXT: v22 = Builtin builtin=JSON
-// CHECK-NEXT: v23 = PropGet v22 key="stringify"
-// CHECK-NEXT: v24 = Convert v23 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v25 = String string="/some/where/file.txt"
-// CHECK-NEXT: v26 = Call v20, -, v25 calleeName="value"
-// CHECK-NEXT: v27 = Call v24, v22, v26 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v28 = Call v21, v2, v27 calleeKey="push" calleeName="found.push"
+// CHECK-NEXT: v22 = PropGet v2 key="push"
+// CHECK-NEXT: v23 = Builtin builtin=JSON
+// CHECK-NEXT: v24 = PropGet v23 key="stringify"
+// CHECK-NEXT: v25 = Convert v24 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+// CHECK-NEXT: v26 = String string="/some/where/file.txt"
+// CHECK-NEXT: v27 = Call v21, -, v26 calleeName="value"
+// CHECK-NEXT: v28 = Call v25, v23, v27 calleeKey="stringify" calleeName="JSON.stringify"
+// CHECK-NEXT: v29 = Call v22, v2, v28 calleeKey="push" calleeName="found.push"
 // CHECK-NEXT: Jump -> next b8()
 // CHECK-NEXT: b7() role=CatchHandler handler=b10():
-// CHECK-NEXT: v29 = CatchValue
-// CHECK-NEXT: v30 = PropGet v2 key="push"
-// CHECK-NEXT: v31 = PropGet v29 key="constructor"
-// CHECK-NEXT: v32 = PropGet v31 key="name"
-// CHECK-NEXT: v33 = Call v30, v2, v32 calleeKey="push" calleeName="found.push"
+// CHECK-NEXT: v30 = CatchValue
+// CHECK-NEXT: v31 = PropGet v2 key="push"
+// CHECK-NEXT: v32 = PropGet v30 key="constructor"
+// CHECK-NEXT: v33 = PropGet v32 key="name"
+// CHECK-NEXT: v34 = Call v31, v2, v33 calleeKey="push" calleeName="found.push"
 // CHECK-NEXT: Jump -> next b8()
 // CHECK-NEXT: b8() handler=b10():
 // CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b9(v34) handler=b10():
+// CHECK-NEXT: b9(v35) handler=b10():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b10() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v35 = CatchException
+// CHECK-NEXT: v36 = CatchException
 // CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v35
+// CHECK-NEXT: Rethrow v36
 // CHECK-NEXT: }

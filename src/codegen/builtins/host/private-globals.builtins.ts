@@ -81,7 +81,12 @@ const makesErrorWithCode = [
     uses: { operands: formattedInMessage },
     implementation: b.hostCall,
   })),
-  changesNothing(b.any),
+  // What an exception of the engine holds comes out of the operand: native code has not made it, and it may be any value: the type is what is made, and no proof.
+  {
+    ...changesNothing(newErrorWithCode),
+    resultIsDeclaredOnly: true,
+    uses: { operands: [...handedOver, b.reachableValuesStoredIn(b.result)] },
+  },
 ];
 
 // An object that the conversion of the message throws, or the getter of the cause, is the answer.

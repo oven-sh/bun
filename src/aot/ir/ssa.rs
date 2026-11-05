@@ -7,8 +7,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use super::builder::{
-    ENTRY_BLOCK, Edge, FunctionBuilder, LocalVariable, PendingBlock, PendingTarget, Place,
-    recycle_vector,
+    ENTRY_BLOCK, Edge, FunctionBuilder, ListInArena, LocalVariable, PendingBlock, PendingTarget,
+    Place, recycle_vector,
 };
 use super::generated::{BlockRole, Opcode, TerminatorKind};
 use super::ids::{BlockId, Id, TypeId, ValueId};
@@ -44,10 +44,10 @@ impl Definitions {
 
 #[derive(Default)]
 struct BlockState {
-    predecessors: Predecessors,
+    predecessors: ListInArena,
     is_sealed: bool,
     is_loop_header: bool,
-    incomplete_variables: Vec<LocalVariable>,
+    incomplete_variables: ListInArena,
     dominator: Option<DominatorLink>,
 }
 
@@ -86,7 +86,7 @@ enum StoreCount {
 struct VariableState {
     declared: Option<TypeId>,
     stores: StoreCount,
-    definition_blocks: SmallVec<[BlockId; 4]>,
+    definition_blocks: ListInArena,
     is_narrowed: bool,
 }
 
@@ -114,6 +114,8 @@ enum PendingRead {
 #[derive(Default)]
 pub(super) struct SsaState {
     states: Vec<BlockState>,
+    listed_blocks: Vec<BlockId>,
+    listed_variables: Vec<LocalVariable>,
     definitions: Definitions,
     pending_reads: Vec<PendingRead>,
     observed_values: FxHashSet<ValueId>,
@@ -137,6 +139,8 @@ impl SsaState {
         self.observed_values.clear();
         SsaState {
             states: recycle_vector(self.states, MAX_SPARE_BLOCK_STATES),
+            listed_blocks: recycle_vector(self.listed_blocks, 4 * MAX_SPARE_BLOCK_STATES),
+            listed_variables: recycle_vector(self.listed_variables, MAX_SPARE_VARIABLES),
             pending_reads: recycle_vector(self.pending_reads, MAX_SPARE_PENDING_READS),
             variables: recycle_vector(self.variables, MAX_SPARE_VARIABLES),
             ..self
@@ -150,7 +154,14 @@ impl SsaState {
 
     #[inline]
     pub(super) fn add_predecessor(&mut self, block: BlockId, predecessor: BlockId) {
-        self.states[block.index()].predecessors.push(predecessor);
+        let predecessors = &mut self.states[block.index()].predecessors;
+        predecessors.push(&mut self.listed_blocks, predecessor);
+    }
+
+    #[inline]
+    fn predecessors_of(&self, block: BlockId) -> &[BlockId] {
+        let predecessors = self.states[block.index()].predecessors;
+        predecessors.items(&self.listed_blocks)
     }
 
     #[inline]
@@ -174,7 +185,7 @@ impl SsaState {
         self.variables.push(VariableState {
             declared,
             stores: StoreCount::Never,
-            definition_blocks: SmallVec::new(),
+            definition_blocks: ListInArena::default(),
             is_narrowed: false,
         });
         variable
@@ -184,8 +195,9 @@ impl SsaState {
     fn record_definition_block(&mut self, variable: LocalVariable, block: BlockId) {
         let definition_blocks = &mut self.variables[variable.0 as usize].definition_blocks;
         let is_tracked = definition_blocks.len() <= MAX_SHORTCUT_DEFINITION_BLOCKS;
-        if is_tracked && !definition_blocks.contains(&block) {
-            definition_blocks.push(block);
+        let recorded = definition_blocks.items(&self.listed_blocks);
+        if is_tracked && !recorded.contains(&block) {
+            definition_blocks.push(&mut self.listed_blocks, block);
         }
     }
 
@@ -274,13 +286,13 @@ impl SsaState {
     }
 
     fn find_shortcut(&self, variable: LocalVariable, block: BlockId) -> Shortcut {
-        let definition_blocks = &self.variables[variable.0 as usize].definition_blocks;
+        let definition_blocks = self.variables[variable.0 as usize].definition_blocks;
         let is_tracked = definition_blocks.len() <= MAX_SHORTCUT_DEFINITION_BLOCKS;
         let (true, Some(current)) = (is_tracked, self.states[block.index()].dominator) else {
             return Shortcut::No;
         };
         let mut nearest: Option<(u32, bool)> = None;
-        for &definition_block in definition_blocks.iter() {
+        for &definition_block in definition_blocks.items(&self.listed_blocks) {
             let dominator = self.states[definition_block.index()].dominator;
             if dominator.is_none_or(|dominator| dominator.root != current.root) {
                 continue;
@@ -355,14 +367,13 @@ impl SsaState {
             self.link_loop_headers(block);
             return;
         }
-        let predecessors = &self.states[block.index()].predecessors;
-        let mut headers = predecessors.iter();
+        let mut headers = self.predecessors_of(block).iter();
         if headers.any(|&predecessor| self.is_unlinked_loop_header(predecessor)) {
-            for predecessor in predecessors.clone() {
-                self.link_loop_headers(predecessor);
+            for index in 0..self.predecessor_count(block) {
+                self.link_loop_headers(self.predecessors_of(block)[index]);
             }
         }
-        let link = self.find_link_below(block, &self.states[block.index()].predecessors);
+        let link = self.find_link_below(block, self.predecessors_of(block));
         self.states[block.index()].dominator = Some(link);
     }
 
@@ -381,13 +392,13 @@ impl SsaState {
             }
             state.dominator = Some(DominatorLink::root(block));
             unlinked.push(block);
-            let Some(&entering) = state.predecessors.first() else {
+            let Some(&entering) = self.predecessors_of(block).first() else {
                 break;
             };
             block = entering;
         }
         for &header in unlinked.iter().rev() {
-            if let Some(&entering) = self.states[header.index()].predecessors.first() {
+            if let Some(&entering) = self.predecessors_of(header).first() {
                 self.link_below(header, &[entering]);
             }
         }
@@ -444,7 +455,7 @@ impl SsaState {
     fn unique_predecessors(&self, block: BlockId) -> Predecessors {
         let mut predecessors = Predecessors::new();
         let mut is_sorted = true;
-        for &predecessor in self.states[block.index()].predecessors.iter() {
+        for &predecessor in self.predecessors_of(block) {
             if self.is_never_entered(predecessor) || predecessors.last() == Some(&predecessor) {
                 continue;
             }
@@ -462,11 +473,13 @@ impl SsaState {
 #[inline]
 fn for_each_edge_target(
     predecessor: &mut PendingBlock,
+    targets: &mut [PendingTarget],
     block: BlockId,
     mut visit: impl FnMut(&mut PendingTarget),
 ) {
-    if let Some(terminator) = &mut predecessor.terminator {
-        for target in terminator.targets.iter_mut() {
+    if let Some(terminator) = &predecessor.terminator {
+        let own = terminator.targets.start as usize..terminator.targets.end as usize;
+        for target in &mut targets[own] {
             if target.block == block {
                 visit(target);
             }
@@ -632,7 +645,8 @@ impl FunctionBuilder {
     fn complete_variables(&mut self, block: BlockId) {
         let state = &mut self.ssa.states[block.index()];
         let incomplete_variables = core::mem::take(&mut state.incomplete_variables);
-        for variable in incomplete_variables {
+        for index in 0..incomplete_variables.len() {
+            let variable = incomplete_variables.items(&self.ssa.listed_variables)[index];
             for predecessor in self.ssa.unique_predecessors(block) {
                 let value = self.read_variable_in(variable, predecessor);
                 self.append_argument(predecessor, block, value);
@@ -711,7 +725,7 @@ impl FunctionBuilder {
             let is_run_exhausted = single_predecessor_run > self.ssa.states.len();
             if is_pass_through && predecessor_count > 0 && !is_run_exhausted {
                 let pending_read = PendingRead::SinglePredecessor(block);
-                block = state.predecessors[0];
+                block = self.ssa.predecessors_of(block)[0];
                 self.ssa.pending_reads.push(pending_read);
                 single_predecessor_run += 1;
                 continue;
@@ -794,15 +808,15 @@ impl FunctionBuilder {
         );
         let declared = self.ssa.variables[variable.0 as usize].declared;
         let parameter = self.add_parameter_value(declared);
-        let pending = &mut self.blocks[block.index()];
-        pending.variable_parameters.push(parameter);
+        let parameters = &mut self.blocks[block.index()].variable_parameters;
+        parameters.push(&mut self.listed_values, parameter);
         parameter
     }
 
     fn create_incomplete_parameter(&mut self, variable: LocalVariable, block: BlockId) -> ValueId {
         let parameter = self.add_variable_parameter(variable, block);
-        let state = &mut self.ssa.states[block.index()];
-        state.incomplete_variables.push(variable);
+        let incomplete_variables = &mut self.ssa.states[block.index()].incomplete_variables;
+        incomplete_variables.push(&mut self.ssa.listed_variables, variable);
         self.record_computed_definition(variable, block, parameter);
         parameter
     }
@@ -831,14 +845,15 @@ impl FunctionBuilder {
         predecessors: &[BlockId],
     ) -> bool {
         let variable_parameters = &mut self.blocks[block.index()].variable_parameters;
-        if variable_parameters.last() != Some(&parameter) {
+        if variable_parameters.items(&self.listed_values).last() != Some(&parameter) {
             return false;
         }
-        variable_parameters.pop();
-        let ssa = &mut self.ssa;
+        variable_parameters.pop(&self.listed_values);
+        let (ssa, listed_values) = (&mut self.ssa, &self.listed_values);
         for &predecessor in predecessors {
-            for_each_edge_target(&mut self.blocks[predecessor.index()], block, |target| {
-                if let Some(argument) = target.variable_arguments.pop() {
+            let predecessor = &mut self.blocks[predecessor.index()];
+            for_each_edge_target(predecessor, &mut self.targets, block, |target| {
+                if let Some(argument) = target.variable_arguments.pop(listed_values) {
                     ssa.take_back_read(argument);
                 }
             });
@@ -850,9 +865,10 @@ impl FunctionBuilder {
     }
 
     fn append_argument(&mut self, predecessor: BlockId, block: BlockId, value: ValueId) {
-        let ssa = &mut self.ssa;
-        for_each_edge_target(&mut self.blocks[predecessor.index()], block, |target| {
-            target.variable_arguments.push(value);
+        let (ssa, listed_values) = (&mut self.ssa, &mut self.listed_values);
+        let predecessor = &mut self.blocks[predecessor.index()];
+        for_each_edge_target(predecessor, &mut self.targets, block, |target| {
+            target.variable_arguments.push(listed_values, value);
             ssa.count_read(value);
         });
     }

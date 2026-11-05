@@ -400,6 +400,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             module @ ModuleRef::File(_) => {
                 let is_own = is_in_plain_body
+                    && !self.is_function_of_file_that_runs_again()
                     && matches!(
                         file.builtins.of_pure_expr(access),
                         Some(Resolved::Builtin(path)) if path.id == BuiltinId::ModuleObjectExports
@@ -716,6 +717,7 @@ fn find_plain_store(
     }
 }
 
+#[inline]
 pub(in crate::lower) fn is_erased(file: &FileLowering<'_, '_, '_, '_>, statement: StmtId) -> bool {
     let modules = file.inputs.modules;
     modules.erased(file.file, statement)

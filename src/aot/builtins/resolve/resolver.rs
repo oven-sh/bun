@@ -218,7 +218,7 @@ pub(super) struct Resolver<'a, 's> {
     pub(super) exposes_own_module_object: bool,
     pub(super) exposes_own_require: bool,
     pub(super) stores_to_exports: Vec<ExprId>,
-    pub(super) loads_node_module: bool,
+    pub(super) may_hold_made_require: bool,
     pub(super) output: ResolverOutput,
     within: Option<&'a [Range<u32>]>,
     named_outside: OnceCell<FxHashSet<SymbolId>>,
@@ -353,10 +353,11 @@ impl<'a, 's> Resolver<'a, 's> {
             exposes_own_module_object: false,
             exposes_own_require: false,
             stores_to_exports: Vec::new(),
-            loads_node_module: input
-                .targets
-                .iter()
-                .any(|it| it.1 == RuntimeModule::NodeModule),
+            may_hold_made_require: !input.hir.imported_requires.is_empty()
+                || input
+                    .targets
+                    .iter()
+                    .any(|it| it.1 == RuntimeModule::NodeModule),
             output: ResolverOutput::default(),
             computed: Vec::new(),
             calls: Vec::new(),

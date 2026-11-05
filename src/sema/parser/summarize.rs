@@ -576,8 +576,7 @@ impl<'s> Summary<'_, 's> {
         match self {
             Summary::InArena(file) => *file,
             Summary::InPlace(file) => {
-                let (mut in_arena, emptied) = core::mem::take(file).into_arena(arena, session);
-                *file = emptied;
+                let mut in_arena = file.move_to_arena(arena, session);
                 in_arena.finish_nodes();
                 in_arena
             }

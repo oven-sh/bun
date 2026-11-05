@@ -70,7 +70,7 @@ const rejected = [
   ["references=medium", 'Invalid value for --aot-references: "medium". Must be one of narrow, wide'],
 ];
 
-const hiddenExplainValues = ["unknown-code", "unproven-type", "mutation"];
+const hiddenExplainValues = ["unknown-code", "unproven-type"];
 
 const invalidProgram = {
   "wrong.ts": `import "./missing-module";

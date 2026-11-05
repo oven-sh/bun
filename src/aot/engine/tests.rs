@@ -68,7 +68,7 @@ fn expected_record(change: impl FnOnce(&mut CompileOptions)) -> CompileOptions {
     let mut record = CompileOptions {
         executable_identity: IDENTITY.0,
         thread_count: 7,
-        excluded_code: ExcludedCode::CODE_OUTSIDE_IMAGE,
+        excluded_code: ExcludedCode::CODE_OUTSIDE_IMAGE | ExcludedCode::LIBRARY_TEXT,
         ..zeroed()
     };
     record.target.reference_width = ReferenceWidth::Narrow;
@@ -135,8 +135,8 @@ fn options_fill_record() {
         expected_record(|record| record.admitted_code = AdmittedCode::REPLACED_BUILTINS)
     );
     assert_eq!(
-        filled_record(|options| options.library_runs_compiled_alone = true),
-        expected_record(|record| record.excluded_code |= ExcludedCode::LIBRARY_TEXT)
+        filled_record(|options| options.omits_builtin_modules = true),
+        expected_record(|record| record.excluded_code = ExcludedCode::CODE_OUTSIDE_IMAGE)
     );
     assert_eq!(
         filled_record(|options| {
@@ -159,7 +159,7 @@ fn options_fill_record() {
     );
     assert_eq!(
         filled_record(|options| options.loads_code_from_disk = true),
-        expected_record(|record| record.excluded_code = ExcludedCode::default())
+        expected_record(|record| record.excluded_code = ExcludedCode::LIBRARY_TEXT)
     );
     assert_eq!(
         filled_record(|options| {
@@ -167,7 +167,8 @@ fn options_fill_record() {
             options.isolates_code_from_disk = true;
         }),
         expected_record(|record| {
-            record.excluded_code = ExcludedCode::FILES_OF_IMAGE_FOR_CODE_OUTSIDE;
+            record.excluded_code =
+                ExcludedCode::LIBRARY_TEXT | ExcludedCode::FILES_OF_IMAGE_FOR_CODE_OUTSIDE;
         })
     );
     assert_eq!(
@@ -259,7 +260,6 @@ fn engine_defaults_are_preserved() {
         size: size_of::<CompileOptions>() as u32,
         size_class_progression: 1.5,
         checks: CheckSet::VALIDATE,
-        layout_seed: 9,
         ..zeroed()
     };
     let mut record = defaults;
@@ -268,7 +268,6 @@ fn engine_defaults_are_preserved() {
         record.size = defaults.size;
         record.size_class_progression = defaults.size_class_progression;
         record.checks = defaults.checks;
-        record.layout_seed = defaults.layout_seed;
     });
     assert_eq!(record, expected);
 }
@@ -325,7 +324,6 @@ fn reports_follow_explain() {
         (ExplainSet::JSON, sites_and_counts),
         (ExplainSet::ONLY_UNKNOWN_CODE, sites_and_counts),
         (ExplainSet::ONLY_UNPROVEN_TYPE, sites_and_counts),
-        (ExplainSet::ONLY_MUTATION, sites_and_counts),
         (ExplainSet::CHECKS, ReportSet::FLOW),
         (ExplainSet::CHECKS_JSON, ReportSet::FLOW),
         (ExplainSet::FORMS, ReportSet::FLOW),
@@ -350,7 +348,6 @@ fn reports_follow_explain() {
 fn front_end_options_do_not_reach_record() {
     let changed = filled_record(|options| {
         options.erases_types = true;
-        options.omits_builtin_modules = true;
         options.ir_output_path = Some(Box::from(&b"program.ir"[..]));
         options.thread_count = NonZeroU32::new(3);
         options.option_words = boxed_words(&[b"check=Validate"]);

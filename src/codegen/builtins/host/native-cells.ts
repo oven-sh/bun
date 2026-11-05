@@ -47,6 +47,8 @@ export const handedWarningsCell = "Process.handedWarnings";
 export const emitsWarningCell = "Process.emitsWarning";
 export const throwsWarningCell = "Process.throwsWarning";
 export const printsErrorWithCodeCell = "ErrorWithCode.toString";
+// The function that a read of Error.prepareStackTrace answers until the program stores one of its own.
+export const formatsStackCell = "Error.formatsStack";
 // Functions of native code's own that it queues with process.nextTick.
 export const reportsExceptionCell = "EventListener.reportsException";
 export const flushesDirectStreamCell = "DirectStreamController.flushesAtEndOfTick";

@@ -910,7 +910,7 @@ async function measureGrowth(
   executable: string,
   cwd: string,
   env: Record<string, string | undefined>,
-): Promise<{ growth: number; message?: string; output?: Output }> {
+): Promise<{ growth: number; measured?: string; message?: string; output?: Output }> {
   const { sizes } = growth!;
   // A count has no noise to speak of, and an eighth of the work says the same.
   let passes = countsInstructions ? Math.max(1, Math.round(growth!.passes / 8)) : growth!.passes;
@@ -956,12 +956,11 @@ async function measureGrowth(
     if (countsInstructions) break;
   }
   const rounded = Math.round(grows * 100) / 100;
-  if (grows <= mostThatIsLinear) return { growth: rounded };
+  const measured = `${least.map(taken => Math.round(taken)).join(" | ")} ${unit} at the sizes ${sizes.join(" | ")}, ${passes} passes`;
+  if (grows <= mostThatIsLinear) return { growth: rounded, measured };
   return {
     growth: rounded,
-    message:
-      `what it takes grows faster than its data: ${rounded}, and at most ${mostThatIsLinear} is linear (4 is, 16 is a square): ` +
-      `${least.map(taken => Math.round(taken)).join(" | ")} ${unit} at the sizes ${sizes.join(" | ")}, ${passes} passes`,
+    message: `what it takes grows faster than its data: ${rounded}, and at most ${mostThatIsLinear} is linear (4 is, 16 is a square): ${measured}`,
   };
 }
 
@@ -975,7 +974,7 @@ async function measureGrowthOfBuild(
   cwd: string,
   env: Record<string, string | undefined>,
   command: (entry: string, outfile: string) => string[],
-): Promise<{ growth?: number; message?: string; output?: Output }> {
+): Promise<{ growth?: number; measured?: string; message?: string; output?: Output }> {
   const { sizes, passes, power } = growth!;
   const counted = `${executable}.instructions`;
   const taken: number[] = [];
@@ -1206,7 +1205,7 @@ async function run(program: Program): Promise<void> {
     if (grown?.message) return fail(program, "growth", grown.message, grown.output ?? compiled.output);
     const passes = {
       state: "pass",
-      ...(grown && { growth: grown.growth }),
+      ...(grown && { growth: grown.growth, measured: grown.measured }),
       compileMs: build.ms,
       runMs: compiled.ms,
       buildMB: build.peakMB,

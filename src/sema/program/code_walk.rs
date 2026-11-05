@@ -536,7 +536,12 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         if added.is_empty() {
             return has_learned;
         }
-        for entry_point in context.entry_points() {
+        let was_alone = context.entry_point_count() - added.len() <= 1;
+        let may_answer_otherwise = match was_alone {
+            true => context.entry_points(),
+            false => added,
+        };
+        for entry_point in may_answer_otherwise {
             let index = state.index_of[&context.canonical_key(entry_point.key)];
             let parsed = state.files[index as usize].parsed.as_ref();
             let folded_with = parsed.map(|it| it.code.analyzed.import_meta_main);

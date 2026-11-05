@@ -6,6 +6,7 @@ use core::mem::{replace, take};
 
 use std::sync::Arc;
 
+use bun_sema::atom::Atom;
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
 use rustc_hash::FxHashMap;
@@ -215,6 +216,7 @@ pub(crate) struct FragmentBuilder {
     pub(crate) is_checked: bool,
     file: FileId,
     visit: u32,
+    atoms_first_met: Vec<Atom>,
     function_keys: KeyTable<FunctionKey>,
     layout_keys: KeyTable<LayoutKey>,
     layouts_named_in_file: Vec<LayoutId>,
@@ -263,6 +265,7 @@ impl FragmentBuilder {
             is_checked: false,
             file,
             visit: state.visit,
+            atoms_first_met: Vec::new(),
             function_keys: finders.functions.with_keys(tables.function_keys),
             layout_keys: finders.layouts.with_keys(tables.layout_keys),
             layouts_named_in_file: Vec::new(),
@@ -301,6 +304,11 @@ impl FragmentBuilder {
         let mut builder = FragmentBuilder::new(file, &mut state);
         builder.own_state = Some(state);
         builder
+    }
+
+    #[inline]
+    pub(crate) fn note_atom_first_met(&mut self, atom: Atom) {
+        self.atoms_first_met.push(atom);
     }
 
     pub(crate) fn declare_function(&mut self, key: FunctionKey) -> FunctionId {
@@ -632,7 +640,21 @@ impl FragmentBuilder {
         self.module_keys.forget_keys_from(lengths.modules);
         self.module_failure_keys
             .forget_keys_from(lengths.module_failures);
+        let (mut atoms, mut atom_keys) = (take(&mut state.atoms), take(&mut state.atom_keys));
+        for atom in take(&mut self.atoms_first_met) {
+            if let Some(string) = atoms.get(&atom)
+                && string.to_word() >= lengths.strings
+            {
+                atoms.remove(&atom);
+            }
+            if let Some(key) = atom_keys.get(&atom)
+                && key.to_word() >= lengths.property_keys
+            {
+                atom_keys.remove(&atom);
+            }
+        }
         drop(self.finish(ModuleFragment::default(), state));
         state.roll_back(lengths);
+        (state.atoms, state.atom_keys) = (atoms, atom_keys);
     }
 }

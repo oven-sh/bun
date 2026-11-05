@@ -84,11 +84,12 @@ pub enum VariableKey {
         part: PrivateStatePart,
     },
     RequiredAnswer(Sym),
-    RequireMadeForOwnFile(Sym),
     MockOf(FileId),
     InstantiationState(FileId),
     EnvironmentMadeAhead(FileId),
     MockOfRuntimeModule(RuntimeModule),
+    RequiresMadeForOwnFile(FileId),
+    RequiresMadeForOtherFolders(FileId),
 }
 
 impl FunctionKey {
@@ -151,12 +152,12 @@ impl VariableKey {
             | VariableKey::ModulePath { file, .. }
             | VariableKey::MockOf(file)
             | VariableKey::InstantiationState(file)
+            | VariableKey::RequiresMadeForOwnFile(file)
+            | VariableKey::RequiresMadeForOtherFolders(file)
             | VariableKey::EnvironmentMadeAhead(file) => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),
-            VariableKey::RequiredAnswer(holder) | VariableKey::RequireMadeForOwnFile(holder) => {
-                Some(holder.file)
-            }
+            VariableKey::RequiredAnswer(holder) => Some(holder.file),
             VariableKey::SyntheticExport(_)
             | VariableKey::Copy(_)
             | VariableKey::MockOfRuntimeModule(_) => None,

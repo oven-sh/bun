@@ -173,6 +173,7 @@ impl MaybeLocal for Key {
 
 /// This can't use the tuple's implementation, because the halves of a hash aren't ids.
 impl Follow for Key {
+    #[inline]
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         let Key(source, target, flags) = *self;
         if flags & GENERIC_KEY == 0 {
@@ -184,6 +185,7 @@ impl Follow for Key {
         visitor.plain(&flags);
     }
 
+    #[inline]
     fn is_bound(&self, own: &OwnStore) -> bool {
         if self.2 & GENERIC_KEY == 0 {
             (self.0, self.1).is_bound(own)
@@ -1348,6 +1350,13 @@ impl<'p, 's> Checker<'p, 's> {
         if are_literals_of_one_kind(sd, td) || Self::are_enum_members_with_other_values(sd, td) {
             return false;
         }
+        if relation == Relation::Comparable
+            && entries_for_query.is_none()
+            && let Some(is_related) =
+                self.is_literal_comparable_to_union_of_units((source, sd), (target, td))
+        {
+            return is_related;
+        }
         let are_objects = is_object_kind(sd) && is_object_kind(td);
         if relation != Relation::Identity {
             if relation == Relation::Comparable
@@ -1357,20 +1366,22 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return true;
             }
-        } else if !are_objects
-            && (self.flags(source) | self.flags(target))
+        } else if !are_objects {
+            let (source_flags, target_flags) = (self.flags(source), self.flags(target));
+            if (source_flags | target_flags)
                 & (tf::UNION_OR_INTERSECTION
                     | tf::INDEXED_ACCESS
                     | tf::CONDITIONAL
                     | tf::SUBSTITUTION)
                 == 0
-        {
-            // Types that may simplify to another form are excluded, so the flags are the same.
-            if self.flags(source) != self.flags(target) {
-                return false;
-            }
-            if self.flags(source) & tf::SINGLETON != 0 {
-                return true;
+            {
+                // Types that may simplify to another form are excluded, so the flags are the same.
+                if source_flags != target_flags {
+                    return false;
+                }
+                if source_flags & tf::SINGLETON != 0 {
+                    return true;
+                }
             }
         }
         // `isRelatedToEx`: an object type is related to a primitive by a simple rule or not at all.
@@ -1747,6 +1758,50 @@ impl<'p, 's> Checker<'p, 's> {
             (TypeData::EnumLit { value: a, .. }, TypeData::EnumLit { value: b, .. })
                 if !Self::is_equal_value(*a, *b)
         )
+    }
+
+    fn is_literal_comparable_to_union_of_units(
+        &self,
+        (source, sd): (TypeId, &'p TypeData<'p>),
+        (target, td): (TypeId, &'p TypeData<'p>),
+    ) -> Option<bool> {
+        let (union, members, literal, data) = match (sd, td) {
+            (TypeData::Union(members), data) => (source, members, target, data),
+            (data, TypeData::Union(members)) => (target, members, source, data),
+            _ => return None,
+        };
+        let is_enum_member = match data {
+            TypeData::StringLit { .. }
+            | TypeData::NumberLit { .. }
+            | TypeData::BigIntLit { .. }
+            | TypeData::BoolLit { .. } => false,
+            TypeData::EnumLit { .. } => true,
+            _ => return None,
+        };
+        let kinds = self.types().member_flags(union);
+        if kinds & !(tf::LITERAL | tf::ENUM_LITERAL | tf::NULLABLE) != 0
+            || kinds & tf::NULLABLE != 0 && !self.p.files.options.strict_null_checks
+            || !self.has_no_fresh_literal(union)
+            || self.may_be_reduced(union)
+        {
+            return None;
+        }
+        if self.contains_type(members, literal) {
+            return Some(true);
+        }
+        if is_enum_member || kinds & tf::ENUM_LITERAL != 0 {
+            let value = self.literal_value(literal);
+            let has_same_value = |&member: &TypeId| {
+                matches!(
+                    (value, self.literal_value(member)),
+                    (Some(a), Some(b)) if Self::is_equal_value(a, b)
+                )
+            };
+            if members.iter().any(has_same_value) {
+                return None;
+            }
+        }
+        Some(false)
     }
 
     /// `t.symbol`, of a type with `TypeFlagsEnumLike`.

@@ -283,6 +283,7 @@ fn insert_sorted<T: Ord + Copy, A: smallvec::Array<Item = T>>(
     }
 }
 
+#[inline(never)]
 fn find_binding(bindings: &[CapturedBinding], binding: BindingRef) -> &CapturedBinding {
     let index = bindings.binary_search_by_key(&binding, |captured| captured.binding);
     &bindings[index.expect("every used binding is listed")]

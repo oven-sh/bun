@@ -1,10 +1,11 @@
 type NeedsWholeStream = () => never;
 type WriteToSink = (fd: number, data: unknown) => number | boolean | Promise<unknown>;
 type GetWindowSize = (fd: number, size: number[]) => boolean;
+type ServedByLightStream = Record<"values" | "methods", string[]>;
 
 // What a compiled program has for process.stdout and process.stderr where getStdioWriteStream() was left out of it: the program asks the
 // streams for `fd`, `isTTY`, `columns`, `rows`, `getColorDepth` and `write` and does nothing else with them. Every other operation on such an object is a trap
-// that calls `needsWholeStream`, so the compiler, which follows the traps, keeps getStdioWriteStream() wherever one of them can run, and
+// that calls `needsWholeStream`. The compiler keeps getStdioWriteStream() wherever the program does anything else with a stream (internal/streams/load_all.ts has the names), and
 // native code then makes the streams with that and never comes here. `needsWholeStream` does not return.
 // console.log asks a proxy nothing: it prints the target, and looks at each of its members. So the target has one, a getter, and that is such a trap too.
 // `writeToSink` calls write() of what the constructor of fs.WriteStream makes for the descriptor: native code makes it when the stream is
@@ -23,7 +24,9 @@ export function getLightStdioWriteStreams(
   const nextTick = process.nextTick;
   require("node:events");
   // And all of node:stream puts its operators on Readable.prototype, which a program that has loaded a part of it reaches.
-  require("internal/streams/load_all").rest?.();
+  const streams = require("internal/streams/load_all");
+  streams.rest?.();
+  const served: ServedByLightStream = streams.servedByLightOutputs;
   // What writeFast() of internal/fs/streams does with a receiver that is not a stream: it asks for the state of a stream and then calls _write().
   function writeToForeignReceiver(receiver: any): never {
     if (receiver === undefined)
@@ -98,8 +101,9 @@ export function getLightStdioWriteStreams(
       "%write of both streams%": typeof writeFast;
     } = {
       get(_, key) {
-        // Read off the handler: the compiler follows this trap once for each name, and a read counts only where the name can be this one.
-        // What a variable holds would count as the answer for every name, and a program that prints `isTTY` would hand out write().
+        // As in the whole stream.
+        if (key === "%write of this stream%") return undefined;
+        if (!served.values.includes(key as string) && !served.methods.includes(key as string)) needsWholeStream();
         if (key === "write") return handler["%write of both streams%"];
         if (key === "isTTY") return isTTY ? true : undefined;
         if (key === "fd") return fd;
@@ -113,10 +117,6 @@ export function getLightStdioWriteStreams(
           const prototype = tty.prototypeOfWriteStream;
           return prototype === undefined ? tty.getColorDepthOfStream : prototype.getColorDepth;
         }
-        // As in the whole stream.
-        if (key === "%write of this stream%") return undefined;
-        // A trap is always handed a key. The compiler takes a parameter for one that may be missing.
-        if (key === undefined) return undefined;
         needsWholeStream();
       },
       set: needsWholeStream,
@@ -159,7 +159,9 @@ export function getLightStdinStream(isTTY: boolean, needsWholeStream: NeedsWhole
   // As in getLightStdioWriteStreams().
   void process.nextTick;
   require("node:events");
-  require("internal/streams/load_all").rest?.();
+  const streams = require("internal/streams/load_all");
+  streams.rest?.();
+  const served: ServedByLightStream = streams.servedByLightInput;
   return new Proxy(
     {
       get "%the whole stream%"() {
@@ -168,9 +170,9 @@ export function getLightStdinStream(isTTY: boolean, needsWholeStream: NeedsWhole
     },
     {
       get(_, key) {
+        if (!served.values.includes(key as string) && !served.methods.includes(key as string)) needsWholeStream();
         if (key === "isTTY") return isTTY ? true : undefined;
         if (key === "fd") return 0;
-        if (key === undefined) return undefined;
         needsWholeStream();
       },
       set: needsWholeStream,

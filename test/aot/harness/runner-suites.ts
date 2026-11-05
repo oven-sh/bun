@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
+import { canTrim } from "../../bundler/compile-trim-features";
 import { describe, test } from "../supported";
 import { run } from "./run";
 
@@ -13,6 +14,8 @@ import { run } from "./run";
 // `~ ` before a line: that test fails in some runs and passes in others.
 // `! ` before a line: that test fails, and in a Bun built with assertions one of them stops its child run: an invariant of the engine is broken there.
 // `x64 ` or `arm64 ` before a line: that test fails on that architecture alone, and has to pass on the other.
+// `trims ` before a line: that test damages an executable and awaits that it goes on as Bun. Where the Bun under test trims, the executable has no command line left to go on with:
+// there the test has to fail, by the words that ../a-truncated-executable-says-so.test.ts holds. Where it does not trim, the test has to pass.
 // A compiled run owes no frame of a stack trace its name, line or column. A test that fails where it asks for one has no line, and is held neither way.
 //
 // All of it takes half an hour of four processors. CI gives a file six minutes, beside another one. So ../runner-suites.test.ts and the files in
@@ -130,9 +133,15 @@ function hold(title: string, preloaded: string, list: string, parts: string[]) {
         const said = quoted.flatMap((line, at) => (stop.test(line) ? quoted.slice(at, at + 4) : []));
         const ends = [...new Set([...readFileSync(stopped, "utf8").split("\n").filter(Boolean), ...said])];
         if (ends.length) console.error(`${part}: child runs were stopped:\n${ends.slice(0, 30).join("\n")}`);
+        const withoutCommandLine = canTrim ? named("trims ") : [];
         expect(names.filter(name => !named("~ ").includes(name)).sort()).toEqual(
-          [...named(""), ...named("! "), ...named(process.arch + " ")].sort(),
+          [...named(""), ...named("! "), ...named(process.arch + " "), ...withoutCommandLine].sort(),
         );
+        for (const result of failed.filter(result => withoutCommandLine.includes(nameOf(result)))) {
+          const said = saidBefore(result).join("\n");
+          expect(said).toContain("is damaged. Its embedded program can't be read.");
+          expect(said).toContain('+   "exitCode": 1,');
+        }
       },
       1_200_000,
     );

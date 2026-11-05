@@ -2616,10 +2616,10 @@ export class DictionaryType extends NamedType {
     );
     return { ...convertingType(accepted, "Dictionary", unionType(accepted, { type: "Object" })), members: this.names };
   }
-  /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. */
+  /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. Otherwise it is still a new ordinary object: `to_js::object`, `to_js::null_prototype_object`. */
   get resultType(): TypeSpec {
     return this.holdsJSValue || this.makesObjectWithoutPrototype
-      ? { type: "Object", freshness: "Yes" }
+      ? { type: "Instance", class: "Object", freshness: "Unaliased" }
       : { type: "PlainData" };
   }
   get dependencies(): readonly Type[] {

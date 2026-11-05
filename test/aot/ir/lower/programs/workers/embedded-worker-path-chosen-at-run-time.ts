@@ -1,6 +1,6 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// STATISTIC: SourceFilesChecked = 1
+// STATISTIC: SourceFilesChecked = 3
 // STATISTIC: SourceFilesData = 2
 // CHECK-LABEL: function {{*}}name="ask"
 

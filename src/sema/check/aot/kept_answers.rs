@@ -165,6 +165,80 @@ fn copy_shape<'n>(shape: TypeShape<'_>, arena: &'n Arena) -> TypeShape<'n> {
     }
 }
 
+const ROWS_IN_BLOCK: usize = 1 << 10;
+
+struct Blocks<T> {
+    blocks: Vec<Vec<T>>,
+    len: usize,
+}
+
+impl<T> Default for Blocks<T> {
+    fn default() -> Blocks<T> {
+        Blocks {
+            blocks: Vec::new(),
+            len: 0,
+        }
+    }
+}
+
+impl<T> Blocks<T> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    fn push(&mut self, value: T) {
+        let block = self.len / ROWS_IN_BLOCK;
+        if block == self.blocks.len() {
+            self.blocks.push(Vec::with_capacity(ROWS_IN_BLOCK));
+        }
+        self.blocks[block].push(value);
+        self.len += 1;
+    }
+
+    fn truncate(&mut self, len: usize) {
+        debug_assert!(len <= self.len);
+        self.blocks.truncate(self.len.div_ceil(ROWS_IN_BLOCK));
+        let (last, rest) = (len / ROWS_IN_BLOCK, len % ROWS_IN_BLOCK);
+        for (index, block) in self.blocks.iter_mut().enumerate().skip(last) {
+            block.truncate(if index == last { rest } else { 0 });
+        }
+        self.len = len;
+    }
+
+    fn clear(&mut self) {
+        self.truncate(0);
+    }
+
+    fn reuse_blocks_of(&mut self, filled: Blocks<T>) {
+        let count = filled.len.div_ceil(ROWS_IN_BLOCK);
+        for mut block in filled.blocks {
+            if self.blocks.len() >= count {
+                break;
+            }
+            block.clear();
+            self.blocks.push(block);
+        }
+    }
+}
+
+impl<T> core::ops::Index<usize> for Blocks<T> {
+    type Output = T;
+
+    #[inline]
+    fn index(&self, index: usize) -> &T {
+        &self.blocks[index / ROWS_IN_BLOCK][index % ROWS_IN_BLOCK]
+    }
+}
+
+impl<T> core::ops::IndexMut<usize> for Blocks<T> {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut T {
+        &mut self.blocks[index / ROWS_IN_BLOCK][index % ROWS_IN_BLOCK]
+    }
+}
+
 impl KeptMemo<'_> {
     pub(super) unsafe fn outliving_its_borrow(self) -> KeptMemo<'static> {
         // SAFETY: that arena is freed behind the memo, and `KeptAnswers::take` hands both out together.
@@ -200,9 +274,9 @@ pub(super) struct ObjectAnswers<'c> {
 #[derive(Default)]
 pub(super) struct KeptMemo<'c> {
     rows: ByType,
-    types: Vec<TypeAnswers<'c>>,
-    objects: Vec<ObjectAnswers<'c>>,
-    member_types: Vec<Option<(Atom, PositionTypes)>>,
+    types: Blocks<TypeAnswers<'c>>,
+    objects: Blocks<ObjectAnswers<'c>>,
+    member_types: Blocks<Option<(Atom, PositionTypes)>>,
     pub(super) signatures: FxHashMap<SigId, SignatureShape<'c>>,
     pub(super) function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
     pub(super) signature_results: FxHashMap<SigId, TypeId>,
@@ -327,17 +401,7 @@ impl<'c> KeptMemo<'c> {
         next.written_forms.clear();
         next.alias_scans.clear();
         next.alias_reads.clear();
-        let mut types: Vec<TypeAnswers<'n>> = std::mem::take(&mut self.types);
-        let (mut object_count, mut member_type_count) = (0, 0);
-        for answers in &types {
-            if answers.seen_in != answers.made_in && answers.object != 0 {
-                let object = &self.objects[answers.object as usize - 1];
-                object_count += 1;
-                member_type_count += object.member_type_count as usize;
-            }
-        }
-        next.objects.reserve_exact(object_count);
-        next.member_types.reserve_exact(member_type_count);
+        let mut types: Blocks<TypeAnswers<'n>> = std::mem::take(&mut self.types);
         let mut new_rows = vec![0u32; types.len()];
         let mut carried_count = 0;
         for (row, new_row) in new_rows.iter_mut().enumerate() {
@@ -350,10 +414,10 @@ impl<'c> KeptMemo<'c> {
                 object => {
                     let object = &self.objects[object as usize - 1];
                     let first = object.first_member_type as usize;
-                    let member_types =
-                        &self.member_types[first..][..object.member_type_count as usize];
                     let first_member_type = next.member_types.len() as u32;
-                    next.member_types.extend_from_slice(member_types);
+                    for index in first..first + object.member_type_count as usize {
+                        next.member_types.push(self.member_types[index]);
+                    }
                     next.objects.push(ObjectAnswers {
                         primitives: object.primitives,
                         builtin_base: (object.builtin_base)
@@ -389,6 +453,10 @@ impl<'c> KeptMemo<'c> {
         }
         types.truncate(carried_count);
         next.types = types;
+        let filled = std::mem::take(&mut self.objects);
+        next.objects.reuse_blocks_of(filled);
+        let filled = std::mem::take(&mut self.member_types);
+        next.member_types.reuse_blocks_of(filled);
         (next, new_rows)
     }
 
@@ -396,14 +464,18 @@ impl<'c> KeptMemo<'c> {
     pub(super) fn object_row(&mut self, ty: TypeId) -> ObjectRow {
         let TypeRow(row) = self.type_row(ty);
         match self.types[row as usize].object {
-            0 => {
-                self.objects.push(ObjectAnswers::default());
-                let count = self.objects.len() as u32;
-                self.types[row as usize].object = count;
-                ObjectRow(count - 1)
-            }
+            0 => self.add_object(row),
             object => ObjectRow(object - 1),
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn add_object(&mut self, row: u32) -> ObjectRow {
+        self.objects.push(ObjectAnswers::default());
+        let count = self.objects.len() as u32;
+        self.types[row as usize].object = count;
+        ObjectRow(count - 1)
     }
 
     #[inline]
@@ -430,6 +502,7 @@ impl<'c> KeptMemo<'c> {
         kept.and_then(|(name, types)| (name == member.name.atom()).then_some(types))
     }
 
+    #[inline]
     pub(super) fn has_room_for_member_types(&self, row: ObjectRow) -> bool {
         self.objects[row.0 as usize].member_type_count != 0
     }
@@ -438,10 +511,12 @@ impl<'c> KeptMemo<'c> {
         let object = &mut self.objects[row.0 as usize];
         object.first_member_type = self.member_types.len() as u32;
         object.member_type_count = count;
-        self.member_types
-            .resize(self.member_types.len() + count as usize, None);
+        for _ in 0..count {
+            self.member_types.push(None);
+        }
     }
 
+    #[inline]
     pub(super) fn keep_member_types(
         &mut self,
         row: ObjectRow,

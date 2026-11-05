@@ -42,6 +42,10 @@ const uses = {
   ],
 };
 
+/** `FsCompletion::reject` (node_fs.rs) and `reject_before_schedule`: an error of the system, that of a signal that has aborted, or that of a result that cannot be made. */
+const error = table.union(table.instance("Error"), table.instance("RangeError"));
+const nullOrError = table.union(table.strictNull, error);
+
 /**
  * `xCb` keeps its callback (`FsCompletion::Callback`) and calls it once the operation is done: with the error, or with `null` and the result.
  * Where it fails before anything is scheduled it queues the callback with the error, and for that it calls process.nextTick.
@@ -58,7 +62,7 @@ const callsBack = (length: number, value: table.TableType) =>
           afterwards: "TouchesOnlyWhatRowNames",
           times: "Later",
           this: table.undefined,
-          args: [table.any, value],
+          args: [nullOrError, value],
           result: "Ignored",
         }),
       ],
@@ -134,14 +138,14 @@ const results: Record<string, table.TableType> = {
   realpath: textOrBytes,
   realpathNative: textOrBytes,
   stat: statsIfFound,
-  // The prototype of what it makes is an object that nothing else leads to.
-  statfs: table.object,
+  // NodeFSStatFSBinding.cpp: an ordinary object with eight numbers or bigints. Its prototype is an object that nothing else leads to.
+  statfs: table.instance("Object"),
   write: table.f64,
   writev: table.f64,
 };
 const resultOf = (name: string) => results[name] ?? table.undefined;
 /** `FsCompletion::Promise`: a promise of its own for each call. */
-const promiseOf = (value: table.TableType) => table.instance("Promise").holding({ value, reason: table.any }).fresh;
+const promiseOf = (value: table.TableType) => table.instance("Promise").holding({ value, reason: error }).fresh;
 
 const constructorOf = (path: string) =>
   ({ getter: b.any.returning(table.builtin(path).spec), capability: "js" }) as const;

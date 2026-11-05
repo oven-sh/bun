@@ -304,6 +304,7 @@ pub(in crate::bind) struct RuntimeInput<'a, 's> {
 #[derive(Default)]
 struct RuntimeScopes {
     appended_bindings: FxHashMap<(ScopeId, Atom), (SymbolId, Declaration)>,
+    appended_names: Vec<u64>,
     hoisted_requires: Vec<(PatId, ScopeId)>,
     hidden_symbols: Vec<u64>,
     body_variables: Vec<(SymbolId, SymbolId)>,

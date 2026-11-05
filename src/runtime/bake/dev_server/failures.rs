@@ -201,6 +201,7 @@ impl DevServer {
     }
 
     pub(super) fn index_failures(&mut self) -> crate::Result<()> {
+        self.graph_safety_lock.assert_locked();
         // After inserting failures into the IncrementalGraphs, they are traced to their routes.
 
         if !self.incremental_result.failures_added.is_empty() {

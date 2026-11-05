@@ -512,6 +512,7 @@ impl DevServer {
                 (*dev).cleanup_failed_preparation();
             }
         };
+        let _graph_lock = self.graph_safety_lock.guard();
         for (path, flags) in entry_points.set.iter() {
             let message = bun_ast_jsc::msg_from_js(self.global(), path.to_vec(), error)?;
             let mut log = Log::init();

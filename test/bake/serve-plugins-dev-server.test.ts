@@ -11,6 +11,50 @@ const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body><script type="module" src="./entry.ts"></script></body></html>`;
 
+test.concurrent.each([false, true])("initial onStart rejection reports a bundle error (async: %s)", async isAsync => {
+  using dir = tempDir("serve-plugins-initial-preparation-error", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+      export default {
+        name: "initial-preparation-error",
+        setup(build) {
+          build.onStart(${isAsync ? "async " : ""}() => {
+            throw new Error("initial preparation rejected");
+          });
+        },
+      };
+    `,
+    "render.ts": `export function render(request, meta) { return new Response(meta.pageModule.default); }`,
+    "routes/index.ts": `export default "initial";`,
+    "server.ts": `
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        app: { framework: { fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" }] } },
+      });
+      try {
+        const response = await fetch(server.url);
+        await response.text();
+        console.log(JSON.stringify({ status: response.status }));
+      } finally {
+        await server.stop(true);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.split("\n").find(line => line.startsWith("{"));
+  expect(result, stderr).toBeDefined();
+  expect(JSON.parse(result!)).toEqual({ status: 500 });
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("onStart rejection waits for every started callback before the next bundle", async () => {
   using dir = tempDir("serve-plugins-onstart-settle", {
     "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,

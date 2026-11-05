@@ -56,8 +56,30 @@ impl Quick {
         self.print_binaryish.skip_leading_comments_of = 0;
     }
 
+    /// `a | b | c` at the top of an expression of Vue: every ancestor is another `|`, up to the root.
+    fn is_vue_filter_sequence_expression(&self, n: i32) -> bool {
+        if (self.n.at(n) & 0xff) != k::BinaryExpression
+            || ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 != tk::BitOr
+        {
+            return false;
+        }
+        let mut p = self.n.at(n + 3);
+        while p != 0 {
+            let kind = self.n.at(p) & 0xff;
+            if kind != k::JsExpressionRoot
+                && !(kind == k::BinaryExpression
+                    && ((self.n.at(p) as u32) >> SUB_SHIFT) as i32 == tk::BitOr)
+            {
+                return false;
+            }
+            p = self.n.at(p + 3);
+        }
+        return true;
+    }
+
     pub(crate) fn line_before_operator(&self, n: i32) -> bool {
-        return ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == tk::Pipeline
+        return (((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == tk::Pipeline
+            || (self.mode.has_vue_filters && self.is_vue_filter_sequence_expression(n)))
             && !self.has_leading_own_line_comment(self.n.at(n + 5));
     }
 
@@ -199,6 +221,8 @@ impl Quick {
             || pk == k::ThrowStatement
             || (pk == k::JSXExpressionContainer
                 && (self.n.at(grandparent) & 0xff) == k::JSXAttribute)
+            || (pk == k::JsExpressionRoot
+                && ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 != tk::BitOr)
             || (pk == k::ArrowFunctionExpression && self.n.at(parent + 5) == n)
             || pk == k::ForStatement
             || (pk == k::ConditionalExpression

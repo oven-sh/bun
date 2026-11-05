@@ -171,8 +171,6 @@ pub(crate) struct Fast {
     pub(crate) in_parameters: i32,
     /// `export { if }`: `from` has to follow
     pub(crate) needs_from: bool,
-    /// among the parameters that were read last there is a pattern, a default value or `...`
-    pub(crate) odd_parameters: bool,
 }
 impl Fast {
     pub(crate) fn new() -> Self {
@@ -259,7 +257,6 @@ impl Fast {
             jsx_is_on: false,
             in_parameters: 0,
             needs_from: false,
-            odd_parameters: false,
         }
     }
 }
@@ -323,8 +320,6 @@ pub(crate) const BLOCK_ARROW: i32 = 64;
 pub(crate) const BLOCK_CONSTRUCTOR: i32 = 128;
 /// with BLOCK_CLASS: the class has a superclass
 pub(crate) const BLOCK_DERIVED: i32 = 256;
-/// with BLOCK_FUNCTION: the parameters are more than names
-pub(crate) const BLOCK_ODD_PARAMETERS: i32 = 512;
 impl Quick {
     pub(crate) fn set_verified(&mut self, start: i32, end: i32) {
         self.fast.verified_start = start;
@@ -452,6 +447,40 @@ impl Quick {
     pub(crate) fn put(&mut self, c: i32) {
         self.t.put(self.fast.out, c);
         self.fast.out += 1;
+    }
+
+    /// The `{` of the body of a function stands at `brace`, and fast.rs has read the head. Are the parameters more than names? (Yes if that is not seen at a glance.)
+    #[cold]
+    pub(crate) fn has_odd_parameters(&self, brace: i32) -> bool {
+        let mut p = self.blanks_back(brace);
+        let is_arrow = self.t.at(p - 1) == 62 && self.t.at(p - 2) == 61;
+        if is_arrow {
+            p = self.blanks_back(p - 2);
+        }
+        if self.t.at(p - 1) != 41 {
+            // `a => {`; with types, the end of the type of what is returned
+            return !is_arrow || self.fast.has_types;
+        }
+        let mut depth: i32 = 0;
+        loop {
+            p -= 1;
+            match self.t.at(p) {
+                41 => {
+                    depth += 1;
+                }
+                40 => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                // a default value, a pattern, `...`, a text in which anything can stand; the start of the text
+                61 | 123 | 91 | 46 | 34 | 39 | 96 | 0 => {
+                    return true;
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Where the blanks in front of p start.
@@ -698,7 +727,12 @@ impl Quick {
                 TW_PLAIN
             };
         }
-        match self.t.at(p) {
+        // a e i k r u y
+        let c = self.t.at(p);
+        if c < 97 || (0x01120511_i32.wrapping_shr((c - 97) as u32) & 1) == 0 {
+            return TW_PLAIN;
+        }
+        match c {
             107 => {
                 return if length == 5 && self.text_is(p, p + 5, b"keyof") {
                     TW_OPERATOR
@@ -729,9 +763,24 @@ impl Quick {
                     TW_PLAIN
                 };
             }
+            101 => {
+                return if length == 4 && self.text_is(p, p + 4, b"enum") {
+                    TW_REFUSED
+                } else {
+                    TW_PLAIN
+                };
+            }
+            121 => {
+                return if length == 5 && self.text_is(p, p + 5, b"yield") {
+                    TW_REFUSED
+                } else {
+                    TW_PLAIN
+                };
+            }
             97 => {
                 return if (length == 7 && self.text_is(p, p + 7, b"asserts"))
                     || (length == 8 && self.text_is(p, p + 8, b"abstract"))
+                    || (length == 5 && self.text_is(p, p + 5, b"await"))
                 {
                     TW_REFUSED
                 } else {
@@ -919,7 +968,7 @@ impl Quick {
                     return Ok(self.no(refusal::NotAscii));
                 }
                 let kw = self.keyword_at(q, e - q);
-                if kw != 0 && (kw & 255) != tk::Name && (kw & 255) != tk::This {
+                if kw != 0 && Self::is_word_of_language(kw) && (kw & 255) != tk::This {
                     return Ok(self.no(refusal::FunctionType));
                 }
                 // `this` has a type and nothing else; `...a?` is printed in a way of its own
@@ -1244,11 +1293,7 @@ impl Quick {
             return self.no(refusal::Block);
         }
         self.fast.opened = q;
-        self.fast.opened_flags = if (flags & BLOCK_FUNCTION) != 0 && self.fast.odd_parameters {
-            flags | BLOCK_ODD_PARAMETERS
-        } else {
-            flags
-        };
+        self.fast.opened_flags = flags;
         return q;
     }
 
@@ -1401,7 +1446,6 @@ impl Quick {
             self.tight(p + 1)
         };
         if self.t.at(q) == 41 {
-            self.fast.odd_parameters = false;
             return Ok(if is_broken {
                 self.no(refusal::Paren)
             } else {
@@ -1409,7 +1453,6 @@ impl Quick {
             });
         }
         let first = q;
-        let mut odd = false;
         loop {
             if is_broken {
                 from = self.width_up_to(q);
@@ -1428,7 +1471,6 @@ impl Quick {
                 q += 3;
             }
             let c = self.t.at(q);
-            odd |= is_rest || (CC.at(c) & ID_START) == 0;
             if (CC.at(c) & ID_START) != 0 {
                 let e = self.word_end(q);
                 if (CC.at(self.t.at(e)) & BEYOND) != 0 {
@@ -1468,10 +1510,10 @@ impl Quick {
             if !is_rest && self.t.at(r) == 61 && self.assignment_operator(r) == 1 {
                 self.spaced(q);
                 let v1 = self.spaced(r + 1);
-                odd = true;
                 self.fast.in_parameters += 1;
-                q = self.expression(v1)?;
+                let value = self.expression(v1);
                 self.fast.in_parameters -= 1;
+                q = value?;
                 if q < 0 {
                     return Ok(-1);
                 }
@@ -1529,13 +1571,11 @@ impl Quick {
                 self.fast.parameters_from = self.width_up_to(q + 1);
                 self.fast.parameters_count = count;
                 self.fast.ready_flags |= F_DECIDED;
-                self.fast.odd_parameters = odd;
                 return Ok(q + 1);
             }
             q = self.tight(q);
             let d = self.t.at(q);
             if d == 41 {
-                self.fast.odd_parameters = odd;
                 return Ok(q + 1);
             }
             if d != 44 {
@@ -1545,7 +1585,6 @@ impl Quick {
             if self.t.at(s) == 41 {
                 self.flush(q);
                 self.fast.run = s;
-                self.fast.odd_parameters = odd;
                 return Ok(s + 1);
             }
             if is_rest {
@@ -1604,7 +1643,6 @@ impl Quick {
                         self.flush(e);
                         self.put(32);
                         self.fast.run = arrow;
-                        self.fast.odd_parameters = false;
                         return self.arrow_body(arrow + 2, is_async);
                     }
                 }
@@ -2127,7 +2165,7 @@ impl Quick {
                 let r = self.blanks(e);
                 if self.t.at(r) == 58 {
                     // there can be one `__proto__: a`: the parser counts
-                    if self.t.at(q) == 95 && e - q == 9 {
+                    if e - q == 9 && self.text_is(q, e, b"__proto__") {
                         return Ok(self.no(refusal::Key));
                     }
                     self.tight(e);
@@ -2504,7 +2542,6 @@ impl Quick {
                                     self.put(41);
                                 }
                                 self.spaced(e);
-                                self.fast.odd_parameters = false;
                                 return self.arrow_body(arrow + 2, true);
                             }
                             return Ok(self.no(refusal::Word));
@@ -2532,7 +2569,6 @@ impl Quick {
                         self.put(41);
                     }
                     self.spaced(q);
-                    self.fast.odd_parameters = false;
                     return self.arrow_body(r + 2, false);
                 }
             }
@@ -3286,6 +3322,10 @@ impl Quick {
             return self.no(refusal::End);
         }
         // No semicolon. The statement ends here if what comes next cannot go on with it.
+        if self.fast.saw_less != 0 && self.fast.ts {
+            // `a < keyof`, and `b > (c)` on the next line: type arguments
+            return self.no(refusal::NoSemicolon);
+        }
         let n = self.next_char_index(s);
         let d = self.t.at(n);
         if (CC.at(d) & ID_START) != 0 {
@@ -4551,18 +4591,33 @@ impl Quick {
     pub(crate) fn modifier_at(&self, p: i32, length: i32) -> i32 {
         let e = p + length;
         match length {
+            2 => {
+                return if self.text_is(p, e, b"in") {
+                    MODIFIER_REFUSED
+                } else {
+                    MODIFIER_NONE
+                };
+            }
             3 => {
                 return if self.text_is(p, e, b"get") || self.text_is(p, e, b"set") {
                     MODIFIER_ACCESSOR
                 } else {
-                    MODIFIER_NONE
+                    if self.text_is(p, e, b"out") {
+                        MODIFIER_REFUSED
+                    } else {
+                        MODIFIER_NONE
+                    }
                 };
             }
             5 => {
                 return if self.text_is(p, e, b"async") {
                     MODIFIER_ASYNC
                 } else {
-                    MODIFIER_NONE
+                    if self.text_is(p, e, b"const") {
+                        MODIFIER_REFUSED
+                    } else {
+                        MODIFIER_NONE
+                    }
                 };
             }
             6 => {
@@ -4747,6 +4802,10 @@ impl Quick {
                 is_accessor = true;
             }
             q = self.spaced(e);
+        }
+        // `new ()` is printed with a blank
+        if e - q == 3 && where_ != MEMBER_OF_CLASS && self.text_is(q, e, b"new") {
+            return Ok(self.no(refusal::Start));
         }
         // A constructor has parameters, and nothing but its accessibility before it.
         if e - q == 11
@@ -5701,9 +5760,11 @@ impl Quick {
                 p = self.terminate(q, false);
             }
             tk::Import => {
+                self.parse.needs_module |= self.fast.ts;
                 p = self.import_declaration(end);
             }
             tk::Export => {
+                self.parse.needs_module |= self.fast.ts;
                 p = self.export_declaration(end)?;
             }
             _ => {}
@@ -5833,7 +5894,6 @@ impl Quick {
         self.fast.opened = 0;
         self.fast.pending_parens = 0;
         self.fast.scanned_at = 0;
-        self.fast.in_parameters = 0;
         return true;
     }
 
@@ -6274,15 +6334,11 @@ impl Quick {
         }
         let length = q - p - 1;
         self.fast.ready_name_length = length;
-        // <fbt> has rules of its own; what is in <style jsx> can be CSS
+        // <fbt> has rules of its own; what is in <style jsx> can be CSS; `<const a = ` starts type parameters
         if (length == 3 && self.text_is(p + 1, q, b"fbt"))
             || (length == 5
                 && (self.text_is(p + 1, q, b"style") || self.text_is(p + 1, q, b"const")))
         {
-            return Ok(self.no(refusal::Jsx));
-        }
-        // `<A extends B>` may be the type parameters of a function
-        if self.word_is(self.blanks(q), b"extends") {
             return Ok(self.no(refusal::Jsx));
         }
         let mut count: i32 = 0;
@@ -6307,6 +6363,10 @@ impl Quick {
             }
             // `:`, `<` behind the name; the end of the line
             if r == q {
+                return Ok(self.no(refusal::Jsx));
+            }
+            // `<A extends B>` may be the type parameters of a function
+            if c == 101 && count == 0 && self.word_is(r, b"extends") {
                 return Ok(self.no(refusal::Jsx));
             }
             let v0 = self.spaced(q);

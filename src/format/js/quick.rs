@@ -170,7 +170,8 @@ fn options_for(options: &FormatOptions, text: &[u8], is_host: bool) -> Option<qu
         // `format`
         is_in_markdown: _,
         is_at_margin: _,
-        is_mdx_jsx,
+        // `format`
+        is_mdx_jsx: _,
         is_mdx_es_syntax,
         html_template_depth,
         is_in_html_file,
@@ -194,8 +195,6 @@ fn options_for(options: &FormatOptions, text: &[u8], is_host: bool) -> Option<qu
         && cursor_offset.is_none()
         // A pragma goes to the top of the host. Where the doctype of HTML in a template is asked about, the host isn't.
         && (is_host || (!insert_pragma && !is_in_html_file))
-        && !is_mdx_jsx
-        && !is_mdx_es_syntax
         && *html_template_depth == 0
         && *in_html == InHtml::default()
         && !flavor.is_oxfmt()
@@ -238,6 +237,7 @@ fn options_for(options: &FormatOptions, text: &[u8], is_host: bool) -> Option<qu
         html_whitespace_sensitivity_ignore: *html_whitespace_sensitivity
             == HtmlWhitespaceSensitivity::Ignore,
         is_in_markdown: false,
+        is_mdx_es_syntax: *is_mdx_es_syntax,
         marks_line_breaks_in_texts: false,
         indentation: 0,
         no_short_cuts: false,
@@ -303,6 +303,9 @@ pub fn format(
         quick_options.is_in_markdown = may_be_jsx(&code);
         quick_options.marks_line_breaks_in_texts = !options.is_at_margin;
     }
+    if options.is_mdx_jsx {
+        return format_mdx_jsx(code.text, &quick_options, scratch, out);
+    }
     let mut dialect = quick::Dialect::of_name(language, code.path);
     // In a declaration file, too, `await` is a name outside of async functions.
     dialect.common_js |= [&b".d.ts"[..], b".d.mts"]
@@ -312,10 +315,51 @@ pub fn format(
     format_as(code.text, dialect, &quick_options, file, scratch, out)
 }
 
+/// See `FormatOptions::is_mdx_jsx`. There's no line break at the end.
+fn format_mdx_jsx(
+    text: &[u8],
+    quick_options: &quick::Options,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), Refused> {
+    // What is white space, and how wide a character is that is none of ASCII's, is where the long way corrects Prettier.
+    let is_plain = |byte: &u8| matches!(byte, b' '..=b'~' | b'\n' | b'\t');
+    if !text.iter().all(is_plain) {
+        return Err(scratch.refuse(Reason::Rare, text));
+    }
+    let how = quick::Expression {
+        text,
+        is_typescript: false,
+        has_vue_filters: false,
+        is_mdx_jsx: true,
+        wrap: quick::Wrap::Bare,
+        before: b"",
+        after: b"",
+    };
+    let quick = scratch.quick.get_or_insert_default();
+    let guests = quick.lend_guests(None);
+    let done = quick::format_expression(&how, quick_options, quick, out);
+    quick.lend_guests(guests);
+    if done.is_err() {
+        let reason = match quick.why() {
+            1 => Reason::SyntaxError,
+            8 => Reason::Guest,
+            _ => Reason::Rare,
+        };
+        return Err(scratch.refuse(reason, text));
+    }
+    if let Some(counts) = &mut scratch.counts {
+        counts.printed.add(text);
+    }
+    Ok(())
+}
+
 /// All that is in a `<script>` of HTML or Vue.
 #[derive(Copy, Clone)]
 pub(crate) struct Script<'c> {
     pub(crate) text: &'c [u8],
+    /// The name of the file that it is in: Prettier's `filepath`.
+    pub(crate) name: &'c [u8],
     pub(crate) is_typescript: bool,
     /// It's known to be no module.
     pub(crate) is_no_module: bool,
@@ -335,7 +379,7 @@ pub(crate) fn format_script(
     let Some(of_host) = options_for(options, b"", true) else {
         return Err(scratch.refuse(Reason::Options, text));
     };
-    let name = options.filepath.as_deref().unwrap_or_default();
+    let name = script.name;
     // In a host nothing is Flow, `<!--` can start a comment, and a byte order mark is white space. What only a module
     // has is an error elsewhere.
     if strings::contains_char(text, b'\r')
@@ -407,6 +451,85 @@ pub(crate) fn block_stands(
         false => scratch.credit -= 1,
     }
     stands
+}
+
+/// An expression of Vue.
+#[derive(Copy, Clone)]
+pub(crate) struct Expression<'c> {
+    pub(crate) text: &'c [u8],
+    pub(crate) is_typescript: bool,
+    /// `__vue_expression`: `a | b` is a filter.
+    pub(crate) has_filters: bool,
+    /// The name of the attribute whose value it is, and `="`. `None` for one between `{{` and `}}`.
+    pub(crate) attribute: Option<&'c [u8]>,
+    /// By how many levels the line is indented that it starts, together with the name of its attribute.
+    pub(crate) indentation: u32,
+}
+
+/// Puts an expression in a text of HTML with `options`, formatted, in the place of what `out` held: all of the attribute,
+/// or what is between the braces. It's what is printed if it starts a line and a line break follows.
+pub(crate) fn format_expression(
+    expression: Expression<'_>,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), Refused> {
+    let text = expression.text;
+    let Some(of_host) = options_for(options, b"", true) else {
+        return Err(scratch.refuse(Reason::Options, text));
+    };
+    // A comment, which the long way has rules of its own for. In an attribute: what is written as an entity, and a string
+    // whose quotes may have to change. Between braces: what may end with `}}`.
+    // Which keys get quotes together with the others depends on the name of the parser.
+    let is_plain = of_host.quote_props != quick::QuoteProps::Consistent
+        && !strings::contains(text, b"//")
+        && !strings::contains(text, b"/*")
+        && !strings::contains_char(text, 0)
+        && match expression.attribute {
+            Some(_) => strings::index_of_any(text, b"\"\\&").is_none(),
+            None => !strings::contains_char(text, b'{'),
+        };
+    if !is_plain {
+        return Err(scratch.refuse(Reason::InHtml, text));
+    }
+    if !strings::is_valid_utf8(text) {
+        return Err(scratch.refuse(Reason::Rare, text));
+    }
+    let quick_options = quick::Options {
+        end_of_line: quick::EndOfLine::Lf,
+        indentation: i32::try_from(expression.indentation).unwrap_or(i32::MAX),
+        single_quote: expression.attribute.is_some() || of_host.single_quote,
+        ..of_host
+    };
+    let how = quick::Expression {
+        text,
+        is_typescript: expression.is_typescript,
+        has_vue_filters: expression.has_filters,
+        is_mdx_jsx: false,
+        wrap: match expression.attribute {
+            Some(_) => quick::Wrap::ByKind,
+            None => quick::Wrap::Bare,
+        },
+        before: expression.attribute.unwrap_or_default(),
+        after: match expression.attribute {
+            Some(_) => b"\"",
+            None => b"",
+        },
+    };
+    let quick = scratch.quick.get_or_insert_default();
+    quick.lend_guests(None);
+    if quick::format_expression(&how, &quick_options, quick, out).is_err() {
+        let reason = match quick.why() {
+            1 => Reason::SyntaxError,
+            8 => Reason::Guest,
+            _ => Reason::Rare,
+        };
+        return Err(scratch.refuse(reason, text));
+    }
+    if let Some(counts) = &mut scratch.counts {
+        counts.printed.add(text);
+    }
+    Ok(())
 }
 
 /// `file`: the options and the name for what is in a template in another language.

@@ -18,6 +18,8 @@ pub(crate) struct Mode {
     pub(crate) allows_non_null: bool,
     /// A program that is one expression statement is printed in a special way: SINGLE_*, or 0.
     pub(crate) single_statement_mode: i32,
+    /// An expression of Vue: `a | b` at the top is a filter.
+    pub(crate) has_vue_filters: bool,
 }
 impl Mode {
     pub(crate) fn new() -> Self {
@@ -29,6 +31,7 @@ impl Mode {
             js_mode_language: 0,
             allows_non_null: false,
             single_statement_mode: 0,
+            has_vue_filters: false,
         }
     }
 }
@@ -43,6 +46,11 @@ impl Quick {
         self.mode.is_babel_flow = language == lang::BabelFlow;
         self.mode.is_flow = language == lang::Flow || self.mode.is_babel_flow;
         self.mode.allows_non_null = self.mode.is_type_script;
+        self.mode.has_vue_filters = self.host.has_vue_filters;
+        if self.host.wrap != crate::js::WRAP_NONE {
+            // no parser for programs
+            self.mode.unquotes_numbers = false;
+        }
         self.mode.single_statement_mode = if self.options.is_in_markdown {
             SINGLE_JSX_IN_MARKDOWN
         } else {

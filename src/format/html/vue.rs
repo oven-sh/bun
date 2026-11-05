@@ -83,13 +83,14 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     pub(crate) fn is_vue_sfc_with_typescript_script(&mut self) -> bool {
         let (tree, options) = (self.tree, self.options);
         *self.has_typescript_script.get_or_insert_with(|| {
-            tree.children(tree.root).any(|child| {
-                tree.is_vue_script_tag(child, options)
-                    && matches!(
-                        tree.attribute(child, b"lang").flatten(),
-                        Some(b"ts" | b"typescript")
-                    )
-            })
+            tree.has_typescript_script_in_run
+                || tree.children(tree.root).any(|child| {
+                    tree.is_vue_script_tag(child, options)
+                        && matches!(
+                            tree.attribute(child, b"lang").flatten(),
+                            Some(b"ts" | b"typescript")
+                        )
+                })
         })
     }
 
@@ -211,6 +212,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             });
         }
         if name.starts_with(b"@") || name.starts_with(b"v-on:") {
+            if self.write_attribute_quickly(element, attr, value, is_typescript, false) {
+                return true;
+            }
             // `printVueVOnDirective`
             let syntax = if is_typescript {
                 Syntax::BabelTs
@@ -241,6 +245,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             } else {
                 return false;
             };
+        let has_filters = root == HtmlRoot::VueExpression;
+        if self.write_attribute_quickly(element, attr, value, is_typescript, has_filters) {
+            return true;
+        }
         self.print_attribute_with(attr, |printer| {
             printer.out.foreign(|f| {
                 js::write_expression(f, value, is_typescript, in_html(root), Hug::Expression)

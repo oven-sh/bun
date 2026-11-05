@@ -635,8 +635,7 @@ mod draft {
     /// This executable asked the kernel to deny it writable and executable memory, and the kernel did.
     static DENIES_WRITE_EXECUTE_MEMORY: AtomicBool = AtomicBool::new(false);
 
-    /// A native library that generates machine code fails this way where the process denies itself
-    /// writable and executable memory: `mprotect(PROT_EXEC)` is refused and the library runs the page anyway.
+    /// A library that generates machine code runs its page even though `mprotect(PROT_EXEC)` was refused.
     fn ran_code_that_write_execute_denial_refused() -> bool {
         RAN_MEMORY_THAT_IS_NOT_EXECUTABLE.load(Ordering::Relaxed)
             && DENIES_WRITE_EXECUTE_MEMORY.load(Ordering::Relaxed)
@@ -3490,8 +3489,7 @@ mod draft {
         SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
     }
 
-    /// An executable built with `bun compile` calls this once `prctl(PR_SET_MDWE)` has succeeded, so that a
-    /// crash in code that the denial kept from becoming executable is reported as that.
+    /// Called once the executable's own `prctl(PR_SET_MDWE)` has succeeded.
     pub fn note_write_execute_memory_denied() {
         DENIES_WRITE_EXECUTE_MEMORY.store(true, Ordering::Relaxed);
     }

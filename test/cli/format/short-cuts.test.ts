@@ -370,6 +370,38 @@ describe("GraphQL", () => {
     `{ ${"a { ".repeat(70)}b${" }".repeat(70)} }\n`,
     `{ a(b: ${"[".repeat(70)}1${"]".repeat(70)}) }\n`,
     `type A { b: ${"[".repeat(70)}C${"]".repeat(70)} }\n`,
+    // Block strings, whose lines are looked at while their end is looked for.
+    ...["", "  "].flatMap(indentation =>
+      [
+        '"""\n_a\n_"""',
+        '"""\n_a\n_b\n_"""',
+        '"""\n_a\n\n_b\n_"""',
+        '"""\n_a\n_  b\n_"""',
+        '"""\n_  a\n_b\n_"""',
+        '"""\n_  a\n_  b\n_"""',
+        '"""\n_a\n b\n_"""',
+        '"""\n_a \n_"""',
+        '"""\n_a\n_ \n_b\n_"""',
+        '"""\n_a\n_\n_b\n_"""',
+        '"""\n\n_a\n_"""',
+        '"""\n_a\n\n_"""',
+        '"""\n_a\n_ """',
+        '"""\n_a\n"""',
+        '"""\n_a"""',
+        '"""a\n_"""',
+        '""" \n_a\n_"""',
+        '"""\n_"""',
+        '"""\n_a \\""" b\n_"""',
+        '"""\n_a\n_\\"""\n_"""',
+        '"""\n_a "" b " c\n_"""',
+        '"""\n_a\n_""""',
+        '"""\n_é\' ` $ \\\\ \x7f\n_"""',
+      ].map(
+        string =>
+          `type A {\n${indentation}${string.replaceAll("_", indentation)}\n${indentation}b: C\n}\n${string.replaceAll("_", "")}\ntype D\n`,
+      ),
+    ),
+    `type A {\n${" ".repeat(60)}"""\n${" ".repeat(60)}a\n${" ".repeat(60)}"""\n  b: C\n}\n`,
     // Errors.
     "{ a",
     "{ a }}",

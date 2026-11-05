@@ -88,15 +88,22 @@ pub(super) struct Token {
     /// How many bytes between the token before it, or the start of the text, and this one are neither spaces nor tabs.
     /// 255 stands for more.
     pub(super) ignored_before: u8,
+    /// Of a block string that's written the way one is printed that's indented by this many blanks or tabs: the quotes
+    /// on lines of their own, every line indented at least like them and one no further, no empty line next to the
+    /// quotes, no white space at the end of a line. [`NOT_ON_LINES`] for any other, and for every other token.
+    pub(super) indentation: u16,
     pub(super) start: u32,
     pub(super) end: u32,
 }
+
+pub(super) const NOT_ON_LINES: u16 = u16::MAX;
 
 impl Token {
     pub(super) fn end_of(text: &[u8]) -> Token {
         Token {
             kind: Kind::End,
             ignored_before: 255,
+            indentation: NOT_ON_LINES,
             start: text.len() as u32,
             end: text.len() as u32,
         }
@@ -161,6 +168,59 @@ fn end_of_long_name(stops: ScannerStops<'_>, start: usize) -> usize {
     end
 }
 
+/// Returns the end of the block string at `start`, and its [`Token::indentation`].
+#[inline(never)]
+fn end_of_block_string(text: &[u8], stops: ScannerStops<'_>, start: usize) -> Option<(usize, u16)> {
+    let content_start = start + 3;
+    let mut is_on_lines = true;
+    // Of the lines that are more than white space, behind the first line: how far the one is indented that's indented
+    // the least, and whether the line before this one is one of them.
+    let (mut common_indent, mut follows_text) = (usize::MAX, false);
+    let mut line_start = content_start;
+    let mut at = content_start;
+    loop {
+        at = stops.in_string.next(at);
+        match *text.get(at)? {
+            b'\n' => {
+                let len = at - line_start;
+                let indent = (stops.after_blanks.run(line_start) as usize).min(len);
+                if line_start == content_start {
+                    is_on_lines &= len == 0;
+                } else {
+                    // An empty line follows the quotes, or the line ends with white space.
+                    let is_first = line_start == content_start + 1;
+                    is_on_lines &= len > indent || (len == 0 && !is_first);
+                    is_on_lines &= len == 0 || !matches!(text[at - 1], b' ' | b'\t');
+                    follows_text = len > indent;
+                    if follows_text {
+                        common_indent = common_indent.min(indent);
+                    }
+                }
+                line_start = at + 1;
+                at += 1;
+            }
+            b'"' if text[at..].starts_with(b"\"\"\"") => {
+                // `\"""` doesn't end the string.
+                if at > content_start && text[at - 1] == b'\\' {
+                    at += 3;
+                    continue;
+                }
+                let len = at - line_start;
+                is_on_lines &= follows_text
+                    && len == common_indent
+                    && stops.after_blanks.run(line_start) as usize == len
+                    && len < 56;
+                let indentation = match is_on_lines {
+                    true => len as u16,
+                    false => NOT_ON_LINES,
+                };
+                return Some((at + 3, indentation));
+            }
+            _ => at += 1,
+        }
+    }
+}
+
 /// Returns the kind and the end of the token at `start`, whose first byte starts a `kind`. `Ignored` is a byte order
 /// mark.
 #[inline(never)]
@@ -177,17 +237,6 @@ fn long_token(
         Kind::Dot if rest.starts_with(b"...") => Some((Kind::Spread, start + 3)),
         Kind::ByteOrderMark if rest.starts_with(crate::text::BOM) => {
             Some((Kind::Ignored, start + 3))
-        }
-        Kind::Quote if rest.starts_with(b"\"\"\"") => {
-            let mut at = 3;
-            loop {
-                at += strings::index_of(rest.get(at..)?, b"\"\"\"")?;
-                // `\"""` doesn't end the string.
-                if at == 3 || rest[at - 1] != b'\\' {
-                    return Some((Kind::BlockString, start + at + 3));
-                }
-                at += 3;
-            }
         }
         Kind::Quote => {
             let (mut at, mut kind) = (start + 1, Kind::String);
@@ -290,8 +339,18 @@ pub(super) fn scan(text: &[u8], stops: ScannerStops<'_>, tokens: &mut Vec<Token>
             let Some(&byte) = text.get(start) else {
                 break 'words;
             };
+            let mut indentation = NOT_ON_LINES;
             let (kind, end) = match KINDS[byte as usize] {
                 Kind::Name => (Kind::Name, end_of_long_name(stops, start)),
+                Kind::Quote if text[start..].starts_with(b"\"\"\"") => {
+                    match end_of_block_string(text, stops, start) {
+                        Some((end, on_lines)) => {
+                            indentation = on_lines;
+                            (Kind::BlockString, end)
+                        }
+                        None => (Kind::Invalid, start + 1),
+                    }
+                }
                 kind => long_token(text, stops, kind, start).unwrap_or((Kind::Invalid, start + 1)),
             };
             resume_at = end;
@@ -306,6 +365,7 @@ pub(super) fn scan(text: &[u8], stops: ScannerStops<'_>, tokens: &mut Vec<Token>
             tokens[count] = Token {
                 kind,
                 ignored_before: ignored as u8,
+                indentation,
                 start: start as u32,
                 end: end as u32,
             };
@@ -353,6 +413,7 @@ fn short_tokens(
         slots[count % WORD] = Token {
             kind,
             ignored_before: ignored as u8,
+            indentation: NOT_ON_LINES,
             start,
             end,
         };

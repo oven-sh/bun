@@ -843,7 +843,12 @@ impl Quick {
         self.lexer.tok = tk::Name;
         self.lexer.tok_kw = kw::None;
         if c >= 128 || c == 92 {
-            p = self.slow_name(p)?;
+            let e = self.slow_name(p)?;
+            // white space beyond ASCII behind a word of the language
+            if e == p && e - s >= 2 && e - s <= 10 {
+                self.classify_name(s, e - s);
+            }
+            p = e;
         } else {
             let len = p - s;
             if len >= 2 && len <= 10 {

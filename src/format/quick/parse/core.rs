@@ -42,8 +42,6 @@ pub(crate) struct Parse {
     /// TypeScript and Flow: the next call of parse_maybe_assign() parses something that may turn out to be a parameter of an arrow
     /// function, so `?` and `: type` can follow its left side.
     pub(crate) paren_item: i32,
-    /// babel-flow: where the consequent of the conditional expression that was entered last starts
-    pub(crate) consequent_start: i32,
     /// Where the last statement that semicolon() ended stops, without the semicolon.
     pub(crate) content_end: i32,
     /// The statement that ended the directive prologue.
@@ -197,7 +195,6 @@ impl Parse {
             is_common_js: false,
             speculating: 0,
             paren_item: 0,
-            consequent_start: -1,
             content_end: 0,
             pending_statement: 0,
             lexer_stays: false,
@@ -651,7 +648,6 @@ impl Quick {
         self.parse.binds_lexically = false;
         self.parse.next_class_is_derived = false;
         self.parse.is_operand = false;
-        self.parse.consequent_start = -1;
         // whatever the language now: the last file may have been Flow, and have ended in the middle
         self.ts_reset_context();
     }
@@ -3843,9 +3839,6 @@ impl Quick {
         self.next()?;
         let saved_no_in = self.parse.no_in;
         self.parse.no_in = NO_IN_CONSEQUENT;
-        if self.mode.is_babel_flow {
-            self.parse.consequent_start = self.lexer.tok_start;
-        }
         let consequent = self.parse_maybe_assign()?;
         self.parse.no_in = saved_no_in;
         self.expect(tk::Colon)?;
@@ -4450,6 +4443,19 @@ impl Quick {
                         // they were parameters, and there is no function
                         return Err(self.text_refuse());
                     }
+                    if maybe_async && self.parse.typed == TYPED_FLOW {
+                        // the same: in Flow they look like casts without parentheses
+                        let mut i: i32 = 1;
+                        while i <= self.n.at(args) {
+                            let argument = self.n.at(args + i);
+                            if (self.n.at(argument) & 0xff) == k::TypeCastExpression
+                                && self.t.at(self.n.at(argument + 1)) != 40
+                            {
+                                return Err(self.text_refuse());
+                            }
+                            i += 1;
+                        }
+                    }
                     base = self.call_node(
                         k::CallExpression | chain,
                         start,
@@ -4928,22 +4934,10 @@ impl Quick {
             if self.parse.suspensions != suspensions && self.parse.typed != TYPED_TS {
                 return Err(self.text_refuse());
             }
-            // Babel forgets to turn the casts into parameters if the function is the first thing behind a `?` and has a block for its body
-            let mut keeps_casts = false;
-            if self.mode.is_babel_flow && start == self.parse.consequent_start {
-                self.save();
-                self.next()?;
-                keeps_casts = self.lexer.tok == tk::BraceL;
-                self.restore();
-            }
             let mut i = mark;
             while i < self.arena.ls_pos {
-                if !(keeps_casts
-                    && (self.n.at(self.arena.ls.at(i)) & 0xff) == k::TypeCastExpression)
-                {
-                    let v3 = self.to_assignable_parameter(self.arena.ls.at(i))?;
-                    self.arena.ls.put(i, v3);
-                }
+                let v3 = self.to_assignable_parameter(self.arena.ls.at(i))?;
+                self.arena.ls.put(i, v3);
                 i += 1;
             }
             let v4 = self.list_finish(mark);
@@ -5989,8 +5983,8 @@ impl Quick {
                     && !(self.lexer.tok_kw == kw::From && self.peek_is_string())
             };
             if is_phase {
-                // TypeScript knows `defer`, and not together with `type`
-                if self.parse.typed == TYPED_TS && (kw != kw::Defer || import_kind != 0) {
+                // TypeScript knows `defer`; nobody knows it together with `type`
+                if (self.parse.typed == TYPED_TS && kw != kw::Defer) || import_kind != 0 {
                     return Err(self.text_refuse());
                 }
                 phase = if kw == kw::Defer {
@@ -6058,6 +6052,10 @@ impl Quick {
                     && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"type")
                 {
                     let v2 = self.ts_parse_import_or_export_specifier(k::ImportSpecifier)?;
+                    let local = self.n.at(v2 + 5);
+                    if self.text_is(self.n.at(local + 1), self.n.at(local + 2), b"enum") {
+                        return Err(self.text_refuse());
+                    }
                     self.list_push(v2);
                     if self.lexer.tok != tk::BraceR {
                         self.expect(tk::Comma)?;

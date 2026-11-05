@@ -2535,7 +2535,8 @@ impl Quick {
         let context = self.save_context();
         let depth = self.parse.speculating;
         let saved = self.parse_typescript.no_conditional_types;
-        let is_shift = self.lexer.tok == tk::Shl;
+        let is_shift =
+            self.lexer.tok == tk::Shl || self.t.at(self.blanks(self.lexer.tok_end)) == 60;
         self.parse_typescript.trial_is_doubtful = false;
         self.set_speculating(depth + 1);
         let mut result: i32 = 0;
@@ -2601,6 +2602,18 @@ impl Quick {
                     return Err(self.text_refuse());
                 }
                 self.restore();
+                // `a << b.c > (d)`: the same, with more that is missed
+                let mut p = self.lexer.tok_end;
+                loop {
+                    let c = self.t.at(p);
+                    if c == 0 || c == 10 || c == 59 {
+                        break;
+                    }
+                    if c == 62 && self.t.at(self.blanks(p + 1)) == 40 {
+                        return Err(self.text_refuse());
+                    }
+                    p += 1;
+                }
             }
         } else {
             self.unmark(m);

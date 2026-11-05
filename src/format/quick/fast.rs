@@ -729,9 +729,24 @@ impl Quick {
                     TW_PLAIN
                 };
             }
+            101 => {
+                return if length == 4 && self.text_is(p, p + 4, b"enum") {
+                    TW_REFUSED
+                } else {
+                    TW_PLAIN
+                };
+            }
+            121 => {
+                return if length == 5 && self.text_is(p, p + 5, b"yield") {
+                    TW_REFUSED
+                } else {
+                    TW_PLAIN
+                };
+            }
             97 => {
                 return if (length == 7 && self.text_is(p, p + 7, b"asserts"))
                     || (length == 8 && self.text_is(p, p + 8, b"abstract"))
+                    || (length == 5 && self.text_is(p, p + 5, b"await"))
                 {
                     TW_REFUSED
                 } else {
@@ -919,7 +934,7 @@ impl Quick {
                     return Ok(self.no(refusal::NotAscii));
                 }
                 let kw = self.keyword_at(q, e - q);
-                if kw != 0 && (kw & 255) != tk::Name && (kw & 255) != tk::This {
+                if kw != 0 && Self::is_word_of_language(kw) && (kw & 255) != tk::This {
                     return Ok(self.no(refusal::FunctionType));
                 }
                 // `this` has a type and nothing else; `...a?` is printed in a way of its own

@@ -195,6 +195,9 @@ impl Quick {
                     } else {
                         TP_ASSERTS
                     };
+                } else if self.word() == w::Is {
+                    // `asserts is A`
+                    return Err(self.text_refuse());
                 } else {
                     self.rewind(m);
                 }
@@ -568,7 +571,7 @@ impl Quick {
 
     /// `+` or `-` before the key of a class property.
     pub(crate) fn flow_parse_variance_of_member(&mut self) -> R<i32> {
-        if self.lexer.tok != tk::Add && self.lexer.tok != tk::Sub && self.word() != w::Writeonly {
+        if self.lexer.tok != tk::Add && self.lexer.tok != tk::Sub {
             return Ok(0);
         }
         return self.flow_parse_variance();
@@ -651,6 +654,10 @@ impl Quick {
                     || self.lexer.tok == tk::Ellipsis)
             {
                 return Err(self.unexpected());
+            }
+            // `in` and `out` are for type parameters
+            if variance != 0 && ((self.n.at(variance) as u32) >> SUB_SHIFT) as i32 >= VA_IN {
+                return Err(self.text_refuse());
             }
             if self.lexer.tok == tk::BracketL {
                 self.next()?;
@@ -1182,6 +1189,9 @@ impl Quick {
                     if self.lexer.tok != tk::Num && self.lexer.tok != tk::BigInt {
                         return Err(self.unexpected());
                     }
+                    if self.lexer.tok_start != start + 1 {
+                        return Err(self.text_refuse());
+                    }
                     // one literal with the sign
                     let literal = self.node0(
                         if self.lexer.tok == tk::Num {
@@ -1312,12 +1322,9 @@ impl Quick {
 
     pub(crate) fn flow_keyword_or_generic(&mut self, which: i32) -> R<i32> {
         let after = self.peek()?;
-        // `number.a`
-        if after == tk::Dot {
+        // `number.a`, `number<A>`
+        if after == tk::Dot || after == tk::Lt {
             return Err(self.text_refuse());
-        }
-        if after == tk::Lt {
-            return self.flow_parse_generic();
         }
         return self.flow_keyword(which);
     }
@@ -1704,7 +1711,7 @@ impl Quick {
                 self.expect(tk::Comma)?;
             }
         }
-        self.next()?;
+        self.expect(tk::ParenR)?;
         return Ok(self.list_finish(list_mark));
     }
 
@@ -1839,6 +1846,9 @@ impl Quick {
             }
             w::Opaque => {
                 self.flow_check_same_line()?;
+                if !self.peek_is_word(w::Type)? {
+                    return Err(self.unexpected());
+                }
                 return self.flow_parse_opaque_type(start, modifiers);
             }
             w::Interface => {
@@ -1847,9 +1857,11 @@ impl Quick {
             }
             w::Enum => {
                 self.not_in_babel()?;
+                self.flow_check_same_line()?;
                 return self.flow_parse_enum(start, modifiers);
             }
             w::Component => {
+                self.flow_check_same_line()?;
                 return self.flow_parse_component(
                     start,
                     k::DeclareComponent,
@@ -1858,6 +1870,7 @@ impl Quick {
             }
             w::Hook => {
                 self.not_in_babel()?;
+                self.flow_check_same_line()?;
                 self.next()?;
                 let id = self.flow_parse_declared_function_name(k::HookTypeAnnotation)?;
                 self.semicolon()?;
@@ -1926,8 +1939,10 @@ impl Quick {
         if self.lexer.tok == tk::BraceL {
             self.next()?;
             let list_mark = self.arena.ls_pos;
+            let mut needs_from = false;
             while self.lexer.tok != tk::BraceR {
                 let spec_start = self.lexer.tok_start;
+                needs_from |= self.lexer.tok != tk::Name || self.is_kw(kw::Enum);
                 let local = self.parse_ident_name()?;
                 let exported: i32;
                 if self.is_kw(kw::As) {
@@ -1955,6 +1970,8 @@ impl Quick {
             if self.is_kw(kw::From) {
                 self.next()?;
                 source = self.string_literal()?;
+            } else if needs_from {
+                return Err(self.text_refuse());
             }
             self.semicolon()?;
             let n = self.node_raw(
@@ -2062,6 +2079,10 @@ impl Quick {
                 self.parse.default_export_at = -1;
                 let body = self.parse_block_of_nodes()?;
                 self.parse.default_export_at = outer_default;
+                // (an empty one is printed in more than one way)
+                if self.n.at(self.n.at(body + 5)) == 0 {
+                    return Err(self.text_refuse());
+                }
                 if self.mode.is_babel_flow {
                     self.flow_check_declare_module_body(body)?;
                 }
@@ -2660,6 +2681,10 @@ impl Quick {
             self.next()?;
             if self.lexer.tok == tk::BraceL || self.lexer.tok == tk::Mul {
                 return Ok(-1);
+            }
+            // `export type as = A`
+            if self.is_kw(kw::As) {
+                return Err(self.text_refuse());
             }
             self.restore();
         }

@@ -82,7 +82,7 @@ unsafe extern "C" {
     /// `listen(2)`. safe: two integers; a descriptor that cannot listen is an errno.
     #[cfg(not(windows))]
     safe fn listen(fd: c_int, backlog: c_int) -> c_int;
-    /// `if_indextoname(3)`. safe: writes at most `IF_NAMESIZE` bytes to `ifname`; an unknown index is null.
+    /// safe: writes at most `IF_NAMESIZE` bytes to `ifname`; null for an unknown index.
     #[cfg(not(windows))]
     safe fn if_indextoname(ifindex: c_uint, ifname: &mut [u8; IF_NAMESIZE + 1]) -> *mut c_char;
 }

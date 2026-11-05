@@ -652,9 +652,10 @@ mod elf {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
-        // SAFETY: `&BUN_COMPILED.size` (c-bindings.cpp): never null, 8-byte aligned, written only in the file that `bun build --compile` produces.
+        // SAFETY: `&BUN_COMPILED.size` (c-bindings.cpp): never null, 8-byte aligned, written only
+        // in the file that `bun build --compile` produces.
         pub(super) safe fn Bun__getStandaloneModuleGraphELFVaddr() -> &'static u64;
-        // safe: one integer by value; reads the vector the kernel gave the process, 0 for an unknown type.
+        // safe: one integer by value; reads the process's auxiliary vector, 0 for an unknown type.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         safe fn getauxval(type_: core::ffi::c_ulong) -> core::ffi::c_ulong;
     }

@@ -82,6 +82,7 @@ impl Quick {
         self.reset_comments();
         self.reset_key_cache();
         self.reset_embed();
+        self.print_member.known = 0;
         self.lang.lang = language;
         self.lang.depth = 0;
         self.lang.guest_column = 0;
@@ -143,7 +144,9 @@ impl Quick {
         while i < self.lexer.c_count {
             let from = self.lexer.c.at((i - 1) * C_STRIDE + C_END);
             let to = self.lexer.c.at(i * C_STRIDE + C_START);
-            row = if self.t.sub(from, to).iter().all(u8::is_ascii_whitespace) {
+            // (Who looks past a row skips blanks of one kind or another, some also `,` and `;`. Whatever any of them could skip counts here.)
+            let is_passed = |&c: &u8| c <= b' ' || c >= 0x80 || c == b',' || c == b';';
+            row = if self.t.sub(from, to).iter().all(is_passed) {
                 row + 1
             } else {
                 0

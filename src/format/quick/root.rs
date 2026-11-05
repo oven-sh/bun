@@ -343,8 +343,17 @@ impl Quick {
         self.begin_root(language);
         self.format_js()?;
         let stub = self.end_doc();
+        if self.doc.overflowed {
+            return Err(self.stop(why::BUG));
+        }
         self.stage(2);
         self.print_doc(DOC_START, stub)?;
+        if self.text.overflowed
+            || self.text.gen_pos > self.text.t_cap
+            || self.printer.out_length > self.printer.out.len() as i32
+        {
+            return Err(self.stop(why::BUG));
+        }
         Ok(())
     }
 

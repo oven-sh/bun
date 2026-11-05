@@ -427,14 +427,18 @@ impl Quick {
     pub(crate) fn expression_index(&self, quasis: i32, start: i32) -> i32 {
         let p = start - 1;
         let count = self.n.at(quasis);
-        let mut i: i32 = 1;
-        while i < count {
-            if p < self.n.at(self.n.at(quasis + 1 + i) + 1) {
-                return i - 1;
+        // the first text but the first that starts behind p
+        let mut low: i32 = 1;
+        let mut high = count;
+        while low < high {
+            let middle = (low + high) >> 1;
+            if p < self.n.at(self.n.at(quasis + 1 + middle) + 1) {
+                high = middle;
+            } else {
+                low = middle + 1;
             }
-            i += 1;
         }
-        return 0;
+        return if low < count { low - 1 } else { 0 };
     }
 
     pub(crate) fn decorate(&mut self, comment: i32) -> R<()> {

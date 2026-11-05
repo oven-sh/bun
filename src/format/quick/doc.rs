@@ -29,6 +29,8 @@ static INITIAL_FILTER_BYTES: [u8; 256] = [
     0, 0,
 ];
 pub(crate) struct Doc {
+    /// Somebody has written more than reserve() promises: commands are lost, and the file is refused.
+    pub(crate) overflowed: bool,
     pub(crate) d_pos: i32,
     pub(crate) d_cap: i32,
     pub(crate) prop_count: i32,
@@ -78,6 +80,7 @@ pub(crate) struct Doc {
 impl Doc {
     pub(crate) fn new() -> Self {
         Self {
+            overflowed: false,
             d_pos: 0,
             d_cap: 65536,
             prop_count: 0,
@@ -231,6 +234,7 @@ impl Quick {
             kind += 1;
         }
         self.doc.d_pos = DOC_START;
+        self.doc.overflowed = false;
         self.doc.last_fill_at = 0;
         self.doc.suffix_possible = true;
         self.doc.line_count = 0;
@@ -247,6 +251,9 @@ impl Quick {
     }
 
     pub(crate) fn grow_doc(&mut self) {
+        if self.doc.d_pos > self.doc.d_cap {
+            self.doc.overflowed = true;
+        }
         self.doc.d_cap = much_larger(self.doc.d_cap);
         let mut grown = zeros::<i32>(self.doc.d_cap);
         grown.set_all(self.d.sub(0, self.doc.d_pos), 0);

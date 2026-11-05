@@ -146,7 +146,7 @@ fn write_dot<T: PathCharCwd>(buf: &mut [T]) -> &[T] {
 
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
-fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> &mut [T] {
+pub fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> &mut [T] {
     let cwd = get_cwd_t(buf);
     let len = cwd.len();
     if len == 0 {
@@ -1738,27 +1738,34 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
 /// Based on Node v21.6.1 path.posix.relative:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1193
 pub fn relative_posix_t<'a, T: PathCharCwd>(
-    from: &[T],
-    to: &[T],
-    buf: &'a mut [T],
-    from_buf: &mut [T],
-    tmp_buf: &mut [T],
+    from: &[T], to: &[T], buf: &'a mut [T], from_buf: &mut [T], tmp_buf: &mut [T],
 ) -> &'a [T] {
+    relative_posix_with_cwd::<T, core::convert::Infallible, _>(
+        from, to, buf, from_buf, tmp_buf, |buf| Ok(posix_cwd_t(buf)),
+    ).unwrap_or_else(|never| match never {})
+}
+
+pub fn relative_posix_with_cwd<'a, T: PathCharCwd, E, F>(
+    from: &[T], to: &[T], buf: &'a mut [T], from_buf: &mut [T], tmp_buf: &mut [T], mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
-        return &[];
+        return Ok(&[]);
     }
 
     // Trim leading forward slashes.
     // Backed by from_buf.
-    let from_orig = resolve_posix_t(&[from], from_buf, tmp_buf);
+    let from_orig = resolve_posix_with_cwd::<T, _, _, false>(&[from], from_buf, tmp_buf, MAX_PATH_SIZE_UPPER, &mut get_cwd)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
-    let to_orig_len = resolve_posix_t(&[to], buf, tmp_buf).len();
+    let to_orig_len = resolve_posix_with_cwd::<T, _, _, false>(&[to], buf, tmp_buf, MAX_PATH_SIZE_UPPER, &mut get_cwd)?.len();
     let to_orig = &buf[0..to_orig_len];
 
     if from_orig == to_orig {
-        return &[];
+        return Ok(&[]);
     }
 
     let from_start = 1usize;
@@ -1792,12 +1799,12 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
             if to_orig[to_start + smallest_length] == T::from_u8(CHAR_FORWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='/foo/bar'; to='/foo/bar/baz'
-                return &buf[to_start + smallest_length + 1..to_orig_len];
+                return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
             }
             if smallest_length == 0 {
                 // We get here if `from` is the root
                 // For example: from='/'; to='/foo'
-                return &buf[to_start + smallest_length..to_orig_len];
+                return Ok(&buf[to_start + smallest_length..to_orig_len]);
             }
         } else if from_len > smallest_length {
             if from_orig[from_start + smallest_length] == T::from_u8(CHAR_FORWARD_SLASH) {
@@ -1864,31 +1871,38 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
         memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
     }
     buf[buf_size] = T::default();
-    &buf[0..buf_size]
+    Ok(&buf[0..buf_size])
 }
 
 /// Based on Node v21.6.1 path.win32.relative:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L500
 pub fn relative_windows_t<'a, T: PathCharCwd>(
-    from: &[T],
-    to: &[T],
-    buf: &'a mut [T],
-    from_buf: &mut [T],
-    tmp_buf: &mut [T],
+    from: &[T], to: &[T], buf: &'a mut [T], from_buf: &mut [T], tmp_buf: &mut [T],
 ) -> &'a [T] {
+    relative_windows_with_cwd::<T, core::convert::Infallible, _>(
+        from, to, buf, from_buf, tmp_buf, |buf| Ok(get_cwd_t(buf)),
+    ).unwrap_or_else(|never| match never {})
+}
+
+pub fn relative_windows_with_cwd<'a, T: PathCharCwd, E, F>(
+    from: &[T], to: &[T], buf: &'a mut [T], from_buf: &mut [T], tmp_buf: &mut [T], mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
-        return &[];
+        return Ok(&[]);
     }
 
     // Backed by from_buf.
-    let from_orig = resolve_windows_t(&[from], from_buf, tmp_buf);
+    let from_orig = resolve_windows_with_cwd::<T, _, _, false>(&[from], from_buf, tmp_buf, MAX_PATH_SIZE_UPPER, &mut get_cwd)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
-    let to_orig_len = resolve_windows_t(&[to], buf, tmp_buf).len();
+    let to_orig_len = resolve_windows_with_cwd::<T, _, _, false>(&[to], buf, tmp_buf, MAX_PATH_SIZE_UPPER, &mut get_cwd)?.len();
 
     if from_orig == &buf[0..to_orig_len] || eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
-        return &[];
+        return Ok(&[]);
     }
 
     // Trim leading backslashes
@@ -1944,19 +1958,19 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     // return the original `to`.
     if !matches_all_of_smallest {
         if last_common_sep.is_none() {
-            return &buf[0..to_orig_len];
+            return Ok(&buf[0..to_orig_len]);
         }
     } else {
         if to_len > smallest_length {
             if buf[to_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='C:\foo\bar'; to='C:\foo\bar\baz'
-                return &buf[to_start + smallest_length + 1..to_orig_len];
+                return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
             }
             if smallest_length == 2 {
                 // We get here if `from` is the device root.
                 // For example: from='C:\'; to='C:\foo'
-                return &buf[to_start + smallest_length..to_orig_len];
+                return Ok(&buf[to_start + smallest_length..to_orig_len]);
             }
         }
         if from_len > smallest_length {
@@ -2034,14 +2048,14 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
         }
         memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
         buf[buf_size] = T::default();
-        return &buf[0..buf_size];
+        return Ok(&buf[0..buf_size]);
     }
 
     // JS `charCodeAt` returns NaN past the end, which never equals '\'.
     if to_start < to_orig_len && buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
         to_start += 1;
     }
-    &buf[to_start.min(to_end)..to_end]
+    Ok(&buf[to_start.min(to_end)..to_end])
 }
 
 /// Based on Node v21.6.1 path.posix.resolve:

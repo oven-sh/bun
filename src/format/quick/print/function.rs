@@ -12,7 +12,7 @@ use crate::print::statics::{
     _ARROW_, ASYNC_, COLON_SPACE, COMMA, DECLARE_, ELLIPSIS, FUNCTION, GET_, HOOK, LPAREN,
     QUESTION, RPAREN, SEMI, SET_, SPACE, STAR,
 };
-use crate::{Quick, R, Words};
+use crate::{Quick, R, Words, rare};
 
 impl Quick {
     pub(crate) fn should_hug_the_only_function_parameter(&self, fn_: i32) -> bool {
@@ -126,16 +126,20 @@ impl Quick {
     }
 
     /// `string => void`: a function type of Flow whose only parameter is a simple type without a name.
-    pub(crate) fn is_flow_shorthand_with_one_arg(&self, fn_: i32, params: i32) -> bool {
+    /// `(A) => B`
+    fn has_one_simple_type_as_parameters(&self, fn_: i32, params: i32) -> bool {
         if self.n.at(params) != 1 || self.n.at(fn_ + FN_TYPE_PARAMETERS) != 0 {
             return false;
         }
         let parameter = self.n.at(params + 1);
-        if (self.n.at(parameter) & 0xff) != k::FunctionTypeParam
-            || self.n.at(parameter + 4) != 0
-            || (self.n.at(parameter) & (F_THIS | F_REST)) != 0
-            || !self.is_simple_type(self.n.at(parameter + 5))
-        {
+        (self.n.at(parameter) & 0xff) == k::FunctionTypeParam
+            && self.n.at(parameter + 4) == 0
+            && (self.n.at(parameter) & (F_THIS | F_REST)) == 0
+            && self.is_simple_type(self.n.at(parameter + 5))
+    }
+
+    pub(crate) fn is_flow_shorthand_with_one_arg(&self, fn_: i32, params: i32) -> bool {
+        if !self.has_one_simple_type_as_parameters(fn_, params) {
             return false;
         }
         let parent = self.n.at(fn_ + 3);
@@ -265,6 +269,16 @@ impl Quick {
                 self.text(RPAREN);
             }
             return Ok(());
+        }
+        if self.mode.is_flow
+            && !self.options.arrow_parens_always
+            && matches!(
+                self.n.at(self.n.at(fn_ + 3)) & 0xff,
+                k::ObjectTypeIndexer | k::ObjectTypeSpreadProperty
+            )
+            && self.has_one_simple_type_as_parameters(fn_, params)
+        {
+            return Err(self.rare(rare::FLOW));
         }
         self.text(LPAREN);
         self.indent_softline();
@@ -462,6 +476,9 @@ impl Quick {
                 type_ = self.n.at(return_type + 5);
             }
             if self.is_object_type(type_) {
+                if rk == k::NullableType {
+                    return Err(self.rare(rare::FLOW));
+                }
                 should_group = true;
             } else {
                 self.doc.depends_on_what_breaks += 1;

@@ -4382,6 +4382,18 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       "",
       'it("does something really long and complicated so I have to write a very long name for the test", fakeAsync((b) => {\n  code();\n}));\n',
     ],
+    // Flow: a function type as the value of an indexer or a spread.
+    [
+      "a.js.flow",
+      "--arrow-parens=avoid",
+      "type A = { [key: string]: (void) => { ... }, ... };\ntype B = { ...(boolean) => void };\n",
+    ],
+    // Flow: one parameter, and an object type behind a `?` as the return type.
+    [
+      "a.js.flow",
+      "--print-width=60",
+      "interface Spec {\n  +getObjectShape: (arg: ?{| prop: ?number |}) => ?{| prop: ?number |};\n}\n",
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

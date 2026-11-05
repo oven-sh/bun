@@ -139,7 +139,9 @@ pub(crate) mod rare {
     /// A comment in a place where the long way is not known to print it alike: see is_comment_taken().
     pub(crate) const COMMENT: i32 = 12;
     /// Flow: a type guard as the return type of an arrow function, which gets no parentheses though there may be a function type in it;
-    /// a `declare module` with nothing in it, whose braces stand on two lines.
+    /// a `declare module` with nothing in it, whose braces stand on two lines; a function type as the value of an indexer or a spread
+    /// with `arrowParens: "avoid"`, whose only parameter loses its parentheses; one parameter and `?{..}` as the return type, of which
+    /// the long way breaks the parameter.
     pub(crate) const FLOW: i32 = 13;
     /// `tabWidth: 1` and a conditional as a branch of a conditional: the long way moves it by one column where Prettier moves it by two.
     pub(crate) const TAB_WIDTH: i32 = 14;

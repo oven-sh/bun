@@ -4811,6 +4811,9 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.js.flow", "", "interface a extends b//\n.c<>{y:T}\n"],
     // Flow: a `;` that starts a line between two members.
     ["a.js.flow", "", "interface a{x:T\n;\n\ny:T}\n"],
+    // prettier-ignore before a statement in a statement that gets a semicolon.
+    ["a.ts", "", "function f() {\n  // prettier-ignore\n  for (;;) break\n  l: var x  = 1\n}\n"],
+    ["a.js", "", "for (;;) {\n  // prettier-ignore\n  while (a) continue\n  // prettier-ignore\n  l: debugger\n}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

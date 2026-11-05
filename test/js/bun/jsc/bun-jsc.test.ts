@@ -972,4 +972,200 @@ describe.concurrent("sampling profiler report at exit", () => {
     const env = { BUN_JSC_useSamplingProfiler: "1", BUN_JSC_samplingProfilerPath: "missing/profiles" };
     expect(await run(`${work} process.exit(0);`, env)).toEqual(expected);
   });
+
+  it("is written to the first directory when a later startSamplingProfiler call throws", async () => {
+    const script = `
+      const { startSamplingProfiler } = require("bun:jsc");
+      startSamplingProfiler("missing/profiles");
+      try { startSamplingProfiler("other/profiles", 2 ** 32 + 500); } catch {}
+      ${work}`;
+    expect(await run(script)).toEqual(expected);
+  });
+});
+
+// Each script runs in a child: a value that gets past a check leaves a listener or a sampler thread in its process.
+describe.concurrent("port and sampleInterval arguments", () => {
+  // `outcome` gives "ok", or the class of what the call threw with its code (with its message, if it has no code).
+  const prelude = `
+    const jsc = require("bun:jsc");
+    const outcome = fn => {
+      try { fn(); return "ok"; } catch (e) { return e.code ? e.name + " " + e.code : e.name + ": " + e.message; }
+    };
+  `;
+
+  // Runs a script that prints one JSON value.
+  async function run(body: string) {
+    using dir = tempDir("bun-jsc-arguments", { "file": "" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { printed: stdout === "" ? undefined : JSON.parse(stdout), stderr, exitCode };
+  }
+
+  // An array literal for a child script: each expression's text with its value.
+  const entries = (expressions: string[]) =>
+    `[${expressions.map(text => `[${JSON.stringify(text)}, ${text}]`).join(", ")}]`;
+  const all = (expressions: string[], outcome: string) => Object.fromEntries(expressions.map(text => [text, outcome]));
+  const outOfRange = "RangeError ERR_OUT_OF_RANGE";
+
+  it("startRemoteDebugger refuses a port that is not an integer from 1 to 65535", async () => {
+    // Nothing listens on these ports: the call throws before it starts the server.
+    const ports = [
+      "2 ** 32 + 52859", // the low 32 bits are 52859
+      "-(2 ** 32) + 52860", // the low 32 bits are 52860
+      "52859.9",
+      "65535.5",
+      "0",
+      "-1",
+      "65536",
+      "NaN",
+      "Infinity",
+    ];
+    const notNumbers = ["'80'", "null", "80n"];
+    const result = await run(`
+      const out = { ports: {}, notNumbers: {} };
+      for (const [text, port] of ${entries(ports)}) out.ports[text] = outcome(() => jsc.startRemoteDebugger("127.0.0.1", port));
+      for (const [text, port] of ${entries(notNumbers)}) out.notNumbers[text] = outcome(() => jsc.startRemoteDebugger("127.0.0.1", port));
+      out.hostIsCheckedFirst = outcome(() => jsc.startRemoteDebugger(1, 0));
+      out.messages = [2 ** 32 + 52859, 52859.9].map(port => {
+        try { jsc.startRemoteDebugger("127.0.0.1", port); } catch (e) { return e.message; }
+      });
+      console.log(JSON.stringify(out));
+    `);
+    expect(result).toEqual({
+      printed: {
+        ports: all(ports, outOfRange),
+        notNumbers: all(notNumbers, "TypeError ERR_INVALID_ARG_TYPE"),
+        hostIsCheckedFirst: "TypeError: host must be a string",
+        messages: [
+          `The value of "port" is out of range. It must be >= 1 && <= 65535. Received 4_295_020_155`,
+          `The value of "port" is out of range. It must be an integer. Received 52859.9`,
+        ],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("startRemoteDebugger accepts an integer port from 1 to 65535", async () => {
+    // 192.0.2.1 (TEST-NET-1) is not an address of this machine: the server cannot bind, and the error names the port it got.
+    // A debug build also logs the failed bind to stderr.
+    const { printed, exitCode } = await run(`
+      const ports = [1, 9230, 65535, undefined];
+      console.log(JSON.stringify(ports.map(port => outcome(() => jsc.startRemoteDebugger("192.0.2.1", port)))));
+    `);
+    const cannotBind = (port: number) => `Error: Failed to start server "192.0.2.1:${port}". Is port already in use?`;
+    expect({ printed, exitCode }).toEqual({
+      printed: [cannotBind(1), cannotBind(9230), cannotBind(65535), cannotBind(9230)],
+      exitCode: 0,
+    });
+  });
+
+  it("profile and startSamplingProfiler refuse a sampleInterval that is not an integer from 1 to 4294967295", async () => {
+    const intervals = [
+      "0",
+      "-0",
+      "0.5",
+      "1.9",
+      "-1",
+      "NaN",
+      "Infinity",
+      "-Infinity",
+      "2 ** 32", // the low 32 bits are 0
+      "2 ** 32 + 500", // the low 32 bits are 500
+      "1e300",
+    ];
+    const result = await run(`
+      const out = { profile: {}, startSamplingProfiler: {}, callbackCalls: 0 };
+      for (const [text, interval] of ${entries(intervals)}) {
+        out.profile[text] = outcome(() => jsc.profile(() => out.callbackCalls++, interval));
+        out.startSamplingProfiler[text] = outcome(() => jsc.startSamplingProfiler("missing/profiles", interval));
+      }
+      out.profileOfAsyncFunction = outcome(() => jsc.profile(async () => out.callbackCalls++, 0));
+      out.directoryExists = require("node:fs").existsSync("missing");
+      out.samplingProfilerStackTraces = outcome(() => jsc.samplingProfilerStackTraces());
+      out.messages = [0, 0.5].map(interval => {
+        try { jsc.profile(() => {}, interval); } catch (e) { return e.message; }
+      });
+      console.log(JSON.stringify(out));
+    `);
+    expect(result).toEqual({
+      printed: {
+        profile: all(intervals, outOfRange),
+        startSamplingProfiler: all(intervals, outOfRange),
+        callbackCalls: 0,
+        profileOfAsyncFunction: outOfRange,
+        directoryExists: false,
+        samplingProfilerStackTraces: "Error: Sampling profiler was never started",
+        messages: [
+          `The value of "sampleInterval" is out of range. It must be >= 1 && <= 4294967295. Received 0`,
+          `The value of "sampleInterval" is out of range. It must be an integer. Received 0.5`,
+        ],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("profile and startSamplingProfiler do not create the sampling profiler when they throw", async () => {
+    // "file" is a regular file, so "file/profiles" cannot be created.
+    const result = await run(`
+      console.log(JSON.stringify({
+        callback: outcome(() => jsc.profile(123, 50)),
+        nullByte: outcome(() => jsc.startSamplingProfiler("missing\\0profiles", 50)),
+        directory: outcome(() => jsc.startSamplingProfiler("file/profiles", 50)),
+        samplingProfilerStackTraces: outcome(() => jsc.samplingProfilerStackTraces()),
+      }));
+    `);
+    expect(result).toEqual({
+      printed: {
+        callback: "TypeError: First argument must be a function.",
+        nullByte: "TypeError: directory must not contain null bytes",
+        directory: "TypeError: directory couldn't be created",
+        samplingProfilerStackTraces: "Error: Sampling profiler was never started",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `stackTraces.interval` is in seconds.
+  it("profile samples at the sampleInterval it is given, and every 1000 microseconds without one", async () => {
+    // A value that is not a number means no interval.
+    const intervals = ["50", "1000", "undefined", "null", "'500'", "500n"];
+    const result = await run(`
+      const out = {};
+      for (const [text, interval] of ${entries(intervals)}) out[text] = jsc.profile(() => {}, interval).stackTraces.interval;
+      console.log(JSON.stringify(out));
+    `);
+    expect(result).toEqual({
+      printed: { "50": 0.00005, "1000": 0.001, "undefined": 0.001, "null": 0.001, "'500'": 0.001, "500n": 0.001 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("profile accepts the smallest and the largest sampleInterval", async () => {
+    const result = await run(`
+      console.log(JSON.stringify([1, 4294967295].map(interval => jsc.profile(() => {}, interval).stackTraces.interval)));
+    `);
+    expect(result).toEqual({ printed: [0.000001, 4294.967295], stderr: "", exitCode: 0 });
+  });
+
+  it("startSamplingProfiler samples at an integer sampleInterval and keeps it when a later call has none", async () => {
+    const result = await run(`
+      const intervals = [];
+      for (const interval of [250, undefined, null, "500", 500n]) {
+        jsc.startSamplingProfiler(undefined, interval);
+        intervals.push(jsc.samplingProfilerStackTraces().interval);
+      }
+      console.log(JSON.stringify(intervals));
+    `);
+    expect(result).toEqual({ printed: [0.00025, 0.00025, 0.00025, 0.00025, 0.00025], stderr: "", exitCode: 0 });
+  });
 });

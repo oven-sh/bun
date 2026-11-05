@@ -752,10 +752,13 @@ declare module "bun:jsc" {
    * - AOT ("Ahead Of Time") is code that `bun build --compile --aot` compiled to machine code when the executable was built
    *
    * @param callback The function to profile. It is called immediately, with `args`.
-   * @param sampleInterval How often to sample the stack, in microseconds. Defaults to 1000 (once a millisecond).
+   * @param sampleInterval How often to sample the stack, in microseconds: an integer from 1 to 4294967295.
+   * Defaults to 1000 (once a millisecond).
    * @param args Arguments to call `callback` with
    * @returns The profile. If `callback` returns a promise, profiling continues until
    * that promise settles, and a promise of the profile is returned instead.
+   * @throws {RangeError} If `sampleInterval` is a number that is not an integer from 1 to 4294967295.
+   * `callback` is not called.
    *
    * @example
    * ```ts
@@ -793,7 +796,8 @@ declare module "bun:jsc" {
    * This is untested and may not be supported on macOS.
    *
    * @param host The address to listen on. Defaults to `"127.0.0.1"`.
-   * @param port The port to listen on. Defaults to `9230`.
+   * @param port The port to listen on: an integer from 1 to 65535. Defaults to `9230`.
+   * @throws {RangeError} If `port` is a number that is not an integer from 1 to 65535
    * @throws {Error} If the server cannot listen, for example because the port is in use
    */
   function startRemoteDebugger(host?: string, port?: number): void;
@@ -806,7 +810,10 @@ declare module "bun:jsc" {
    * @param optionalDirectory A directory to write a text report of the hottest
    * functions and bytecodes to when the process (or the calling worker) exits.
    * The directory is created if it doesn't exist.
-   * @param sampleInterval How often to sample the stack, in microseconds. Defaults to 1000 (once a millisecond).
+   * @param sampleInterval How often to sample the stack, in microseconds: an integer from 1 to 4294967295.
+   * When omitted, the profiler keeps the interval it already has: 1000 (once a millisecond), unless an earlier call set another.
+   * @throws {RangeError} If `sampleInterval` is a number that is not an integer from 1 to 4294967295.
+   * The profiler does not start and the directory is not created.
    */
   function startSamplingProfiler(optionalDirectory?: string, sampleInterval?: number): void;
 

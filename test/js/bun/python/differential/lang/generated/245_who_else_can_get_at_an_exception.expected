@@ -1,0 +1,101 @@
+status: 0
+script: c91618dd38f921ee
+source: b906e6f16a17bded
+---
+kind [kind='statement', asks=function] => statement
+asks.__name__ [kind='statement', asks=function] => by_current_exceptions
+parked(kind, asks) [kind='statement', asks=function] => [('asked', ('KeyError', "('parked',)", True, [('worker', 2, 5), ('raises', 2, 2)], None)), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 2, 2)], None)), ('after', None), ('kept', ('KeyError', "('parked',)", True, [('worker', 2, 7), ('raises', 2, 2)], None))]
+kind [kind='statement', asks=function] => statement
+asks.__name__ [kind='statement', asks=function] => by_current_exceptions_twice
+parked(kind, asks) [kind='statement', asks=function] => [('asked', ('KeyError', "('parked',)", True, [('worker', 2, 5), ('raises', 2, 2)], None)), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 2, 2)], None)), ('after', None), ('kept', ('KeyError', "('parked',)", True, [('worker', 2, 7), ('raises', 2, 2)], None))]
+kind [kind='statement', asks=function] => statement
+asks.__name__ [kind='statement', asks=function] => by_objects
+parked(kind, asks) [kind='statement', asks=function] => [('asked', ('KeyError', "('parked',)", True, [('worker', 2, 5), ('raises', 2, 2)], None)), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 2, 2)], None)), ('after', None), ('kept', ('KeyError', "('parked',)", True, [('worker', 2, 7), ('raises', 2, 2)], None))]
+kind [kind='statement', asks=function] => statement
+asks.__name__ [kind='statement', asks=function] => by_frames
+parked(kind, asks) [kind='statement', asks=function] => [('asked', 'worker<run<_bootstrap_inner<_bootstrap'), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 2, 2)], None)), ('after', None)]
+kind [kind='statement', asks=function] => statement
+asks.__name__ [kind='statement', asks=function] => by_faulthandler
+parked(kind, asks) [kind='statement', asks=function] => [('asked', 2), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 2, 2)], None)), ('after', None)]
+kind [kind='statement', asks=function] => statement
+asks.__name__ [kind='statement', asks=function] => by_collection
+parked(kind, asks) [kind='statement', asks=function] => [('asked', None), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 2, 2)], None)), ('after', None)]
+kind [kind='native', asks=function] => native
+asks.__name__ [kind='native', asks=function] => by_current_exceptions
+parked(kind, asks) [kind='native', asks=function] => [('asked', ('KeyError', "('parked',)", True, [('worker', 2, 5), ('raises', 4, 4)], None)), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 4, 4)], None)), ('after', None), ('kept', ('KeyError', "('parked',)", True, [('worker', 2, 7), ('raises', 4, 4)], None))]
+kind [kind='native', asks=function] => native
+asks.__name__ [kind='native', asks=function] => by_current_exceptions_twice
+parked(kind, asks) [kind='native', asks=function] => [('asked', ('KeyError', "('parked',)", True, [('worker', 2, 5), ('raises', 4, 4)], None)), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 4, 4)], None)), ('after', None), ('kept', ('KeyError', "('parked',)", True, [('worker', 2, 7), ('raises', 4, 4)], None))]
+kind [kind='native', asks=function] => native
+asks.__name__ [kind='native', asks=function] => by_objects
+parked(kind, asks) [kind='native', asks=function] => [('asked', ('KeyError', "('parked',)", True, [('worker', 2, 5), ('raises', 4, 4)], None)), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 4, 4)], None)), ('after', None), ('kept', ('KeyError', "('parked',)", True, [('worker', 2, 7), ('raises', 4, 4)], None))]
+kind [kind='native', asks=function] => native
+asks.__name__ [kind='native', asks=function] => by_frames
+parked(kind, asks) [kind='native', asks=function] => [('asked', 'worker<run<_bootstrap_inner<_bootstrap'), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 4, 4)], None)), ('after', None)]
+kind [kind='native', asks=function] => native
+asks.__name__ [kind='native', asks=function] => by_faulthandler
+parked(kind, asks) [kind='native', asks=function] => [('asked', 2), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 4, 4)], None)), ('after', None)]
+kind [kind='native', asks=function] => native
+asks.__name__ [kind='native', asks=function] => by_collection
+parked(kind, asks) [kind='native', asks=function] => [('asked', None), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 4, 4)], None)), ('after', None)]
+kind [kind='callee', asks=function] => callee
+asks.__name__ [kind='callee', asks=function] => by_current_exceptions
+parked(kind, asks) [kind='callee', asks=function] => [('asked', ('KeyError', "('parked',)", True, [('worker', 2, 5), ('raises', 8, 8), ('deeper', 1, 1)], None)), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 8, 8), ('deeper', 1, 1)], None)), ('after', None), ('kept', ('KeyError', "('parked',)", True, [('worker', 2, 7), ('raises', 8, 8), ('deeper', 1, 1)], None))]
+kind [kind='callee', asks=function] => callee
+asks.__name__ [kind='callee', asks=function] => by_current_exceptions_twice
+parked(kind, asks) [kind='callee', asks=function] => [('asked', ('KeyError', "('parked',)", True, [('worker', 2, 5), ('raises', 8, 8), ('deeper', 1, 1)], None)), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 8, 8), ('deeper', 1, 1)], None)), ('after', None), ('kept', ('KeyError', "('parked',)", True, [('worker', 2, 7), ('raises', 8, 8), ('deeper', 1, 1)], None))]
+kind [kind='callee', asks=function] => callee
+asks.__name__ [kind='callee', asks=function] => by_objects
+parked(kind, asks) [kind='callee', asks=function] => [('asked', ('KeyError', "('parked',)", True, [('worker', 2, 5), ('raises', 8, 8), ('deeper', 1, 1)], None)), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 8, 8), ('deeper', 1, 1)], None)), ('after', None), ('kept', ('KeyError', "('parked',)", True, [('worker', 2, 7), ('raises', 8, 8), ('deeper', 1, 1)], None))]
+kind [kind='callee', asks=function] => callee
+asks.__name__ [kind='callee', asks=function] => by_frames
+parked(kind, asks) [kind='callee', asks=function] => [('asked', 'worker<run<_bootstrap_inner<_bootstrap'), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 8, 8), ('deeper', 1, 1)], None)), ('after', None)]
+kind [kind='callee', asks=function] => callee
+asks.__name__ [kind='callee', asks=function] => by_faulthandler
+parked(kind, asks) [kind='callee', asks=function] => [('asked', 2), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 8, 8), ('deeper', 1, 1)], None)), ('after', None)]
+kind [kind='callee', asks=function] => callee
+asks.__name__ [kind='callee', asks=function] => by_collection
+parked(kind, asks) [kind='callee', asks=function] => [('asked', None), ('own, late', ('KeyError', "('parked',)", True, [('worker', 2, 6), ('raises', 8, 8), ('deeper', 1, 1)], None)), ('after', None)]
+taking turns: taking_turns() => []
+[('finalizer', ('KeyError', "('finalizer',)", True, [('with_finalizer', 3, 8)], None)), ('handler', ('KeyError', "('finalizer',)", True, [('with_finalizer', 3, 9)], None))]
+[('finalizer', ('KeyError', "('finalizer',)", True, [('with_finalizer', 3, 8)], None)), ('handler', ('KeyError', "('finalizer',)", True, [('with_finalizer', 3, 9)], None))]
+[('signal', 'with_signal', ('KeyError', "('signal',)", True, [('with_signal', 11, 13)], None)), ('after', None, ('KeyError', "('signal',)", True, [('with_signal', 11, 17)], None))]
+[('exception', 'inner', 'ValueError', ('ValueError', "('inner',)", True, [('inner', 7, 7)], ('KeyError', "('traced',)", True, [('inner', 2, 7)], None))), ('KeyError', "('traced',)", True, [('inner', 2, 10)], None)]
+[('reraise', 'inner', ('KeyError', "('monitored',)", True, [('inner', 2, 7)], None)), ('handled', 'inner', ('KeyError', "('monitored',)", True, [('inner', 2, 7)], None)), ('reraise', 'inner', ('KeyError', "('monitored',)", True, [('inner', 2, 7)], None)), ('unwind', 'inner', ('KeyError', "('monitored',)", True, [('inner', 2, 7)], None)), ('handled', 'with_monitoring', ('KeyError', "('monitored',)", True, [('with_monitoring', 17, 17), ('inner', 2, 7)], None))]
+(True, True, 'KeyError', ('ValueError', "('start',)", True, [('to_the_limit', 12, 29)], None), [('down', 4, 6)], 'RecursionError')
+(True, True, 'KeyError', ('ValueError', "('start',)", True, [('to_the_limit', 12, 29)], None), [('down', 4, 6)], 'RecursionError')
+item [row=list, item=False] => False
+item [row=list, item='default'] => default
+item [row=list, item='default'] => default
+item [row=list, item=list] => []
+item [row=list, item=list] => []
+item [row=list, item=None] => None
+item [row=list, item=tuple] => ('get', ('TypeError', '("cannot use \'Raises\' as a dict key (no hash)",)', True, [('swallowed', 7, 9), ('<lambda>', 0, 0)], None))
+item [row=list, item=None] => None
+item [row=list, item=tuple] => ('in', ('TypeError', '("cannot use \'Raises\' as a dict key (no hash)",)', True, [('swallowed', 7, 9), ('<lambda>', 0, 0)], None))
+item [row=list, item=None] => None
+item [row=list, item=tuple] => ('set', ('TypeError', '("cannot use \'Raises\' as a set element (no hash)",)', True, [('swallowed', 7, 9), ('<lambda>', 0, 0)], None))
+item [row=list, item=None] => None
+item [row=list, item=tuple] => ('bool', ('ValueError', "('no truth',)", True, [('swallowed', 7, 9), ('<lambda>', 0, 0), ('__bool__', 1, 1)], None))
+item [row=list, item=None] => None
+item [row=list, item=tuple] => ('len', ('IndexError', "('no length',)", True, [('swallowed', 7, 9), ('<lambda>', 0, 0), ('__len__', 1, 1)], None))
+item [row=list, item=None] => None
+item [row=list, item=tuple] => ('eq', ('ArithmeticError', "('no equality',)", True, [('swallowed', 7, 9), ('<lambda>', 0, 0), ('__eq__', 1, 1)], None))
+item [row=list, item=None] => None
+item [row=list, item=tuple] => ('contains', ('LookupError', "('no items',)", True, [('swallowed', 7, 9), ('<lambda>', 0, 0), ('__contains__', 1, 1)], None))
+item [row=list, item=None] => None
+item [row=list, item=tuple] => ('attr', ('AttributeError', "('c',)", True, [('swallowed', 7, 9), ('<lambda>', 0, 0), ('__getattr__', 5, 5)], ('KeyError', "('c',)", True, [('__getattr__', 2, 5)], None)))
+item [row=list, item=None] => None
+item [row=list, item=tuple] => ('sorted', ('IndexError', "('no length',)", True, [('swallowed', 7, 9), ('<lambda>', 0, 0), ('__len__', 1, 1)], None))
+item [row=list, item=None] => None
+item [row=list, item=False] => False
+item [row=list, item='default'] => default
+item [row=list, item='default'] => default
+item [row=list, item=tuple] => ('OSError', "('outer',)", True, [('swallowed', 16, 18)], None)
+item [row=list, item=tuple] => ('KeyError', "('a',)", True, [('__getattr__', 2, 4)], None)
+item [row=list, item=tuple] => ('KeyError', "('b',)", True, [('__getattr__', 2, 4)], None)
+item [row=list, item=tuple] => ('KeyError', "('c',)", True, [('__getattr__', 2, 4)], None)
+item [row=list, item=tuple] => ('KeyError', "('c',)", True, [('__getattr__', 2, 4)], None)
+item [row=list, item=tuple] => ('KeyError', "('d',)", True, [('__getattr__', 2, 4)], ('OSError', "('outer',)", True, [('swallowed', 16, 18)], None))
+item [row=list, item=tuple] => ('KeyError', "('e',)", True, [('__getattr__', 2, 4)], ('OSError', "('outer',)", True, [('swallowed', 16, 18)], None))
+(5, None)

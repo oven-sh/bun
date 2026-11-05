@@ -1,6 +1,6 @@
 // The exception being handled, when what handles it is a `catch` of JavaScript.
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { KeyError, LookupError, ValueError, dict, exec, isinstance, list, repr } from "python:builtins";
 import gc from "python:gc";
 import io from "python:io";
@@ -745,4 +745,163 @@ test("in code whose bytecode was optimized", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout.trim()).toBe("ValueError('outer') ValueError('inner') ValueError('outer') None");
   expect(exitCode).toBe(0);
+});
+
+// An `except` that does not name what it catches. Whoever gets hold of the exception all the same finds its traceback complete.
+describe("an exception that its handler does not look at", () => {
+  const code: any = dict();
+  exec(
+    `
+import sys
+
+def where(e):
+    rows = []
+    tb = e.__traceback__
+    while tb is not None:
+        code = tb.tb_frame.f_code
+        rows.append(code.co_name + ":" + ("js" if code.co_filename.endswith(".ts") else str(tb.tb_lineno - code.co_firstlineno)))
+        tb = tb.tb_next
+    return " ".join(rows)
+
+def catches(call):
+    try:
+        raise KeyError("k")
+    except KeyError:
+        return call()
+
+def catches_what_c_raises(call):
+    try:
+        {}["k"]
+    except KeyError:
+        return call()
+
+def raises():
+    raise KeyError("k")
+
+def catches_what_it_called(function, call):
+    try:
+        function()
+    except KeyError:
+        return call()
+
+def catches_and_goes_on(call, kept):
+    for i in range(3):
+        try:
+            raise KeyError(i)
+        except KeyError:
+            if i == 1:
+                kept.append(call())
+    return sys.exception()
+
+def raises_again(call):
+    try:
+        raise KeyError("again")
+    except ValueError:
+        pass
+    except KeyError:
+        call()
+        raise
+`,
+    code,
+  );
+  const ask = () => sys.exception();
+
+  test("asked for by JavaScript in the handler, and looked at there and later", () => {
+    for (const catches of [code.catches, code.catches_what_c_raises]) {
+      const name = String(catches.__name__);
+      expect(String(catches(() => code.where(sys.exception())))).toBe(`${name}:2`);
+      const kept = catches(ask);
+      expect(String(code.where(kept))).toBe(`${name}:2`);
+      expect(kept.__traceback__).toBe(kept.__traceback__);
+      expect(String(kept.__traceback__.tb_frame.f_code.co_name)).toBe(name);
+      // Nobody asks.
+      expect(catches(() => 1)).toBe(1);
+      expect(sys.exception()).toBeUndefined();
+    }
+    const kept: any = list();
+    expect(code.catches_and_goes_on(ask, kept)).toBeUndefined();
+    expect(shown(kept)).toEqual(["KeyError(1)"]);
+    expect(String(code.where(kept[0]))).toBe("catches_and_goes_on:3");
+  });
+
+  test("through a function of JavaScript on its way", () => {
+    const results: unknown[] = [];
+    function through() {
+      // (Not in tail position.)
+      results.push(code.raises());
+    }
+    const kept = code.catches_what_it_called(through, ask);
+    expect(String(code.where(kept))).toBe("catches_what_it_called:2 through:js raises:1");
+    expect(String(code.where(code.catches_what_it_called(code.raises, ask)))).toBe("catches_what_it_called:2 raises:1");
+    expect(code.catches_what_it_called(through, () => 2)).toBe(2);
+  });
+
+  test("caught by JavaScript", () => {
+    let caught: any;
+    try {
+      code.raises();
+    } catch (error) {
+      caught = error;
+    }
+    expect(String(code.where(caught))).toBe("<anonymous>:js raises:1");
+    for (const call of [() => 1, ask]) {
+      try {
+        code.raises_again(call);
+        expect.unreachable();
+      } catch (error) {
+        expect(String(code.where(error))).toBe("<anonymous>:js raises_again:2");
+        expect(sys.exception()).toBe(error);
+      }
+    }
+    expect(sys.exception()).toBeUndefined();
+  });
+
+  test("a worker that is terminated in such handlers, several deep", async () => {
+    using dir = tempDir("python-terminated-in-a-handler", {
+      "worker.ts": `
+        import { dict, exec } from "python:builtins";
+        const globals = dict();
+        globals.tell = () => postMessage("in the handlers");
+        exec(\`
+def down(depth):
+    try:
+        raise KeyError(depth)
+    except KeyError:
+        if depth:
+            down(depth - 1)
+        else:
+            tell()
+            while True:
+                pass
+\`, globals);
+        globals.down(5);
+      `,
+      "main.ts": `
+        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+        await new Promise(resolve => { worker.onmessage = resolve; });
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        worker.terminate();
+        await closed;
+        console.log("terminated");
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.ts"], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("terminated\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("what JavaScript throws in the handler remembers it", () => {
+    let context: any;
+    try {
+      code.catches(() => {
+        throw new ValueError("thrown in the handler");
+      });
+    } catch (error: any) {
+      context = error.__context__;
+    }
+    expect(String(repr(context))).toBe("KeyError('k')");
+    expect(String(code.where(context))).toBe("catches:2");
+  });
 });

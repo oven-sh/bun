@@ -1,0 +1,582 @@
+status: 0
+script: ed4dc53b848543d8
+source: 0c95614921071b3b
+---
+how [digest=HASH, how='class', door_name='nothing'] => class
+| door_name [digest=HASH, how='class', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='class', door_name='nothing'] => 5a81d875b391e80e
+how [digest=HASH, how='class', door_name='as'] => class
+| door_name [digest=HASH, how='class', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='class', door_name='as'] => 21af609cab66b164
+how [digest=HASH, how='class', door_name='exception'] => class
+| door_name [digest=HASH, how='class', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='class', door_name='exception'] => 21af609cab66b164
+how [digest=HASH, how='class', door_name='exc_info'] => class
+| door_name [digest=HASH, how='class', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='class', door_name='exc_info'] => 21af609cab66b164
+how [digest=HASH, how='class', door_name='asked by a callee'] => class
+| door_name [digest=HASH, how='class', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='class', door_name='asked by a callee'] => 21af609cab66b164
+how [digest=HASH, how='class', door_name='context'] => class
+| door_name [digest=HASH, how='class', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='class', door_name='context'] => bc06c5cfa08882dd
+how [digest=HASH, how='class', door_name='current'] => class
+| door_name [digest=HASH, how='class', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='class', door_name='current'] => 21af609cab66b164
+how [digest=HASH, how='class', door_name='format'] => class
+| door_name [digest=HASH, how='class', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='class', door_name='format'] => 40e9b6f2f52b41a6
+how [digest=HASH, how='call', door_name='nothing'] => call
+| door_name [digest=HASH, how='call', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='call', door_name='nothing'] => b85efe6551d0d82f
+how [digest=HASH, how='call', door_name='as'] => call
+| door_name [digest=HASH, how='call', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='call', door_name='as'] => 0d58d1911e5bf82d
+how [digest=HASH, how='call', door_name='exception'] => call
+| door_name [digest=HASH, how='call', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='call', door_name='exception'] => 0d58d1911e5bf82d
+how [digest=HASH, how='call', door_name='exc_info'] => call
+| door_name [digest=HASH, how='call', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='call', door_name='exc_info'] => 0d58d1911e5bf82d
+how [digest=HASH, how='call', door_name='asked by a callee'] => call
+| door_name [digest=HASH, how='call', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='call', door_name='asked by a callee'] => 0d58d1911e5bf82d
+how [digest=HASH, how='call', door_name='context'] => call
+| door_name [digest=HASH, how='call', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='call', door_name='context'] => a5598a07531c1c05
+how [digest=HASH, how='call', door_name='current'] => call
+| door_name [digest=HASH, how='call', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='call', door_name='current'] => 0d58d1911e5bf82d
+how [digest=HASH, how='call', door_name='format'] => call
+| door_name [digest=HASH, how='call', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='call', door_name='format'] => 868a5f5f36f0816a
+how [digest=HASH, how='subscript', door_name='nothing'] => subscript
+| door_name [digest=HASH, how='subscript', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='subscript', door_name='nothing'] => b85efe6551d0d82f
+how [digest=HASH, how='subscript', door_name='as'] => subscript
+| door_name [digest=HASH, how='subscript', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='subscript', door_name='as'] => 0d58d1911e5bf82d
+how [digest=HASH, how='subscript', door_name='exception'] => subscript
+| door_name [digest=HASH, how='subscript', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='subscript', door_name='exception'] => 0d58d1911e5bf82d
+how [digest=HASH, how='subscript', door_name='exc_info'] => subscript
+| door_name [digest=HASH, how='subscript', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='subscript', door_name='exc_info'] => 0d58d1911e5bf82d
+how [digest=HASH, how='subscript', door_name='asked by a callee'] => subscript
+| door_name [digest=HASH, how='subscript', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='subscript', door_name='asked by a callee'] => 0d58d1911e5bf82d
+how [digest=HASH, how='subscript', door_name='context'] => subscript
+| door_name [digest=HASH, how='subscript', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='subscript', door_name='context'] => a5598a07531c1c05
+how [digest=HASH, how='subscript', door_name='current'] => subscript
+| door_name [digest=HASH, how='subscript', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='subscript', door_name='current'] => 0d58d1911e5bf82d
+how [digest=HASH, how='subscript', door_name='format'] => subscript
+| door_name [digest=HASH, how='subscript', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='subscript', door_name='format'] => 868a5f5f36f0816a
+how [digest=HASH, how='division', door_name='nothing'] => division
+| door_name [digest=HASH, how='division', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='division', door_name='nothing'] => 699e3d99851d5f38
+how [digest=HASH, how='division', door_name='as'] => division
+| door_name [digest=HASH, how='division', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='division', door_name='as'] => d940de17c20b9256
+how [digest=HASH, how='division', door_name='exception'] => division
+| door_name [digest=HASH, how='division', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='division', door_name='exception'] => d940de17c20b9256
+how [digest=HASH, how='division', door_name='exc_info'] => division
+| door_name [digest=HASH, how='division', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='division', door_name='exc_info'] => d940de17c20b9256
+how [digest=HASH, how='division', door_name='asked by a callee'] => division
+| door_name [digest=HASH, how='division', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='division', door_name='asked by a callee'] => d940de17c20b9256
+how [digest=HASH, how='division', door_name='context'] => division
+| door_name [digest=HASH, how='division', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='division', door_name='context'] => e29a121e64c0c71a
+how [digest=HASH, how='division', door_name='current'] => division
+| door_name [digest=HASH, how='division', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='division', door_name='current'] => d940de17c20b9256
+how [digest=HASH, how='division', door_name='format'] => division
+| door_name [digest=HASH, how='division', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='division', door_name='format'] => d448d9014c20c2c1
+how [digest=HASH, how='attribute', door_name='nothing'] => attribute
+| door_name [digest=HASH, how='attribute', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='attribute', door_name='nothing'] => 8fe05119e0507308
+how [digest=HASH, how='attribute', door_name='as'] => attribute
+| door_name [digest=HASH, how='attribute', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='attribute', door_name='as'] => 9a10df0220a9c432
+how [digest=HASH, how='attribute', door_name='exception'] => attribute
+| door_name [digest=HASH, how='attribute', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='attribute', door_name='exception'] => 9a10df0220a9c432
+how [digest=HASH, how='attribute', door_name='exc_info'] => attribute
+| door_name [digest=HASH, how='attribute', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='attribute', door_name='exc_info'] => 9a10df0220a9c432
+how [digest=HASH, how='attribute', door_name='asked by a callee'] => attribute
+| door_name [digest=HASH, how='attribute', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='attribute', door_name='asked by a callee'] => 9a10df0220a9c432
+how [digest=HASH, how='attribute', door_name='context'] => attribute
+| door_name [digest=HASH, how='attribute', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='attribute', door_name='context'] => 66e5e1f7c27f905e
+how [digest=HASH, how='attribute', door_name='current'] => attribute
+| door_name [digest=HASH, how='attribute', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='attribute', door_name='current'] => 9a10df0220a9c432
+how [digest=HASH, how='attribute', door_name='format'] => attribute
+| door_name [digest=HASH, how='attribute', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='attribute', door_name='format'] => b203a5af4a4a4f07
+how [digest=HASH, how='name', door_name='nothing'] => name
+| door_name [digest=HASH, how='name', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='name', door_name='nothing'] => ef5b1fa2c3c88c09
+how [digest=HASH, how='name', door_name='as'] => name
+| door_name [digest=HASH, how='name', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='name', door_name='as'] => 608428c0a64d9eea
+how [digest=HASH, how='name', door_name='exception'] => name
+| door_name [digest=HASH, how='name', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='name', door_name='exception'] => 608428c0a64d9eea
+how [digest=HASH, how='name', door_name='exc_info'] => name
+| door_name [digest=HASH, how='name', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='name', door_name='exc_info'] => 608428c0a64d9eea
+how [digest=HASH, how='name', door_name='asked by a callee'] => name
+| door_name [digest=HASH, how='name', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='name', door_name='asked by a callee'] => 608428c0a64d9eea
+how [digest=HASH, how='name', door_name='context'] => name
+| door_name [digest=HASH, how='name', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='name', door_name='context'] => d3d25f8c76b7cb6c
+how [digest=HASH, how='name', door_name='current'] => name
+| door_name [digest=HASH, how='name', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='name', door_name='current'] => 608428c0a64d9eea
+how [digest=HASH, how='name', door_name='format'] => name
+| door_name [digest=HASH, how='name', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='name', door_name='format'] => 7dbb56b10468c8c1
+how [digest=HASH, how='next', door_name='nothing'] => next
+| door_name [digest=HASH, how='next', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='next', door_name='nothing'] => 1eb7413827c0af6d
+how [digest=HASH, how='next', door_name='as'] => next
+| door_name [digest=HASH, how='next', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='next', door_name='as'] => 369db9316b39410b
+how [digest=HASH, how='next', door_name='exception'] => next
+| door_name [digest=HASH, how='next', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='next', door_name='exception'] => 369db9316b39410b
+how [digest=HASH, how='next', door_name='exc_info'] => next
+| door_name [digest=HASH, how='next', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='next', door_name='exc_info'] => 369db9316b39410b
+how [digest=HASH, how='next', door_name='asked by a callee'] => next
+| door_name [digest=HASH, how='next', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='next', door_name='asked by a callee'] => 369db9316b39410b
+how [digest=HASH, how='next', door_name='context'] => next
+| door_name [digest=HASH, how='next', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='next', door_name='context'] => 13357c4295ed29c9
+how [digest=HASH, how='next', door_name='current'] => next
+| door_name [digest=HASH, how='next', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='next', door_name='current'] => 369db9316b39410b
+how [digest=HASH, how='next', door_name='format'] => next
+| door_name [digest=HASH, how='next', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='next', door_name='format'] => e6bca1599800ad69
+how [digest=HASH, how='plain', door_name='nothing'] => plain
+| door_name [digest=HASH, how='plain', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='plain', door_name='nothing'] => c36b70c03aae266d
+how [digest=HASH, how='plain', door_name='as'] => plain
+| door_name [digest=HASH, how='plain', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='plain', door_name='as'] => 6704dcd046f7ed2a
+how [digest=HASH, how='plain', door_name='exception'] => plain
+| door_name [digest=HASH, how='plain', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='plain', door_name='exception'] => 6704dcd046f7ed2a
+how [digest=HASH, how='plain', door_name='exc_info'] => plain
+| door_name [digest=HASH, how='plain', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='plain', door_name='exc_info'] => 6704dcd046f7ed2a
+how [digest=HASH, how='plain', door_name='asked by a callee'] => plain
+| door_name [digest=HASH, how='plain', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='plain', door_name='asked by a callee'] => 6704dcd046f7ed2a
+how [digest=HASH, how='plain', door_name='context'] => plain
+| door_name [digest=HASH, how='plain', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='plain', door_name='context'] => d611273993daef52
+how [digest=HASH, how='plain', door_name='current'] => plain
+| door_name [digest=HASH, how='plain', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='plain', door_name='current'] => 6704dcd046f7ed2a
+how [digest=HASH, how='plain', door_name='format'] => plain
+| door_name [digest=HASH, how='plain', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='plain', door_name='format'] => a5980cbd34fdbb39
+how [digest=HASH, how='init', door_name='nothing'] => init
+| door_name [digest=HASH, how='init', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='init', door_name='nothing'] => 6ffb996219a0c026
+how [digest=HASH, how='init', door_name='as'] => init
+| door_name [digest=HASH, how='init', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='init', door_name='as'] => 8787f1bcc4501da5
+how [digest=HASH, how='init', door_name='exception'] => init
+| door_name [digest=HASH, how='init', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='init', door_name='exception'] => 8787f1bcc4501da5
+how [digest=HASH, how='init', door_name='exc_info'] => init
+| door_name [digest=HASH, how='init', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='init', door_name='exc_info'] => 8787f1bcc4501da5
+how [digest=HASH, how='init', door_name='asked by a callee'] => init
+| door_name [digest=HASH, how='init', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='init', door_name='asked by a callee'] => 8787f1bcc4501da5
+how [digest=HASH, how='init', door_name='context'] => init
+| door_name [digest=HASH, how='init', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='init', door_name='context'] => 2f67d5031c6ea638
+how [digest=HASH, how='init', door_name='current'] => init
+| door_name [digest=HASH, how='init', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='init', door_name='current'] => 8787f1bcc4501da5
+how [digest=HASH, how='init', door_name='format'] => init
+| door_name [digest=HASH, how='init', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='init', door_name='format'] => 70a0deffbf7ace45
+how [digest=HASH, how='new', door_name='nothing'] => new
+| door_name [digest=HASH, how='new', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='new', door_name='nothing'] => aabe11a966c06fd1
+how [digest=HASH, how='new', door_name='as'] => new
+| door_name [digest=HASH, how='new', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='new', door_name='as'] => e08e0946e2b68870
+how [digest=HASH, how='new', door_name='exception'] => new
+| door_name [digest=HASH, how='new', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='new', door_name='exception'] => e08e0946e2b68870
+how [digest=HASH, how='new', door_name='exc_info'] => new
+| door_name [digest=HASH, how='new', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='new', door_name='exc_info'] => e08e0946e2b68870
+how [digest=HASH, how='new', door_name='asked by a callee'] => new
+| door_name [digest=HASH, how='new', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='new', door_name='asked by a callee'] => e08e0946e2b68870
+how [digest=HASH, how='new', door_name='context'] => new
+| door_name [digest=HASH, how='new', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='new', door_name='context'] => bfe5247359eeb48f
+how [digest=HASH, how='new', door_name='current'] => new
+| door_name [digest=HASH, how='new', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='new', door_name='current'] => e08e0946e2b68870
+how [digest=HASH, how='new', door_name='format'] => new
+| door_name [digest=HASH, how='new', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='new', door_name='format'] => d1e636aef4d8cdc2
+how [digest=HASH, how='slots', door_name='nothing'] => slots
+| door_name [digest=HASH, how='slots', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='slots', door_name='nothing'] => 8e081bc23b218afc
+how [digest=HASH, how='slots', door_name='as'] => slots
+| door_name [digest=HASH, how='slots', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='slots', door_name='as'] => c98c55de210fbba5
+how [digest=HASH, how='slots', door_name='exception'] => slots
+| door_name [digest=HASH, how='slots', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='slots', door_name='exception'] => c98c55de210fbba5
+how [digest=HASH, how='slots', door_name='exc_info'] => slots
+| door_name [digest=HASH, how='slots', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='slots', door_name='exc_info'] => c98c55de210fbba5
+how [digest=HASH, how='slots', door_name='asked by a callee'] => slots
+| door_name [digest=HASH, how='slots', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='slots', door_name='asked by a callee'] => c98c55de210fbba5
+how [digest=HASH, how='slots', door_name='context'] => slots
+| door_name [digest=HASH, how='slots', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='slots', door_name='context'] => 27dbc4cfd5613c69
+how [digest=HASH, how='slots', door_name='current'] => slots
+| door_name [digest=HASH, how='slots', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='slots', door_name='current'] => c98c55de210fbba5
+how [digest=HASH, how='slots', door_name='format'] => slots
+| door_name [digest=HASH, how='slots', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='slots', door_name='format'] => d7d27d31c2b8a5d8
+how [digest=HASH, how='meta', door_name='nothing'] => meta
+| door_name [digest=HASH, how='meta', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='meta', door_name='nothing'] => 243e7ca3e39629da
+how [digest=HASH, how='meta', door_name='as'] => meta
+| door_name [digest=HASH, how='meta', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='meta', door_name='as'] => 67f5307dda3bb6e2
+how [digest=HASH, how='meta', door_name='exception'] => meta
+| door_name [digest=HASH, how='meta', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='meta', door_name='exception'] => 67f5307dda3bb6e2
+how [digest=HASH, how='meta', door_name='exc_info'] => meta
+| door_name [digest=HASH, how='meta', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='meta', door_name='exc_info'] => 67f5307dda3bb6e2
+how [digest=HASH, how='meta', door_name='asked by a callee'] => meta
+| door_name [digest=HASH, how='meta', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='meta', door_name='asked by a callee'] => 67f5307dda3bb6e2
+how [digest=HASH, how='meta', door_name='context'] => meta
+| door_name [digest=HASH, how='meta', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='meta', door_name='context'] => df7088e701270a49
+how [digest=HASH, how='meta', door_name='current'] => meta
+| door_name [digest=HASH, how='meta', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='meta', door_name='current'] => 67f5307dda3bb6e2
+how [digest=HASH, how='meta', door_name='format'] => meta
+| door_name [digest=HASH, how='meta', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='meta', door_name='format'] => 8499a21a22d59c37
+how [digest=HASH, how='instance', door_name='nothing'] => instance
+| door_name [digest=HASH, how='instance', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='instance', door_name='nothing'] => c0e5755e48c7e310
+how [digest=HASH, how='instance', door_name='as'] => instance
+| door_name [digest=HASH, how='instance', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='instance', door_name='as'] => 1652320dbd5ab80c
+how [digest=HASH, how='instance', door_name='exception'] => instance
+| door_name [digest=HASH, how='instance', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='instance', door_name='exception'] => 1652320dbd5ab80c
+how [digest=HASH, how='instance', door_name='exc_info'] => instance
+| door_name [digest=HASH, how='instance', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='instance', door_name='exc_info'] => 1652320dbd5ab80c
+how [digest=HASH, how='instance', door_name='asked by a callee'] => instance
+| door_name [digest=HASH, how='instance', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='instance', door_name='asked by a callee'] => 1652320dbd5ab80c
+how [digest=HASH, how='instance', door_name='context'] => instance
+| door_name [digest=HASH, how='instance', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='instance', door_name='context'] => eaeeb5003165ce2b
+how [digest=HASH, how='instance', door_name='current'] => instance
+| door_name [digest=HASH, how='instance', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='instance', door_name='current'] => 1652320dbd5ab80c
+how [digest=HASH, how='instance', door_name='format'] => instance
+| door_name [digest=HASH, how='instance', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='instance', door_name='format'] => 67dbf3769a0c8028
+how [digest=HASH, how='function', door_name='nothing'] => function
+| door_name [digest=HASH, how='function', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='function', door_name='nothing'] => 5f530d58128ff841
+how [digest=HASH, how='function', door_name='as'] => function
+| door_name [digest=HASH, how='function', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='function', door_name='as'] => 7c46d5129bae2540
+how [digest=HASH, how='function', door_name='exception'] => function
+| door_name [digest=HASH, how='function', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='function', door_name='exception'] => 7c46d5129bae2540
+how [digest=HASH, how='function', door_name='exc_info'] => function
+| door_name [digest=HASH, how='function', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='function', door_name='exc_info'] => 7c46d5129bae2540
+how [digest=HASH, how='function', door_name='asked by a callee'] => function
+| door_name [digest=HASH, how='function', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='function', door_name='asked by a callee'] => 7c46d5129bae2540
+how [digest=HASH, how='function', door_name='context'] => function
+| door_name [digest=HASH, how='function', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='function', door_name='context'] => a515b48ac567b03b
+how [digest=HASH, how='function', door_name='current'] => function
+| door_name [digest=HASH, how='function', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='function', door_name='current'] => 7c46d5129bae2540
+how [digest=HASH, how='function', door_name='format'] => function
+| door_name [digest=HASH, how='function', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='function', door_name='format'] => 86edb7d5e4aa9f73
+how [digest=HASH, how='with_traceback', door_name='nothing'] => with_traceback
+| door_name [digest=HASH, how='with_traceback', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='with_traceback', door_name='nothing'] => b85efe6551d0d82f
+how [digest=HASH, how='with_traceback', door_name='as'] => with_traceback
+| door_name [digest=HASH, how='with_traceback', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='with_traceback', door_name='as'] => 0d58d1911e5bf82d
+how [digest=HASH, how='with_traceback', door_name='exception'] => with_traceback
+| door_name [digest=HASH, how='with_traceback', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='with_traceback', door_name='exception'] => 0d58d1911e5bf82d
+how [digest=HASH, how='with_traceback', door_name='exc_info'] => with_traceback
+| door_name [digest=HASH, how='with_traceback', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='with_traceback', door_name='exc_info'] => 0d58d1911e5bf82d
+how [digest=HASH, how='with_traceback', door_name='asked by a callee'] => with_traceback
+| door_name [digest=HASH, how='with_traceback', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='with_traceback', door_name='asked by a callee'] => 0d58d1911e5bf82d
+how [digest=HASH, how='with_traceback', door_name='context'] => with_traceback
+| door_name [digest=HASH, how='with_traceback', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='with_traceback', door_name='context'] => a5598a07531c1c05
+how [digest=HASH, how='with_traceback', door_name='current'] => with_traceback
+| door_name [digest=HASH, how='with_traceback', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='with_traceback', door_name='current'] => 0d58d1911e5bf82d
+how [digest=HASH, how='with_traceback', door_name='format'] => with_traceback
+| door_name [digest=HASH, how='with_traceback', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='with_traceback', door_name='format'] => 868a5f5f36f0816a
+how [digest=HASH, how='from', door_name='nothing'] => from
+| door_name [digest=HASH, how='from', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='from', door_name='nothing'] => 7e0ef8afdb02d8ae
+how [digest=HASH, how='from', door_name='as'] => from
+| door_name [digest=HASH, how='from', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='from', door_name='as'] => ca4f61e68af5878d
+how [digest=HASH, how='from', door_name='exception'] => from
+| door_name [digest=HASH, how='from', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='from', door_name='exception'] => ca4f61e68af5878d
+how [digest=HASH, how='from', door_name='exc_info'] => from
+| door_name [digest=HASH, how='from', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='from', door_name='exc_info'] => ca4f61e68af5878d
+how [digest=HASH, how='from', door_name='asked by a callee'] => from
+| door_name [digest=HASH, how='from', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='from', door_name='asked by a callee'] => ca4f61e68af5878d
+how [digest=HASH, how='from', door_name='context'] => from
+| door_name [digest=HASH, how='from', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='from', door_name='context'] => def490220621090a
+how [digest=HASH, how='from', door_name='current'] => from
+| door_name [digest=HASH, how='from', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='from', door_name='current'] => ca4f61e68af5878d
+how [digest=HASH, how='from', door_name='format'] => from
+| door_name [digest=HASH, how='from', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='from', door_name='format'] => 2f4efe935c5aaf5a
+how [digest=HASH, how='callee', door_name='nothing'] => callee
+| door_name [digest=HASH, how='callee', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='callee', door_name='nothing'] => 0c4a16deaf92f4d8
+how [digest=HASH, how='callee', door_name='as'] => callee
+| door_name [digest=HASH, how='callee', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='callee', door_name='as'] => ec1e7c1d472b3670
+how [digest=HASH, how='callee', door_name='exception'] => callee
+| door_name [digest=HASH, how='callee', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='callee', door_name='exception'] => ec1e7c1d472b3670
+how [digest=HASH, how='callee', door_name='exc_info'] => callee
+| door_name [digest=HASH, how='callee', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='callee', door_name='exc_info'] => ec1e7c1d472b3670
+how [digest=HASH, how='callee', door_name='asked by a callee'] => callee
+| door_name [digest=HASH, how='callee', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='callee', door_name='asked by a callee'] => ec1e7c1d472b3670
+how [digest=HASH, how='callee', door_name='context'] => callee
+| door_name [digest=HASH, how='callee', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='callee', door_name='context'] => 9287f20c4032158c
+how [digest=HASH, how='callee', door_name='current'] => callee
+| door_name [digest=HASH, how='callee', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='callee', door_name='current'] => ec1e7c1d472b3670
+how [digest=HASH, how='callee', door_name='format'] => callee
+| door_name [digest=HASH, how='callee', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='callee', door_name='format'] => 7383e396a449ee35
+how [digest=HASH, how='callee2', door_name='nothing'] => callee2
+| door_name [digest=HASH, how='callee2', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='callee2', door_name='nothing'] => e69ae059d3bf3446
+how [digest=HASH, how='callee2', door_name='as'] => callee2
+| door_name [digest=HASH, how='callee2', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='callee2', door_name='as'] => e420da4120d9d6fb
+how [digest=HASH, how='callee2', door_name='exception'] => callee2
+| door_name [digest=HASH, how='callee2', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='callee2', door_name='exception'] => e420da4120d9d6fb
+how [digest=HASH, how='callee2', door_name='exc_info'] => callee2
+| door_name [digest=HASH, how='callee2', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='callee2', door_name='exc_info'] => e420da4120d9d6fb
+how [digest=HASH, how='callee2', door_name='asked by a callee'] => callee2
+| door_name [digest=HASH, how='callee2', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='callee2', door_name='asked by a callee'] => e420da4120d9d6fb
+how [digest=HASH, how='callee2', door_name='context'] => callee2
+| door_name [digest=HASH, how='callee2', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='callee2', door_name='context'] => 8fcf2077f63514c2
+how [digest=HASH, how='callee2', door_name='current'] => callee2
+| door_name [digest=HASH, how='callee2', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='callee2', door_name='current'] => e420da4120d9d6fb
+how [digest=HASH, how='callee2', door_name='format'] => callee2
+| door_name [digest=HASH, how='callee2', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='callee2', door_name='format'] => a92645e4aedea60c
+how [digest=HASH, how='hash', door_name='nothing'] => hash
+| door_name [digest=HASH, how='hash', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='hash', door_name='nothing'] => b968cebc3a4c033f
+how [digest=HASH, how='hash', door_name='as'] => hash
+| door_name [digest=HASH, how='hash', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='hash', door_name='as'] => 8dc72f4ec3a6a2cc
+how [digest=HASH, how='hash', door_name='exception'] => hash
+| door_name [digest=HASH, how='hash', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='hash', door_name='exception'] => 8dc72f4ec3a6a2cc
+how [digest=HASH, how='hash', door_name='exc_info'] => hash
+| door_name [digest=HASH, how='hash', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='hash', door_name='exc_info'] => 8dc72f4ec3a6a2cc
+how [digest=HASH, how='hash', door_name='asked by a callee'] => hash
+| door_name [digest=HASH, how='hash', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='hash', door_name='asked by a callee'] => 8dc72f4ec3a6a2cc
+how [digest=HASH, how='hash', door_name='context'] => hash
+| door_name [digest=HASH, how='hash', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='hash', door_name='context'] => 78820f6d613fdfd4
+how [digest=HASH, how='hash', door_name='current'] => hash
+| door_name [digest=HASH, how='hash', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='hash', door_name='current'] => 8dc72f4ec3a6a2cc
+how [digest=HASH, how='hash', door_name='format'] => hash
+| door_name [digest=HASH, how='hash', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='hash', door_name='format'] => 6d6dd051f7144a61
+how [digest=HASH, how='getattr', door_name='nothing'] => getattr
+| door_name [digest=HASH, how='getattr', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='getattr', door_name='nothing'] => 455ed562511107eb
+how [digest=HASH, how='getattr', door_name='as'] => getattr
+| door_name [digest=HASH, how='getattr', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='getattr', door_name='as'] => ea865501ab1c1ba5
+how [digest=HASH, how='getattr', door_name='exception'] => getattr
+| door_name [digest=HASH, how='getattr', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='getattr', door_name='exception'] => ea865501ab1c1ba5
+how [digest=HASH, how='getattr', door_name='exc_info'] => getattr
+| door_name [digest=HASH, how='getattr', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='getattr', door_name='exc_info'] => ea865501ab1c1ba5
+how [digest=HASH, how='getattr', door_name='asked by a callee'] => getattr
+| door_name [digest=HASH, how='getattr', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='getattr', door_name='asked by a callee'] => ea865501ab1c1ba5
+how [digest=HASH, how='getattr', door_name='context'] => getattr
+| door_name [digest=HASH, how='getattr', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='getattr', door_name='context'] => 18b92edb54e8e582
+how [digest=HASH, how='getattr', door_name='current'] => getattr
+| door_name [digest=HASH, how='getattr', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='getattr', door_name='current'] => ea865501ab1c1ba5
+how [digest=HASH, how='getattr', door_name='format'] => getattr
+| door_name [digest=HASH, how='getattr', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='getattr', door_name='format'] => b779d200fa22b720
+how [digest=HASH, how='group', door_name='nothing'] => group
+| door_name [digest=HASH, how='group', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='group', door_name='nothing'] => 5a2db84d6db53c84
+how [digest=HASH, how='group', door_name='as'] => group
+| door_name [digest=HASH, how='group', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='group', door_name='as'] => 0ac5dee1d8bd7c28
+how [digest=HASH, how='group', door_name='exception'] => group
+| door_name [digest=HASH, how='group', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='group', door_name='exception'] => 0ac5dee1d8bd7c28
+how [digest=HASH, how='group', door_name='exc_info'] => group
+| door_name [digest=HASH, how='group', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='group', door_name='exc_info'] => 0ac5dee1d8bd7c28
+how [digest=HASH, how='group', door_name='asked by a callee'] => group
+| door_name [digest=HASH, how='group', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='group', door_name='asked by a callee'] => 0ac5dee1d8bd7c28
+how [digest=HASH, how='group', door_name='context'] => group
+| door_name [digest=HASH, how='group', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='group', door_name='context'] => 94af881a15b6c7a5
+how [digest=HASH, how='group', door_name='current'] => group
+| door_name [digest=HASH, how='group', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='group', door_name='current'] => 0ac5dee1d8bd7c28
+how [digest=HASH, how='group', door_name='format'] => group
+| door_name [digest=HASH, how='group', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='group', door_name='format'] => 3c73f5a9de5edda9
+how [digest=HASH, how='assert', door_name='nothing'] => assert
+| door_name [digest=HASH, how='assert', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='assert', door_name='nothing'] => c2fbb0f8a82ca2c1
+how [digest=HASH, how='assert', door_name='as'] => assert
+| door_name [digest=HASH, how='assert', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='assert', door_name='as'] => b839d3c6ddf0c431
+how [digest=HASH, how='assert', door_name='exception'] => assert
+| door_name [digest=HASH, how='assert', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='assert', door_name='exception'] => b839d3c6ddf0c431
+how [digest=HASH, how='assert', door_name='exc_info'] => assert
+| door_name [digest=HASH, how='assert', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='assert', door_name='exc_info'] => b839d3c6ddf0c431
+how [digest=HASH, how='assert', door_name='asked by a callee'] => assert
+| door_name [digest=HASH, how='assert', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='assert', door_name='asked by a callee'] => b839d3c6ddf0c431
+how [digest=HASH, how='assert', door_name='context'] => assert
+| door_name [digest=HASH, how='assert', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='assert', door_name='context'] => e6f2056d02ce2c84
+how [digest=HASH, how='assert', door_name='current'] => assert
+| door_name [digest=HASH, how='assert', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='assert', door_name='current'] => b839d3c6ddf0c431
+how [digest=HASH, how='assert', door_name='format'] => assert
+| door_name [digest=HASH, how='assert', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='assert', door_name='format'] => bcc897e119e973ff
+how [digest=HASH, how='unpack', door_name='nothing'] => unpack
+| door_name [digest=HASH, how='unpack', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='unpack', door_name='nothing'] => 2e08f915f32aa47f
+how [digest=HASH, how='unpack', door_name='as'] => unpack
+| door_name [digest=HASH, how='unpack', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='unpack', door_name='as'] => 16b30da4aef2abcf
+how [digest=HASH, how='unpack', door_name='exception'] => unpack
+| door_name [digest=HASH, how='unpack', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='unpack', door_name='exception'] => 16b30da4aef2abcf
+how [digest=HASH, how='unpack', door_name='exc_info'] => unpack
+| door_name [digest=HASH, how='unpack', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='unpack', door_name='exc_info'] => 16b30da4aef2abcf
+how [digest=HASH, how='unpack', door_name='asked by a callee'] => unpack
+| door_name [digest=HASH, how='unpack', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='unpack', door_name='asked by a callee'] => 16b30da4aef2abcf
+how [digest=HASH, how='unpack', door_name='context'] => unpack
+| door_name [digest=HASH, how='unpack', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='unpack', door_name='context'] => 515a5f59bea7c6c7
+how [digest=HASH, how='unpack', door_name='current'] => unpack
+| door_name [digest=HASH, how='unpack', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='unpack', door_name='current'] => 16b30da4aef2abcf
+how [digest=HASH, how='unpack', door_name='format'] => unpack
+| door_name [digest=HASH, how='unpack', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='unpack', door_name='format'] => a5bfe8f7b7b91f4a
+how [digest=HASH, how='import', door_name='nothing'] => import
+| door_name [digest=HASH, how='import', door_name='nothing'] => nothing
+| digest.hexdigest()[:16] [digest=HASH, how='import', door_name='nothing'] => 9135d47e7b527b99
+how [digest=HASH, how='import', door_name='as'] => import
+| door_name [digest=HASH, how='import', door_name='as'] => as
+| digest.hexdigest()[:16] [digest=HASH, how='import', door_name='as'] => f8eb85c0a42542e6
+how [digest=HASH, how='import', door_name='exception'] => import
+| door_name [digest=HASH, how='import', door_name='exception'] => exception
+| digest.hexdigest()[:16] [digest=HASH, how='import', door_name='exception'] => f8eb85c0a42542e6
+how [digest=HASH, how='import', door_name='exc_info'] => import
+| door_name [digest=HASH, how='import', door_name='exc_info'] => exc_info
+| digest.hexdigest()[:16] [digest=HASH, how='import', door_name='exc_info'] => f8eb85c0a42542e6
+how [digest=HASH, how='import', door_name='asked by a callee'] => import
+| door_name [digest=HASH, how='import', door_name='asked by a callee'] => asked by a callee
+| digest.hexdigest()[:16] [digest=HASH, how='import', door_name='asked by a callee'] => f8eb85c0a42542e6
+how [digest=HASH, how='import', door_name='context'] => import
+| door_name [digest=HASH, how='import', door_name='context'] => context
+| digest.hexdigest()[:16] [digest=HASH, how='import', door_name='context'] => 3681feca6725b058
+how [digest=HASH, how='import', door_name='current'] => import
+| door_name [digest=HASH, how='import', door_name='current'] => current
+| digest.hexdigest()[:16] [digest=HASH, how='import', door_name='current'] => f8eb85c0a42542e6
+how [digest=HASH, how='import', door_name='format'] => import
+| door_name [digest=HASH, how='import', door_name='format'] => format
+| digest.hexdigest()[:16] [digest=HASH, how='import', door_name='format'] => 97dc23132ad54e1d
+count => 16128
+cases

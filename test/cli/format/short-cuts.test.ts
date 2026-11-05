@@ -4989,6 +4989,9 @@ describe("TypeScript that the long way rejects", () => {
     "export default namespace A {}",
   ]);
   expectRejected("a.tsx", [
+    // type arguments that TypeScript mends, and that end together with a list in them
+    "o<keyof|d<y>>(1)",
+    "o<keyof|d<e<y>>>(1)",
     // nothing goes on behind an element
     "<a />.b",
     "<a />()",
@@ -5844,6 +5847,11 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // Flow: a cast as a computed key, a comment before the type arguments of what is implemented.
     ["a.js", "--print-width=25 --tab-width=8", "//@flow\nif(d){({[(1:y)]:d})}\n"],
     ["a.js", "--print-width=81", "//@flow\nclass a extends o implements a\n//\n<>{static{export default{}}}\n"],
+    // A list in the default value of a parameter of a function that may be hugged.
+    ["a.jsx", "--print-width=21", 'a((a=a({f}))=>{("")})\n'],
+    ["a.jsx", "--print-width=22", "a((a=b([f]))=>{c})\n"],
+    // Flow: a cast among the items of a sequence.
+    ["a.js", "--print-width=17", "//@flow\ne=(e,(h).a:(((a))))\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

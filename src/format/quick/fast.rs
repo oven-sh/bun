@@ -1533,6 +1533,15 @@ impl Quick {
                 if q < 0 {
                     return Ok(-1);
                 }
+                // Whether a function can be hugged is measured with the commas that the lists in it would end with if they were broken.
+                if self.fast.argument_lists != 0
+                    && q - v1 > 2
+                    && (self.has_byte_in_range(b'(', v1, q)
+                        || self.has_byte_in_range(b'[', v1, q)
+                        || self.has_byte_in_range(b'{', v1, q))
+                {
+                    return Ok(self.no(refusal::Paren));
+                }
             }
             if is_broken {
                 let width = self.width_up_to(q) - from;

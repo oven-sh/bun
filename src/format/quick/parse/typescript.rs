@@ -2828,7 +2828,8 @@ impl Quick {
                         break;
                     }
                 }
-                tk::Gt => {
+                // (`>>`: the ends of two lists)
+                tk::Gt | tk::Shr | tk::UShr => {
                     if self.next().is_err() {
                         if self.why.get() != why::SYNTAX {
                             return Err(Stop);

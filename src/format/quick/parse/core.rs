@@ -5206,14 +5206,12 @@ impl Quick {
             expression = self.arena.ls.at(mark);
             self.list_truncate(mark);
         } else {
-            // `(a: A, b)`: a cast has parentheses of its own
+            // `(a: A, b)`: a cast has parentheses of its own. (Whether it has is not seen at a glance: `(a, (b).c: (D))`.)
             if self.parse.typed == TYPED_FLOW {
                 let mut i = mark;
                 while i < self.arena.ls_pos {
                     let item = self.arena.ls.at(i);
-                    if (self.n.at(item) & 0xff) == k::TypeCastExpression
-                        && self.t.at(self.n.at(item + 1)) != 40
-                    {
+                    if (self.n.at(item) & 0xff) == k::TypeCastExpression {
                         return Err(self.text_refuse());
                     }
                     i += 1;

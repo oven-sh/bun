@@ -3580,10 +3580,10 @@ impl Quick {
         if q < 0 || self.fast.opened != 0 {
             return Ok(q);
         }
-        if self.t.at(q) == 59 && self.fast.shape != SH_ARROW {
+        if self.t.at(q) == 59 && self.fast.shape != SH_ARROW && self.fast.shape != SH_AS {
             return Ok(self.terminate(q, false));
         }
-        if self.fast.shape == SH_ARROW {
+        if self.fast.shape == SH_ARROW || self.fast.shape == SH_AS {
             return Ok(self.no(refusal::Start));
         }
         let r = self.blanks(q);

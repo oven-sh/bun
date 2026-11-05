@@ -126,6 +126,7 @@ pub(crate) mod rare {
     /// An empty line between two elements of a tuple type: the long way keeps it, and the type broken.
     pub(crate) const TUPLE: i32 = 6;
     /// The name `let`: at the start of a statement it gets parentheses, and a `;` in front of them where there are no semicolons.
+    /// A statement that is an `as` or a `satisfies` expression, at the start of which more names get them.
     pub(crate) const LET: i32 = 7;
     /// A decorator and `export` on one line.
     pub(crate) const DECORATOR: i32 = 8;

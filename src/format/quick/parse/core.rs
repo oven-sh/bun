@@ -2007,6 +2007,13 @@ impl Quick {
                 body,
             ));
         }
+        // `(type) as A;`: some names get parentheses at the start of such a statement
+        if matches!(
+            self.n.at(expression) & (0xff | F_PAREN),
+            k::AsExpression | k::SatisfiesExpression
+        ) {
+            return Err(self.rare(rare::LET));
+        }
         let end = self.lexer.prev_end;
         self.semicolon()?;
         return Ok(self.node1(k::ExpressionStatement, start, end, expression));

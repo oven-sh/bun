@@ -1,6 +1,7 @@
 // ESM tests are about various esm features in development mode.
 import { expect } from "bun:test";
 import { isWindows } from "harness";
+import { once } from "node:events";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
@@ -581,28 +582,7 @@ devTest("browser console forwarding does not throw into the page", {
 // The forwarder sends each line on the socket of the dev server, and a page can replace send().
 // This test logs strings only, so it does not depend on the formatter.
 devTest("browser console forwarding returns for a send() that throws or logs", {
-  files: {
-    "index.html": emptyHtmlFile({
-      scripts: ["index.ts"],
-    }),
-    "bun.app.ts": `
-      import html from "./index.html";
-      export default {
-        static: {
-          "/": html,
-        },
-        development: {
-          console: true,
-        },
-        fetch(req) {
-          return new Response("Not Found", { status: 404 });
-        },
-      };
-    `,
-    "index.ts": `
-      console.log("loaded");
-    `,
-  },
+  files: consoleForwardingFiles(`console.log("loaded");`),
   htmlFiles: [],
   async test(dev) {
     // `errors` lets the page call console.error.
@@ -893,7 +873,10 @@ devTest("browser console forwarding does not make console.error throw", {
       hookCalls: 18,
     });
     await c.expectMessage("second call");
-    await dev.output.waitForLine(/\[browser\].* second call/);
+    // The line of console.log is on the other pipe of the dev server, so it can arrive before
+    // or after "done". waitForLine starts after the last line that it matched, so it can miss
+    // a line that arrived before.
+    while (!forwardedLines(dev).some(line => line.startsWith("second call"))) await once(dev.output, "line");
     const lines = forwardedLines(dev);
     expect(lines.filter(line => line.startsWith("second call"))).toEqual(["second call Second { b: 2 }"]);
     expect(lines.filter(line => !line.startsWith("second call"))).toEqual([

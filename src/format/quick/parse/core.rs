@@ -2255,13 +2255,16 @@ impl Quick {
         if kind >= V_USING
             && ((self.parse.is_common_js
                 && self.parse.in_function == 0
-                && self.parse.list_depth == 0)
+                && self.parse.list_depth == self.options.indentation)
                 || (self.parse.list_depth == self.parse.cases_depth
                     && self.parse.typed != TYPED_TS))
         {
             return Err(self.text_refuse());
         }
-        if kind >= V_USING && self.parse.in_function == 0 && self.parse.list_depth == 0 {
+        if kind >= V_USING
+            && self.parse.in_function == 0
+            && self.parse.list_depth == self.options.indentation
+        {
             self.need_module()?;
         }
         if kind >= V_USING && self.parse.typed != 0 && !self.mode.is_babel_flow {
@@ -2611,6 +2614,7 @@ impl Quick {
     pub(crate) fn parse_typed_binding_element(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
         let decorators = if self.lexer.tok == tk::At {
+            self.check_place_of_decorated_parameter()?;
             self.parse_decorators()?
         } else {
             0
@@ -2690,6 +2694,15 @@ impl Quick {
         return Ok(element);
     }
 
+    /// A parameter of a function that is no method has a decorator: an error for TypeScript's parser, and to the long way the arguments
+    /// of such a decorator are those of any call.
+    fn check_place_of_decorated_parameter(&self) -> R<()> {
+        if self.parse.typed != TYPED_TS && self.parse.place.scope == SCOPE_FUNCTION {
+            return Err(self.rare(rare::DECORATOR));
+        }
+        Ok(())
+    }
+
     pub(crate) fn parse_binding_element(&mut self) -> R<i32> {
         self.stack()?;
         if self.parse.typed != 0 {
@@ -2697,7 +2710,13 @@ impl Quick {
         }
         let start = self.lexer.tok_start;
         if self.lexer.tok == tk::At {
+            self.check_place_of_decorated_parameter()?;
+            let await_names = self.parse.await_names;
             let decorators = self.parse_decorators()?;
+            // an operator there for some, if it is one around the function
+            if self.parse.await_names != await_names {
+                return Err(self.text_refuse());
+            }
             let v0 = self.parse_binding_element()?;
             let element = self.with_room(v0)?;
             self.n.put(element, self.n.at(element) | F_EXT);
@@ -2763,7 +2782,10 @@ impl Quick {
         self.parse.no_in = 0;
         let body: i32;
         if self.parse.typed == TYPED_TS {
+            let in_parameters = self.parse.place.in_parameters;
+            self.parse.place.in_parameters = false;
             body = self.parse_block_like(k::BlockStatement, true)?;
+            self.parse.place.in_parameters = in_parameters;
         } else {
             let outside = self.enter_function();
             body = self.parse_block_like(k::BlockStatement, true)?;
@@ -2914,9 +2936,9 @@ impl Quick {
         let outer_scope = self.parse.place.scope;
         let is_method = (head & 0xff) == k::ClassMethod || (head & 0xff) == k::ObjectMethod;
         let method = ((head as u32) >> SUB_SHIFT) as i32 & M_MASK;
+        self.parse.in_async = if (head & F_ASYNC) != 0 { 1 } else { 0 };
+        self.parse.in_generator = if (head & F_GENERATOR) != 0 { 1 } else { 0 };
         if asks {
-            self.parse.in_async = if (head & F_ASYNC) != 0 { 1 } else { 0 };
-            self.parse.in_generator = if (head & F_GENERATOR) != 0 { 1 } else { 0 };
             self.parse.place.scope = if !is_method {
                 SCOPE_FUNCTION
             } else if method == M_CONSTRUCTOR
@@ -2933,10 +2955,8 @@ impl Quick {
         } else {
             PARAMETERS_PLAIN
         })?;
-        if asks {
-            self.parse.in_async = a;
-            self.parse.in_generator = g;
-        }
+        self.parse.in_async = a;
+        self.parse.in_generator = g;
         // a getter has no parameter, a setter has one (TypeScript's parser does not count)
         if (method == M_GET || method == M_SET)
             && self.parse.typed != TYPED_TS
@@ -3127,6 +3147,10 @@ impl Quick {
                         0,
                     );
                 }
+            }
+            // (the long way puts the parentheses of a class in this place on the lines of the class)
+            if (self.n.at(expression) & 0xff) == k::ClassExpression {
+                return Err(self.rare(rare::DECORATOR));
             }
             let v0 = self.node1(k::Decorator, start, self.lexer.prev_end, expression);
             self.list_push(v0);
@@ -3705,6 +3729,10 @@ impl Quick {
                 if is_async && self.is_bare_arrow(n) {
                     return Err(self.text_refuse());
                 }
+                // (the long way breaks the line behind it)
+                if (self.n.at(n) & 0xff) == k::ClassExpression {
+                    return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
                 self.parse.no_in = saved_no_in;
                 self.expect(tk::BracketR)?;
                 return Ok(n);
@@ -3873,7 +3901,7 @@ impl Quick {
     /// An `await` or `yield` expression has been read.
     fn suspend(&mut self) -> R<()> {
         self.parse.suspensions += 1;
-        if self.parse.place.in_parameters && self.parse.typed != TYPED_TS {
+        if self.parse.place.in_parameters {
             return Err(self.text_refuse());
         }
         Ok(())
@@ -3935,6 +3963,13 @@ impl Quick {
         // Prettier turns `a || (b || c)` into `(a || b) || c`
         let r = self.n.at(right);
         if (r & 0xff) == k::LogicalExpression && ((r as u32) >> SUB_SHIFT) as i32 == op {
+            // (what then stands on the line of the operator before it does not on the long way)
+            if matches!(
+                self.n.at(self.n.at(right + 4)) & 0xff,
+                k::ObjectExpression | k::ArrayExpression | k::JSXElement | k::JSXFragment
+            ) {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             let inner = self.make_logical(
                 op,
                 self.n.at(left + 1),
@@ -4504,7 +4539,7 @@ impl Quick {
                     }
                     let are_typed = maybe_async && self.parse.arguments_were_typed;
                     if maybe_async && self.lexer.tok == tk::Arrow && self.lexer.tok_nl == 0 {
-                        if (self.parse.suspensions != suspensions && self.parse.typed != TYPED_TS)
+                        if self.parse.suspensions != suspensions
                             || self.parse.await_names != await_names
                         {
                             return Err(self.text_refuse());
@@ -4526,6 +4561,7 @@ impl Quick {
                         return self.parse_arrow_rest(start, args, F_ASYNC);
                     }
                     if maybe_async && self.parse.typed != 0 && self.lexer.tok == tk::Colon {
+                        let suspends = self.parse.suspensions != suspensions;
                         let list_mark = self.arena.ls_pos;
                         let mut i: i32 = 1;
                         while i <= self.n.at(args) {
@@ -4535,7 +4571,7 @@ impl Quick {
                         let arrow =
                             self.try_parse_arrow_with_return_type(start, list_mark, F_ASYNC)?;
                         if arrow != 0 {
-                            if self.parse.await_names != await_names {
+                            if suspends || self.parse.await_names != await_names {
                                 return Err(self.text_refuse());
                             }
                             return Ok(arrow);
@@ -4880,7 +4916,8 @@ impl Quick {
                     return Err(self.text_refuse());
                 }
                 let n = self.private_name()?;
-                if self.lexer.tok != tk::In {
+                // (in the head of a `for` the `in` is not an operator)
+                if self.lexer.tok != tk::In || (self.parse.no_in & 1) != 0 {
                     return Err(self.text_refuse());
                 }
                 return Ok(n);
@@ -5044,7 +5081,7 @@ impl Quick {
         let typed_item = self.parse.saw_typed_item;
         self.parse.saw_typed_item = saved_typed_item;
         if self.lexer.tok == tk::Arrow && self.lexer.tok_nl == 0 {
-            if self.parse.suspensions != suspensions && self.parse.typed != TYPED_TS {
+            if self.parse.suspensions != suspensions {
                 return Err(self.text_refuse());
             }
             let mut i = mark;
@@ -5057,8 +5094,12 @@ impl Quick {
             return self.parse_arrow_rest(start, v4, 0);
         }
         if self.parse.typed != 0 && self.lexer.tok == tk::Colon {
+            let suspends = self.parse.suspensions != suspensions;
             let arrow = self.try_parse_arrow_with_return_type(start, mark, 0)?;
             if arrow != 0 {
+                if suspends {
+                    return Err(self.text_refuse());
+                }
                 return Ok(arrow);
             }
         }
@@ -5246,7 +5287,13 @@ impl Quick {
             let saved_no_in = self.parse.no_in;
             self.parse.no_in = 0;
             let v1 = if is_type {
-                self.ts_parse_type()?
+                let from = self.lexer.tok_start;
+                let hole = self.ts_parse_type()?;
+                // (with braces in it Prettier breaks the parameters of a function whose return type it is part of)
+                if self.has_byte_in_range(123, from, self.lexer.prev_end) {
+                    return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
+                hole
             } else {
                 self.parse_expression()?
             };

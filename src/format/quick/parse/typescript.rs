@@ -1268,7 +1268,8 @@ impl Quick {
                 self.expect(tk::Comma)?;
             }
         }
-        if self.parse_typescript.odd_parameters != odd {
+        // (`[]`: two line breaks in a row where it breaks, which the long way writes as one)
+        if self.parse_typescript.odd_parameters != odd || self.arena.ls_pos == list_mark {
             return Err(self.text_refuse());
         }
         self.next()?;
@@ -1589,7 +1590,10 @@ impl Quick {
             } else if self.lexer.tok == tk::Lt {
                 type_arguments = self.ts_parse_type_arguments()?;
             }
-            if !self.is_entity_name(expression) {
+            // (`a<<T>() => b>`: `<<` is an operator in this place on the long way)
+            if !self.is_entity_name(expression)
+                || (type_arguments != 0 && self.t.at(self.n.at(type_arguments + 1) + 1) == 60)
+            {
                 return Err(self.text_refuse());
             }
             let v0 = self.node2(
@@ -1940,6 +1944,11 @@ impl Quick {
         let body_start = self.lexer.tok_start;
         self.expect(tk::BraceL)?;
         let list_mark = self.arena.ls_pos;
+        // `await` and `yield` are what they are outside of every function
+        let a = self.parse.in_async;
+        let g = self.parse.in_generator;
+        self.parse.in_async = 0;
+        self.parse.in_generator = 0;
         while self.lexer.tok != tk::BraceR {
             let member_start = self.lexer.tok_start;
             // a word or a string
@@ -1967,6 +1976,8 @@ impl Quick {
                 self.expect(tk::Comma)?;
             }
         }
+        self.parse.in_async = a;
+        self.parse.in_generator = g;
         self.next()?;
         let v1 = self.lexer.prev_end;
         let v2 = self.list_finish(list_mark);

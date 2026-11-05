@@ -804,13 +804,16 @@ impl Quick {
         let should_indent = (self.is_return_or_throw(parent) && self.needs_parens(n)?)
             || (pk == k::ArrowFunctionExpression && self.n.at(parent + 5) == n);
         if should_indent {
-            // ifBreak([indent([softline, parts]), softline], parts): the parts are written twice
+            // ifBreak([indent([softline, parts]), softline], parts)
+            let h = self.detach_open();
+            self.print_sequence_parts(list, count)?;
+            let parts = self.detach_close(h);
             let h = self.if_break_open(0);
             self.indent_softline();
-            self.print_sequence_parts(list, count)?;
+            self.call(parts);
             self.dedent_softline();
             self.if_break_else(h);
-            self.print_sequence_parts(list, count)?;
+            self.call(parts);
             self.if_break_close(h);
         } else {
             self.print_sequence_parts(list, count)?;

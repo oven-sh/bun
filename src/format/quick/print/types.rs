@@ -404,6 +404,15 @@ impl Quick {
                 || (self.n.at(self.n.at(params + 1)) & KIND_AND_SUB)
                     == (k::KeywordType | (type_keyword::All << SUB_SHIFT)))
         {
+            // (on the left of a `=`, whether it can break decides about the right side)
+            if (self.n.at(grandparent) & 0xff) == k::TypeAnnotation {
+                let owner = self.n.at(grandparent + 3);
+                if (self.n.at(owner) & 0xff) == k::ClassProperty
+                    || (self.n.at(self.n.at(owner + 3)) & 0xff) == k::VariableDeclarator
+                {
+                    return Err(self.rare(rare::FLOW));
+                }
+            }
             self.gives_up_where_broken(g)?;
         }
         Ok(())
@@ -951,7 +960,7 @@ impl Quick {
         h = self.detach_open();
         self.print(expression)?;
         let printed = self.detach_close(h);
-        if self.doc_will_break(printed) {
+        if self.doc_will_break(printed) || self.doc_will_break(cast) {
             return Err(self.rare(rare::ASSERTION));
         }
         let c = self.cond_open();

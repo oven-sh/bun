@@ -816,6 +816,29 @@ pub(crate) fn is_in_ranges(ranges: &[i32], code: i32) -> bool {
 }
 
 impl Quick {
+    /// Can the character of two to four bytes at `p` be in a name, or start one?
+    fn is_in_name(&self, p: i32, is_first: bool) -> bool {
+        let c = self.t.at(p);
+        let code = if c < 0xe0 {
+            ((c & 0x1f) << 6) | (self.t.at(p + 1) & 0x3f)
+        } else if c < 0xf0 {
+            ((c & 0x0f) << 12) | ((self.t.at(p + 1) & 0x3f) << 6) | (self.t.at(p + 2) & 0x3f)
+        } else {
+            ((c & 0x07) << 18)
+                | ((self.t.at(p + 1) & 0x3f) << 12)
+                | ((self.t.at(p + 2) & 0x3f) << 6)
+                | (self.t.at(p + 3) & 0x3f)
+        };
+        is_in_ranges(
+            if is_first {
+                ID_START.as_slice()
+            } else {
+                ID_PART.as_slice()
+            },
+            code,
+        )
+    }
+
     /// Scans the rest of a name that has a non-ASCII byte or a backslash at p. Returns its end.
     pub(crate) fn slow_name(&mut self, mut p: i32) -> R<i32> {
         loop {
@@ -827,32 +850,11 @@ impl Quick {
                 if self.unicode_space(p) != 0 {
                     return Ok(p);
                 }
-                // one character of two to four bytes
-                let code: i32;
                 let length = self.character_length(p);
                 if length == 0 {
                     return Err(self.fail(p));
                 }
-                if c < 0xe0 {
-                    code = ((c & 0x1f) << 6) | (self.t.at(p + 1) & 0x3f);
-                } else if c < 0xf0 {
-                    code = ((c & 0x0f) << 12)
-                        | ((self.t.at(p + 1) & 0x3f) << 6)
-                        | (self.t.at(p + 2) & 0x3f);
-                } else {
-                    code = ((c & 0x07) << 18)
-                        | ((self.t.at(p + 1) & 0x3f) << 12)
-                        | ((self.t.at(p + 2) & 0x3f) << 6)
-                        | (self.t.at(p + 3) & 0x3f);
-                }
-                if !is_in_ranges(
-                    if p == self.lexer.pos {
-                        ID_START.as_slice()
-                    } else {
-                        ID_PART.as_slice()
-                    },
-                    code,
-                ) {
+                if !self.is_in_name(p, p == self.lexer.pos) {
                     if p == self.lexer.pos {
                         return Err(self.fail(p));
                     }
@@ -1571,7 +1573,7 @@ impl Quick {
                         }
                         self.lexer.tok_flags |= F_SLOW_TEXT;
                         let length = self.character_length(q);
-                        if length == 0 {
+                        if length == 0 || !self.is_in_name(q, q == p) {
                             return Err(self.text_refuse());
                         }
                         q += length;
@@ -1720,8 +1722,11 @@ impl Quick {
                 }
                 flags |= F_SLOW_TEXT;
                 if d >= 128 {
-                    // (no white space for JSX, but the long way trims it)
-                    if self.unicode_space(q) != 0 {
+                    // (no white space for JSX, but the long way trims it, also what only TypeScript takes for white space)
+                    if self.unicode_space(q) != 0
+                        || (d == 0xc2 && self.t.at(q + 1) == 0x85)
+                        || (d == 0xe2 && self.t.at(q + 1) == 0x80 && self.t.at(q + 2) == 0x8b)
+                    {
                         return Err(self.rare(rare::ODD_BYTES));
                     }
                     let length = self.character_length(q);

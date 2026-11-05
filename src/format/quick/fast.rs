@@ -1940,6 +1940,11 @@ impl Quick {
                 {
                     return Ok(self.no(refusal::Arguments));
                 }
+                // The list in it does not fit on this line. On the line of the `(` it does not fit either, unless it starts further to
+                // the left there, after what follows it has been counted: a comma here, the `)` and what follows that there.
+                if head + flat + 1 + outer_follow < inner + self.fast.follow {
+                    return Ok(self.no(refusal::Arguments));
+                }
                 flat = 4096;
             } else {
                 flat = flat + self.width_up_to(e) - from + 2;
@@ -3957,6 +3962,10 @@ impl Quick {
     /// The list of an import or export at p, in whatever layout it stands there, and the rest of the statement. `has_others`: a name stands in front of the list (`import a, { b }`).
     /// The list is a group: on one line if the statement fits, else each name on a line of its own.
     pub(crate) fn specifiers_and_rest(&mut self, p: i32, is_export: bool, has_others: bool) -> i32 {
+        // (what was too long has not been written, and the attempts below start from what has been)
+        if self.fast.too_long {
+            return self.no(refusal::Long);
+        }
         let run0 = self.fast.run;
         let out0 = self.fast.out;
         let prefix = self.width_up_to(p);
@@ -6638,6 +6647,7 @@ impl Quick {
         if is_child && (self.fast.attribute_count <= 1 || is_empty) {
             let out_here = self.fast.out;
             let run_here = self.fast.run;
+            let too_long_here = self.fast.too_long;
             let e = self.jsx_leaf(p, start)?;
             if e >= 0 && !self.fast.too_long && self.jsx_line_ends(e) {
                 self.fast.ready_end = e;
@@ -6649,7 +6659,7 @@ impl Quick {
             self.fast.out = out_here;
             self.fast.run = run_here;
             self.fast.why = 0;
-            self.fast.too_long = false;
+            self.fast.too_long = too_long_here;
         }
         // With nothing in the element the closing tag follows on the line, and so does a template that is all there is in it.
         let mut r = p;

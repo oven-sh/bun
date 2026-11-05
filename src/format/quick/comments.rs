@@ -8,8 +8,8 @@
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     CL_EXTENDS, CL_IMPLEMENTS, CL_MIXINS, CL_TYPE_PARAMETERS, EXT_AT, F_CHAIN, F_DANGLING, F_EXT,
-    F_IGNORED, F_LEADING, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, MOD_ABSTRACT, MOD_DECLARE,
-    SHAPE, k,
+    F_IGNORED, F_LEADING, F_PAREN, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, MOD_ABSTRACT,
+    MOD_DECLARE, SHAPE, k,
 };
 use crate::lexer::{
     C_ENCLOSING, C_END, C_FLAGS, C_FOLLOWING, C_NEXT, C_NODE, C_PRECEDING, C_START, C_STRIDE,
@@ -104,7 +104,6 @@ fn comments_taken_in(kind: i32) -> i32 {
         | k::ArrayPattern
         | k::AsExpression
         | k::AssignmentExpression
-        | k::AssignmentPattern
         | k::AwaitExpression
         | k::BinaryExpression
         | k::CallExpression
@@ -116,7 +115,6 @@ fn comments_taken_in(kind: i32) -> i32 {
         | k::DeclareModuleExports
         | k::EnumBody
         | k::EnumDeclaration
-        | k::EnumMember
         | k::ExportAllDeclaration
         | k::ExportNamedDeclaration
         | k::ExportSpecifier
@@ -180,7 +178,8 @@ fn comments_taken_in(kind: i32) -> i32 {
         | k::ObjectTypeIndexer
         | k::ObjectTypeProperty
         | k::ThrowStatement
-        | k::TypeParameter => MID_BLOCK,
+        | k::TypeParameter
+        | k::TypePredicate => MID_BLOCK,
         k::BlockStatement
         | k::ConditionalExpression
         | k::IfStatement
@@ -194,14 +193,13 @@ fn comments_taken_in(kind: i32) -> i32 {
         | k::ImportExpression
         | k::MetaProperty
         | k::SatisfiesExpression => OWN_LINE | END_LINE | MID_BLOCK,
-        k::ConstructSignature
-        | k::JSXOpeningFragment
-        | k::TaggedTemplateExpression
-        | k::TypePredicate => OWN_LINE | MID_BLOCK,
+        k::ConstructSignature | k::JSXOpeningFragment | k::TaggedTemplateExpression => {
+            OWN_LINE | MID_BLOCK
+        }
         k::ArrowFunctionExpression | k::ModuleBlock => OWN_LINE | OWN_BLOCK | END_LINE,
         k::MappedType | k::ReturnStatement => OWN_LINE | OWN_BLOCK | MID_BLOCK,
         k::UnaryExpression => END_LINE | MID_BLOCK,
-        k::FunctionTypeParam => OWN_BLOCK | MID_BLOCK,
+        k::AssignmentPattern | k::EnumMember | k::FunctionTypeParam => OWN_BLOCK | MID_BLOCK,
         k::DoWhileStatement => OWN_LINE,
         _ => 0,
     }
@@ -220,7 +218,10 @@ fn is_part_of_word(c: i32) -> bool {
 }
 
 impl Quick {
-    fn is_part_of_optional_chain(&self, n: i32) -> bool {
+    fn is_part_of_optional_chain(&self, mut n: i32) -> bool {
+        while (self.n.at(n) & 0xff) == k::NonNullExpression {
+            n = self.n.at(n + 4);
+        }
         matches!(self.n.at(n) & 0xff, k::MemberExpression | k::CallExpression)
             && (self.n.at(n) & F_CHAIN) != 0
     }
@@ -327,12 +328,23 @@ impl Quick {
         if i > self.lexer.c_base && self.lexer.c.at((i - 1) * C_STRIDE + C_END) == c.h_start {
             return false;
         }
-        // Some trees have a node more around an optional chain. So none in a chain but among the arguments of a call, none before one
-        // but on lines of its own, none behind one on its line.
+        // Some trees have a node more around an optional chain. So none in a chain but among the arguments of a call that has some, none
+        // before one but on lines of its own where the chain is an item of a list, an operand or a branch, none behind one on its line.
         if (self.is_part_of_optional_chain(c.h_enclosing)
-            && !(inside == k::CallExpression && (before == 40 || before == 44)))
+            && !(inside == k::CallExpression && ((before == 40 && behind != 41) || before == 44)))
             || (self.is_part_of_optional_chain(c.h_following)
-                && !(c.h_placement == CF_OWN_LINE && behind != 40))
+                && !(c.h_placement == CF_OWN_LINE
+                    && behind != 40
+                    && (self.n.at(c.h_following) & F_PAREN) == 0
+                    && matches!(
+                        inside,
+                        k::CallExpression
+                            | k::NewExpression
+                            | k::ArrayExpression
+                            | k::LogicalExpression
+                            | k::BinaryExpression
+                            | k::ConditionalExpression
+                    )))
             || (c.h_placement != CF_OWN_LINE && self.is_part_of_optional_chain(c.h_preceding))
         {
             return false;
@@ -341,6 +353,51 @@ impl Quick {
         if inside != k::JSXEmptyExpression
             && form == MID_BLOCK
             && self.has_newline_in_range(c.h_start, c.h_end)
+        {
+            return false;
+        }
+        // A line comment waits for the end of the line that is printed. Prettier leaves two blanks before it where a blank was printed
+        // already: before a `=`, and behind a `=` or the `:` of a type before a template or parentheses that go, which stay on the line.
+        if !c.h_is_block
+            && (behind == 61
+                || (form == END_LINE
+                    && ((before == 61 && (behind == 96 || behind == 40))
+                        || (before == 58 && behind == 96 && inside != k::ConditionalExpression))))
+        {
+            return false;
+        }
+        // The first line break that is printed may be the one in a block comment, which then has the comments that wait in it:
+        // comments in what it follows on its line, or a line comment before it that follows a `:` or an operator.
+        if c.h_is_block
+            && i > self.lexer.c_base
+            && self.has_newline_in_range(c.h_start, c.h_end)
+            && match form {
+                END_BLOCK => {
+                    self.lexer.c.at((i - 1) * C_STRIDE + C_START) >= self.n.at(c.h_preceding + 1)
+                }
+                OWN_BLOCK => {
+                    (self.lexer.c.at((i - 1) * C_STRIDE + C_FLAGS) & CF_BLOCK) == 0
+                        && !is_part_of_word(before)
+                        && !matches!(before, 0 | 40 | 41 | 44 | 59 | 91 | 93 | 123 | 125)
+                        && !matches!(
+                            inside,
+                            k::Program
+                                | k::BlockStatement
+                                | k::ModuleBlock
+                                | k::ClassBody
+                                | k::SwitchCase
+                                | k::TypeLiteral
+                        )
+                        && {
+                            let mut p = self.lexer.c.at((i - 1) * C_STRIDE + C_END);
+                            while is_blank(self.t.at(p)) {
+                                p += 1;
+                            }
+                            p == c.h_start
+                        }
+                }
+                _ => false,
+            }
         {
             return false;
         }
@@ -399,10 +456,20 @@ impl Quick {
             // (a DeclareTypeAlias is no TypeAlias)
             k::TypeAlias => {
                 !is_part_of_word(before)
+                    && behind != 61
                     && (((self.n.at(c.h_enclosing) as u32) >> SUB_SHIFT) as i32 & MOD_DECLARE) == 0
             }
+            // (not behind the `.` if another one is before it, nor in a decorator)
             k::MemberExpression => {
-                c.h_preceding_kind == k::CallExpression || (form == MID_BLOCK && before == 46)
+                (match before == 46 {
+                    true => {
+                        form == MID_BLOCK
+                            && !(i > self.lexer.c_base
+                                && self.lexer.c.at((i - 1) * C_STRIDE + C_START)
+                                    >= self.n.at(c.h_enclosing + 1))
+                    }
+                    false => c.h_preceding_kind == k::CallExpression,
+                }) && (self.n.at(self.n.at(c.h_enclosing + 3)) & 0xff) != k::Decorator
             }
             // before the parentheses of a function, or parentheses that go
             k::ObjectProperty => behind != 40,
@@ -414,10 +481,16 @@ impl Quick {
             k::FunctionType => behind != 46,
             // between the name and the type arguments
             k::TypeReference => behind != 60,
-            // before the `in` or the `of`, or before a template
+            // next to the `in` or the `of`
             k::ForInStatement | k::ForOfStatement => {
-                !(form == END_LINE && (behind == 105 || behind == 111 || behind == 96))
+                !(form == END_LINE && (is_part_of_word(before) || behind == 105 || behind == 111))
             }
+            // between the brackets
+            k::ArrayType => before != 91,
+            // in the parentheses of an element
+            k::TupleType => behind != 41 && before != 40,
+            // before the type arguments
+            k::CallExpression | k::NewExpression => behind != 60 || before == 40 || before == 44,
             // next to the `=`
             k::JSXAttribute => before != 61 && behind != 61,
             // between `/` and `>`

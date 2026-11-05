@@ -134,8 +134,9 @@ pub(crate) mod rare {
     /// TypeScript: `a < b > c`. The long way ends no line with what looks like type arguments.
     pub(crate) const LESS_GREATER: i32 = 9;
     /// A chain of calls in the default value of a parameter of a function that is hugged: it is indented otherwise.
+    /// A call there that hugs a function itself, an element of JSX there.
     pub(crate) const HUGGED_CHAIN: i32 = 10;
-    /// `<T>` before something that breaks whatever its width; `<const>`, which the long way never breaks.
+    /// `<T>` before something that breaks whatever its width, or with a type that does; `<const>`, which the long way never breaks.
     pub(crate) const ASSERTION: i32 = 11;
     /// A comment in a place where the long way is not known to print it alike: see is_comment_taken().
     pub(crate) const COMMENT: i32 = 12;

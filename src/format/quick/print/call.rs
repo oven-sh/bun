@@ -6,8 +6,8 @@
 
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
-    F_CHAIN, F_COMMENTS, F_COMPUTED, F_EXPR_BODY, F_OPTIONAL, F_PAREN, F_SHORTHAND, P_DEFER,
-    P_MASK, P_SOURCE, k,
+    F_CHAIN, F_COMMENTS, F_COMPUTED, F_EXPR_BODY, F_OPTIONAL, F_PAREN, F_SHORTHAND, FN_RETURN_TYPE,
+    P_DEFER, P_MASK, P_SOURCE, k,
 };
 use crate::doc::{LABEL_EMBED, LABEL_MEMBER_CHAIN};
 use crate::lexer::tk;
@@ -783,6 +783,13 @@ impl Quick {
         }
         if self.should_expand_last_arg(args)? {
             let last = self.n.at(args + count);
+            // `a()((): B => {})`: the long way breaks the return type where Prettier gives the function a line of its own
+            if (self.n.at(self.n.at(n + 4)) & 0xff) == k::CallExpression
+                && (self.n.at(last) & 0xff) == k::ArrowFunctionExpression
+                && self.n.at(last + FN_RETURN_TYPE) != 0
+            {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             let mut head: i32 = 0;
             if count > 1 {
                 let h = self.detach_open();

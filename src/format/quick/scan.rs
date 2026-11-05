@@ -76,9 +76,14 @@ impl Quick {
     }
 
     pub(crate) fn has_newline_in_range(&self, start: i32, end: i32) -> bool {
+        self.has_byte_in_range(10, start, end)
+    }
+
+    #[inline]
+    pub(crate) fn has_byte_in_range(&self, byte: u8, start: i32, end: i32) -> bool {
         let mut p = start;
         while p < end {
-            let found = where_byte_is(self.t.u128_at(p), 10);
+            let found = where_byte_is(self.t.u128_at(p), byte);
             if found != 0 {
                 return p + bytes_before(found) < end;
             }

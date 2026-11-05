@@ -17,7 +17,7 @@ use crate::print::statics::{
     COLON, DOT, DQUOTE, ELLIPSIS, EQUALS, GT, LBRACE, LPAREN, LT, LT_SLASH, RAW_WHITESPACE_DOUBLE,
     RAW_WHITESPACE_SINGLE, RBRACE, RPAREN, SELF_CLOSE, SLASH_GT, SPACE, SQUOTE,
 };
-use crate::{Quick, R, Words, why, zeros};
+use crate::{Quick, R, Words, rare, why, zeros};
 
 pub(crate) struct PrintJsx {
     pub(crate) jx: Vec<i32>,
@@ -915,7 +915,28 @@ impl Quick {
         return (self.n.at(self.n.at(call_node + 3)) & 0xff) == k::JSXExpressionContainer;
     }
 
+    /// Where the long way gives the element `n` other parentheses than Prettier does, or breaks other lines around it: as a decorator,
+    /// a key, what a class extends, what is spread into an element or waited for.
+    fn is_in_odd_place(&self, n: i32) -> bool {
+        let parent = self.n.at(n + 3);
+        match self.n.at(parent) & 0xff {
+            k::Decorator
+            | k::ClassDeclaration
+            | k::ClassExpression
+            | k::JSXSpreadAttribute
+            | k::AwaitExpression => true,
+            k::ObjectProperty | k::ObjectMethod | k::ClassMethod | k::ClassProperty => {
+                self.n.at(parent + 4) == n
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn print_jsx_element(&mut self, n: i32) -> R<()> {
+        // (in the parameters of a function that is hugged: Prettier breaks the element, the long way does not hug)
+        if self.doc.remove_lines_depth != 0 {
+            return Err(self.rare(rare::HUGGED_CHAIN));
+        }
         let mut wrap = true;
         match self.n.at(self.n.at(n + 3)) & 0xff {
             k::ArrayExpression
@@ -938,6 +959,9 @@ impl Quick {
             self.print_jsx_element_internal(n)?;
             self.print_trailing_comments(n);
             return Ok(());
+        }
+        if self.is_in_odd_place(n) {
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
         }
         let parens = self.needs_parens(n)?;
         let g = self.group_open();

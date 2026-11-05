@@ -186,7 +186,14 @@ impl Quick {
             self.last_index_of_outside_comments(123, self.n.at(first + 1)),
             self.n.at(first + 1),
         );
-        if should_break && !self.options.object_wrap_preserve {
+        // (as the body of an `if` or a loop it moves to the next line, which it does not on the long way)
+        if should_break
+            && (!self.options.object_wrap_preserve
+                || !matches!(
+                    self.n.at(self.n.at(n + 3)) & 0xff,
+                    k::Program | k::BlockStatement | k::ModuleBlock
+                ))
+        {
             return Err(self.rare(rare::UNLIKE_PRETTIER));
         }
         let single = self.is_single_type_import_attributes(attributes);

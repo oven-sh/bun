@@ -14,7 +14,7 @@ use crate::print::statics::{
     SPACE, YIELD, YIELD_STAR,
 };
 use crate::print::util::NEEDS_CARE;
-use crate::{Quick, R, Words};
+use crate::{Quick, R, Words, rare};
 
 pub(crate) struct Print {
     /// A printer that finds that its node cannot be printed the way it was asked to sets this and returns at once
@@ -237,6 +237,10 @@ impl Quick {
 
     /// Prints `n` once, out of line, however often this is called for it.
     pub(crate) fn print_shared(&mut self, n: i32) -> R<()> {
+        // (what is printed without its lines is not what is printed with them)
+        if self.doc.remove_lines_depth != 0 {
+            return Err(self.rare(rare::HUGGED_CHAIN));
+        }
         let mut doc = self.cache_get(n);
         if doc == 0 {
             let h = self.detach_open();
@@ -249,6 +253,12 @@ impl Quick {
     }
 
     pub(crate) fn print_ignored(&mut self, n: i32, k: i32) -> R<()> {
+        // (its line breaks are written with the rest of it, without a mark)
+        if self.options.marks_line_breaks_in_texts
+            && self.has_newline_in_range(self.n.at(n + 1), self.n.at(n + 2))
+        {
+            return Err(self.rare(rare::OTHER));
+        }
         let is_decorated_class_expression =
             k == k::ClassExpression && self.n.at(self.n.at(n + 7)) > 0;
         if is_decorated_class_expression {

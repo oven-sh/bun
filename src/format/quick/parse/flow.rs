@@ -48,10 +48,11 @@ impl Quick {
         self.parse_flow.may_be_empty = false;
     }
 
-    /// Called where syntax starts that flow-parser knows and Babel does not.
+    /// Called where syntax starts that flow-parser knows and Babel does not. (Where this is a trial, Babel goes on with something
+    /// else, and the long way does not.)
     pub(crate) fn not_in_babel(&self) -> R<()> {
         if self.mode.is_babel_flow {
-            return Err(self.unexpected());
+            return Err(self.text_refuse());
         }
         Ok(())
     }
@@ -195,8 +196,11 @@ impl Quick {
                     } else {
                         TP_ASSERTS
                     };
-                } else if self.word() == w::Is {
-                    // `asserts is A`
+                } else if self.word() == w::Is
+                    || self.lexer.tok == tk::Name
+                    || self.lexer.tok == tk::This
+                {
+                    // `asserts is A`; a name on the next line, which the long way takes for what is asserted
                     return Err(self.text_refuse());
                 } else {
                     self.rewind(m);
@@ -453,6 +457,10 @@ impl Quick {
                 self.expect(tk::Colon)?;
                 let type_ = self.flow_parse_type()?;
                 if is_this {
+                    // (Prettier gives it parentheses)
+                    if (self.n.at(type_) & 0xff) == k::FunctionType {
+                        return Err(self.rare(rare::UNLIKE_PRETTIER));
+                    }
                     return Ok(self.node2(
                         k::FunctionTypeParam | F_THIS,
                         start,
@@ -1027,6 +1035,13 @@ impl Quick {
             } else {
                 0
             };
+            // (of three names, the long way breaks the line before a `.` and drops `<>`; to it, `a.b<>` has no type arguments)
+            if (self.n.at(id) & 0xff) == k::QualifiedName
+                && ((self.n.at(self.n.at(id + 4)) & 0xff) == k::QualifiedName
+                    || (type_arguments != 0 && self.n.at(self.n.at(type_arguments + 4)) == 0))
+            {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             let v0 = self.node2(k::Heritage, start, self.lexer.prev_end, id, type_arguments);
             self.list_push(v0);
             if !self.eat(tk::Comma)? {
@@ -1517,6 +1532,14 @@ impl Quick {
     }
 
     /// The current token is `opaque`.
+    /// `a.b.c`
+    fn is_reference_with_dots(&self, n: i32) -> bool {
+        let name = self.n.at(n + 4);
+        (self.n.at(n) & 0xff) == k::TypeReference
+            && (self.n.at(name) & 0xff) == k::QualifiedName
+            && (self.n.at(self.n.at(name + 4)) & 0xff) == k::QualifiedName
+    }
+
     pub(crate) fn flow_parse_opaque_type(&mut self, start: i32, modifiers: i32) -> R<i32> {
         self.next()?;
         self.next()?;
@@ -1550,6 +1573,10 @@ impl Quick {
         }
         if self.eat(tk::Eq)? {
             impl_ = self.flow_parse_type_fresh()?;
+        }
+        // (the long way breaks the line before a `.`)
+        if self.is_reference_with_dots(supertype) || self.is_reference_with_dots(impl_) {
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
         }
         self.semicolon()?;
         let n = self.node_raw(

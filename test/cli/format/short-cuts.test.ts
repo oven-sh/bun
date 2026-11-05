@@ -5139,6 +5139,158 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "", "({[/* GraphQL */`{a}`]:y})\n"],
     ["a.ts", "", "d&&(/* GraphQL */`{d}`&&h)\n"],
     ["a.ts", "", "d||(/* HTML */`<a></a>`||h)\n"],
+    // `await` and `yield` are names in the members of an enum, whatever function is around it, ..
+    ["a.ts", "", "async()=>{enum a{a=await(x)}}\n"],
+    ["a.ts", "", "async()=>{enum a{a=await x,b=await,c=(await``)[0]}}\n"],
+    ["a.ts", "", "function*f(){enum a{a=yield(x),b=yield*x}}\n"],
+    ["a.ts", "", "async()=>{enum a{a=await(x)}await(x)}\n"],
+    // .. and what they are among parameters is a matter of the function that has the parameters.
+    ["a.ts", "", "async()=>{class a{b({a=await({})}){}}}\n"],
+    ["a.ts", "", "async()=>{({b(a=await({})){}})}\n"],
+    ["a.ts", "", "async()=>{(a=await({}))=>{}}\n"],
+    ["a.ts", "", "async()=>{(a=await(x)):T=>{}}\n"],
+    ["a.ts", "", "function*f(){class a{b(a=yield(1)){}}}\n"],
+    ["a.ts", "", "(e=await/e/i)=>{}\n"],
+    ["a.ts", "", "(e=(await(k())``))=>{}\n"],
+    ["a.ts", "", "async()=>{type a=(a=await(x))=>b}\n"],
+    ["a.ts", "", "async()=>{interface a{b(a=await(x))}}\n"],
+    ["a.js", "", "async()=>{class a{b(@(await(x))c){}}}\n"],
+    // What is no part of a name, in a name of JSX.
+    ["a.js", "", "<a\u0085/>\n"],
+    ["a.js", "", "<a><\u0085b/></a>\n"],
+    ["a.js", "", '<a b=""\u0085/>\n'],
+    ["a.js", "", "<a\u200b/>\n"],
+    ["a.js", "", "<a\u2014/>\n"],
+    ["a.js", "--print-width=9", '<a><b></b>{" "}\u0085</a>\n'],
+    // An import whose first name is longer than the line.
+    ["a.js", "--print-width=10", 'import lphahaAlpha,{b}from""\n'],
+    // A list on lines of its own in a list on lines of its own that fits on one line.
+    ["a.js", "--print-width=14 --tab-width=4", "a=[\n[\na(\nb,\na\n)\n]\n]\n"],
+    [
+      "a.ts",
+      "--print-width=71 --tab-width=16",
+      "(a=>{for(const{}of[]){\n                                return [\na(\noBravo,\nha(),\nCharli\n)\n]\n}})\n",
+    ],
+    // A call that hugs a function, in the default value of a parameter of a function that is hugged.
+    ["a.ts", "--print-width=12", "a(({o={c:a(()=>[g()])}})=>{})\n"],
+    ["a.ts", "--print-width=12", 'a(({e:{o=a(()=>b?"":c)}})=>{})\n'],
+    ["a.ts", "--print-width=20", "a((o=a(()=>[g()]))=>{})\n"],
+    // A comment before an optional chain, around which some trees have a node more; in a call of one that has no arguments.
+    ["a.ts", "--print-width=16", "o\n//\n=[()=>(class{}).e]?.()\n"],
+    ["a.ts", "--print-width=13", "a=\n//\na?.((function(){c()}))\n"],
+    ["a.ts", "", "(\n//\na?.a)()\n"],
+    ["a.ts", "", "({a:\n//\na?.b})\n"],
+    ["a.ts", "", "({a:\n//\na?.b!})\n"],
+    ["a.ts", "", "`${\n//\na?.()}`\n"],
+    ["a.tsx", "", "<a b={\n//\na?.()}/>\n"],
+    ["a.ts", "", "new(\n//\na?.b)\n"],
+    ["a.ts", "", "class A extends(\n//\na?.b){}\n"],
+    ["a.ts", "--print-width=26", "class a extends n?.(/**/){r(a,b){}}\n"],
+    // An element of JSX as a decorator, a key, what a class extends, what is spread or waited for, or in a parameter that is hugged.
+    ["a.tsx", "--print-width=4", "@(<a/>)class a{}\n"],
+    ["a.js", "--print-width=10", "a=class{@(<a>{/ /}</a>)a}\n"],
+    ["a.tsx", "--print-width=18", "const{[<></>]:a}\n"],
+    ["a.tsx", "--print-width=26", '({[<a>{""}</a>](){}})\n'],
+    ["a.js", "--print-width=17", "class a extends(/**/<a/>){}\n"],
+    ["a.tsx", "", '<a b=""{.../**/<a/>}/>\n'],
+    ["a.js", "--print-width=18", "(`${await(await(<a>f</a>)).a}`)\n"],
+    ["a.js", "--print-width=29", "a(({a:{b=<a>o</a>.p}})=>{})\n"],
+    // A class as a decorator or a key.
+    ["a.tsx", "", "class e{@(@n class extends function(){}{})a(){}}\n"],
+    ["a.tsx", "--print-width=10 --tab-width=8", "({[(class{})]:(g)})\n"],
+    // `a && (b && c)` is `(a && b) && c`: an array, an object or an element that comes to stand on the right.
+    ["a.js", "--print-width=13", "a&&([[]]&&(e)&&n)\n"],
+    ["a.js", "--print-width=15", "a&&(({1:1})&&([])&&2)\n"],
+    ["a.js", "--print-width=23", "a||((<a/>)||(<a/>).a||(a))\n"],
+    // An index signature without a parameter.
+    ["a.ts", "--print-width=5", "type b={[]}\n"],
+    ["a.ts", "--print-width=4", "a<{[]:k}>\n"],
+    // Import attributes on lines of their own, where the import is the body of a statement.
+    ["a.ts", "--print-width=36", 'if(a)import""with{\ntype:""}\n'],
+    ["a.js", "--print-width=41", 'for(;;[])import""with{\ntype:""}\n'],
+    // A function with a return type as the argument of the call of a call.
+    ["a.tsx", "--print-width=34", 'const e=e()(():[{}&{""}]=>{})\n'],
+    ["a.ts", "--print-width=30", "const e=e()(():[aaaaa,bbbbbb]=>{})\n"],
+    // A line comment next to a `=`, or before a template.
+    ["a.ts", "--print-width=6", "const{l//\n=``}\n"],
+    ["a.ts", "", "const[a//\n=``]\n"],
+    ["a.ts", "", "enum a{e//\n=``}\n"],
+    ["a.ts", "--print-width=2", 'enum a{a//\n="".h}\n'],
+    ["a.ts", "--print-width=2", 'enum a{""=//\n5..a}\n'],
+    ["a.ts", "--print-width=7", "const a:{t://\n``}\n"],
+    ["a.ts", "--print-width=15", "function e([]=//\n[]):`aaaaaaaaaaaaaa`\n"],
+    ["a.ts", "--print-width=13", "const[{}]//\n=()=>a?d:b\n"],
+    ["a.js", "--print-width=6", "const{a:l,c,l}=//\n(``())\n"],
+    ["a.ts", "--print-width=14", "for(d of//\n()=>a?1:b);\n"],
+    ["a.js", "--print-width=11", "for(const{}of//\n(``)){}\n"],
+    // A block comment with a line break in it, while other comments wait for the end of the line.
+    ["a.ts", "", 'o//\n=""/*\n*/\n'],
+    ["a.tsx", "", "({}=(e//\n))/*\n*/\n"],
+    ["a.ts", "", 'import""with{\n/**/}/*\n*/\n'],
+    ["a.ts", "--print-width=5", "a<{y://\n/*\n*/g}>\n"],
+    // Comments: before the `=` of a type alias, between `[` and `]` of an array type, before the `|` of what is asserted, in the parentheses of an element of a tuple, in a decorator, on both sides of a `.`, before type arguments.
+    ["a.tsx", "--print-width=34", "type d<e extends{a:(new()=>t)[]}>/**/={[h as n]:l}\n"],
+    ["a.ts", "--print-width=32", "const d:(()=>x)[\n//\n]=5\n"],
+    ["a.tsx", "--print-width=5", "function d():h is\n//\n|/**/c|t\n"],
+    ["a.ts", "--print-width=18", 'b(a as([(""\n//\n\n),a<[]>]))\n'],
+    ["a.ts", "", "type a=[g,(//\na)]\n"],
+    ["a.ts", "--print-width=16", "(@e()\n/**/.e class{})\n"],
+    ["a.js", "--print-width=7", "e()//\n./**/b\n"],
+    ["a.js", "", "//@flow\nd/**/<|l>()\n"],
+    // A template literal type with braces in it.
+    ["a.tsx", "--print-width=21", "function a(a):b is(l)=>`${y<{bT}>}b`{((d))}\n"],
+    ["a.tsx", "--print-width=23", "function a({a:{}}):(`a${ise<{e:T}>}b`)|(h)\n"],
+    ["a.ts", "--print-width=24", "const a:((c)=>([`${{o}[]}`extends[]?t:r]))\n"],
+    // A decorator of a parameter of a function that is no method.
+    ["a.js", "", "function a(@a(()=>(t),()=>[])o){}\n"],
+    ["a.js", "", '//@flow\nfunction a<a>(@a(b=>(""),()=>function(){})a){}\n'],
+    // A type assertion with a type that breaks, as the first of a sequence.
+    ["a.ts", "", "return<{\na}>a,(k)\n"],
+    // Flow: three names with dots where a type is extended or opaque, `a.b<>` where one is extended, ..
+    ["a.js", "", "//@flow\ninterface a extends b.b.b<>{a:h}\n"],
+    ["a.js", "--print-width=12", "//@flow\ninterface a extends b.b<>{}\n"],
+    ["a.js", "", "//@flow\ndeclare class a extends b.b.b<>{}\n"],
+    ["a.js", "--print-width=21", "//@flow\nopaque type a=a.o.r\n"],
+    ["a.js", "--print-width=23", "//@flow\n(c=>{opaque type e:o.b.t<{e:T}>=e})\n"],
+    // .. what only flow-parser reads, where Babel goes on with a comparison, `asserts` at the end of a line, ..
+    ["a.js", "", "//@flow\n[[]]<keyof\nf>((class{}))\n"],
+    ["a.js", "", "//@flow\na?b?a<a<keyof(1)>>((a)):c:d\n"],
+    ["a.js", "", "//@flow\nlet a:()=>asserts\ne\n"],
+    // .. `<*>` on the left of a `=`, a function type as the type of `this`.
+    ["a.js", "--print-width=18", "//@flow\nconst a:e<*>=``\n"],
+    ["a.js", "", "//@flow\ntype a=(this:(?b)=>v)=>v\n"],
+    // What the long way prints as Prettier does by now: the type of `this`, a name that is short in characters, a pattern with a default value on the left of a `=`, an operator in the key of a pattern.
+    ["a.ts", "", "(this:{\nT})=>d\n"],
+    ["a.ts", "", "interface a{(this:{\nT}):d}\n"],
+    ["a.ts", "--print-width=31", "const d:(this:{T})=>void|null\n"],
+    ["a.js", "", "//@flow\ntype a=(this:{\na:{g:T}})=>e\n"],
+    ["a.js", "--print-width=11 --tab-width=1", "\u00e9.\u6587().\uff45()\n"],
+    ["a.ts", "--print-width=9", "e\u0301.\u00e9().c()\n"],
+    ["a.ts", "", "({a:{a:[]}=(k).b}=a&{a(){f()}})\n"],
+    ["a.js", "--print-width=5", "const{[a&b]:a}\n"],
+    ["a.js", "--print-width=9", "try{(a)}catch({[h+o]:a}){(a)}\n"],
+    ["a.ts", "--print-width=6", "({[a|l]:a},a={a(){}})=>e\n"],
+    // A sequence in a function in a sequence in a function, and so on.
+    [
+      "a.ts",
+      "",
+      "f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, f(() => (a, x))))))))))))))))))))))))))))))))))))))))\n",
+    ],
+    // `#a in b` where `in` is no operator, `<<` behind a name that is extended.
+    ["a.js", "", "class A{#a;m(){for(var a=#a in b);}}\n"],
+    ["a.ts", "", "interface a<X>extends b<<X>()=>Y>,c{}\n"],
+    // `using` at the top of what is no module, in a host that indents it.
+    ["a.html", "", "<script>using a = b</script>\n"],
+    ["a.html", "", "<script>await using a=(r)</script>\n"],
+    ["a.html", "", "<script>for(var a=#a in b);</script>\n"],
+    // Something that is ignored and has an empty line in it, in a code block that is indented.
+    ["a.md", "", "-\n  ```ts\n  (c=>{if([a?2:2])e\n  //prettier-ignore\n  a=\n\n  e})\n  ```\n"],
+    // A type assertion with a type that breaks.
+    ["a.ts", "--print-width=10", "(<{\nT}>e)=[1,3]\n"],
+    // An element of JSX as an argument, in a parameter that is hugged.
+    ["a.jsx", "--print-width=31", "a(({a=a(<a>a</a>)},[])=>{''})\n"],
+    // A comment on a line of its own before what is asserted.
+    ["a.tsx", "--print-width=5", "function d():h is\n//\nd|/**/t\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

@@ -32,7 +32,7 @@ declare global {
     interface TTYReadStream extends ReadStream {
       isRaw: boolean;
       isTTY: boolean;
-      /** On `process.stdin`, which is a native readable. */
+      /** On a terminal fd other than `process.stdin`: the polled native source it reads through. */
       $bunNativePtr?: $Bindgen.FileInternalReadableStreamSource;
       $start(): void;
       [kRawModeState]?: Uint8Array;
@@ -61,10 +61,22 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd) as any;
   }
-  require("internal/fs/streams").ReadStream.$apply(this, ["", { fd }]);
-  this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
-  this.isTTY = isatty(fd);
+  const isTTY = isatty(fd);
+  if (isTTY && typeof fd === "number" && process.platform !== "win32") {
+    // Node reads a terminal through a TTY handle that readStop() and close()
+    // retract at once. A thread pool read(2) on the fd cannot be retracted: it
+    // would hold the process and swallow the next key. So a terminal fd is read
+    // through the polled native source process.stdin uses, and, as in Node,
+    // with readableHighWaterMark 0, so a pause() stops the poll after one chunk.
+    const native = Bun.file(fd).stream();
+    require("internal/fs/streams").ReadStream.$apply(this, ["", { fd, highWaterMark: 0 }]);
+    require("internal/streams/native-readable").attachNativeSource(this, native, 64 * 1024);
+  } else {
+    require("internal/fs/streams").ReadStream.$apply(this, ["", { fd }]);
+  }
+  this.isRaw = false;
+  this.isTTY = isTTY;
 }
 
 // The class stands below fs.ReadStream, and internal/fs/streams loads node:stream. So it is put there when it is first read.
@@ -148,6 +160,10 @@ const prototypeOfReadStream = {
     };
 
     Prototype._destroy = function (this: $Node.TTYReadStream, err: Error | null, cb: DoneCallback) {
+      if (this.$bunNativePtr !== undefined) {
+        // Closes the reopened terminal and releases the event loop. The caller's fd is closed below.
+        require("internal/streams/native-readable").cancelNativeSource.$call(this, err, null);
+      }
       if (isStdio(this.fd)) return cb(err);
       require("internal/fs/streams").ReadStream.prototype._destroy.$call(this, err, cb);
     };

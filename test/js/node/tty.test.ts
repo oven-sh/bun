@@ -299,6 +299,138 @@ describe.concurrent("ReadStream destroy()", () => {
   });
 });
 
+// Node reads a terminal through a handle that destroy(), pause() and unref() retract at once. A thread pool
+// read(2) on the fd could not be retracted: the process stayed alive until the next key, and that key went
+// to the destroyed stream. Each child here opens /dev/tty itself, so the stream is not process.stdin.
+describe.skipIf(isWindows)("ReadStream on a terminal fd", () => {
+  // Runs `script` under a pty. `onOutput` sees the accumulated output after every chunk and writes keys.
+  async function runInTerminal(script: string, onOutput: (output: string, terminal: Bun.Terminal) => void) {
+    let output = "";
+    const decoder = new TextDecoder();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(terminal, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          onOutput(output, terminal);
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    output += decoder.decode();
+    return { lines: Bun.stripANSI(output).split(/\r?\n/).filter(Boolean), exitCode };
+  }
+
+  const openTTY = `
+    const fs = require("fs");
+    const tty = require("tty");
+    const input = new tty.ReadStream(fs.openSync("/dev/tty", "r"));
+    input.setRawMode(true);
+    const keys = [];
+    input.on("data", chunk => {
+      keys.push(chunk.toString());
+      console.log("key " + JSON.stringify(chunk.toString()));
+    });
+  `;
+
+  // The shape of the report: the process must exit once destroy() has run, with no further input.
+  test("destroy() from a timer after a key closes the stream and the process exits", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => setTimeout(() => {
+          input.setRawMode(false);
+          input.on("close", () => console.log("closed " + JSON.stringify({ fd: input.fd, keys })));
+          input.destroy();
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && output.includes("ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', 'closed {"fd":null,"keys":["a"]}']);
+    expect(exitCode).toBe(0);
+  });
+
+  test("destroy() after an await leaves the next key to a child with inherited stdio", async () => {
+    let wrote = 0;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        const { once } = require("events");
+        (async () => {
+          console.log("ready");
+          await once(input, "data");
+          await Bun.sleep(30);
+          input.setRawMode(false);
+          input.destroy();
+          await once(input, "close");
+          console.log("destroyed");
+          const child = Bun.spawn({
+            cmd: [process.execPath, "-e", "process.stdin.once('data', d => { console.log('child got ' + JSON.stringify(d.toString())); process.exit(0); })"],
+            stdio: ["inherit", "inherit", "inherit"],
+            env: process.env,
+          });
+          console.log("child " + (await child.exited));
+        })();
+      `,
+      (output, terminal) => {
+        if (wrote === 0 && output.includes("ready")) {
+          wrote = 1;
+          terminal.write("a");
+        } else if (wrote === 1 && output.includes("destroyed")) {
+          wrote = 2;
+          terminal.write("b\n");
+        }
+      },
+    );
+    // The terminal is cooked again when "b\n" is typed, so the pty echoes it.
+    expect(lines).toEqual(["ready", 'key "a"', "destroyed", "b", 'child got "b\\n"', "child 0"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("unref() from a timer lets the process exit", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => setTimeout(() => {
+          input.setRawMode(false);
+          input.unref();
+          console.log("unref");
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && output.includes("ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', "unref"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("destroy() with no key read closes the caller's fd and exits", async () => {
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.on("close", () => console.log("closed " + JSON.stringify({ fd: input.fd })));
+        input.destroy();
+      `,
+      () => {},
+    );
+    expect(lines).toEqual(['closed {"fd":null}']);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("WriteStream destroy()", () => {
   async function destroyStdioStreams(exhaustDescriptors: boolean) {
     const script = `

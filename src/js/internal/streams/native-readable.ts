@@ -56,14 +56,33 @@ interface NativePtr {
 let debugId = 0;
 
 function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
+  const stream = new Readable(options) as NativeReadable;
+  attachNativeSource(stream, readableStream, options.highWaterMark);
+  stream._destroy = destroy;
+  stream.ref = ref;
+  stream.unref = unref;
+  if (process.platform === "win32") {
+    // Only used by node:tty on Windows
+    stream.$start = ensureConstructed;
+  }
+  $debug(`[${stream.debugId}] constructed!`);
+  return stream;
+}
+
+/**
+ * Makes `stream` read from the native source behind `readableStream`: installs
+ * `_read` as an own property and takes the `ReadableStream` out of use. The
+ * caller's `_destroy` calls `cancelNativeSource`. `highWaterMark` is the size
+ * of one native pull, not the Readable's.
+ */
+function attachNativeSource(readable: $Node.Readable, readableStream: ReadableStream, highWaterMark?: number | null) {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
+  const stream = readable as NativeReadable;
   const bunNativePtr = readableStream.$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
   $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
 
-  const stream = new Readable(options) as NativeReadable;
   stream._read = read;
-  stream._destroy = destroy;
 
   if (!!$debug) {
     stream.debugId = ++debugId;
@@ -77,16 +96,7 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
-
-  const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
-
-  stream.ref = ref;
-  stream.unref = unref;
-  if (process.platform === "win32") {
-    // Only used by node:tty on Windows
-    stream.$start = ensureConstructed;
-  }
 
   // https://github.com/oven-sh/bun/pull/12801
   // https://github.com/oven-sh/bun/issues/9555
@@ -94,10 +104,6 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   // We can't update those handles to point to the NativeReadable from JS
   // So we instead mark it as no longer usable, and create a new NativeReadable
   transferToNativeReadable(readableStream);
-
-  $debug(`[${stream.debugId}] constructed!`);
-
-  return stream;
 }
 
 function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
@@ -257,12 +263,13 @@ function adjustHighWaterMark(stream: NativeReadable) {
   stream[kHasResized] = true;
 }
 
-function destroy(this: NativeReadable, error: any, cb: () => void) {
-  const ptr = this.$bunNativePtr;
+function destroy(this: $Node.Readable, error: any, cb: ((error?: any) => void) | null) {
+  const stream = this as NativeReadable;
+  const ptr = stream.$bunNativePtr;
   if (ptr) {
     ptr.cancel(error);
   }
-  dropReadAhead(this);
+  dropReadAhead(stream);
   if (cb) {
     // `_destroy` reports its error through the callback.
     process.nextTick(cb, error);
@@ -299,4 +306,4 @@ function unref(this: NativeReadable) {
   }
 }
 
-export default { constructNativeReadable };
+export default { constructNativeReadable, attachNativeSource, cancelNativeSource: destroy };

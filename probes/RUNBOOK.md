@@ -46,6 +46,35 @@ also has a BoringSSL bump (41bf9b59c2 -> 89a2ff2be7). Both are in the handshake 
 test runs through, so the rerun after the next main merge is a real check. #46528 and #46522 are
 CONFLICTING with main since then.
 
+#47944 (main b1007f1177, 2026-11-05T00:03Z, Dylan Conway: "Remove 125 unsafe blocks ...
+node:quic ...") changes BOTH Rust files of the cut. It is a type change, not a change of the
+header queue: `QuicStream.raw` becomes `Cell<Option<lsquic::Stream>>` (`ls()` is `self.raw.get()`,
+same signature), and `lsquic::Conn` / `lsquic::Stream` wrap `NonNull`, so every FFI call passes
+`self.0.as_ptr()`. The one line of it inside a function of the cut is the first argument of
+`us_nq_stream_send_headers` in `Stream::send_headers`.
+
+Simulated at 2026-11-05T00:20Z (per file: `git merge-file` with base = the merge-base of main and
+#46528, ours = #46528, theirs = main; then base = old #46528 head, ours = that result, theirs =
+the cut):
+- main into #46528: stream.rs, ffi.rs, tls.rs merge clean. lsquic_sys/lib.rs has 3 conflicts,
+  session.rs 15, endpoint.rs 18. All 3 in lib.rs are #46528's changed calls against main's
+  `.as_ptr()`; none is in `send_headers` or near the `LSQ_DG_*` constants. #46528's own added
+  lines (`self.0` passed to FFI in lib.rs, `self.raw.get().is_null()` in stream.rs) merge with no
+  marker but do not compile, so the maintainer has hand work there.
+- the cut onto that result: all 8 files merge clean, and `send_headers` has `self.0.as_ptr()`
+  with the cut's `SendHeaders` match around it.
+So the next rebase is expected to be clean in text, but its base has hand-made resolutions in the
+QUIC files. After it: read `git diff <new base> -- src/lsquic_sys/lib.rs
+src/runtime/node/quic/stream.rs`, confirm `self.0.as_ptr()` in `send_headers`, then build and run
+the whole QUIC test set before the push.
+
+To repeat the simulation for a file F when main moves again in a file of the cut:
+    MB=$(git merge-base origin/main origin/claude/http-consolidated)
+    git show $MB:F > base; git show origin/claude/http-consolidated:F > ours; git show origin/main:F > theirs
+    git merge-file ours base theirs; echo "conflicts: $?"      # ours now holds the merged text
+    git show <old #46528 head>:F > oldbase; git show <cut>:F > mine
+    git merge-file ours oldbase mine; echo "conflicts: $?"
+
 NOT run again on edb9ce8f7a: the release builds and the gdb counts of section 3. Their numbers
 below are of 2026-10-30 on 001958b155. Section 1 to 3 run in full on main after the merge.
 

@@ -3430,32 +3430,32 @@ pub(crate) static TEST_START: [u8; 256] = [
 impl Quick {
     /// is_test_call() of Prettier: `it("..", () => {`, `describe.only("..", function () {`, `it("..", fakeAsync(() => {`, `beforeEach(waitForAsync(() => {`. The arguments of such a call
     /// are printed one behind the other, with nothing that could break but the body of the function: the head stays on its line however long it is. p is at the name, which ends at e.
-    /// Returns where the `{` is, or -1: then the statement may still be read as any other, from the start.
+    /// Returns where the `{` is, or -1: then the statement may still be read as any other, from the start; or -2: the same, and nothing has been touched.
     pub(crate) fn test_call(&mut self, p: i32, e: i32) -> R<i32> {
         let mut is_set_up = false;
         let mut may_have_dot = false;
         match e - p {
             2 => {
                 if !self.word_is(p, b"it") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
                 may_have_dot = true;
             }
             3 => {
                 if !self.word_is(p, b"xit") && !self.word_is(p, b"fit") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             4 => {
                 if self.word_is(p, b"test") {
                     may_have_dot = true;
                 } else if !self.word_is(p, b"skip") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             5 => {
                 if !self.word_is(p, b"xtest") && !self.word_is(p, b"ftest") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             8 => {
@@ -3464,40 +3464,40 @@ impl Quick {
                 } else if self.word_is(p, b"afterAll") {
                     is_set_up = true;
                 } else {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             9 => {
                 if self.word_is(p, b"afterEach") || self.word_is(p, b"beforeAll") {
                     is_set_up = true;
                 } else if !self.word_is(p, b"xdescribe") && !self.word_is(p, b"fdescribe") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
             }
             10 => {
                 if !self.word_is(p, b"beforeEach") {
-                    return Ok(-1);
+                    return Ok(-2);
                 }
                 is_set_up = true;
             }
             _ => {
-                return Ok(-1);
+                return Ok(-2);
             }
         }
         let mut q = e;
         if self.t.at(q) == 46 {
             if !may_have_dot || (!self.word_is(q + 1, b"only") && !self.word_is(q + 1, b"skip")) {
-                return Ok(-1);
+                return Ok(-2);
             }
             q += 5;
         }
         if self.t.at(q) != 40 {
-            return Ok(-1);
+            return Ok(-2);
         }
         q += 1;
         if !is_set_up {
             if self.t.at(q) != 34 && self.t.at(q) != 39 {
-                return Ok(-1);
+                return Ok(-2);
             }
             // (the room for generated texts that was reserved is 2048 bytes)
             self.fast.room = 1500;
@@ -3571,11 +3571,13 @@ impl Quick {
             if head >= 0 {
                 return Ok(head);
             }
-            // from the start
-            if !self.prepare_at(p, self.fast.column) {
-                return Ok(-1);
+            if head == -1 {
+                // from the start
+                if !self.prepare_at(p, self.fast.column) {
+                    return Ok(-1);
+                }
+                self.fast.why = 0;
             }
-            self.fast.why = 0;
         }
         self.fast.breakable_at = p;
         let mut q = self.open_expression(p)?;

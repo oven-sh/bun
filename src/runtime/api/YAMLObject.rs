@@ -1072,7 +1072,7 @@ pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JS
         let global = unsafe { cx.heap.global() };
         let text = input.get(&cx.heap);
         let result = parse_to_values(global, text, roots, &mut pending, |_| Ok(()))?;
-        define_pending(cx.global(), pending)?;
+        define_pending(cx.global(), roots, pending)?;
         Ok(result)
     })
 }
@@ -1085,10 +1085,11 @@ pub(crate) struct PendingProperty {
     value: JSValue,
 }
 
-/// Defines the properties that waited. This runs JavaScript: the caller no longer reads the input.
+/// Defines the properties that waited, which `roots` holds. This runs JavaScript: the caller no longer reads the input.
 #[inline(always)]
 pub(crate) fn define_pending(
     global: &JSGlobalObject,
+    _roots: &MarkedArgumentBuffer,
     pending: Vec<PendingProperty>,
 ) -> JsResult<()> {
     for PendingProperty {

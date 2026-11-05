@@ -130,6 +130,8 @@ A line ends with LF, CRLF, or CR.
 
 A document that starts with `----`, with `---yaml`, or with an indented `---` has no front matter, and Bun renders all of it.
 
+`bun fmt` and `bun lint` follow other tools, and their rules differ in details. `bun fmt` follows Prettier: a language can follow the opening fence (`---yaml`), and the line after that fence can be blank. `bun lint` reads front matter only when `languageOptions.frontmatter` names the format. There, the line after the opening fence can be blank, and `...` does not end the block.
+
 Two examples of the CommonMark spec start with what this rule reads as front matter. Bun renders `---\n---` to nothing, where CommonMark has two thematic breaks. Bun renders `---\nFoo\n---\nBar\n---\nBaz` without its first three lines, where CommonMark has a thematic break and the heading `Foo`. Pass `frontmatter: false` to render the block as CommonMark does:
 
 ```ts
@@ -193,7 +195,7 @@ Bun.markdown.frontmatter("---\ntitle Hello\n---\n");
 // SyntaxError: YAML front matter must be a mapping
 ```
 
-A renderer looks for front matter at the start of its input. When you render `content`, pass `frontmatter: false`. A body that starts with a `---` line then keeps its first lines.
+A renderer looks for front matter at the start of its input. When you render `content`, pass `frontmatter: false`. A body that starts with a `---` line then keeps its first lines. Do the same when your own code removes the front matter before it renders the rest.
 
 ```ts
 const { data, content } = Bun.markdown.frontmatter(await Bun.file("post.md").text());

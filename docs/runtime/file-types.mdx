@@ -361,6 +361,32 @@ During bundling, Bun inlines the rendered HTML into the bundle as a string.
 
 Bun skips [front matter](/runtime/markdown#front-matter) at the start of the file. The loader has no option to render it, and the module does not export the metadata. To read the metadata, pass the text of the file to `Bun.markdown.frontmatter()`.
 
+To import the metadata with the HTML at runtime, load `.md` files with a [plugin](/runtime/plugins) from a [preload](/runtime/bunfig#preload) script:
+
+```ts markdown-plugin.ts icon="/icons/typescript.svg"
+import { plugin } from "bun";
+
+plugin({
+  name: "markdown-front-matter",
+  setup(build) {
+    build.onLoad({ filter: /\.md$/ }, async ({ path }) => {
+      const { data, content } = Bun.markdown.frontmatter(await Bun.file(path).text());
+      return {
+        loader: "object",
+        exports: {
+          default: Bun.markdown.html(content, { frontmatter: false }),
+          frontmatter: data,
+        },
+      };
+    });
+  },
+});
+```
+
+```ts
+import html, { frontmatter } from "./post.md";
+```
+
 ### `napi`
 
 **Native addon loader**. Default for `.node`.

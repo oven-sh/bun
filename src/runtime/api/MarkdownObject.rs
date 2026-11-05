@@ -279,7 +279,7 @@ pub(crate) fn frontmatter<'a>(
             }
         };
         // This can run JavaScript, which can change a buffer: nothing reads the input from here on.
-        yaml_object::define_pending(cx.global(), pending)?;
+        yaml_object::define_pending(cx.global(), roots, pending)?;
         Ok(FrontMatter { data, content })
     })
 }

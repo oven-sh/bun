@@ -395,7 +395,7 @@ struct Simple {
     /// `Layout::is_several_nodes` can't tell whether a term is one node, or says that it isn't: an item other than the
     /// first starts with a sign, or there's `@@a`, `~"a"` or `#{$a}`.
     has_unclear_term: bool,
-    /// It has `12px/1.5`.
+    /// It has `12px/1.5` or `a/b`.
     has_tight_slash: bool,
     /// It has parentheses without a name before them.
     has_groups: bool,
@@ -1425,6 +1425,10 @@ impl Scanner<'_> {
                             }
                             p = skip_long(css, p, NAME);
                             if byte(css, p) == b'(' {
+                                // Where `--a()` ends isn't where a call ends: see `Layout::keeps_empty_line`.
+                                if first == b'-' {
+                                    return None;
+                                }
                                 self.call(term, p)?;
                                 (p, place) = (p + 1, Place::Open);
                                 continue;

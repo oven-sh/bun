@@ -952,6 +952,8 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "capitals-in-and-after-at-rules.css":
       "@media (min-width: 1px) {\n  A {\n  }\n}\nB {\n  @media (min-width: 1px) {\n    C {\n      D {\n      }\n    }\n  }\n  E {\n  }\n}\n" +
       "@keyframes f {\n  FROM {\n  }\n}\nFROM {\n}\n",
+    "empty-line-behind-a-call-with-two-dashes.scss":
+      "a{b:(1 --c(),\n\nd)}\ne{b:f(1 --c(),\n\nd)}\ng{b:(1 -c(),\n\nd)}\n",
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",

@@ -1074,7 +1074,7 @@ describe("gc entries", () => {
           // Enough live objects that the marking is not over in the pause that starts the collection.
           const live = [];
           for (let i = 0; i < 100000; i++) live.push({ i, text: "x" + i, tags: ["a" + i, "b" + i] });
-          const keepAlive = setInterval(() => {}, 60000);
+          const giveUp = setTimeout(() => console.log(JSON.stringify({ gaveUp: true })), 15000);
           let parkedAt = Infinity;
           new PerformanceObserver((list, observer) => {
             const now = performance.now();
@@ -1084,7 +1084,7 @@ describe("gc entries", () => {
             );
             if (!entry) return;
             observer.disconnect();
-            clearInterval(keepAlive);
+            clearTimeout(giveUp);
             console.log(JSON.stringify({
               flags: entry.detail.flags,
               endsBeforeItArrives: entry.startTime + entry.duration <= now,

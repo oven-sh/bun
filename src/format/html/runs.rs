@@ -2932,8 +2932,13 @@ impl<'a> Scanner<'_, 'a> {
         };
         let value =
             &value_and_rest[..bun_core::strings::index_of_char_usize(value_and_rest, b'"')?];
+        // What may be a reference is for the lexer: one that it does not know is an error.
+        let starts_reference = |&[first, second]: &[u8; 2]| {
+            first == b'&' && (second.is_ascii_alphanumeric() || second == b'#')
+        };
         // Behind `{{` the lexer looks for `}}` first.
         if bun_core::strings::contains(value, b"{{")
+            || value.array_windows().any(starts_reference)
             || (self.siblings.level + 1) * self.settings.indent_width > self.settings.line_width
         {
             return None;
@@ -2945,6 +2950,7 @@ impl<'a> Scanner<'_, 'a> {
             is_typescript,
             has_filters,
             attribute: rest.get(..len + 2),
+            hugs: false,
             indentation: self.siblings.level as u32 + 1,
         };
         let printed = &mut scripts.formatted;
@@ -3063,6 +3069,7 @@ impl<'a> Scanner<'_, 'a> {
             is_typescript,
             has_filters: true,
             attribute: None,
+            hugs: false,
             indentation: self.siblings.level as u32 + 1,
         };
         let printed = &mut scripts.formatted;

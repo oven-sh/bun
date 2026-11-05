@@ -2897,6 +2897,12 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "", "var\u2028x;\n"],
     ["a.tsx", "", "x = <a>\u2029</a>;\n"],
     ["a.ts", "", "first();\nglobal\u2028{}\n"],
+    // What TypeScript's parser takes for a modifier, and drops, is a statement or a member of its own for another parser.
+    ["a.ts", "", "declare export = x;\n"],
+    ["a.ts", "", "declare import a = b;\n"],
+    ["a.ts", "", "class A {\n  export c;\n}\n"],
+    ["a.ts", "", "class A {\n  const a;\n}\n"],
+    ["a.ts", "", "class A {\n  default function() {}\n}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

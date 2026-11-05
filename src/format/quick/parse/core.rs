@@ -1607,20 +1607,7 @@ impl Quick {
             ));
         }
         let end = self.lexer.prev_end;
-        // TypeScript says nothing about a missing semicolon behind `declare`: what follows should have been a declaration
-        if self.parse.typed == TYPED_TS
-            && self.lexer.tok != tk::Semi
-            && (self.n.at(expression) & (0xff | F_PAREN)) == k::Identifier
-            && self.text_is(
-                self.n.at(expression + 1),
-                self.n.at(expression + 2),
-                b"declare",
-            )
-        {
-            self.parse.content_end = end;
-        } else {
-            self.semicolon()?;
-        }
+        self.semicolon()?;
         return Ok(self.node1(k::ExpressionStatement, start, end, expression));
     }
 

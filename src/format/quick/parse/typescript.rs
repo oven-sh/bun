@@ -1513,10 +1513,7 @@ impl Quick {
             0
         };
         let value = self.parse_class_property_value()?;
-        // both parsers go on without a semicolon
-        if self.lexer.tok == tk::Semi || self.mode.is_babel_flow {
-            self.semicolon()?;
-        }
+        self.semicolon()?;
         return Ok(self.class_property_node(
             k::ClassProperty | head,
             start,

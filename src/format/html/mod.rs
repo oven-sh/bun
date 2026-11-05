@@ -528,6 +528,7 @@ fn write_lines_and_code(
             None => {
                 let script = crate::js::quick::Script {
                     text: source,
+                    name: options.filepath.as_deref().unwrap_or_default(),
                     is_typescript: code.language == Language::TypeScript,
                     is_no_module: false,
                     indentation: u32::from(code.level),

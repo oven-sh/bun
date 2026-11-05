@@ -24,11 +24,10 @@ async function runMd(source: string, env: Record<string, string> = {}) {
 
 describe("bun <file.md>", () => {
   afterEach(() => {
-    // Implicit exit-code assertion for every test that relies on runMd().
-    if (lastExitCode !== null) {
-      expect(lastExitCode).toBe(0);
-      lastExitCode = null;
-    }
+    // Implicit exit-code assertion for every test that relies on runMd(). The next test starts without this one's code.
+    const exitCode = lastExitCode;
+    lastExitCode = null;
+    if (exitCode !== null) expect(exitCode).toBe(0);
   });
 
   test("renders headings with underlines", async () => {

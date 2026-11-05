@@ -9,7 +9,7 @@ use crate::lexer::tk;
 use crate::print::util::{
     MAY_NEED_PARENS, PARENS_LOOK, get_precedence, is_bitwise_operator, should_flatten,
 };
-use crate::{Quick, R, Words, why};
+use crate::{Quick, R, Words};
 
 impl Quick {
     pub(crate) fn return_argument_has_leading_comment(&self, n: i32) -> bool {
@@ -131,13 +131,13 @@ impl Quick {
             && self.t.at(p + 4) == 83;
     }
 
-    pub(crate) fn identifier_needs_parens(&self, n: i32) -> R<bool> {
+    pub(crate) fn identifier_needs_parens(&self, n: i32) -> bool {
         let len = self.n.at(n + 2) - self.n.at(n + 1);
         if (self.n.at(n) & F_PAREN) != 0
             && len > 30
             && self.is_html_placeholder_name(self.n.at(n + 1), self.n.at(n + 2))
         {
-            return Ok(true);
+            return true;
         }
         if (self.n.at(n) & F_ESCAPE) != 0 {
             // `\u0061sync` is printed as `async`
@@ -146,15 +146,11 @@ impl Quick {
                 || self.n.at(parent + 4) != n
                 || (self.n.at(parent) & F_AWAIT) != 0
             {
-                return Ok(false);
+                return false;
             }
             return self.is_async_with_escapes(self.n.at(n + 1), self.n.at(n + 2));
         }
-        return Ok(self.identifier_needs_parens_behind(n));
-    }
-
-    pub(crate) fn is_async_with_escapes(&self, _start: i32, _end: i32) -> R<bool> {
-        Err(self.stop(why::RARE))
+        return self.identifier_needs_parens_behind(n);
     }
 
     pub(crate) fn identifier_needs_parens_behind(&self, n: i32) -> bool {
@@ -481,7 +477,7 @@ impl Quick {
         }
         if k == k::Identifier {
             return Ok(
-                (head & (F_EXTRA | F_ESCAPE | F_PAREN)) != 0 && self.identifier_needs_parens(n)?
+                (head & (F_EXTRA | F_ESCAPE | F_PAREN)) != 0 && self.identifier_needs_parens(n)
             );
         }
         let parent = self.n.at(n + 3);
@@ -1188,4 +1184,41 @@ impl Quick {
         }
         return Ok(false);
     }
+}
+
+impl Quick {
+    /// Is the name T[start, end), which has `a` or `\u{61}` in it, `async`?
+    fn is_async_with_escapes(&self, start: i32, end: i32) -> bool {
+        let mut rest = self.t.sub(start, end);
+        for &expected in b"async" {
+            let value;
+            (value, rest) = match rest {
+                [b'\\', b'u', b'{', tail @ ..] => {
+                    let length = tail.iter().take_while(|c| c.is_ascii_hexdigit()).count();
+                    let (digits, tail) = tail.split_at(length);
+                    let Some((b'}', tail)) = tail.split_first() else {
+                        return false;
+                    };
+                    (hex(digits), tail)
+                }
+                [b'\\', b'u', a, b, c, d, tail @ ..] => (hex(&[*a, *b, *c, *d]), tail),
+                [c, tail @ ..] => (*c as u32, tail),
+                [] => return false,
+            };
+            if value != expected as u32 {
+                return false;
+            }
+        }
+        rest.is_empty()
+    }
+}
+
+/// The value of hexadecimal digits; what is no such digit, or too much, gives a number that is no letter.
+fn hex(digits: &[u8]) -> u32 {
+    digits
+        .iter()
+        .fold(0u32, |value, &c| match (c as char).to_digit(16) {
+            Some(digit) if value < 0x11_0000 => value * 16 + digit,
+            _ => u32::MAX,
+        })
 }

@@ -14,28 +14,28 @@ impl Quick {
                 QUESTION_DOT
             } else {
                 DOT
-            })?;
+            });
             self.print(property)?;
             return Ok(());
         }
         if (self.n.at(property) & 0xff) == k::NumericLiteral {
             if (head & F_OPTIONAL) != 0 {
-                self.text(QUESTION_DOT)?;
+                self.text(QUESTION_DOT);
             }
-            self.text(LBRACKET)?;
+            self.text(LBRACKET);
             self.print(property)?;
-            self.text(RBRACKET)?;
+            self.text(RBRACKET);
             return Ok(());
         }
         let g = self.group_open();
         if (head & F_OPTIONAL) != 0 {
-            self.text(QUESTION_DOT)?;
+            self.text(QUESTION_DOT);
         }
-        self.text(LBRACKET)?;
+        self.text(LBRACKET);
         self.indent_softline();
         self.print(property)?;
         self.dedent_softline();
-        self.text(RBRACKET)?;
+        self.text(RBRACKET);
         self.group_close(g);
         Ok(())
     }

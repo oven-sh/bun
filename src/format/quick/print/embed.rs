@@ -527,7 +527,7 @@ impl Quick {
     pub(crate) fn print_embed_css(&mut self, n: i32) -> R<bool> {
         let quasis = self.n.at(n + 4);
         let count = self.n.at(quasis);
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         self.indent_hardline();
         let ok: bool;
         if count == 1 {
@@ -570,7 +570,7 @@ impl Quick {
             return Ok(false);
         }
         self.dedent_softline();
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         self.set_label(LABEL_EMBED);
         return Ok(true);
     }
@@ -611,12 +611,7 @@ impl Quick {
     }
 
     /// print_graphql_comments(). Returns false if there is nothing but white space.
-    pub(crate) fn print_graphql_comments(
-        &mut self,
-        start: i32,
-        end: i32,
-        dry_run: bool,
-    ) -> R<bool> {
+    pub(crate) fn print_graphql_comments(&mut self, start: i32, end: i32, dry_run: bool) -> bool {
         let mut seen_comment = false;
         let mut previous_was_blank = false;
         let mut p = start;
@@ -632,7 +627,7 @@ impl Quick {
             }
             if from != to {
                 if dry_run {
-                    return Ok(true);
+                    return true;
                 }
                 if seen_comment {
                     self.hardline();
@@ -640,7 +635,7 @@ impl Quick {
                 if previous_was_blank && seen_comment {
                     self.hardline();
                 }
-                self.slice_any(from, to)?;
+                self.slice_any(from, to);
                 seen_comment = true;
             }
             previous_was_blank = from == to;
@@ -649,7 +644,7 @@ impl Quick {
             }
             p = e + 1;
         }
-        return Ok(seen_comment);
+        return seen_comment;
     }
 
     pub(crate) fn print_embed_graph_ql(&mut self, n: i32) -> R<bool> {
@@ -658,7 +653,7 @@ impl Quick {
         let base = self.print_expressions(n)?;
         let saved_parts = self.print_embed.part_count;
         self.print_embed.part_count = 0;
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         self.indent_hardline();
         let mut ok = true;
         let mut i: i32 = 1;
@@ -734,7 +729,7 @@ impl Quick {
                 p = e + 1;
             }
             let has_doc =
-                !comments_and_whitespace_only || self.print_graphql_comments(start, end, true)?;
+                !comments_and_whitespace_only || self.print_graphql_comments(start, end, true);
             if has_doc {
                 if !is_first && starts_with_blank_line {
                     self.next_part();
@@ -744,7 +739,7 @@ impl Quick {
                     self.push_text_filter(FILTER_UNCOOK);
                 }
                 if comments_and_whitespace_only {
-                    self.print_graphql_comments(start, end, false)?;
+                    self.print_graphql_comments(start, end, false);
                 } else {
                     ok = self.embed(lang::GraphQL, start, end)?;
                 }
@@ -769,7 +764,7 @@ impl Quick {
             return Ok(false);
         }
         self.dedent_hardline();
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         self.set_label(LABEL_EMBED);
         return Ok(true);
     }
@@ -823,18 +818,18 @@ impl Quick {
         let hard_break = self.options.html_whitespace_sensitivity == WHITESPACE_IGNORE;
         let has_linebreak = hard_break || (leading_whitespace && trailing_whitespace);
         let outer = self.group_open();
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         let mut indent_at: i32 = 0;
         if has_linebreak {
             self.indent_open();
             if hard_break {
                 self.hardline();
             } else {
-                self.line()?;
+                self.line();
             }
         } else {
             if leading_whitespace {
-                self.text(SPACE)?;
+                self.text(SPACE);
             }
             indent_at = self.nop();
         }
@@ -867,7 +862,7 @@ impl Quick {
             if hard_break {
                 self.hardline();
             } else {
-                self.line()?;
+                self.line();
             }
         } else {
             if self.lang.top_level_count > 1 {
@@ -875,10 +870,10 @@ impl Quick {
                 self.indent_close();
             }
             if trailing_whitespace {
-                self.text(SPACE)?;
+                self.text(SPACE);
             }
         }
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         self.group_close(outer);
         self.set_label(if has_linebreak {
             LABEL_EMBED
@@ -976,7 +971,7 @@ impl Quick {
             end = self.text.gen_pos;
             self.gen_source_end();
         }
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         if indent_length != 0 {
             self.indent_softline();
         } else {
@@ -993,7 +988,7 @@ impl Quick {
             return Ok(false);
         }
         self.dedent_softline();
-        self.text(BACKQUOTE)?;
+        self.text(BACKQUOTE);
         self.set_label(LABEL_EMBED);
         return Ok(true);
     }
@@ -1053,8 +1048,8 @@ impl Quick {
                 if count == 1
                     && self.print_embed_is_blank(self.n.at(first + 1), self.n.at(first + 2))
                 {
-                    self.text(BACKQUOTE)?;
-                    self.text(BACKQUOTE)?;
+                    self.text(BACKQUOTE);
+                    self.text(BACKQUOTE);
                     self.set_label(0);
                     ok = true;
                 } else if kind == EMBED_CSS {

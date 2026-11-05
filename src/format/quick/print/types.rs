@@ -151,7 +151,7 @@ impl Quick {
             if token == TOKEN_ARROW
                 || (token == TOKEN_COLON && self.has_leading_comment(annotation))
             {
-                self.text(SPACE)?;
+                self.text(SPACE);
             }
         }
         self.print(annotation)?;
@@ -209,15 +209,15 @@ impl Quick {
     pub(crate) fn print_type_annotation(&mut self, n: i32) -> R<()> {
         let token = self.type_annotation_first_token(n);
         if token == TOKEN_COLON {
-            self.text(COLON_SPACE)?;
+            self.text(COLON_SPACE);
         } else if token == TOKEN_ARROW {
-            self.text(ARROW_)?;
+            self.text(ARROW_);
         }
         let type_ = self.n.at(n + 4);
         if self.mode.is_flow && self.needs_parens_as_return_type_of_arrow(type_)? {
-            self.text(LPAREN)?;
+            self.text(LPAREN);
             self.print(type_)?;
-            self.text(RPAREN)?;
+            self.text(RPAREN);
             return Ok(());
         }
         self.print(type_)?;
@@ -301,34 +301,34 @@ impl Quick {
                 && !self.parameter_comments_forbid_inlining(params);
         }
         if should_inline {
-            self.text(LT)?;
+            self.text(LT);
             let mut i: i32 = 1;
             while i <= count {
                 if i > 1 {
-                    self.text(COMMA_SPACE)?;
+                    self.text(COMMA_SPACE);
                 }
                 self.print(self.n.at(params + i))?;
                 i += 1;
             }
             if self.has_dangling_comment(n) {
                 let has_line = self.has_dangling_matching(n, DANGLING_LINE);
-                self.print_dangling_comments_filtered(n, DANGLING_NO_MARKER, has_line)?;
+                self.print_dangling_comments_filtered(n, DANGLING_NO_MARKER, has_line);
                 if has_line {
                     self.hardline();
                 }
             }
-            self.text(GT)?;
+            self.text(GT);
             return Ok(());
         }
         let g = self.group_open();
-        self.text(LT)?;
+        self.text(LT);
         self.indent_softline();
         let mut i: i32 = 1;
         while i <= count {
             self.reserve();
             if i > 1 {
-                self.text(COMMA)?;
-                self.line()?;
+                self.text(COMMA);
+                self.line();
             }
             self.print(self.n.at(params + i))?;
             i += 1;
@@ -342,21 +342,21 @@ impl Quick {
             && (self.n.at(parent) & 0xff) == k::ArrowFunctionExpression
             && !self.options.name_ends_in_ts
         {
-            self.text(COMMA)?;
+            self.text(COMMA);
         } else if self.options.trailing_comma != TRAILING_COMMA_NONE {
-            self.if_break_text(COMMA, 0, 0)?;
+            self.if_break_text(COMMA, 0, 0);
         }
         self.softline();
-        self.text(GT)?;
+        self.text(GT);
         self.group_close(g);
         Ok(())
     }
 
     pub(crate) fn print_fluid_part(&mut self, keyword: i32, node: i32) -> R<()> {
         let id = self.new_group_id();
-        self.text(keyword)?;
+        self.text(keyword);
         let g = self.group_open();
-        self.indent_line()?;
+        self.indent_line();
         self.indent_close();
         self.group_close_with(g, false, id);
         self.line_suffix_boundary();
@@ -370,21 +370,21 @@ impl Quick {
         let head = self.n.at(n);
         let g = self.group_open();
         if (head & F_CONST) != 0 {
-            self.text(CONST_)?;
+            self.text(CONST_);
         }
         if self.n.at(n + 7) != 0 {
             self.print(self.n.at(n + 7))?;
         }
         if (head & F_IN) != 0 {
-            self.text(IN_)?;
+            self.text(IN_);
         }
         if (head & F_OUT) != 0 {
-            self.text(OUT_)?;
+            self.text(OUT_);
         }
         self.print(self.n.at(n + 4))?;
         if self.mode.is_flow {
             if (head & F_EXTENDS_BOUND) != 0 {
-                self.text(_EXTENDS_)?;
+                self.text(_EXTENDS_);
             }
             self.print_type_annotation_property(self.n.at(n + 5))?;
         } else if self.n.at(n + 5) != 0 {
@@ -450,22 +450,22 @@ impl Quick {
             self.reserve();
             let type_ = self.n.at(types + i);
             if i == 1 {
-                self.if_break_text(BAR_, 0, 0)?;
+                self.if_break_text(BAR_, 0, 0);
             } else {
-                self.line()?;
-                self.text(BAR_)?;
+                self.line();
+                self.text(BAR_);
             }
             if self.has_leading_comment(type_) {
                 self.align_open(2);
-                self.print_leading_comments(type_)?;
+                self.print_leading_comments(type_);
                 self.print(type_)?;
-                self.print_trailing_comments(type_)?;
+                self.print_trailing_comments(type_);
                 self.indent_close();
             } else {
                 self.align_open(2);
                 self.print(type_)?;
                 self.indent_close();
-                self.print_trailing_comments(type_)?;
+                self.print_trailing_comments(type_);
             }
             i += 1;
         }
@@ -475,9 +475,9 @@ impl Quick {
 
     pub(crate) fn print_union_with_comments(&mut self, n: i32) -> R<()> {
         if self.has_comment(n) && self.should_union_type_print_own_comments(n) {
-            self.print_leading_comments(n)?;
+            self.print_leading_comments(n);
             self.print_union_members(n)?;
-            self.print_trailing_comments(n)?;
+            self.print_trailing_comments(n);
         } else {
             self.print_union_members(n)?;
         }
@@ -490,7 +490,7 @@ impl Quick {
             let mut i: i32 = 1;
             while i <= self.n.at(types) {
                 if i > 1 {
-                    self.text(_BAR_)?;
+                    self.text(_BAR_);
                 }
                 self.print(self.n.at(types + i))?;
                 i += 1;
@@ -511,13 +511,13 @@ impl Quick {
             let g = self.group_open();
             self.indent_open();
             let h = self.if_break_open(0);
-            self.text(LPAREN)?;
+            self.text(LPAREN);
             self.softline();
             self.if_break_else(h);
             self.if_break_close(h);
             self.print_union_with_comments(n)?;
             self.dedent_softline();
-            self.if_break_text(RPAREN, 0, 0)?;
+            self.if_break_text(RPAREN, 0, 0);
             self.group_close(g);
             return Ok(());
         }
@@ -552,7 +552,7 @@ impl Quick {
                 let current_is_object = self.is_object_type(type_);
                 let previous_is_object = self.is_object_type(self.n.at(types + i - 1));
                 if previous_is_object && current_is_object {
-                    self.text(_AMP_)?;
+                    self.text(_AMP_);
                     if was_indented {
                         self.indent_open();
                     }
@@ -565,11 +565,11 @@ impl Quick {
                 {
                     self.indent_open();
                     if self.options.operator_position_start {
-                        self.line()?;
-                        self.text(AMP_)?;
+                        self.line();
+                        self.text(AMP_);
                     } else {
-                        self.text(_AMP)?;
-                        self.line()?;
+                        self.text(_AMP);
+                        self.line();
                     }
                     self.print(type_)?;
                     self.indent_close();
@@ -578,7 +578,7 @@ impl Quick {
                     if i > 2 {
                         was_indented = true;
                     }
-                    self.text(_AMP_)?;
+                    self.text(_AMP_);
                     if i > 2 {
                         self.indent_open();
                     }
@@ -595,20 +595,19 @@ impl Quick {
     }
 
     // ---------------------------------------------------------------------------------------- function types, signatures
-    pub(crate) fn print_accessibility(&mut self, head: i32) -> R<()> {
+    pub(crate) fn print_accessibility(&mut self, head: i32) {
         match ((head as u32) >> SUB_SHIFT) as i32 & MOD_ACCESSIBILITY {
             MOD_PUBLIC => {
-                self.text(PUBLIC_)?;
+                self.text(PUBLIC_);
             }
             MOD_PROTECTED => {
-                self.text(PROTECTED_)?;
+                self.text(PROTECTED_);
             }
             MOD_PRIVATE => {
-                self.text(PRIVATE_)?;
+                self.text(PRIVATE_);
             }
             _ => {}
         }
-        Ok(())
     }
 
     pub(crate) fn print_function_type(&mut self, n: i32, k: i32) -> R<()> {
@@ -620,15 +619,15 @@ impl Quick {
         };
         let g = self.group_open();
         if (((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & MOD_ABSTRACT) != 0 {
-            self.text(ABSTRACT_)?;
+            self.text(ABSTRACT_);
         }
         if k == k::ConstructorType || k == k::ConstructSignature {
-            self.text(NEW_)?;
+            self.text(NEW_);
         }
         self.print_parameters_and_return_type(n, false, true, false, false)?;
         self.group_close(g);
         if is_signature {
-            self.print_class_member_semicolon(n, semicolon)?;
+            self.print_class_member_semicolon(n, semicolon);
         }
         Ok(())
     }
@@ -637,20 +636,20 @@ impl Quick {
         let head = self.n.at(n);
         let position = self.member_position();
         let g = self.group_open();
-        self.print_accessibility(head)?;
+        self.print_accessibility(head);
         let method = ((head as u32) >> SUB_SHIFT) as i32 & M_MASK;
         if method == M_GET {
-            self.text(GET_)?;
+            self.text(GET_);
         } else if method == M_SET {
-            self.text(SET_)?;
+            self.text(SET_);
         }
         self.print_key(n)?;
         if (head & F_OPTIONAL) != 0 {
-            self.text(QUESTION)?;
+            self.text(QUESTION);
         }
         self.print_parameters_and_return_type(n, false, true, false, true)?;
         self.group_close(g);
-        self.print_class_member_semicolon(n, position)?;
+        self.print_class_member_semicolon(n, position);
         Ok(())
     }
 
@@ -672,14 +671,14 @@ impl Quick {
         let head = self.n.at(n);
         let position = self.member_position();
         if (((head as u32) >> SUB_SHIFT) as i32 & MOD_READONLY) != 0 {
-            self.text(READONLY_)?;
+            self.text(READONLY_);
         }
         self.print_key(n)?;
         if (head & F_OPTIONAL) != 0 {
-            self.text(QUESTION)?;
+            self.text(QUESTION);
         }
         self.print_type_annotation_property(self.n.at(n + 5))?;
-        self.print_class_member_semicolon(n, position)?;
+        self.print_class_member_semicolon(n, position);
         Ok(())
     }
 
@@ -689,43 +688,42 @@ impl Quick {
         let parameters = self.n.at(n + 5);
         let count = self.n.at(parameters);
         if (head & F_STATIC) != 0 && (self.n.at(self.n.at(n + 3)) & 0xff) == k::ClassBody {
-            self.text(STATIC_)?;
+            self.text(STATIC_);
         }
         if (((head as u32) >> SUB_SHIFT) as i32 & MOD_READONLY) != 0 {
-            self.text(READONLY_)?;
+            self.text(READONLY_);
         }
-        self.text(LBRACKET)?;
+        self.text(LBRACKET);
         let g = self.group_open();
         self.indent_softline();
         let mut i: i32 = 1;
         while i <= count {
             if i > 1 {
-                self.text(COMMA_SPACE)?;
+                self.text(COMMA_SPACE);
                 self.softline();
             }
             self.print(self.n.at(parameters + i))?;
             i += 1;
         }
         if count > 1 && self.options.trailing_comma != TRAILING_COMMA_NONE {
-            self.if_break_text(COMMA, 0, 0)?;
+            self.if_break_text(COMMA, 0, 0);
         }
         self.dedent_softline();
         self.group_close(g);
-        self.text(RBRACKET)?;
+        self.text(RBRACKET);
         self.print_type_annotation_property(self.n.at(n + 4))?;
-        self.print_class_member_semicolon(n, position)?;
+        self.print_class_member_semicolon(n, position);
         Ok(())
     }
 
     // --------------------------------------------------------------------------------------------------------- the rest
-    pub(crate) fn print_mapped_type_modifier(&mut self, which: i32, keyword: i32) -> R<()> {
+    pub(crate) fn print_mapped_type_modifier(&mut self, which: i32, keyword: i32) {
         if which == MT_PLUS {
-            self.text(PLUS)?;
+            self.text(PLUS);
         } else if which == MT_MINUS {
-            self.text(MINUS)?;
+            self.text(MINUS);
         }
-        self.text(keyword)?;
-        Ok(())
+        self.text(keyword);
     }
 
     pub(crate) fn print_mapped_type(&mut self, n: i32) -> R<()> {
@@ -738,10 +736,10 @@ impl Quick {
             should_break = self.has_newline_in_range(start, self.next_significant_index(start));
         }
         let g = self.group_open();
-        self.text(LBRACE)?;
+        self.text(LBRACE);
         self.indent_open();
         if self.options.bracket_spacing {
-            self.line()?;
+            self.line();
         } else {
             self.softline();
         }
@@ -760,15 +758,15 @@ impl Quick {
                     }
                     first = false;
                     if c != last {
-                        self.print_comment(c)?;
+                        self.print_comment(c);
                         break 'c1;
                     }
                     let cg = self.group_open();
-                    self.print_comment(c)?;
+                    self.print_comment(c);
                     if !self.is_block_comment(c) || self.has_newline(self.comment_end(c)) {
                         self.hardline();
                     } else {
-                        self.line()?;
+                        self.line();
                     }
                     self.group_close(cg);
                 }
@@ -776,39 +774,39 @@ impl Quick {
             }
         }
         if readonly != MT_NONE {
-            self.print_mapped_type_modifier(readonly, READONLY)?;
-            self.text(SPACE)?;
+            self.print_mapped_type_modifier(readonly, READONLY);
+            self.text(SPACE);
         }
         let kg = self.group_open();
-        self.text(LBRACKET)?;
+        self.text(LBRACKET);
         self.indent_softline();
         self.print(self.n.at(n + 4))?;
-        self.text(_IN_)?;
+        self.text(_IN_);
         self.print(self.n.at(n + 5))?;
         if self.n.at(n + 6) != 0 {
-            self.text(_AS_)?;
+            self.text(_AS_);
             self.print(self.n.at(n + 6))?;
         }
         self.dedent_softline();
-        self.text(RBRACKET)?;
+        self.text(RBRACKET);
         self.group_close(kg);
         if optional != MT_NONE {
-            self.print_mapped_type_modifier(optional, QUESTION)?;
+            self.print_mapped_type_modifier(optional, QUESTION);
         }
         if self.n.at(n + 7) != 0 {
-            self.text(COLON_SPACE)?;
+            self.text(COLON_SPACE);
             self.print(self.n.at(n + 7))?;
         }
         if self.options.semi {
-            self.if_break_text(SEMI, 0, 0)?;
+            self.if_break_text(SEMI, 0, 0);
         }
         self.indent_close();
         if self.options.bracket_spacing {
-            self.line()?;
+            self.line();
         } else {
             self.softline();
         }
-        self.text(RBRACE)?;
+        self.text(RBRACE);
         self.group_close_with(g, should_break, 0);
         Ok(())
     }
@@ -833,9 +831,9 @@ impl Quick {
             _SATISFIES_
         } else {
             _AS_
-        })?;
+        });
         if self.n.at(n + 5) == 0 {
-            self.text(CONST)?;
+            self.text(CONST);
         } else {
             self.print(self.n.at(n + 5))?;
         }
@@ -870,11 +868,11 @@ impl Quick {
         st = self.state_open();
         self.call(cast);
         let g = self.group_open();
-        self.if_break_text(LPAREN, 0, 0)?;
+        self.if_break_text(LPAREN, 0, 0);
         self.indent_softline();
         self.call(printed);
         self.dedent_softline();
-        self.if_break_text(RPAREN, 0, 0)?;
+        self.if_break_text(RPAREN, 0, 0);
         self.group_close_with(g, true, 0);
         self.state_close(st);
         st = self.state_open();
@@ -887,37 +885,35 @@ impl Quick {
 
     pub(crate) fn print_cast_group(&mut self, type_: i32) -> R<()> {
         let g = self.group_open();
-        self.text(LT)?;
+        self.text(LT);
         self.indent_softline();
         self.print(type_)?;
         self.dedent_softline();
-        self.text(GT)?;
+        self.text(GT);
         self.group_close(g);
         Ok(())
     }
 
-    pub(crate) fn print_declare_token(&mut self, n: i32) -> R<()> {
+    pub(crate) fn print_declare_token(&mut self, n: i32) {
         if (((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & MOD_DECLARE) != 0 {
-            self.text(DECLARE_)?;
+            self.text(DECLARE_);
         }
-        Ok(())
     }
 
     /// " type", " typeof" or nothing; with the space behind it if `space_behind`.
-    pub(crate) fn print_import_or_export_kind(&mut self, n: i32, space_behind: bool) -> R<()> {
+    pub(crate) fn print_import_or_export_kind(&mut self, n: i32, space_behind: bool) {
         let kind = ((((self.n.at(n) as u32) >> SUB_SHIFT) as i32) >> IK_SHIFT) & IK_MASK;
         if kind == IK_TYPE {
-            self.text(if space_behind { TYPE_ } else { _TYPE })?;
+            self.text(if space_behind { TYPE_ } else { _TYPE });
         } else if kind == IK_TYPEOF {
-            self.text(if space_behind { TYPEOF_ } else { _TYPEOF })?;
+            self.text(if space_behind { TYPEOF_ } else { _TYPEOF });
         }
-        Ok(())
     }
 
     /// Everything of a type alias up to the `=`.
     pub(crate) fn print_type_alias_left(&mut self, n: i32) -> R<()> {
-        self.print_declare_token(n)?;
-        self.text(TYPE_)?;
+        self.print_declare_token(n);
+        self.text(TYPE_);
         self.print(self.n.at(n + 4))?;
         self.print(self.n.at(n + 5))?;
         Ok(())
@@ -931,7 +927,7 @@ impl Quick {
                 return Ok(true);
             }
             k::KeywordType => {
-                self.text(KEYWORD_TEXT.at(((self.n.at(n) as u32) >> SUB_SHIFT) as i32))?;
+                self.text(KEYWORD_TEXT.at(((self.n.at(n) as u32) >> SUB_SHIFT) as i32));
                 return Ok(true);
             }
             k::TypeReference | k::Heritage | k::InstantiationExpression => {
@@ -941,7 +937,7 @@ impl Quick {
             }
             k::QualifiedName => {
                 self.print(self.n.at(n + 4))?;
-                self.text(DOT)?;
+                self.text(DOT);
                 self.print(self.n.at(n + 5))?;
                 return Ok(true);
             }
@@ -955,7 +951,7 @@ impl Quick {
             }
             k::ArrayType => {
                 self.print(self.n.at(n + 4))?;
-                self.text(BRACKETS_EMPTY)?;
+                self.text(BRACKETS_EMPTY);
                 return Ok(true);
             }
             k::NamedTupleMember => {
@@ -964,36 +960,36 @@ impl Quick {
                 }
                 self.print(self.n.at(n + 4))?;
                 if (self.n.at(n) & F_OPTIONAL) != 0 {
-                    self.text(QUESTION)?;
+                    self.text(QUESTION);
                 }
-                self.text(COLON_SPACE)?;
+                self.text(COLON_SPACE);
                 self.print(self.n.at(n + 5))?;
                 return Ok(true);
             }
             k::RestType => {
-                self.text(ELLIPSIS)?;
+                self.text(ELLIPSIS);
                 if self.n.at(n + 5) != 0 {
                     self.print(self.n.at(n + 5))?;
-                    self.text(COLON_SPACE)?;
+                    self.text(COLON_SPACE);
                 }
                 self.print(self.n.at(n + 4))?;
                 return Ok(true);
             }
             k::OptionalType => {
                 self.print(self.n.at(n + 4))?;
-                self.text(QUESTION)?;
+                self.text(QUESTION);
                 return Ok(true);
             }
             k::NullableType => {
                 let which = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32;
                 if which == NT_NULLABLE {
-                    self.text(QUESTION)?;
+                    self.text(QUESTION);
                 } else if which == NT_NON_NULLABLE {
-                    self.text(BANG)?;
+                    self.text(BANG);
                 }
                 self.print(self.n.at(n + 4))?;
                 if which == NT_NON_NULLABLE_POSTFIX {
-                    self.text(BANG)?;
+                    self.text(BANG);
                 }
                 return Ok(true);
             }
@@ -1028,7 +1024,7 @@ impl Quick {
                         } else {
                             RENDERS_STAR_
                         }
-                    })?;
+                    });
                 } else {
                     self.text(if operator == TO_KEYOF {
                         KEYOF_
@@ -1038,7 +1034,7 @@ impl Quick {
                         } else {
                             UNIQUE_
                         }
-                    })?;
+                    });
                 }
                 self.print(self.n.at(n + 4))?;
                 return Ok(true);
@@ -1046,20 +1042,20 @@ impl Quick {
             k::IndexedAccessType => {
                 self.print(self.n.at(n + 4))?;
                 if (self.n.at(n) & F_OPTIONAL) != 0 {
-                    self.text(QUESTION_DOT)?;
+                    self.text(QUESTION_DOT);
                 }
-                self.text(LBRACKET)?;
+                self.text(LBRACKET);
                 self.print(self.n.at(n + 5))?;
-                self.text(RBRACKET)?;
+                self.text(RBRACKET);
                 return Ok(true);
             }
             k::InferType => {
-                self.text(INFER_)?;
+                self.text(INFER_);
                 self.print(self.n.at(n + 4))?;
                 return Ok(true);
             }
             k::TypeQuery => {
-                self.text(TYPEOF_)?;
+                self.text(TYPEOF_);
                 self.print(self.n.at(n + 4))?;
                 self.print(self.n.at(n + 5))?;
                 return Ok(true);
@@ -1068,13 +1064,13 @@ impl Quick {
                 if (self.n.at(n) & F_ASSERTS) != 0
                     || ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == TP_ASSERTS
                 {
-                    self.text(ASSERTS_)?;
+                    self.text(ASSERTS_);
                 } else if ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == TP_IMPLIES {
-                    self.text(IMPLIES_)?;
+                    self.text(IMPLIES_);
                 }
                 self.print(self.n.at(n + 4))?;
                 if self.n.at(n + 5) != 0 {
-                    self.text(_IS_)?;
+                    self.text(_IS_);
                     self.print_type_annotation_property(self.n.at(n + 5))?;
                 }
                 return Ok(true);
@@ -1086,7 +1082,7 @@ impl Quick {
             k::ImportType => {
                 self.print_call_expression(n)?;
                 if self.n.at(n + 7) != 0 {
-                    self.text(DOT)?;
+                    self.text(DOT);
                     self.print(self.n.at(n + 7))?;
                 }
                 self.print(self.n.at(n + 6))?;
@@ -1110,7 +1106,7 @@ impl Quick {
             }
             k::NonNullExpression => {
                 self.print(self.n.at(n + 4))?;
-                self.text(BANG)?;
+                self.text(BANG);
                 return Ok(true);
             }
             k::TypeAssertion => {
@@ -1120,88 +1116,88 @@ impl Quick {
             k::TypeAlias => {
                 self.print_assignment(n, self.n.at(n + 6), EQ, 0)?;
                 if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(true);
             }
             k::EnumDeclaration => {
-                self.print_declare_token(n)?;
+                self.print_declare_token(n);
                 if (self.n.at(n) & F_CONST) != 0 {
-                    self.text(CONST_)?;
+                    self.text(CONST_);
                 }
-                self.text(ENUM_)?;
+                self.text(ENUM_);
                 self.print(self.n.at(n + 4))?;
-                self.text(SPACE)?;
+                self.text(SPACE);
                 self.print(self.n.at(n + 5))?;
                 return Ok(true);
             }
             k::EnumMember => {
                 self.print_key(n)?;
                 if self.n.at(n + 5) != 0 {
-                    self.text(EQ_SPACES)?;
+                    self.text(EQ_SPACES);
                     self.print(self.n.at(n + 5))?;
                 }
                 return Ok(true);
             }
             k::ModuleDeclaration => {
-                self.print_declare_token(n)?;
+                self.print_declare_token(n);
                 let kind = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & 3;
                 if kind != MK_GLOBAL {
                     self.text(if kind == MK_MODULE {
                         MODULE_
                     } else {
                         NAMESPACE_
-                    })?;
+                    });
                 }
                 self.print(self.n.at(n + 4))?;
                 if self.n.at(n + 5) != 0 {
-                    self.text(SPACE)?;
+                    self.text(SPACE);
                     let g = self.group_open();
                     self.print(self.n.at(n + 5))?;
                     self.group_close(g);
                 } else if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(true);
             }
             k::ExportAssignment => {
-                self.text(EXPORT_EQ_)?;
+                self.text(EXPORT_EQ_);
                 self.print(self.n.at(n + 4))?;
                 if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(true);
             }
             k::NamespaceExportDeclaration => {
-                self.text(EXPORT_AS_NAMESPACE_)?;
+                self.text(EXPORT_AS_NAMESPACE_);
                 self.print(self.n.at(n + 4))?;
                 if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(true);
             }
             k::ImportEqualsDeclaration => {
-                self.text(IMPORT_)?;
-                self.print_import_or_export_kind(n, true)?;
+                self.text(IMPORT_);
+                self.print_import_or_export_kind(n, true);
                 self.print(self.n.at(n + 4))?;
-                self.text(EQ_SPACES)?;
+                self.text(EQ_SPACES);
                 self.print(self.n.at(n + 5))?;
                 if self.options.semi {
-                    self.text(SEMI)?;
+                    self.text(SEMI);
                 }
                 return Ok(true);
             }
             k::ParameterProperty => {
                 let head = self.n.at(n);
-                self.print_accessibility(head)?;
+                self.print_accessibility(head);
                 if (head & F_STATIC) != 0 {
-                    self.text(STATIC_)?;
+                    self.text(STATIC_);
                 }
                 if (((head as u32) >> SUB_SHIFT) as i32 & MOD_OVERRIDE) != 0 {
-                    self.text(OVERRIDE_)?;
+                    self.text(OVERRIDE_);
                 }
                 if (((head as u32) >> SUB_SHIFT) as i32 & MOD_READONLY) != 0 {
-                    self.text(READONLY_)?;
+                    self.text(READONLY_);
                 }
                 self.print(self.n.at(n + 4))?;
                 return Ok(true);

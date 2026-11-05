@@ -68,17 +68,16 @@ impl Quick {
     }
 
     /// What stands between the parts so far and the operator with its right operand.
-    pub(crate) fn print_separator(&mut self, n: i32) -> R<()> {
+    pub(crate) fn print_separator(&mut self, n: i32) {
         if self.options.operator_position_start {
             if self.should_inline_logical_expression(n)
                 || self.comment_before_operator(self.n.at(n + 5))
             {
-                self.text(SPACE)?;
+                self.text(SPACE);
             }
         } else if !self.line_before_operator(n) {
-            self.text(SPACE)?;
+            self.text(SPACE);
         }
-        Ok(())
     }
 
     /// The operator and the right operand.
@@ -95,32 +94,32 @@ impl Quick {
                 && (self.n.at(right) & 0xff) != k);
         let g = if should_group { self.group_open() } else { 0 };
         if self.should_inline_logical_expression(n) {
-            self.text(operator)?;
+            self.text(operator);
             if self.has_leading_own_line_comment(right) {
-                self.indent_line()?;
+                self.indent_line();
                 self.print(right)?;
                 self.indent_close();
             } else {
-                self.text(SPACE)?;
+                self.text(SPACE);
                 self.print(right)?;
             }
         } else if self.options.operator_position_start {
-            self.line()?;
+            self.line();
             if self.comment_before_operator(right) {
-                self.print_leading_comments(right)?;
+                self.print_leading_comments(right);
                 self.print_binaryish.skip_leading_comments_of = right;
             }
-            self.text(operator)?;
-            self.text(SPACE)?;
+            self.text(operator);
+            self.text(SPACE);
             self.print(right)?;
         } else if self.line_before_operator(n) {
-            self.line()?;
-            self.text(operator)?;
-            self.text(SPACE)?;
+            self.line();
+            self.text(operator);
+            self.text(SPACE);
             self.print(right)?;
         } else {
-            self.text(operator)?;
-            self.line()?;
+            self.text(operator);
+            self.line();
             self.print(right)?;
         }
         if should_group {
@@ -146,13 +145,13 @@ impl Quick {
         {
             let comments = self.has_comment(left);
             if comments {
-                self.print_leading_comments(left)?;
+                self.print_leading_comments(left);
             }
             self.print_left_parts(left, is_inside_parenthesis, indent_after_head)?;
-            self.print_separator(left)?;
+            self.print_separator(left);
             self.print_right(left, is_inside_parenthesis)?;
             if comments {
-                self.print_trailing_comments(left)?;
+                self.print_trailing_comments(left);
             }
             return Ok(());
         }
@@ -167,7 +166,7 @@ impl Quick {
 
     pub(crate) fn print_parts(&mut self, n: i32, is_inside_parenthesis: bool) -> R<()> {
         self.print_left_parts(n, is_inside_parenthesis, false)?;
-        self.print_separator(n)?;
+        self.print_separator(n);
         self.print_right(n, is_inside_parenthesis)?;
         Ok(())
     }
@@ -233,7 +232,7 @@ impl Quick {
         if !self.is_jsx_element(self.n.at(n + 5)) {
             let g = self.group_open();
             self.print_left_parts(n, false, true)?;
-            self.print_separator(n)?;
+            self.print_separator(n);
             self.print_right(n, false)?;
             self.indent_close();
             self.group_close(g);
@@ -243,7 +242,7 @@ impl Quick {
         let outer = self.group_open();
         let chain = self.group_open();
         self.print_left_parts(n, false, true)?;
-        self.print_separator(n)?;
+        self.print_separator(n);
         self.indent_close();
         self.group_close_with(chain, false, id);
         self.indent_if_break_open(id, false);

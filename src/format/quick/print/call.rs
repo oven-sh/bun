@@ -593,15 +593,14 @@ impl Quick {
     }
 
     // -------------------------------------------------------------------------------------------------------- arguments
-    pub(crate) fn print_trailing_comma_all(&mut self, n: i32) -> R<()> {
+    pub(crate) fn print_trailing_comma_all(&mut self, n: i32) {
         if self.options.trailing_comma != TRAILING_COMMA_ALL {
-            return Ok(());
+            return;
         }
         let k = self.n.at(n) & 0xff;
         if k != k::ImportExpression && k != k::ImportType && k != k::ExternalModuleReference {
-            self.if_break_text(COMMA, 0, 0)?;
+            self.if_break_text(COMMA, 0, 0);
         }
-        Ok(())
     }
 
     /// `arg,` and the line behind it, for every argument from `from` to `to`; nothing behind the very last argument.
@@ -614,12 +613,12 @@ impl Quick {
             if i == count {
                 break;
             }
-            self.text(COMMA)?;
+            self.text(COMMA);
             if self.is_next_line_empty(arg) {
                 self.hardline();
                 self.hardline();
             } else {
-                self.line()?;
+                self.line();
             }
             i += 1;
         }
@@ -636,23 +635,23 @@ impl Quick {
         let count = self.n.at(args);
         if count == 0 {
             let g = self.group_open();
-            self.text(LPAREN)?;
-            self.print_dangling_comments_in_list(n)?;
-            self.text(RPAREN)?;
+            self.text(LPAREN);
+            self.print_dangling_comments_in_list(n);
+            self.text(RPAREN);
             self.group_close(g);
             return Ok(());
         }
         if self.is_react_hook_call_with_deps_array(args) {
-            self.text(LPAREN)?;
+            self.text(LPAREN);
             let mut i: i32 = 1;
             while i <= count {
                 self.print(self.n.at(args + i))?;
                 if i != count {
-                    self.text(COMMA_SPACE)?;
+                    self.text(COMMA_SPACE);
                 }
                 i += 1;
             }
-            self.text(RPAREN)?;
+            self.text(RPAREN);
             return Ok(());
         }
         let mut any_arg_empty_line = false;
@@ -668,12 +667,12 @@ impl Quick {
                 && self.is_function_composition_arguments(args))
         {
             let g = self.group_open();
-            self.text(LPAREN)?;
-            self.indent_line()?;
+            self.text(LPAREN);
+            self.indent_line();
             self.print_arguments_range(args, 1, count)?;
-            self.print_trailing_comma_all(n)?;
-            self.dedent_line()?;
-            self.text(RPAREN)?;
+            self.print_trailing_comma_all(n);
+            self.dedent_line();
+            self.text(RPAREN);
             self.group_close_with(g, true, 0);
             return Ok(());
         }
@@ -698,15 +697,15 @@ impl Quick {
             }
             if expanded == 0 {
                 let g = self.group_open();
-                self.text(LPAREN)?;
-                self.indent_line()?;
+                self.text(LPAREN);
+                self.indent_line();
                 self.print(first)?;
-                self.text(COMMA)?;
-                self.line()?;
+                self.text(COMMA);
+                self.line();
                 self.call(tail);
-                self.print_trailing_comma_all(n)?;
-                self.dedent_line()?;
-                self.text(RPAREN)?;
+                self.print_trailing_comma_all(n);
+                self.dedent_line();
+                self.text(RPAREN);
                 self.group_close_with(g, true, 0);
                 return Ok(());
             }
@@ -718,33 +717,33 @@ impl Quick {
             let mut st: i32;
             if !breaks {
                 st = self.state_open();
-                self.text(LPAREN)?;
+                self.text(LPAREN);
                 self.call(expanded);
-                self.text(COMMA_SPACE)?;
+                self.text(COMMA_SPACE);
                 self.call(tail);
-                self.text(RPAREN)?;
+                self.text(RPAREN);
                 self.state_close(st);
             }
             st = self.state_open();
-            self.text(LPAREN)?;
+            self.text(LPAREN);
             let mut g = self.group_open();
             self.call(expanded);
             self.group_close_with(g, true, 0);
-            self.text(COMMA_SPACE)?;
+            self.text(COMMA_SPACE);
             self.call(tail);
-            self.text(RPAREN)?;
+            self.text(RPAREN);
             self.state_close(st);
             st = self.state_open();
             g = self.group_open();
-            self.text(LPAREN)?;
-            self.indent_line()?;
+            self.text(LPAREN);
+            self.indent_line();
             self.print_node(first, ARG_SHARE)?;
-            self.text(COMMA)?;
-            self.line()?;
+            self.text(COMMA);
+            self.line();
             self.call(tail);
-            self.print_trailing_comma_all(n)?;
-            self.dedent_line()?;
-            self.text(RPAREN)?;
+            self.print_trailing_comma_all(n);
+            self.dedent_line();
+            self.text(RPAREN);
             self.group_close_with(g, true, 0);
             self.state_close(st);
             self.cond_close(c, false);
@@ -774,15 +773,15 @@ impl Quick {
             }
             if expanded == 0 {
                 let g = self.group_open();
-                self.text(LPAREN)?;
-                self.indent_line()?;
+                self.text(LPAREN);
+                self.indent_line();
                 if head != 0 {
                     self.call(head);
                 }
                 self.print(last)?;
-                self.print_trailing_comma_all(n)?;
-                self.dedent_line()?;
-                self.text(RPAREN)?;
+                self.print_trailing_comma_all(n);
+                self.dedent_line();
+                self.text(RPAREN);
                 self.group_close_with(g, true, 0);
                 return Ok(());
             }
@@ -794,28 +793,28 @@ impl Quick {
             let mut st: i32;
             if !breaks {
                 st = self.state_open();
-                self.text(LPAREN)?;
+                self.text(LPAREN);
                 if head != 0 {
                     self.call(head);
                 }
                 self.call(expanded);
-                self.text(RPAREN)?;
+                self.text(RPAREN);
                 self.state_close(st);
             }
             st = self.state_open();
-            self.text(LPAREN)?;
+            self.text(LPAREN);
             if head != 0 {
                 self.call(head);
             }
             let mut g = self.group_open();
             self.call(expanded);
             self.group_close_with(g, true, 0);
-            self.text(RPAREN)?;
+            self.text(RPAREN);
             self.state_close(st);
             st = self.state_open();
             g = self.group_open();
-            self.text(LPAREN)?;
-            self.indent_line()?;
+            self.text(LPAREN);
+            self.indent_line();
             if head != 0 {
                 self.call(head);
             }
@@ -824,9 +823,9 @@ impl Quick {
             } else {
                 self.call(expanded);
             }
-            self.print_trailing_comma_all(n)?;
-            self.dedent_line()?;
-            self.text(RPAREN)?;
+            self.print_trailing_comma_all(n);
+            self.dedent_line();
+            self.text(RPAREN);
             self.group_close_with(g, true, 0);
             self.state_close(st);
             self.cond_close(c, false);
@@ -835,13 +834,13 @@ impl Quick {
         let curried = self.is_long_curried_call_expression(n);
         let g = if curried { 0 } else { self.group_open() };
         let breaks = self.doc.wb_count;
-        self.text(LPAREN)?;
+        self.text(LPAREN);
         self.indent_softline();
         self.print_arguments_range(args, 1, count)?;
         let should_break = self.doc.wb_count != breaks;
-        self.print_trailing_comma_all(n)?;
+        self.print_trailing_comma_all(n);
         self.dedent_softline();
-        self.text(RPAREN)?;
+        self.text(RPAREN);
         if !curried {
             self.group_close_with(g, should_break, 0);
         }
@@ -852,25 +851,25 @@ impl Quick {
     pub(crate) fn print_callee(&mut self, n: i32) -> R<()> {
         let k = self.n.at(n) & 0xff;
         if k == k::ImportExpression {
-            self.text(IMPORT)?;
+            self.text(IMPORT);
             let phase = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & P_MASK;
             if phase == P_DEFER {
-                self.text(DOT_DEFER)?;
+                self.text(DOT_DEFER);
             } else if phase == P_SOURCE {
-                self.text(DOT_SOURCE)?;
+                self.text(DOT_SOURCE);
             }
             return Ok(());
         }
         if k == k::ImportType {
-            self.text(IMPORT)?;
+            self.text(IMPORT);
             return Ok(());
         }
         if k == k::ExternalModuleReference {
-            self.text(REQUIRE)?;
+            self.text(REQUIRE);
             return Ok(());
         }
         if k == k::NewExpression {
-            self.text(NEW_)?;
+            self.text(NEW_);
         }
         self.print(self.n.at(n + 4))?;
         self.line_suffix_boundary();
@@ -907,21 +906,21 @@ impl Quick {
         if self.prints_arguments_on_one_line(n)? {
             self.print_callee(n)?;
             if (self.n.at(n) & F_OPTIONAL) != 0 {
-                self.text(QUESTION_DOT)?;
+                self.text(QUESTION_DOT);
             }
             self.print_type_arguments(n, k)?;
-            self.text(LPAREN)?;
+            self.text(LPAREN);
             let args = self.n.at(n + 5);
             let count = self.n.at(args);
             let mut i: i32 = 1;
             while i <= count {
                 if i > 1 {
-                    self.text(COMMA_SPACE)?;
+                    self.text(COMMA_SPACE);
                 }
                 self.print(self.n.at(args + i))?;
                 i += 1;
             }
-            self.text(RPAREN)?;
+            self.text(RPAREN);
             self.set_label(0);
             return Ok(());
         }
@@ -936,7 +935,7 @@ impl Quick {
         let g = if should_group { self.group_open() } else { 0 };
         self.print_callee(n)?;
         if (self.n.at(n) & F_OPTIONAL) != 0 {
-            self.text(QUESTION_DOT)?;
+            self.text(QUESTION_DOT);
         }
         self.print_type_arguments(n, k)?;
         self.print_call_arguments(n)?;
@@ -1247,25 +1246,25 @@ impl Quick {
         let is_top = i == count - 1;
         let comments = !is_top && self.has_comment(node);
         if comments {
-            self.print_leading_comments(node)?;
+            self.print_leading_comments(node);
         }
         let k = self.n.at(node) & 0xff;
         if k == k::CallExpression {
             if (self.n.at(node) & F_OPTIONAL) != 0 {
-                self.text(QUESTION_DOT)?;
+                self.text(QUESTION_DOT);
             }
             self.print(self.n.at(node + 6))?;
             self.print_call_arguments(node)?;
         } else if k == k::MemberExpression {
             self.print_member_lookup(node)?;
         } else if k == k::NonNullExpression {
-            self.text(BANG)?;
+            self.text(BANG);
         } else {
-            self.text(DOUBLE_COLON)?;
+            self.text(DOUBLE_COLON);
             self.print(self.n.at(node + 5))?;
         }
         if comments {
-            self.print_trailing_comments(node)?;
+            self.print_trailing_comments(node);
         }
         if (self.print_call.ch.at(base + i * 2 + 1) & LINK_EMPTY_LINE_AFTER) != 0 {
             self.hardline();
@@ -1296,12 +1295,12 @@ impl Quick {
                 if (self.n.at(node) & 0xff) == k::MemberExpression {
                     self.print_member_lookup(node)?;
                 } else {
-                    self.text(BANG)?;
+                    self.text(BANG);
                 }
                 i -= 1;
             }
             if (self.n.at(n) & F_OPTIONAL) != 0 {
-                self.text(QUESTION_DOT)?;
+                self.text(QUESTION_DOT);
             }
             self.print(self.n.at(n + 6))?;
             self.print_call_arguments(n)?;

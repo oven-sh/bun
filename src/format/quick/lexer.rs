@@ -1,5 +1,5 @@
 //! The lexer. It hands out one token at a time, on demand, because `/`, `}` and `<` mean different things depending on
-//! what the parser expects. All of its state is module-level int32: under `bun compile` each is one load or store.
+//! what the parser expects.
 
 use crate::ast::{F_BLANK, F_BLANK_LINE, F_ESCAPE, F_QUOTE, F_SLOW_TEXT, F_TAIL};
 use crate::id_table::{ID_PART, ID_START};

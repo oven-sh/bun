@@ -1957,6 +1957,7 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
     expect(problems(inEslint.stdout)).toEqual(
       [2, 3, 4, 5, 6, 7, 10, 11, 12, 14].map(line => `a.js:${line} capitalized-comments`),
     );
+    expect([inOxlint.exitCode, inEslint.exitCode]).toEqual([1, 1]);
   });
 
   test("an oxlint config reports rules under oxlint's names", async () => {

@@ -4914,7 +4914,7 @@ const hand: Project[] = [
       "capitalized-comments": [
         "error",
         "always",
-        { ignorePattern: "^noinspection|late|^ pragma|^noinspection\\nMulti|^noinspection$|^tail x$" },
+        { ignorePattern: "^noinspection|late|^ pragma|^tail x$|^multi\\nLine$|^single$" },
       ],
     }),
     files: {
@@ -4937,15 +4937,17 @@ const hand: Project[] = [
       ),
       // The lines are joined with `\n`, a final line break starts no line, and a `\r` stays unless a `\n` follows it.
       "b.js": lines(
-        `/** noinspection`,
-        ` * Multi */`,
-        `/* noinspection`,
+        `/** multi`,
+        ` * Line*/`,
+        `/** multi`,
+        ` * Line */`,
+        `/* single`,
         `*/`,
-        `/* tail x */`,
-        `/*tail x*/`,
+        `/* single */`,
+        `/*single*/`,
         `/* tail x\r*/`,
         `/* tail x\r\n*/`,
-        `/** noinspection\r\n * Multi */`,
+        `/** multi\r\n * Line*/`,
         `a();`,
       ),
     },

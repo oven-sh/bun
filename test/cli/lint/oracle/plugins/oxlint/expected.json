@@ -9607,7 +9607,8 @@
   "a.js:13:1+9 eslint(capitalized-comments)",
   "a.js:6:1+31 eslint(capitalized-comments)",
   "a.js:7:1+28 eslint(capitalized-comments)",
-  "b.js:5:1+12 eslint(capitalized-comments)",
-  "b.js:7:1+12 eslint(capitalized-comments)"
+  "b.js:3:1+20 eslint(capitalized-comments)",
+  "b.js:7:1+12 eslint(capitalized-comments)",
+  "b.js:9:1+12 eslint(capitalized-comments)"
  ]
 }

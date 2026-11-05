@@ -50,11 +50,12 @@ fn without_asterisks(value: &[u8]) -> Cow<'_, [u8]> {
 }
 
 /// oxlint's `normalize_comment_text`, which its `ignorePattern` is tested against: each line of the value without its
-/// leading whitespace, one `*` and one space after the `*`. ESLint tests the value with only its asterisks removed, so
-/// an anchored pattern such as `^noinspection` matches `// noinspection` for oxlint and not for ESLint.
+/// leading whitespace (Rust's `str::trim_start`), one `*` and one space after the `*`. ESLint tests the value with only
+/// its asterisks removed, so an anchored pattern such as `^noinspection` matches `// noinspection` for oxlint and not
+/// for ESLint.
 fn oxlint_normalized(value: &[u8]) -> Cow<'_, [u8]> {
     fn normalize_line(line: &[u8]) -> &[u8] {
-        let line = strings::trim_js_whitespace_start(line);
+        let line = strings::trim_unicode_whitespace_start(line);
         match line.strip_prefix(b"*") {
             Some(rest) => rest.strip_prefix(b" ").unwrap_or(rest),
             None => line,

@@ -3,7 +3,7 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { compose, Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
@@ -1951,6 +1951,92 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
       expect(caught.message).toBe(`The "${name}" argument must be of type function. Received type number (123)`);
       r.destroy();
     }
+  });
+});
+
+describe("Readable promise operators start to read inside the call", () => {
+  it.concurrent("the fixture prints what Node prints", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "promise-operators-start-in-the-call-fixture.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The stdout of `node promise-operators-start-in-the-call-fixture.js` on Node v26.3.0.
+    expect(stdout.split(/\r?\n/)).toEqual([
+      "top level | call, destroy(err) | listeners 1/1/1/1, readableFlowing false, read() calls 1 | rejected with err | toArray, forEach, reduce, some, every, find",
+      "top level | destroy(err), call | listeners 1/1/0/0, readableFlowing false, read() calls 0 | rejected with err | toArray, forEach, reduce, some, every, find",
+      "nextTick | call, destroy(err) | listeners 1/1/1/1, readableFlowing false, read() calls 1 | rejected with err | toArray, forEach, reduce, some, every, find",
+      "nextTick | destroy(err), call | listeners 1/1/0/0, readableFlowing false, read() calls 0 | rejected with err | toArray, forEach, reduce, some, every, find",
+      "setImmediate | call, destroy(err) | listeners 1/1/1/1, readableFlowing false, read() calls 1 | rejected with err | toArray, forEach, reduce, some, every, find",
+      "setImmediate | destroy(err), call | listeners 1/1/0/0, readableFlowing false, read() calls 0 | rejected with err | toArray, forEach, reduce, some, every, find",
+      'push("a"), resume(), toArray(), push(null) | resolved ["a"]',
+      'push("a"), toArray(), read() | read() returned null | resolved ["a"]',
+      'new Readable() with no read(), toArray(), push("a") | rejected with ERR_METHOD_NOT_IMPLEMENTED',
+      "reduce() with an aborted signal | destroyed at return true | rejected with ABORT_ERR",
+      "source.map().toArray(), source.destroy(err) | rejected with Error",
+      'Duplex.from(generator), write("a"), every(() => false), destroy() | rejected with ERR_STREAM_PREMATURE_CLOSE',
+      "toArray() under a replaced Promise.prototype.then | 0 calls | a plain Promise true | resolved []",
+      'http handler: request.toArray(), response.end() | resolved "body"',
+      "derived = source.map(), derived.toArray(), derived.destroy(err) | pending",
+      "Readable.from(a generator that waits), toArray(), destroy() | pending",
+      "reduce(fn, 0, { signal }), abort() | pending",
+      "toArray(), removeAllListeners(), push(null) | pending",
+      "a read() that gets its source after the call | pending",
+      "",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.each([
+    ["a CommonJS entry", `const { Transform } = require("node:stream");`],
+    [
+      "an ES module entry",
+      `import { createRequire } from "node:module";
+       const { Transform } = createRequire(import.meta.url)("node:stream");`,
+    ],
+  ])("a rejection that try/catch handles leaves the exit code at 0 in %s", async (entry, load) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${load}
+         (async () => {
+           const parser = new Transform({
+             transform(chunk, encoding, callback) {
+               callback(new Error("bad input"));
+             },
+           });
+           parser.end("x");
+           try {
+             await parser.toArray();
+           } catch (error) {
+             console.log("caught: " + error.message);
+           }
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "caught: bad input\n", stderr: "", exitCode: 0 });
+  });
+
+  // compose() starts a generator stage at the first read of the composed stream, and the operator reads inside the
+  // call. Node starts the stage later, since nodejs/node#63593. #41510 brings that change to compose().
+  it.todo("compose() starts a generator stage after the call", async () => {
+    let started = false;
+    const composed = compose(new Readable({ read() {} }), async function* (source) {
+      started = true;
+      yield* source;
+    });
+    const chunks = composed.toArray();
+    expect(started).toBe(false);
+    composed.destroy(new Error("done"));
+    await expect(chunks).rejects.toThrow("done");
   });
 });
 

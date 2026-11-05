@@ -855,8 +855,10 @@ pub(crate) fn parse<'a>(
     let (mut tree_errors, is_nested_too_deeply) = (builder.errors, builder.is_nested_too_deeply);
     // There is more only if the tree is nested too deeply.
     while lexer.step() {}
-    tree.has_typescript_script_in_run |=
-        (lexer.runs.as_ref()).is_some_and(|runs| runs.has_typescript_script);
+    if let Some(runs) = &lexer.runs {
+        tree.has_typescript_script_in_run |= runs.has_typescript_script;
+        tree.assumes_typescript = runs.assumes_typescript;
+    }
     let mut errors = lexer.errors;
     errors.append(&mut tree_errors);
     let ended = (lexer.tokens.last()).map_or(text.len() as u32, |eof| eof.span.start);

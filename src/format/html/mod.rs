@@ -487,7 +487,9 @@ fn write_document_with_cursor<'w, 'f>(
     };
     printer.print_root(!is_embedded);
     let is_nested_too_deeply = printer.is_nested_too_deeply;
-    let has_wrong_short_cut = printer.has_wrong_short_cut;
+    let has_wrong_short_cut = printer.has_wrong_short_cut
+        || (tree.assumes_typescript)
+            .is_some_and(|it| it != printer.is_vue_sfc_with_typescript_script());
     *scripts = std::mem::take(&mut printer.scripts);
     let unwritten = printer.out.unwritten();
     printer.out.finish();
@@ -791,7 +793,11 @@ fn format_once(
             }
             None => (runs::Runs::new(settings), Vec::new()),
         };
-        if let Some((span, is_in_text)) = runs.whole(&text, &mut printed)
+        let guests = (parser == Parser::Vue).then_some(runs::Guests {
+            options,
+            scripts: &mut scratch.scripts,
+        });
+        if let Some((span, is_in_text)) = runs.whole(&text, &mut printed, guests)
             && options.line_ending.resolve(original) == crate::options::LineEnding::Lf
             && let Some(whole) = (if is_in_text { &text[..] } else { &printed[..] })
                 .get(span.start as usize..span.end as usize)

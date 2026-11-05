@@ -2475,6 +2475,193 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
   });
 });
 
+describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () => {
+  const wide = "a".repeat(30);
+  const values = [
+    "a  +  b",
+    "(a)",
+    "a ? (b) : c",
+    "[a,b]",
+    `[${wide}, ${wide}, ${wide}]`,
+    `[\n  ${wide},\n  b]`,
+    "{a:b}",
+    "{\n  a: b }",
+    `{ a: ${wide}, b: ${wide}, c: ${wide} }`,
+    `${wide}(${wide}, ${wide}, ${wide})`,
+    `${wide} || ${wide} || ${wide} || ${wide}`,
+    `${wide} ? ${wide} : ${wide} + ${wide}`,
+    "(a) => b(a)",
+    "a => { b(a) }",
+    "(a) => {\n  b(a);\n  c();\n}",
+    "a = b; c = d",
+    "a()",
+    "a as b",
+    "a!",
+    "(a: b) => c",
+    "<a>b",
+    "a | b",
+    "a | b(c)",
+    "`a${ b }`",
+    "`a\n${b}`",
+    "'a' + \"b\"",
+    "'a\\'b'",
+    "a && b",
+    "(a || b) && c",
+    "a &amp;&amp; b",
+    "a &foo; b",
+    "a &quot;b&quot;",
+    "a // b",
+    "a /* b */",
+    "{{ a }}",
+    "a }} b",
+    "a\tb",
+    "'é' + a  ",
+    "'中文' +  a",
+    "",
+    " ",
+    "a b",
+    "(",
+    "function () {}",
+    "async () => await a",
+    "/a\\d/.test(b)",
+    "$emit('a',  b)",
+  ];
+  const names = [":a", ".a", "v-bind:a", "v-bind", "v-if", "v-model", "v-html", "@a", "v-on:a", "@a.b", ":[a]", "v-for", "#a", "v-slot:a", "slot-scope", "a", "onclick"];
+  const scripts = [
+    "",
+    '\n<script setup lang="ts">\nlet a;\n</script>\n',
+    "\n<script setup lang='ts'>\nlet a;\n</script>\n",
+    '\n<script lang="typescript">\nlet a;\n</script>\n',
+    '\n<script lang="tsx">\nlet a;\n</script>\n',
+    '\n<script>\nlet a = \'<script lang="ts">\';\n</script>\n',
+    '\n<!-- <script lang="ts"> -->\n<script>\nlet a;\n</script>\n',
+    '\n<docs>\n<script lang="ts">\n</script>\n</docs>\n',
+    '\n<script lang="ts" src="a">\n</script>\n',
+  ];
+  const inputs = [
+    ...values.flatMap(value =>
+      names.map(name => `<template>\n  <div>\n    <p b="c" ${name}="${value}" d>e</p>\n  </div>\n</template>\n${scripts[1]}`),
+    ),
+    ...values.map(value => `<template>\n  <div>\n    {{ ${value} }}\n    <p>{{${value}}}</p>\n    <p>a {{ ${value} }} b</p>\n  </div>\n</template>\n${scripts[1]}`),
+    // Whether the code is TypeScript.
+    ...scripts.flatMap(script => [
+      `<template>\n  <p :a="b  as c" @d="(e: f) => g!">{{ h  as i }}</p>\n</template>\n${script}`,
+      `${script.trimStart()}\n<template>\n  <p :a="b  as c" @d="(e: f) => g!">{{ h  as i }}</p>\n</template>\n`,
+      // With something that goes the long way behind the code.
+      `<template>\n  <p :a="b  as c">{{ h  as i }}</p>\n  <p #j="{ k: { l } }"></p>\n</template>\n${script}`,
+    ]),
+    // Where the attribute is, and what follows it.
+    ...[
+      '<p :a="[b,c]"></p>',
+      '<p :a="[b,c]" />',
+      '<p\n  :a="[b,c]"\n/>',
+      `<p :a="[${wide},${wide},${wide}]" />`,
+      `<p :a="[${wide},${wide},${wide}]">d</p>`,
+      `<p :a="[${wide},${wide},${wide}]"\n  >d</p\n>`,
+      `<span :a="[${wide},${wide},${wide}]">d</span>`,
+      `<span :a="[${wide},${wide},${wide}]"><b>d</b></span>`,
+      `<component-with-a-long-name :a="[${wide},${wide}]" />`,
+      `<i :a="[${wide},${wide}, b]" />`,
+      `<pre :a="[${wide},${wide},${wide}]">d</pre>`,
+      '<pre :a="[b,c]">d</pre>',
+      '<textarea :a="[b,c]"></textarea>',
+      `<textarea :a="[${wide},${wide},${wide}]"></textarea>`,
+      '<svg :a="[b,c]"><g :d="[e,f]"></g></svg>',
+      'a <b :c="[d,e]">f</b> g',
+      `a <b :c="[${wide},${wide},${wide}]">f</b> g`,
+      '<input :a="[b,c]">',
+      '<br :a="[b,c]" /><br :a="[b,c]" />',
+    ].flatMap(element => [
+      `<template>\n  ${element}\n</template>\n`,
+      `<template>\n  <div>\n    <div>\n      ${element}\n    </div>\n  </div>\n</template>\n`,
+      `<template>\n  <span>${element}</span>\n</template>\n`,
+    ]),
+    // A `style` attribute, whatever is between its declarations.
+    ...[
+      "color: red;width: 1px",
+      "color: red ; width: 1px",
+      "\n  color: red;\n  width: 1px;\n",
+      "\n  color: red;\n\n  width: 1px;\n",
+      "\n\n  color: red;\n",
+      "color: red;;",
+      "color: red;\twidth: 1px",
+      `\n  color: var(--${wide});\n  width: 1px;\n  background: rgba(0, 0, 0, 0.5);\n`,
+      `color: var(--${wide}); width: 1px; background: rgba(0, 0, 0, 0.5); height: 100%`,
+      `color: var(--${wide}${wide}${wide})`,
+      `margin: ${"1px ".repeat(30)}1px`,
+      "color: red; /* a */ width: 1px",
+      "color: RED;\n width: 1px",
+      "color: red;\n font-family: a, b",
+      "--a: b;\n color: red",
+      "",
+      "\n",
+      ";",
+    ].flatMap(value => [
+      `<template>\n  <div>\n    <p a="b" style="${value}" c>d</p>\n  </div>\n</template>\n`,
+      `<template>\n  <i style="${value}" />\n  <component-with-a-long-name style="${value}" />\n</template>\n`,
+    ]),
+    // A tab is as wide as the options say, which matters on one line.
+    ...["M1,2\n\tz", "M1,2\tz", "\tM1\n", "a\t\nb"].flatMap(value =>
+      ["d", "class", ":d", "title"].map(name => `<template>\n  <path a="b" ${name}="${value}" />\n</template>\n`),
+    ),
+  ];
+  const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
+
+  test.concurrent.each([
+    [],
+    ["--print-width=40"],
+    ["--print-width=20", "--tab-width=4"],
+    ["--print-width=60", "--tab-width=8"],
+    ["--print-width=1"],
+    ["--print-width=100000", "--tab-width=0"],
+    ["--use-tabs", "--print-width=60"],
+    ["--single-quote", "--no-bracket-spacing", "--arrow-parens=avoid", "--no-semi"],
+    ["--quote-props=consistent", "--trailing-comma=none"],
+    ["--object-wrap=collapse", "--experimental-operator-position=start"],
+    ["--experimental-ternaries"],
+    ["--html-whitespace-sensitivity=strict"],
+    ["--html-whitespace-sensitivity=ignore", "--print-width=60"],
+    ["--bracket-same-line", "--print-width=60"],
+    ["--single-attribute-per-line"],
+    ["--embedded-language-formatting=off"],
+    ["--end-of-line=crlf"],
+    ["--vue-indent-script-and-style"],
+  ])("the same with and without short cuts: %j", async (...options: string[]) => {
+    const { short, long } = await bothWays(files, options);
+    expect(short).toEqual(long);
+  });
+
+  test("code in a file that is read from the bytes is formatted", async () => {
+    const { short, long } = await bothWays(
+      {
+        "a.vue": `<template>\n  <div :a="[b,c]" style="\n color: red;width: 1px;">\n    <p :class="[${wide},${wide}, d  as e]">{{ f  ( g ) }}</p>\n  </div>\n</template>\n\n<script lang="ts">\nh\n</script>\n`,
+      },
+      [],
+    );
+    expect(short).toEqual(long);
+    expect(short.written["a.vue"]).toMatchInlineSnapshot(`
+      "<template>
+        <div :a="[b, c]" style="color: red; width: 1px">
+          <p
+            :class="[
+              aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+              aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+              d as e,
+            ]"
+          >
+            {{ f(g) }}
+          </p>
+        </div>
+      </template>
+
+      <script lang="ts">
+      h;
+      </script>
+      "
+    `);
+  });
+});
+
 describe.skipIf(!hasFlag)("where lines are written without a document", () => {
   /** Formats `files` with `flags`, and returns what they are afterwards. */
   async function format(files: Record<string, string>, flags: string[]) {

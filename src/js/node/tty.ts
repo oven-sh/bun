@@ -70,13 +70,23 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
     // through the polled native source process.stdin uses, and, as in Node,
     // with readableHighWaterMark 0, so a pause() stops the poll after one chunk.
     const native = Bun.file(fd).stream();
+    // Already-open fd: skip the async _construct round-trip so the stream is
+    // born constructed, like Node's tty.ReadStream (a net.Socket).
+    this._construct = undefined;
     require("internal/fs/streams").ReadStream.$apply(this, ["", { fd, highWaterMark: 0 }]);
     require("internal/streams/native-readable").attachNativeSource(this, native, 64 * 1024);
+    this.push = pushCountingBytes;
   } else {
     require("internal/fs/streams").ReadStream.$apply(this, ["", { fd }]);
   }
   this.isRaw = false;
   this.isTTY = isTTY;
+}
+
+// fs.ReadStream counts bytesRead in its _read. The native _read pushes straight into the stream.
+function pushCountingBytes(this: $Node.TTYReadStream, chunk: Buffer | null, encoding?: BufferEncoding) {
+  if (chunk != null) this.bytesRead += chunk.length;
+  return require("internal/fs/streams").ReadStream.prototype.push.$call(this, chunk, encoding);
 }
 
 // The class stands below fs.ReadStream, and internal/fs/streams loads node:stream. So it is put there when it is first read.

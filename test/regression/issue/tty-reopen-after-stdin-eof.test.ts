@@ -60,8 +60,8 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
           ttyStream.setRawMode(false);
         }
 
+        // destroy() closes the fd, so the script must not close it again.
         ttyStream.destroy();
-        fs.closeSync(fd);
         console.log('SUCCESS:true');
         process.exit(0);
       } catch (err) {
@@ -127,7 +127,6 @@ test.skipIf(isWindows)("TTY ReadStream should not set position for character dev
       console.log('READ_CALLED:' + readCalled);
 
       ttyStream.destroy();
-      fs.closeSync(fd);
       process.exit(0);
     } catch (err) {
       console.log('ERROR:' + err.code);

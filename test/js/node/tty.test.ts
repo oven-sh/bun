@@ -302,7 +302,7 @@ describe.concurrent("ReadStream destroy()", () => {
 // Node reads a terminal through a handle that destroy(), pause() and unref() retract at once. A thread pool
 // read(2) on the fd could not be retracted: the process stayed alive until the next key, and that key went
 // to the destroyed stream. Each child here opens /dev/tty itself, so the stream is not process.stdin.
-describe.skipIf(isWindows)("ReadStream on a terminal fd", () => {
+describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
   // Runs `script` under a pty. `onOutput` sees the accumulated output after every chunk and writes keys.
   async function runInTerminal(script: string, onOutput: (output: string, terminal: Bun.Terminal) => void) {
     let output = "";
@@ -344,7 +344,7 @@ describe.skipIf(isWindows)("ReadStream on a terminal fd", () => {
       `${openTTY}
         input.once("data", () => setTimeout(() => {
           input.setRawMode(false);
-          input.on("close", () => console.log("closed " + JSON.stringify({ fd: input.fd, keys })));
+          input.on("close", () => console.log("closed " + JSON.stringify({ fd: input.fd, keys, bytesRead: input.bytesRead })));
           input.destroy();
         }, 30));
         console.log("ready");
@@ -356,7 +356,132 @@ describe.skipIf(isWindows)("ReadStream on a terminal fd", () => {
         }
       },
     );
-    expect(lines).toEqual(["ready", 'key "a"', 'closed {"fd":null,"keys":["a"]}']);
+    expect(lines).toEqual(["ready", 'key "a"', 'closed {"fd":null,"keys":["a"],"bytesRead":1}']);
+    expect(exitCode).toBe(0);
+  });
+
+  // As Node: pause() stops the reads once the next chunk is buffered, and resume() delivers it.
+  test("pause() from a timer keeps the next key for resume()", async () => {
+    let wrote = 0;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => setTimeout(() => {
+          input.pause();
+          console.log("paused");
+          setTimeout(() => {
+            console.log("buffered " + input.readableLength);
+            input.once("data", () => {
+              input.setRawMode(false);
+              input.destroy();
+            });
+            input.resume();
+          }, 200);
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (wrote === 0 && output.includes("ready")) {
+          wrote = 1;
+          terminal.write("a");
+        } else if (wrote === 1 && output.includes("paused")) {
+          wrote = 2;
+          terminal.write("b");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', "paused", "buffered 1", 'key "b"']);
+    expect(exitCode).toBe(0);
+  });
+
+  // fs.ReadStream constructs on the next tick. A terminal stream is born constructed, as Node's, so a read() in
+  // the same tick starts the poll and a 'readable' listener gets the key.
+  test("read() in the constructing tick starts reading", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        const input = new tty.ReadStream(fs.openSync("/dev/tty", "r"));
+        input.setRawMode(true);
+        input.pause();
+        console.log("read " + JSON.stringify(input.read()));
+        input.once("readable", () => {
+          console.log("key " + JSON.stringify(String(input.read())));
+          input.setRawMode(false);
+          input.destroy();
+        });
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && output.includes("ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["read null", "ready", 'key "a"']);
+    expect(exitCode).toBe(0);
+  });
+
+  test("on fd 0 destroy() from a timer closes the stream, leaves fd 0 open and the process exits", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        const input = new tty.ReadStream(0);
+        input.setRawMode(true);
+        input.once("data", chunk => setTimeout(() => {
+          input.setRawMode(false);
+          input.on("close", () => {
+            let fd0;
+            try { fd0 = fs.fstatSync(0).isCharacterDevice() ? "open" : "other"; } catch (e) { fd0 = e.code; }
+            console.log("closed " + JSON.stringify({ key: String(chunk), fd: input.fd, fd0 }));
+          });
+          input.destroy();
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && output.includes("ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'closed {"key":"a","fd":0,"fd0":"open"}']);
+    expect(exitCode).toBe(0);
+  });
+
+  // The private reopen of the terminal must not take a closed stdio number: fd 0 to 2 are never closed,
+  // and a child with inherited stdio would get the terminal as its stderr.
+  test("the reopened terminal does not land on a closed fd 2", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        const fdState = () => { try { fs.fstatSync(2); return "open"; } catch (e) { return e.code; } };
+        const fd = fs.openSync("/dev/tty", "r");
+        fs.closeSync(2);
+        const input = new tty.ReadStream(fd);
+        input.setRawMode(true);
+        input.once("data", chunk => setTimeout(() => {
+          const afterKey = fdState();
+          input.setRawMode(false);
+          input.on("close", () => console.log("closed " + JSON.stringify({ key: String(chunk), afterKey, afterClose: fdState() })));
+          input.destroy();
+        }, 30));
+        console.log("ready " + fdState());
+      `,
+      (output, terminal) => {
+        if (!wrote && output.includes("ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready EBADF", 'closed {"key":"a","afterKey":"EBADF","afterClose":"EBADF"}']);
     expect(exitCode).toBe(0);
   });
 

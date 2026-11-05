@@ -14,6 +14,7 @@ use crate::options::TRAILING_COMMA_NONE;
 use crate::print::assignment::LAYOUT_BREAK_AFTER_OPERATOR;
 use crate::print::comments::{DANGLING_LINE, DANGLING_NO_MARKER};
 use crate::print::core::{ARG_LAYOUT_MASK, ARG_LAYOUT_SHIFT};
+use crate::print::jsx::KIND_AND_SUB;
 use crate::print::statics::{
     _AMP, _AMP_, _AS_, _BAR_, _EXTENDS, _EXTENDS_, _IN_, _IS_, _SATISFIES_, _TYPE, _TYPEOF,
     ABSTRACT_, AMP_, ARROW_, ASSERTS_, BANG, BAR_, BRACKETS_EMPTY, COLON_SPACE, COMMA, COMMA_SPACE,
@@ -354,6 +355,18 @@ impl Quick {
             self.text(GT);
             return Ok(());
         }
+        // `a<interface {}>`: an object type for the long way, which hugs it, and which lays out what is around a call by it.
+        let is_interface = self.mode.is_flow
+            && count == 1
+            && (self.n.at(self.n.at(params + 1)) & 0xff) == k::InterfaceType;
+        if is_interface
+            && matches!(
+                self.n.at(parent) & 0xff,
+                k::CallExpression | k::NewExpression
+            )
+        {
+            return Err(self.rare(rare::FLOW));
+        }
         let g = self.group_open();
         self.text(LT);
         self.indent_softline();
@@ -383,7 +396,14 @@ impl Quick {
         self.softline();
         self.text(GT);
         self.group_close(g);
-        if count == 1 && self.is_hugged_by_the_long_way_only(self.n.at(params + 1)) {
+        // (`a<*>`: the long way does not break it)
+        if count == 1
+            && self.mode.is_flow
+            && (is_interface
+                || self.is_hugged_by_the_long_way_only(self.n.at(params + 1))
+                || (self.n.at(self.n.at(params + 1)) & KIND_AND_SUB)
+                    == (k::KeywordType | (type_keyword::All << SUB_SHIFT)))
+        {
             self.gives_up_if_broken(g);
         }
         Ok(())
@@ -594,6 +614,16 @@ impl Quick {
     pub(crate) fn print_intersection_type(&mut self, n: i32) -> R<()> {
         let types = self.n.at(n + 4);
         let count = self.n.at(types);
+        if self.mode.is_flow {
+            // (`interface {} & A`: the long way takes what follows for what the interface extends)
+            let mut i: i32 = 1;
+            while i <= count {
+                if (self.n.at(self.n.at(types + i)) & 0xff) == k::InterfaceType {
+                    return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
+                i += 1;
+            }
+        }
         let mut was_indented = false;
         let g = self.group_open();
         let mut i: i32 = 1;

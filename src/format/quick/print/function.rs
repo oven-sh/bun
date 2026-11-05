@@ -127,7 +127,7 @@ impl Quick {
 
     /// `string => void`: a function type of Flow whose only parameter is a simple type without a name.
     /// `(A) => B`
-    fn has_one_simple_type_as_parameters(&self, fn_: i32, params: i32) -> bool {
+    pub(crate) fn has_one_simple_type_as_parameters(&self, fn_: i32, params: i32) -> bool {
         if self.n.at(params) != 1 || self.n.at(fn_ + FN_TYPE_PARAMETERS) != 0 {
             return false;
         }
@@ -261,6 +261,8 @@ impl Quick {
         if self.mode.is_flow && self.is_flow_shorthand_with_one_arg(fn_, params) {
             let parens = self.options.arrow_parens_always
                 || (self.n.at(fn_) & 0xff) == k::HookTypeAnnotation;
+            // Nothing in it can break. In some places the long way breaks it all the same.
+            let g = self.group_open();
             if parens {
                 self.text(LPAREN);
             }
@@ -268,6 +270,8 @@ impl Quick {
             if parens {
                 self.text(RPAREN);
             }
+            self.group_close(g);
+            self.gives_up_if_broken(g);
             return Ok(());
         }
         if self.mode.is_flow

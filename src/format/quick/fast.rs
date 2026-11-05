@@ -1198,6 +1198,10 @@ impl Quick {
             q = self.tight(p + 1);
             if self.t.at(q) != 93 {
                 loop {
+                    // `-1`, `-a: A`
+                    if self.t.at(q) == 45 {
+                        return Ok(self.no(refusal::Type));
+                    }
                     q = self.type_(q)?;
                     if q < 0 {
                         return Ok(-1);

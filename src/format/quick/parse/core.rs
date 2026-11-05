@@ -2364,6 +2364,14 @@ impl Quick {
                 if kind == k::ForInStatement && (await_flag != 0 || var_kind >= V_USING) {
                     return Err(self.text_refuse());
                 }
+                // (a type cast gets more parentheses there)
+                if kind == k::ForInStatement
+                    && self.parse.typed == TYPED_FLOW
+                    && var_kind >= 0
+                    && self.n.at(self.n.at(self.n.at(init + 4) + 1) + 5) != 0
+                {
+                    return Err(self.rare(rare::FLOW));
+                }
                 if var_kind < 0 {
                     self.to_assignable(init)?;
                     if self.parse.typed != TYPED_TS {
@@ -4000,7 +4008,7 @@ impl Quick {
                 left = self.make_logical(op, left_start, self.lexer.prev_end, left, right)?;
             } else {
                 if op == tk::Gt
-                    && self.parse.typed == TYPED_TS
+                    && (self.parse.typed == TYPED_TS || self.parse.typed == TYPED_FLOW)
                     && (self.n.at(left) & 0xff) == k::BinaryExpression
                     && ((self.n.at(left) as u32) >> SUB_SHIFT) as i32 == tk::Lt
                 {

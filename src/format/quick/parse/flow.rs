@@ -932,6 +932,9 @@ impl Quick {
                     let after = self.peek()?;
                     if after == tk::Name {
                         variance = self.flow_parse_variance()?;
+                    } else if self.lexer.tok == tk::Sub {
+                        // (the long way takes the sign for a variance and drops it)
+                        return Err(self.rare(rare::UNLIKE_PRETTIER));
                     }
                 } else if self.lexer.tok == tk::Name
                     && (self.word() == w::Readonly || self.word() == w::Writeonly)
@@ -1013,6 +1016,10 @@ impl Quick {
             let start = self.lexer.tok_start;
             if self.lexer.tok != tk::Name {
                 return Err(self.unexpected());
+            }
+            // (the long way writes `boolean`)
+            if self.word() == w::Bool {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
             }
             let id = self.flow_parse_qualified(0)?;
             let type_arguments = if self.lexer.tok == tk::Lt {
@@ -1524,6 +1531,10 @@ impl Quick {
         let mut upper: i32 = 0;
         let mut impl_: i32 = 0;
         if self.eat(tk::Colon)? {
+            // (the long way writes `extends` for the `:` then)
+            if self.lexer.tok == tk::BitOr {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             supertype = self.flow_parse_type_fresh()?;
         }
         if self.lexer.tok == tk::Super || self.lexer.tok == tk::Extends {
@@ -1615,7 +1626,15 @@ impl Quick {
             return Ok(0);
         }
         self.next()?;
-        return self.flow_parse_heritage_list();
+        let list = self.flow_parse_heritage_list()?;
+        let mut i: i32 = 1;
+        while i <= self.n.at(list) {
+            if (self.n.at(self.n.at(self.n.at(list + i) + 4)) & 0xff) == k::QualifiedName {
+                return Err(self.rare(rare::FLOW));
+            }
+            i += 1;
+        }
+        return Ok(list);
     }
 
     /// The current token is `enum`.
@@ -1926,6 +1945,13 @@ impl Quick {
                 declaration = self.flow_parse_declared(self.lexer.tok_start, 0)?;
             } else {
                 declaration = self.flow_parse_type_fresh()?;
+                // (`A => B`: the long way does not break its parameters)
+                if (self.n.at(declaration) & 0xff) == k::FunctionType
+                    && self
+                        .has_one_simple_type_as_parameters(declaration, self.n.at(declaration + 6))
+                {
+                    return Err(self.rare(rare::FLOW));
+                }
                 self.semicolon()?;
             }
             return Ok(self.node1(

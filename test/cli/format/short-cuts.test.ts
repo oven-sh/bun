@@ -4822,6 +4822,28 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // A union that a conditional type among type arguments checks, where it breaks.
     ["a.ts", "--print-width=16", "const a:b<X|Y extends c?d:e>=z\n"],
     ["a.ts", "--print-width=7", "type a=X|Y extends Y?Z:X\n"],
+    // Flow: `<*>`, which the long way does not break.
+    ["a.js.flow", "--print-width=18", "async function a():e<*>{z()}\n"],
+    // Flow: the name `bool` or a qualified name behind `implements` or `extends`.
+    ["a.js.flow", "", "class a implements bool{}\n"],
+    ["a.js.flow", "", "interface a extends bool{}\n"],
+    ["a.js.flow", "--print-width=24", "class a implements a.b{}\n"],
+    // Flow: a function type with one type as its parameters, where it does not fit.
+    ["a.js.flow", "--print-width=20", "class a{static b:X=>Y}\n"],
+    ["a.js.flow", "--print-width=34", 'declare module""{declare module.exports:X=>Y}\n'],
+    ["a.js.flow", "--print-width=24", "declare export default X=>Y\n"],
+    // Flow: `a < b > c`, which the long way may take for type arguments.
+    ["a.js", "", "//@flow\nc<[...X]>(y)\n"],
+    // Flow: `interface {}` as the only type argument, where it does not fit.
+    ["a.js.flow", "--print-width=27", "c=b<interface{a:X}>()\n"],
+    // Flow: a negative number in a tuple type, whose sign the long way drops.
+    ["a.js.flow", "", "const a:[-1]=z\n"],
+    ["a.js.flow", "", "type a=[X,-1]\n"],
+    // Flow: a type cast as the initial value in a `for`-`in`.
+    ["a.js.flow", "", "for(var a=(x:Y)in b);\n"],
+    // Flow: `|` at the start of the supertype of an opaque type, `interface {}` in an intersection.
+    ["a.js.flow", "", "opaque type a:|X\n"],
+    ["a.js.flow", "", "type a=interface{}&Y\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

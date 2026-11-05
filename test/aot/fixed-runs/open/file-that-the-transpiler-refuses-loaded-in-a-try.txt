@@ -1,35 +1,35 @@
-A file with a mistake that Bun's transpiler finds when it visits the file (an import statement beside CommonJS, a macro in an export, an unknown export of bun:bundle, a misuse of feature()), loaded in a try: the test catches a BuildMessage, and the build stops no test.
+A file with a mistake that Bun's transpiler finds when it visits the file (an import statement beside CommonJS, a macro in an export, an unknown export of bun:bundle, a misuse of feature()), loaded in a try: the test catches the error, and the build stops no test.
 #### loads.test.ts
 import { test } from "bun:test";
 import { good } from "./src/good.ts";
 const say = (how: string, name: string, said: unknown) => console.log("| CASE", how, name, String(said));
 test("mixes.cjs", async () => {
-  try { say("require", "mixes.cjs", Object.keys(require("./src/mixes.cjs"))); } catch (e) { say("require", "mixes.cjs", e?.constructor?.name); }
-  try { say("import", "mixes.cjs", Object.keys(await import("./src/mixes.cjs"))); } catch (e) { say("import", "mixes.cjs", e?.constructor?.name); }
+  try { say("require", "mixes.cjs", Object.keys(require("./src/mixes.cjs"))); } catch { say("require", "mixes.cjs", "threw"); }
+  try { say("import", "mixes.cjs", Object.keys(await import("./src/mixes.cjs"))); } catch { say("import", "mixes.cjs", "threw"); }
 });
 test("macro-star.ts", async () => {
-  try { say("require", "macro-star.ts", Object.keys(require("./src/macro-star.ts"))); } catch (e) { say("require", "macro-star.ts", e?.constructor?.name); }
-  try { say("import", "macro-star.ts", Object.keys(await import("./src/macro-star.ts"))); } catch (e) { say("import", "macro-star.ts", e?.constructor?.name); }
+  try { say("require", "macro-star.ts", Object.keys(require("./src/macro-star.ts"))); } catch { say("require", "macro-star.ts", "threw"); }
+  try { say("import", "macro-star.ts", Object.keys(await import("./src/macro-star.ts"))); } catch { say("import", "macro-star.ts", "threw"); }
 });
 test("macro-from.ts", async () => {
-  try { say("require", "macro-from.ts", Object.keys(require("./src/macro-from.ts"))); } catch (e) { say("require", "macro-from.ts", e?.constructor?.name); }
-  try { say("import", "macro-from.ts", Object.keys(await import("./src/macro-from.ts"))); } catch (e) { say("import", "macro-from.ts", e?.constructor?.name); }
+  try { say("require", "macro-from.ts", Object.keys(require("./src/macro-from.ts"))); } catch { say("require", "macro-from.ts", "threw"); }
+  try { say("import", "macro-from.ts", Object.keys(await import("./src/macro-from.ts"))); } catch { say("import", "macro-from.ts", "threw"); }
 });
 test("bundle-export.ts", async () => {
-  try { say("require", "bundle-export.ts", Object.keys(require("./src/bundle-export.ts"))); } catch (e) { say("require", "bundle-export.ts", e?.constructor?.name); }
-  try { say("import", "bundle-export.ts", Object.keys(await import("./src/bundle-export.ts"))); } catch (e) { say("import", "bundle-export.ts", e?.constructor?.name); }
+  try { say("require", "bundle-export.ts", Object.keys(require("./src/bundle-export.ts"))); } catch { say("require", "bundle-export.ts", "threw"); }
+  try { say("import", "bundle-export.ts", Object.keys(await import("./src/bundle-export.ts"))); } catch { say("import", "bundle-export.ts", "threw"); }
 });
 test("feature-count.ts", async () => {
-  try { say("require", "feature-count.ts", Object.keys(require("./src/feature-count.ts"))); } catch (e) { say("require", "feature-count.ts", e?.constructor?.name); }
-  try { say("import", "feature-count.ts", Object.keys(await import("./src/feature-count.ts"))); } catch (e) { say("import", "feature-count.ts", e?.constructor?.name); }
+  try { say("require", "feature-count.ts", Object.keys(require("./src/feature-count.ts"))); } catch { say("require", "feature-count.ts", "threw"); }
+  try { say("import", "feature-count.ts", Object.keys(await import("./src/feature-count.ts"))); } catch { say("import", "feature-count.ts", "threw"); }
 });
 test("feature-number.ts", async () => {
-  try { say("require", "feature-number.ts", Object.keys(require("./src/feature-number.ts"))); } catch (e) { say("require", "feature-number.ts", e?.constructor?.name); }
-  try { say("import", "feature-number.ts", Object.keys(await import("./src/feature-number.ts"))); } catch (e) { say("import", "feature-number.ts", e?.constructor?.name); }
+  try { say("require", "feature-number.ts", Object.keys(require("./src/feature-number.ts"))); } catch { say("require", "feature-number.ts", "threw"); }
+  try { say("import", "feature-number.ts", Object.keys(await import("./src/feature-number.ts"))); } catch { say("import", "feature-number.ts", "threw"); }
 });
 test("feature-outside.ts", async () => {
-  try { say("require", "feature-outside.ts", Object.keys(require("./src/feature-outside.ts"))); } catch (e) { say("require", "feature-outside.ts", e?.constructor?.name); }
-  try { say("import", "feature-outside.ts", Object.keys(await import("./src/feature-outside.ts"))); } catch (e) { say("import", "feature-outside.ts", e?.constructor?.name); }
+  try { say("require", "feature-outside.ts", Object.keys(require("./src/feature-outside.ts"))); } catch { say("require", "feature-outside.ts", "threw"); }
+  try { say("import", "feature-outside.ts", Object.keys(await import("./src/feature-outside.ts"))); } catch { say("import", "feature-outside.ts", "threw"); }
 });
 test("good", () => console.log("| CASE", good));
 #### src/good.ts

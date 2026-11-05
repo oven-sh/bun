@@ -132,55 +132,6 @@ test/js/bun/test/test-auto-import-jest-globals.test.js: the transpiler cache > c
 # These put accessors on Array.prototype[0] and Object.prototype[0]. Built-in objects are read-only in compiled code, in an executable too.
 test/js/bun/test/expect-deferred.test.ts: matchers that have to wait for a promise > accessors on Array.prototype can't observe or change a matcher's cached answers
 test/js/bun/test/expect-deferred.test.ts: matchers that have to wait for a promise > accessors on Object.prototype can't observe or change a matcher's cached answers
-# These ask about the caches of SourceProviders and of the transpiler, the JIT and what else only a run from source has: they say nothing about compiled code.
-test/cli/test/isolation.test.ts: --isolate parses the source of an internal module for the first file that loads it, and for no other
-test/cli/test/isolation.test.ts: --isolate: SourceProvider cache covers CommonJS modules
-test/cli/test/isolation.test.ts: --isolate: SourceProvider cache covers node_modules .mjs and type:commonjs packages
-test/cli/test/isolation.test.ts: --isolate: code is generated once for the modules every file loads, however many there are
-test/cli/test/isolation.test.ts: --isolate: delete require.cache evicts the SourceProvider cache
-test/cli/test/isolation.test.ts: --isolate: require(esm) caches a BunTranspiledModule SourceProvider
-test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate --hot
-test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate --watch
-test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate, large files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
-test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate, large files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=undefined
-test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate, small files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=undefined
-test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --parallel=1, small files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=undefined
-test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate: a later test file can require() it
-test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate: a test can require() a preload that vi.resetModules() unloaded
-test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate=modules: a later test file can require() it
-test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate=modules: a test can require() a preload that vi.resetModules() unloaded
-test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --parallel=1: a later test file can require() it
-test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --parallel=1: a test can require() a preload that vi.resetModules() unloaded
-test/cli/test/isolation.test.ts: bun test --isolate > with --isolate, cached module records keep short, Latin-1 and UTF-16 names
-test/cli/test/isolation.test.ts: bun test --isolate > with --isolate, the on-disk transpiler cache keeps that namespace in the stored module record
-test/cli/test/isolation.test.ts: bun test --isolate=modules > a file runs the code that was compiled for the files before it
-#
-test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a BroadcastChannel in a ShadowRealm > 12 files
-test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a BroadcastChannel in a ShadowRealm > 3 files
-test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a BroadcastChannel in a ShadowRealm > 48 files
-test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a ShadowRealm > 12 files
-test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a ShadowRealm > 3 files
-test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a ShadowRealm > 48 files
-# What a frame or a register still holds decides whether a global object is let go: seen to fail on Linux x64 alone, and to pass there too. So also the four of plugins.test.ts below.
-~ test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a node:vm context > 12 files
-~ test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a node:vm context > 3 files
-~ test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a node:vm context > 48 files
-~ test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a node:vm context without a sandbox > 12 files
-~ test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a node:vm context without a sandbox > 3 files
-~ test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes a node:vm context without a sandbox > 48 files
-test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes all of them > 12 files
-test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes all of them > 3 files
-test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes all of them > 48 files
-~ test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes nothing > 12 files
-~ test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes nothing > 3 files
-~ test/cli/test/isolation.test.ts: bun test --isolate > no root reaches the global object of a finished file > that makes nothing > 48 files
-test/cli/test/isolation.test.ts: bun test --isolate > a test file's macros are loaded again for each file (--isolate)
-test/cli/test/isolation.test.ts: bun test --isolate > a test file's macros are loaded again for each file (--parallel worker)
-test/cli/test/isolation.test.ts: bun test --isolate > with --isolate, a BroadcastChannel left open in a ShadowRealm stops receiving messages
-test/cli/test/isolation.test.ts: bun test --isolate > with --isolate=modules, a BroadcastChannel left open in a ShadowRealm stops receiving messages
-test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds the builtins as the first one did, whatever the files before it did to them
-test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
-test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file
 # From here on, by what stands behind them:
 #   30887.test.ts, missing-module.test.js: a compiled run writes and reads no entry of the run-time transpiler's cache: these ask for one.
 #   junit.test.js: the words of a syntax error are the checker's.
@@ -190,6 +141,7 @@ test/cli/test/parallel.test.ts: --parallel: a worker that dies mid-file takes th
 test/js/bun/plugin/plugins.test.ts: a macro called in a file that is not the entry point > in bun test ["--isolate"]
 test/js/bun/plugin/plugins.test.ts: a macro called in a file that is not the entry point > in bun test ["--parallel=2"]
 test/js/bun/plugin/plugins.test.ts: a macro called in a file that is not the entry point > in bun test []
+# What a frame or a register still holds decides whether a global object is let go: seen to fail on Linux x64 alone, and to pass there too.
 ~ test/js/bun/plugin/plugins.test.ts: a module made from an object > doesn't leak the global of a test file that imports it twice at once under --isolate: JSON
 ~ test/js/bun/plugin/plugins.test.ts: a module made from an object > doesn't leak the global of a test file that imports it twice at once under --isolate: TOML
 ~ test/js/bun/plugin/plugins.test.ts: a module made from an object > doesn't leak the global of a test file that imports it twice at once under --isolate: a JSON array

@@ -21,10 +21,11 @@ pub type Index = IndexType;
 // open-coded `unsafe { &*dir_info }` at ~50 read sites. The BSSMap backing
 // store is process-lifetime and append-only (slots are never freed), so a
 // `Copy` handle that
-// `Deref`s to `&DirInfo` is sound: the pointee outlives every holder, and
-// nothing writes to it while a handle exists — writes happen only inside
-// `dir_info_uncached` while filling a slot from `reserve_slot`, before
-// `publish_slot` lets anybody find it. No lock serializes the reads.
+// `Deref`s to `&DirInfo` is sound: the pointee outlives every holder, and no
+// `&mut DirInfo` is ever materialized concurrently with a read — writes happen
+// only inside `dir_info_uncached` while filling a freshly-`put` slot, before
+// any handle to that slot escapes. All access is additionally serialized under
+// the resolver mutex.
 //
 // `as_ptr()` exposes the raw `*mut` for the few callers that still need it
 // (the `dir_info_uncached` fill path and `MatchResult.dir_info` round-trip).
@@ -75,11 +76,11 @@ impl core::ops::Deref for DirInfoRef {
     #[inline]
     fn deref(&self) -> &DirInfo {
         // ARENA — `self.0` is a slot in the process-lifetime BSSMap singleton
-        // (see type-level doc). The slot is never freed and never written while
-        // a `DirInfoRef` is held: writes occur only in `dir_info_uncached`,
-        // against a slot from `reserve_slot` that nobody finds by its path
-        // until `publish_slot`. The deref `unsafe` is centralised in
-        // `BackRef::get`.
+        // (see type-level doc). The slot is never freed and never aliased by a
+        // live `&mut DirInfo` while a `DirInfoRef` is held: writes occur only
+        // in `dir_info_uncached` against a freshly-`put` slot before any handle
+        // escapes, under the resolver mutex. The deref `unsafe` is centralised
+        // in `BackRef::get`.
         self.0.get()
     }
 }
@@ -245,14 +246,6 @@ impl DirInfo {
             .as_entries()
     }
 
-    /// The lock that `get_entries_ref_locked(generation)` asks for.
-    #[must_use = "the lock is released as soon as the guard is dropped"]
-    pub(crate) fn lock_entries(&self, generation: Generation) -> fs::EntriesGuard {
-        fs::FileSystem::instance()
-            .fs
-            .guard_for_listing(self.entries, generation)
-    }
-
     /// Generation-checked lookup of one basename in this directory's cached
     /// listing, performed in a single `entries_mutex` critical section. A
     /// concurrent resolver with a newer generation rewrites the `DirEntry` in
@@ -269,7 +262,7 @@ impl DirInfo {
         let rfs = &mut fs::FileSystem::instance().fs;
         // `MutexGuard` stores the mutex by raw pointer, so holding it does not
         // keep `rfs` borrowed.
-        let _lock = rfs.guard_for_listing(self.entries, generation);
+        let _lock = rfs.entries_mutex.lock_guard();
         rfs.entries_at_locked(self.entries, generation)?
             .as_entries()?
             .get(query)
@@ -306,13 +299,13 @@ impl DirInfo {
 // the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
 // PORTING.md §Global mutable state: lazy singleton. `AtomicCell` over the
 // `Option<NonNull<_>>` because resolver-pool threads race on first access;
-// the load/CAS below makes the publish itself data-race-free. (The map locks
-// itself, and a slot that it finds is not written again: see `reserve_slot`.)
+// the load/CAS below makes the publish itself data-race-free. (The map's
+// *contents* are still guarded by the resolver mutex.)
 static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
     bun_core::AtomicCell::new(None);
 
 /// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
-/// per-access — PORTING.md §Global mutable state.
+/// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline(always)]
 pub(crate) fn hash_map_instance() -> *mut HashMap {
     if let Some(p) = DIR_INFO_MAP.load() {
@@ -342,9 +335,8 @@ fn hash_map_instance_init() -> *mut HashMap {
 #[inline]
 fn ref_at_index(index: Index) -> Option<DirInfoRef> {
     // SAFETY: ARENA — `hash_map_instance()` is the never-null BSSMap singleton
-    // (process-lifetime; never freed). `index` comes out of a published `DirInfo`,
-    // so its own slot was published earlier: it is not written again, and slots
-    // never move. `at_index` yields a slot satisfying `DirInfoRef`'s invariant.
+    // (process-lifetime; never freed). Resolver mutex held by caller serializes
+    // mutation. `at_index` yields a slot satisfying `DirInfoRef`'s invariant.
     unsafe { (*hash_map_instance()).at_index(index) }.map(DirInfoRef::from_slot)
 }
 
@@ -354,23 +346,21 @@ fn ref_at_index(index: Index) -> Option<DirInfoRef> {
 /// Returns `None` for the `NOT_FOUND` / `UNASSIGNED` sentinels.
 ///
 /// # Safety
-/// A non-sentinel `index` must have been assigned by `put_unpublished` (slot
-/// initialized). Only who reserved the slot may write through the pointer, and
-/// only until `publish_slot`.
+/// A non-sentinel `index` must have been assigned by `put` (slot initialized),
+/// and the caller must hold the resolver mutex.
 pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
     if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
         return None;
     }
     let raw = hash_map_instance();
     if index.is_overflow() {
-        // SAFETY: assigned overflow index; the blocks of the list never move.
+        // SAFETY: assigned overflow index; resolver mutex held.
         Some(std::ptr::from_mut::<DirInfo>(unsafe {
             (*raw).overflow_list.at_index_mut(index)
         }))
     } else {
-        // SAFETY: a shared reference to the atomic alone.
-        let used = unsafe { &(*raw).backing_buf_used };
-        let used = u32::from(used.load(core::sync::atomic::Ordering::Relaxed));
+        // SAFETY: raw place read of a `Copy` scalar.
+        let used = u32::from(unsafe { (*raw).backing_buf_used });
         // Unconditional assert: keep the inherent `at_index` panic-on-bad-index
         // failure mode rather than handing out an out-of-bounds pointer.
         assert!(
@@ -416,17 +406,15 @@ pub use Flags as Flag;
 // COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 
-/// Store `value` at `result`'s slot and return a retag-durable slot pointer
+/// Insert `value` at `result`'s slot and return a retag-durable slot pointer
 /// (see [`slot_ptr_at`]). Takes a raw map pointer, not `&mut self`: a
 /// protected `&mut` receiver would be invalidated when `slot_ptr_at` goes
 /// through the singleton's root tag.
 ///
-/// The slot is filled in place, and nobody finds it by its path until [`publish_slot`]: a directory that is found is
-/// answered without a lock of the resolver's, so what is found is never half made.
-///
 /// # Safety
-/// `map` must be the live `hash_map_instance()` singleton.
-pub(crate) unsafe fn reserve_slot(
+/// `map` must be the live `hash_map_instance()` singleton and the caller must
+/// hold the resolver mutex.
+pub(crate) unsafe fn put_slot(
     map: *mut HashMap,
     result: &mut allocators::Result,
     value: DirInfo,
@@ -435,17 +423,9 @@ pub(crate) unsafe fn reserve_slot(
         map.cast_const(),
         hash_map_instance().cast_const()
     ));
-    // SAFETY: `map` is the live singleton. The auto-ref `&mut *map` ends when
-    // `put_unpublished` returns, before `slot_ptr_at` runs.
-    unsafe { (*map).put_unpublished(result, value) }.map_err(crate::Error::from)?;
-    // SAFETY: `put_unpublished` just assigned a non-sentinel, initialized index.
-    Ok(unsafe { slot_ptr_at(result.index) }.expect("the slot has a non-sentinel index"))
-}
-
-/// # Safety
-/// `map` must be the live `hash_map_instance()` singleton, `result` comes from [`reserve_slot`], and nothing writes
-/// to the slot from here on.
-pub(crate) unsafe fn publish_slot(map: *mut HashMap, result: allocators::Result) {
-    // SAFETY: `map` is the live singleton, and the map locks itself.
-    unsafe { (*map).publish(result) };
+    // SAFETY: `map` is the live singleton; resolver mutex held. The auto-ref
+    // `&mut *map` ends when `put` returns, before `slot_ptr_at` runs.
+    unsafe { (*map).put(result, value) }.map_err(crate::Error::from)?;
+    // SAFETY: `put` just assigned a non-sentinel, initialized index.
+    Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
 }

@@ -386,8 +386,8 @@ const projects: Record<string, Record<string, string>> = {
     "node_modules/bad/index.js": `let b = 1;\nlet b = 2;\nmodule.exports = b;`,
     "names.test.js": `${head}
       test("an alias and a package", async () => {
-        await import("@/broken/declared-twice.js").then(() => console.log("loaded"), error => console.log("an alias", error.name));
-        try { require("bad"); console.log("loaded"); } catch (error) { console.log("a package", error.name); }
+        await import("@/broken/declared-twice.js").then(() => console.log("loaded"), () => console.log("an alias", "threw"));
+        try { require("bad"); console.log("loaded"); } catch { console.log("a package", "threw"); }
       });`,
   },
   "one file under several types, taken out of require.cache in between": {

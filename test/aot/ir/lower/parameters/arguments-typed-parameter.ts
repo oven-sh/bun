@@ -7,5 +7,5 @@
 // CHECK: = Add {{*}}, [[a]]
 
 export function f(a: number) {
-  return arguments.length + a;
+  return arguments[0] + a;
 }

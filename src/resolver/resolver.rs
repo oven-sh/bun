@@ -434,22 +434,15 @@ macro_rules! bufs {
     };
 }
 
-// This is a global so even if multiple resolvers are created, the mutex will still work.
-// Whoever reads a directory that nobody has read holds it, or one of `DIRECTORY_MUTEXES` (`read_unknown_dir_info`).
+// This is a global so even if multiple resolvers are created, the mutex will still work
+// `pub(crate)` so the `fs::EntriesMap::inner` debug-assert can verify it is held
+// (the resolver mutex is one of the two documented guards for the entries singleton).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
-
-// The one that the path of a directory hashes to is held while the directory is read: no two threads read one
-// directory at the same time, and threads that read different ones seldom wait for one another. No thread holds two.
-static DIRECTORY_MUTEXES: [Mutex; 256] = [const { Mutex::new() }; 256];
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 static BIN_FOLDERS: bun_core::RacyCell<BinFolderArray> =
     bun_core::RacyCell::new(BoundedArray::new());
 static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
-
-fn lock_bin_folders() -> bun_threading::MutexGuard {
-    BIN_FOLDERS_LOCK.lock_guard()
-}
 
 // LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
 // register directory watches. The concrete callback lives in `bun_watcher`
@@ -553,9 +546,6 @@ pub struct Resolver<'a> {
     // reducing parallelism in the resolver helps the rest of the bundler go
     // faster. I'm not sure why this is but please don't change this unless you
     // do a lot of testing with various benchmarks and there aren't any regressions.
-    //
-    // It is held while a directory that nobody has read is read, where there is a package manager and on Windows: see
-    // `read_unknown_dir_info`. A directory that is known is answered without it.
     pub(crate) mutex: &'static Mutex,
 
     /// This cache maps a directory path to information about that directory and
@@ -800,15 +790,14 @@ impl<'a> Resolver<'a> {
     /// allocation, so any `*mut DirInfo` previously projected from an earlier
     /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
     /// subsequent map access are re-derived from the raw singleton via
-    /// `DirInfo::reserve_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
+    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
     /// `ref_at_index` are only durable until the next map access.
     #[inline(always)]
     pub(crate) fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
         // `DirInfo::hash_map_instance()` static (set in `init1`, never
-        // reassigned, never freed). Worker clones come here at the same time:
-        // the map takes its own mutex for what it changes, and its slots never
-        // move. `&mut self` rules out intra-instance aliasing.
+        // reassigned, never freed). Resolver mutex serializes all mutation
+        // across worker clones; `&mut self` rules out intra-instance aliasing.
         unsafe { &mut *self.dir_cache }
     }
 
@@ -2772,8 +2761,6 @@ impl<'a> Resolver<'a> {
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
-        // In this order: whoever fills a `DirInfo` holds `entries_mutex` until the slot is published, and
-        // `bust_entries_cache` takes it exclusively, so what was being read when the bust came is removed too.
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
         bun_core::scoped_log!(
@@ -3711,7 +3698,7 @@ impl<'a> Resolver<'a> {
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
-            // SAFETY: `Exists`: the slot is published, and nobody writes to it again.
+            // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
             // The slot pointer is rooted at the singleton, so the returned ref
             // survives the caller's later map reborrows.
             return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
@@ -3844,9 +3831,9 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        // SAFETY: `dir_cache()` is the live singleton.
+        // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
         let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
-            DirInfo::reserve_slot(
+            DirInfo::put_slot(
                 self.dir_cache(),
                 &mut dir_cache_info_result,
                 DirInfo::DirInfo::default(),
@@ -3863,7 +3850,7 @@ impl<'a> Resolver<'a> {
         // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
-        let filled = self.dir_info_uncached(
+        self.dir_info_uncached(
             dir_info_ptr,
             dir_entries_dir,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
@@ -3876,10 +3863,7 @@ impl<'a> Resolver<'a> {
             allocators::NOT_FOUND,
             open_dir,
             Some(package_id),
-        );
-        // SAFETY: the live singleton, the slot reserved above, and `dir_info_uncached` was the last to write to it.
-        unsafe { DirInfo::publish_slot(self.dir_cache(), dir_cache_info_result) };
-        filled?;
+        )?;
         // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
         Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
     }
@@ -4047,7 +4031,7 @@ impl<'a> Resolver<'a> {
                 // rewrites the `DirEntry` in place under that lock. The entry
                 // pointer stays valid after unlock (EntryStore-owned).
                 let looked_up = {
-                    let _entries_lock = resolved_dir_info.lock_entries(self.generation);
+                    let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
                     resolved_dir_info
                         .get_entries_ref_locked(self.generation)
                         .map(|entries| (entries.get(base), entries.fd))
@@ -4498,6 +4482,9 @@ impl<'a> Resolver<'a> {
         enable_logging: bool,
         raw_input_path: &[u8],
     ) -> crate::CrateResult<Option<DirInfoRef>> {
+        // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
+        // doesn't keep `self` borrowed across the body.
+        let _unlock = self.mutex.lock_guard();
         let mut input_path = raw_input_path;
 
         if is_dot_slash(input_path) || input_path == b"." {
@@ -4562,94 +4549,17 @@ impl<'a> Resolver<'a> {
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
-        // A directory that is known is answered without a lock of the resolver's: whoever reads a new directory holds
-        // one across the system calls, and every other thread would queue behind it for an answer that is there.
-        // The map locks itself, and a slot is found once it is filled (`DirInfo::publish_slot`) and never written again.
-        let known = self
+        let top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
-        if known.status != allocators::ItemStatus::Unknown {
+        if top_result.status != allocators::ItemStatus::Unknown {
             return Ok(self
                 .dir_cache_mut()
-                .at_index(known.index)
+                .at_index(top_result.index)
                 .map(DirInfoRef::from_slot));
         }
 
-        self.read_unknown_dir_info(enable_logging, input_path)
-    }
-
-    /// The directory at `input_path`, which nobody had read when the cache was asked.
-    #[cold]
-    #[inline(never)]
-    fn read_unknown_dir_info(
-        &mut self,
-        enable_logging: bool,
-        input_path: &[u8],
-    ) -> crate::CrateResult<Option<DirInfoRef>> {
-        // What reading a directory touches beside the slots of the directory locks itself or belongs to the resolver
-        // or to the thread, but for the package manager, of which the process has one.
-        if cfg!(windows) || self.use_package_manager() {
-            return self.read_dir_info_under(self.mutex, enable_logging, false, input_path);
-        }
-
-        // Reading the directories above writes to the thread's buffers, and `input_path` may lie in one of them.
-        let mut own_path = bun_paths::path_buffer_pool::get();
-        own_path[..input_path.len()].copy_from_slice(input_path);
-        let input_path: &[u8] = &own_path[..input_path.len()];
-
-        // Threads read different directories at the same time, each directory under its own lock and behind the one
-        // above it, which holds what a `DirInfo` takes from others. The lengths of the paths to read, from the bottom up:
-        let mut lengths = [0u32; 256];
-        lengths[0] = input_path.len() as u32;
-        let mut count = 1;
-        let mut above = Dirname::dirname(input_path);
-        while above.len() < lengths[count - 1] as usize
-            && self.dir_cache_mut().get_or_put(above)?.status == allocators::ItemStatus::Unknown
-        {
-            // As in `dir_info_cached_miss`: no real directory is this deep.
-            if count == lengths.len() {
-                return Ok(None);
-            }
-            lengths[count] = above.len() as u32;
-            count += 1;
-            above = Dirname::dirname(above);
-        }
-
-        let mut dir_info = None;
-        for &length in lengths[..count].iter().rev() {
-            let path = &input_path[..length as usize];
-            let hash = self.dir_cache_mut().get_or_put(path)?.hash;
-            let mutex = &DIRECTORY_MUTEXES[hash as usize % DIRECTORY_MUTEXES.len()];
-            let is_ancestor = path.len() < input_path.len();
-            dir_info = self.read_dir_info_under(mutex, enable_logging, is_ancestor, path)?;
-            if dir_info.is_none() {
-                break;
-            }
-        }
-        Ok(dir_info)
-    }
-
-    /// Reads the directory at `path` under `mutex`, unless another thread has read it by then.
-    /// `is_ancestor`: it is read on the way to one below it.
-    fn read_dir_info_under(
-        &mut self,
-        mutex: &'static Mutex,
-        enable_logging: bool,
-        is_ancestor: bool,
-        path: &[u8],
-    ) -> crate::CrateResult<Option<DirInfoRef>> {
-        let _unlock = mutex.lock_guard();
-        let result = self
-            .dir_cache_mut()
-            .get_or_put(strings::without_trailing_slash_windows_path(path))?;
-        if result.status != allocators::ItemStatus::Unknown {
-            return Ok(self
-                .dir_cache_mut()
-                .at_index(result.index)
-                .map(DirInfoRef::from_slot));
-        }
-
-        self.dir_info_cached_miss(enable_logging, is_ancestor, path, result)
+        self.dir_info_cached_miss(enable_logging, input_path, top_result)
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
@@ -4662,7 +4572,6 @@ impl<'a> Resolver<'a> {
     fn dir_info_cached_miss(
         &mut self,
         enable_logging: bool,
-        is_ancestor: bool,
         input_path: &[u8],
         top_result: allocators::Result,
     ) -> crate::CrateResult<Option<DirInfoRef>> {
@@ -4718,7 +4627,7 @@ impl<'a> Resolver<'a> {
         }
 
         // SAFETY: `rfs` points at process-global storage; outlives this guard.
-        let mut entries_guard = rfs!().entries_mutex.guard_for_reading(self.store_fd);
+        let _entries_unlock = rfs!().entries_mutex.lock_guard();
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
@@ -4835,16 +4744,6 @@ impl<'a> Resolver<'a> {
         // - remember
         let mut _safe_path: Option<&'static [u8]> = None;
 
-        // `dir_info_uncached` asks for the listing of the directory above at this generation.
-        // SAFETY: `top_parent.index` is a sentinel or a published slot.
-        let listing_above = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
-            .map(|above| unsafe { (*above).entries });
-        if listing_above
-            .is_some_and(|listing| rfs!().is_listing_older_than(listing, self.generation))
-        {
-            entries_guard = rfs!().entries_mutex.make_exclusive(entries_guard);
-        }
-
         // Start at the top.
         while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
@@ -4920,7 +4819,7 @@ impl<'a> Resolver<'a> {
                             // A permission-denied ancestor (sandboxed drive roots, x-only
                             // shared dirs) is treated as opaque and empty, like the
                             // ENOTDIR tolerance; the requested directory itself stays fatal.
-                            if (queue_slice_len > 0 || is_ancestor)
+                            if queue_slice_len > 0
                                 && matches!(
                                     err,
                                     crate::Error::Sys(bun_errno::SystemErrno::EPERM)
@@ -5020,10 +4919,6 @@ impl<'a> Resolver<'a> {
 
             let mut cached_dir_entry_result =
                 rfs!().entries.get_or_put(dir_path).expect("unreachable");
-            if rfs!().is_listing_older_than(cached_dir_entry_result.index, self.generation) {
-                entries_guard = rfs!().entries_mutex.make_exclusive(entries_guard);
-                cached_dir_entry_result = rfs!().entries.get_or_put(dir_path).expect("unreachable");
-            }
 
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
@@ -5040,16 +4935,11 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
-            debug_assert!(
-                in_place.is_none() || rfs!().entries_mutex.is_held_exclusively_by_current_thread(),
-                "a listing is rewritten in place under the exclusive entries_mutex",
-            );
 
             if needs_iter {
                 // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to
                 // slots in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this
-                // fn and are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv), which is
-                // held exclusively where `in_place` is written to.
+                // fn and are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
                 let mut new_entry = Fs::file_system::DirEntry::init(
                     if let Some(existing) = in_place {
                         // SAFETY: see block-wide note above.
@@ -5123,11 +5013,6 @@ impl<'a> Resolver<'a> {
                     // freshly boxed entry (see block-wide note above).
                     unsafe { (*dir_entries_ptr).data.count() },
                 );
-                if in_place.is_none() {
-                    // The lock may be shared here, and who shares it writes to no slot that others see. Where the
-                    // slot holds an error of an earlier read, the listing gets a slot of its own.
-                    cached_dir_entry_result.index = allocators::UNASSIGNED;
-                }
                 dir_entries_option = rfs!().entries.put(
                     &mut cached_dir_entry_result,
                     Fs::file_system::real_fs::EntriesOption::Entries(
@@ -5139,21 +5024,22 @@ impl<'a> Resolver<'a> {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            // SAFETY: `dir_cache()` is the live singleton.
+            // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
             // Both slot pointers are rooted at the singleton, so the map
             // reborrows inside `dir_info_uncached` cannot pop them.
             let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
-                DirInfo::reserve_slot(
+                DirInfo::put_slot(
                     self.dir_cache(),
                     &mut queue_top.result,
                     DirInfo::DirInfo::default(),
                 )
             }?;
-            // SAFETY: `top_parent.index` is a sentinel or a published slot.
+            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
+            // `put`; resolver mutex held.
             let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
-            let filled = self.dir_info_uncached(
+            self.dir_info_uncached(
                 dir_info_ptr,
                 dir_path,
                 // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
@@ -5164,11 +5050,7 @@ impl<'a> Resolver<'a> {
                 top_parent.index,
                 open_dir,
                 None,
-            );
-            // Whoever finds the directory from here on takes no lock of the resolver's.
-            // SAFETY: the live singleton, the slot reserved above, and `dir_info_uncached` was the last to write to it.
-            unsafe { DirInfo::publish_slot(self.dir_cache(), queue_top.result) };
-            filled?;
+            )?;
 
             top_parent = queue_top.result;
 
@@ -5740,7 +5622,7 @@ impl<'a> Resolver<'a> {
         // for the rewrite this guards against); the fd gate matches
         // `DirInfo::get_file_descriptor`.
         let looked_up = {
-            let _entries_lock = dir_info.lock_entries(self.generation);
+            let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
             dir_info
                 .get_entries_ref_locked(self.generation)
                 .map(|entries| {
@@ -6540,7 +6422,7 @@ impl<'a> Resolver<'a> {
                         let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
                             break 'append_bin_dir;
                         };
-                        let _unlock = lock_bin_folders();
+                        let _unlock = BIN_FOLDERS_LOCK.lock_guard();
 
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                         unsafe {
@@ -6573,7 +6455,7 @@ impl<'a> Resolver<'a> {
                             else {
                                 break 'append_bin_dir;
                             };
-                            let _unlock = lock_bin_folders();
+                            let _unlock = BIN_FOLDERS_LOCK.lock_guard();
 
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                             unsafe {

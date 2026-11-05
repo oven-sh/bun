@@ -283,9 +283,6 @@ impl Build<'_> {
             // SAFETY: as above, and what is lowered owns its data.
             unsafe { loaded.project(project).loaded.free_checker(&in_parallel) };
         }
-        // They were two fifths of what the front end held. Nobody waits for the pages to go back.
-        let thread = std::thread::Builder::new().name("AOT memory".into());
-        let _ = thread.spawn(bun_alloc::give_back_freed_pages);
         let LoweredApplication {
             mut decided,
             mut checked,

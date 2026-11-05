@@ -79,10 +79,6 @@ const files = {
       at.toLocaleDateString("ja-u-ca-japanese", { timeZone: "UTC", dateStyle: "full" }),
     ]);
     show("day period", () => at.toLocaleTimeString("en", { timeZone: "UTC", hour: "numeric", dayPeriod: "long" }));
-    show("both by default", () => at.toLocaleString());
-    for (const locale of ["en-IN", "de", "ja", "ar-EG", "hi", "ru", "he-u-ca-hebrew", "xx"]) {
-      show("both " + locale, () => [at.toLocaleString(locale, { timeZone: "UTC", dateStyle: "full", timeStyle: "full" }), at.toLocaleString(locale, { timeZone: "Asia/Kolkata", timeZoneName: "longGeneric" })]);
-    }
   `,
   "names-toLocaleString.ts": `
     ${show}
@@ -116,18 +112,19 @@ const files = {
       ]);
     }
   `,
-  // The first argument says which.
-  "uses-one.ts": `
-    const uses: Record<string, () => unknown> = {
-      IntlSegmenter: () => [...new Intl.Segmenter("en", { granularity: "word" }).segment("two words")].length,
-      IntlDisplayNames: () => new Intl.DisplayNames("de", { type: "region" }).of("US"),
-      IntlOther: () => new Intl.ListFormat("de").format(["a", "b"]),
-      IntlCollation: () => "b".localeCompare("a"),
-      IntlNumberFormat: () => (1234.5).toLocaleString(process.env.LOCALE ?? "de"),
-      IntlDateTimeFormat: () => new Date(0).toLocaleDateString(process.env.LOCALE ?? "de", { timeZone: "UTC" }),
-    };
-    console.log(uses[process.argv[2]]());
+  "names-date-toLocaleString.ts": `
+    ${show}
+    show("default", () => at.toLocaleString());
+    for (const locale of ["en-IN", "de", "ja", "ar-EG", "hi", "ru", "he-u-ca-hebrew", "xx"]) {
+      show(locale, () => [at.toLocaleString(locale, { timeZone: "UTC", dateStyle: "full", timeStyle: "full" }), at.toLocaleString(locale, { timeZone: "Asia/Kolkata", timeZoneName: "longGeneric" })]);
+    }
   `,
+  "uses-IntlSegmenter.ts": `console.log([...new Intl.Segmenter("en", { granularity: "word" }).segment("two words")].length);`,
+  "uses-IntlDisplayNames.ts": `console.log(new Intl.DisplayNames("de", { type: "region" }).of("US"));`,
+  "uses-IntlOther.ts": `console.log(new Intl.ListFormat("de").format(["a", "b"]));`,
+  "uses-IntlCollation.ts": `console.log("b".localeCompare("a"));`,
+  "uses-IntlNumberFormat.ts": `console.log((1234.5).toLocaleString(process.env.LOCALE ?? "de"));`,
+  "uses-IntlDateTimeFormat.ts": `console.log(new Date(0).toLocaleDateString(process.env.LOCALE ?? "de", { timeZone: "UTC" }));`,
   "uses-IntlUnits.ts": `
     ${show}
     show("unit", () => (3.5).toLocaleString("en", { style: "unit", unit: "liter", unitDisplay: "long" }));
@@ -195,8 +192,12 @@ const without = (...kept: string[]) => features.filter(feature => !kept.includes
     await runsLikeBun("names-localeCompare.ts", without("IntlCollation"));
   });
 
-  test("toLocaleDateString, toLocaleTimeString and toLocaleString of a Date need only the data of date formatting", async () => {
+  test("toLocaleDateString and toLocaleTimeString need only the data of date formatting", async () => {
     await runsLikeBun("names-toLocaleDateString.ts", without("IntlDateTimeFormat"));
+  });
+
+  test("toLocaleString of a Date needs only the data of date formatting", async () => {
+    await runsLikeBun("names-date-toLocaleString.ts", without("IntlDateTimeFormat"));
   });
 
   test("toLocaleString of a Number or a BigInt needs only the data of number formatting and of units", async () => {
@@ -219,7 +220,7 @@ const without = (...kept: string[]) => features.filter(feature => !kept.includes
 
   for (const feature of without("IntlUnits")) {
     test(`${feature}: with it forced out, the executable says so`, async () => {
-      const failed = await run([(await build("uses-one.ts", without("IntlUnits"))).executable, feature], folder);
+      const failed = await run([(await build(`uses-${feature}.ts`, [feature])).executable], folder);
       expect({ stderr: failed.stderr, saysSo: saysFeatureWasRemoved(failed.stderr, featureNamed(feature)) }).toEqual({
         stderr: failed.stderr,
         saysSo: true,

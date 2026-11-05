@@ -12,8 +12,8 @@ import { beforeAll, describe, eachRow, gap, test } from "./supported";
 
 raiseDefaultTimeout(240_000);
 
-// Each function may call itself, by a test that no build can decide. What is in a cycle of calls is never inlined, so each
-// has code and a symbol of its own whatever the compiler thinks of its size. The call is never in tail position: that would
+// Each function may call itself, by a test that no build can decide. So each has code and a symbol of its own whatever the
+// compiler thinks of its size, though its caller may hold a copy of it in line. The call is never in tail position: that would
 // make a loop of the body, and in a loop Map.get is searched inline, without a call of the code that the functions share.
 const files = {
   "app.ts": `import { priceOf, type Item } from "./prices.ts";
@@ -122,9 +122,25 @@ class Executable {
     }
     throw new Error(`${name} calls nothing that has a symbol`);
   }
-  writeWithFaultAt(address: number, path: string, fault = loadFromLowAddress) {
+  /** Where the near calls of `callee` return to in the program's other functions: in the body of its caller, and wherever that body was copied in line. */
+  returnAddressesOfCallsOf(callee: string) {
+    const target = this.addressOf(callee);
+    const sorted = [...this.addresses].sort((a, b) => a - b);
+    const found: number[] = [];
+    for (const [symbol, start] of this.symbols) {
+      if (!/ (?:app|prices)\.ts:\d+/.test(symbol) || start === target) continue;
+      const end = sorted.find(address => address > start)!;
+      for (let address = start; address + 5 <= end; address++) {
+        const at = this.offsetOf(address);
+        if (this.bytes[at] === 0xe8 && address + 5 + this.bytes.readInt32LE(at + 1) === target) found.push(address + 5);
+      }
+    }
+    if (!found.length) throw new Error(`nothing calls ${callee}`);
+    return found;
+  }
+  writeWithFaultAt(addresses: number | number[], path: string, fault = loadFromLowAddress) {
     const planted = Buffer.from(this.bytes);
-    fault.copy(planted, this.offsetOf(address));
+    for (const address of [addresses].flat()) fault.copy(planted, this.offsetOf(address));
     writeFileSync(path, planted);
     chmodSync(path, 0o755);
   }
@@ -195,7 +211,7 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
   test("in a function: the function and all its callers, by name, file, line and column", async () => {
     using dir = tempDir("aot-crash-in-compiled-code", files);
     const { id, executable } = await build(String(dir));
-    executable.writeWithFaultAt(executable.firstReturnAddressIn("lineTotal"), join(String(dir), "planted"));
+    executable.writeWithFaultAt(executable.returnAddressesOfCallsOf("priceOf"), join(String(dir), "planted"));
     expect(await crash(String(dir), id)).toEqual([
       "lineTotal app.ts:17:17",
       "total app.ts:11:43",
@@ -211,7 +227,7 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
       ["SIGSEGV", loadFromLowAddress, "Segmentation fault at address 0x18\n"],
       ["SIGILL", illegalInstruction, "Illegal instruction at address 0x"],
     ] as const) {
-      executable.writeWithFaultAt(executable.firstReturnAddressIn("lineTotal"), join(String(dir), "planted"), fault);
+      executable.writeWithFaultAt(executable.returnAddressesOfCallsOf("priceOf"), join(String(dir), "planted"), fault);
       await using child = Bun.spawn({
         cmd: withoutCoreDump([join(String(dir), "planted"), "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE"]),
         cwd: String(dir),

@@ -26,9 +26,6 @@ pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
 unsafe extern "C" {
     /// No preconditions.
     pub safe fn mi_collect(force: bool);
-    /// Gives every freed page that nobody has taken again back to the system now, whatever
-    /// `purge_delay` says, on the calling thread. Touches no heap of that thread. No preconditions.
-    pub safe fn mi_arenas_purge();
     /// Call when a thread goes idle: collects this thread's pending frees, discards the
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
@@ -169,10 +166,7 @@ pub enum Option {
 unsafe extern "C" {
     // `mi_option_*` take only by-value `#[repr(C)]` enum + scalar args and
     // mutate mimalloc-internal global state; no pointer invariants → `safe fn`.
-    pub safe fn mi_option_get(option: Option) -> c_long;
     pub safe fn mi_option_set(option: Option, value: c_long);
-    /// Leaves an option alone that the environment or `mi_option_set` has set.
-    pub safe fn mi_option_set_default(option: Option, value: c_long);
     pub fn mi_malloc_usable_size(p: *const c_void) -> usize;
     pub fn mi_free_size(p: *mut c_void, size: usize);
     pub fn mi_free_size_aligned(p: *mut c_void, size: usize, alignment: usize);

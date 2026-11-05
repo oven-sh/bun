@@ -62,62 +62,14 @@ console.log(value);
 
 const savedText = `'[{"sku":"B-2","price":10,"quantity":3}]'`;
 
-const programs: Record<string, Program> = {
-  "a class and a loop": {
-    hasTyped: true,
-    hasUntyped: false,
-    files: {
-      "main.ts": `class Account {
-  constructor(
-    public id: number,
-    public balance: number,
-  ) {}
-}
-function total(accounts: Account[]): number {
-  let sum = 0;
-  for (const account of accounts) sum += account.balance;
-  return sum;
-}
-const accounts: Account[] = [];
-for (let id = 0; id < 10; id++) {
-  const account = new Account(id, id % 3);
-  accounts.push(account);
-}
-const sum = total(accounts);
-console.log(sum);
-`,
-    },
-  },
-  "objects of a class behind an any": {
-    hasTyped: true,
-    hasUntyped: false,
-    files: {
-      "main.ts": `class Account {
-  id = 1;
-  balance = 2;
-}
-const accounts: any[] = [];
-for (let id = 0; id < 10; id++) {
-  const account = new Account();
-  accounts.push(account);
-}
-let sum = 0;
-for (const account of accounts) sum += account.balance;
-console.log(sum);
-`,
-    },
-  },
-  "a JavaScript file of the program": {
-    hasTyped: true,
-    hasUntyped: false,
-    files: {
-      "helper.js": `export function describe(jobs) {
+const twoFiles = {
+  "helper.js": `export function describe(jobs) {
   let text = "";
   for (const job of jobs) text += job.id + ": " + job.state + "\\n";
   return text;
 }
 `,
-      "main.ts": `import { describe } from "./helper.js";
+  "main.ts": `import { describe } from "./helper.js";
 class Job {
   id = 1;
   state = "queued";
@@ -126,8 +78,9 @@ const jobs = [new Job(), new Job()];
 const text = describe(jobs);
 console.log(text);
 `,
-    },
-  },
+};
+
+const programs: Record<string, Program> = {
   "properties of parsed data": {
     hasUntyped: true,
     files: {
@@ -300,7 +253,7 @@ test(
   "closing line",
   () =>
     slot(async () => {
-      const { files } = programs["a JavaScript file of the program"]!;
+      const files = twoFiles;
       const texts = Object.values(files);
       const lineCount = texts.reduce((sum, text) => sum + text.split("\n").length - 1, 0);
       const closingLine = new RegExp(

@@ -489,11 +489,6 @@ impl Files<'_> {
         self.modules[file.idx()].state.load(SeqCst) == GONE
     }
 
-    #[cfg(any(test, feature = "test_support"))]
-    pub fn times_tree_came_back(&self, _file: FileId) -> u32 {
-        0
-    }
-
     /// The trees stay for good, or the file owns none. `Files::free_tree` does not ask: that is up to its caller.
     pub fn is_tree_kept(&self, file: FileId) -> bool {
         self.modules[file.idx()].state.load(SeqCst) == KEPT

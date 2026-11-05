@@ -174,6 +174,22 @@ describe.concurrent("the hidden --aot- flags of a build", () => {
     300_000,
   );
 
+  // A build with plugins is a call and has no command line.
+  test(
+    "compile.aotOut of Bun.build() writes it too",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-out-by-call", {
+          ...pointsProgram,
+          "build.ts": `await Bun.build({ entrypoints: ["./app.ts"], compile: { outfile: "./out", aot: true, aotOut: "program.bin" } as any });\n`,
+        });
+        const folder = String(dir);
+        expect(await bun(folder, "build.ts")).toMatchObject({ exitCode: 0, signal: null });
+        expect(statSync(join(folder, "program.bin")).size).toBeGreaterThan(0);
+      }),
+    300_000,
+  );
+
   test(
     "a value of another type than declared is computed with as in plain Bun, with and without --aot-erase-types",
     () =>

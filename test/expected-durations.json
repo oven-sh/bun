@@ -948,6 +948,14 @@
     "default": 182800,
     "asan": 731200
   },
+  "aot/perf/apply-arguments-cost.test.ts": {
+    "default": 300,
+    "asan": 1200
+  },
+  "aot/perf/generator-first-question.test.ts": {
+    "default": 200,
+    "asan": 800
+  },
   "aot/perf/measure-idioms.test.ts": {
     "default": 400,
     "asan": 1600
@@ -1693,13 +1701,6 @@
     "musl": 2400,
     "windows": 2200,
     "windows-aarch64": 3500
-  },
-  "aot/assembled-patterns-in-executables.test.ts": {
-    "default": 1300,
-    "asan": 6200,
-    "musl": 900,
-    "windows": 2300,
-    "windows-aarch64": 1700
   },
   "aot/back-end-options-from-environment.test.ts": {
     "default": 1000,
@@ -2657,13 +2658,6 @@
     "windows": 27700,
     "windows-aarch64": 27600
   },
-  "aot/generated-code-of-module-bodies.test.ts": {
-    "default": 2000,
-    "asan": 5000,
-    "musl": 1200,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/globals-of-every-project-in-the-run.test.ts": {
     "default": 8100,
     "asan": 147500,
@@ -3251,6 +3245,34 @@
     "musl": 1700,
     "windows": 2400,
     "windows-aarch64": 2000
+  },
+  "aot/perf/copies-in-cold-code.test.ts": {
+    "default": 100,
+    "asan": 400,
+    "musl": 900,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/perf/evaluated-text-reads-names-above-functions.test.ts": {
+    "default": 100,
+    "asan": 500,
+    "musl": 1600,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/perf/lone-reads-in-cold-code.test.ts": {
+    "default": 100,
+    "asan": 900,
+    "musl": 500,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/perf/names-given-by-key.test.ts": {
+    "default": 100,
+    "asan": 1200,
+    "musl": 19200,
+    "windows": 100,
+    "windows-aarch64": 100
   },
   "aot/perf/threads-of-a-build.test.ts": {
     "default": 2400,

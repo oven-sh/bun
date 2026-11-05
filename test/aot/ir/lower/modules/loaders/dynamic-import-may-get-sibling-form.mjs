@@ -1,17 +1,17 @@
-// import() with a type resolves to whatever the loader holds for the path and the kind of type: none, "json", or any other type. So it may get the form that a static import loaded under
-// another type of the same kind. Such a sibling form keeps all its exports, and its members are not constant-folded. Both forms are keyed by type. A form of another kind is unaffected.
+// import() with a type resolves to whatever the loader holds for the path and the kind of type: none, "json", or any other type. So it gets the form that a static import loaded under
+// another type of the same kind: the two are one module, under the path alone. It keeps all its exports, and its members are not constant-folded. A form of another kind is unaffected.
 
 // RUN(TOML): link
-// TOML: module {{*}}path="{{*}}first.toml?toml" displayPath={{*}}exports=[{name="a"{{*}}{name="b"{{*}}{name="default"
+// TOML: module {{*}}path="{{*}}first.toml" displayPath={{*}}exports=[{name="a"{{*}}{name="b"{{*}}{name="default"
 
 // RUN(TEXT): link
-// TEXT: module {{*}}path="{{*}}first.toml?text" displayPath
+// TEXT-NOT: path="{{*}}first.toml?text" displayPath
 
 // RUN(BARE): link
-// BARE-NOT: path="{{*}}first.toml" displayPath
+// BARE-NOT: path="{{*}}first.toml?toml" displayPath
 
 // RUN(YAML): link
-// YAML: module {{*}}path="{{*}}second.yaml?yaml" displayPath={{*}}exports=[{name="a"{{*}}{name="b"{{*}}{name="default"
+// YAML: module {{*}}path="{{*}}second.yaml" displayPath={{*}}exports=[{name="a"{{*}}{name="b"{{*}}{name="default"
 
 // RUN(COMPUTED): link
 // COMPUTED: module {{*}}path="{{*}}third.toml?toml" displayPath={{*}}exports=[{name="a"{{*}}{name="b"{{*}}{name="default"

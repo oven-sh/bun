@@ -73,7 +73,6 @@ use bun_sema_driver::{
     for_each_parallel_in_runs, run_on_one_thread_while,
 };
 use bun_sys::{Fd, File};
-use bun_threading::thread_pool::BuildUnderWay;
 use core::fmt;
 use core::time::Duration;
 use std::num::NonZeroUsize;
@@ -298,7 +297,6 @@ pub fn link_program(
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<LinkedProgram, BuildFailed> {
-    let _under_way = BuildUnderWay::begin();
     let caches = ThreadCaches::default();
     let mut build = Build::new(options, provider, &caches, LimitValues::for_host());
     let result = build.run_front_end().map(|mut output| {
@@ -396,7 +394,6 @@ pub fn compile(
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     bun_threading::thread_pool::exit_without_any_thread();
-    let _under_way = BuildUnderWay::begin();
     let request = EngineRequest {
         options: options.aot,
         identity: options.executable_identity,
@@ -655,11 +652,7 @@ impl<'a> Build<'a> {
         let clock = &mut self.clock;
         let ((), (engine, time_in_engine)) = run_beside(
             &beside,
-            // The front end has freed more than it hands over, in pieces too small for the lists of the engine.
-            move || {
-                drop(leftovers);
-                bun_alloc::give_back_freed_pages();
-            },
+            move || drop(leftovers),
             || {
                 clock.stop();
                 let entered = Instant::now();

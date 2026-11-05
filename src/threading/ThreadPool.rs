@@ -30,7 +30,7 @@ use core::cell::Cell;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
 
-use crate::{Futex, Guarded, WaitGroup};
+use crate::{Futex, WaitGroup};
 use bun_core::Output;
 
 /// Debug instrumentation: when `BUN_THREADPOOL_STATS=1`, each pool records
@@ -369,8 +369,6 @@ impl Drop for ThreadPool {
     fn drop(&mut self) {
         self.shutdown();
         self.join();
-        let this = bun_ptr::BackRef::new(&*self);
-        BUILDS.lock().pools_asleep.retain(|pool| *pool != this);
     }
 }
 
@@ -854,154 +852,6 @@ pub fn exit_without_any_thread() {
 #[unsafe(no_mangle)]
 extern "C" fn Bun__ThreadPool__exitWithoutAnyThread() {
     exit_without_any_thread();
-}
-
-#[cfg(not(test))]
-mod allocator {
-    pub(super) use bun_alloc::mimalloc::{
-        mi_on_thread_idle, mi_on_thread_idle_end, mi_on_thread_idle_start,
-    };
-    pub(super) use bun_alloc::{PurgeSettings, give_back_freed_pages};
-}
-
-/// Counts the calls. The tests of this crate link no allocator.
-#[cfg(test)]
-mod allocator {
-    use core::sync::atomic::{AtomicUsize, Ordering};
-
-    pub(super) struct Calls {
-        pub(super) hand_offs: AtomicUsize,
-        pub(super) heaps_taken_back: AtomicUsize,
-        pub(super) sweeps: AtomicUsize,
-        pub(super) purges_put_off: AtomicUsize,
-        pub(super) settings_restored: AtomicUsize,
-        pub(super) freed_pages_given_back: AtomicUsize,
-    }
-
-    pub(super) static CALLS: Calls = Calls {
-        hand_offs: AtomicUsize::new(0),
-        heaps_taken_back: AtomicUsize::new(0),
-        sweeps: AtomicUsize::new(0),
-        purges_put_off: AtomicUsize::new(0),
-        settings_restored: AtomicUsize::new(0),
-        freed_pages_given_back: AtomicUsize::new(0),
-    };
-
-    fn count(calls: &AtomicUsize) {
-        calls.fetch_add(1, Ordering::SeqCst);
-    }
-
-    pub(super) unsafe fn mi_on_thread_idle_start() -> bool {
-        count(&CALLS.hand_offs);
-        true
-    }
-
-    pub(super) fn mi_on_thread_idle_end() {
-        count(&CALLS.heaps_taken_back);
-    }
-
-    pub(super) fn mi_on_thread_idle() {
-        count(&CALLS.sweeps);
-    }
-
-    pub(super) struct PurgeSettings;
-
-    impl PurgeSettings {
-        pub(super) fn put_off() -> PurgeSettings {
-            count(&CALLS.purges_put_off);
-            PurgeSettings
-        }
-
-        pub(super) fn restore(self) {
-            count(&CALLS.settings_restored);
-        }
-    }
-
-    pub(super) fn give_back_freed_pages() {
-        count(&CALLS.freed_pages_given_back);
-    }
-}
-
-/// How many ahead-of-time builds run in this process. It changes under the lock of `BUILDS`.
-static BUILDS_UNDER_WAY: AtomicU32 = AtomicU32::new(0);
-
-struct Builds {
-    /// The allocator's, from before the first build began.
-    former_settings: Option<allocator::PurgeSettings>,
-    /// Each has a thread that went idle during a build and sleeps with its free memory.
-    pools_asleep: Vec<bun_ptr::BackRef<ThreadPool>>,
-}
-
-static BUILDS: Guarded<Builds> = Guarded::new(Builds {
-    former_settings: None,
-    pools_asleep: Vec::new(),
-});
-
-/// Until it's dropped, an ahead-of-time build runs in this process, and what is freed stays with the process: the next
-/// stage takes it. Memory that goes back to the system interrupts every thread, and whoever takes it again faults it in
-/// page by page. When the last one is dropped, the idle threads hand their heaps to the allocator as ever, and the freed
-/// pages go back at once.
-#[must_use]
-pub struct BuildUnderWay(());
-
-impl BuildUnderWay {
-    pub fn begin() -> BuildUnderWay {
-        let mut builds = BUILDS.lock();
-        if BUILDS_UNDER_WAY.fetch_add(1, Ordering::Relaxed) == 0 {
-            builds.former_settings = Some(allocator::PurgeSettings::put_off());
-        }
-        BuildUnderWay(())
-    }
-}
-
-impl Drop for BuildUnderWay {
-    fn drop(&mut self) {
-        let mut builds = BUILDS.lock();
-        if BUILDS_UNDER_WAY.fetch_sub(1, Ordering::Relaxed) != 1 {
-            return;
-        }
-        if let Some(former) = builds.former_settings.take() {
-            former.restore();
-        }
-        for pool in builds.pools_asleep.drain(..) {
-            pool.idle_event.wake_all();
-        }
-        drop(builds);
-        // What comes behind the build does not wait for it.
-        let thread = std::thread::Builder::new().name("AOT memory".into());
-        if thread.spawn(allocator::give_back_freed_pages).is_err() {
-            allocator::give_back_freed_pages();
-        }
-    }
-}
-
-/// Whoever gives free memory back to the system of its own accord does not while this is true.
-#[inline]
-pub fn is_build_under_way() -> bool {
-    BUILDS_UNDER_WAY.load(Ordering::Relaxed) != 0
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__ThreadPool__isBuildUnderWay() -> bool {
-    is_build_under_way()
-}
-
-/// Whether a thread that goes idle now keeps its free memory. The end of the last build wakes the pool of `worker`.
-fn sleeps_through_build(worker: Option<&Thread>) -> bool {
-    if !is_build_under_way() {
-        return false;
-    }
-    let Some(worker) = worker else {
-        return true;
-    };
-    let mut builds = BUILDS.lock();
-    if !is_build_under_way() {
-        return false;
-    }
-    if !builds.pools_asleep.contains(&worker.thread_pool) {
-        builds.pools_asleep.push(worker.thread_pool);
-    }
-    true
 }
 
 /// A refused thread is the environment's limit, not a bug: no crash reporter.
@@ -1750,15 +1600,12 @@ impl Event {
             // An idle thread hands its heaps to mimalloc's scavenger for the wait that has no
             // timeout: one sweep never takes the free blocks of a large page that was just
             // allocated from, and the scavenger comes back for them while this thread sleeps.
-            //
-            // See `BuildUnderWay`. The `wake_all()` at its end brings the thread back here.
-            let gives_memory_back = is_idle && !sleeps_through_build(worker);
             // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
-            let handed_off = gives_memory_back && unsafe { allocator::mi_on_thread_idle_start() };
-            if gives_memory_back && !handed_off && !has_swept {
+            let handed_off = is_idle && unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
+            if is_idle && !handed_off && !has_swept {
                 // No scavenger to hand off to.
                 has_swept = true;
-                allocator::mi_on_thread_idle();
+                bun_alloc::mimalloc::mi_on_thread_idle();
             }
             let timeout_ns: Option<u64> = if !is_idle {
                 Some(100_000_000) // 100ms
@@ -1767,7 +1614,7 @@ impl Event {
             };
             let timed_out = Futex::wait(&self.state, epoch | Self::WAITING, timeout_ns).is_err();
             if handed_off {
-                allocator::mi_on_thread_idle_end();
+                bun_alloc::mimalloc::mi_on_thread_idle_end();
             }
             is_idle |= timed_out;
             word = self.state.load(Ordering::Relaxed);
@@ -2314,134 +2161,5 @@ pub mod node {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::allocator::CALLS;
-    use super::*;
-    use std::time::{Duration, Instant};
-
-    // The count of builds and the counts of calls are the process's.
-    static ONE_AT_A_TIME: Guarded<()> = Guarded::new(());
-
-    fn forget_calls() {
-        for calls in [
-            &CALLS.hand_offs,
-            &CALLS.heaps_taken_back,
-            &CALLS.sweeps,
-            &CALLS.purges_put_off,
-            &CALLS.settings_restored,
-            &CALLS.freed_pages_given_back,
-        ] {
-            calls.store(0, Ordering::SeqCst);
-        }
-    }
-
-    fn read(calls: &AtomicUsize) -> usize {
-        calls.load(Ordering::SeqCst)
-    }
-
-    fn wait_until(what: &str, is_so: impl Fn() -> bool) {
-        let began = Instant::now();
-        while !is_so() {
-            assert!(began.elapsed() < Duration::from_secs(30), "never {what}");
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-
-    fn sleep_as_worker_of(pool: &ThreadPool) {
-        let worker = Thread {
-            next: Cell::new(ptr::null_mut()),
-            target: Cell::new(ptr::null_mut()),
-            join_event: Event::default(),
-            run_queue: node::Queue::default(),
-            idle_queue: node::Queue::default(),
-            run_buffer: node::Buffer::default(),
-            thread_pool: bun_ptr::BackRef::new(pool),
-        };
-        pool.idle_event.wait(Some(&worker));
-    }
-
-    fn is_listed_asleep(pool: &ThreadPool) -> bool {
-        let pool = bun_ptr::BackRef::new(pool);
-        BUILDS.lock().pools_asleep.contains(&pool)
-    }
-
-    /// Also where a test fails, which otherwise would wait for the sleeper forever.
-    struct EndsSleep<'a>(&'a ThreadPool);
-
-    impl Drop for EndsSleep<'_> {
-        fn drop(&mut self) {
-            self.0.idle_event.shutdown();
-        }
-    }
-
-    #[test]
-    fn an_idle_thread_keeps_its_memory_until_the_last_build_ends() {
-        let _alone = ONE_AT_A_TIME.lock();
-        forget_calls();
-        let pool = ThreadPool::init(Config::default());
-        std::thread::scope(|scope| {
-            let _ends_sleep = EndsSleep(&pool);
-            let first = BuildUnderWay::begin();
-            let second = BuildUnderWay::begin();
-            scope.spawn(|| sleep_as_worker_of(&pool));
-            wait_until("asleep", || is_listed_asleep(&pool));
-            drop(first);
-            assert!(is_build_under_way());
-            assert!(is_listed_asleep(&pool));
-            assert_eq!(read(&CALLS.purges_put_off), 1);
-            assert_eq!(read(&CALLS.settings_restored), 0);
-            assert_eq!(read(&CALLS.freed_pages_given_back), 0);
-            assert_eq!(read(&CALLS.hand_offs) + read(&CALLS.sweeps), 0);
-
-            drop(second);
-            assert!(!is_build_under_way());
-            assert_eq!(read(&CALLS.settings_restored), 1);
-            wait_until("handed off", || read(&CALLS.hand_offs) != 0);
-            wait_until("given back", || read(&CALLS.freed_pages_given_back) == 1);
-            assert!(!is_listed_asleep(&pool));
-        });
-        assert_eq!(read(&CALLS.heaps_taken_back), read(&CALLS.hand_offs));
-        assert_eq!(read(&CALLS.purges_put_off), 1);
-        assert_eq!(read(&CALLS.sweeps), 0);
-    }
-
-    #[test]
-    fn an_idle_thread_hands_its_heaps_off_where_no_build_runs() {
-        let _alone = ONE_AT_A_TIME.lock();
-        forget_calls();
-        let pool = ThreadPool::init(Config::default());
-        std::thread::scope(|scope| {
-            let _ends_sleep = EndsSleep(&pool);
-            scope.spawn(|| sleep_as_worker_of(&pool));
-            wait_until("handed off", || read(&CALLS.hand_offs) != 0);
-            assert!(!is_listed_asleep(&pool));
-        });
-        assert_eq!(read(&CALLS.heaps_taken_back), read(&CALLS.hand_offs));
-        assert_eq!(read(&CALLS.purges_put_off), 0);
-        assert_eq!(read(&CALLS.freed_pages_given_back), 0);
-    }
-
-    #[test]
-    fn the_end_of_a_build_wakes_no_pool_that_is_gone() {
-        let _alone = ONE_AT_A_TIME.lock();
-        forget_calls();
-        let build = BuildUnderWay::begin();
-        {
-            // It ends where it stands: `drop(pool)` would move it first, and the list has it by its address.
-            let pool = ThreadPool::init(Config::default());
-            std::thread::scope(|scope| {
-                let _ends_sleep = EndsSleep(&pool);
-                scope.spawn(|| sleep_as_worker_of(&pool));
-                wait_until("asleep", || is_listed_asleep(&pool));
-            });
-        }
-        assert!(BUILDS.lock().pools_asleep.is_empty());
-        drop(build);
-        wait_until("given back", || read(&CALLS.freed_pages_given_back) == 1);
-        assert_eq!(read(&CALLS.hand_offs), 0);
     }
 }

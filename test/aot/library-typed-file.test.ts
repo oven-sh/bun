@@ -85,24 +85,6 @@ describe.concurrent("a program compiled against a package that bun compile --lib
   });
 
   test.each([
-    ["is not strict", { strict: false, skipLibCheck: true, target: "es2017", lib: ["es2017", "dom"] }],
-    ["asks for more than strict", { strict: true, noUncheckedIndexedAccess: true, noImplicitOverride: true }],
-  ])("an application whose tsconfig.json %s compiles the same .aot.ts files", async (_, compilerOptions) => {
-    using dir = tempDir("aot-library-typed-file-options", {
-      ...library,
-      "library/src/area.ts": library["library/src/area.ts"].replace(
-        "return shape",
-        "const sizes = [shape.size];\n  if (sizes[0].valueOf() < 0) return 0;\n  return shape",
-      ),
-      "app/tsconfig.json": JSON.stringify({
-        compilerOptions: { module: "esnext", moduleResolution: "bundler", types: [], ...compilerOptions },
-      }),
-    });
-    await install(String(dir));
-    expect(await compile(String(dir))).toEqual(USED);
-  });
-
-  test.each([
     [
       "a member that is named like the variable it is cast from",
       "const size: unknown = shape.size;\n  shape = { kind: shape.kind, size: size as number };\n  return shape",

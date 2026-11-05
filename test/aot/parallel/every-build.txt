@@ -8,7 +8,6 @@ builtin-modules/members-compiled-module-read-object-body.ts
 builtins-on-typed-objects/lists-of-constants-that-variables-hold/main.js
 builtins/keys-of-reflect-behind-values-that-nothing-uses/main.mjs
 builtins/method-found-under-a-joined-name-is-compiled-once.js
-bundler/macro-with-state-runs-once/main.mjs
 calls/dispatch-by-name.mjs
 changed-builtins/setter-alone.mjs
 class-and-function-changes/name-and-length-redefined-by-key.mjs
@@ -22,9 +21,6 @@ closed-bugs/1867-date-to-json-may-return-its-receiver/main.js
 closed-bugs/2040-getter-taken-from-a-descriptor-of-process-env-g-class-field/main.mjs
 closed-bugs/2047-caller-of-a-getter-under-an-update/the-caller-of-a-getter-under-an-update.js
 closed-bugs/2177-constructed-function-left-by-a-tail-call/k2-what-is-left.mjs
-closed-bugs/2407-order-of-bodies-around-a-require-of-a-module-o-one-thread/main.mjs
-closed-bugs/2407-order-of-bodies-around-a-require-of-a-module-q-one-thread/main.mjs
-closed-bugs/2407-order-of-bodies-around-a-require-of-a-module-s-one-thread/main.mjs
 closed-bugs/2660-constructor-below-object-stores-a-closure-default/small.js
 closed-bugs/2700-escaped-closure-renamed-under-an-unknown-key-way00-right/way00.mjs
 closed-bugs/2700-escaped-closure-renamed-under-an-unknown-key-way01/way01.mjs

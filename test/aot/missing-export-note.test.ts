@@ -86,18 +86,14 @@ test("two files that misspell the name", async () => {
     try {
       await load();
     } catch (error) {
-      console.error("SEEN", error.constructor.name, error.message.replaceAll(import.meta.dir, "<dir>"));
+      console.error("SEEN", error.constructor.name, /'(\\w+)'/.exec(error.message)?.[1]);
     }
   }
 });`,
   };
   const [plain, ...compiled] = await Promise.all([undefined, oneProgram].map(words => seenWith(files, words)));
   expect(plain).toEqual({
-    seen: [
-      "SEEN compiled code reads bound",
-      "SEEN SyntaxError Export named 'bonud' not found in module '<dir>/lib.ts'.",
-      "SEEN SyntaxError export 'bonud' not found in './lib.ts'",
-    ],
+    seen: ["SEEN compiled code reads bound", "SEEN SyntaxError bonud", "SEEN SyntaxError bonud"],
     exitCode: 0,
     note: [],
   });

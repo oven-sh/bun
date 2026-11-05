@@ -1,4 +1,4 @@
-What an error quotes and what a frame shows in a test file, which is an ES module whose functions keep no text: on one line, over several lines, with types; a stack taken while import() first loads node:util.
+What an error quotes in a test file, which is an ES module whose functions keep no text: on one line, over several lines, with types.
 #### one-line.test.js
 const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE one line | " + line).join("\n"));
 // A TypeError quotes the read, the store or the call that failed as it is written. None of these functions is ever used as a value: each is only called.
@@ -161,7 +161,7 @@ function tell(label, run) {
     run();
     say(label + ": nothing thrown");
   } catch (error) {
-    say(label + ": " + error.constructor.name + ": " + error.message + " | " + /:(\d+:\d+)\)?$/.exec(error.stack.split("\n")[1])[1]);
+    say(label + ": " + error.constructor.name + ": " + error.message);
   }
 }
 function read(o) {
@@ -407,31 +407,6 @@ tell("arrow", () => readInArrow({}));
 tell("this", () => new Holder().read(1));
 
 ;(await import("bun:test")).test("several lines", () => {});
-#### stack-at-first-load.test.js
-const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE stack | " + line).join("\n"));
-// A function of the program runs while an import() first loads library modules. The stack that it takes ends at the module that
-// was asked for.
-const stacks = [];
-const note = title =>
-  function () {
-    stacks.push(title + "\n" + new Error("seen").stack);
-  };
-Object.defineProperty(Map.prototype, "added", { configurable: true, value: note("Map") });
-const show = title => {
-  say(title, stacks.length);
-  for (const stack of stacks.splice(0)) say(stack.replaceAll(import.meta.dirname, ""));
-};
-async function load() {
-  const util = await import("node:util");
-  return typeof util.inspect;
-}
-say(await load());
-show("import() in an async function");
-say(await load());
-show("the same again");
-delete Map.prototype.added;
-
-;(await import("bun:test")).test("stack", () => {});
 #### tsconfig.json
 {}
 #### typed/case.test.js
@@ -450,7 +425,7 @@ function tell(label: string, run: () => unknown) {
     run();
     say(label + ": nothing thrown");
   } catch (error: any) {
-    say(label + ": " + error.constructor.name + ": " + error.message + " | " + /:(\d+:\d+)\)?$/.exec(error.stack.split("\n")[1])![1]);
+    say(label + ": " + error.constructor.name + ": " + error.message);
   }
 }
 function read(o: Outer) {

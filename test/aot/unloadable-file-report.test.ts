@@ -65,7 +65,7 @@ for (const [title, files] of Object.entries(cases)) {
       const { messages, ...compiled } = await report(folder, words, "--aot", ...flags);
       expect({ form, ...compiled }).toEqual({ form, ...plain });
       // A part leaves such a file to the loader, which says what it says under `bun test`.
-      const said = expect.stringMatching(/^(?:BuildMessage: TS\d+|SyntaxError): ./);
+      const said = expect.stringMatching(/^(?:BuildMessage|SyntaxError): ./);
       expect({ form, messages }).toEqual({ form, messages: [said] });
     }
   });

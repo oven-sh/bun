@@ -92,16 +92,12 @@ console.log(new NoBase().describe(), new InArrow().name, new InParameter().name,
 // CHECK-NEXT: Throw v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, IsChecked] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0(v0: int[0, 4294967295], v1: anything, v2: Array):
-// CHECK-NEXT: v3 = CreateUnmappedArguments v0, v2, v1
-// CHECK-NEXT: v4 = TypeTest v1 testedType=undefined
-// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = PropGet v3 key="length"
-// CHECK-NEXT: Jump -> next b3(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: Jump -> next b3(v7)
-// CHECK-NEXT: b3(v8):
-// CHECK-NEXT: Return v8
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, IsChecked] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
+// CHECK-NEXT: b0(v0: int[0, 4294967295], v1: anything):
+// CHECK-NEXT: v2 = TypeTest v1 testedType=undefined
+// CHECK-NEXT: Branch v2 -> taken b2(v0), notTaken b1(| 0)
+// CHECK-NEXT: b1(v3):
+// CHECK-NEXT: Jump -> next b2(v3)
+// CHECK-NEXT: b2(v4):
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }

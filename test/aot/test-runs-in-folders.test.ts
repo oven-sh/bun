@@ -1,6 +1,6 @@
 // Each folder two levels below parallel-test-runs/ is a project with test files: parallel-test-runs/<area>/<what it shows>/. It is copied out of the tree and run twice, by
 // `bun test` and by `bun test --aot`. What `bun test` prints is the specification: the lines that the tests print, how each test ends and the exit code must be equal.
-// A project needs no expectation of its own. It prints what a wrong answer would change. A preload is named by a bunfig.toml in the folder.
+// A project needs no expectation of its own. It prints what a wrong answer would change, or expects it in a test, which then fails in one run alone. A preload is named by a bunfig.toml in the folder.
 // The test files of a project end in _test, which `bun test` finds: scripts/runner.node.ts takes every name that holds ".test" for a test of the repository.
 // The packages of a project lie in a folder `installed`, which the copy has as `node_modules`: git ignores a folder of that name, and so does whatever carries this tree to another machine.
 // A file flags.txt in the folder holds flags for both runs: `--isolate`.
@@ -68,8 +68,8 @@ for (const area of foldersIn(root)) {
         outcomeOf(String(plainDir), ...flags),
         outcomeOf(String(compiledDir), "--aot", ...flags),
       ]);
-      // A run in which plain printed nothing would pass for the wrong reason.
-      expect(plain.printed.length).toBeGreaterThan(0);
+      // A run in which plain says nothing would pass for the wrong reason: it prints, or a test of it passes by what it expects.
+      expect(plain.printed.length + plain.tests.filter(line => line.startsWith("(pass) ")).length).toBeGreaterThan(0);
       expect(plain.tests.length).toBeGreaterThan(0);
       expect(compiled).toEqual(plain);
     }, 180_000);

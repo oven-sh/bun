@@ -7,11 +7,11 @@ const look = async step => console.log("| CASE", step, (await import("./dep.js")
 test("t", async () => {
   await look("start");
   mock.module("./dep.js", () => ({ flag: "module" }));
-  await look("mock.module()");
+  await look("the first mock");
   vi.doMock("./dep.js", () => ({ flag: "mock", added: 1 }));
-  await look("vi.doMock()");
+  await look("the second mock");
   mock.module("./dep.js", () => ({ flag: "again" }));
-  await look("mock.module() again");
+  await look("the third mock");
 });
 #### dep.js
 export const flag = "real";

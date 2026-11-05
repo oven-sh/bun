@@ -1,7 +1,6 @@
 // JavaScript projects as people have them, with no types at all: a value is made in one module and used in another, which has seen other values there.
-// Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=1
-// `bun <file>` as users run it prints these lines in another order from run to run (five orders in five runs): which text its transpiler's threads finish first decides. On one thread it is stable.
-const settled = () => new Promise(resolve => setTimeout(resolve, 1));
+// Some projects start work that nothing awaits. Each gets time to end before the next begins: else `bun <file>` prints the lines of two projects in an order that the threads of its transpiler decide.
+const settled = () => new Promise(resolve => setTimeout(resolve, 60));
 console.log("# chain-of-calls-ends-another-kind-began");
 await import("./chain-of-calls-ends-another-kind-began/main.js");
 await settled();

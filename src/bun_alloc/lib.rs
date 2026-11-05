@@ -150,43 +150,6 @@ macro_rules! arena_format {
 /// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
-/// When mimalloc gives freed memory back to the system.
-pub struct PurgeSettings {
-    delay: core::ffi::c_long,
-    purges_holes: core::ffi::c_long,
-}
-
-impl PurgeSettings {
-    /// A day, in milliseconds. Under a negative delay mimalloc would not list what is freed, and nothing could give it back later.
-    const DELAY_NO_BUILD_OUTLASTS: core::ffi::c_long = 24 * 60 * 60 * 1000;
-
-    /// From now on a freed page, and a free block in a page that is in use, stay with the process until somebody takes them again.
-    /// Returns the settings until now, for `restore`. What the environment sets stands.
-    pub fn put_off() -> PurgeSettings {
-        use mimalloc::{Option, mi_option_get, mi_option_set_default};
-        let former = PurgeSettings {
-            delay: mi_option_get(Option::purge_delay),
-            purges_holes: mi_option_get(Option::purge_holes),
-        };
-        mi_option_set_default(Option::purge_delay, Self::DELAY_NO_BUILD_OUTLASTS);
-        mi_option_set_default(Option::purge_holes, 0);
-        former
-    }
-
-    /// The pages freed since `put_off` keep the time they were given then, and so does what is freed into their arenas from now on:
-    /// `give_back_freed_pages` has to follow.
-    pub fn restore(self) {
-        use mimalloc::{Option, mi_option_set_default};
-        mi_option_set_default(Option::purge_delay, self.delay);
-        mi_option_set_default(Option::purge_holes, self.purges_holes);
-    }
-}
-
-/// Gives every freed page that nobody has taken again back to the system, on the calling thread: about 70 ms for each GB.
-pub fn give_back_freed_pages() {
-    mimalloc::mi_arenas_purge();
-}
-
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
@@ -2122,8 +2085,7 @@ pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLAS
     pub(crate) mutex: Mutex,
     // Only `[0..backing_buf_used]` is initialized.
     pub backing_buf: [MaybeUninit<ValueType>; COUNT],
-    // Written under `mutex`. Whoever got an index out of the map reads it without.
-    pub backing_buf_used: AtomicU16,
+    pub backing_buf_used: u16,
 }
 
 impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
@@ -2145,7 +2107,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).index).write(IndexMap::default());
-            addr_of_mut!((*slot).backing_buf_used).write(AtomicU16::new(0));
+            addr_of_mut!((*slot).backing_buf_used).write(0);
             OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
     }
@@ -2247,78 +2209,36 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         value: ValueType,
     ) -> core::result::Result<&mut ValueType, AllocError> {
         let _guard = self.mutex.lock();
-        // Insert into `index` only after the slot is materialized, so a
-        // failed (fallible) `append` can't leave a dangling hash -> index entry.
-        let slot = Self::store_in_slot(
-            &mut self.overflow_list,
-            &mut self.backing_buf,
-            &self.backing_buf_used,
-            result,
-            value,
-        )?;
-        self.index.insert(result.hash, result.index);
-        Ok(slot)
-    }
 
-    /// `put` that leaves `index` as it is: the slot has its number and its value, and nobody finds it by its key
-    /// until `publish`. For a value that is filled in place and refers to its own number.
-    pub fn put_unpublished(
-        &mut self,
-        result: &mut Result,
-        value: ValueType,
-    ) -> core::result::Result<&mut ValueType, AllocError> {
-        let _guard = self.mutex.lock();
-        Self::store_in_slot(
-            &mut self.overflow_list,
-            &mut self.backing_buf,
-            &self.backing_buf_used,
-            result,
-            value,
-        )
-    }
-
-    /// Stores `value` in the slot that `result` names, or in a new one, whose number `result` gets. The caller holds
-    /// `mutex`.
-    fn store_in_slot<'map>(
-        overflow_list: &'map mut OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
-        backing_buf: &'map mut [MaybeUninit<ValueType>; COUNT],
-        backing_buf_used: &AtomicU16,
-        result: &mut Result,
-        value: ValueType,
-    ) -> core::result::Result<&'map mut ValueType, AllocError> {
         if result.index.index() == NOT_FOUND.index() || result.index.index() == UNASSIGNED.index() {
-            let used = backing_buf_used.load(Ordering::Relaxed);
             result
                 .index
-                .set_is_overflow(used as usize > Self::MAX_INDEX);
+                .set_is_overflow(self.backing_buf_used as usize > Self::MAX_INDEX);
             if result.index.is_overflow() {
-                result.index.set_index(overflow_list.len());
+                result.index.set_index(self.overflow_list.len());
             } else {
-                result.index.set_index(used as u32);
-                backing_buf_used.store(used + 1, Ordering::Relaxed);
+                result.index.set_index(self.backing_buf_used as u32);
+                self.backing_buf_used += 1;
             }
         }
 
-        if result.index.is_overflow() {
-            if overflow_list.len() == result.index.index() {
-                overflow_list.append(value)
+        // Insert into `index` only after the slot is materialized below, so a
+        // failed (fallible) `append` can't leave a dangling hash -> index entry.
+        let ret = if result.index.is_overflow() {
+            if self.overflow_list.len() == result.index.index() {
+                self.overflow_list.append(value)?
             } else {
-                let ptr = overflow_list.at_index_mut(result.index);
+                let ptr = self.overflow_list.at_index_mut(result.index);
                 *ptr = value;
-                Ok(ptr)
+                ptr
             }
         } else {
             let idx = result.index.index() as usize;
             // Raw write — fresh slots are uninit; no drop glue runs.
-            Ok(backing_buf[idx].write(value))
-        }
-    }
-
-    /// Lets `get` and `get_or_put` find what `put_unpublished` stored. Whoever finds it sees every write to the slot
-    /// that came before this call.
-    pub fn publish(&mut self, result: Result) {
-        let _guard = self.mutex.lock();
+            self.backing_buf[idx].write(value)
+        };
         self.index.insert(result.hash, result.index);
+        Ok(ret)
     }
 
     /// Returns true if the entry was removed.
@@ -2326,30 +2246,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _guard = self.mutex.lock();
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
-    }
-}
-
-#[cfg(test)]
-mod bss_map_tests {
-    use super::*;
-
-    #[test]
-    fn a_value_is_found_by_its_key_once_it_is_published() {
-        // SAFETY: a fresh map that nothing else refers to.
-        let map = unsafe { BSSMapInner::<u32, 2, false>::init().as_mut() };
-        // Two go into the buffer and two into the overflow list.
-        let keys: [&[u8]; 4] = [b"a", b"b", b"c", b"d"];
-        for key in keys {
-            let mut result = map.get_or_put(key).unwrap();
-            assert!(result.status == ItemStatus::Unknown);
-            *map.put_unpublished(&mut result, 1).unwrap() += 1;
-            assert!(map.get(key).is_none());
-            assert!(map.get_or_put(key).unwrap().status == ItemStatus::Unknown);
-            assert_eq!(map.at_index(result.index).copied(), Some(2));
-            map.publish(result);
-            assert_eq!(map.get(key).copied(), Some(2));
-            assert!(map.get_or_put(key).unwrap().status == ItemStatus::Exists);
-        }
     }
 }
 

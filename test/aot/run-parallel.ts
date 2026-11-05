@@ -47,7 +47,7 @@
 //   // Todo under a check: <why>       the same for every build with --aot-check= among its flags
 //   // Under: <flags>: <why>           it is built once more with those flags, and held to the same. A line for each such build
 //   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. What it prints is compared in the first build alone, and not under --more-flags.
-//                                      Every other build is made and run
+//                                      Every other build is made and run: `ways` says "built and run, not compared" of it, not "pass"
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable of the first build must have counted when it ends: no clock, and the same on every machine.
 //                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresMade), or
@@ -654,7 +654,9 @@ function settle(program: Program, verdict: Record<string, unknown>) {
         runMs: sum("runMs"),
         plainMs: sum("plainMs"),
       }),
-    ways: Object.fromEntries(all.map(({ way, state }) => [way, state])),
+    ways: Object.fromEntries(
+      all.map(({ way, state, isCompared }) => [way, isCompared === false ? "built and run, not compared" : state]),
+    ),
   });
 }
 // A long output is cut where it is shown, and the cut must not hide the difference.
@@ -964,7 +966,8 @@ async function run(program: Program): Promise<void> {
       buildMB: build.peakMB,
       runMB: Math.max(compiled.peakMB, plain?.peakMB ?? 0),
     };
-    if ((moreFlags.length || program.way !== "compiled") && program.printsWhatIsSaved) return settle(program, passes);
+    if ((moreFlags.length || program.way !== "compiled") && program.printsWhatIsSaved)
+      return settle(program, { ...passes, isCompared: false });
     const passesButForFrames = () => (programsWhoseFramesDiffer++, settle(program, { ...passes, framesDiffer: true }));
     if (stored !== undefined) {
       if (asText(compared(compiled.output)) === stored) return settle(program, passes);

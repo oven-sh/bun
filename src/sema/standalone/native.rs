@@ -211,15 +211,7 @@ mod fake_mimalloc {
     #[unsafe(no_mangle)]
     extern "C" fn mi_collect(_force: bool) {}
     #[unsafe(no_mangle)]
-    extern "C" fn mi_arenas_purge() {}
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_option_get(_option: u32) -> core::ffi::c_long {
-        0
-    }
-    #[unsafe(no_mangle)]
     extern "C" fn mi_option_set(_option: u32, _value: core::ffi::c_long) {}
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_option_set_default(_option: u32, _value: core::ffi::c_long) {}
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.

@@ -474,7 +474,6 @@ void us_loop_run(struct us_loop_t *loop) {
 
 extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
 extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
-extern _Bool Bun__ThreadPool__isBuildUnderWay(void);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -517,11 +516,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
      * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
      * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
-     * it between ticks is what we are avoiding.
-     * A park makes the scavenger give every freed page back: see BuildUnderWay in src/threading/ThreadPool.rs. */
-    const int gives_memory_back = will_idle_inside_event_loop && !Bun__ThreadPool__isBuildUnderWay();
-    const int handed_off = gives_memory_back && mi_on_thread_idle_start();
-    if (!handed_off && gives_memory_back) {
+     * it between ticks is what we are avoiding. */
+    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
+    if (!handed_off && will_idle_inside_event_loop) {
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;
         const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();

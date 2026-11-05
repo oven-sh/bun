@@ -47,11 +47,9 @@ pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
 
 /// Gives the memory of the free blocks in the calling thread's heaps back to the system. A page with one block in use
 /// otherwise stays resident as a whole. Only the thread that owns a heap can do this. The allocator does it for a
-/// thread that parks, so this is for a thread that has work for a long time. See `BuildUnderWay`.
+/// thread that parks, so this is for a thread that has work for a long time.
 pub fn give_back_free_memory() {
-    if !bun_threading::thread_pool::is_build_under_way() {
-        bun_alloc::mimalloc::mi_on_thread_idle();
-    }
+    bun_alloc::mimalloc::mi_on_thread_idle();
 }
 
 /// Starts at 1.

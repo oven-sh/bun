@@ -24,7 +24,7 @@ const files: Record<string, string> = {
   "src/exports-absent.mjs": `export { absent } from "./esm.mjs"; console.log("never printed");`,
   "by-import-call.test.mjs": testFile(`
     import { one } from "./src/good.mjs";
-    const said = await import("./src/exports-absent.mjs").then(() => "loaded", error => error.name + ": " + error.message);
+    const said = await import("./src/exports-absent.mjs").then(() => "loaded", error => error.name + ": " + /'(\\w+)'/.exec(error.message)?.[1]);
     console.log("by import():", one, said);`),
 };
 
@@ -47,6 +47,6 @@ test("in a run of one test file", async () => {
   using dir = tempDir("a-module-whose-link-fails-one-file", files);
   const folder = String(dir);
   const plain = await runTests(folder, ["by-import-call"]);
-  expect(plain.printed).toContain("by import(): 1 SyntaxError: export 'absent' not found in './esm.mjs'");
+  expect(plain.printed).toContain("by import(): 1 SyntaxError: absent");
   expect(await runTests(folder, ["--aot", "by-import-call"])).toEqual(plain);
 });

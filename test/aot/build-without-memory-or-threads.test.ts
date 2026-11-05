@@ -301,7 +301,6 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
     });
     expect(endsByThread).toEqual([
       { name: "AOT build", first: noCompilerThread, later: ["it runs\n"] },
-      { name: "AOT memory", first: "it runs\n", later: ["it runs\n"] },
       { name: "Bun Compile", first: noPoolThread, later: ["it runs\n"] },
       { name: "mi-scavenger", first: "it runs\n", later: ["it runs\n"] },
     ]);

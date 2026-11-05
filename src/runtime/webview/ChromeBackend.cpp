@@ -16,7 +16,6 @@
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ErrorInstance.h>
-#include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/JSONObject.h>

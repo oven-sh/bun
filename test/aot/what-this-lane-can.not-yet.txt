@@ -36,7 +36,6 @@ fuzz/grids/layers.ts
 fuzz/grids/one-more-module.ts
 fuzz/grids/ssa-walk.ts
 fuzz/grids/the-start-of-a-compiled-program-calls-no-function-of-each-class-of-the-host.ts
-generated-code-of-module-bodies.test.ts
 hardened-crash-report.test.ts
 hardened-environment.test.ts
 hardened-executable.test.ts

@@ -250,9 +250,23 @@ worker.onmessage = async event => {
       }),
       "work/worker.ts": `class Holder {\n  first: number;\n  second = 2;\n}\nfunction length(text: string) {\n  return text === null ? -1 : text.length;\n}\npostMessage(Object.keys(new Holder()).join() + " " + length(null));\n`,
     });
-    const executable = await build(folder, ["./app/main.ts", "./work/worker.ts"], "configured");
-    const plain = await spawned([bunExe(), "run", "app/main.ts"], folder, bunEnv);
-    expect({ exitCode: plain.exitCode, signal: plain.signal, stderr: plain.stderr }).toEqual({
+    const entryPoints = ["./app/main.ts", "./work/worker.ts"];
+    const executable = await build(folder, entryPoints, "configured");
+    // `bun run` takes useDefineForClassFields for every file from the tsconfig.json of the folder that it is started in. An executable takes it from the one that each file finds, with --aot and without.
+    const withoutCompiler = [
+      bunExe(),
+      "build",
+      "--compile",
+      "--root",
+      ".",
+      ...entryPoints,
+      "--outfile",
+      join(folder, "plain"),
+    ];
+    built(await spawned(withoutCompiler, folder, bunEnv));
+    const plain = await spawned([join(folder, "plain")], root, bunEnv);
+    expect({ stdout: plain.stdout, exitCode: plain.exitCode, signal: plain.signal, stderr: plain.stderr }).toEqual({
+      stdout: "first,second\nsecond -1\n",
       exitCode: 0,
       signal: null,
       stderr: "",

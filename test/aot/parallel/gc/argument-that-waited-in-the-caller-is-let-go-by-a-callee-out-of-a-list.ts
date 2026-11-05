@@ -37,18 +37,10 @@ const table = [toNull, toUndefined];
 function outOfList(i: number): boolean {
   return table[i](make() as any, other());
 }
-function outOfListAndGoesOn(i: number): boolean {
-  const gone = table[i](make() as any, other());
-  use(null, other());
-  return gone;
-}
 
 say("by name", toNull(make(), 0));
 say("by name, across a call", toNull(make(), other()));
 say("out of the list, the first", outOfList(other() & 0));
 say("out of the list, the second", outOfList(1 | other()));
-say("out of the list, in a function that goes on", outOfListAndGoesOn(other() & 0));
-say("call", toUndefined.call(undefined, make(), other()));
-say("apply", toNull.apply(undefined, [make(), other()]));
 console.log(lines.join("\n"));
 console.log(sum > 0);

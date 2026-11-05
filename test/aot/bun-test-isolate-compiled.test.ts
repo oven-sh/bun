@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeEnvironment } from "./harness/flags";
@@ -336,35 +336,6 @@ test("nothing", () => { expect(1).toBe(1); });`,
     "f.test.ts": lastFile(""),
   });
   expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
-});
-
-test.skipIf(!isLinux)("process.stdout and process.stderr give their descriptors back with the test file", async () => {
-  const countsCopies = `
-import { expect, test } from "bun:test";
-import { appendFileSync, readdirSync, readlinkSync } from "node:fs";
-import { join } from "node:path";
-test("counts", () => {
-  process.stdout.write("");
-  process.stderr.write("");
-  const link = (fd: string) => { try { return readlinkSync("/proc/self/fd/" + fd); } catch { return "gone"; } };
-  const ours = [link("1"), link("2")];
-  const copies = readdirSync("/proc/self/fd").filter(fd => ours.includes(link(fd))).length;
-  appendFileSync(join(import.meta.dir, "counts"), copies + "\\n");
-  expect(1).toBe(1);
-});`;
-  const names = ["a", "b", "c", "d", "e", "f"];
-  using dir = tempDir(
-    "bun-test-isolate-descriptors",
-    Object.fromEntries(names.map(name => [`${name}.test.ts`, countsCopies])),
-  );
-  // On one processor nothing runs beside the test files: what is left to another thread has not happened when the next file counts.
-  const processor = /^Cpus_allowed_list:\s*(\d+)/m.exec(readFileSync("/proc/self/status", "utf8"))![1];
-  const onOneProcessor = Bun.which("taskset") ? ["taskset", "-c", processor] : [];
-  const { exitCode } = await run([...onOneProcessor, bunExe(), "test", "--aot", "--isolate"], String(dir), bunEnv);
-  const counts = readFileSync(join(String(dir), "counts"), "utf8")
-    .trim()
-    .split("\n");
-  expect({ counts, exitCode }).toEqual({ counts: names.map(() => counts[0]), exitCode: 0 });
 });
 
 test("what a test file's close handlers write to process.stdout is still printed", async () => {

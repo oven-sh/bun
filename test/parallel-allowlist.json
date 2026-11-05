@@ -917,7 +917,6 @@
     "aot/array-from-a-collection-whose-iterator-a-test-removed.test.ts",
     "aot/asking-about-a-class-keeps-none-of-its-code.test.ts",
     "aot/asking-about-a-function-keeps-none-of-its-code.test.ts",
-    "aot/assembled-patterns-in-executables.test.ts",
     "aot/back-end-options-from-environment.test.ts",
     "aot/blocks-freed-between-live-ones-leave-a-bounded-number-of-mappings.test.ts",
     "aot/build-carries-files-that-are-no-code.test.ts",
@@ -1394,6 +1393,7 @@
     "aot/the-frames-of-a-stack-trace-are-not-held-to-plain-bun.test.ts",
     "aot/the-warnings-of-a-rejection-come-where-nothing-names-promise.test.ts",
     "aot/what-a-constant-of-the-build-rules-out-is-not-in-the-executable.test.ts",
-    "aot/what-the-program-asks-for-inside-a-request-to-the-host-the-program-asks-for.test.ts"
+    "aot/what-the-program-asks-for-inside-a-request-to-the-host-the-program-asks-for.test.ts",
+    "aot/perf/names-given-by-key.test.ts"
   ]
 }

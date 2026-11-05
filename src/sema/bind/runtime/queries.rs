@@ -4,8 +4,8 @@ use super::storage::RuntimeDeclarationsIn;
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName, PrivateNameId,
-    RuntimeBindings, RuntimeBindingsIn, StoreKind, SymbolStore, has_mapped_arguments, stability,
+    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
+    StoreKind, SymbolStore, has_mapped_arguments, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{
@@ -295,19 +295,6 @@ impl RuntimeBindings<'_> {
 
     pub fn implicit_references(&self) -> &[ImplicitReference] {
         &self.references.implicit_references
-    }
-
-    /// What a JSX element names and does not spell: the factory of classic JSX, which it calls, and the fragment, which it reads.
-    pub fn implicit_references_of_element(&self, element: ExprId) -> &[ImplicitReference] {
-        let element_of = |reference: &ImplicitReference| match (reference.kind, reference.node) {
-            (ImplicitReferenceKind::DecoratorMetadata(_), _) => None,
-            (_, NodeData::Expr(element)) => Some(element),
-            _ => None,
-        };
-        let references = self.implicit_references();
-        let start = references.partition_point(|it| element_of(it).is_some_and(|at| at < element));
-        let len = references[start..].partition_point(|it| element_of(it) == Some(element));
-        &references[start..start + len]
     }
 
     /// Whether something names the symbol and does not spell it. Who asks only the identifier expressions of a file misses these.

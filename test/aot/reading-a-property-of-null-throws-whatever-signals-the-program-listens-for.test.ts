@@ -1,18 +1,14 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll } from "./harness/default-timeout";
+import { compiler, readers, sender } from "./harness/reads-of-null";
 import { withoutCoreDump } from "./harness/without-core-dump";
 import { describe, test } from "./supported";
 
 // Compiled code turns a fault at one of its own null checks into a TypeError, so SIGSEGV and SIGBUS are signals that both the
 // program and its compiled code may want to hear of.
-const readers = `function readX(point: { x: number } | null): number { return point!.x; }
-function readXPlusOne(point: { x: number } | null): number { return point!.x + 1; }
-const readers = [readX, readXPlusOne];
-const none: { x: number } | null = JSON.parse("null");
-`;
 
 const steps: [label: string, code: string][] = [
   ["no listener yet", ""],
@@ -35,7 +31,7 @@ ${steps
   .map(
     ([label, code]) => `${code}
 caught = 0;
-for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch (error) { if (error instanceof TypeError) caught++; }
+for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch (error) { if (error instanceof TypeError) caught++; }
 console.log(${JSON.stringify(label)}, caught);
 `,
   )
@@ -56,7 +52,7 @@ for (let turn = 0; turn < 2; turn++) {
   send();
   await next;
 }
-for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch (error) { if (error instanceof TypeError) caught++; }
+for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch (error) { if (error instanceof TypeError) caught++; }
 console.log("listening", caught);
 process.off(name, listener);
 process.once(name, listener);
@@ -64,7 +60,7 @@ const last = heard.promise;
 send();
 await last;
 caught = 0;
-for (let i = 0; i < 10; i++) try { readers[i & 1](none); } catch (error) { if (error instanceof TypeError) caught++; }
+for (let i = 0; i < 10; i++) try { readers[i & 3](); } catch (error) { if (error instanceof TypeError) caught++; }
 console.log("no longer listening", caught);
 send();
 await Bun.sleep(30_000);
@@ -88,7 +84,7 @@ const aWorkerReadsAllTheWhile = `${readers}if (Bun.isMainThread) {
   process.exit(0);
 } else {
   postMessage("started");
-  for (let i = 0; ; i++) try { readers[i & 1](none); } catch {}
+  for (let i = 0; ; i++) try { readers[i & 3](); } catch {}
 }
 `;
 
@@ -118,6 +114,7 @@ const directory = String(
       .map(name => `if (process.argv[2] === ${JSON.stringify(name)}) await import("./${name}.ts");\n`)
       .join(""),
     "worker.ts": aWorkerReadsAllTheWhile,
+    "sender.c": sender,
   }),
 );
 afterAll(() => rmSync(directory, { recursive: true, force: true }));
@@ -143,6 +140,27 @@ describe.concurrent("reading a property of null throws a TypeError", () => {
       });
     }
   }, 120_000);
+
+  // A build that tests for null in front of the load raises no signal, and the case above would hold whatever the program listened for.
+  test.skipIf(!isLinux || isASAN || !compiler)(
+    "and in that program a read of null raises the signal",
+    async () => {
+      const [executable, built] = await Promise.all([
+        build("main.ts"),
+        run([compiler!, "-w", "-o", "sender", "sender.c"], directory),
+      ]);
+      expect(built).toMatchObject({ exitCode: 0 });
+      const counted = await run([join(directory, "sender"), executable, "listeners-SIGSEGV"], directory);
+      const reads = steps.length * 10;
+      const raised = Number(counted.stdout.trimEnd().split("\n").at(-1));
+      expect({ raised, isEnough: raised >= reads / 2 && raised <= reads, exitCode: counted.exitCode }).toEqual({
+        raised,
+        isEnough: true,
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 
   test.skipIf(isWindows)(
     "and a signal that another process sends does what it does without --aot",

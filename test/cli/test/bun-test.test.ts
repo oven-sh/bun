@@ -4258,6 +4258,37 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       expect(stderr).toContain("timed out after 300ms");
     });
 
+    // The task that takes the step that waited also starts "overruns". That test did not run while the step waited,
+    // so the task judges it by its own clock when it steps for the promise that the hook left.
+    test("times out a test that overran in the call of the runner that took the step that waited", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          ${imports}
+          afterEach(() => void Promise.reject(new Error("left by a hook")));
+          test("leaves", async () => {
+            await new Promise<void>(resolve => {
+              setImmediate(() => {
+                Promise.reject(new Error("left"));
+                resolve();
+              });
+            });
+          });
+          test("overruns", async () => {
+            // Past the time limit of this test before it returns its promise.
+            const end = performance.now() + 60;
+            while (performance.now() < end);
+            await new Promise<void>(resolve => setImmediate(resolve));
+          }, 20);
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(fail) leaves", "(fail) overruns"],
+        errors: ["error: left", "error: left by a hook", "error: left by a hook"],
+        exitCode: 1,
+      });
+      expect(stderr).toContain("timed out after 20ms");
+    });
+
     // No step waits here. The hooks leave their promises inside one call of the runner, which reads the queue itself,
     // so that call judges "overruns" by its own clock.
     test("times out a test that overran after hooks left rejected promises in the same call of the runner", async () => {

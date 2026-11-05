@@ -1121,7 +1121,11 @@ impl BunTest {
         };
         // The report of rejected promises charges the entry that is current then, so the runner stays on this one while a promise waits for that report, and then until a task steps. A `RunTestsTask` that is already queued still steps first, because the event loop runs its queued tasks before it reports.
         if (strong.get().execution.step_was_left || has_unreported_rejections(global_this)) && strong.get().has_due_step() {
-            strong.get().execution.step_was_left = true;
+            let execution = &mut strong.get().execution;
+            if !execution.step_was_left {
+                execution.step_was_left = true;
+                execution.step_left_at = Timespec::now_force_real_time();
+            }
             // The poll of this turn comes before the report. It must not sleep while this step is due.
             global_this.bun_vm().as_mut().wakeup();
             return false;

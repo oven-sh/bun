@@ -70,6 +70,15 @@ describe("concat", () => {
     const chunks = [Uint8Array.from([1, 2, 3, 4, 5]), Uint8Array.from([6, 7, 8, 9, 10])];
     const expected = Uint8Array.from(bytes);
     expect(concatArrayBuffers(chunks, maxLength, true)).toEqual(expected);
+    expect(concatArrayBuffers(chunks, maxLength, false)).toEqual(expected.buffer);
     expect(concatArrayBuffers(chunks, maxLength)).toEqual(expected.buffer);
+  });
+
+  it.each([2 ** 32 + 3, 2 ** 33 + 7])("does not wrap a max length of %d that is shorter than the input", maxLength => {
+    // 64 GiB of input from one 64 MiB view.
+    const chunks = new Array(1024).fill(new Uint8Array(64 * 1024 * 1024));
+    // The result would be longer than the largest ArrayBuffer, as it is with no max length.
+    expect(() => concatArrayBuffers(chunks, maxLength)).toThrow("Failed to allocate ArrayBuffer");
+    expect(() => concatArrayBuffers(chunks, maxLength, true)).toThrow("Failed to allocate ArrayBuffer");
   });
 });

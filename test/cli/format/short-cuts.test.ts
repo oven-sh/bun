@@ -5360,6 +5360,23 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.ts", "", "function*a(){yield a()\n/**/\n.b}\n"],
     ["a.ts", "", "function*a(){yield(/**/\nx?a:b)?c:d}\n"],
     ["a.ts", "", "function*a(){yield(\n/**/\nx as Y)()}\n"],
+    // Flow: `a<>` as the only parameter of a function type; a decorator on a parameter of an arrow function.
+    ["a.js", "--print-width=39", "//@flow\ndeclare module a{declare var b:a<>=>(p<((...a)=>v)>)}\n"],
+    ["a.js", "", "//@flow\n(()=>{<a>(@d(h,()=>h,((()=>h)))@(()=>{})h)=>{``}},[])\n"],
+    // A sequence in the parentheses of a cast of JSDoc, `{...a}` between tags with something behind it on its line.
+    ["a.jsx", "--print-width=9", "{/**@type*/(a/**/,()=>[])}\n"],
+    ["a.mjs", "--print-width=43", 'const{}=<a>{""}{...`${(<a/>+d).l()}`}{" "}<b>{d()}</b> b</a>\n'],
+    // Comments: a block comment before `catch` where there are no semicolons, all there is in an array pattern, on both sides of an assignment operator, on lines of its own before the `>` of type arguments, before the `)` of a type in parentheses.
+    ["a.jsx", "--print-width=15 --no-semi", "try{}\n/**@type*/catch(e){(c=>{e()})}\n"],
+    ["a.mjs", "", "try{e()}catch([//\n]){}\n"],
+    ["a.js", "--print-width=7", "e//\n+=//\n1\n"],
+    ["a.tsx", "", "const a:b<X\n/**/>[]=``\n"],
+    ["a.tsx", "", "const a:(X\n/**/)=``\n"],
+    // `await (await a).b` in a template, with something in it that is filled.
+    ["a.mjs", "--print-width=27", "{`${await(await c(<a>{} </a>)).a}`}\n"],
+    // A call without arguments is a short argument by its name alone, whatever its type arguments are.
+    ["a.tsx", "--print-width=15", "e=o(\ne<ayValue>()\n);\n"],
+    ["a.tsx", "--print-width=15", "e=o(\ne<ayValue>()\n).g;\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

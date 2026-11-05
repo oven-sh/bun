@@ -484,8 +484,10 @@ impl Quick {
             k::ConditionalExpression | k::ConditionalType => true,
             // before the `:` of a type
             _ if behind == 58 => false,
-            // behind the last item of a pattern that has a type
-            k::ObjectPattern | k::ArrayPattern => c.h_following_kind != k::TypeAnnotation,
+            // behind the last item of a pattern that has a type, or all there is between brackets
+            k::ObjectPattern | k::ArrayPattern => {
+                c.h_following_kind != k::TypeAnnotation && !(before == 91 && behind == 93)
+            }
             // in braces with nothing else in them, which may be hugged; on the line of a member that has no separator
             k::TypeLiteral | k::InterfaceBody => {
                 (inside == k::InterfaceBody || c.h_preceding != 0 || c.h_following != 0)
@@ -542,6 +544,27 @@ impl Quick {
             }
             // behind the `(`
             k::TypeCastExpression => before != 40,
+            // on lines of its own before the `>`
+            k::TypeParameterInstantiation => !(form == OWN_BLOCK && behind == 62),
+            // before the `)` of a type in parentheses
+            k::TypeAnnotation => behind != 41,
+            // a block comment that goes into a block, before whose first statement a `;` may be written
+            k::TryStatement | k::CatchClause if c.h_is_block && !self.options.semi => false,
+            // on both sides of the operator
+            k::AssignmentExpression => {
+                !(before == 61
+                    && i > self.lexer.c_base
+                    && self.lexer.c.at((i - 1) * C_STRIDE + C_START)
+                        >= self.n.at(c.h_enclosing + 1)
+                    && self.lexer.c.at((i - 1) * C_STRIDE + C_END) <= self.n.at(c.h_following + 1)
+                    && {
+                        let mut p = self.lexer.c.at((i - 1) * C_STRIDE + C_END);
+                        while is_blank(self.t.at(p)) {
+                            p += 1;
+                        }
+                        p != c.h_start
+                    })
+            }
             // before a body, which may start with a directive
             k::ArrowFunctionExpression => behind != 123,
             // (a DeclareTypeAlias is no TypeAlias)

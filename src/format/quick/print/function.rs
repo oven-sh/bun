@@ -270,6 +270,17 @@ impl Quick {
             }
             return Ok(());
         }
+        // (`a<> => b`: to the long way `a<>` is a simple type)
+        if self.mode.is_flow && count == 1 {
+            let type_ = self.n.at(self.n.at(params + 1) + 5);
+            if (self.n.at(self.n.at(params + 1)) & 0xff) == k::FunctionTypeParam
+                && (self.n.at(type_) & 0xff) == k::TypeReference
+                && self.n.at(type_ + 5) != 0
+                && self.n.at(self.n.at(self.n.at(type_ + 5) + 4)) == 0
+            {
+                return Err(self.rare(rare::FLOW));
+            }
+        }
         self.text(LPAREN);
         self.indent_softline();
         self.print_parameter_list(params, should_hug)?;

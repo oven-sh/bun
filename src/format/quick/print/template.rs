@@ -7,7 +7,7 @@
 use crate::ast::k;
 use crate::doc::ALIGN_TO_ROOT;
 use crate::print::statics::{BACKQUOTE, DOLLAR_BRACE, RBRACE, SPACE};
-use crate::{Quick, R, Words, div, rem};
+use crate::{Quick, R, Words, div, rare, rem};
 
 impl Quick {
     /// An expression that prints as plain text whatever the width.
@@ -67,6 +67,10 @@ impl Quick {
             if self.doc_will_break(doc) {
                 // as if there were a line break in it
             } else if self.doc.fill_count != fills_before {
+                // (`await (await a).b` has line breaks that belong to no group, and of the three ways no two print them alike)
+                if (self.n.at(expression) & 0xff) == k::AwaitExpression {
+                    return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
                 // A fill measures the line whatever the mode is, so for once the doc is printed to a text, as Prettier does.
                 self.print_to_text(doc, 1 << 28)?;
                 let filter = self.doc.text_filter;

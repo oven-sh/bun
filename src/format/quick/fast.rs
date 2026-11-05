@@ -1884,6 +1884,8 @@ impl Quick {
         let mut flat: i32 = 0;
         let mut count: i32 = 0;
         let mut last_byte: i32;
+        let mut last_from: i32;
+        let mut last_end: i32;
         let mut q = p;
         loop {
             // an empty line between two arguments is kept
@@ -1958,6 +1960,8 @@ impl Quick {
             }
             count += 1;
             last_byte = self.t.at(e - 1);
+            last_from = q;
+            last_end = e;
             if self.t.at(e) == 44 {
                 if self.t.at(e + 1) != 10 {
                     return Ok(self.no(refusal::Arguments));
@@ -2001,7 +2005,10 @@ impl Quick {
                 }
             } else if self.fast.shape == SH_LITERAL {
                 self.fast.has_lone_short_argument = true;
-            } else if (width - 8) * 4 <= self.options.print_width {
+            } else if (width - 8) * 4 <= self.options.print_width
+                // (`a<B>()`: the type arguments do not count)
+                || self.has_byte_in_range(60, last_from, last_end)
+            {
                 self.fast.has_lone_short_argument = true;
             }
         }

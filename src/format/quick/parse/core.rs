@@ -105,6 +105,8 @@ pub(crate) struct Parse {
     pub(crate) private_names: Vec<i32>,
     /// How many `await` and `yield` expressions there have been, but for those in the bodies of functions that have ended.
     pub(crate) suspensions: i32,
+    /// PARAMETERS_PLAIN ..: whose parameters are read.
+    pub(crate) parameters_owner: i32,
     /// Where the first `default` stands that the file exports, or 0.
     pub(crate) default_export_at: i32,
     /// The names that are declared next are those of `let`, `const` or `using`, in a language in which `let` cannot be one of them.
@@ -226,6 +228,7 @@ impl Parse {
             labels: Vec::new(),
             private_names: Vec::new(),
             suspensions: 0,
+            parameters_owner: PARAMETERS_PLAIN,
             default_export_at: 0,
             binds_lexically: false,
             next_class_is_derived: false,
@@ -2521,6 +2524,8 @@ impl Quick {
         let mark = self.arena.ls_pos;
         let outer = self.parse.place.in_parameters;
         self.parse.place.in_parameters = true;
+        let outer_owner = self.parse.parameters_owner;
+        self.parse.parameters_owner = owner;
         let odd = self.parse_typescript.odd_parameters;
         while self.lexer.tok != tk::ParenR {
             let v0 = self.parse_binding_element()?;
@@ -2537,6 +2542,7 @@ impl Quick {
             }
         }
         self.parse.place.in_parameters = outer;
+        self.parse.parameters_owner = outer_owner;
         if self.parse_typescript.odd_parameters != odd {
             self.ts_check_parameters(mark, owner)?;
         }
@@ -2698,10 +2704,10 @@ impl Quick {
         return Ok(element);
     }
 
-    /// A parameter of a function that is no method has a decorator: an error for TypeScript's parser, and to the long way the arguments
-    /// of such a decorator are those of any call.
+    /// A parameter of a function that is no method of a class has a decorator: an error for TypeScript's parser, and to the long way
+    /// the arguments of such a decorator are those of any call.
     fn check_place_of_decorated_parameter(&self) -> R<()> {
-        if self.parse.typed != TYPED_TS && self.parse.place.scope == SCOPE_FUNCTION {
+        if self.parse.typed != TYPED_TS && self.parse.parameters_owner == PARAMETERS_PLAIN {
             return Err(self.rare(rare::DECORATOR));
         }
         Ok(())
@@ -5149,6 +5155,10 @@ impl Quick {
             return Ok(expression);
         }
         if keep_parens {
+            // (the long way indents what follows the first comma)
+            if (self.n.at(expression) & 0xff) == k::SequenceExpression {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
             return Ok(self.node1(
                 k::ParenthesizedExpression,
                 start,
@@ -6771,8 +6781,10 @@ impl Quick {
             if self.lexer.tok != tk::BraceR {
                 return Err(self.unexpected());
             }
-            // (the long way keeps a blank behind it that Prettier writes as `{" "}`)
-            if self.t.at(self.lexer.tok_end) == 32 {
+            // (with something behind it on its line: the long way keeps a blank there that Prettier writes as `{" "}`, and what
+            // fits on the line is counted in two ways)
+            let behind = self.t.at(self.lexer.tok_end);
+            if behind != 10 && !(behind == 60 && self.t.at(self.lexer.tok_end + 1) == 47) {
                 return Err(self.rare(rare::UNLIKE_PRETTIER));
             }
             return Ok(self.node1(k::JSXSpreadChild, start, self.lexer.tok_end, expression));

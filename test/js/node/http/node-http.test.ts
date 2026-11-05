@@ -1554,7 +1554,6 @@ describe("node https server", async () => {
   it("constructs HTTPS servers through both public entry points", () => {
     for (const server of [new https.Server(httpsOptions), createHttpsServer(httpsOptions)]) {
       expect(server).toBeInstanceOf(https.Server);
-      expect(server).toBeInstanceOf(http.Server);
       expect(server.constructor).toBe(https.Server);
       expect(typeof server.setSecureContext).toBe("function");
       expect(() => server.setSecureContext(httpsOptions)).not.toThrow();

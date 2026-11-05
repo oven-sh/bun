@@ -171,6 +171,8 @@ pub(crate) struct Fast {
     pub(crate) in_parameters: i32,
     /// `export { if }`: `from` has to follow
     pub(crate) needs_from: bool,
+    /// among the parameters that were read last there is a pattern, a default value or `...`
+    pub(crate) odd_parameters: bool,
 }
 impl Fast {
     pub(crate) fn new() -> Self {
@@ -257,6 +259,7 @@ impl Fast {
             jsx_is_on: false,
             in_parameters: 0,
             needs_from: false,
+            odd_parameters: false,
         }
     }
 }
@@ -320,6 +323,8 @@ pub(crate) const BLOCK_ARROW: i32 = 64;
 pub(crate) const BLOCK_CONSTRUCTOR: i32 = 128;
 /// with BLOCK_CLASS: the class has a superclass
 pub(crate) const BLOCK_DERIVED: i32 = 256;
+/// with BLOCK_FUNCTION: the parameters are more than names
+pub(crate) const BLOCK_ODD_PARAMETERS: i32 = 512;
 impl Quick {
     pub(crate) fn set_verified(&mut self, start: i32, end: i32) {
         self.fast.verified_start = start;
@@ -1225,7 +1230,11 @@ impl Quick {
             return self.no(refusal::Block);
         }
         self.fast.opened = q;
-        self.fast.opened_flags = flags;
+        self.fast.opened_flags = if (flags & BLOCK_FUNCTION) != 0 && self.fast.odd_parameters {
+            flags | BLOCK_ODD_PARAMETERS
+        } else {
+            flags
+        };
         return q;
     }
 
@@ -1378,6 +1387,7 @@ impl Quick {
             self.tight(p + 1)
         };
         if self.t.at(q) == 41 {
+            self.fast.odd_parameters = false;
             return Ok(if is_broken {
                 self.no(refusal::Paren)
             } else {
@@ -1385,6 +1395,7 @@ impl Quick {
             });
         }
         let first = q;
+        let mut odd = false;
         loop {
             if is_broken {
                 from = self.width_up_to(q);
@@ -1403,6 +1414,7 @@ impl Quick {
                 q += 3;
             }
             let c = self.t.at(q);
+            odd |= is_rest || (CC.at(c) & ID_START) == 0;
             if (CC.at(c) & ID_START) != 0 {
                 let e = self.word_end(q);
                 if (CC.at(self.t.at(e)) & BEYOND) != 0 {
@@ -1442,6 +1454,7 @@ impl Quick {
             if !is_rest && self.t.at(r) == 61 && self.assignment_operator(r) == 1 {
                 self.spaced(q);
                 let v1 = self.spaced(r + 1);
+                odd = true;
                 self.fast.in_parameters += 1;
                 q = self.expression(v1)?;
                 self.fast.in_parameters -= 1;
@@ -1502,11 +1515,13 @@ impl Quick {
                 self.fast.parameters_from = self.width_up_to(q + 1);
                 self.fast.parameters_count = count;
                 self.fast.ready_flags |= F_DECIDED;
+                self.fast.odd_parameters = odd;
                 return Ok(q + 1);
             }
             q = self.tight(q);
             let d = self.t.at(q);
             if d == 41 {
+                self.fast.odd_parameters = odd;
                 return Ok(q + 1);
             }
             if d != 44 {
@@ -1516,6 +1531,7 @@ impl Quick {
             if self.t.at(s) == 41 {
                 self.flush(q);
                 self.fast.run = s;
+                self.fast.odd_parameters = odd;
                 return Ok(s + 1);
             }
             if is_rest {
@@ -1574,6 +1590,7 @@ impl Quick {
                         self.flush(e);
                         self.put(32);
                         self.fast.run = arrow;
+                        self.fast.odd_parameters = false;
                         return self.arrow_body(arrow + 2, is_async);
                     }
                 }
@@ -2475,6 +2492,7 @@ impl Quick {
                                     self.put(41);
                                 }
                                 self.spaced(e);
+                                self.fast.odd_parameters = false;
                                 return self.arrow_body(arrow + 2, true);
                             }
                             return Ok(self.no(refusal::Word));
@@ -2502,6 +2520,7 @@ impl Quick {
                         self.put(41);
                     }
                     self.spaced(q);
+                    self.fast.odd_parameters = false;
                     return self.arrow_body(r + 2, false);
                 }
             }
@@ -2825,17 +2844,17 @@ impl Quick {
                     {
                         return Ok(self.no(refusal::Await));
                     }
-                    // (for a parser that will find out that it stands among the parameters of an arrow function)
-                    self.parse.suspensions += 1;
-                    if self.parse.in_async == 0 {
-                        self.need_module()?;
-                    }
                     if p == self.fast.breakable_at {
                         self.fast.breakable_at = o;
                     }
                     let q = self.unary(o)?;
                     if q < 0 {
                         return Ok(-1);
+                    }
+                    // (for a parser that will find out that it stands among the parameters of an arrow function)
+                    self.parse.suspensions += 1;
+                    if self.parse.in_async == 0 {
+                        self.need_module()?;
                     }
                     // a function that is awaited itself gets parentheses; one that is an argument does not
                     if self.fast.opened != 0 {

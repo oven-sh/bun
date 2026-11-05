@@ -422,6 +422,7 @@ impl Quick {
     }
 
     /// How many bytes the character has that starts with the byte at p, which is not ASCII; 0 if this is not UTF-8.
+    #[cold]
     pub(crate) fn character_length(&self, p: i32) -> i32 {
         let a = self.t.at(p);
         let b = self.t.at(p + 1);
@@ -451,6 +452,7 @@ impl Quick {
     }
 
     /// Does U+2028 or U+2029 stand at p?
+    #[cold]
     pub(crate) fn is_line_separator(&self, p: i32) -> bool {
         self.t.at(p) == 0xe2
             && self.t.at(p + 1) == 0x80
@@ -1012,6 +1014,7 @@ impl Quick {
         }
     }
 
+    #[inline(never)]
     pub(crate) fn read_string(&mut self, quote: i32) -> R<()> {
         let end = self.text.src_end;
         let start = self.lexer.pos;

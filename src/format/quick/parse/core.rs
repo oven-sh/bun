@@ -12,8 +12,8 @@ use crate::ast::{
 };
 use crate::fast::{
     AFTER_BLOCK, AFTER_REFUSED, BLOCK_ARROW, BLOCK_ASYNC, BLOCK_CLASS, BLOCK_CONSTRUCTOR,
-    BLOCK_DERIVED, BLOCK_FUNCTION, BLOCK_INTERFACE, BLOCK_JSX, BLOCK_OBJECT, JSX_ELEMENT,
-    JSX_REFUSED, MEMBER_OF_CLASS, STARTS_READY, STARTS_READY_MEMBER,
+    BLOCK_DERIVED, BLOCK_FUNCTION, BLOCK_INTERFACE, BLOCK_JSX, BLOCK_OBJECT, BLOCK_ODD_PARAMETERS,
+    JSX_ELEMENT, JSX_REFUSED, MEMBER_OF_CLASS, STARTS_READY, STARTS_READY_MEMBER,
 };
 use crate::holes::FILTER_END_OF_LINE;
 use crate::lang::lang;
@@ -121,9 +121,8 @@ pub(crate) struct Parse {
 /// Where the parser is. Whoever gives up a reading of the text goes back to what this was: see mark().
 #[derive(Clone, Copy)]
 pub(crate) struct Place {
-    /// How many loops are open in the function at hand, and how many loops and `switch`es.
-    pub(crate) loops: i32,
-    pub(crate) breakables: i32,
+    /// How many loops are open in the function at hand (A_LOOP each) and how many `switch`es (A_SWITCH each).
+    pub(crate) jumps: u64,
     /// `labels` from here on belong to the function at hand ..
     pub(crate) labels_base: i32,
     /// .. and this is where they end.
@@ -144,6 +143,19 @@ pub(crate) struct Place {
     pub(crate) only_for_patterns: i32,
 }
 
+/// What a function leaves behind when it is entered: see enter_function().
+#[derive(Clone, Copy)]
+pub(crate) struct Outside {
+    jumps: u64,
+    labels_base: i32,
+    in_parameters: bool,
+    suspensions: i32,
+}
+
+/// In the lower half what `continue` can go to, in the upper half what `break` can go to.
+const A_LOOP: u64 = (1 << 32) | 1;
+const A_SWITCH: u64 = 1 << 32;
+
 /// outside of all functions but arrow functions
 pub(crate) const SCOPE_TOP: i32 = 0;
 pub(crate) const SCOPE_FUNCTION: i32 = 1;
@@ -156,8 +168,7 @@ pub(crate) const SCOPE_FIELD: i32 = 4;
 pub(crate) const SCOPE_STATIC_BLOCK: i32 = 5;
 
 const NOWHERE: Place = Place {
-    loops: 0,
-    breakables: 0,
+    jumps: 0,
     labels_base: 0,
     labels_top: 0,
     scope: SCOPE_TOP,
@@ -243,8 +254,12 @@ impl Quick {
         self.set_comment_count(count);
     }
 
-    /// For mark() of the lexer.
+    /// For mark() of the lexer. (What is asked about the place in TypeScript does no harm if it is out of date.)
+    #[inline]
     pub(crate) fn keep_place(&mut self, index: i32) {
+        if self.parse.typed == TYPED_TS {
+            return;
+        }
         let place = self.parse.place;
         match self.parse.places.get_mut(index as u32 as usize) {
             Some(slot) => *slot = place,
@@ -253,26 +268,38 @@ impl Quick {
     }
 
     /// For rewind() of the lexer.
+    #[inline]
     pub(crate) fn go_back_to_place(&mut self, index: i32) {
+        if self.parse.typed == TYPED_TS {
+            return;
+        }
         if let Some(place) = self.parse.places.get(index as u32 as usize) {
             self.parse.place = *place;
         }
     }
 
-    /// The body of a function starts, or its parameters do: no loop and no label outside of it counts in there. Returns what the place was, for leave_function().
-    pub(crate) fn enter_function(&mut self) -> Place {
-        let outer = self.parse.place;
-        self.parse.place.loops = 0;
-        self.parse.place.breakables = 0;
-        self.parse.place.labels_base = outer.labels_top;
-        self.parse.place.in_parameters = false;
-        return outer;
+    /// The body of a function starts: no loop and no label outside of it counts in there, and what suspends it does not suspend what is around it.
+    #[inline]
+    pub(crate) fn enter_function(&mut self) -> Outside {
+        let place = &mut self.parse.place;
+        let outside = Outside {
+            jumps: place.jumps,
+            labels_base: place.labels_base,
+            in_parameters: place.in_parameters,
+            suspensions: self.parse.suspensions,
+        };
+        place.jumps = 0;
+        place.labels_base = place.labels_top;
+        place.in_parameters = false;
+        return outside;
     }
 
-    pub(crate) fn leave_function(&mut self, outer: Place) {
-        let only_for_patterns = self.parse.place.only_for_patterns;
-        self.parse.place = outer;
-        self.parse.place.only_for_patterns = only_for_patterns;
+    #[inline]
+    pub(crate) fn leave_function(&mut self, outside: Outside) {
+        self.parse.place.jumps = outside.jumps;
+        self.parse.place.labels_base = outside.labels_base;
+        self.parse.place.in_parameters = outside.in_parameters;
+        self.parse.suspensions = outside.suspensions;
     }
 
     pub(crate) fn set_speculating(&mut self, depth: i32) {
@@ -391,12 +418,6 @@ impl Quick {
             kw::Yield => self.parse.in_generator != 0,
             _ => false,
         }
-    }
-
-    /// Is the current token `arguments` in a place where there are none: the value of a property of a class, a static block? TypeScript's parser does not mind.
-    #[cold]
-    fn is_misplaced_arguments(&self, start: i32, end: i32) -> bool {
-        self.parse.typed != TYPED_TS && self.text_is(start, end, b"arguments")
     }
 
     /// A name that is bound or read.
@@ -1326,16 +1347,20 @@ impl Quick {
         let head_has_lines = self.fast.ready_last_length != self.fast.ready_length;
         // where the blocks are, as the parser would know if it had read the head
         let outer_scope = self.parse.place.scope;
-        let is_field = is_class_member && kind == k::ClassProperty;
+        let outer_jumps = self.parse.place.jumps;
+        let asks = self.parse.typed != TYPED_TS;
+        let is_field = asks && is_class_member && kind == k::ClassProperty;
         if is_field {
             self.parse.place.scope = SCOPE_FIELD;
         }
-        let is_loop = (kind == k::ForStatement
-            || kind == k::ForOfStatement
-            || kind == k::ForInStatement
-            || kind == k::WhileStatement) as i32;
-        self.parse.place.loops += is_loop;
-        self.parse.place.breakables += is_loop;
+        if asks
+            && (kind == k::ForStatement
+                || kind == k::ForOfStatement
+                || kind == k::ForInStatement
+                || kind == k::WhileStatement)
+        {
+            self.parse.place.jumps += A_LOOP;
+        }
         let mut after: i32;
         // Has the lexer looked at what follows the last block?
         let mut looked: bool;
@@ -1391,7 +1416,7 @@ impl Quick {
                         } else {
                             if (flags & BLOCK_FUNCTION) != 0 {
                                 let scope = self.parse.place.scope;
-                                if (flags & BLOCK_ARROW) == 0 {
+                                if (flags & BLOCK_ARROW) == 0 && asks {
                                     self.parse.place.scope = if kind != k::ClassMethod {
                                         SCOPE_FUNCTION
                                     } else if (flags & BLOCK_CONSTRUCTOR) != 0
@@ -1409,12 +1434,13 @@ impl Quick {
                                         0
                                     })?;
                                 self.parse.place.scope = scope;
-                                // whether that goes with the parameters is for the parser to say
+                                // see check_directives()
                                 if self.n.at(self.n.at(body + 4)) != 0
+                                    && (flags & BLOCK_ODD_PARAMETERS) != 0
                                     && self.parse.typed != TYPED_TS
                                     && self.has_use_strict(body)
                                 {
-                                    return Err(self.redo());
+                                    return Err(self.text_refuse());
                                 }
                                 body
                             } else {
@@ -1481,8 +1507,7 @@ impl Quick {
             }
         }
         self.parse.place.scope = outer_scope;
-        self.parse.place.loops -= is_loop;
-        self.parse.place.breakables -= is_loop;
+        self.parse.place.jumps = outer_jumps;
         let count = (self.arena.ls_pos - list_mark) / 3;
         if after == AFTER_REFUSED {
             let base = self.parse.known_blocks_count;
@@ -1979,11 +2004,9 @@ impl Quick {
     }
 
     fn parse_loop_body(&mut self) -> R<i32> {
-        self.parse.place.loops += 1;
-        self.parse.place.breakables += 1;
+        self.parse.place.jumps += A_LOOP;
         let body = self.parse_body()?;
-        self.parse.place.loops -= 1;
-        self.parse.place.breakables -= 1;
+        self.parse.place.jumps -= A_LOOP;
         return Ok(body);
     }
 
@@ -1994,9 +2017,9 @@ impl Quick {
         }
         if label == 0 {
             return if is_continue {
-                self.parse.place.loops != 0
+                self.parse.place.jumps as u32 != 0
             } else {
-                self.parse.place.breakables != 0
+                self.parse.place.jumps != 0
             };
         }
         let mut i = self.parse.place.labels_base;
@@ -2315,7 +2338,7 @@ impl Quick {
         self.parse.list_depth += 2;
         let outer_cases = self.parse.cases_depth;
         self.parse.cases_depth = self.parse.list_depth;
-        self.parse.place.breakables += 1;
+        self.parse.place.jumps += A_SWITCH;
         let mut has_default = false;
         let mark = self.arena.ls_pos;
         while self.lexer.tok != tk::BraceR {
@@ -2360,7 +2383,7 @@ impl Quick {
             self.list_push(v1);
         }
         let cases = self.list_finish(mark);
-        self.parse.place.breakables -= 1;
+        self.parse.place.jumps -= A_SWITCH;
         self.parse.cases_depth = outer_cases;
         self.parse.list_depth -= 2;
         self.next()?;
@@ -2612,11 +2635,14 @@ impl Quick {
         self.parse.in_async = if (flags & F_ASYNC) != 0 { 1 } else { 0 };
         self.parse.in_generator = if (flags & F_GENERATOR) != 0 { 1 } else { 0 };
         self.parse.no_in = 0;
-        let outer = self.enter_function();
-        let suspensions = self.parse.suspensions;
-        let body = self.parse_block_like(k::BlockStatement, true)?;
-        self.parse.suspensions = suspensions;
-        self.leave_function(outer);
+        let body: i32;
+        if self.parse.typed == TYPED_TS {
+            body = self.parse_block_like(k::BlockStatement, true)?;
+        } else {
+            let outside = self.enter_function();
+            body = self.parse_block_like(k::BlockStatement, true)?;
+            self.leave_function(outside);
+        }
         self.parse.in_function = f;
         self.parse.in_async = a;
         self.parse.in_generator = g;
@@ -2852,9 +2878,6 @@ impl Quick {
         let saved_no_in = self.parse.no_in;
         self.parse.no_in = saved_no_in & !NO_IN_CONSEQUENT;
         let body: i32;
-        let suspensions = self.parse.suspensions;
-        let outer_in_parameters = self.parse.place.in_parameters;
-        self.parse.place.in_parameters = false;
         if self.lexer.tok == tk::BraceL {
             body = self.parse_function_body(flags)?;
         } else {
@@ -2868,14 +2891,17 @@ impl Quick {
             self.parse.in_function = 1;
             self.parse.in_async = if (flags & F_ASYNC) != 0 { 1 } else { 0 };
             self.parse.in_generator = 0;
+            let suspensions = self.parse.suspensions;
+            let in_parameters = self.parse.place.in_parameters;
+            self.parse.place.in_parameters = false;
             body = self.parse_maybe_assign()?;
+            self.parse.suspensions = suspensions;
+            self.parse.place.in_parameters = in_parameters;
             self.parse.in_function = f;
             self.parse.in_async = a;
             self.parse.in_generator = g;
             flags |= F_EXPR_BODY;
         }
-        self.parse.suspensions = suspensions;
-        self.parse.place.in_parameters = outer_in_parameters;
         self.parse.no_in = saved_no_in;
         if (flags & F_EXPR_BODY) == 0 {
             self.check_directives(body, params)?;
@@ -3302,24 +3328,25 @@ impl Quick {
 
     /// The current token is the `{` behind `static`.
     pub(crate) fn parse_static_block(&mut self, start: i32) -> R<i32> {
-        let outer = self.enter_function();
+        let outside = self.enter_function();
+        let scope = self.parse.place.scope;
         self.parse.place.scope = SCOPE_STATIC_BLOCK;
         let block = self.parse_block_like(k::StaticBlock, false)?;
-        self.leave_function(outer);
+        self.parse.place.scope = scope;
+        self.leave_function(outside);
         self.n.put(block + 1, start);
         self.check_for_arguments(start, self.n.at(block + 2))?;
         return Ok(block);
     }
 
-    /// T[start, end) is a static block or the value of a property of a class. The parser has seen to it that `arguments` is not read in there; the reader, which may have read
-    /// parts of it, has not looked.
+    /// T[start, end) is a static block or the value of a property of a class. There are no `arguments` in there, but in a function in it; TypeScript's parser does not mind.
+    /// Nobody looks at each name for that: the word is rare enough.
     pub(crate) fn check_for_arguments(&self, start: i32, end: i32) -> R<()> {
-        if self.parse.reads_ahead
-            && self.parse.typed != TYPED_TS
+        if self.parse.typed != TYPED_TS
             && self.parse.place.scope < SCOPE_FIELD
             && bun_core::strings::contains(self.t.sub(start, end), b"arguments")
         {
-            return Err(self.redo());
+            return Err(self.text_refuse());
         }
         Ok(())
     }
@@ -3349,11 +3376,13 @@ impl Quick {
         self.parse.in_function = 1;
         self.parse.in_generator = 0;
         self.parse.in_async = 0;
-        let outer = self.enter_function();
+        let outside = self.enter_function();
+        let scope = self.parse.place.scope;
         self.parse.place.scope = SCOPE_FIELD;
         let start = self.lexer.tok_start;
         let value = self.parse_maybe_assign()?;
-        self.leave_function(outer);
+        self.parse.place.scope = scope;
+        self.leave_function(outside);
         self.check_for_arguments(start, self.lexer.prev_end)?;
         self.parse.in_function = f;
         self.parse.in_async = a;
@@ -4427,14 +4456,10 @@ impl Quick {
                             return Err(self.text_refuse());
                         }
                         self.restore();
-                    }
-                    if self.parse.place.scope >= SCOPE_FIELD
-                        && self.lexer.tok_end - self.lexer.tok_start == 9
-                        && self.is_misplaced_arguments(self.lexer.tok_start, self.lexer.tok_end)
-                    {
+                    } else if self.lexer.tok_kw != 0 && self.is_reserved_here(self.lexer.tok_kw) {
                         return Err(self.text_refuse());
                     }
-                    let id = self.parse_ident()?;
+                    let id = self.identifier()?;
                     if self.lexer.tok == tk::Arrow && self.lexer.tok_nl == 0 {
                         let mark = self.arena.ls_pos;
                         self.list_push(id);
@@ -5232,11 +5257,7 @@ impl Quick {
             return Err(self.unexpected());
         }
         // the name is read, or bound
-        if word != tk::Name
-            || (word_kw != 0 && self.is_reserved_here(word_kw))
-            || (self.parse.place.scope >= SCOPE_FIELD
-                && self.is_misplaced_arguments(self.n.at(key + 1), self.n.at(key + 2)))
-        {
+        if word != tk::Name || (word_kw != 0 && self.is_reserved_here(word_kw)) {
             return Err(self.text_refuse());
         }
         let mut value = if self.parse.typed == 0 {

@@ -710,29 +710,16 @@ impl Quick {
                 let w = self.d.at(pc);
                 's2: {
                     match w & 31 {
-                        op::BreakText => {
-                            if mode != BREAK {
-                                pc += 1;
-                                continue 'l1;
-                            }
-                            {
-                                if o > cap {
-                                    break 's2;
-                                }
-                                let len = (w >> 5) & 255;
-                                self.printer.out.put_u16(o, ((w as u32) >> 13) as i32);
-                                o += len;
-                                pos += len;
-                                pc += 1;
-                                continue 'l1;
-                            }
-                        }
-                        // falls through
-                        op::Short => {
+                        op::BreakText | op::Short => {
                             if o > cap {
                                 break 's2;
                             }
-                            let len = (w >> 5) & 255;
+                            // (what is written and does not count is overwritten)
+                            let len = if (w & 31) == op::BreakText && mode != BREAK {
+                                0
+                            } else {
+                                (w >> 5) & 255
+                            };
                             self.printer.out.put_u16(o, ((w as u32) >> 13) as i32);
                             o += len;
                             pos += len;
@@ -809,11 +796,9 @@ impl Quick {
                             {
                                 let kind = w >> 5;
                                 if mode == FLAT && kind < LINE_HARD {
-                                    if kind == LINE_NORMAL {
-                                        self.printer.out.put(o, 32);
-                                        o += 1;
-                                        pos += 1;
-                                    }
+                                    self.printer.out.put(o, 32);
+                                    o += (kind == LINE_NORMAL) as i32;
+                                    pos += (kind == LINE_NORMAL) as i32;
                                     pc += 1;
                                     continue 'l1;
                                 }
@@ -860,11 +845,9 @@ impl Quick {
                         op::Line => {
                             let kind = w >> 5;
                             if mode == FLAT && kind < LINE_HARD {
-                                if kind == LINE_NORMAL {
-                                    self.printer.out.put(o, 32);
-                                    o += 1;
-                                    pos += 1;
-                                }
+                                self.printer.out.put(o, 32);
+                                o += (kind == LINE_NORMAL) as i32;
+                                pos += (kind == LINE_NORMAL) as i32;
                                 pc += 1;
                                 continue 'l1;
                             }
@@ -1133,10 +1116,8 @@ impl Quick {
                                                     continue 'l13;
                                                 }
                                                 op::IndentLine | op::DedentLine | op::Line => {
-                                                    if (v >> 5) == LINE_NORMAL {
-                                                        self.printer.out.put(o, 32);
-                                                        o += 1;
-                                                    }
+                                                    self.printer.out.put(o, 32);
+                                                    o += ((v >> 5) == LINE_NORMAL) as i32;
                                                     pc += 1;
                                                     continue 'l13;
                                                 }

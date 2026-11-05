@@ -3,7 +3,8 @@
 use crate::lang::lang;
 use crate::lexer::{C_END, C_START, C_STRIDE};
 use crate::parse::core::{TYPED_FLOW, TYPED_TS};
-use crate::{Quick, R, Stop, Words, why};
+use crate::{Quick, R, Stop, Words, rare, why};
+use bun_core::strings;
 
 impl Quick {
     /// is_flow_file() of parse/babel.js: the name ends in .js.flow, or @flow or @noflow stands in the comments before the first token.
@@ -164,6 +165,11 @@ impl Quick {
         let mode = self.mode_of_run();
         self.set_js_mode(mode);
         let root = self.parse_once()?;
+        if self.lexer.is_beyond_ascii
+            && !strings::is_valid_utf8(self.t.sub(self.text.src_start, self.text.src_end))
+        {
+            return Err(self.rare(rare::ODD_BYTES));
+        }
         self.nothing_lost()?;
         self.stage(0);
         if self.has_long_row_of_comments() {

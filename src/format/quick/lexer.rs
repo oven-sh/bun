@@ -16,6 +16,8 @@ pub(crate) struct Lexer {
     /// node flags that describe the token's text
     pub(crate) tok_flags: i32,
     pub(crate) tok_kw: i32,
+    /// A token or a comment has a byte that is not ASCII. (What is read from the bytes without tokens is ASCII, but for comments that are copied.)
+    pub(crate) is_beyond_ascii: bool,
     pub(crate) prev_end: i32,
     pub(crate) c: Vec<i32>,
     pub(crate) c_count: i32,
@@ -52,6 +54,7 @@ impl Lexer {
             tok_nl: 0,
             tok_flags: 0,
             tok_kw: 0,
+            is_beyond_ascii: false,
             prev_end: 0,
             c: zeros(4096),
             c_count: 0,
@@ -285,7 +288,7 @@ impl Quick {
     }
 
     /// Starts at the beginning of the window. The comments of this run are C[c_base .. c_count).
-    pub(crate) fn reset_lexer(&mut self) {
+    pub(crate) fn reset_lexer(&mut self) -> R<()> {
         self.lexer.pos = self.text.src_start;
         self.lexer.tok = tk::EOF;
         let v0 = self.text.src_start;
@@ -297,15 +300,24 @@ impl Quick {
         self.lexer.tok_kw = 0;
         self.lexer.c_base = self.lexer.c_count;
         self.lexer.marks_top = 0;
+        self.lexer.is_beyond_ascii = false;
         // #! line
         if self.t.at(self.lexer.pos) == 35 && self.t.at(self.lexer.pos + 1) == 33 {
             let mut p = self.lexer.pos;
             while p < self.text.src_end && self.t.at(p) != 10 {
+                let c = self.t.at(p);
+                if (c < 32 || c >= 127) && c != 9 {
+                    if self.is_odd_in_comment(p) {
+                        return Err(self.rare(rare::ODD_BYTES));
+                    }
+                    self.lexer.is_beyond_ascii = true;
+                }
                 p += 1;
             }
             self.push_comment(self.lexer.pos, p, CF_HASHBANG);
             self.lexer.pos = p;
         }
+        Ok(())
     }
 
     pub(crate) fn save(&mut self) {
@@ -417,12 +429,22 @@ impl Quick {
         return shift + 12;
     }
 
-    /// The byte at `p`, which is not a printable character of ASCII, is neither a tab nor part of a character that is printed:
+    /// The byte at `p`, which is neither a printable character of ASCII nor a tab, is not part of a character that is printed either:
     /// comments are trimmed, line by line, and measured.
     #[cold]
     pub(crate) fn is_odd_in_comment(&self, p: i32) -> bool {
+        self.t.at(p) < 128 || self.unicode_space(p) != 0
+    }
+
+    /// The byte at `p` of a string, a template, a regular expression or the text of an element, which is not a printable character of
+    /// ASCII, a tab or a line feed, is a control character, or starts U+2028 or U+2029: what counts as a line differs from place to place.
+    #[inline(always)]
+    pub(crate) fn is_odd_in_text(&self, p: i32) -> bool {
         let c = self.t.at(p);
-        if c < 128 { c != 9 } else { self.unicode_space(p) != 0 }
+        c < 128
+            || (c == 0xe2
+                && self.t.at(p + 1) == 0x80
+                && (self.t.at(p + 2) == 0xa8 || self.t.at(p + 2) == 0xa9))
     }
 
     pub(crate) fn unicode_space(&self, p: i32) -> i32 {
@@ -510,8 +532,11 @@ impl Quick {
                             {
                                 break;
                             }
-                            if self.is_odd_in_comment(p) {
-                                return Err(self.rare(rare::ODD_BYTES));
+                            if e != 9 {
+                                if self.is_odd_in_comment(p) {
+                                    return Err(self.rare(rare::ODD_BYTES));
+                                }
+                                self.lexer.is_beyond_ascii = true;
                             }
                             flags = 0;
                         }
@@ -575,8 +600,11 @@ impl Quick {
                             } else if e == 0 && p >= self.text.src_end {
                                 return Err(self.fail(start));
                             }
-                            if self.is_odd_in_comment(p) {
-                                return Err(self.rare(rare::ODD_BYTES));
+                            if e != 9 {
+                                if self.is_odd_in_comment(p) {
+                                    return Err(self.rare(rare::ODD_BYTES));
+                                }
+                                self.lexer.is_beyond_ascii = true;
                             }
                             flags &= !CF_PLAIN;
                         }
@@ -763,6 +791,7 @@ impl Quick {
                 if self.unicode_space(p) != 0 {
                     return Ok(p);
                 }
+                self.lexer.is_beyond_ascii = true;
                 // one character of two to four bytes
                 let code: i32;
                 let length: i32;
@@ -914,9 +943,10 @@ impl Quick {
                 if c == 10 || c == 13 || (c == 0 && p >= self.text.src_end) {
                     return Err(self.fail(start));
                 }
-                if c < 128 && c != 9 {
+                if c != 9 && self.is_odd_in_text(p) {
                     return Err(self.rare(rare::ODD_BYTES));
                 }
+                self.lexer.is_beyond_ascii = true;
                 flags |= F_SLOW_TEXT;
             }
             p += 1;
@@ -1298,9 +1328,10 @@ impl Quick {
             } else if c == 47 && !in_class {
                 break;
             } else if c < 32 || c >= 127 {
-                if c < 128 && c != 9 {
+                if c != 9 && self.is_odd_in_text(p) {
                     return Err(self.rare(rare::ODD_BYTES));
                 }
+                self.lexer.is_beyond_ascii = true;
                 flags |= F_SLOW_TEXT;
             }
             p += 1;
@@ -1337,8 +1368,11 @@ impl Quick {
                 if c == 0 && p >= self.text.src_end {
                     return Err(self.fail(from));
                 }
-                if c < 128 && c != 9 && c != 10 {
-                    return Err(self.rare(rare::ODD_BYTES));
+                if c != 9 && c != 10 {
+                    if self.is_odd_in_text(p) {
+                        return Err(self.rare(rare::ODD_BYTES));
+                    }
+                    self.lexer.is_beyond_ascii = true;
                 }
                 flags |= F_SLOW_TEXT;
             }
@@ -1369,6 +1403,7 @@ impl Quick {
                         if self.unicode_space(q) != 0 {
                             break;
                         }
+                        self.lexer.is_beyond_ascii = true;
                         self.lexer.tok_flags |= F_SLOW_TEXT;
                     }
                     q += 1;
@@ -1395,8 +1430,11 @@ impl Quick {
                             if d == 0 && q >= self.text.src_end {
                                 return Err(self.fail(p));
                             }
-                            if d < 128 && d != 9 && d != 10 {
-                                return Err(self.rare(rare::ODD_BYTES));
+                            if d != 9 && d != 10 {
+                                if self.is_odd_in_text(q) {
+                                    return Err(self.rare(rare::ODD_BYTES));
+                                }
+                                self.lexer.is_beyond_ascii = true;
                             }
                             flags |= F_SLOW_TEXT;
                         } else if d == 38 {
@@ -1497,8 +1535,11 @@ impl Quick {
                 if d == 0 && q >= self.text.src_end {
                     return Err(self.fail(p));
                 }
-                if d < 128 && d != 9 && d != 10 {
-                    return Err(self.rare(rare::ODD_BYTES));
+                if d != 9 && d != 10 {
+                    if self.is_odd_in_text(q) {
+                        return Err(self.rare(rare::ODD_BYTES));
+                    }
+                    self.lexer.is_beyond_ascii = true;
                 }
                 flags |= F_SLOW_TEXT;
             } else if (d == 62 || d == 125) && !self.lexer.lenient_jsx_text {

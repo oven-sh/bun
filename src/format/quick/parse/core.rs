@@ -289,7 +289,7 @@ impl Quick {
     // ---------------------------------------------------------------------------------------------------------- program
     pub(crate) fn parse_program(&mut self) -> R<i32> {
         self.reserve_ast((self.text.src_end - self.text.src_start) * 2 + 1024);
-        self.reset_lexer();
+        self.reset_lexer()?;
         self.parse.no_in = 0;
         self.parse.in_generator = 0;
         self.parse.in_async = 0;

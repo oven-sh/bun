@@ -24,6 +24,29 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
     js_ast::StoreStr::new(s)
 }
 
+/// `a` and `b` of an `import a = b.c` that isn't exported.
+pub(crate) fn ts_import_equals(st: &S::Local) -> Option<(Ref, Ref)> {
+    if !st.origin.is_ts_import_equals() || st.is_export || st.decls.len_u32() == 0 {
+        return None;
+    }
+    let decl = &st.decls.slice()[0];
+    let js_ast::b::B::BIdentifier(alias) = decl.binding.data else {
+        return None;
+    };
+
+    // Skip to the underlying reference
+    let mut value: Option<Expr> = decl.value;
+    while let Some(js_ast::ExprData::EDot(dot)) = value.map(|it| it.data) {
+        value = Some(dot.target);
+    }
+
+    // Is this an identifier reference and not a require() call?
+    match value.map(|it| it.data) {
+        Some(js_ast::ExprData::EIdentifier(id)) => Some((alias.r#ref, id.ref_)),
+        _ => None,
+    }
+}
+
 impl<'a> ImportScanner<'a> {
     // Only the parser P is handled here — the bundler scans imports via its own
     // path and does not go through this function.
@@ -656,38 +679,15 @@ impl<'a> ImportScanner<'a> {
 
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
-                    if st.origin.is_ts_import_equals() && !st.is_export && st.decls.len_u32() > 0 {
-                        let decl = &st.decls.slice()[0];
+                    if let Some((alias, root)) = ts_import_equals(&st) {
+                        // Is this import statement unused?
+                        if p.symbols[alias.inner_index() as usize].use_count_estimate == 0 {
+                            p.ignore_usage(root);
 
-                        // Skip to the underlying reference
-                        let mut value: Option<Expr> = decl.value;
-                        if decl.value.is_some() {
-                            while let js_ast::ExprData::EDot(dot) = value.unwrap().data {
-                                value = Some(dot.target);
-                            }
+                            scanner.removed_import_equals = true;
+                            continue;
                         }
-
-                        // Is this an identifier reference and not a require() call?
-                        if let Some(val) = value {
-                            if let js_ast::ExprData::EIdentifier(id) = val.data {
-                                // Is this import statement unused?
-                                if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
-                                    let b_id_ref = b_id.r#ref;
-                                    if p.symbols[b_id_ref.inner_index() as usize].use_count_estimate
-                                        == 0
-                                    {
-                                        p.ignore_usage(id.ref_);
-
-                                        scanner.removed_import_equals = true;
-                                        continue;
-                                    } else {
-                                        scanner.kept_import_equals = true;
-                                    }
-                                } else {
-                                    scanner.kept_import_equals = true;
-                                }
-                            }
-                        }
+                        scanner.kept_import_equals = true;
                     }
                 }
                 js_ast::StmtData::SExportDefault(mut st) => {

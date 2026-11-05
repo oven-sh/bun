@@ -5413,6 +5413,304 @@ console.log("boop");
       export var q = r;
     `);
   });
+
+  // A lowered top-level `using` moves the statements of the module into a `try`.
+  describe("an `import a = b.c` beside a lowered top-level `using`", () => {
+    const usings = ["using r = { [Symbol.dispose]() {} };", "await using r = { async [Symbol.asyncDispose]() {} };"];
+
+    it("leaves no code when it names a type", () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      const output = transpiler.transformSync(`namespace N { export type T = number; }
+import T = N.T;
+using resource = { [Symbol.dispose]() {} };
+const x: T = 1;
+console.log(x);
+`);
+      expect(prepareForSnapshot(output)).toMatchInlineSnapshot(`
+        "import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+        let __bun_temp_ref_1$ = [];
+        try {
+          var resource = __using(__bun_temp_ref_1$, { [Symbol.dispose]() {} }, 0);
+          var x = 1;
+          console.log(x);
+        } catch (__bun_temp_ref_2$) {
+          var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+        } finally {
+          __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+        }
+        "
+      `);
+    });
+
+    const USING = Symbol("using");
+    const gone = alias => [alias, false];
+    const stays = alias => [alias, true];
+    const metadata = { tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } } };
+    const classicJsx = {
+      loader: "tsx",
+      tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h", jsxFragmentFactory: "F" } },
+    };
+    // [name, lines, options]. The twin of a module has `const` for each alias that stays, and no other alias.
+    const modules = [
+      ["a type alias", ["namespace N { export type T = number; }", gone("import T = N.T;"), USING, "const x: T = 1;"]],
+      [
+        "an interface",
+        ["namespace N { export interface T { a: number; } }", gone("import T = N.T;"), USING, "const x: T = { a: 1 };"],
+      ],
+      [
+        "a type of a declared namespace",
+        ["declare namespace N { type T = number; }", gone("import T = N.T;"), USING, "const x: T = 1;"],
+      ],
+      [
+        "a type of a nested namespace",
+        ["namespace A.B { export type T = string; }", gone("import T = A.B.T;"), USING, 'const x: T = "s";'],
+      ],
+      [
+        "a type of an ambient namespace",
+        [gone("import Timeout = NodeJS.Timeout;"), USING, "const timer: Timeout = setTimeout(() => {}, 0);"],
+      ],
+      [
+        "a type of an `import type` binding",
+        ['import type { NS } from "./types";', gone("import Foo = NS.Foo;"), USING, "const x: Foo = 1;"],
+      ],
+      ["a type that nothing names", ["namespace N { export type T = number; }", gone("import T = N.T;"), USING]],
+      ["a value that nothing reads", ["namespace N { export const v = 1; }", gone("import v = N.v;"), USING]],
+      [
+        "a namespace that only types name",
+        ["namespace N { export type T = number; }", gone("import M = N;"), USING, "const x: M.T = 1;"],
+      ],
+      [
+        "two aliases in front of a declaration",
+        [
+          "namespace N { export type T = number; export type U = string; }",
+          gone("import T = N.T;"),
+          gone("import U = N.U;"),
+          "const y = 2;",
+          USING,
+        ],
+      ],
+      [
+        "a chain with the leaf first",
+        [
+          "namespace A { export namespace B { export type T = number; } }",
+          gone("import T = B.T;"),
+          gone("import B = A.B;"),
+          USING,
+          "const x: T = 1;",
+        ],
+      ],
+      [
+        "a chain with the root first",
+        [
+          "namespace A { export namespace B { export type T = number; } }",
+          gone("import B = A.B;"),
+          gone("import T = B.T;"),
+          USING,
+          "const x: T = 1;",
+        ],
+      ],
+      [
+        "a chain in neither order",
+        [
+          "namespace A { export namespace B { export namespace C { export type T = number; } } }",
+          gone("import C = B.C;"),
+          gone("import T = C.T;"),
+          gone("import B = A.B;"),
+          USING,
+          "const x: T = 1;",
+        ],
+      ],
+      [
+        "an alias that two unused aliases read",
+        [
+          "namespace A { export namespace B { export type T = number; export type U = string; } }",
+          gone("import T = B.T;"),
+          gone("import B = A.B;"),
+          gone("import U = B.U;"),
+          USING,
+          'const x: [T, U] = [1, "s"];',
+        ],
+      ],
+      ["a value that code reads", ["namespace N { export const v = 1; }", stays("import v = N.v;"), USING, "v;"]],
+      [
+        "a value that a hoisted function reads",
+        ["export function f() { return v; }", "namespace N { export const v = 1; }", stays("import v = N.v;"), USING],
+      ],
+      [
+        "a value that an export clause names",
+        ["namespace N { export const v = 1; }", stays("import v = N.v;"), USING, "export { v };"],
+      ],
+      ["an exported alias", ["namespace N { export const v = 1; }", stays("export import v = N.v;"), USING]],
+      ["an alias of require()", [stays('import lib = require("./lib");'), USING]],
+      [
+        "each alias of a chain whose leaf code reads",
+        [
+          "namespace A { export namespace B { export const v = 7; } }",
+          stays("import B = A.B;"),
+          stays("import v = B.v;"),
+          USING,
+          "v;",
+        ],
+      ],
+      [
+        "a read alias between two unused ones",
+        [
+          "namespace N { export const v = 1; export type T = number; }",
+          gone("import T = N.T;"),
+          stays("import v = N.v;"),
+          gone("import U = N.T;"),
+          USING,
+          "const x: T = v;",
+        ],
+      ],
+      [
+        "a chain with a read leaf and an unused leaf",
+        [
+          "namespace A { export namespace B { export const v = 7; export type T = number; } }",
+          stays("import B = A.B;"),
+          gone("import T = B.T;"),
+          stays("import v = B.v;"),
+          USING,
+          "const x: T = v;",
+        ],
+      ],
+      [
+        "a root that code reads behind its unused leaf",
+        [
+          "namespace A { export namespace B { export const v = 7; export type T = number; } }",
+          gone("import T = B.T;"),
+          stays("import B = A.B;"),
+          USING,
+          "const x: T = B.v;",
+        ],
+      ],
+      [
+        "an unused root of two unused leaves beside a read alias",
+        [
+          "namespace A { export const w = 1; export namespace B { export type T = number; export type U = string; } }",
+          gone("import B = A.B;"),
+          gone("import T = B.T;"),
+          stays("import w = A.w;"),
+          gone("import U = B.U;"),
+          USING,
+          'const x: [T, U] = [w, "s"];',
+        ],
+      ],
+      [
+        "aliases between statements that leave the try",
+        [
+          'import { a } from "./a";',
+          "export function f() { return 1; }",
+          "export default 5;",
+          "namespace N { export type T = number; export const v = 1; }",
+          gone("import T = N.T;"),
+          "export { a };",
+          stays("import v = N.v;"),
+          'export * from "./b";',
+          gone("import U = N.T;"),
+          USING,
+          'export class K { static { console.log("k"); } }',
+          gone("import W = N.T;"),
+          "console.log(v, a);",
+        ],
+      ],
+      [
+        "a class that decorator metadata names",
+        [
+          "namespace N { export class K {} }",
+          stays("import K = N.K;"),
+          USING,
+          "declare const dec: any;",
+          "class C { @dec p: K; }",
+        ],
+        metadata,
+      ],
+      [
+        "a namespace that decorator metadata names",
+        [
+          "namespace N { export namespace A { export class K {} } }",
+          stays("import A = N.A;"),
+          USING,
+          "declare const dec: any;",
+          "class C { @dec p: A.K; }",
+        ],
+        metadata,
+      ],
+      [
+        "a classic JSX factory",
+        ["namespace P { export const h = (...a: any[]) => a; }", stays("import h = P.h;"), USING, "<div />;"],
+        classicJsx,
+      ],
+      [
+        "a classic JSX fragment factory",
+        [
+          "namespace P { export const h = (...a: any[]) => a; export const F = 1; }",
+          stays("import h = P.h;"),
+          stays("import F = P.F;"),
+          USING,
+          "<></>;",
+        ],
+        classicJsx,
+      ],
+    ];
+    const render = (lines, using, twin) =>
+      lines
+        .filter(line => !Array.isArray(line) || !twin || line[1])
+        .map(line => {
+          if (line === USING) return using;
+          if (!Array.isArray(line)) return line;
+          return twin ? line[0].replace("import ", "const ") : line[0];
+        })
+        .join("\n");
+
+    describe.each([
+      ["the default target", { loader: "ts" }],
+      ["target node", { loader: "ts", target: "node" }],
+      ["minify.syntax", { loader: "ts", minify: { syntax: true } }],
+      ["replMode", { loader: "ts", replMode: true }],
+    ])("%s", (_, options) => {
+      it.each(modules.map(([name, lines, more = {}]) => [name, lines, more]))(
+        "%s prints as its twin",
+        (_, lines, more) => {
+          const transpiler = new Bun.Transpiler({ ...options, ...more });
+          const usingFirst = [USING, ...lines.filter(line => line !== USING)];
+          for (const using of usings) {
+            for (const module of [lines, usingFirst]) {
+              const twin = transpiler.transformSync(render(module, using, true));
+              expect(twin).toContain("__callDispose");
+              expect(transpiler.transformSync(render(module, using, false))).toBe(twin);
+            }
+          }
+        },
+      );
+    });
+
+    it("prints as its twin after transform()", async () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      const [, lines] = modules[0];
+      expect(await transpiler.transform(render(lines, usings[0], false))).toBe(
+        await transpiler.transform(render(lines, usings[0], true)),
+      );
+    });
+
+    it("leaves a declaration that is not an alias", () => {
+      const output = new Bun.Transpiler({ loader: "ts" }).transformSync(
+        `const object = { property: 1 };\nnamespace N { export type T = number; }\nimport T = N.T;\n${usings[0]}\nconst unused = object.property;`,
+      );
+      expect(output).toContain("var unused = object.property;");
+      expect(output).not.toContain("N.T");
+    });
+
+    // An alias in a namespace body stays on every target.
+    it('leaves an alias in a namespace body as `target: "bun"` does', () => {
+      const source = `namespace N { export const v = 1; }\nnamespace M { import v = N.v; ${usings[0]} }`;
+      const lowered = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+      expect(lowered).toContain("__callDispose");
+      expect(lowered.includes("v = N.v")).toBe(
+        new Bun.Transpiler({ loader: "ts", target: "bun" }).transformSync(source).includes("v = N.v"),
+      );
+    });
+  });
 });
 
 describe("await can only be used inside an async function message", () => {

@@ -495,7 +495,7 @@ function Server(options, callback): void {
       this._SNICallback = options.SNICallback;
       this._ALPNCallback = options.ALPNCallback;
       const handshakeTimeout = options.handshakeTimeout || 120 * 1000;
-      validateNumber(handshakeTimeout, "options.handshakeTimeout", 0);
+      validateNumber(handshakeTimeout, "options.handshakeTimeout");
       this._handshakeTimeout = handshakeTimeout;
     }
   }

@@ -24,7 +24,7 @@ async function runInlineFixture(script, expectedStdout = null, expectedCode = 0)
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   if (expectedStdout !== null) {
     expect(stdout).toBe(expectedStdout);
@@ -716,6 +716,43 @@ it("process.argv in testing", () => {
 });
 
 describe("process.exitCode", () => {
+  it.each([
+    ["natural exit", "process.exitCode = 7;", "", 7, 7],
+    ["uncaught exception", "", 'throw new Error("boom");', 1, 1],
+    ["beforeExit", 'process.on("beforeExit", () => { process.exitCode = 7; });', "", 7, 7],
+    ["process.exit()", "process.exitCode = 7;", "process.exit();", 7, 0],
+  ])(
+    "clearing the code during %s preserves its exit semantics",
+    async (_name, setup, ending, emittedCode, expectedCode) => {
+      await runInlineFixture(
+        `${setup}
+       process.on("exit", code => { console.log("exit", code); process.exitCode = undefined; });
+       ${ending}`,
+        `exit ${emittedCode}\n`,
+        expectedCode,
+      );
+    },
+  );
+
+  it("keeps a cleared code unobservable to later exit listeners", async () => {
+    await runInlineFixture(
+      `process.exitCode = 7;
+       process.on("exit", code => { console.log("first", code, process.exitCode); process.exitCode = null; });
+       process.on("exit", code => { console.log("second", code, process.exitCode); });`,
+      "first 7 7\nsecond 7 undefined\n",
+      7,
+    );
+  });
+
+  it.each([0, 9])("honors an explicit %s after clearing the code in an exit listener", async replacement => {
+    await runInlineFixture(
+      `process.exitCode = 7;
+       process.on("exit", () => { process.exitCode = undefined; process.exitCode = ${replacement}; });`,
+      "",
+      replacement,
+    );
+  });
+
   it("validates int", () => {
     expect(() => (process.exitCode = "potato")).toThrow(
       `The "code" argument must be of type number. Received type string ('potato')`,

@@ -2030,6 +2030,18 @@ test("parentPort.unref() lets a listening worker exit", async () => {
   expect(await exited).toBe(0);
 });
 
+test.each(["undefined", "null"])(
+  "clearing process.exitCode in a worker exit listener with %s retains its code",
+  async clearValue => {
+    const worker = new Worker(
+      `process.exitCode = 5;
+     process.on("exit", () => { process.exitCode = ${clearValue}; });`,
+      { eval: true },
+    );
+    expect(await once(worker, "exit")).toEqual([5]);
+  },
+);
+
 test("clearing process.exitCode restores a worker's natural zero exit", async () => {
   const worker = new Worker(
     `const assert = require("node:assert/strict");

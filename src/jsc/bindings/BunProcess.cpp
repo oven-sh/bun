@@ -869,6 +869,13 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
+static void dispatchOnExit(Zig::GlobalObject* globalObject, Process* process, uint8_t exitCode)
+{
+    if (exitCode > 0)
+        process->m_isExitCodeObservable = true;
+    dispatchExitInternal(globalObject, process, exitCode);
+}
+
 extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
@@ -876,9 +883,13 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     }
 
     auto* process = globalObject->processObject();
-    if (exitCode > 0)
-        process->m_isExitCodeObservable = true;
-    dispatchExitInternal(globalObject, process, exitCode);
+    dispatchOnExit(globalObject, process, exitCode);
+
+    // Natural shutdown falls back to the emitted code when an exit listener clears it.
+    // process.exit() instead uses the listener's cleared code, so it bypasses this fallback.
+    void* bunVm = globalObject->bunVM();
+    if (exitCode > 0 && !process->m_isExitCodeObservable && Bun__getExitCode(bunVm) == 0)
+        Bun__setExitCode(bunVm, exitCode);
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -902,7 +913,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    Process__dispatchOnExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
+    dispatchOnExit(zigGlobal, process, Bun__getExitCode(bunVM(zigGlobal)));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     // process.reallyExit(process.exitCode) — re-read: an 'exit' listener may have set it.

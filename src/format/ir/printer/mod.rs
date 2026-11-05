@@ -892,6 +892,7 @@ impl<'d> Printer<'d> {
         let pending = (self.pending_indent, self.pending_space);
         let measured_group_fits = self.measured_group_fits;
         let has_empty_line = self.has_empty_line;
+        let boundary = (self.is_boundary_pending, self.after_boundary);
         let line_width = self.line_width;
         let elements = self.elements.clone();
         let mode = self.mode;
@@ -919,6 +920,7 @@ impl<'d> Printer<'d> {
         (self.pending_indent, self.pending_space) = pending;
         self.measured_group_fits = measured_group_fits;
         self.has_empty_line = has_empty_line;
+        (self.is_boundary_pending, self.after_boundary) = boundary;
         self.line_width = line_width;
         self.elements = elements;
         self.mode = mode;

@@ -671,3 +671,96 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   expect(child.exitCode).toBe(null);
   webSocket.close();
 });
+
+// In a CommonJS module the parser binds the JSX runtime with a `require()` of its own, ahead of the
+// module's statements. The `debugger;` of --inspect-brk and `import.meta.glob = ..` stay ahead of it.
+test("--inspect-brk pauses a CommonJS entry before the require() that the parser generates", async () => {
+  using dir = tempDir("inspect-brk-cjs", {
+    "node_modules/react/package.json": `{ "name": "react", "version": "0.0.0" }`,
+    "node_modules/react/jsx-dev-runtime.js": `globalThis.runtimeLoaded = true; exports.jsxDEV = (type, props) => ({ type, props });`,
+    "notes/a.txt": "a",
+    "entry.jsx": `
+      module.exports = [<div />, Object.keys(import.meta.glob("./notes/*.txt"))];
+      console.log(JSON.stringify(module.exports));
+    `,
+  });
+
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect-brk=ws://127.0.0.1:0/", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  let url: string | undefined;
+  const decoder = new TextDecoder();
+  const reader = (child.stderr as ReadableStream<Uint8Array>).getReader();
+  while (!url) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stderr += decoder.decode(value, { stream: true });
+    url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
+  }
+  reader.releaseLock();
+  if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+
+  const pending = new Map<number, (reply: any) => void>();
+  const events = new Map<string, (params: any) => void>();
+  const closed = Promise.withResolvers<never>();
+  const opened = Promise.withResolvers<void>();
+  const webSocket = new WebSocket(url);
+  webSocket.addEventListener("open", () => opened.resolve());
+  webSocket.addEventListener("close", () => closed.reject(new Error("the inspector closed the socket")));
+  webSocket.addEventListener("error", () => closed.reject(new Error("the inspector socket failed")));
+  closed.promise.catch(() => {});
+  webSocket.addEventListener("message", ({ data }) => {
+    const message = JSON.parse(data.toString());
+    if (typeof message.id === "number") {
+      pending.get(message.id)?.(message);
+      pending.delete(message.id);
+    } else {
+      events.get(message.method)?.(message.params);
+    }
+  });
+
+  let nextId = 1;
+  function send(method: string, params: object = {}): Promise<any> {
+    const id = nextId++;
+    const { promise, resolve } = Promise.withResolvers<any>();
+    pending.set(id, resolve);
+    webSocket.send(JSON.stringify({ id, method, params }));
+    return Promise.race([promise, closed.promise]);
+  }
+  function once(method: string): Promise<any> {
+    const { promise, resolve } = Promise.withResolvers<any>();
+    events.set(method, resolve);
+    return Promise.race([promise, closed.promise]);
+  }
+
+  await Promise.race([opened.promise, closed.promise]);
+  await send("Inspector.enable");
+  await send("Runtime.enable");
+  await send("Debugger.enable");
+  await send("Debugger.setBreakpointsActive", { active: true });
+  await send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+
+  const paused = once("Debugger.paused");
+  await send("Inspector.initialized");
+  const { reason } = await paused;
+  const atPause = await send("Runtime.evaluate", { expression: "typeof globalThis.runtimeLoaded" });
+
+  const resumed = once("Debugger.resumed");
+  await send("Debugger.resume");
+  await resumed;
+  webSocket.close();
+
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+  expect({ reason, atPause: atPause.result?.result?.value, stdout }).toEqual({
+    reason: "DebuggerStatement",
+    atPause: "undefined",
+    stdout: `[{"type":"div","props":{}},["./notes/a.txt"]]\n`,
+  });
+  expect(exitCode).toBe(0);
+});

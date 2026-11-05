@@ -309,4 +309,5 @@ impl Host for RecordingHost<'_> {
         self.import_paths.push((index, path.into()));
         (index, self.add(namespace, SymbolOrigin::ImportNamespace))
     }
+    // `bind_import` is not forwarded: `report_imports` reads the `import` statements.
 }

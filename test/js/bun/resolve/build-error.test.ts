@@ -250,6 +250,51 @@ test.concurrent("JSX next to module.exports loads", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Under `bun test` the parser binds `assert` and `should` of "vitest" to "chai"
+// with a statement of its own, and TypeScript drops what is left of the `import`
+// when nothing else of it is used. The file still has an import statement that
+// the user wrote, and that statement is the one to report.
+test.concurrent("chai names of vitest next to module.exports are reported as the import the user wrote", async () => {
+  using dir = tempDir("build-error-chai-cjs", {
+    "with-unused-name.ts": `import { assert, vi } from "vitest";\nmodule.exports = { check(value: unknown) { assert.ok(value); } };`,
+    "alone.ts": `import { assert } from "vitest";\nmodule.exports = { check(value: unknown) { assert.ok(value); } };`,
+    "unused.ts": `import { assert, vi } from "vitest";\nmodule.exports = { check() { return "checked"; } };`,
+    "chai.test.js": `
+      test("chai names", () => {
+        const errors = ["./with-unused-name.ts", "./alone.ts"].map(file => {
+          try {
+            require(file);
+          } catch (error) {
+            return [error.name, error.message, error.position?.lineText];
+          }
+        });
+        console.log(JSON.stringify({ unused: require("./unused.ts").check(), errors }));
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./chai.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const message = "Cannot use import statement with CommonJS-only features";
+  expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual({
+    unused: "checked",
+    errors: [
+      ["BuildMessage", message, `import { assert, vi } from "vitest";`],
+      ["BuildMessage", message, `import { assert } from "vitest";`],
+    ],
+  });
+  expect(stderr).toContain(" 1 pass\n");
+  expect(exitCode).toBe(0);
+});
+
 // The lexer reads the first token while the parser is constructed. An error it
 // logs there still has to fail the parse, on both load paths, also when the
 // `// @bun` pragma makes the parser hand the file over without parsing it.

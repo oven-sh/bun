@@ -11,7 +11,7 @@ use crate::collections::{IndexMap, IndexSet, sort_slice_by};
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::{
-    ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
+    ClauseItem, ImportKind, ImportRecord, Loc, LocRef, Ref, S, Stmt, StoreSlice, StoreStr, Symbol,
 };
 use bun_core::strings::locale_compare;
 
@@ -228,7 +228,7 @@ pub(crate) fn validate_restricted_imports(
 
 /// Insert import declarations into the program body.
 ///
-/// Upstream's merge-into-existing-import and `require()` branches are dropped:
+/// Upstream's merge-into-existing-import branch is dropped, and its `require()` branch is [`Host::bind_import`]:
 /// each pending module becomes one new `S::Import` prepended to `stmts`, with
 /// its `ImportRecord` registered via `host.add_import_record`. Emitting a second
 /// import statement for an already-imported module is valid JS; the bundler's
@@ -250,19 +250,24 @@ pub(crate) fn add_imports_to_program(
 
     for (module_name, imports_map) in sorted_modules {
         let sorted_imports = {
-            let mut sorted: Vec<_> = imports_map.values().collect();
-            sort_slice_by(&mut sorted, |a, b| {
-                locale_compare(a.imported.as_bytes(), b.imported.as_bytes())
-            });
+            let mut sorted: Vec<(&'static [u8], Ref)> = imports_map
+                .values()
+                .map(|spec| (spec.imported.as_bytes(), spec.name_ref))
+                .collect();
+            sort_slice_by(&mut sorted, |a, b| locale_compare(a.0, b.0));
             sorted
         };
+
+        if host.bind_import(module_name.as_bytes(), &sorted_imports) {
+            continue;
+        }
 
         let (import_record_index, namespace_ref) =
             host.add_import_record(module_name.as_bytes(), ImportKind::Stmt);
 
         let mut items: AstVec<ClauseItem> = AstAlloc::vec_with_capacity(sorted_imports.len());
-        for spec in &sorted_imports {
-            items.push(make_import_specifier(spec));
+        for &(imported, name_ref) in &sorted_imports {
+            items.push(make_import_specifier(imported, name_ref));
         }
 
         new_stmts.push(Stmt::alloc(
@@ -286,14 +291,14 @@ pub(crate) fn add_imports_to_program(
     }
 }
 
-/// Create a `ClauseItem` AST node from a NonLocalImportSpecifier.
-fn make_import_specifier(spec: &NonLocalImportSpecifier) -> ClauseItem {
+/// Create a `ClauseItem` AST node from the name and the symbol of a NonLocalImportSpecifier.
+fn make_import_specifier(imported: &[u8], name_ref: Ref) -> ClauseItem {
     ClauseItem {
-        alias: arena_str(spec.imported.as_bytes()),
+        alias: arena_str(imported),
         alias_loc: Loc::EMPTY,
         name: LocRef {
             loc: Loc::EMPTY,
-            ref_: spec.name_ref,
+            ref_: name_ref,
         },
         original_name: StoreStr::EMPTY,
     }

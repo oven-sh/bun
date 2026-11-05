@@ -1,9 +1,9 @@
 //! `bun_react_compiler::Host` adapter over `&mut P`, kept in this crate so
 //! `bun_react_compiler` stays free of a `bun_js_parser` dependency.
 //!
-//! Constructed inline at each post-visit hook site (`visit_stmt.rs`) around the
-//! single `maybe_compile_*` call, then dropped — it owns no state of its own.
+//! Constructed around each call into the compiler and then dropped: `new` at a post-visit hook site (`visit_stmt.rs`), `with_requires` for `finish` in a module that is wrapped as CommonJS.
 
+use bun_alloc::ArenaVec as BumpVec;
 use bun_ast as js_ast;
 use bun_collections::VecExt;
 
@@ -24,12 +24,26 @@ pub(crate) struct ReactCompilerCandidate {
 
 pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
     p: &'p mut P<'a, TS, SCAN_ONLY>,
+    /// In a module that is wrapped as CommonJS: the parts that get the `require()` bindings, and the place in them.
+    requires: Option<(&'p mut BumpVec<'a, js_ast::Part>, &'p mut usize)>,
 }
 
 impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool> ReactCompilerHost<'p, 'a, TS, SCAN_ONLY> {
     #[inline]
     pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
-        Self { p }
+        Self { p, requires: None }
+    }
+
+    /// For `bun_react_compiler::finish` in a module that is wrapped as CommonJS.
+    pub(crate) fn with_requires(
+        p: &'p mut P<'a, TS, SCAN_ONLY>,
+        parts: &'p mut BumpVec<'a, js_ast::Part>,
+        at: &'p mut usize,
+    ) -> Self {
+        Self {
+            p,
+            requires: Some((parts, at)),
+        }
     }
 }
 
@@ -188,6 +202,28 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, path);
         VecExt::append(&mut p.module_scope_mut().generated, namespace_ref);
         (index, namespace_ref)
+    }
+
+    fn bind_import(
+        &mut self,
+        module: &'static [u8],
+        imports: &[(&'static [u8], js_ast::Ref)],
+    ) -> bool {
+        let Some((parts, at)) = &mut self.requires else {
+            return false;
+        };
+        self.p
+            .generate_require_stmt(
+                module,
+                imports,
+                parts,
+                at,
+                js_ast::LocalKind::KVar,
+                false,
+                bun_ast::PartTag::ReactCompiler,
+            )
+            .expect("oom");
+        true
     }
 }
 

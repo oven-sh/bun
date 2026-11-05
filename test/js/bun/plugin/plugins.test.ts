@@ -2917,6 +2917,21 @@ describe.concurrent("`contents` from a plugin is loaded like a file with the sam
       { default: "div" },
       { default: "div" },
     ],
+    // In a CommonJS module the parser binds the JSX runtime and the helpers of "bun:wrap" with require().
+    "JSX that is CommonJS": [
+      "jsx",
+      "jsx",
+      `const { basename } = require("node:path"); module.exports = { el: <div title={basename("/a/b.txt")} /> };`,
+      { el: { type: "div", props: { title: "b.txt" } }, default: { el: { type: "div", props: { title: "b.txt" } } } },
+      { el: { type: "div", props: { title: "b.txt" } } },
+    ],
+    "a CommonJS module with a hoisted class that needs a helper": [
+      "js",
+      "js",
+      `class Box { static accessor count = 1 } module.exports = { count: Box.count };`,
+      { count: 1, default: { count: 1 } },
+      { count: 1 },
+    ],
     "a JSON object": [
       "json",
       "json",
@@ -3005,7 +3020,12 @@ describe.concurrent("`contents` from a plugin is loaded like a file with the sam
     ),
   );
   async function run(extra: Record<string, string>, args: string[], env: Record<string, string> = {}) {
-    using dir = tempDir("plugin-contents", { ...files, ...extra });
+    using dir = tempDir("plugin-contents", {
+      "node_modules/react/package.json": JSON.stringify({ name: "react", version: "0.0.0" }),
+      "node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      ...files,
+      ...extra,
+    });
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd: String(dir),

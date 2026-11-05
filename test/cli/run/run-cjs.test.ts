@@ -308,6 +308,25 @@ describe.concurrent("run-cjs", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The globals of bun:test stay `const`, as an `import` binds them.
+  test("commonjs test file cannot assign to a global of bun:test", async () => {
+    using dir = tempDir("run-cjs-bun-test-assign", {
+      "assign.test.cjs": `
+        test("assign", () => {
+          expect(() => {
+            expect = null;
+          }).toThrow(TypeError);
+        });
+        module.exports = {};
+      `,
+    });
+
+    const { stderr, exitCode } = await run(String(dir), ["test", "./assign.test.cjs"]);
+    expect(stderr).toContain(" 1 pass\n");
+    expect(stderr).toContain(" 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("commonjs module using TypeScript experimental decorators", async () => {
     using dir = tempDir("run-cjs-legacy-decorators", {
       "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
@@ -440,6 +459,47 @@ describe.concurrent("run-cjs", () => {
     });
   });
 
+  // The class in the static field moves with the class that holds it.
+  test("commonjs module with a class inside a hoisted class that needs a bun:wrap helper", async () => {
+    using dir = tempDir("run-cjs-nested-class-helper", {
+      "outer.cts": `
+        class Outer {
+          static Inner = class {
+            static accessor count = 1;
+          };
+        }
+        module.exports = Outer.Inner.count;
+      `,
+      "entry.cjs": `console.log(require("./outer.cts"));`,
+    });
+
+    expect(await run(String(dir), ["entry.cjs"])).toEqual({
+      stdout: "1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `import.meta.glob = ..` goes to the head of the module after the class was moved there.
+  test("commonjs module with import.meta.glob and a hoisted class that needs a bun:wrap helper", async () => {
+    using dir = tempDir("run-cjs-glob-hoisted-class", {
+      "notes/a.txt": "a",
+      "box.cts": `
+        class Box {
+          static accessor count = 1;
+        }
+        module.exports = { count: Box.count, files: Object.keys(import.meta.glob("./notes/*.txt")) };
+      `,
+      "entry.cjs": `console.log(JSON.stringify(require("./box.cts")));`,
+    });
+
+    expect(await run(String(dir), ["entry.cjs"])).toEqual({
+      stdout: `{"count":1,"files":["./notes/a.txt"]}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // `bun -e`, `bun -p` and `bun run -` evaluate their source as CommonJS too,
   // but without the function wrapper.
   test("bun -e using require() and JSX", async () => {
@@ -447,6 +507,34 @@ describe.concurrent("run-cjs", () => {
 
     expect(await run(String(dir), ["-e", requireAndJsx])).toEqual({
       stdout: `{"type":"div","props":{"title":"b.txt"}}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("bun -e with a hoisted class that needs a bun:wrap helper", async () => {
+    using dir = tempDir("run-cjs-eval-hoisted-class", {});
+
+    expect(
+      await run(String(dir), [
+        "-e",
+        `const { basename } = require("node:path"); class Box { static accessor count = 1; accessor value = basename("/a/b.txt"); } console.log(Box.count, new Box().value);`,
+      ]),
+    ).toEqual({ stdout: "1 b.txt\n", stderr: "", exitCode: 0 });
+  });
+
+  // Without the wrapper the generated binding is a global declaration, and a
+  // second evaluation of the entry declares it again. `var` allows that.
+  test("bun -e evaluates an entry that uses JSX a second time", async () => {
+    using dir = tempDir("run-cjs-eval-jsx-twice", fakeReact);
+
+    expect(
+      await run(String(dir), [
+        "-e",
+        `if (!globalThis.again) { globalThis.again = true; delete require.cache[__filename]; require(__filename); } console.log(JSON.stringify(<div />));`,
+      ]),
+    ).toEqual({
+      stdout: `{"type":"div","props":{}}\n{"type":"div","props":{}}\n`,
       stderr: "",
       exitCode: 0,
     });

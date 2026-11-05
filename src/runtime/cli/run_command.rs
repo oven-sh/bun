@@ -101,6 +101,8 @@ enum BootMain {
     /// The file at `path`. An `.html` file is served by `src/js/internal/html.ts`.
     File {
         path: Box<[u8]>,
+        /// `process.argv[1]` when it is not `path`.
+        argv_path: Option<Box<[u8]>>,
         loader: Option<Loader>,
     },
     /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
@@ -982,6 +984,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             BootMain::File {
                 path: entry_path,
+                argv_path,
                 loader,
             },
         )
@@ -1022,7 +1025,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
         if is_checked && !watches {
             // `bun bake` always watches, so it checks in `Run::start`.
-            let BootMain::File { path, loader } = &main else {
+            let BootMain::File { path, loader, .. } = &main else {
                 unreachable!("bun bake always watches")
             };
             let has_type_errors = !Self::check_main(ctx, path, *loader, &ctx.passthrough, None);
@@ -1085,10 +1088,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
         // `vm.main` is a BACKREF into these bytes and the runner never returns,
         // so the allocation is process-lifetime by construction.
-        let (entry, loader): (Option<&'static [u8]>, Option<Loader>) = match main {
-            BootMain::File { path, loader } => (Some(Box::leak(path)), loader),
-            BootMain::Bake => (None, None),
-        };
+        let (entry, argv_path, loader): (Option<&'static [u8]>, Option<Box<[u8]>>, Option<Loader>) =
+            match main {
+                BootMain::File {
+                    path,
+                    argv_path,
+                    loader,
+                } => (Some(Box::leak(path)), argv_path, loader),
+                BootMain::Bake => (None, None, None),
+            };
         // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
         // cron-execution branch below may swap in a synthetic `cwd/[eval]` path
         // while `entry` stays the user's path for the loader check further down.
